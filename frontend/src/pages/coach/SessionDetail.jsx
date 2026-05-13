@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, formatApiError, formatDate } from "../../lib/api";
 import { Button } from "../../components/ui/button";
@@ -27,7 +27,7 @@ export default function CoachSessionDetail() {
   const [noteOpen, setNoteOpen] = useState(null);
   const [noteText, setNoteText] = useState("");
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [s, e, l, n] = await Promise.all([
       api.get(`/sessions/${id}`),
       api.get(`/enrollments?session_id=${id}`),
@@ -36,8 +36,8 @@ export default function CoachSessionDetail() {
     ]);
     setSession(s.data); setRoster(e.data); setLessons(l.data);
     setNotes(n.data.filter((x) => !x.session_id || x.session_id === id));
-  };
-  useEffect(() => { load(); }, [id]);
+  }, [id]);
+  useEffect(() => { load(); }, [load]);
 
   // Load existing attendance for the date
   useEffect(() => {

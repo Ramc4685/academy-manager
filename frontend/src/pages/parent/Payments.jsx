@@ -9,6 +9,7 @@ import { CreditCard } from "lucide-react";
 export default function ParentPayments() {
   const [items, setItems] = useState([]);
   const [busy, setBusy] = useState(null);
+  const [stripeReady, setStripeReady] = useState(true);
   const [params, setParams] = useSearchParams();
   const polledRef = useRef(false);
 
@@ -17,7 +18,12 @@ export default function ParentPayments() {
     setItems(data);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    api.get("/billing/config")
+      .then(({ data }) => setStripeReady(Boolean(data.stripe_configured)))
+      .catch(() => setStripeReady(false));
+  }, [load]);
 
   const payNow = async (pid) => {
     setBusy(pid);
@@ -91,9 +97,16 @@ export default function ParentPayments() {
                 <td className="px-4 py-3 text-xs text-slate-500">{p.payment_date ? formatDate(p.payment_date) : "—"}</td>
                 <td className="px-4 py-3 text-right">
                   {p.status === "pending" && (
-                    <Button size="sm" onClick={() => payNow(p.id)} disabled={busy === p.id} data-testid={`pay-now-${p.id}`} className="bg-blue-600 hover:bg-blue-500 text-white">
+                    <Button
+                      size="sm"
+                      onClick={() => payNow(p.id)}
+                      disabled={busy === p.id || !stripeReady}
+                      title={stripeReady ? "Pay by card" : "Card payments are not configured"}
+                      data-testid={`pay-now-${p.id}`}
+                      className="bg-blue-600 hover:bg-blue-500 text-white disabled:bg-slate-300 disabled:text-slate-600"
+                    >
                       <CreditCard className="w-3.5 h-3.5 mr-1.5" />
-                      {busy === p.id ? "…" : "Pay now"}
+                      {busy === p.id ? "..." : "Pay now"}
                     </Button>
                   )}
                 </td>
@@ -102,7 +115,9 @@ export default function ParentPayments() {
           </tbody>
         </table>
       </div>
-      <div className="text-xs text-slate-500">Pay by card (Stripe) or at the front desk. After paying, your status updates automatically.</div>
+      <div className="text-xs text-slate-500">
+        {stripeReady ? "Pay by card (Stripe) or at the front desk. After paying, your status updates automatically." : "Card payments are not configured yet. Please pay at the front desk."}
+      </div>
     </div>
   );
 }

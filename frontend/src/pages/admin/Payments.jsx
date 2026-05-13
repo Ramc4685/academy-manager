@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, formatApiError, currency, formatDate, currentPeriod } from "../../lib/api";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -20,14 +20,14 @@ export default function AdminPayments() {
   const [payOpen, setPayOpen] = useState(null);
   const [payForm, setPayForm] = useState({ payment_method: "cash", notes: "" });
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     const q = filter === "all" ? "" : `?status=${filter}`;
     const { data } = await api.get(`/payments${q}`);
     setItems(data);
     setLoading(false);
-  };
-  useEffect(() => { load(); }, [filter]);
+  }, [filter]);
+  useEffect(() => { load(); }, [load]);
 
   const generate = async () => {
     try {

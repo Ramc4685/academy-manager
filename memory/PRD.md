@@ -1,7 +1,7 @@
 # Badminton Academy Manager — PRD & Roadmap
 
 > **Owner:** BLno Badminton Academy
-> **Stack:** FastAPI + MongoDB Motor + JWT (httpOnly cookies) · React 19 + Tailwind + shadcn/ui + Recharts · Stripe (test mode via emergentintegrations) · Resend (transactional email)
+> **Stack:** FastAPI + MongoDB Motor + JWT (httpOnly cookies) · React 19 + Tailwind + shadcn/ui + Recharts · Stripe SDK · Resend (transactional email)
 > **Status:** Phase 1+2+3 shipped. Phase 4+ documented below.
 
 ---
@@ -252,8 +252,8 @@ kishore@blno.academy   / Coach@12345
   - Undo paid for student payments + coach payouts (auto-expense reversed)
   - Undo approve for coach payouts
   - Public student registration `/register-student` — 3-step form, replaces Google Form, creates parent+child+optional enrollment (pending), auto-login
-  - **Stripe Checkout** integration via `emergentintegrations` (test mode, `sk_test_emergent` proxied through Emergent's Stripe gateway)
-  - Stripe webhook + status polling with local-state fallback (works around upstream library Pydantic bug)
+  - **Stripe Checkout** integration via the official Stripe SDK
+  - Stripe webhook + status polling with local-state fallback
   - **Resend email** integration: test email, welcome, bulk dues reminders
   - Pause-month + Resume-month on enrollments — handles "kid in Apr, not May, back in June"
   - Pay-now button on parent payments page
@@ -266,7 +266,7 @@ Prioritized. Each item is sized so it can be picked up independently.
 
 ### P0 — Polish on shipped flows
 1. **Email deliverability** — verify `blno.academy` domain at resend.com/domains so Resend can send to all parents (not just the account's own email)
-2. **Stripe webhook secret** — set `STRIPE_WEBHOOK_SECRET` env var and wire `whsec_...` in Stripe Dashboard, then enable signature verification (`sc.handle_webhook` already supports it)
+2. **Stripe webhook secret** — set `STRIPE_WEBHOOK_SECRET` env var and wire `whsec_...` in Stripe Dashboard
 3. **`payments` undo-paid receipt cleanup** — when undoing a Stripe-paid payment, also refund via Stripe API (optional toggle)
 4. **`coach-payouts.undo-paid`** — instead of regex match on notes, store `coach_payout_id` as first-class field on the auto-expense and match by that (testing agent's recommendation)
 5. **CORS fix verification on `shuttle-flow.preview.emergentagent.com`** — current `.env` `FRONTEND_URL` references the older `6e9f5c4d-...` host. Update once you confirm the canonical preview host
@@ -304,7 +304,6 @@ Prioritized. Each item is sized so it can be picked up independently.
 
 ## 7. Tech debt & known issues
 
-- **`emergentintegrations.payments.stripe.checkout.get_checkout_status` Pydantic bug** — already worked around; if upstream fixes it, simplify `billing_routes.checkout_status` to call the helper directly again
 - **`/api/email/send-dues-reminders`** counts attempted sends, not actual deliveries. Refactor to return `{sent, failed, rate_limited}` and throttle to Resend's 5 req/s
 - **`/api/email/test` returns `ok:true`** even on Resend test-mode rejection — improve to surface the actual provider response status
 - **Frontend ESLint warnings** about `useEffect` exhaustive-deps — harmless but should add `eslint-disable-next-line` comments or refactor
@@ -317,39 +316,42 @@ Prioritized. Each item is sized so it can be picked up independently.
 ## 8. Environment variables
 
 ```bash
-# /app/backend/.env (current)
-MONGO_URL="mongodb://localhost:27017"
-DB_NAME="test_database"
-CORS_ORIGINS=""                       # let regex match preview subdomains
+# backend/.env
+APP_ENV=development
+MONGO_URL="mongodb://127.0.0.1:27017"
+DB_NAME="academy_manager_local"
+CORS_ORIGINS="http://localhost:3000,http://127.0.0.1:3000"
 JWT_SECRET="<random-256-bit-hex>"
 ADMIN_EMAIL="admin@badminton.app"
 ADMIN_PASSWORD="Admin@12345"
-FRONTEND_URL="https://<preview-host>" # used for invite accept_url
-STRIPE_API_KEY="sk_test_emergent"     # proxied through integrations.emergentagent.com/stripe
-RESEND_API_KEY="re_..."               # user-provided
-SENDER_EMAIL="onboarding@resend.dev"  # change after verifying domain
-
-# Phase 4 will need
+COOKIE_SECURE=false
+FRONTEND_URL="http://localhost:3000"
+STRIPE_API_KEY="sk_test_..."
 STRIPE_WEBHOOK_SECRET="whsec_..."
+RESEND_API_KEY="re_..."
+SENDER_EMAIL="onboarding@resend.dev"
 TWILIO_ACCOUNT_SID="AC..."
 TWILIO_AUTH_TOKEN="..."
 TWILIO_WHATSAPP_FROM="whatsapp:+1..."
+
+# frontend/.env
+REACT_APP_BACKEND_URL="http://127.0.0.1:8001"
 ```
 
 ---
 
 ## 9. Running locally / continuing on another platform
 
-1. **Backend:** `cd /app/backend && uvicorn server:app --host 0.0.0.0 --port 8001` — or `sudo supervisorctl restart backend` on Emergent
-2. **Frontend:** `cd /app/frontend && yarn install && yarn start` — listens on `:3000`
-3. **MongoDB:** any Mongo 6+ instance; `MONGO_URL` and `DB_NAME` in `.env`
-4. **Reimport BLno data:** `python3 /app/backend/scripts/import_blno.py` (requires `BLNO_XLSX` env var or `/tmp/blno.xlsx`)
-5. **Run pytest:** `cd /app && pytest backend/tests/` — iteration tests live in `backend/tests/iter*_test.py`
+1. **MongoDB:** `mongod --dbpath /tmp/academy-manager-mongo-local --bind_ip 127.0.0.1 --port 27017`
+2. **Backend:** `cd backend && source .venv/bin/activate && uvicorn server:app --host 127.0.0.1 --port 8001 --reload`
+3. **Frontend:** `cd frontend && yarn start` — listens on `:3000`
+4. **Reimport BLno data:** `cd backend && BLNO_XLSX="/Users/ramc/Downloads/BLno-Badmintion-Training.xlsx" python scripts/import_blno.py`
+5. **Run pytest:** `cd backend && pytest` — iteration tests live in `backend/tests/iter*_test.py`
 
 ---
 
 ## 10. Quick wins if you only have 1 hour
 
 - Verify `blno.academy` domain at Resend → set `SENDER_EMAIL=noreply@blno.academy` → real email to all parents starts working
-- In Stripe Dashboard: add `https://<preview-host>/api/webhook/stripe` as a webhook endpoint, copy `whsec_...`, set `STRIPE_WEBHOOK_SECRET` env var → uncomment signature verification in `billing_routes.stripe_webhook`
+- In Stripe Dashboard or Stripe CLI: add/forward to `https://<host>/api/webhook/stripe`, copy `whsec_...`, set `STRIPE_WEBHOOK_SECRET`, then restart the backend
 - Add `data-testid="..."` audit on every new interactive element (current coverage is good but not exhaustive)
