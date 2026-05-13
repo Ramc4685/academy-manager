@@ -48,6 +48,11 @@ export default function AdminPayouts() {
 
   const approve = async (id) => { await api.post(`/coach-payouts/${id}/approve`); toast.success("Approved"); load(); };
   const pay = async (id) => { await api.post(`/coach-payouts/${id}/mark-paid`); toast.success("Marked paid"); load(); };
+  const undoApprove = async (id) => { await api.post(`/coach-payouts/${id}/undo-approve`); toast.success("Reverted to calculated"); load(); };
+  const undoPaid = async (id) => {
+    if (!confirm("Revert payout to approved (and remove auto-expense)?")) return;
+    await api.post(`/coach-payouts/${id}/undo-paid`); toast.success("Reverted to approved"); load();
+  };
 
   const saveRule = async () => {
     try {
@@ -105,7 +110,13 @@ export default function AdminPayouts() {
                         <button onClick={() => approve(p.id)} data-testid={`approve-payout-${p.id}`} className="text-xs px-2 py-1 rounded bg-amber-50 text-amber-700 hover:bg-amber-100"><Check className="w-3.5 h-3.5 inline mr-1" />Approve</button>
                       )}
                       {p.status === "approved" && (
-                        <button onClick={() => pay(p.id)} data-testid={`pay-payout-${p.id}`} className="text-xs px-2 py-1 rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100"><DollarSign className="w-3.5 h-3.5 inline mr-1" />Mark paid</button>
+                        <>
+                          <button onClick={() => pay(p.id)} data-testid={`pay-payout-${p.id}`} className="text-xs px-2 py-1 rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100"><DollarSign className="w-3.5 h-3.5 inline mr-1" />Mark paid</button>
+                          <button onClick={() => undoApprove(p.id)} className="text-xs px-2 py-1 rounded hover:bg-slate-100 text-slate-700 ml-1">Undo</button>
+                        </>
+                      )}
+                      {p.status === "paid" && (
+                        <button onClick={() => undoPaid(p.id)} data-testid={`undo-payout-${p.id}`} className="text-xs px-2 py-1 rounded bg-amber-50 text-amber-700 hover:bg-amber-100">Undo paid</button>
                       )}
                     </td>
                   </tr>

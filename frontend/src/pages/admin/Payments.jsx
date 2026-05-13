@@ -59,6 +59,15 @@ export default function AdminPayments() {
     }
   };
 
+  const undoPaid = async (id) => {
+    if (!confirm("Revert this payment to pending?")) return;
+    try {
+      await api.post(`/payments/${id}/undo-paid`);
+      toast.success("Payment reverted to pending");
+      load();
+    } catch (e) { toast.error(formatApiError(e.response?.data?.detail)); }
+  };
+
   return (
     <div className="space-y-6" data-testid="admin-payments">
       <div className="flex items-end justify-between flex-wrap gap-3">
@@ -109,6 +118,9 @@ export default function AdminPayments() {
                       <button onClick={() => { setDiscOpen(p.id); setDiscValue(p.discount || 0); }} data-testid={`discount-${p.id}`} className="text-xs px-2 py-1 rounded hover:bg-slate-100 text-amber-700"><Percent className="w-3.5 h-3.5 inline mr-1" />Discount</button>
                       <button onClick={() => { setPayOpen(p.id); setPayForm({ payment_method: "cash", notes: "" }); }} data-testid={`mark-paid-${p.id}`} className="text-xs px-2 py-1 rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100 ml-1"><Check className="w-3.5 h-3.5 inline mr-1" />Mark paid</button>
                     </>
+                  )}
+                  {p.status === "paid" && (
+                    <button onClick={() => undoPaid(p.id)} data-testid={`undo-paid-${p.id}`} className="text-xs px-2 py-1 rounded bg-amber-50 text-amber-700 hover:bg-amber-100">Undo</button>
                   )}
                 </td>
               </tr>

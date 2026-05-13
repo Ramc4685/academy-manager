@@ -1,7 +1,9 @@
 """Auth + Invites + Users routes."""
 import secrets
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 from fastapi import APIRouter, Request, Response, Depends, HTTPException
+from pydantic import BaseModel, EmailStr, Field
 from bson import ObjectId
 
 from models import (
@@ -56,6 +58,133 @@ async def register(body: RegisterIn, response: Response):
     refresh = create_refresh_token(user_id)
     set_auth_cookies(response, access, refresh)
     return {"id": user_id, "email": email, "name": body.name, "role": "parent", "status": "active"}
+
+
+class PublicRegisterIn(BaseModel):
+    parent_name: str
+    parent_email: EmailStr
+    parent_phone: Optional[str] = ""
+    password: str = Field(min_length=6)
+    # child
+    child_first_name: str
+    child_last_name: str
+    child_dob: str
+    child_skill_level: str = "beginner"
+    emergency_contact_name: str
+    emergency_contact_phone: str
+    medical_notes: Optional[str] = ""
+    t_shirt_size: Optional[str] = ""
+    previous_experience: Optional[str] = ""
+    waiver_accepted: bool
+    session_id: Optional[str] = None  # optional pick at registration
+
+
+@router.post("/auth/register-full")
+async def register_full(body: PublicRegisterIn, response: Response):
+    """Single-shot parent registration + child + optional enrollment.
+    Replaces the Google Form workflow."""
+    if not body.waiver_accepted:
+        raise HTTPException(status_code=400, detail="Waiver must be accepted")
+    db = get_db()
+    email = body.parent_email.lower()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email already registered. Please log in.")
+    now = datetime.now(timezone.utc).isoformat()
+    # parent user
+    parent_doc = {
+        "email": email, "password_hash": hash_password(body.password),
+        "name": body.parent_name, "phone": body.parent_phone or "",
+        "role": "parent", "status": "active", "must_change_password": False,
+        "created_at": now, "updated_at": now,
+    }
+    pr = await db.users.insert_one(parent_doc)
+    parent_id = str(pr.inserted_id)
+    # student
+    try:
+        from datetime import datetime as dt
+        d = dt.fromisoformat(body.child_dob)
+        age = (dt.now() - d).days // 365
+    except Exception:
+        age = 0
+    stu_doc = {
+        "first_name": body.child_first_name, "last_name": body.child_last_name,
+        "dob": body.child_dob, "age": age, "skill_level": body.child_skill_level,
+        "emergency_contact_name": body.emergency_contact_name,
+        "emergency_contact_phone": body.emergency_contact_phone,
+        "medical_notes": body.medical_notes or "",
+        "t_shirt_size": body.t_shirt_size or "",
+        "previous_experience": body.previous_experience or "",
+        "waiver_accepted": True, "waiver_date": now,
+        "parent_user_id": parent_id, "status": "active",
+        "is_deleted": False, "created_at": now,
+    }
+    sr = await db.students.insert_one(stu_doc)
+    student_id = str(sr.inserted_id)
+    enrollment_id = None
+    if body.session_id:
+        sess = await db.sessions.find_one({"_id": ObjectId(body.session_id), "is_deleted": {"$ne": True}})
+        if sess:
+            er = await db.enrollments.insert_one({
+                "session_id": body.session_id, "student_id": student_id,
+                "parent_user_id": parent_id, "billing_type": "Standard",
+                "approval_status": "pending",  # admin must approve
+                "status": "active", "enrolled_at": now, "is_deleted": False,
+            })
+            enrollment_id = str(er.inserted_id)
+    # Auto-login
+    access = create_access_token(parent_id, email, "parent")
+    refresh = create_refresh_token(parent_id)
+    set_auth_cookies(response, access, refresh)
+    # Notify admins
+    async for admin_user in db.users.find({"role": "admin", "status": "active"}):
+        await db.notifications.insert_one({
+            "user_id": str(admin_user["_id"]),
+            "type": "registration",
+            "title": "New parent registration",
+            "message": f"{body.parent_name} registered {body.child_first_name} {body.child_last_name}"
+                       + (f" (enrolled in session)" if enrollment_id else ""),
+            "related_entity": parent_id,
+            "read": False,
+            "created_at": now,
+        })
+    # Optional welcome email (fire-and-forget)
+    try:
+        from routers.email_routes import send_email, _wrap
+        html = _wrap(
+            f"<h2 style='margin:0 0 12px 0;'>Welcome, {body.parent_name}!</h2>"
+            f"<p>{body.child_first_name} is registered with BLno Badminton Academy.</p>"
+            + ("<p>Your child's enrollment is pending admin approval. We'll notify you soon.</p>" if enrollment_id else "")
+        )
+        import asyncio
+        asyncio.create_task(send_email(email, "Welcome to BLno Badminton Academy", html))
+    except Exception:
+        pass
+    return {
+        "id": parent_id, "email": email, "name": body.parent_name,
+        "role": "parent", "status": "active",
+        "student_id": student_id, "enrollment_id": enrollment_id,
+    }
+
+
+@router.get("/auth/public-sessions")
+async def public_sessions():
+    """Active, enrollable sessions for the public registration form."""
+    db = get_db()
+    cursor = db.sessions.find({"status": "active", "is_deleted": {"$ne": True}})
+    items = await cursor.to_list(50)
+    out = []
+    for s in items:
+        out.append({
+            "id": str(s["_id"]),
+            "name": s["name"],
+            "skill_level": s.get("skill_level"),
+            "age_group": s.get("age_group"),
+            "days_of_week": s.get("days_of_week"),
+            "start_time": s.get("start_time"),
+            "end_time": s.get("end_time"),
+            "monthly_price": s.get("monthly_price"),
+        })
+    return out
 
 
 @router.post("/auth/login")

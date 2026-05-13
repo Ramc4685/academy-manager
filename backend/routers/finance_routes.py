@@ -176,6 +176,60 @@ async def delete_payment(pid: str, admin=Depends(require_roles("admin"))):
     return {"ok": True}
 
 
+@router.post("/payments/{pid}/undo-paid")
+async def undo_paid(pid: str, admin=Depends(require_roles("admin"))):
+    db = get_db()
+    p = await db.payments.find_one({"_id": _oid(pid)})
+    if not p:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    if p.get("status") != "paid":
+        raise HTTPException(status_code=400, detail="Payment is not paid")
+    await db.payments.update_one(
+        {"_id": _oid(pid)},
+        {"$set": {"status": "pending", "payment_date": None, "payment_method": None,
+                  "notes": (p.get("notes", "") + " [reverted by admin]").strip()}},
+    )
+    await log_audit(admin, "undo_paid", "payment", pid, "")
+    return {"ok": True}
+
+
+@router.post("/coach-payouts/{pid}/undo-paid")
+async def undo_payout_paid(pid: str, admin=Depends(require_roles("admin"))):
+    db = get_db()
+    p = await db.coach_payouts.find_one({"_id": _oid(pid)})
+    if not p:
+        raise HTTPException(status_code=404, detail="Payout not found")
+    if p.get("status") != "paid":
+        raise HTTPException(status_code=400, detail="Payout not in paid state")
+    await db.coach_payouts.update_one(
+        {"_id": _oid(pid)},
+        {"$set": {"status": "approved", "paid_at": None, "paid_by": None}},
+    )
+    # Remove auto-created expense entry (matched by note)
+    await db.expenses.update_many(
+        {"category": "Coach Payout", "notes": {"$regex": pid}},
+        {"$set": {"is_deleted": True}},
+    )
+    await log_audit(admin, "undo_paid", "coach_payout", pid, "")
+    return {"ok": True}
+
+
+@router.post("/coach-payouts/{pid}/undo-approve")
+async def undo_payout_approve(pid: str, admin=Depends(require_roles("admin"))):
+    db = get_db()
+    p = await db.coach_payouts.find_one({"_id": _oid(pid)})
+    if not p:
+        raise HTTPException(status_code=404, detail="Payout not found")
+    if p.get("status") != "approved":
+        raise HTTPException(status_code=400, detail="Not in approved state")
+    await db.coach_payouts.update_one(
+        {"_id": _oid(pid)},
+        {"$set": {"status": "calculated", "approved_at": None, "approved_by": None}},
+    )
+    await log_audit(admin, "undo_approve", "coach_payout", pid, "")
+    return {"ok": True}
+
+
 # ----------------- /api/expenses -----------------
 @router.get("/expenses")
 async def list_expenses(admin=Depends(require_roles("admin"))):
@@ -268,14 +322,18 @@ async def calculate_payouts(body: CalcPayoutIn, admin=Depends(require_roles("adm
             continue
         amount = 0.0
         if rule["rule_type"] == "revenue_percentage":
-            # Sum of paid revenue for this period for these sessions
+            basis = rule.get("basis", "collected")
+            match: dict = {
+                "session_id": {"$in": session_ids},
+                "period": period,
+                "is_deleted": {"$ne": True},
+            }
+            if basis == "collected":
+                match["status"] = "paid"
+            else:
+                match["status"] = {"$ne": "failed"}
             agg = await db.payments.aggregate([
-                {"$match": {
-                    "session_id": {"$in": session_ids},
-                    "period": period,
-                    "status": "paid",
-                    "is_deleted": {"$ne": True},
-                }},
+                {"$match": match},
                 {"$group": {"_id": None, "total": {"$sum": "$final_amount"}}},
             ]).to_list(1)
             total = agg[0]["total"] if agg else 0

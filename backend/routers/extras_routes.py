@@ -130,6 +130,7 @@ async def coach_payslip(coach_id: str, period: str, user=Depends(get_current_use
     rule = await db.payout_rules.find_one({"coach_id": coach_id, "is_active": True})
     rule_type = rule["rule_type"] if rule else "revenue_percentage"
     rule_value = rule["value"] if rule else 30
+    rule_basis = (rule.get("basis") if rule else "collected") or "collected"
     payout = 0.0
     collected = 0.0
     # Collected revenue this period for coach's sessions
@@ -144,7 +145,8 @@ async def coach_payslip(coach_id: str, period: str, user=Depends(get_current_use
     ]).to_list(1)
     collected = float(collected_agg[0]["total"]) if collected_agg else 0.0
     if rule_type == "revenue_percentage":
-        payout = collected * float(rule_value) / 100.0
+        basis_amount = collected if rule_basis == "collected" else expected_revenue
+        payout = basis_amount * float(rule_value) / 100.0
     elif rule_type == "fixed_monthly":
         payout = float(rule_value)
     elif rule_type == "per_student":
@@ -166,8 +168,9 @@ async def coach_payslip(coach_id: str, period: str, user=Depends(get_current_use
         "collected_revenue": round(collected, 2),
         "rule_type": rule_type,
         "rule_value": rule_value,
+        "rule_basis": rule_basis,
         "payout_amount": round(payout, 2),
-        "payout_basis": "collected" if rule_type == "revenue_percentage" else rule_type,
+        "payout_basis": rule_basis if rule_type == "revenue_percentage" else rule_type,
         "current_status": existing["status"] if existing else "not_calculated",
         "rows": rows,
     }

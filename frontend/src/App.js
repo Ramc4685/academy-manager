@@ -20,6 +20,8 @@ import AdminReports from "./pages/admin/Reports";
 import AdminAuditLogs from "./pages/admin/AuditLogs";
 import AdminDuesFollowup from "./pages/admin/DuesFollowup";
 import AdminCoachPayslip from "./pages/admin/CoachPayslip";
+import AdminSettings from "./pages/admin/Settings";
+import RegisterStudent from "./pages/auth/RegisterStudent";
 
 import CoachDashboard from "./pages/coach/Dashboard";
 import CoachSessions from "./pages/coach/Sessions";
@@ -64,6 +66,7 @@ function App() {
             <Route path="/" element={<RoleRedirect />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/register-student" element={<RegisterStudent />} />
             <Route path="/accept-invite/:token" element={<AcceptInvite />} />
 
             <Route path="/admin/dashboard" element={LR(AdminDashboard, ["admin"])} />
@@ -77,6 +80,7 @@ function App() {
             <Route path="/admin/audit-logs" element={LR(AdminAuditLogs, ["admin"])} />
             <Route path="/admin/dues" element={LR(AdminDuesFollowup, ["admin"])} />
             <Route path="/admin/coach-payslip" element={LR(AdminCoachPayslip, ["admin", "coach"])} />
+            <Route path="/admin/settings" element={LR(AdminSettings, ["admin"])} />
 
             <Route path="/coach/dashboard" element={LR(CoachDashboard, ["coach"])} />
             <Route path="/coach/sessions" element={LR(CoachSessions, ["coach"])} />

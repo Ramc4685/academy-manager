@@ -17,6 +17,9 @@ from routers.coaching_routes import router as coaching_router
 from routers.comms_routes import router as comms_router
 from routers.dashboard_routes import router as dashboard_router
 from routers.extras_routes import router as extras_router
+from routers.settings_routes import router as settings_router
+from routers.billing_routes import router as billing_router
+from routers.email_routes import router as email_router
 
 
 app = FastAPI(title="Badminton Academy Manager API")
@@ -29,6 +32,9 @@ api_router.include_router(coaching_router)
 api_router.include_router(comms_router)
 api_router.include_router(dashboard_router)
 api_router.include_router(extras_router)
+api_router.include_router(settings_router)
+api_router.include_router(billing_router)
+api_router.include_router(email_router)
 
 
 @api_router.get("/")

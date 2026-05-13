@@ -84,7 +84,7 @@ export default function Login() {
           </form>
 
           <div className="mt-6 text-sm text-slate-600 text-center">
-            New parent? <Link to="/register" className="text-blue-600 hover:underline font-medium" data-testid="link-register">Create an account</Link>
+            New parent? <Link to="/register-student" className="text-blue-600 hover:underline font-medium" data-testid="link-register">Register your child →</Link>
           </div>
 
           <div className="mt-8 p-4 border border-slate-200 rounded-xl bg-white">

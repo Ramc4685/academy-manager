@@ -20,6 +20,7 @@ const adminNav = [
   { to: "/admin/coach-payslip", icon: Coins, label: "Coach Payslip" },
   { to: "/admin/reports", icon: FileBarChart2, label: "Reports" },
   { to: "/admin/audit-logs", icon: ShieldCheck, label: "Audit Logs" },
+  { to: "/admin/settings", icon: ShieldCheck, label: "Settings" },
   { to: "/messages", icon: MessageSquare, label: "Messages" },
 ];
 
