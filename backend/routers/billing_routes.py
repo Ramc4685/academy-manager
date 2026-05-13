@@ -1,5 +1,6 @@
 """Stripe Checkout for parent self-pay of monthly fees."""
 import os
+import asyncio
 import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -115,26 +116,44 @@ async def _apply_paid(db, payment_id: str, method: str = "stripe"):
 
 @router.get("/billing/checkout-status/{session_id}")
 async def checkout_status(session_id: str, request: Request, user=Depends(get_current_user)):
+    """Return local payment + transaction status. The Stripe webhook flips
+    payment_transactions.payment_status='paid' which triggers _apply_paid().
+    Frontend polls this endpoint after returning from Stripe Checkout."""
     db = get_db()
-    sc = _client(request)
-    status = await sc.get_checkout_status(session_id)
     tx = await db.payment_transactions.find_one({"session_id": session_id})
-    if tx:
-        new_status = {
-            "payment_status": status.payment_status,
-            "status": status.status,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-        await db.payment_transactions.update_one({"session_id": session_id}, {"$set": new_status})
-        # Idempotent paid
-        if status.payment_status == "paid" and tx.get("payment_status") != "paid":
+    if not tx:
+        raise HTTPException(status_code=404, detail="Checkout session not found")
+    pay = None
+    if tx.get("payment_id"):
+        pay = await db.payments.find_one({"_id": ObjectId(tx["payment_id"])})
+    # Best-effort Stripe lookup; failure is non-fatal — webhook is canonical
+    try:
+        _client(request)
+        import stripe
+        sess = await asyncio.to_thread(stripe.checkout.Session.retrieve, session_id)
+        stripe_status = sess.get("status")
+        stripe_payment_status = sess.get("payment_status")
+        await db.payment_transactions.update_one(
+            {"session_id": session_id},
+            {"$set": {"payment_status": stripe_payment_status, "status": stripe_status,
+                      "updated_at": datetime.now(timezone.utc).isoformat()}},
+        )
+        if stripe_payment_status == "paid" and tx.get("payment_status") != "paid":
             await _apply_paid(db, tx["payment_id"])
-    return {
-        "session_id": session_id,
-        "status": status.status,
-        "payment_status": status.payment_status,
-        "amount_total": status.amount_total,
-    }
+        return {
+            "session_id": session_id,
+            "status": stripe_status,
+            "payment_status": stripe_payment_status,
+            "amount_total": sess.get("amount_total"),
+        }
+    except Exception as e:
+        log.warning("Stripe lookup failed (using local state): %s", e)
+        return {
+            "session_id": session_id,
+            "status": tx.get("status", "unknown"),
+            "payment_status": (pay.get("status") if pay and pay.get("status") == "paid" else tx.get("payment_status", "unknown")),
+            "amount_total": int(tx.get("amount", 0) * 100) if tx.get("amount") else None,
+        }
 
 
 @router.post("/webhook/stripe")

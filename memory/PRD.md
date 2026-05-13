@@ -1,244 +1,355 @@
-# Badminton Academy Manager — PRD
+# Badminton Academy Manager — PRD & Roadmap
 
-## Original Problem Statement
-Build a multi-role web app to manage a badminton academy: classes, students, parents, coaches, payments, coach payouts, expenses, profit, attendance, progress, lesson plans, messages, and notifications.
-
-Roles: **Admin, Coach, Parent, Student**. Style: premium sports SaaS, blue/white/black/yellow.
-
-## User Personas
-- **Admin (Owner)** — Manages everything, financial visibility, approves payouts.
-- **Coach** — Sees assigned sessions, marks attendance, writes lesson plans + progress notes, messages parents.
-- **Parent** — Registers children, enrolls in sessions, pays fees, views attendance/progress, messages coaches.
-- **Student** — Read-only view of their schedule, attendance, progress (Phase 2 deep view; Phase 1 minimal).
-
-## Tech Stack
-- Backend: FastAPI + Motor (MongoDB async) + JWT (httpOnly cookies) + bcrypt
-- Frontend: React 19 + Tailwind + shadcn/ui + Recharts + Phosphor Icons + Outfit/Manrope fonts
+> **Owner:** BLno Badminton Academy
+> **Stack:** FastAPI + MongoDB Motor + JWT (httpOnly cookies) · React 19 + Tailwind + shadcn/ui + Recharts · Stripe (test mode via emergentintegrations) · Resend (transactional email)
+> **Status:** Phase 1+2+3 shipped. Phase 4+ documented below.
 
 ---
 
-## Database Schema (MongoDB Collections)
+## 0. Architecture & Conventions
+
+- **Backend:** `/app/backend/server.py` mounts a single `/api`-prefixed router that includes:
+  - `auth_routes` — auth, invites, users (admin edit + reset password), public registration
+  - `sessions_routes` — sessions CRUD, students, enrollments, transfer, pause-month, move-log, approve
+  - `finance_routes` — payments (incl. undo-paid, generate-monthly, discount), expenses, payout rules, coach payouts (calc/approve/pay + undo)
+  - `coaching_routes` — attendance (bulk), lesson plans, progress notes
+  - `comms_routes` — `/messages/contacts` (role-scoped), messages, notifications
+  - `dashboard_routes` — admin / coach / parent dashboards, CSV reports, audit logs
+  - `extras_routes` — dues followup w/ WhatsApp, coach payslip, pending approvals
+  - `settings_routes` — academy settings singleton, payout basis per coach
+  - `billing_routes` — Stripe Checkout (create + status + webhook)
+  - `email_routes` — Resend test email, welcome, bulk dues reminders
+
+- **Roles:** `admin`, `coach`, `parent`, `student` (Phase 4)
+
+- **Cookies:** `access_token` (12h) + `refresh_token` (7d), `httponly secure samesite=none` so they work cross-origin under the preview ingress
+
+- **Frontend layout:** `/app/frontend/src/components/Layout.jsx` renders the dark `slate-900` sidebar with role-specific nav + glassy header with notifications
+
+- **Design system:** Outfit (display) + Manrope (body) fonts, blue (`#2563EB`) + yellow (`#FACC15`) + slate accents, no purple/violet gradients, card-based with subtle hover-lift
+
+- **MongoDB collections (16):**
+  `users, students, coach_profiles, sessions, enrollments, attendance, payments, expenses, payout_rules, coach_payouts, lesson_plans, progress_notes, messages, notifications, invites, audit_logs, move_log, payment_transactions, academy_settings, login_attempts, password_reset_tokens`
+
+- **All mutating endpoints write to `audit_logs`** via `auth.log_audit()`.
+
+- **Soft delete:** every core entity has `is_deleted: bool`. Status fields (`pending|active|paid|approved|cancelled|completed|paused`) are also distinct from deletion.
+
+---
+
+## 1. Data Model (current)
 
 ### users
-`{ _id, email (unique), password_hash, name, phone, role (admin|coach|parent|student), status (active|invited|suspended|deleted), invited_by, must_change_password, created_at, updated_at }`
+`_id, email, password_hash, name, phone, role, status, must_change_password, created_at, updated_at`
 
 ### students
-`{ _id, parent_user_id, first_name, last_name, dob, age, skill_level, emergency_contact_name, emergency_contact_phone, medical_notes, waiver_accepted, waiver_date, status (active|inactive), is_deleted, created_at }`
-
-### coach_profiles
-`{ _id, user_id, bio, specialties[], created_at }`
+`_id, parent_user_id, first_name, last_name, dob, age, skill_level, emergency_contact_{name,phone}, medical_notes, t_shirt_size, previous_experience, waiver_accepted, waiver_date, status, is_deleted, created_at`
 
 ### sessions
-`{ _id, name, skill_level, age_group, start_date, end_date, days_of_week[], start_time, end_time, location, max_students, monthly_price, coach_id, status (active|cancelled|completed), is_deleted, created_at }`
+`_id, name, skill_level, age_group, start_date, end_date, days_of_week[], start_time, end_time, location, max_students, monthly_price, coach_id, status, is_deleted, created_at`
 
 ### enrollments
-`{ _id, session_id, student_id, parent_user_id, status (active|cancelled|completed), enrolled_at, is_deleted }`
-
-### attendance
-`{ _id, session_id, student_id, enrollment_id, date (YYYY-MM-DD), status (present|absent|late|excused), notes, marked_by, marked_at }`
+`_id, session_id, student_id, parent_user_id, billing_type ("Standard"|"NoCharge"|"Waived"), approval_status ("pending"|"approved"), status, skip_periods[] (YYYY-MM list), session_overrides{period: session_id}, enrolled_at, is_deleted`
 
 ### payments
-`{ _id, parent_user_id, student_id, enrollment_id, session_id, period (YYYY-MM), amount, discount, final_amount, status (pending|paid|failed), payment_date, payment_method, marked_by, notes, is_deleted, created_at }`
+`_id, parent_user_id, student_id, enrollment_id, session_id, period (YYYY-MM), amount, discount, final_amount, status ("pending"|"paid"|"failed"), payment_date, payment_method, marked_by, notes, is_deleted, created_at`
 
 ### expenses
-`{ _id, category, description, amount, date, paid_to, status (paid|pending), notes, is_deleted, created_by, created_at }`
+`_id, category, description, amount, date, paid_to, status, notes, is_deleted, created_by, created_at`
 
 ### payout_rules
-`{ _id, coach_id, rule_type (revenue_percentage|fixed_per_class|fixed_monthly|per_student), value, is_active, created_at }`
+`_id, coach_id, rule_type ("revenue_percentage"|"fixed_per_class"|"fixed_monthly"|"per_student"), value, basis ("collected"|"expected"), is_active, created_at`
 
 ### coach_payouts
-`{ _id, coach_id, period (YYYY-MM), session_ids[], rule_type, calculated_amount, status (calculated|approved|paid), approved_by, approved_at, paid_at, paid_by, notes, is_deleted, created_at }`
+`_id, coach_id, period, session_ids[], rule_type, rule_value, calculated_amount, status ("calculated"|"approved"|"paid"), approved_{by,at}, paid_{by,at}, notes, is_deleted, created_at`
+
+### attendance
+`_id, session_id, student_id, enrollment_id, date (YYYY-MM-DD), status ("present"|"absent"|"late"|"excused"|"make_up"), notes, marked_by, marked_at`
 
 ### lesson_plans
-`{ _id, session_id, coach_id, date, objective, warmup, skill_drill, game_activity, fitness_activity, homework, coach_notes, created_at }`
+`_id, session_id, coach_id, date, objective, warmup, skill_drill, game_activity, fitness_activity, homework, coach_notes, created_at`
 
 ### progress_notes
-`{ _id, student_id, coach_id, session_id, note, created_at }`
+`_id, student_id, coach_id, session_id, note, created_at`
 
 ### messages
-`{ _id, thread_id (sorted pair), from_user_id, to_user_id, body, read, created_at }`
+`_id, thread_id, from_user_id, to_user_id, body, read, created_at`
 
 ### notifications
-`{ _id, user_id, type, title, message, related_entity, read, created_at }`
+`_id, user_id, type, title, message, related_entity, read, created_at`
 
-### invites
-`{ _id, email, role, token (unique), invited_by, status (pending|accepted|expired), expires_at, created_at }`
+### move_log
+`_id, student_id, enrollment_id, from_session_id, to_session_id, effective_month, permanent, note, moved_by, moved_at`
+
+### academy_settings (singleton, _id="singleton")
+`name, zelle_handle, reminder_template, currency, default_capacity, beginner_price, intermediate_price, advanced_price`
+
+### payment_transactions (Stripe trail)
+`_id, session_id, payment_id, user_id, user_email, amount, currency, payment_status, status, metadata, created_at, updated_at`
 
 ### audit_logs
-`{ _id, user_id, role, action, entity_type, entity_id, summary, created_at }`
-
-### login_attempts, password_reset_tokens (auth support)
+`_id, user_id, user_email, role, action, entity_type, entity_id, summary, created_at`
 
 ---
 
-## API Endpoints
+## 2. API Surface (current)
 
-### /api/auth
-- POST `/register` (parent self-signup)
-- POST `/login`
-- POST `/logout`
-- GET `/me`
-- POST `/refresh`
-- POST `/forgot-password`, `/reset-password`
+> All routes prefixed `/api`. ✅ = shipped.
 
-### /api/invites (admin)
-- POST `/` invite coach or parent
-- GET `/` list pending
-- POST `/accept/{token}` (public, sets password)
+### Auth & users
+| Method | Path | Role | Notes |
+|---|---|---|---|
+| ✅ POST | `/auth/register` | public | parent self-signup |
+| ✅ POST | `/auth/register-full` | public | parent + child + optional enrollment (replaces Google Form) |
+| ✅ GET | `/auth/public-sessions` | public | list enrollable sessions for the registration form |
+| ✅ POST | `/auth/login` | public | |
+| ✅ POST | `/auth/logout` | any | |
+| ✅ GET | `/auth/me` | any | |
+| ✅ POST | `/auth/refresh` | any | refresh cookie |
+| ✅ POST | `/auth/forgot-password` | public | logs token to backend logs (Phase 4: email it) |
+| ✅ POST | `/auth/reset-password` | public | |
+| ✅ POST | `/invites` | admin | invite coach/parent |
+| ✅ GET | `/invites` | admin | |
+| ✅ DELETE | `/invites/{token}` | admin | |
+| ✅ GET | `/invites/info/{token}` | public | for accept page |
+| ✅ POST | `/invites/accept/{token}` | public | |
+| ✅ GET | `/users[?role=...]` | admin | |
+| ✅ GET/PATCH/DELETE | `/users/{id}` | admin | edit name, email, phone, status |
+| ✅ POST | `/users/{id}/reset-password` | admin | |
 
-### /api/users (admin)
-- GET `/` list with role filter
-- GET/PATCH/DELETE `/{id}`
+### Sessions & enrollment
+| Method | Path | Role | Notes |
+|---|---|---|---|
+| ✅ GET/POST | `/sessions` | varied | |
+| ✅ GET/PATCH/DELETE | `/sessions/{id}` | admin | |
+| ✅ POST | `/sessions/{id}/cancel` | admin | |
+| ✅ POST/GET | `/students` | varied | with t-shirt + previous experience; admin gets `enrollments[]` per student |
+| ✅ GET/PATCH/DELETE | `/students/{id}` | varied | |
+| ✅ POST/GET | `/enrollments[?session_id,student_id]` | varied | parent-created = `approval_status: pending` |
+| ✅ POST | `/enrollments/{id}/cancel` | varied | |
+| ✅ POST | `/enrollments/{id}/approve` | admin | |
+| ✅ POST | `/enrollments/{id}/transfer` | admin | permanent or single-month override |
+| ✅ POST | `/enrollments/{id}/pause-month?period=YYYY-MM` | admin | |
+| ✅ POST | `/enrollments/{id}/resume-month?period=YYYY-MM` | admin | |
+| ✅ GET | `/enrollments/pending-approval` | admin | |
+| ✅ GET | `/move-log` | admin/coach | |
 
-### /api/sessions
-- GET `/` (role-scoped)
-- POST `/` (admin)
-- GET/PATCH/DELETE `/{id}` (admin)
-- POST `/{id}/cancel`
+### Attendance & coaching
+| ✅ POST | `/attendance/bulk` | coach/admin | statuses incl. `make_up` |
+| ✅ GET | `/attendance` | varied | |
+| ✅ GET/POST/PATCH/DELETE | `/lesson-plans` | coach/admin | |
+| ✅ GET/POST/DELETE | `/progress-notes` | varied | |
 
-### /api/students
-- POST `/` (parent creates child)
-- GET `/` (admin: all; parent: own; coach: by session)
-- GET/PATCH/DELETE `/{id}`
+### Finance
+| ✅ GET/POST | `/payments` | varied | parent sees own only |
+| ✅ POST | `/payments/generate-monthly` | admin | skips paused months + non-Standard billing |
+| ✅ PATCH | `/payments/{id}/mark-paid` | admin | |
+| ✅ PATCH | `/payments/{id}/apply-discount` | admin | |
+| ✅ DELETE | `/payments/{id}` | admin | soft delete |
+| ✅ POST | `/payments/{id}/undo-paid` | admin | reverts paid → pending |
+| ✅ GET/POST/PATCH/DELETE | `/expenses` | admin | |
+| ✅ GET/POST | `/payout-rules` | admin | |
+| ✅ POST | `/coach-payouts/calculate` | admin | honors `rule.basis` |
+| ✅ GET | `/coach-payouts[?period]` | varied | |
+| ✅ POST | `/coach-payouts/{id}/approve` | admin | |
+| ✅ POST | `/coach-payouts/{id}/mark-paid` | admin | also creates auto-expense |
+| ✅ POST | `/coach-payouts/{id}/undo-paid` | admin | reverts + soft-deletes auto-expense |
+| ✅ POST | `/coach-payouts/{id}/undo-approve` | admin | |
+| ✅ GET | `/coach-payouts/{coach_id}/payslip?period=YYYY-MM` | admin/coach | returns expected_revenue + collected_revenue + payout |
 
-### /api/enrollments
-- POST `/`
-- GET `/`
-- POST `/{id}/cancel`
+### Dashboard, reports, settings
+| ✅ GET | `/dashboard/{admin|coach|parent}` | role-gated | admin returns expected/collected/waived, utilization, profitability |
+| ✅ GET | `/reports/{revenue|profit|attendance|pending-payments|coach-payouts}.csv` | admin | |
+| ✅ GET | `/audit-logs?limit=N` | admin | |
+| ✅ GET/PATCH | `/settings` | admin | academy singleton |
+| ✅ POST | `/settings/payout-basis` | admin | per-coach |
 
-### /api/attendance
-- POST `/bulk` (coach: mark for session+date)
-- GET `/` (filters)
+### Communications
+| ✅ GET | `/messages/contacts` | any | role-scoped recipient list |
+| ✅ GET | `/messages/threads` | any | |
+| ✅ GET | `/messages/thread/{user_id}` | any | marks received as read |
+| ✅ POST | `/messages` | any | also creates notification |
+| ✅ GET | `/notifications` | any | |
+| ✅ PATCH | `/notifications/{id}/read` | any | |
+| ✅ POST | `/notifications/read-all` | any | |
 
-### /api/payments
-- GET `/`
-- POST `/` (admin manual)
-- POST `/generate-monthly` (admin bulk)
-- PATCH `/{id}/mark-paid`, `/{id}/apply-discount`
-- DELETE `/{id}`
-
-### /api/expenses
-- GET/POST/PATCH/DELETE
-
-### /api/payout-rules
-- GET/POST/PATCH
-
-### /api/coach-payouts (admin)
-- POST `/calculate?period=YYYY-MM`
-- GET `/`
-- POST `/{id}/approve`, `/{id}/mark-paid`
-
-### /api/lesson-plans (coach RW)
-- GET/POST/PATCH/DELETE
-
-### /api/progress-notes (coach RW)
-- GET/POST/DELETE
-
-### /api/messages
-- GET `/threads`
-- GET `/thread/{other_user_id}`
-- POST `/`
-
-### /api/notifications
-- GET `/`
-- PATCH `/{id}/read`
-- POST `/read-all`
-
-### /api/dashboard
-- GET `/admin`, `/coach`, `/parent`
-
-### /api/reports (admin)
-- GET `/revenue.csv`, `/profit.csv`, `/attendance.csv`, `/pending-payments.csv`, `/coach-payouts.csv`
-
-### /api/audit-logs (admin)
-- GET `/`
-
----
-
-## Role Permission Matrix
-
-| Resource         | Admin | Coach        | Parent       | Student |
-|------------------|-------|--------------|--------------|---------|
-| Users            | RW    | -            | -            | -       |
-| Sessions         | RW    | R (assigned) | R (active)   | R       |
-| Students         | RW    | R (assigned) | RW (own)     | R (self)|
-| Enrollments      | RW    | R (assigned) | RW (own)     | R (self)|
-| Attendance       | R     | RW (assigned)| R (child)    | R (self)|
-| Payments         | RW    | -            | R (own)      | -       |
-| Expenses         | RW    | -            | -            | -       |
-| Payout Rules     | RW    | R (own)      | -            | -       |
-| Coach Payouts    | RW(*) | R (own)      | -            | -       |
-| Lesson Plans     | R     | RW (assigned)| R (child)    | R       |
-| Progress Notes   | R     | RW (assigned)| R (child)    | R (self)|
-| Messages         | RW    | RW           | RW           | -       |
-| Notifications    | R own | R own        | R own        | R own   |
-| Reports          | R     | -            | -            | -       |
-| Audit Logs       | R     | -            | -            | -       |
-
-(*) Coach payouts require admin approval before marking paid.
+### Extras
+| ✅ GET | `/dues-followup` | admin | returns parents + total_due + WhatsApp link |
+| ✅ POST | `/billing/checkout-session` | parent/admin | Stripe Checkout |
+| ✅ GET | `/billing/checkout-status/{session_id}` | any | falls back to local txn state if Stripe lookup fails |
+| ✅ POST | `/webhook/stripe` | public | Stripe webhook → flips payment to paid |
+| ✅ POST | `/email/test` | admin | sends a probe via Resend |
+| ✅ POST | `/email/send-dues-reminders` | admin | bulk to all parents with pending |
+| ✅ POST | `/email/welcome/{parent_id}` | admin | |
 
 ---
 
-## Pages
-**Public:** /login, /register, /forgot-password, /reset-password, /accept-invite/:token
+## 3. Frontend Pages (current)
 
-**Admin:** /admin/dashboard, /sessions, /students, /users, /payments, /expenses, /payouts, /reports, /audit-logs, /messages
+```
+Public
+  /login                       — demo-fill buttons, link to /register-student
+  /register                    — legacy parent-only signup (kept)
+  /register-student            — NEW 3-step public form (replaces Google Form)
+  /accept-invite/:token        — coach/parent invite landing
+  /forgot-password, /reset-password
 
-**Coach:** /coach/dashboard, /coach/sessions/:id, /messages
+Admin
+  /admin/dashboard             — Collected, Expected, Waived, Payouts, Pending, Net Profit + 6-mo profit chart + session utilization table
+  /admin/sessions              — create/edit/cancel/delete
+  /admin/students              — Enrolled/Not enrolled filter, Pause/Resume/Move buttons per enrollment
+  /admin/users                 — Tabs: coaches / parents / pending invites — Edit modal (name, email, phone, status)
+  /admin/payments              — Generate monthly, discount, mark paid, **Undo paid**
+  /admin/dues                  — 28+ parents, WhatsApp wa.me link + Copy message
+  /admin/expenses              — categories, soft delete
+  /admin/payouts               — Tabs: Payouts (calc + approve + pay + **Undo**), Rules
+  /admin/coach-payslip         — per-coach × month: Expected | Collected | Payout (with formula)
+  /admin/reports               — 5 CSV downloads
+  /admin/audit-logs            — last 500 mutating actions
+  /admin/settings              — Tabs: Academy info / Payout Basis / Email
+  /messages                    — universal threaded chat
 
-**Parent:** /parent/dashboard, /parent/children, /parent/payments, /parent/attendance, /parent/progress, /messages
+Coach
+  /coach/dashboard
+  /coach/sessions              — assigned sessions cards
+  /coach/sessions/:id          — Tabs: Attendance grid (P/A/L/E + Make-up) / Lesson plans / Progress notes
+  /coach-payslip               — own only
+
+Parent
+  /parent/dashboard
+  /parent/children             — register child, enroll in session
+  /parent/payments             — **Pay now (Stripe)** + history
+  /parent/attendance, /parent/progress
+```
 
 ---
 
-## User Flows (Critical)
-1. **Onboarding:** Admin logs in → invites coach via email → coach accepts → coach sets password.
-2. **Parent registration:** Parent signs up → adds child → enrolls in session → admin records payment.
-3. **Coach attendance:** Coach login → opens assigned session → marks attendance grid (P/A/L/E) → adds lesson plan.
-4. **Monthly billing:** Admin runs "Generate Monthly Payments" → reviews list → applies discounts → marks paid.
-5. **Payout cycle:** Admin runs "Calculate Payouts" for period → reviews → approves → marks paid.
+## 4. Test Credentials (auto-seeded on startup)
+
+```
+admin@badminton.app    / Admin@12345    (role: admin)
+coach@badminton.app    / Coach@12345    (role: coach — demo)
+parent@badminton.app   / Parent@12345   (role: parent — demo)
+```
+
+After BLno spreadsheet import (`/app/backend/scripts/import_blno.py`):
+```
+gowtham@blno.academy   / Coach@12345
+kishore@blno.academy   / Coach@12345
+<any imported parent email>  / Parent@12345
+```
 
 ---
 
-## Admin Dashboard Wireframe
-- **Header bar** (sticky, glassmorphism): logo + month switcher + profile dropdown
-- **Row 1 (4 KPI cards):** Monthly Income | Expenses | Coach Payouts | Net Profit
-- **Row 2 (4 smaller cards):** Total Students | Active Sessions | Pending Payments | Attendance %
-- **Row 3 (col-span-2 chart + col-span-2 list):** Profit trend (line, last 6 months) | Upcoming classes (next 7 days)
-- **Row 4 (full-width table):** Session profitability (revenue, payout, net)
+## 5. Implemented (history)
+
+- **2026-02 — Phase 1 MVP:** Auth + 4 roles, admin/coach/parent dashboards, sessions CRUD, student registration, payment tracking, coach assignment + payout rules, attendance, expenses, profit chart, in-app messaging + notifications, lesson plans, progress notes, CSV reports, audit logs, soft delete everywhere.
+
+- **2026-02 — Phase 2 BLno data + 8 features:** imported the actual BLno-Badminton-Training.xlsx (4 sessions, 42 parents, 46 students, 46 enrollments, Apr+May payments+expenses, attendance), added billing_type (Standard/NoCharge/Waived), session transfer + move_log, make-up attendance status, t-shirt size + previous experience, Dues Followup page with WhatsApp generator, Coach Payslip per coach×month, Expected/Collected/Waived KPIs + utilization%, admin edit user (name/email/phone/status) + reset password, enrollment approval workflow.
+
+- **2026-02 — Phase 3 Power-user + Self-pay:**
+  - Admin Settings page (academy info, per-coach payout basis collected|expected, reminder template, default prices, email test, bulk dues email)
+  - Undo paid for student payments + coach payouts (auto-expense reversed)
+  - Undo approve for coach payouts
+  - Public student registration `/register-student` — 3-step form, replaces Google Form, creates parent+child+optional enrollment (pending), auto-login
+  - **Stripe Checkout** integration via `emergentintegrations` (test mode, `sk_test_emergent` proxied through Emergent's Stripe gateway)
+  - Stripe webhook + status polling with local-state fallback (works around upstream library Pydantic bug)
+  - **Resend email** integration: test email, welcome, bulk dues reminders
+  - Pause-month + Resume-month on enrollments — handles "kid in Apr, not May, back in June"
+  - Pay-now button on parent payments page
 
 ---
 
-## Phase 1 Implementation Plan (current)
-1. Auth + roles + invites + admin seed + audit log
-2. User/coach/parent management
-3. Sessions CRUD + enrollments + assignment
-4. Student registration + waiver + medical
-5. Attendance bulk marking
-6. Manual payments + discounts + monthly generation
-7. Payout rules + payout calculation + approval workflow
-8. Expenses CRUD
-9. Admin dashboard KPIs + charts
-10. Coach + Parent dashboards
-11. Messaging (1:1)
-12. In-app notifications
-13. Basic lesson plans + progress notes
-14. CSV exports for reports
-15. Audit logs viewer
-16. Soft delete + status fields everywhere
+## 6. Phase 4 Backlog (next up)
 
-## Phase 2 (Backlog)
-- Stripe real payments + receipts
-- Email + push notifications (Resend/SendGrid + FCM)
-- Calendar (FullCalendar)
-- Announcements + session-level posts
-- Advanced progress scoring (10 skill metrics)
-- Profitability per session/coach drill-downs
-- Student portal deep view
-- Search/filter polish + pagination tuning
+Prioritized. Each item is sized so it can be picked up independently.
 
-## Implemented (Date stamps grow with iteration)
-- 2026-02 — Phase 1 MVP build
-- 2026-02 — Iteration 2: Imported real BLno spreadsheet data (4 sessions, 42 parents, 46 students, 46 enrollments, Apr+May payments + expenses, 8 attendance records, 2 real coaches). Added: billing_type (Standard/NoCharge/Waived), session transfer (permanent + single-month override) with move_log, make-up attendance, t-shirt size + previous experience on students, Dues Followup page with WhatsApp link generator, Coach Payslip page (per coach × month), Expected/Collected/Waived KPIs + utilization% on admin dashboard, admin edit coach/parent + reset password, enrollment approval workflow.
+### P0 — Polish on shipped flows
+1. **Email deliverability** — verify `blno.academy` domain at resend.com/domains so Resend can send to all parents (not just the account's own email)
+2. **Stripe webhook secret** — set `STRIPE_WEBHOOK_SECRET` env var and wire `whsec_...` in Stripe Dashboard, then enable signature verification (`sc.handle_webhook` already supports it)
+3. **`payments` undo-paid receipt cleanup** — when undoing a Stripe-paid payment, also refund via Stripe API (optional toggle)
+4. **`coach-payouts.undo-paid`** — instead of regex match on notes, store `coach_payout_id` as first-class field on the auto-expense and match by that (testing agent's recommendation)
+5. **CORS fix verification on `shuttle-flow.preview.emergentagent.com`** — current `.env` `FRONTEND_URL` references the older `6e9f5c4d-...` host. Update once you confirm the canonical preview host
 
-## Test Credentials
-See `/app/memory/test_credentials.md`.
+### P1 — High-value features
+6. **Scheduled automation:** APScheduler job that on the 1st of each month
+   - runs `payments/generate-monthly`
+   - then emails dues reminders via Resend
+   - then sends WhatsApp reminders via Twilio (requires Twilio credentials)
+   *Implementation:* new file `/app/backend/jobs/monthly.py`, start scheduler in `server.py` startup event
+7. **Twilio WhatsApp auto-send** — replaces the manual "click wa.me" loop on Dues Followup. Requires Twilio Account SID + Auth Token + WhatsApp-enabled From number
+8. **Calendar view** — admin sees all classes; coach sees assigned; parent sees child's; support cancelled/rescheduled. Use `react-big-calendar` or `fullcalendar`. Backend: `GET /api/calendar/events?from=...&to=...`
+9. **Announcements** — academy-wide + session-level posts (a new collection `announcements` + frontend feed on each role dashboard)
+10. **Per-month "Roster sync" report** — replicates the spreadsheet's `Roster` view: kid × month grid showing Active/Paid/Due/Paused. Backend: `GET /api/roster?period=...` returns 2D structure; frontend renders pivoted table
+
+### P2 — Deeper coaching tools
+11. **10-metric progress scoring** — replace free-text progress notes with structured ratings (Footwork, Serve, Smash, Drop shot, Defense, Rally consistency, Match readiness, Effort, Overall). Each is 1-5 stars. Aggregate over time → parent sees a radar chart
+12. **Student deep portal** — kids 12+ can self-login (already a role, just no UI) and see their own schedule, attendance streak, progress radar
+13. **Match results & tournament fees** — new income category + per-student match record + leaderboard
+14. **Equipment loans / shop** — track rackets, shuttles, jerseys lent out vs sold
+
+### P3 — Growth & analytics
+15. **Marketing landing page** at `/` (currently redirects to dashboard) — features, pricing, parent testimonials, "Register now" CTA
+16. **Referral program** — parents get $20 credit per referred parent (auto-applied as discount)
+17. **Cohort retention analytics** — % of kids in May who are still enrolled in Aug, etc.
+18. **Multi-location / multi-court** — add `location` entity, sessions reference it, dashboards filterable
+19. **Coach 1-on-1 booking** — private lesson slot system + Stripe per-slot payment
+20. **Push notifications (web + mobile PWA)** — currently in-app only
+
+### P4 — Mobile
+21. **PWA with offline-first attendance** — coach can mark attendance even without signal, syncs when back online
+22. **Native wrap** with Capacitor for App Store / Play Store presence
+
+---
+
+## 7. Tech debt & known issues
+
+- **`emergentintegrations.payments.stripe.checkout.get_checkout_status` Pydantic bug** — already worked around; if upstream fixes it, simplify `billing_routes.checkout_status` to call the helper directly again
+- **`/api/email/send-dues-reminders`** counts attempted sends, not actual deliveries. Refactor to return `{sent, failed, rate_limited}` and throttle to Resend's 5 req/s
+- **`/api/email/test` returns `ok:true`** even on Resend test-mode rejection — improve to surface the actual provider response status
+- **Frontend ESLint warnings** about `useEffect` exhaustive-deps — harmless but should add `eslint-disable-next-line` comments or refactor
+- **Background email task** in `auth_routes.register_full` uses `asyncio.create_task` — may be cancelled when response completes. Refactor to FastAPI `BackgroundTasks`
+- **No DB migration system** — schema changes are applied via `ensure_indexes()` at startup. For production, add Alembic-style migrations or at least version the schema
+- **No rate limiting** on auth endpoints beyond brute-force lockout — add slowapi if exposed to public traffic
+
+---
+
+## 8. Environment variables
+
+```bash
+# /app/backend/.env (current)
+MONGO_URL="mongodb://localhost:27017"
+DB_NAME="test_database"
+CORS_ORIGINS=""                       # let regex match preview subdomains
+JWT_SECRET="<random-256-bit-hex>"
+ADMIN_EMAIL="admin@badminton.app"
+ADMIN_PASSWORD="Admin@12345"
+FRONTEND_URL="https://<preview-host>" # used for invite accept_url
+STRIPE_API_KEY="sk_test_emergent"     # proxied through integrations.emergentagent.com/stripe
+RESEND_API_KEY="re_..."               # user-provided
+SENDER_EMAIL="onboarding@resend.dev"  # change after verifying domain
+
+# Phase 4 will need
+STRIPE_WEBHOOK_SECRET="whsec_..."
+TWILIO_ACCOUNT_SID="AC..."
+TWILIO_AUTH_TOKEN="..."
+TWILIO_WHATSAPP_FROM="whatsapp:+1..."
+```
+
+---
+
+## 9. Running locally / continuing on another platform
+
+1. **Backend:** `cd /app/backend && uvicorn server:app --host 0.0.0.0 --port 8001` — or `sudo supervisorctl restart backend` on Emergent
+2. **Frontend:** `cd /app/frontend && yarn install && yarn start` — listens on `:3000`
+3. **MongoDB:** any Mongo 6+ instance; `MONGO_URL` and `DB_NAME` in `.env`
+4. **Reimport BLno data:** `python3 /app/backend/scripts/import_blno.py` (requires `BLNO_XLSX` env var or `/tmp/blno.xlsx`)
+5. **Run pytest:** `cd /app && pytest backend/tests/` — iteration tests live in `backend/tests/iter*_test.py`
+
+---
+
+## 10. Quick wins if you only have 1 hour
+
+- Verify `blno.academy` domain at Resend → set `SENDER_EMAIL=noreply@blno.academy` → real email to all parents starts working
+- In Stripe Dashboard: add `https://<preview-host>/api/webhook/stripe` as a webhook endpoint, copy `whsec_...`, set `STRIPE_WEBHOOK_SECRET` env var → uncomment signature verification in `billing_routes.stripe_webhook`
+- Add `data-testid="..."` audit on every new interactive element (current coverage is good but not exhaustive)
