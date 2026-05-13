@@ -28,6 +28,26 @@ async def admin_dashboard(period: str | None = None, admin=Depends(require_roles
     ]).to_list(1)
     monthly_income = float(agg[0]["total"]) if agg else 0.0
 
+    # Expected revenue (paid + pending) for the period
+    exp_rev_agg = await db.payments.aggregate([
+        {"$match": {"period": period, "is_deleted": {"$ne": True}, "status": {"$ne": "failed"}}},
+        {"$group": {"_id": None, "total": {"$sum": "$final_amount"}}},
+    ]).to_list(1)
+    expected_revenue = float(exp_rev_agg[0]["total"]) if exp_rev_agg else 0.0
+
+    # Waived / No Charge value: active enrollments with billing_type != Standard
+    waived_value = 0.0
+    nc_enrolls = await db.enrollments.find(
+        {"status": "active", "is_deleted": {"$ne": True},
+         "billing_type": {"$in": ["NoCharge", "Waived"]}}
+    ).to_list(1000)
+    if nc_enrolls:
+        sess_ids = list({e["session_id"] for e in nc_enrolls})
+        sessions_map = {}
+        async for s in db.sessions.find({"_id": {"$in": [ObjectId(x) for x in sess_ids]}}):
+            sessions_map[str(s["_id"])] = float(s.get("monthly_price", 0) or 0)
+        waived_value = sum(sessions_map.get(e["session_id"], 0) for e in nc_enrolls)
+
     pending_agg = await db.payments.aggregate([
         {"$match": {"period": period, "status": "pending", "is_deleted": {"$ne": True}}},
         {"$group": {"_id": None, "total": {"$sum": "$final_amount"}, "count": {"$sum": 1}}},
@@ -120,13 +140,19 @@ async def admin_dashboard(period: str | None = None, admin=Depends(require_roles
         ]).to_list(1)
         rev = float(rev_agg[0]["total"]) if rev_agg else 0.0
         enr = await db.enrollments.count_documents({"session_id": s["id"], "status": "active"})
-        session_rows.append({"id": s["id"], "name": s["name"], "enrolled": enr, "revenue": round(rev, 2)})
+        cap = int(s.get("max_students", 0) or 0)
+        util = round(100 * enr / cap, 1) if cap > 0 else 0
+        session_rows.append({"id": s["id"], "name": s["name"], "enrolled": enr,
+                             "capacity": cap, "utilization": util, "revenue": round(rev, 2)})
     session_rows.sort(key=lambda x: x["revenue"], reverse=True)
 
     return {
         "period": period,
         "kpis": {
             "monthly_income": round(monthly_income, 2),
+            "expected_revenue": round(expected_revenue, 2),
+            "collected_revenue": round(monthly_income, 2),
+            "waived_value": round(waived_value, 2),
             "expenses": round(expenses, 2),
             "coach_payouts": round(coach_payouts, 2),
             "net_profit": round(net_profit, 2),

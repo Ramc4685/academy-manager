@@ -64,18 +64,28 @@ class StudentIn(BaseModel):
     emergency_contact_phone: str
     medical_notes: Optional[str] = ""
     waiver_accepted: bool = False
+    t_shirt_size: Optional[str] = ""
+    previous_experience: Optional[str] = ""
 
 
 # ---- Enrollments ----
 class EnrollmentIn(BaseModel):
     session_id: str
     student_id: str
+    billing_type: Optional[str] = "Standard"  # Standard | NoCharge | Waived
+
+
+class TransferIn(BaseModel):
+    to_session_id: str
+    effective_month: str  # YYYY-MM
+    permanent: bool = True
+    note: Optional[str] = ""
 
 
 # ---- Attendance ----
 class AttendanceItem(BaseModel):
     student_id: str
-    status: str  # present | absent | late | excused
+    status: str  # present | absent | late | excused | make_up
     notes: Optional[str] = ""
 
 
@@ -159,4 +169,9 @@ class MessageIn(BaseModel):
 class UpdateUserIn(BaseModel):
     name: Optional[str] = None
     phone: Optional[str] = None
+    email: Optional[EmailStr] = None
     status: Optional[str] = None
+
+
+class ResetUserPasswordIn(BaseModel):
+    password: str = Field(min_length=6)

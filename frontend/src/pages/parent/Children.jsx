@@ -12,11 +12,13 @@ import { toast } from "sonner";
 import { Plus, BookOpen } from "lucide-react";
 
 const SKILLS = ["beginner", "intermediate", "advanced"];
+const T_SIZES = ["XS", "S", "M", "L", "XL"];
 
 const emptyChild = {
   first_name: "", last_name: "", dob: "", skill_level: "beginner",
   emergency_contact_name: "", emergency_contact_phone: "",
   medical_notes: "", waiver_accepted: false,
+  t_shirt_size: "M", previous_experience: "",
 };
 
 export default function ParentChildren() {
@@ -115,6 +117,14 @@ export default function ParentChildren() {
             </div>
             <div><Label>Emergency contact name</Label><Input value={form.emergency_contact_name} onChange={(e) => setForm({ ...form, emergency_contact_name: e.target.value })} data-testid="child-emergency-name" className="mt-1" /></div>
             <div><Label>Emergency contact phone</Label><Input value={form.emergency_contact_phone} onChange={(e) => setForm({ ...form, emergency_contact_phone: e.target.value })} data-testid="child-emergency-phone" className="mt-1" /></div>
+            <div>
+              <Label>T-shirt size</Label>
+              <Select value={form.t_shirt_size} onValueChange={(v) => setForm({ ...form, t_shirt_size: v })}>
+                <SelectTrigger className="mt-1" data-testid="child-tshirt"><SelectValue /></SelectTrigger>
+                <SelectContent>{T_SIZES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div><Label>Previous experience</Label><Input value={form.previous_experience} onChange={(e) => setForm({ ...form, previous_experience: e.target.value })} placeholder="e.g. 1 year at school" data-testid="child-prev-exp" className="mt-1" /></div>
             <div className="col-span-2"><Label>Medical notes</Label><Textarea value={form.medical_notes} onChange={(e) => setForm({ ...form, medical_notes: e.target.value })} className="mt-1" rows={2} /></div>
             <label className="col-span-2 flex items-start gap-2 p-3 rounded-lg border border-slate-200 cursor-pointer">
               <Checkbox checked={form.waiver_accepted} onCheckedChange={(v) => setForm({ ...form, waiver_accepted: !!v })} data-testid="child-waiver" />

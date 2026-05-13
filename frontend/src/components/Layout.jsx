@@ -14,8 +14,10 @@ const adminNav = [
   { to: "/admin/students", icon: GraduationCap, label: "Students" },
   { to: "/admin/users", icon: Users, label: "Coaches & Parents" },
   { to: "/admin/payments", icon: DollarSign, label: "Payments" },
+  { to: "/admin/dues", icon: Receipt, label: "Dues Followup" },
   { to: "/admin/expenses", icon: Receipt, label: "Expenses" },
   { to: "/admin/payouts", icon: Coins, label: "Coach Payouts" },
+  { to: "/admin/coach-payslip", icon: Coins, label: "Coach Payslip" },
   { to: "/admin/reports", icon: FileBarChart2, label: "Reports" },
   { to: "/admin/audit-logs", icon: ShieldCheck, label: "Audit Logs" },
   { to: "/messages", icon: MessageSquare, label: "Messages" },
@@ -24,6 +26,7 @@ const adminNav = [
 const coachNav = [
   { to: "/coach/dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/coach/sessions", icon: CalendarDays, label: "My Sessions" },
+  { to: "/admin/coach-payslip", icon: Coins, label: "My Payslip" },
   { to: "/messages", icon: MessageSquare, label: "Messages" },
 ];
 

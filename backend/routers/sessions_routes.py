@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from bson import ObjectId
-from models import SessionIn, EnrollmentIn, StudentIn
+from models import SessionIn, EnrollmentIn, StudentIn, TransferIn
 from auth import get_current_user, require_roles, log_audit
 from db import get_db
 
@@ -216,6 +216,8 @@ async def create_enrollment(body: EnrollmentIn, user=Depends(get_current_user)):
         "session_id": body.session_id,
         "student_id": body.student_id,
         "parent_user_id": student.get("parent_user_id"),
+        "billing_type": body.billing_type or "Standard",
+        "approval_status": "approved" if user["role"] == "admin" else "pending",
         "status": "active",
         "enrolled_at": datetime.now(timezone.utc).isoformat(),
         "is_deleted": False,
@@ -275,3 +277,87 @@ async def cancel_enrollment(eid: str, user=Depends(get_current_user)):
     await db.enrollments.update_one({"_id": _oid(eid)}, {"$set": {"status": "cancelled"}})
     await log_audit(user, "cancel", "enrollment", eid, "")
     return {"ok": True}
+
+
+@router.post("/enrollments/{eid}/approve")
+async def approve_enrollment(eid: str, admin=Depends(require_roles("admin"))):
+    db = get_db()
+    e = await db.enrollments.find_one({"_id": _oid(eid)})
+    if not e:
+        raise HTTPException(status_code=404, detail="Not found")
+    await db.enrollments.update_one(
+        {"_id": _oid(eid)},
+        {"$set": {"approval_status": "approved", "approved_by": admin["id"],
+                  "approved_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    await log_audit(admin, "approve", "enrollment", eid, "")
+    return {"ok": True}
+
+
+@router.post("/enrollments/{eid}/transfer")
+async def transfer_enrollment(eid: str, body: "TransferIn", admin=Depends(require_roles("admin"))):
+    db = get_db()
+    e = await db.enrollments.find_one({"_id": _oid(eid)})
+    if not e:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    to_session = await db.sessions.find_one({"_id": _oid(body.to_session_id), "is_deleted": {"$ne": True}})
+    if not to_session:
+        raise HTTPException(status_code=404, detail="Target session not found")
+    from_session_id = e["session_id"]
+    move_doc = {
+        "enrollment_id": eid,
+        "student_id": e["student_id"],
+        "from_session_id": from_session_id,
+        "to_session_id": body.to_session_id,
+        "effective_month": body.effective_month,
+        "permanent": bool(body.permanent),
+        "note": body.note or "",
+        "moved_by": admin["id"],
+        "moved_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.move_log.insert_one(move_doc)
+    if body.permanent:
+        # Capacity check on target
+        active_count = await db.enrollments.count_documents({"session_id": body.to_session_id, "status": "active"})
+        if active_count >= int(to_session.get("max_students", 999)):
+            raise HTTPException(status_code=400, detail="Target session is full")
+        await db.enrollments.update_one(
+            {"_id": _oid(eid)},
+            {"$set": {"session_id": body.to_session_id}},
+        )
+    else:
+        # Single-month override
+        overrides = e.get("session_overrides", {}) or {}
+        overrides[body.effective_month] = body.to_session_id
+        await db.enrollments.update_one(
+            {"_id": _oid(eid)},
+            {"$set": {"session_overrides": overrides}},
+        )
+    await log_audit(admin, "transfer", "enrollment", eid,
+                    f"{'permanent' if body.permanent else 'override-' + body.effective_month}")
+    return {"ok": True}
+
+
+@router.get("/move-log")
+async def list_move_log(user=Depends(get_current_user)):
+    if user["role"] not in ("admin", "coach"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    db = get_db()
+    cursor = db.move_log.find().sort("moved_at", -1).limit(500)
+    items = await cursor.to_list(500)
+    stu_ids = {it["student_id"] for it in items}
+    sess_ids = {it["from_session_id"] for it in items} | {it["to_session_id"] for it in items}
+    students = {}
+    sessions = {}
+    if stu_ids:
+        async for s in db.students.find({"_id": {"$in": [ObjectId(x) for x in stu_ids]}}):
+            students[str(s["_id"])] = f"{s['first_name']} {s['last_name']}"
+    if sess_ids:
+        async for s in db.sessions.find({"_id": {"$in": [ObjectId(x) for x in sess_ids]}}):
+            sessions[str(s["_id"])] = s["name"]
+    for it in items:
+        it["id"] = str(it.pop("_id"))
+        it["student_name"] = students.get(it["student_id"], "")
+        it["from_session_name"] = sessions.get(it["from_session_id"], "")
+        it["to_session_name"] = sessions.get(it["to_session_id"], "")
+    return items

@@ -18,6 +18,8 @@ export default function AdminUsers() {
   const [open, setOpen] = useState(false);
   const [inv, setInv] = useState({ email: "", role: "coach", name: "" });
   const [lastInvite, setLastInvite] = useState(null);
+  const [editUser, setEditUser] = useState(null);
+  const [editForm, setEditForm] = useState({ name: "", email: "", phone: "", status: "active" });
 
   const load = async () => {
     const [c, p, i] = await Promise.all([
@@ -140,11 +142,36 @@ export default function AdminUsers() {
           )}
         </DialogContent>
       </Dialog>
+
+      <Dialog open={!!editUser} onOpenChange={(v) => !v && setEditUser(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle className="font-display tracking-tight">Edit {editUser?.role}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div><Label>Full name</Label><Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} className="mt-1" data-testid="edit-user-name" /></div>
+            <div><Label>Email</Label><Input type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} className="mt-1" data-testid="edit-user-email" /></div>
+            <div><Label>Phone</Label><Input value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} className="mt-1" data-testid="edit-user-phone" /></div>
+            <div>
+              <Label>Status</Label>
+              <Select value={editForm.status} onValueChange={(v) => setEditForm({ ...editForm, status: v })}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="suspended">Suspended</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditUser(null)}>Cancel</Button>
+            <Button onClick={saveEdit} className="bg-blue-600 hover:bg-blue-500 text-white" data-testid="save-user-edit">Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function UserTable({ users }) {
+function UserTable({ users, onEdit }) {
   return (
     <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
       <table className="w-full text-sm">
@@ -152,16 +179,20 @@ function UserTable({ users }) {
           <tr className="text-left text-xs uppercase tracking-[0.1em] text-slate-500">
             <th className="px-4 py-3">Name</th><th className="px-4 py-3">Email</th>
             <th className="px-4 py-3">Phone</th><th className="px-4 py-3">Status</th>
+            <th className="px-4 py-3 text-right"></th>
           </tr>
         </thead>
         <tbody>
-          {users.length === 0 && <tr><td colSpan={4} className="py-10 text-center text-slate-500">None yet</td></tr>}
+          {users.length === 0 && <tr><td colSpan={5} className="py-10 text-center text-slate-500">None yet</td></tr>}
           {users.map((u) => (
             <tr key={u.id} className="border-b border-slate-100 hover:bg-slate-50">
               <td className="px-4 py-3 font-medium text-slate-900">{u.name}</td>
               <td className="px-4 py-3 text-slate-700">{u.email}</td>
               <td className="px-4 py-3 text-slate-700">{u.phone || "—"}</td>
               <td className="px-4 py-3"><StatusBadge status={u.status} /></td>
+              <td className="px-4 py-3 text-right">
+                <button onClick={() => onEdit(u)} data-testid={`edit-user-${u.id}`} className="text-xs px-2.5 py-1 rounded hover:bg-slate-100 text-blue-600">Edit</button>
+              </td>
             </tr>
           ))}
         </tbody>

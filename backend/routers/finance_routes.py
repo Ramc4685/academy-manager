@@ -80,15 +80,28 @@ async def create_payment(body: PaymentIn, admin=Depends(require_roles("admin")))
 @router.post("/payments/generate-monthly")
 async def generate_monthly(body: GenerateMonthlyIn, admin=Depends(require_roles("admin"))):
     db = get_db()
-    enrollments = await db.enrollments.find({"status": "active", "is_deleted": {"$ne": True}}).to_list(5000)
+    enrollments = await db.enrollments.find({
+        "status": "active",
+        "is_deleted": {"$ne": True},
+        "approval_status": {"$ne": "pending"},
+    }).to_list(5000)
     created = 0
     skipped = 0
+    skipped_no_charge = 0
     for e in enrollments:
+        # Skip No Charge / Waived
+        bt = e.get("billing_type", "Standard")
+        if bt and bt.lower() != "standard":
+            skipped_no_charge += 1
+            continue
         existing = await db.payments.find_one({"enrollment_id": str(e["_id"]), "period": body.period})
         if existing:
             skipped += 1
             continue
-        session = await db.sessions.find_one({"_id": ObjectId(e["session_id"])})
+        # Use session override for this period if present
+        overrides = e.get("session_overrides", {}) or {}
+        session_id = overrides.get(body.period, e["session_id"])
+        session = await db.sessions.find_one({"_id": ObjectId(session_id)})
         if not session:
             continue
         price = float(session.get("monthly_price", 0))
@@ -96,7 +109,7 @@ async def generate_monthly(body: GenerateMonthlyIn, admin=Depends(require_roles(
             "parent_user_id": e["parent_user_id"],
             "student_id": e["student_id"],
             "enrollment_id": str(e["_id"]),
-            "session_id": e["session_id"],
+            "session_id": session_id,
             "period": body.period,
             "amount": price,
             "discount": 0,
@@ -111,8 +124,9 @@ async def generate_monthly(body: GenerateMonthlyIn, admin=Depends(require_roles(
         }
         await db.payments.insert_one(doc)
         created += 1
-    await log_audit(admin, "generate", "payment", body.period, f"created {created} skipped {skipped}")
-    return {"created": created, "skipped": skipped}
+    await log_audit(admin, "generate", "payment", body.period,
+                    f"created {created} skipped {skipped} no_charge {skipped_no_charge}")
+    return {"created": created, "skipped": skipped, "skipped_no_charge": skipped_no_charge}
 
 
 @router.patch("/payments/{pid}/mark-paid")

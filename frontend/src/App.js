@@ -18,6 +18,8 @@ import AdminExpenses from "./pages/admin/Expenses";
 import AdminPayouts from "./pages/admin/Payouts";
 import AdminReports from "./pages/admin/Reports";
 import AdminAuditLogs from "./pages/admin/AuditLogs";
+import AdminDuesFollowup from "./pages/admin/DuesFollowup";
+import AdminCoachPayslip from "./pages/admin/CoachPayslip";
 
 import CoachDashboard from "./pages/coach/Dashboard";
 import CoachSessions from "./pages/coach/Sessions";
@@ -73,6 +75,8 @@ function App() {
             <Route path="/admin/payouts" element={LR(AdminPayouts, ["admin"])} />
             <Route path="/admin/reports" element={LR(AdminReports, ["admin"])} />
             <Route path="/admin/audit-logs" element={LR(AdminAuditLogs, ["admin"])} />
+            <Route path="/admin/dues" element={LR(AdminDuesFollowup, ["admin"])} />
+            <Route path="/admin/coach-payslip" element={LR(AdminCoachPayslip, ["admin", "coach"])} />
 
             <Route path="/coach/dashboard" element={LR(CoachDashboard, ["coach"])} />
             <Route path="/coach/sessions" element={LR(CoachSessions, ["coach"])} />

@@ -1,0 +1,54 @@
+{
+  "summary": "Iteration 2 — Badminton Academy Manager. Ran 18 targeted pytest cases for all new endpoints (dashboard new KPIs, dues-followup, coach payslip, user PATCH+reset-password, enrollment approval+transfer+move-log, generate-monthly skip logic, t-shirt+experience, make_up attendance) — 18/18 PASS against the real imported data. Verified shapes: dashboard KPIs expected=2920 collected=1680 waived=210 attendance_rate=88.9 sessions=4 students=43; dues-followup returns 28 parents (spec said ~27, close); session_profitability includes utilization+capacity; payslip returns kids_enrolled+billing_type rows. Frontend smoke against shuttle-flow.preview.emergentagent.com (REACT_APP_BACKEND_URL): Admin dashboard new KPIs render, Dues page generates wa.me links + Zelle message, Coach payslip page renders, parent Child form has T-shirt size + Previous experience. FOUND CRITICAL FRONTEND BUG: /admin/users page throws React error in <AdminUsers> component — Edit modal cannot be tested. Also CORS_ORIGINS=\"*\" in backend/.env will break cross-origin frontend cookies; works on shuttle-flow same-origin but will fail on the 6e9f5c4d-... preview host listed in review_request.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/dashboard/admin?period=2026-05", "issue": "Returns 43 students (spec said ~46). Likely soft-deleted students from earlier tests; non-blocking."},
+      {"endpoint": "/api/dues-followup", "issue": "Returns 28 parents (spec said ~27). Off-by-one; data-dependent, acceptable."},
+      {"endpoint": "/api/payments/generate-monthly", "issue": "Response shape includes 'created' and 'skipped_no_charge' (spec mentions 'skipped' too). Tolerated by test, but contract should be documented."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AdminUsers (/admin/users)", "issue": "React error boundary triggered: 'An error occurred in the <AdminUsers> component' on load. No edit buttons rendered. Blocks admin edit-user/reset-password UI flow.", "selector": "/admin/users", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Cross-origin login on 6e9f5c4d-... preview host", "issue": "Backend returns Access-Control-Allow-Origin: '*' because CORS_ORIGINS='*' in backend/.env. Browsers reject this with credentials:include → all auth/me + login calls fail CORS preflight when frontend host ≠ backend host. allow_origin_regex is bypassed when explicit allow_origins contains '*'.", "affected_selectors": ["all /api/* calls from frontend served on 6e9f5c4d-...emergentagent.com"]}
+    ],
+    "design_issues": [
+      {"screen": "Parent child registration modal", "issues": ["Date of Birth uses browser default date picker (mm/dd/yyyy) instead of shadcn Calendar component — inconsistent with rest of app design."]},
+      {"screen": "Admin dashboard", "issues": ["Recharts emits width(-1) height(-1) console warning on initial render (cosmetic carry-over from iter 1, charts render after layout settles)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/iter2_test.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/iter2_results.xml"
+  ],
+  "action_items": [
+    "FIX: /admin/users page React crash — open browser console on /admin/users to see actual error; likely a null/undefined field on a user record (e.g., status missing) or a missing Dialog Description prop. Edit modal cannot be exercised until fixed.",
+    "FIX: CORS — change backend/.env CORS_ORIGINS from '*' to an explicit comma-separated list (e.g. 'https://shuttle-flow.preview.emergentagent.com,https://6e9f5c4d-ca1d-4551-837d-e67871d3dffb.preview.emergentagent.com') so allow_credentials=True works. The existing allow_origin_regex pattern is correct but ignored when '*' is in allow_origins.",
+    "OPTIONAL: Replace native <input type=\"date\"> with shadcn Calendar component on parent Child form for design consistency.",
+    "OPTIONAL: Document generate-monthly response contract (created, skipped, skipped_no_charge) in API docs."
+  ],
+  "critical_code_review_comments": [
+    "extras_routes.coach_payslip: uses 'COLLECTED revenue' (status=paid) for percentage payout — good, matches business intent; doc-string is clear.",
+    "sessions_routes.transfer_enrollment: capacity check on target session only runs when permanent=True; for non-permanent overrides target session can be overfilled for that one month. Acceptable if intended (makeup classes).",
+    "extras_routes.dues_followup: phone normalization adds leading '1' only for 10-digit numbers; international phones (>10 digits without '1') will be silently rejected from wa.me link. Edge case for non-US parents.",
+    "auth_routes.update_user: properly checks email uniqueness with $ne on _id; ✓.",
+    "auth_routes.admin_reset_password: no minimum password validation on backend beyond Pydantic (min_length=6). Should consider stronger requirements for admin-issued passwords.",
+    "models.EnrollmentIn.billing_type accepts any string; should be Literal['Standard','NoCharge','Waived'] for validation.",
+    "extras_routes.pending_approval: missing 'parent_name'/'parent_phone' enrichment — would be useful in UI for context.",
+    "Dashboard route should be reviewed for performance — multiple sequential awaits on per-session aggregations; can be parallelized with asyncio.gather."
+  ],
+  "updated_files": [
+    "/app/backend/tests/iter2_test.py (new)"
+  ],
+  "success_rate": {"backend": "100% (18/18 new + 55/55 existing remain green)", "frontend": "80% (5/6 screens OK; /admin/users crashed)"},
+  "test_credentials": "admin@badminton.app/Admin@12345, gowtham@blno.academy/Coach@12345, parent@badminton.app/Parent@12345",
+  "seed_data_creation": "Created 1 TEST parent user (test_iter2_<uuid>@example.com), 1 child (TESTIter2 Kid), 1 enrollment (then approved + transferred), 1 makeup attendance, 1 payment via generate-monthly. Child soft-deleted at end; user record + enrollment persist (idempotent).",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend iter2 endpoints are 100% green; pytest suite in /app/backend/tests/iter2_test.py is idempotent and safe to re-run. PRIORITY for next agent: (1) verify /admin/users React error fixed and test edit modal + reset password UI; (2) verify CORS fix on 6e9f5c4d-...domain login. Use shuttle-flow.preview.emergentagent.com as the working FE host until CORS is fixed.",
+  "rca_of_the_issue": "Issue 1 (AdminUsers crash): Component error shown by React error boundary on /admin/users; the page renders the empty state placeholder ('login.') instead of the user table — confirmed via Playwright that no edit buttons are present and console logs 'An error occurred in the <AdminUsers> component'. Most likely a property access on a possibly-undefined field (e.g., user.phone, user.status). Mitigation: add null-safe access + render guards in /app/frontend/src/pages/admin/Users.jsx. Issue 2 (CORS): FastAPI CORSMiddleware behavior — when allow_origins contains '*' it always sends 'Access-Control-Allow-Origin: *' which the browser refuses for credentials:include requests. allow_origin_regex is only consulted when allow_origins does NOT contain '*'. Fix: set CORS_ORIGINS to a non-wildcard explicit list (or empty string + rely on regex)."
+}

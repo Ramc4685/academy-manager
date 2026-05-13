@@ -45,17 +45,17 @@ export default function AdminDashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <KPICard testId="kpi-income" label="Monthly Income" value={currency(k.monthly_income)} hint="Paid this month" accent="blue" />
+        <KPICard testId="kpi-income" label="Collected" value={currency(k.collected_revenue ?? k.monthly_income)} hint={`of ${currency(k.expected_revenue ?? k.monthly_income)} expected`} accent="blue" />
         <KPICard testId="kpi-expenses" label="Expenses" value={currency(k.expenses)} hint="Excl. coach payouts" accent="slate" />
         <KPICard testId="kpi-payouts" label="Coach Payouts" value={currency(k.coach_payouts)} hint="Calculated" accent="yellow" />
-        <KPICard testId="kpi-profit" label="Net Profit" value={currency(k.net_profit)} hint="Income − expenses − payouts" accent={k.net_profit >= 0 ? "emerald" : "red"} />
+        <KPICard testId="kpi-profit" label="Net Profit" value={currency(k.net_profit)} hint="Collected − expenses − payouts" accent={k.net_profit >= 0 ? "emerald" : "red"} />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <KPICard testId="kpi-students" label="Students" value={k.students} hint="Active" accent="slate" />
         <KPICard testId="kpi-sessions" label="Active Sessions" value={k.active_sessions} hint="" accent="slate" />
         <KPICard testId="kpi-pending" label="Pending Payments" value={k.pending_count} hint={`${currency(k.pending_total)} due`} accent="yellow" />
-        <KPICard testId="kpi-attendance" label="Attendance" value={`${k.attendance_rate}%`} hint="This month" accent="emerald" />
+        <KPICard testId="kpi-waived" label="Waived / No Charge" value={currency(k.waived_value ?? 0)} hint="Free students value" accent="slate" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
@@ -94,21 +94,29 @@ export default function AdminDashboard() {
       </div>
 
       <div className="bg-white border border-slate-200 rounded-xl p-6">
-        <h3 className="text-lg font-display font-semibold tracking-tight text-slate-900">Session Profitability</h3>
+        <h3 className="text-lg font-display font-semibold tracking-tight text-slate-900">Session Profitability & Utilization</h3>
         <table className="w-full mt-4 text-sm" data-testid="session-profitability">
           <thead>
             <tr className="text-left text-xs uppercase tracking-[0.1em] text-slate-500">
-              <th className="py-2">Session</th><th className="py-2">Enrolled</th><th className="py-2 text-right">Revenue</th>
+              <th className="py-2">Session</th><th className="py-2">Enrolled</th><th className="py-2">Utilization</th><th className="py-2 text-right">Revenue</th>
             </tr>
           </thead>
           <tbody>
             {data.session_profitability.length === 0 && (
-              <tr><td colSpan={3} className="py-6 text-center text-slate-500">No sessions yet.</td></tr>
+              <tr><td colSpan={4} className="py-6 text-center text-slate-500">No sessions yet.</td></tr>
             )}
             {data.session_profitability.map((s) => (
               <tr key={s.id} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="py-3 font-medium text-slate-900">{s.name}</td>
-                <td className="py-3 text-slate-700">{s.enrolled}</td>
+                <td className="py-3 text-slate-700">{s.enrolled}/{s.capacity || "-"}</td>
+                <td className="py-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-24 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <div className={`h-full ${s.utilization >= 80 ? "bg-emerald-500" : s.utilization >= 50 ? "bg-blue-500" : "bg-amber-500"}`} style={{ width: `${Math.min(100, s.utilization || 0)}%` }} />
+                    </div>
+                    <span className="text-xs text-slate-700 font-medium">{s.utilization || 0}%</span>
+                  </div>
+                </td>
                 <td className="py-3 text-right font-semibold text-blue-600">{currency(s.revenue)}</td>
               </tr>
             ))}

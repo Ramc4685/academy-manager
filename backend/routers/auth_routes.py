@@ -6,7 +6,7 @@ from bson import ObjectId
 
 from models import (
     RegisterIn, LoginIn, InviteIn, AcceptInviteIn, ForgotPasswordIn,
-    ResetPasswordIn, UpdateUserIn,
+    ResetPasswordIn, UpdateUserIn, ResetUserPasswordIn,
 )
 from auth import (
     hash_password, verify_password, create_access_token, create_refresh_token,
@@ -256,9 +256,27 @@ async def get_user(user_id: str, admin=Depends(require_roles("admin"))):
 async def update_user(user_id: str, body: UpdateUserIn, admin=Depends(require_roles("admin"))):
     db = get_db()
     update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if "email" in update:
+        update["email"] = update["email"].lower()
+        # ensure email isn't taken
+        existing = await db.users.find_one({"email": update["email"], "_id": {"$ne": ObjectId(user_id)}})
+        if existing:
+            raise HTTPException(status_code=400, detail="Email already in use")
     update["updated_at"] = datetime.now(timezone.utc).isoformat()
     await db.users.update_one({"_id": ObjectId(user_id)}, {"$set": update})
     await log_audit(admin, "update", "user", user_id, f"updated {list(update.keys())}")
+    return {"ok": True}
+
+
+@router.post("/users/{user_id}/reset-password")
+async def admin_reset_password(user_id: str, body: ResetUserPasswordIn, admin=Depends(require_roles("admin"))):
+    db = get_db()
+    await db.users.update_one(
+        {"_id": ObjectId(user_id)},
+        {"$set": {"password_hash": hash_password(body.password),
+                  "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    await log_audit(admin, "reset_password", "user", user_id, "")
     return {"ok": True}
 
 
