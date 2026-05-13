@@ -13,6 +13,65 @@ def _thread_id(a: str, b: str) -> str:
     return ":".join(sorted([a, b]))
 
 
+# ----------------- /api/messages/contacts -----------------
+@router.get("/messages/contacts")
+async def list_contacts(user=Depends(get_current_user)):
+    """Return the list of users this person is allowed to message."""
+    db = get_db()
+    if user["role"] == "admin":
+        cursor = db.users.find(
+            {"_id": {"$ne": ObjectId(user["id"])}, "status": {"$ne": "deleted"}},
+            {"password_hash": 0},
+        )
+    elif user["role"] == "coach":
+        # Coaches see admins + parents of students in their sessions
+        sessions = await db.sessions.find({"coach_id": user["id"]}, {"_id": 1}).to_list(500)
+        sids = [str(s["_id"]) for s in sessions]
+        enrolls = await db.enrollments.find(
+            {"session_id": {"$in": sids}, "status": "active"}, {"parent_user_id": 1},
+        ).to_list(2000)
+        parent_ids = list({e["parent_user_id"] for e in enrolls if e.get("parent_user_id")})
+        admins = [u async for u in db.users.find({"role": "admin", "status": {"$ne": "deleted"}}, {"password_hash": 0})]
+        parents = []
+        if parent_ids:
+            parents = [u async for u in db.users.find(
+                {"_id": {"$in": [ObjectId(p) for p in parent_ids]}, "status": {"$ne": "deleted"}},
+                {"password_hash": 0},
+            )]
+        items = admins + parents
+        for it in items:
+            it["id"] = str(it.pop("_id"))
+        return items
+    elif user["role"] == "parent":
+        # Parents see admins + coaches of their kids' sessions
+        students = await db.students.find({"parent_user_id": user["id"]}, {"_id": 1}).to_list(50)
+        sids = [str(s["_id"]) for s in students]
+        enrolls = await db.enrollments.find(
+            {"student_id": {"$in": sids}, "status": "active"}, {"session_id": 1},
+        ).to_list(500)
+        sess_ids = list({e["session_id"] for e in enrolls})
+        coach_ids = set()
+        async for s in db.sessions.find({"_id": {"$in": [ObjectId(x) for x in sess_ids]}}, {"coach_id": 1}):
+            if s.get("coach_id"):
+                coach_ids.add(s["coach_id"])
+        admins = [u async for u in db.users.find({"role": "admin", "status": {"$ne": "deleted"}}, {"password_hash": 0})]
+        coaches = []
+        if coach_ids:
+            coaches = [u async for u in db.users.find(
+                {"_id": {"$in": [ObjectId(c) for c in coach_ids]}}, {"password_hash": 0},
+            )]
+        items = admins + coaches
+        for it in items:
+            it["id"] = str(it.pop("_id"))
+        return items
+    else:
+        return []
+    items = await cursor.to_list(2000)
+    for it in items:
+        it["id"] = str(it.pop("_id"))
+    return items
+
+
 # ----------------- /api/messages -----------------
 @router.get("/messages/threads")
 async def list_threads(user=Depends(get_current_user)):

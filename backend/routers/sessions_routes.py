@@ -145,9 +145,34 @@ async def list_students(session_id: str | None = None, user=Depends(get_current_
     if parent_ids:
         async for p in db.users.find({"_id": {"$in": [ObjectId(p) for p in parent_ids]}}):
             parents[str(p["_id"])] = {"name": p.get("name"), "email": p.get("email"), "phone": p.get("phone")}
+    # Enrollments per student
+    student_ids_str = [str(it["_id"]) for it in items]
+    enrolls = await db.enrollments.find({
+        "student_id": {"$in": student_ids_str},
+        "status": "active", "is_deleted": {"$ne": True},
+    }).to_list(5000)
+    sess_ids = {e["session_id"] for e in enrolls}
+    sessions = {}
+    if sess_ids:
+        async for s in db.sessions.find({"_id": {"$in": [ObjectId(x) for x in sess_ids]}}):
+            sessions[str(s["_id"])] = {"id": str(s["_id"]), "name": s["name"], "monthly_price": s.get("monthly_price")}
+    by_student: dict = {}
+    for e in enrolls:
+        sess = sessions.get(e["session_id"])
+        if not sess:
+            continue
+        by_student.setdefault(e["student_id"], []).append({
+            "enrollment_id": str(e["_id"]),
+            "session_id": e["session_id"],
+            "session_name": sess["name"],
+            "billing_type": e.get("billing_type", "Standard"),
+            "approval_status": e.get("approval_status", "approved"),
+            "skip_periods": e.get("skip_periods", []),
+        })
     for it in items:
         it["id"] = str(it.pop("_id"))
         it["parent"] = parents.get(it.get("parent_user_id"), {})
+        it["enrollments"] = by_student.get(it["id"], [])
     return items
 
 
@@ -336,6 +361,34 @@ async def transfer_enrollment(eid: str, body: "TransferIn", admin=Depends(requir
     await log_audit(admin, "transfer", "enrollment", eid,
                     f"{'permanent' if body.permanent else 'override-' + body.effective_month}")
     return {"ok": True}
+
+
+@router.post("/enrollments/{eid}/pause-month")
+async def pause_month(eid: str, period: str, admin=Depends(require_roles("admin"))):
+    """Mark an enrollment as paused for a specific YYYY-MM period.
+    Payment generation will skip this month; dashboards exclude paused months."""
+    db = get_db()
+    e = await db.enrollments.find_one({"_id": _oid(eid)})
+    if not e:
+        raise HTTPException(status_code=404, detail="Not found")
+    skip = list(e.get("skip_periods", []) or [])
+    if period not in skip:
+        skip.append(period)
+    await db.enrollments.update_one({"_id": _oid(eid)}, {"$set": {"skip_periods": skip}})
+    await log_audit(admin, "pause_month", "enrollment", eid, period)
+    return {"ok": True, "skip_periods": skip}
+
+
+@router.post("/enrollments/{eid}/resume-month")
+async def resume_month(eid: str, period: str, admin=Depends(require_roles("admin"))):
+    db = get_db()
+    e = await db.enrollments.find_one({"_id": _oid(eid)})
+    if not e:
+        raise HTTPException(status_code=404, detail="Not found")
+    skip = [p for p in (e.get("skip_periods", []) or []) if p != period]
+    await db.enrollments.update_one({"_id": _oid(eid)}, {"$set": {"skip_periods": skip}})
+    await log_audit(admin, "resume_month", "enrollment", eid, period)
+    return {"ok": True, "skip_periods": skip}
 
 
 @router.get("/move-log")

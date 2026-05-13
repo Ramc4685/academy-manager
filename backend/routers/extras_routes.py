@@ -131,18 +131,19 @@ async def coach_payslip(coach_id: str, period: str, user=Depends(get_current_use
     rule_type = rule["rule_type"] if rule else "revenue_percentage"
     rule_value = rule["value"] if rule else 30
     payout = 0.0
+    collected = 0.0
+    # Collected revenue this period for coach's sessions
+    collected_agg = await db.payments.aggregate([
+        {"$match": {
+            "session_id": {"$in": list(session_map.keys())},
+            "period": period,
+            "status": "paid",
+            "is_deleted": {"$ne": True},
+        }},
+        {"$group": {"_id": None, "total": {"$sum": "$final_amount"}}},
+    ]).to_list(1)
+    collected = float(collected_agg[0]["total"]) if collected_agg else 0.0
     if rule_type == "revenue_percentage":
-        # Use COLLECTED revenue, not expected
-        collected_agg = await db.payments.aggregate([
-            {"$match": {
-                "session_id": {"$in": list(session_map.keys())},
-                "period": period,
-                "status": "paid",
-                "is_deleted": {"$ne": True},
-            }},
-            {"$group": {"_id": None, "total": {"$sum": "$final_amount"}}},
-        ]).to_list(1)
-        collected = float(collected_agg[0]["total"]) if collected_agg else 0.0
         payout = collected * float(rule_value) / 100.0
     elif rule_type == "fixed_monthly":
         payout = float(rule_value)
@@ -162,9 +163,11 @@ async def coach_payslip(coach_id: str, period: str, user=Depends(get_current_use
         "period": period,
         "kids_enrolled": len(rows),
         "expected_revenue": round(expected_revenue, 2),
+        "collected_revenue": round(collected, 2),
         "rule_type": rule_type,
         "rule_value": rule_value,
         "payout_amount": round(payout, 2),
+        "payout_basis": "collected" if rule_type == "revenue_percentage" else rule_type,
         "current_status": existing["status"] if existing else "not_calculated",
         "rows": rows,
     }

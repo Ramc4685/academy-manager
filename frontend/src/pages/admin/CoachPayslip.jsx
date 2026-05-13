@@ -41,10 +41,10 @@ export default function CoachPayslip() {
       {!data && <div className="text-slate-500 text-sm">Select a coach and period.</div>}
       {data && (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
             <div className="bg-white border border-slate-200 rounded-xl p-6">
               <div className="text-xs uppercase tracking-[0.18em] text-slate-500 font-bold">Coach</div>
-              <div className="mt-2 text-2xl font-display font-bold text-slate-900">{data.coach_name}</div>
+              <div className="mt-2 text-xl font-display font-bold text-slate-900">{data.coach_name}</div>
             </div>
             <div className="bg-white border border-slate-200 rounded-xl p-6">
               <div className="text-xs uppercase tracking-[0.18em] text-slate-500 font-bold">Kids enrolled</div>
@@ -53,11 +53,24 @@ export default function CoachPayslip() {
             <div className="bg-white border border-slate-200 rounded-xl p-6">
               <div className="text-xs uppercase tracking-[0.18em] text-slate-500 font-bold">Expected revenue</div>
               <div className="mt-2 text-3xl font-display font-bold text-slate-900">{currency(data.expected_revenue)}</div>
-              <div className="text-xs text-slate-500 mt-1">{data.rule_type?.replace(/_/g, " ")} @ {data.rule_value}{data.rule_type === "revenue_percentage" ? "%" : ""}</div>
+              <div className="text-xs text-slate-500 mt-1">If everyone pays</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-6">
+              <div className="text-xs uppercase tracking-[0.18em] text-slate-500 font-bold">Collected so far</div>
+              <div className="mt-2 text-3xl font-display font-bold text-emerald-600">{currency(data.collected_revenue ?? 0)}</div>
+              <div className="text-xs text-slate-500 mt-1">Actually received</div>
             </div>
             <div className="bg-white border border-slate-200 rounded-xl p-6">
               <div className="text-xs uppercase tracking-[0.18em] text-slate-500 font-bold">Payout</div>
               <div className="mt-2 text-3xl font-display font-bold text-yellow-700">{currency(data.payout_amount)}</div>
+              <div className="mt-1 text-xs text-slate-500">
+                {data.rule_type === "revenue_percentage" && (
+                  <>= {currency(data.collected_revenue ?? 0)} × {data.rule_value}%</>
+                )}
+                {data.rule_type !== "revenue_percentage" && (
+                  <>{data.rule_type?.replace(/_/g, " ")} @ {data.rule_value}</>
+                )}
+              </div>
               <div className="mt-2"><StatusBadge status={data.current_status} /></div>
             </div>
           </div>

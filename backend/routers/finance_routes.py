@@ -88,7 +88,12 @@ async def generate_monthly(body: GenerateMonthlyIn, admin=Depends(require_roles(
     created = 0
     skipped = 0
     skipped_no_charge = 0
+    skipped_paused = 0
     for e in enrollments:
+        # Skip if this period is in the enrollment's paused list
+        if body.period in (e.get("skip_periods", []) or []):
+            skipped_paused += 1
+            continue
         # Skip No Charge / Waived
         bt = e.get("billing_type", "Standard")
         if bt and bt.lower() != "standard":
@@ -125,8 +130,9 @@ async def generate_monthly(body: GenerateMonthlyIn, admin=Depends(require_roles(
         await db.payments.insert_one(doc)
         created += 1
     await log_audit(admin, "generate", "payment", body.period,
-                    f"created {created} skipped {skipped} no_charge {skipped_no_charge}")
-    return {"created": created, "skipped": skipped, "skipped_no_charge": skipped_no_charge}
+                    f"created {created} skipped {skipped} no_charge {skipped_no_charge} paused {skipped_paused}")
+    return {"created": created, "skipped": skipped,
+            "skipped_no_charge": skipped_no_charge, "skipped_paused": skipped_paused}
 
 
 @router.patch("/payments/{pid}/mark-paid")

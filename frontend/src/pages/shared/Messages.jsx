@@ -26,21 +26,8 @@ export default function Messages() {
   useEffect(() => { loadThreads(); }, []);
 
   useEffect(() => {
-    // Load contacts based on role
-    if (user?.role === "admin") {
-      api.get("/users").then((r) => setContacts(r.data.filter((u) => u.id !== user.id)));
-    } else if (user?.role === "coach") {
-      // Coach: parents of students in own sessions + admins
-      api.get("/users?role=admin").then((adminR) => {
-        api.get("/users?role=parent").then((p) => {
-          setContacts([...adminR.data, ...p.data]);
-        }).catch(() => setContacts(adminR.data));
-      });
-    } else if (user?.role === "parent") {
-      // Parent: coaches + admins
-      Promise.all([api.get("/users?role=coach").catch(() => ({ data: [] })), api.get("/users?role=admin").catch(() => ({ data: [] }))])
-        .then(([c, a]) => setContacts([...(c.data || []), ...(a.data || [])]));
-    }
+    // Load allowed contacts based on role (server decides)
+    api.get("/messages/contacts").then((r) => setContacts(r.data)).catch(() => setContacts([]));
   }, [user]);
 
   const openThread = async (otherId) => {
