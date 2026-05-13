@@ -1,0 +1,127 @@
+{
+  "theme": "Light Theme (with High-Contrast Dark accents)",
+  "archetype": "Hybrid: Archetype 4 (Swiss & High-Contrast) + Archetype 2 (Performance Pro)",
+  "vibe": "Professional, authoritative, clean, and dynamic (sports-driven without being overly 'gym-bro' or childish). Parent-friendly but admin-powerful.",
+  "typography": {
+    "headings": {
+      "family": "Outfit",
+      "weights": ["font-semibold", "font-bold"],
+      "classes": "font-sans tracking-tight",
+      "usage": "Use Outfit for all Dashboard Page Titles, Section Headers, and KPI numeric values to give a modern, sporty geometric feel."
+    },
+    "body": {
+      "family": "Manrope",
+      "weights": ["font-normal", "font-medium"],
+      "classes": "font-sans leading-relaxed tracking-normal",
+      "usage": "Use Manrope for all table data, forms, and general UI text for crystal clear legibility for parents and admins."
+    },
+    "hierarchy": {
+      "h1": "text-3xl md:text-4xl lg:text-5xl font-bold tracking-tighter text-slate-900",
+      "h2": "text-2xl md:text-3xl font-semibold tracking-tight text-slate-800",
+      "h3": "text-xl md:text-2xl font-semibold tracking-tight text-slate-800",
+      "kpi_value": "text-4xl md:text-5xl font-bold tracking-tighter text-blue-600",
+      "overline": "text-xs font-bold uppercase tracking-[0.2em] text-slate-500",
+      "body": "text-sm md:text-base text-slate-600"
+    }
+  },
+  "color_palette": {
+    "background": {
+      "app": "bg-slate-50",
+      "card": "bg-white",
+      "sidebar": "bg-slate-900"
+    },
+    "primary": {
+      "name": "Cobalt Blue",
+      "default": "bg-blue-600",
+      "hover": "hover:bg-blue-500",
+      "text": "text-blue-600"
+    },
+    "accent": {
+      "name": "Volt Yellow",
+      "default": "bg-yellow-400",
+      "hover": "hover:bg-yellow-300",
+      "text": "text-yellow-700",
+      "usage": "Use strictly for highlights: active menu items, warnings, or secondary CTAs. Do NOT overuse."
+    },
+    "neutral": {
+      "dark": "text-slate-900",
+      "muted": "text-slate-500",
+      "border": "border-slate-200"
+    },
+    "status": {
+      "success": "bg-emerald-100 text-emerald-700 border border-emerald-200",
+      "pending": "bg-amber-100 text-amber-700 border border-amber-200",
+      "failed": "bg-red-100 text-red-700 border border-red-200"
+    }
+  },
+  "spacing_and_layout": {
+    "general": "Mobile-first approach. Generous padding in cards (p-6 or p-8) to avoid data clutter.",
+    "grids": {
+      "admin_dashboard": "Control Room Grid. grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6. KPI summaries in col-span-1. Main charts in col-span-2 or col-span-full.",
+      "parent_portal": "Bento Grid. grid-cols-1 md:grid-cols-3 lg:grid-cols-12 gap-8. Make student profiles the dominant visual (col-span-full md:col-span-8)."
+    },
+    "alignment": "Left-align all tables, inputs, and standard content. Center-align only major empty states or specific modal CTAs."
+  },
+  "surface_strategies": {
+    "cards": "Neumorphism Tactile variant. bg-white border border-slate-200 shadow-sm rounded-xl. Avoid heavy drop shadows.",
+    "sidebar": "Dark theme sidebar (bg-slate-900 text-slate-300) to create 'Command Center' contrast against the light content area.",
+    "headers": "Sticky headers with crystal glassmorphism: backdrop-blur-xl bg-white/80 border-b border-slate-200."
+  },
+  "components": {
+    "tables": "Use clear 1px borders for rows (border-b border-slate-100). No vertical borders. Striped backgrounds on hover only (hover:bg-slate-50). Status badges must be rounded-full with light bg and dark text.",
+    "forms": "Use Shadcn UI Inputs. rounded-lg, focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600.",
+    "buttons": "rounded-lg font-medium. Primary: bg-blue-600 text-white shadow-sm. Secondary: bg-white text-slate-700 border border-slate-200.",
+    "charts": "Use Recharts. Minimal grid lines (strokeDasharray='3 3' stroke='#E2E8F0'). Tooltips must have rounded-lg bg-white shadow-md border border-slate-200.",
+    "icons": "Phosphor Icons (Duotone weight for marketing/parent views, Regular/Bold for dense admin dashboards)."
+  },
+  "animations": {
+    "interactive": "hover:-translate-y-[2px] hover:shadow-md transition-all duration-200 for actionable cards.",
+    "loading": "Use skeleton loaders with pulse animation (bg-slate-200 rounded-lg) rather than spinners for dashboard content."
+  },
+  "media_urls": {
+    "hero_login_bg": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/c735a2b3-2fb1-4fa5-a75c-2007226ca62e/images/1d1cfafe28a9d8df9f22f211189ef097f1bb5d348846857bdee5ba711ec35327.png",
+      "description": "Wide-angle premium indoor badminton court for login or marketing hero background.",
+      "usage": "Use with bg-black/40 overlay to ensure login form text contrast."
+    },
+    "dashboard_header_texture": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/c735a2b3-2fb1-4fa5-a75c-2007226ca62e/images/3911318683d1db5e47fc8797ef577d6627b688511d98c6161bd37ebcdffb6ecf.png",
+      "description": "Abstract sleek geometric slate and blue texture.",
+      "usage": "Can be used as a subtle banner background in the parent portal or coach dashboard header."
+    },
+    "equipment_showcase": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/c735a2b3-2fb1-4fa5-a75c-2007226ca62e/images/4ae5ade4a71ff7e16c455c03586292a4efc73c600d23339a0021fac0ecfc57ca.png",
+      "description": "Premium badminton racket on white towel.",
+      "usage": "Use for empty states, 'No upcoming classes', or registration success screens."
+    },
+    "stock_court_match": {
+      "url": "https://images.unsplash.com/photo-1775993167284-8e6a6e56ab69?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzOTB8MHwxfHNlYXJjaHwzfHxiYWRtaW50b24lMjBjb3VydCUyMG1hdGNofGVufDB8fHx8MTc3ODY4MDkzMXww&ixlib=rb-4.1.0&q=85",
+      "description": "Indoor badminton court with blue walls and floor.",
+      "usage": "Fallback hero or section image."
+    },
+    "stock_coach": {
+      "url": "https://images.unsplash.com/photo-1617962529235-262e8e777e48?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTJ8MHwxfHNlYXJjaHwxfHxiYWRtaW50b24lMjBjb2FjaCUyMHRyYWluaW5nfGVufDB8fHx8MTc3ODY4MDkzMXww&ixlib=rb-4.1.0&q=85",
+      "description": "Coach profile placeholder.",
+      "usage": "Use as a default avatar for coaches if none exists."
+    }
+  },
+  "instructions_to_main_agent": [
+    "INSTALLATION: Run `yarn add @phosphor-icons/react` before starting.",
+    "INSTALLATION: Add Google Fonts 'Outfit' and 'Manrope' to your index.html or tailwind layout.",
+    "LAYOUT STRUCTURE: Use a persistent dark sidebar (bg-slate-900 text-white) for Admin/Coach roles, and a top navigation (glassmorphism) for Parent portal.",
+    "DASHBOARDS: Build the Admin Dashboard using grid-cols-4 for top KPIs (Income, Expenses, Net Profit, Students). Use Recharts for the Profit line chart.",
+    "TABLES: Build a unified Reusable Table component using Shadcn for Sessions, Payments, and Expenses. Ensure status badges follow the color_palette.status rules.",
+    "Avoid full-screen generic gradients. Use the provided texture image or clean white backgrounds (bg-slate-50 for app background, bg-white for cards).",
+    "DO NOT use generic grey text for headers; use text-slate-900 or text-slate-800 for strong contrast.",
+    "For all interactive elements, apply hover/focus states properly."
+  ],
+  "data_testid_conventions": {
+    "rule": "All interactive elements must include a kebab-case data-testid attribute describing its role.",
+    "examples": [
+      "data-testid='admin-sidebar-nav'",
+      "data-testid='create-session-button'",
+      "data-testid='payment-status-badge'",
+      "data-testid='coach-attendance-grid'"
+    ]
+  }
+}
