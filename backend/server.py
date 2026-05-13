@@ -41,12 +41,10 @@ app.include_router(api_router)
 
 # CORS — use explicit origins to support httpOnly cookies with credentials
 _frontend = os.environ.get("FRONTEND_URL", "")
-_origins_env = os.environ.get("CORS_ORIGINS", "*")
-if _frontend and _frontend not in _origins_env:
-    _origins_env = ",".join([o for o in [_origins_env, _frontend] if o and o != "*"])
-_origins = [o.strip() for o in _origins_env.split(",") if o.strip()]
-if not _origins:
-    _origins = ["*"]
+_origins_env = os.environ.get("CORS_ORIGINS", "")
+_origins = [o.strip() for o in _origins_env.split(",") if o.strip() and o.strip() != "*"]
+if _frontend and _frontend not in _origins:
+    _origins.append(_frontend)
 # When using cookies cross-origin, allow_origin_regex covers preview subdomains
 app.add_middleware(
     CORSMiddleware,

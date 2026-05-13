@@ -47,6 +47,27 @@ export default function AdminUsers() {
     toast.success("Invite link copied");
   };
 
+  const startEdit = (u) => {
+    setEditUser(u);
+    setEditForm({
+      name: u.name || "",
+      email: u.email || "",
+      phone: u.phone || "",
+      status: u.status || "active",
+    });
+  };
+
+  const saveEdit = async () => {
+    try {
+      await api.patch(`/users/${editUser.id}`, editForm);
+      toast.success("User updated");
+      setEditUser(null);
+      load();
+    } catch (e) {
+      toast.error(formatApiError(e.response?.data?.detail));
+    }
+  };
+
   return (
     <div className="space-y-6" data-testid="admin-users">
       <div className="flex items-end justify-between flex-wrap gap-3">
@@ -67,10 +88,10 @@ export default function AdminUsers() {
         </TabsList>
 
         <TabsContent value="coach">
-          <UserTable users={coaches} />
+          <UserTable users={coaches} onEdit={startEdit} />
         </TabsContent>
         <TabsContent value="parent">
-          <UserTable users={parents} />
+          <UserTable users={parents} onEdit={startEdit} />
         </TabsContent>
         <TabsContent value="invites">
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">

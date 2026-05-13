@@ -238,6 +238,7 @@ Roles: **Admin, Coach, Parent, Student**. Style: premium sports SaaS, blue/white
 
 ## Implemented (Date stamps grow with iteration)
 - 2026-02 — Phase 1 MVP build
+- 2026-02 — Iteration 2: Imported real BLno spreadsheet data (4 sessions, 42 parents, 46 students, 46 enrollments, Apr+May payments + expenses, 8 attendance records, 2 real coaches). Added: billing_type (Standard/NoCharge/Waived), session transfer (permanent + single-month override) with move_log, make-up attendance, t-shirt size + previous experience on students, Dues Followup page with WhatsApp link generator, Coach Payslip page (per coach × month), Expected/Collected/Waived KPIs + utilization% on admin dashboard, admin edit coach/parent + reset password, enrollment approval workflow.
 
 ## Test Credentials
 See `/app/memory/test_credentials.md`.
