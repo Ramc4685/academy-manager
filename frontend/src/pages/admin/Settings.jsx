@@ -7,13 +7,48 @@ import { Textarea } from "../../components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../../components/ui/tabs";
 import { toast } from "sonner";
-import { Send } from "lucide-react";
+import { Send, Clock, Play } from "lucide-react";
 
 export default function AdminSettings() {
   const [settings, setSettings] = useState(null);
   const [rules, setRules] = useState([]);
   const [coaches, setCoaches] = useState([]);
   const [testEmail, setTestEmail] = useState("");
+  const [schedStatus, setSchedStatus] = useState(null);
+  const [nextPeriod, setNextPeriod] = useState(null);
+  const [runningJob, setRunningJob] = useState("");
+
+  const loadScheduler = async () => {
+    try {
+      const [s, n] = await Promise.all([
+        api.get("/scheduler/status"),
+        api.get("/scheduler/next-period"),
+      ]);
+      setSchedStatus(s.data);
+      setNextPeriod(n.data);
+    } catch { /* */ }
+  };
+
+  const runMonthly = async () => {
+    if (!confirm(`Generate pending invoices for ${nextPeriod?.next_period}? Existing invoices for that month will be skipped.`)) return;
+    setRunningJob("invoices");
+    try {
+      const { data } = await api.post("/scheduler/run-monthly-invoices", { period: nextPeriod?.next_period });
+      toast.success(`${data.created} invoices created • ${data.skipped} already existed • ${data.skipped_autopay} autopay skipped`);
+      loadScheduler();
+    } catch (e) { toast.error(formatApiError(e.response?.data?.detail)); }
+    finally { setRunningJob(""); }
+  };
+
+  const runReminders = async () => {
+    if (!confirm("Run dues reminder cron now? This emails every parent with pending invoices.")) return;
+    setRunningJob("reminders");
+    try {
+      const { data } = await api.post("/scheduler/run-dues-reminders");
+      toast.success(`${data.sent} reminders sent • ${data.failed} failed • ${data.skipped} skipped`);
+    } catch (e) { toast.error(formatApiError(e.response?.data?.detail)); }
+    finally { setRunningJob(""); }
+  };
 
   const load = async () => {
     const [s, r, c] = await Promise.all([
@@ -23,7 +58,7 @@ export default function AdminSettings() {
     ]);
     setSettings(s.data); setRules(r.data); setCoaches(c.data);
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); loadScheduler(); }, []);
 
   const saveSettings = async () => {
     try {
@@ -71,6 +106,7 @@ export default function AdminSettings() {
           <TabsTrigger value="academy" data-testid="tab-academy">Academy</TabsTrigger>
           <TabsTrigger value="payouts" data-testid="tab-payouts">Payout Basis</TabsTrigger>
           <TabsTrigger value="email" data-testid="tab-email">Email</TabsTrigger>
+          <TabsTrigger value="scheduler" data-testid="tab-scheduler">Automation</TabsTrigger>
         </TabsList>
 
         <TabsContent value="academy">
@@ -139,6 +175,74 @@ export default function AdminSettings() {
               <div className="font-display font-semibold tracking-tight text-slate-900">Bulk dues reminders</div>
               <p className="text-sm text-slate-600 mt-1">Email all parents currently on your dues followup list.</p>
               <Button onClick={sendReminders} data-testid="send-dues-reminders" className="mt-3 bg-amber-500 hover:bg-amber-400 text-white"><Send className="w-4 h-4 mr-1.5" /> Send dues reminders to all</Button>
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="scheduler">
+          <div className="bg-white border border-slate-200 rounded-xl p-6 max-w-3xl space-y-6" data-testid="scheduler-panel">
+            <div>
+              <div className="flex items-center gap-2">
+                <Clock className="w-5 h-5 text-blue-600" />
+                <div className="font-display font-semibold tracking-tight text-slate-900 text-lg">Monthly automation</div>
+              </div>
+              <p className="text-sm text-slate-600 mt-1">
+                Two cron jobs run automatically on your server. You can also trigger either one manually below.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="border border-slate-200 rounded-xl p-4">
+                <div className="text-xs uppercase tracking-[0.18em] text-slate-500">1st of month · 09:00 UTC</div>
+                <div className="font-display font-semibold tracking-tight text-slate-900 mt-1">Generate monthly invoices</div>
+                <div className="text-xs text-slate-500 mt-1">
+                  Next run: <strong className="text-slate-700">
+                    {schedStatus?.jobs?.find((j) => j.id === "monthly_invoices")?.next_run_time?.replace("T", " ").slice(0, 16) || "—"}
+                  </strong>
+                </div>
+                <div className="text-xs text-slate-500 mt-0.5">
+                  Target period: <strong className="text-slate-700">{nextPeriod?.next_period || "—"}</strong>
+                </div>
+                <Button
+                  onClick={runMonthly}
+                  disabled={runningJob === "invoices"}
+                  data-testid="run-monthly-invoices"
+                  className="mt-3 bg-blue-600 hover:bg-blue-500 text-white w-full"
+                >
+                  <Play className="w-4 h-4 mr-1.5" />
+                  {runningJob === "invoices" ? "Generating…" : `Run now (${nextPeriod?.next_period || ""})`}
+                </Button>
+              </div>
+
+              <div className="border border-slate-200 rounded-xl p-4">
+                <div className="text-xs uppercase tracking-[0.18em] text-slate-500">5th of month · 09:00 UTC</div>
+                <div className="font-display font-semibold tracking-tight text-slate-900 mt-1">Send dues reminders</div>
+                <div className="text-xs text-slate-500 mt-1">
+                  Next run: <strong className="text-slate-700">
+                    {schedStatus?.jobs?.find((j) => j.id === "dues_reminders")?.next_run_time?.replace("T", " ").slice(0, 16) || "—"}
+                  </strong>
+                </div>
+                <div className="text-xs text-slate-500 mt-0.5">
+                  Emails every parent on the dues-followup list via Resend.
+                </div>
+                <Button
+                  onClick={runReminders}
+                  disabled={runningJob === "reminders"}
+                  data-testid="run-dues-reminders-now"
+                  className="mt-3 bg-amber-500 hover:bg-amber-400 text-white w-full"
+                >
+                  <Play className="w-4 h-4 mr-1.5" />
+                  {runningJob === "reminders" ? "Sending…" : "Run now"}
+                </Button>
+              </div>
+            </div>
+
+            <div className="text-xs text-slate-500">
+              Scheduler status: <strong className={schedStatus?.running ? "text-emerald-600" : "text-red-600"}>
+                {schedStatus?.running ? "running" : "stopped"}
+              </strong> · timezone <strong className="text-slate-700">{schedStatus?.timezone}</strong>
+              {" "}— override defaults via env: <code className="text-[11px]">SCHEDULER_INVOICE_DAY</code>,
+              {" "}<code className="text-[11px]">SCHEDULER_REMINDER_DAY</code>, etc.
             </div>
           </div>
         </TabsContent>

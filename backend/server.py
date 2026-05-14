@@ -21,6 +21,9 @@ from routers.settings_routes import router as settings_router
 from routers.billing_routes import router as billing_router
 from routers.email_routes import router as email_router
 from routers.waitlist_routes import router as waitlist_router
+from routers.scheduler_routes import router as scheduler_router
+from routers.calendar_routes import router as calendar_router
+from services.scheduler import start_scheduler, shutdown_scheduler
 
 
 app = FastAPI(title="Badminton Academy Manager API")
@@ -37,6 +40,8 @@ api_router.include_router(settings_router)
 api_router.include_router(billing_router)
 api_router.include_router(email_router)
 api_router.include_router(waitlist_router)
+api_router.include_router(scheduler_router)
+api_router.include_router(calendar_router)
 
 
 @api_router.get("/")
@@ -77,4 +82,10 @@ logger = logging.getLogger(__name__)
 async def on_startup():
     await ensure_indexes()
     await seed_users()
-    logger.info("Startup complete — indexes ready, admin seeded.")
+    start_scheduler()
+    logger.info("Startup complete — indexes ready, admin seeded, scheduler running.")
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    shutdown_scheduler()
