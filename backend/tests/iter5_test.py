@@ -126,8 +126,10 @@ class TestScheduler:
             pass
 
     def test_run_dues_reminders(self, admin):
-        delivery_mode = os.environ.get("EMAIL_DELIVERY_MODE", "disabled").strip().lower()
-        if os.environ.get("RESEND_API_KEY", "").startswith("re_") and delivery_mode in {"allowlist", "live"}:
+        app_env = os.environ.get("APP_ENV", "development").strip().lower()
+        delivery_enabled = os.environ.get("EMAIL_DELIVERY_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+        delivery_mode = "live" if app_env in {"production", "prod"} and delivery_enabled else "disabled"
+        if delivery_mode == "live":
             pytest.skip("Avoid sending bulk real emails from integration tests")
         r = admin.post(f"{API}/scheduler/run-dues-reminders", timeout=60)
         assert r.status_code == 200, r.text

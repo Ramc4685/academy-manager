@@ -594,12 +594,11 @@ class TestPauseRequests:
 # --------- Email ---------
 class TestEmail:
     def _email_delivery_mode(self):
-        explicit = os.environ.get("EMAIL_DELIVERY_MODE", "").strip().lower()
-        if explicit:
-            return explicit
         app_env = os.environ.get("APP_ENV", "development").strip().lower()
+        if app_env not in {"production", "prod"}:
+            return "disabled"
         enabled = os.environ.get("EMAIL_DELIVERY_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
-        return "live" if app_env in {"production", "prod"} and enabled else "disabled"
+        return "live" if enabled else "disabled"
 
     def _test_recipient(self):
         raw = os.environ.get("EMAIL_TEST_ALLOWLIST", "Ramc.venkatasamy@gmail.com")
@@ -612,7 +611,7 @@ class TestEmail:
             assert r.status_code == 503
             assert "not configured" in r.text
             return
-        if self._email_delivery_mode() not in {"allowlist", "live"}:
+        if self._email_delivery_mode() != "live":
             assert r.status_code == 503
             assert "disabled" in r.text
             return

@@ -115,12 +115,8 @@ Email delivery is disabled by default in local/test environments, even when
 `RESEND_API_KEY` is set. This prevents integration tests and manual local runs
 from sending real parent emails.
 
-For a single-recipient smoke test, set:
-
-```bash
-EMAIL_DELIVERY_MODE=allowlist
-EMAIL_TEST_ALLOWLIST=Ramc.venkatasamy@gmail.com
-```
+Local/test email is always blocked. Do not use local/test for live email smoke
+tests.
 
 For production sending, set `APP_ENV=production` and
 `EMAIL_DELIVERY_ENABLED=true`.

@@ -65,14 +65,7 @@ Refunds are tracked in local payment records. Stripe payments are refunded throu
 4. Set `EMAIL_DELIVERY_ENABLED=true` only after the domain, sender, and test mailbox checks are complete.
 5. Test password reset delivery from `/forgot-password`.
 
-Email delivery is blocked by default outside production, even when a real Resend key is present. For a non-production single-recipient smoke test, use:
-
-```bash
-EMAIL_DELIVERY_MODE=allowlist
-EMAIL_TEST_ALLOWLIST=Ramc.venkatasamy@gmail.com
-```
-
-Use `EMAIL_DELIVERY_MODE=live` only for a controlled staging/prod-like test where sending to real recipients is intentional. Email endpoints return skipped/blocked/failed status when Resend is not configured, delivery is safety-blocked, or provider delivery fails.
+Email delivery is always blocked outside production, even when a real Resend key or `EMAIL_DELIVERY_MODE=live` is present. Email endpoints return skipped/blocked/failed status when Resend is not configured, delivery is safety-blocked, or provider delivery fails.
 
 ## Health And Monitoring
 

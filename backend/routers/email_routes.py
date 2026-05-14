@@ -25,16 +25,19 @@ def _truthy(value: str | None) -> bool:
 
 
 def _delivery_mode() -> str:
-    """Return disabled, allowlist, or live.
+    """Return disabled or live.
 
-    Real email is blocked by default in every non-production environment, even
-    when a real Resend key is present. Production must opt in explicitly.
+    Real email is always blocked outside production, even when a real Resend key
+    or EMAIL_DELIVERY_MODE override is present. Production must opt in
+    explicitly with EMAIL_DELIVERY_ENABLED=true.
     """
-    explicit = os.environ.get("EMAIL_DELIVERY_MODE", "").strip().lower()
-    if explicit in {"disabled", "allowlist", "live"}:
-        return explicit
     app_env = os.environ.get("APP_ENV", "development").strip().lower()
-    if app_env in {"production", "prod"} and _truthy(os.environ.get("EMAIL_DELIVERY_ENABLED")):
+    if app_env not in {"production", "prod"}:
+        return "disabled"
+    explicit = os.environ.get("EMAIL_DELIVERY_MODE", "").strip().lower()
+    if explicit == "disabled":
+        return "disabled"
+    if _truthy(os.environ.get("EMAIL_DELIVERY_ENABLED")):
         return "live"
     return "disabled"
 
@@ -49,10 +52,6 @@ def _delivery_block_reason(to: str) -> str | None:
     mode = _delivery_mode()
     if mode == "live":
         return None
-    if mode == "allowlist" and to.strip().lower() in _test_allowlist():
-        return None
-    if mode == "allowlist":
-        return "Email recipient is not in EMAIL_TEST_ALLOWLIST"
     return "Email delivery is disabled for this environment"
 
 
