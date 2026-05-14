@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import requests
 import pytest
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://shuttle-flow.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://squad-flow.preview.emergentagent.com").rstrip("/")
 ADMIN_EMAIL = "admin@badminton.app"
 ADMIN_PASSWORD = "Admin@12345"
 

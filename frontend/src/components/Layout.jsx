@@ -11,6 +11,7 @@ import {
 const adminNav = [
   { to: "/admin/dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/admin/sessions", icon: CalendarDays, label: "Sessions" },
+  { to: "/calendar", icon: CalendarDays, label: "Calendar" },
   { to: "/admin/students", icon: GraduationCap, label: "Students" },
   { to: "/admin/waitlist", icon: Bell, label: "Waitlist" },
   { to: "/admin/users", icon: Users, label: "Coaches & Parents" },
@@ -28,6 +29,7 @@ const adminNav = [
 const coachNav = [
   { to: "/coach/dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/coach/sessions", icon: CalendarDays, label: "My Sessions" },
+  { to: "/calendar", icon: CalendarDays, label: "Calendar" },
   { to: "/admin/coach-payslip", icon: Coins, label: "My Payslip" },
   { to: "/messages", icon: MessageSquare, label: "Messages" },
 ];
@@ -35,6 +37,7 @@ const coachNav = [
 const parentNav = [
   { to: "/parent/dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/parent/children", icon: GraduationCap, label: "My Children" },
+  { to: "/calendar", icon: CalendarDays, label: "Calendar" },
   { to: "/parent/payments", icon: DollarSign, label: "Payments" },
   { to: "/parent/attendance", icon: CalendarDays, label: "Attendance" },
   { to: "/parent/progress", icon: UserCircle2, label: "Progress" },

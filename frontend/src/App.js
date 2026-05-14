@@ -37,6 +37,7 @@ import ParentAttendance from "./pages/parent/Attendance";
 import ParentProgress from "./pages/parent/Progress";
 
 import Messages from "./pages/shared/Messages";
+import Calendar from "./pages/shared/Calendar";
 
 function RoleRedirect() {
   const { user } = useAuth();
@@ -99,6 +100,7 @@ function App() {
             <Route path="/parent/progress" element={LR(ParentProgress, ["parent"])} />
 
             <Route path="/messages" element={L(Messages)} />
+            <Route path="/calendar" element={L(Calendar)} />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

@@ -27,7 +27,7 @@
   ],
   "action_items": [
     "FIX: /admin/users page React crash — open browser console on /admin/users to see actual error; likely a null/undefined field on a user record (e.g., status missing) or a missing Dialog Description prop. Edit modal cannot be exercised until fixed.",
-    "FIX: CORS — change backend/.env CORS_ORIGINS from '*' to an explicit comma-separated list (e.g. 'https://shuttle-flow.preview.emergentagent.com,https://6e9f5c4d-ca1d-4551-837d-e67871d3dffb.preview.emergentagent.com') so allow_credentials=True works. The existing allow_origin_regex pattern is correct but ignored when '*' is in allow_origins.",
+    "FIX: CORS — change backend/.env CORS_ORIGINS from '*' to an explicit comma-separated list (e.g. 'https://squad-flow.preview.emergentagent.com,https://squad-flow.preview.emergentagent.com') so allow_credentials=True works. The existing allow_origin_regex pattern is correct but ignored when '*' is in allow_origins.",
     "OPTIONAL: Replace native <input type=\"date\"> with shadcn Calendar component on parent Child form for design consistency.",
     "OPTIONAL: Document generate-monthly response contract (created, skipped, skipped_no_charge) in API docs."
   ],
