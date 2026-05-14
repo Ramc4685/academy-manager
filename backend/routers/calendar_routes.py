@@ -37,7 +37,8 @@ def _parse_date(s: str) -> datetime | None:
         return None
     for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%fZ"):
         try:
-            return datetime.strptime(s.split("T")[0] if "T" in s else s, "%Y-%m-%d")
+            d = datetime.strptime(s.split("T")[0] if "T" in s else s, "%Y-%m-%d")
+            return d.replace(tzinfo=timezone.utc)
         except Exception:
             continue
     return None
