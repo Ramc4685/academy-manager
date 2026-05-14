@@ -22,8 +22,43 @@ async def _coach_owns_session(user, session_id: str) -> bool:
     if user["role"] != "coach":
         return False
     db = get_db()
-    s = await db.sessions.find_one({"_id": _oid(session_id)})
+    s = await db.sessions.find_one({"_id": _oid(session_id), "is_deleted": {"$ne": True}})
     return s and s.get("coach_id") == user["id"]
+
+
+async def _coach_session_ids(db, coach_id: str) -> list[str]:
+    sessions = await db.sessions.find(
+        {"coach_id": coach_id, "is_deleted": {"$ne": True}},
+        {"_id": 1},
+    ).to_list(500)
+    return [str(s["_id"]) for s in sessions]
+
+
+async def _parent_student_ids(db, parent_id: str) -> list[str]:
+    students = await db.students.find(
+        {"parent_user_id": parent_id, "is_deleted": {"$ne": True}},
+        {"_id": 1},
+    ).to_list(500)
+    return [str(s["_id"]) for s in students]
+
+
+async def _coach_can_access_student(db, coach_id: str, student_id: str, session_id: str | None = None) -> bool:
+    session_ids = await _coach_session_ids(db, coach_id)
+    if not session_ids:
+        return False
+    if session_id:
+        if session_id not in session_ids:
+            return False
+        session_filter = session_id
+    else:
+        session_filter = {"$in": session_ids}
+    enrollment = await db.enrollments.find_one({
+        "session_id": session_filter,
+        "student_id": student_id,
+        "status": "active",
+        "is_deleted": {"$ne": True},
+    })
+    return enrollment is not None
 
 
 # ----------------- /api/attendance -----------------
@@ -69,14 +104,18 @@ async def list_attendance(session_id: str | None = None, student_id: str | None 
         q["date"] = date
     if user["role"] == "parent":
         # Only own children
-        students = await db.students.find({"parent_user_id": user["id"]}, {"_id": 1}).to_list(500)
-        sids = [str(s["_id"]) for s in students]
+        sids = await _parent_student_ids(db, user["id"])
         if not sids:
             return []
+        if student_id and student_id not in sids:
+            raise HTTPException(status_code=403, detail="Forbidden")
         q["student_id"] = {"$in": sids} if not student_id else student_id
     elif user["role"] == "coach":
-        sess = await db.sessions.find({"coach_id": user["id"]}, {"_id": 1}).to_list(500)
-        ids = [str(s["_id"]) for s in sess]
+        ids = await _coach_session_ids(db, user["id"])
+        if session_id and session_id not in ids:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        if student_id and not await _coach_can_access_student(db, user["id"], student_id, session_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
         q["session_id"] = {"$in": ids} if not session_id else session_id
     cursor = db.attendance.find(q).sort("date", -1)
     items = await cursor.to_list(2000)
@@ -99,13 +138,16 @@ async def list_lesson_plans(session_id: str | None = None, user=Depends(get_curr
     if session_id:
         q["session_id"] = session_id
     if user["role"] == "coach":
+        if session_id and not await _coach_owns_session(user, session_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
         q["coach_id"] = user["id"]
     elif user["role"] == "parent":
         # only sessions for own students
-        students = await db.students.find({"parent_user_id": user["id"]}, {"_id": 1}).to_list(500)
-        sids = [str(s["_id"]) for s in students]
+        sids = await _parent_student_ids(db, user["id"])
         enrolls = await db.enrollments.find({"student_id": {"$in": sids}, "status": "active"}, {"session_id": 1}).to_list(500)
         sess_ids = list({e["session_id"] for e in enrolls})
+        if session_id and session_id not in sess_ids:
+            raise HTTPException(status_code=403, detail="Forbidden")
         q["session_id"] = {"$in": sess_ids} if not session_id else session_id
     cursor = db.lesson_plans.find(q).sort("date", -1)
     items = await cursor.to_list(500)
@@ -161,14 +203,16 @@ async def list_progress_notes(student_id: str | None = None, user=Depends(get_cu
         q["student_id"] = student_id
     if user["role"] == "coach":
         # See notes only for students in coach's sessions
-        sess = await db.sessions.find({"coach_id": user["id"]}, {"_id": 1}).to_list(500)
-        sids = [str(s["_id"]) for s in sess]
+        sids = await _coach_session_ids(db, user["id"])
         enrolls = await db.enrollments.find({"session_id": {"$in": sids}, "status": "active"}, {"student_id": 1}).to_list(2000)
         stu_ids = list({e["student_id"] for e in enrolls})
+        if student_id and student_id not in stu_ids:
+            raise HTTPException(status_code=403, detail="Forbidden")
         q["student_id"] = {"$in": stu_ids} if not student_id else student_id
     elif user["role"] == "parent":
-        students = await db.students.find({"parent_user_id": user["id"]}, {"_id": 1}).to_list(500)
-        sids = [str(s["_id"]) for s in students]
+        sids = await _parent_student_ids(db, user["id"])
+        if student_id and student_id not in sids:
+            raise HTTPException(status_code=403, detail="Forbidden")
         q["student_id"] = {"$in": sids} if not student_id else student_id
     cursor = db.progress_notes.find(q).sort("created_at", -1)
     items = await cursor.to_list(500)
@@ -180,6 +224,9 @@ async def list_progress_notes(student_id: str | None = None, user=Depends(get_cu
 @router.post("/progress-notes")
 async def create_progress_note(body: ProgressNoteIn, user=Depends(require_roles("coach", "admin"))):
     db = get_db()
+    if user["role"] == "coach":
+        if not await _coach_can_access_student(db, user["id"], body.student_id, body.session_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
     doc = body.model_dump()
     doc["coach_id"] = user["id"]
     doc["created_at"] = datetime.now(timezone.utc).isoformat()

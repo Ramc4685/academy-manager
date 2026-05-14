@@ -6,11 +6,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../../components/ui/dialog";
 import StatusBadge from "../../components/StatusBadge";
 import { toast } from "sonner";
-import { Pause, Play, ArrowRightLeft } from "lucide-react";
+import { Check, Pause, Play, ArrowRightLeft, X } from "lucide-react";
 
 export default function AdminStudents() {
   const [items, setItems] = useState([]);
   const [sessions, setSessions] = useState([]);
+  const [pauseRequests, setPauseRequests] = useState([]);
   const [filter, setFilter] = useState("");
   const [enrolFilter, setEnrolFilter] = useState("all"); // all | enrolled | not_enrolled
   const [loading, setLoading] = useState(true);
@@ -21,9 +22,14 @@ export default function AdminStudents() {
 
   const load = async () => {
     setLoading(true);
-    const [s, sess] = await Promise.all([api.get("/students"), api.get("/sessions")]);
+    const [s, sess, pauses] = await Promise.all([
+      api.get("/students"),
+      api.get("/sessions"),
+      api.get("/pause-requests?status=pending"),
+    ]);
     setItems(s.data);
     setSessions(sess.data);
+    setPauseRequests(pauses.data);
     setLoading(false);
   };
   useEffect(() => { load(); }, []);
@@ -39,6 +45,22 @@ export default function AdminStudents() {
   const resume = async (enr, period) => {
     await api.post(`/enrollments/${enr.enrollment_id}/resume-month?period=${period}`);
     toast.success(`Resumed ${period}`); load();
+  };
+
+  const approvePauseRequest = async (requestId) => {
+    try {
+      await api.post(`/pause-requests/${requestId}/approve`, { note: "" });
+      toast.success("Pause request approved");
+      load();
+    } catch (e) { toast.error(formatApiError(e.response?.data?.detail)); }
+  };
+
+  const declinePauseRequest = async (requestId) => {
+    try {
+      await api.post(`/pause-requests/${requestId}/decline`, { note: "" });
+      toast.success("Pause request declined");
+      load();
+    } catch (e) { toast.error(formatApiError(e.response?.data?.detail)); }
   };
 
   const doTransfer = async () => {
@@ -87,6 +109,46 @@ export default function AdminStudents() {
         </div>
       </div>
 
+      {pauseRequests.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-100">
+            <h2 className="font-semibold text-slate-900">Pending pause requests</h2>
+            <p className="text-xs text-slate-500 mt-0.5">Approving skips app billing for that month and pauses Stripe collection immediately if the request is for the current month.</p>
+          </div>
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-xs uppercase tracking-[0.1em] text-slate-500">
+                <th className="px-4 py-3">Student</th><th className="px-4 py-3">Session</th>
+                <th className="px-4 py-3">Parent</th><th className="px-4 py-3">Month</th>
+                <th className="px-4 py-3">Reason</th><th className="px-4 py-3 text-right"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {pauseRequests.map((r) => (
+                <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50">
+                  <td className="px-4 py-3 font-medium text-slate-900">{r.student_name}</td>
+                  <td className="px-4 py-3 text-slate-700">{r.session_name}</td>
+                  <td className="px-4 py-3">
+                    <div className="text-xs text-slate-900">{r.parent_name}</div>
+                    <div className="text-xs text-slate-500">{r.parent_email}</div>
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs">{r.period}</td>
+                  <td className="px-4 py-3 text-slate-600">{r.reason || "—"}</td>
+                  <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
+                    <Button size="sm" onClick={() => approvePauseRequest(r.id)} className="bg-emerald-600 hover:bg-emerald-500 text-white">
+                      <Check className="w-3.5 h-3.5 mr-1.5" /> Approve
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => declinePauseRequest(r.id)}>
+                      <X className="w-3.5 h-3.5 mr-1.5" /> Decline
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-50">
@@ -122,6 +184,8 @@ export default function AdminStudents() {
                       <div className="text-xs text-slate-700">{e.session_name}</div>
                       <div className="flex gap-1 mt-0.5 flex-wrap items-center">
                         <StatusBadge status={e.billing_type === "Standard" ? "active" : (e.billing_type === "NoCharge" ? "excused" : "pending")} />
+                        <StatusBadge status={e.payment_mode || "manual"} />
+                        {e.subscription_status && <StatusBadge status={e.subscription_status} />}
                         {(e.skip_periods || []).length > 0 && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
                             Paused: {(e.skip_periods || []).join(", ")}
@@ -152,9 +216,9 @@ export default function AdminStudents() {
 
       <Dialog open={!!pauseFor} onOpenChange={(v) => !v && setPauseFor(null)}>
         <DialogContent>
-          <DialogHeader><DialogTitle className="font-display tracking-tight">Pause this kid for a month</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="font-display tracking-tight">Pause this student for a month</DialogTitle></DialogHeader>
           <div className="space-y-3">
-            <div className="text-sm text-slate-600">Kid will be skipped from <span className="font-medium">{pauseFor?.session_name}</span> for one month. No payment will be generated for that period. You can resume later.</div>
+            <div className="text-sm text-slate-600">This student will be skipped from <span className="font-medium">{pauseFor?.session_name}</span> for one month. No payment will be generated for that period. You can resume later.</div>
             <div>
               <label className="text-sm text-slate-700">Month to skip</label>
               <Input type="month" value={pausePeriod} onChange={(e) => setPausePeriod(e.target.value)} className="mt-1" data-testid="pause-period-input" />

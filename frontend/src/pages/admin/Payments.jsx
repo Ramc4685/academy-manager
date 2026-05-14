@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, formatApiError, currency, formatDate, currentPeriod } from "../../lib/api";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -19,15 +19,17 @@ export default function AdminPayments() {
   const [discValue, setDiscValue] = useState(0);
   const [payOpen, setPayOpen] = useState(null);
   const [payForm, setPayForm] = useState({ payment_method: "cash", notes: "" });
+  const [refundOpen, setRefundOpen] = useState(null);
+  const [refundForm, setRefundForm] = useState({ amount: "", reason: "" });
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     const q = filter === "all" ? "" : `?status=${filter}`;
     const { data } = await api.get(`/payments${q}`);
     setItems(data);
     setLoading(false);
-  };
-  useEffect(() => { load(); }, [filter]);
+  }, [filter]);
+  useEffect(() => { load(); }, [load]);
 
   const generate = async () => {
     try {
@@ -68,6 +70,18 @@ export default function AdminPayments() {
     } catch (e) { toast.error(formatApiError(e.response?.data?.detail)); }
   };
 
+  const refund = async () => {
+    try {
+      const body = {
+        amount: refundForm.amount ? Number(refundForm.amount) : null,
+        reason: refundForm.reason,
+      };
+      await api.post(`/payments/${refundOpen}/refund`, body);
+      toast.success("Refund recorded");
+      setRefundOpen(null); load();
+    } catch (e) { toast.error(formatApiError(e.response?.data?.detail)); }
+  };
+
   return (
     <div className="space-y-6" data-testid="admin-payments">
       <div className="flex items-end justify-between flex-wrap gap-3">
@@ -97,12 +111,12 @@ export default function AdminPayments() {
             <tr className="text-left text-xs uppercase tracking-[0.1em] text-slate-500">
               <th className="px-4 py-3">Period</th><th className="px-4 py-3">Student</th><th className="px-4 py-3">Session</th>
               <th className="px-4 py-3 text-right">Amount</th><th className="px-4 py-3 text-right">Discount</th>
-              <th className="px-4 py-3 text-right">Final</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Actions</th>
+              <th className="px-4 py-3 text-right">Final</th><th className="px-4 py-3">Invoice</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={8} className="py-10 text-center text-slate-500">Loading…</td></tr>}
-            {!loading && items.length === 0 && <tr><td colSpan={8} className="py-10 text-center text-slate-500">No payments. Click "Generate monthly" to create from active enrollments.</td></tr>}
+            {loading && <tr><td colSpan={9} className="py-10 text-center text-slate-500">Loading…</td></tr>}
+            {!loading && items.length === 0 && <tr><td colSpan={9} className="py-10 text-center text-slate-500">No payments. Click "Generate monthly" to create from active enrollments.</td></tr>}
             {items.map((p) => (
               <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="px-4 py-3 font-mono text-xs">{p.period}</td>
@@ -111,6 +125,7 @@ export default function AdminPayments() {
                 <td className="px-4 py-3 text-right">{currency(p.amount)}</td>
                 <td className="px-4 py-3 text-right text-amber-700">{p.discount ? `−${currency(p.discount)}` : "—"}</td>
                 <td className="px-4 py-3 text-right font-semibold text-blue-600">{currency(p.final_amount)}</td>
+                <td className="px-4 py-3 font-mono text-[11px] text-slate-500">{p.invoice_number || "—"}</td>
                 <td className="px-4 py-3"><StatusBadge status={p.status} /></td>
                 <td className="px-4 py-3 text-right whitespace-nowrap">
                   {p.status === "pending" && (
@@ -120,7 +135,10 @@ export default function AdminPayments() {
                     </>
                   )}
                   {p.status === "paid" && (
-                    <button onClick={() => undoPaid(p.id)} data-testid={`undo-paid-${p.id}`} className="text-xs px-2 py-1 rounded bg-amber-50 text-amber-700 hover:bg-amber-100">Undo</button>
+                    <>
+                      <button onClick={() => { setRefundOpen(p.id); setRefundForm({ amount: "", reason: "" }); }} data-testid={`refund-${p.id}`} className="text-xs px-2 py-1 rounded bg-red-50 text-red-700 hover:bg-red-100">Refund</button>
+                      <button onClick={() => undoPaid(p.id)} data-testid={`undo-paid-${p.id}`} className="text-xs px-2 py-1 rounded bg-amber-50 text-amber-700 hover:bg-amber-100 ml-1">Undo</button>
+                    </>
                   )}
                 </td>
               </tr>
@@ -142,6 +160,20 @@ export default function AdminPayments() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setGenOpen(false)}>Cancel</Button>
             <Button onClick={generate} className="bg-blue-600 hover:bg-blue-500 text-white" data-testid="confirm-generate">Generate</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!refundOpen} onOpenChange={(v) => !v && setRefundOpen(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle className="font-display tracking-tight">Record refund</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div><Label>Amount ($)</Label><Input type="number" value={refundForm.amount} onChange={(e) => setRefundForm({ ...refundForm, amount: e.target.value })} placeholder="Leave blank for full remaining" className="mt-1" /></div>
+            <div><Label>Reason</Label><Input value={refundForm.reason} onChange={(e) => setRefundForm({ ...refundForm, reason: e.target.value })} className="mt-1" /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRefundOpen(null)}>Cancel</Button>
+            <Button onClick={refund} className="bg-blue-600 hover:bg-blue-500 text-white">Refund</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

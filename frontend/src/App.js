@@ -8,6 +8,8 @@ import Layout from "./components/Layout";
 import Login from "./pages/auth/Login";
 import Register from "./pages/auth/Register";
 import AcceptInvite from "./pages/auth/AcceptInvite";
+import ForgotPassword from "./pages/auth/ForgotPassword";
+import ResetPassword from "./pages/auth/ResetPassword";
 
 import AdminDashboard from "./pages/admin/Dashboard";
 import AdminSessions from "./pages/admin/Sessions";
@@ -21,6 +23,7 @@ import AdminAuditLogs from "./pages/admin/AuditLogs";
 import AdminDuesFollowup from "./pages/admin/DuesFollowup";
 import AdminCoachPayslip from "./pages/admin/CoachPayslip";
 import AdminSettings from "./pages/admin/Settings";
+import AdminWaitlist from "./pages/admin/Waitlist";
 import RegisterStudent from "./pages/auth/RegisterStudent";
 
 import CoachDashboard from "./pages/coach/Dashboard";
@@ -67,11 +70,14 @@ function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/register-student" element={<RegisterStudent />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password/:token" element={<ResetPassword />} />
             <Route path="/accept-invite/:token" element={<AcceptInvite />} />
 
             <Route path="/admin/dashboard" element={LR(AdminDashboard, ["admin"])} />
             <Route path="/admin/sessions" element={LR(AdminSessions, ["admin"])} />
             <Route path="/admin/students" element={LR(AdminStudents, ["admin"])} />
+            <Route path="/admin/waitlist" element={LR(AdminWaitlist, ["admin"])} />
             <Route path="/admin/users" element={LR(AdminUsers, ["admin"])} />
             <Route path="/admin/payments" element={LR(AdminPayments, ["admin"])} />
             <Route path="/admin/expenses" element={LR(AdminExpenses, ["admin"])} />

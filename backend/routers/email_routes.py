@@ -41,6 +41,14 @@ async def send_email(to: str, subject: str, html: str) -> dict:
         return {"error": str(e)}
 
 
+def _delivery_status(result: dict) -> tuple[bool, str]:
+    if result.get("error"):
+        return False, result["error"]
+    if result.get("id") == "skipped":
+        return False, "Email provider is not configured"
+    return True, "sent"
+
+
 def _wrap(content: str) -> str:
     return f"""<!doctype html><html><body style="background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;padding:24px;color:#0f172a;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
@@ -71,7 +79,10 @@ async def test_email(body: TestEmailIn, admin=Depends(require_roles("admin"))):
         _wrap("<p>This is a test email from your Badminton Academy Manager.</p>"
               "<p>If you can read this, Resend is wired correctly. 🏸</p>"),
     )
+    delivered, reason = _delivery_status(result)
     await log_audit(admin, "email_test", "email", body.to, str(result))
+    if not delivered:
+        raise HTTPException(status_code=503, detail=reason)
     return {"ok": True, "result": result}
 
 
@@ -96,6 +107,8 @@ async def send_dues_reminders(body: SendRemindersIn, admin=Depends(require_roles
     settings = await db.academy_settings.find_one({"_id": "singleton"}) or {}
     zelle = settings.get("zelle_handle", "the academy")
     sent = 0
+    failed = 0
+    skipped = 0
     for pid, items in by_parent.items():
         parent = await db.users.find_one({"_id": ObjectId(pid)})
         if not parent or not parent.get("email"):
@@ -114,10 +127,18 @@ async def send_dues_reminders(body: SendRemindersIn, admin=Depends(require_roles
             f"<p>Please send payment via <strong>Zelle to {zelle}</strong>, or log in to pay by card.</p>"
             f"<p>Thank you! 🏸</p>"
         )
-        await send_email(parent["email"], "Payment reminder — BLno Badminton Academy", html)
-        sent += 1
-    await log_audit(admin, "email_reminders", "email", "bulk", f"sent={sent}")
-    return {"sent": sent}
+        result = await send_email(parent["email"], "Payment reminder — BLno Badminton Academy", html)
+        delivered, _ = _delivery_status(result)
+        if delivered:
+            sent += 1
+        elif result.get("id") == "skipped":
+            skipped += 1
+        else:
+            failed += 1
+    await log_audit(admin, "email_reminders", "email", "bulk", f"sent={sent}, failed={failed}, skipped={skipped}")
+    if sent == 0 and (failed or skipped):
+        raise HTTPException(status_code=503, detail="No reminders were delivered")
+    return {"sent": sent, "failed": failed, "skipped": skipped}
 
 
 @router.post("/email/welcome/{parent_id}")
@@ -137,5 +158,8 @@ async def email_welcome(parent_id: str, admin=Depends(require_roles("admin"))):
         f"<p>Happy playing! 🏸</p>"
     )
     res = await send_email(parent["email"], "Welcome to BLno Badminton Academy", html)
+    delivered, reason = _delivery_status(res)
     await log_audit(admin, "email_welcome", "email", parent_id, str(res))
-    return {"ok": True}
+    if not delivered:
+        raise HTTPException(status_code=503, detail=reason)
+    return {"ok": True, "result": res}

@@ -1,12 +1,63 @@
 """Iteration 3 tests — Settings, Undo flows, Public register, Stripe, Resend."""
 import os
 import time
+from datetime import datetime, timezone
 import requests
 import pytest
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://shuttle-flow.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://squad-flow.preview.emergentagent.com").rstrip("/")
 ADMIN_EMAIL = "admin@badminton.app"
 ADMIN_PASSWORD = "Admin@12345"
+
+
+def _create_approved_parent_enrollment(admin_session, label="AutoPay"):
+    uniq = int(time.time() * 1000)
+    session_body = {
+        "name": f"TEST {label} Session {uniq}",
+        "skill_level": "beginner",
+        "age_group": "8-12",
+        "start_date": "2026-01-01",
+        "end_date": "2026-12-31",
+        "days_of_week": ["Tue"],
+        "start_time": "17:00",
+        "end_time": "18:00",
+        "location": "Court Auto",
+        "max_students": 4,
+        "monthly_price": 111.0,
+        "status": "active",
+    }
+    sr = admin_session.post(f"{BASE_URL}/api/sessions", json=session_body, timeout=15)
+    assert sr.status_code == 200, sr.text
+    session_id = sr.json()["id"]
+
+    parent_session = requests.Session()
+    email = f"{label.lower()}_{uniq}@example.com"
+    body = {
+        "parent_name": f"TEST {label} Parent",
+        "parent_email": email,
+        "parent_phone": "5551234567",
+        "password": "TestPass123!",
+        "child_first_name": label,
+        "child_last_name": "Kid",
+        "child_dob": "2015-05-10",
+        "child_skill_level": "beginner",
+        "emergency_contact_name": "Emergency",
+        "emergency_contact_phone": "5559998888",
+        "waiver_accepted": True,
+        "session_id": session_id,
+    }
+    r = parent_session.post(f"{BASE_URL}/api/auth/register-full", json=body, timeout=20)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    paid = admin_session.patch(
+        f"{BASE_URL}/api/payments/{data['payment_id']}/mark-paid",
+        json={"payment_method": "cash"},
+        timeout=15,
+    )
+    assert paid.status_code == 200, paid.text
+    approved = admin_session.post(f"{BASE_URL}/api/enrollments/{data['enrollment_id']}/approve", timeout=15)
+    assert approved.status_code == 200, approved.text
+    return parent_session, data["enrollment_id"], session_id
 
 
 # --------- shared session fixtures ---------
@@ -186,6 +237,9 @@ class TestPublicRegister:
         assert r.status_code == 200
         data = r.json()
         assert isinstance(data, list)
+        for session in data:
+            for key in ("max_students", "active_enrollments", "available_seats", "is_full"):
+                assert key in session, f"missing capacity key {key}"
 
     def test_register_full_creates_parent(self):
         s = requests.Session()
@@ -215,6 +269,88 @@ class TestPublicRegister:
         assert me.status_code == 200
         assert me.json()["email"] == email
 
+    def test_register_full_with_session_creates_registration_payment(self, admin_session):
+        uniq = int(time.time() * 1000)
+        session_body = {
+            "name": f"TEST Payment Gated Session {uniq}",
+            "skill_level": "beginner",
+            "age_group": "8-12",
+            "start_date": "2026-01-01",
+            "end_date": "2026-12-31",
+            "days_of_week": ["Mon"],
+            "start_time": "13:00",
+            "end_time": "14:00",
+            "location": "Court 8",
+            "max_students": 3,
+            "monthly_price": 123.0,
+            "status": "active",
+        }
+        sr = admin_session.post(f"{BASE_URL}/api/sessions", json=session_body, timeout=15)
+        assert sr.status_code == 200, sr.text
+        session_id = sr.json()["id"]
+
+        s = requests.Session()
+        email = f"pay_gated_{uniq}@example.com"
+        body = {
+            "parent_name": "Payment Parent",
+            "parent_email": email,
+            "parent_phone": "5551234567",
+            "password": "TestPass123!",
+            "child_first_name": "Pay",
+            "child_last_name": "Kid",
+            "child_dob": "2015-05-10",
+            "child_skill_level": "beginner",
+            "emergency_contact_name": "Emergency",
+            "emergency_contact_phone": "5559998888",
+            "waiver_accepted": True,
+            "session_id": session_id,
+        }
+        r = s.post(f"{BASE_URL}/api/auth/register-full", json=body, timeout=20)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["enrollment_id"]
+        assert data["payment_id"]
+        assert data.get("waitlisted") is False
+
+        student = admin_session.get(f"{BASE_URL}/api/students/{data['student_id']}", timeout=15)
+        assert student.status_code == 200, student.text
+        assert student.json().get("waiver_version")
+        assert student.json().get("waiver_text_hash")
+
+        payments = s.get(f"{BASE_URL}/api/payments", timeout=15)
+        assert payments.status_code == 200, payments.text
+        payment = next(p for p in payments.json() if p["id"] == data["payment_id"])
+        assert payment["status"] == "pending"
+        assert payment["payment_type"] == "registration"
+        assert payment["final_amount"] == 123.0
+
+        enrollments = admin_session.get(f"{BASE_URL}/api/enrollments", params={"session_id": session_id}, timeout=15)
+        assert enrollments.status_code == 200, enrollments.text
+        enrollment = next(e for e in enrollments.json() if e["id"] == data["enrollment_id"])
+        assert enrollment["approval_status"] == "pending_payment"
+
+        paid = admin_session.patch(
+            f"{BASE_URL}/api/payments/{data['payment_id']}/mark-paid",
+            json={"payment_method": "cash"},
+            timeout=15,
+        )
+        assert paid.status_code == 200, paid.text
+        after = admin_session.get(f"{BASE_URL}/api/enrollments", params={"session_id": session_id}, timeout=15)
+        enrollment_after = next(e for e in after.json() if e["id"] == data["enrollment_id"])
+        assert enrollment_after["approval_status"] == "pending"
+
+        refund = admin_session.post(
+            f"{BASE_URL}/api/payments/{data['payment_id']}/refund",
+            json={"amount": 23, "reason": "test partial refund"},
+            timeout=15,
+        )
+        assert refund.status_code == 200, refund.text
+        assert refund.json()["refund_status"] == "partially_refunded"
+
+        waivers = admin_session.get(f"{BASE_URL}/api/reports/waivers.csv", timeout=15)
+        assert waivers.status_code == 200
+        assert "Version" in waivers.text
+
     def test_register_full_duplicate_email(self, admin_session):
         body = {
             "parent_name": "Dup", "parent_email": ADMIN_EMAIL,
@@ -239,6 +375,123 @@ class TestPublicRegister:
         r = requests.post(f"{BASE_URL}/api/auth/register-full", json=body, timeout=15)
         assert r.status_code == 400
 
+    def test_register_full_waitlists_full_session(self, admin_session):
+        uniq = int(time.time() * 1000)
+        session_body = {
+            "name": f"TEST Full Public Session {uniq}",
+            "skill_level": "beginner",
+            "age_group": "8-12",
+            "start_date": "2026-01-01",
+            "end_date": "2026-12-31",
+            "days_of_week": ["Sat"],
+            "start_time": "09:00",
+            "end_time": "10:00",
+            "location": "Court 9",
+            "max_students": 1,
+            "monthly_price": 100.0,
+            "status": "active",
+        }
+        sr = admin_session.post(f"{BASE_URL}/api/sessions", json=session_body, timeout=15)
+        assert sr.status_code == 200, sr.text
+        session_id = sr.json()["id"]
+
+        existing_student = {
+            "first_name": "TESTFull",
+            "last_name": "Seat",
+            "dob": "2015-01-01",
+            "skill_level": "beginner",
+            "emergency_contact_name": "Admin",
+            "emergency_contact_phone": "5550001111",
+            "waiver_accepted": True,
+        }
+        child = admin_session.post(f"{BASE_URL}/api/students", json=existing_student, timeout=15)
+        assert child.status_code == 200, child.text
+        enrollment = admin_session.post(
+            f"{BASE_URL}/api/enrollments",
+            json={"student_id": child.json()["id"], "session_id": session_id},
+            timeout=15,
+        )
+        assert enrollment.status_code == 200, enrollment.text
+        enrollment_id = enrollment.json()["id"]
+
+        full = admin_session.get(f"{BASE_URL}/api/sessions/{session_id}", timeout=15)
+        assert full.status_code == 200
+        session_info = full.json()
+        assert session_info["available_seats"] == 0
+        assert session_info["is_full"] is True
+
+        email = f"full_session_{uniq}@example.com"
+        body = {
+            "parent_name": "Full Session Parent",
+            "parent_email": email,
+            "parent_phone": "5551234567",
+            "password": "TestPass123!",
+            "child_first_name": "Full",
+            "child_last_name": "Kid",
+            "child_dob": "2015-05-10",
+            "child_skill_level": "beginner",
+            "emergency_contact_name": "Emergency",
+            "emergency_contact_phone": "5559998888",
+            "waiver_accepted": True,
+            "session_id": session_id,
+        }
+        r = requests.post(f"{BASE_URL}/api/auth/register-full", json=body, timeout=20)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["waitlisted"] is True
+        assert data["waitlist_id"]
+        assert data["enrollment_id"] is None
+
+        login = requests.post(
+            f"{BASE_URL}/api/auth/login",
+            json={"email": email, "password": "TestPass123!"},
+            timeout=15,
+        )
+        assert login.status_code == 200
+
+        waitlist = admin_session.get(f"{BASE_URL}/api/waitlist", params={"status": "waiting"}, timeout=15)
+        assert waitlist.status_code == 200, waitlist.text
+        assert any(w["id"] == data["waitlist_id"] for w in waitlist.json())
+
+        cancel = admin_session.post(f"{BASE_URL}/api/enrollments/{enrollment_id}/cancel", timeout=15)
+        assert cancel.status_code == 200, cancel.text
+        cancel_again = admin_session.post(f"{BASE_URL}/api/enrollments/{enrollment_id}/cancel", timeout=15)
+        assert cancel_again.status_code == 200, cancel_again.text
+        reopened = admin_session.get(f"{BASE_URL}/api/sessions/{session_id}", timeout=15)
+        assert reopened.status_code == 200
+        reopened_info = reopened.json()
+        assert reopened_info["available_seats"] == 0
+        assert reopened_info["is_full"] is True
+        offered = admin_session.get(f"{BASE_URL}/api/waitlist", params={"status": "offered"}, timeout=15)
+        assert offered.status_code == 200, offered.text
+        assert any(w["id"] == data["waitlist_id"] for w in offered.json())
+
+        target_body = {
+            **session_body,
+            "name": f"TEST Transfer Target {uniq}",
+            "days_of_week": ["Sun"],
+            "start_time": "11:00",
+            "end_time": "12:00",
+        }
+        target = admin_session.post(f"{BASE_URL}/api/sessions", json=target_body, timeout=15)
+        assert target.status_code == 200, target.text
+        target_id = target.json()["id"]
+        transfer = admin_session.post(
+            f"{BASE_URL}/api/enrollments/{enrollment_id}/transfer",
+            json={
+                "to_session_id": target_id,
+                "effective_month": "2026-06",
+                "permanent": True,
+                "note": "cancelled enrollment should not reserve target",
+            },
+            timeout=15,
+        )
+        assert transfer.status_code == 400
+        after_transfer = admin_session.get(f"{BASE_URL}/api/sessions/{target_id}", timeout=15)
+        assert after_transfer.status_code == 200
+        target_info = after_transfer.json()
+        assert target_info["available_seats"] == 1
+
 
 # --------- Stripe checkout ---------
 class TestStripe:
@@ -250,9 +503,17 @@ class TestStripe:
         if not pending:
             pytest.skip("no pending payment")
         pid = pending[0]["id"]
+        cfg = admin_session.get(f"{BASE_URL}/api/billing/config", timeout=15)
+        assert cfg.status_code == 200, cfg.text
+        stripe_configured = cfg.json().get("stripe_configured") is True
+        origin_url = os.environ.get("FRONTEND_URL", "http://localhost:3000")
         r = admin_session.post(f"{BASE_URL}/api/billing/checkout-session",
-                               json={"payment_id": pid, "origin_url": "https://shuttle-flow.preview.emergentagent.com"},
+                               json={"payment_id": pid, "origin_url": origin_url},
                                timeout=30)
+        if not stripe_configured:
+            assert r.status_code == 503
+            assert "Stripe is not configured" in r.text
+            return
         assert r.status_code == 200, r.text
         d = r.json()
         assert "url" in d and "session_id" in d
@@ -268,22 +529,91 @@ class TestStripe:
         sd = rs.json()
         assert "status" in sd and "payment_status" in sd
 
+    def test_subscription_checkout_returns_url(self, admin_session):
+        parent_session, enrollment_id, _ = _create_approved_parent_enrollment(admin_session, "SubCheckout")
+        cfg = admin_session.get(f"{BASE_URL}/api/billing/config", timeout=15)
+        assert cfg.status_code == 200, cfg.text
+        stripe_configured = cfg.json().get("stripe_configured") is True
+        origin_url = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+        r = parent_session.post(
+            f"{BASE_URL}/api/billing/subscription-checkout",
+            json={"enrollment_id": enrollment_id, "origin_url": origin_url},
+            timeout=30,
+        )
+        if not stripe_configured:
+            assert r.status_code == 503
+            return
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["url"].startswith("https://checkout.stripe.com/")
+        assert d["session_id"].startswith("cs_")
+
+
+class TestPauseRequests:
+    def test_parent_pause_request_admin_approval(self, admin_session):
+        parent_session, enrollment_id, _ = _create_approved_parent_enrollment(admin_session, "Pause")
+        period = datetime.now(timezone.utc).strftime("%Y-%m")
+        request = parent_session.post(
+            f"{BASE_URL}/api/pause-requests",
+            json={"enrollment_id": enrollment_id, "period": period, "reason": "test pause"},
+            timeout=15,
+        )
+        assert request.status_code == 200, request.text
+        request_id = request.json()["id"]
+        assert request.json()["status"] == "pending"
+
+        parent_list = parent_session.get(f"{BASE_URL}/api/pause-requests?status=pending", timeout=15)
+        assert parent_list.status_code == 200, parent_list.text
+        assert any(p["id"] == request_id for p in parent_list.json())
+
+        admin_list = admin_session.get(f"{BASE_URL}/api/pause-requests?status=pending", timeout=15)
+        assert admin_list.status_code == 200, admin_list.text
+        assert any(p["id"] == request_id for p in admin_list.json())
+
+        approved = admin_session.post(f"{BASE_URL}/api/pause-requests/{request_id}/approve", json={"note": ""}, timeout=20)
+        assert approved.status_code == 200, approved.text
+        assert period in approved.json()["skip_periods"]
+
+        enrollments = admin_session.get(f"{BASE_URL}/api/enrollments", timeout=15)
+        assert enrollments.status_code == 200, enrollments.text
+        enrollment = next(e for e in enrollments.json() if e["id"] == enrollment_id)
+        assert period in enrollment.get("skip_periods", [])
+
+    def test_parent_cannot_pause_other_parent_enrollment(self, admin_session):
+        parent_session, enrollment_id, _ = _create_approved_parent_enrollment(admin_session, "PauseOwn")
+        other_parent, _, _ = _create_approved_parent_enrollment(admin_session, "PauseOther")
+        period = datetime.now(timezone.utc).strftime("%Y-%m")
+        r = other_parent.post(
+            f"{BASE_URL}/api/pause-requests",
+            json={"enrollment_id": enrollment_id, "period": period, "reason": "bad"},
+            timeout=15,
+        )
+        assert r.status_code == 403
+
 
 # --------- Email ---------
 class TestEmail:
     def test_email_test_endpoint(self, admin_session):
         r = admin_session.post(f"{BASE_URL}/api/email/test",
                                json={"to": "blnobadminton@gmail.com"}, timeout=30)
+        if not os.environ.get("RESEND_API_KEY", "").startswith("re_"):
+            assert r.status_code == 503
+            assert "not configured" in r.text
+            return
         assert r.status_code == 200, r.text
         d = r.json()
         assert d.get("ok") is True
-        # 'result' is present whether real-sent or test-mode error
         assert "result" in d
 
     def test_send_dues_reminders_returns_count(self, admin_session):
         r = admin_session.post(f"{BASE_URL}/api/email/send-dues-reminders",
                                json={}, timeout=60)
+        if not os.environ.get("RESEND_API_KEY", "").startswith("re_"):
+            assert r.status_code == 503
+            assert "No reminders were delivered" in r.text
+            return
         assert r.status_code == 200, r.text
         d = r.json()
         assert "sent" in d
         assert isinstance(d["sent"], int)
+        assert "failed" in d and "skipped" in d

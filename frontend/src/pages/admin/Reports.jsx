@@ -7,6 +7,7 @@ const REPORTS = [
   { key: "attendance", label: "Attendance", description: "All attendance markings (latest 5,000)." },
   { key: "coach-payouts", label: "Coach payouts", description: "All payouts with approval/payment state." },
   { key: "profit", label: "Profit by month", description: "Aggregated revenue, expenses, and net profit per month." },
+  { key: "waivers", label: "Waivers", description: "Waiver acceptance records with version and text hash." },
 ];
 
 export default function AdminReports() {

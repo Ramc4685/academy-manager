@@ -13,60 +13,79 @@ def _thread_id(a: str, b: str) -> str:
     return ":".join(sorted([a, b]))
 
 
+def _oid(s: str) -> ObjectId:
+    try:
+        return ObjectId(s)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid id")
+
+
+async def _allowed_contact_ids(db, user: dict) -> set[str]:
+    """Return user ids the current user may message."""
+    if user["role"] == "admin":
+        users = await db.users.find(
+            {"_id": {"$ne": ObjectId(user["id"])}, "status": {"$ne": "deleted"}},
+            {"_id": 1},
+        ).to_list(2000)
+        return {str(u["_id"]) for u in users}
+
+    admins = await db.users.find(
+        {"role": "admin", "status": {"$ne": "deleted"}},
+        {"_id": 1},
+    ).to_list(100)
+    allowed = {str(u["_id"]) for u in admins if str(u["_id"]) != user["id"]}
+
+    if user["role"] == "coach":
+        sessions = await db.sessions.find(
+            {"coach_id": user["id"], "is_deleted": {"$ne": True}},
+            {"_id": 1},
+        ).to_list(500)
+        session_ids = [str(s["_id"]) for s in sessions]
+        enrolls = await db.enrollments.find(
+            {"session_id": {"$in": session_ids}, "status": "active", "is_deleted": {"$ne": True}},
+            {"parent_user_id": 1},
+        ).to_list(2000)
+        allowed.update(e["parent_user_id"] for e in enrolls if e.get("parent_user_id"))
+    elif user["role"] == "parent":
+        students = await db.students.find(
+            {"parent_user_id": user["id"], "is_deleted": {"$ne": True}},
+            {"_id": 1},
+        ).to_list(50)
+        student_ids = [str(s["_id"]) for s in students]
+        enrolls = await db.enrollments.find(
+            {"student_id": {"$in": student_ids}, "status": "active", "is_deleted": {"$ne": True}},
+            {"session_id": 1},
+        ).to_list(500)
+        session_ids = list({e["session_id"] for e in enrolls})
+        if session_ids:
+            async for s in db.sessions.find(
+                {"_id": {"$in": [ObjectId(x) for x in session_ids]}, "is_deleted": {"$ne": True}},
+                {"coach_id": 1},
+            ):
+                if s.get("coach_id"):
+                    allowed.add(s["coach_id"])
+
+    allowed.discard(user["id"])
+    return allowed
+
+
 # ----------------- /api/messages/contacts -----------------
 @router.get("/messages/contacts")
 async def list_contacts(user=Depends(get_current_user)):
     """Return the list of users this person is allowed to message."""
     db = get_db()
     if user["role"] == "admin":
-        cursor = db.users.find(
-            {"_id": {"$ne": ObjectId(user["id"])}, "status": {"$ne": "deleted"}},
-            {"password_hash": 0},
-        )
-    elif user["role"] == "coach":
-        # Coaches see admins + parents of students in their sessions
-        sessions = await db.sessions.find({"coach_id": user["id"]}, {"_id": 1}).to_list(500)
-        sids = [str(s["_id"]) for s in sessions]
-        enrolls = await db.enrollments.find(
-            {"session_id": {"$in": sids}, "status": "active"}, {"parent_user_id": 1},
-        ).to_list(2000)
-        parent_ids = list({e["parent_user_id"] for e in enrolls if e.get("parent_user_id")})
-        admins = [u async for u in db.users.find({"role": "admin", "status": {"$ne": "deleted"}}, {"password_hash": 0})]
-        parents = []
-        if parent_ids:
-            parents = [u async for u in db.users.find(
-                {"_id": {"$in": [ObjectId(p) for p in parent_ids]}, "status": {"$ne": "deleted"}},
-                {"password_hash": 0},
-            )]
-        items = admins + parents
-        for it in items:
-            it["id"] = str(it.pop("_id"))
-        return items
-    elif user["role"] == "parent":
-        # Parents see admins + coaches of their kids' sessions
-        students = await db.students.find({"parent_user_id": user["id"]}, {"_id": 1}).to_list(50)
-        sids = [str(s["_id"]) for s in students]
-        enrolls = await db.enrollments.find(
-            {"student_id": {"$in": sids}, "status": "active"}, {"session_id": 1},
-        ).to_list(500)
-        sess_ids = list({e["session_id"] for e in enrolls})
-        coach_ids = set()
-        async for s in db.sessions.find({"_id": {"$in": [ObjectId(x) for x in sess_ids]}}, {"coach_id": 1}):
-            if s.get("coach_id"):
-                coach_ids.add(s["coach_id"])
-        admins = [u async for u in db.users.find({"role": "admin", "status": {"$ne": "deleted"}}, {"password_hash": 0})]
-        coaches = []
-        if coach_ids:
-            coaches = [u async for u in db.users.find(
-                {"_id": {"$in": [ObjectId(c) for c in coach_ids]}}, {"password_hash": 0},
-            )]
-        items = admins + coaches
-        for it in items:
-            it["id"] = str(it.pop("_id"))
-        return items
+        allowed = await _allowed_contact_ids(db, user)
+    elif user["role"] in ("coach", "parent"):
+        allowed = await _allowed_contact_ids(db, user)
     else:
         return []
-    items = await cursor.to_list(2000)
+    if not allowed:
+        return []
+    items = await db.users.find(
+        {"_id": {"$in": [ObjectId(uid) for uid in allowed]}, "status": {"$ne": "deleted"}},
+        {"password_hash": 0},
+    ).to_list(2000)
     for it in items:
         it["id"] = str(it.pop("_id"))
     return items
@@ -107,6 +126,11 @@ async def list_threads(user=Depends(get_current_user)):
 @router.get("/messages/thread/{other_user_id}")
 async def get_thread(other_user_id: str, user=Depends(get_current_user)):
     db = get_db()
+    other = await db.users.find_one({"_id": _oid(other_user_id), "status": {"$ne": "deleted"}})
+    if not other:
+        raise HTTPException(status_code=404, detail="Recipient not found")
+    if other_user_id not in await _allowed_contact_ids(db, user):
+        raise HTTPException(status_code=403, detail="Forbidden")
     tid = _thread_id(user["id"], other_user_id)
     cursor = db.messages.find({"thread_id": tid}).sort("created_at", 1)
     msgs = await cursor.to_list(2000)
@@ -123,9 +147,11 @@ async def get_thread(other_user_id: str, user=Depends(get_current_user)):
 @router.post("/messages")
 async def send_message(body: MessageIn, user=Depends(get_current_user)):
     db = get_db()
-    other = await db.users.find_one({"_id": ObjectId(body.to_user_id)})
+    other = await db.users.find_one({"_id": _oid(body.to_user_id), "status": {"$ne": "deleted"}})
     if not other:
         raise HTTPException(status_code=404, detail="Recipient not found")
+    if body.to_user_id not in await _allowed_contact_ids(db, user):
+        raise HTTPException(status_code=403, detail="Forbidden")
     tid = _thread_id(user["id"], body.to_user_id)
     doc = {
         "thread_id": tid,

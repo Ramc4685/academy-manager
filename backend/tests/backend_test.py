@@ -87,6 +87,8 @@ class TestAuth:
         assert r.status_code == 200
         data = r.json()
         assert data["role"] == "parent"
+        state["other_parent_id"] = data["id"]
+        state["other_parent_session"] = s
         me = s.get(f"{API}/auth/me").json()
         assert me["email"] == email.lower()
 
@@ -134,7 +136,10 @@ class TestInvites:
         r = s.post(f"{API}/invites/accept/{state['invite_token']}",
                    json={"password": "NewPass@123", "name": "Invited Coach"})
         assert r.status_code == 200, r.text
-        assert r.json()["role"] == "coach"
+        data = r.json()
+        assert data["role"] == "coach"
+        state["other_coach_id"] = data["id"]
+        state["other_coach_session"] = s
 
 
 # ============================================================
@@ -192,6 +197,26 @@ class TestSessions:
         for s in r.json():
             assert s.get("coach_id") == state["coach_id"]
 
+    def test_create_second_coach_session(self):
+        body = {
+            "name": "TEST Other Coach Session",
+            "skill_level": "beginner",
+            "age_group": "8-12",
+            "start_date": "2026-01-01",
+            "end_date": "2026-12-31",
+            "days_of_week": ["Tue"],
+            "start_time": "18:00",
+            "end_time": "19:00",
+            "location": "Court 2",
+            "max_students": 10,
+            "monthly_price": 100.0,
+            "coach_id": state["other_coach_id"],
+            "status": "active",
+        }
+        r = state["admin_session"].post(f"{API}/sessions", json=body)
+        assert r.status_code == 200, r.text
+        state["other_session_id"] = r.json()["id"]
+
 
 # ============================================================
 # 5) Students + Enrollments (parent flow)
@@ -223,12 +248,86 @@ class TestParentFlow:
         r = state["parent_session"].post(f"{API}/enrollments", json=body)
         assert r.status_code == 200, r.text
         state["enrollment_id"] = r.json()["id"]
+        approve = state["admin_session"].post(f"{API}/enrollments/{state['enrollment_id']}/approve")
+        assert approve.status_code == 200, approve.text
 
     def test_capacity_check(self):
         # try to enroll same student again -> Already enrolled
         body = {"student_id": state["student_id"], "session_id": state["session_id"]}
         r = state["parent_session"].post(f"{API}/enrollments", json=body)
         assert r.status_code == 400
+
+    def test_admin_creates_other_student_and_enrollment(self):
+        body = {
+            "first_name": "TEST",
+            "last_name": "OtherChild",
+            "dob": "2016-05-01",
+            "skill_level": "beginner",
+            "emergency_contact_name": "Admin",
+            "emergency_contact_phone": "555-2222",
+            "waiver_accepted": True,
+        }
+        r = state["admin_session"].post(f"{API}/students", json=body)
+        assert r.status_code == 200, r.text
+        state["other_student_id"] = r.json()["id"]
+
+        er = state["admin_session"].post(
+            f"{API}/enrollments",
+            json={"student_id": state["other_student_id"], "session_id": state["other_session_id"]},
+        )
+        assert er.status_code == 200, er.text
+        state["other_enrollment_id"] = er.json()["id"]
+
+
+class TestAuthorizationBoundaries:
+    def test_coach_cannot_filter_students_by_another_coachs_session(self):
+        r = state["coach_session"].get(f"{API}/students", params={"session_id": state["other_session_id"]})
+        assert r.status_code == 403
+
+    def test_coach_cannot_filter_enrollments_by_another_coachs_session(self):
+        r = state["coach_session"].get(f"{API}/enrollments", params={"session_id": state["other_session_id"]})
+        assert r.status_code == 403
+
+    def test_coach_cannot_filter_attendance_by_another_coachs_session(self):
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        body = {
+            "session_id": state["other_session_id"],
+            "date": today,
+            "items": [{"student_id": state["other_student_id"], "status": "present"}],
+        }
+        admin_mark = state["admin_session"].post(f"{API}/attendance/bulk", json=body)
+        assert admin_mark.status_code == 200, admin_mark.text
+
+        r = state["coach_session"].get(f"{API}/attendance", params={"session_id": state["other_session_id"]})
+        assert r.status_code == 403
+
+    def test_coach_cannot_create_progress_note_for_unassigned_student(self):
+        body = {
+            "student_id": state["other_student_id"],
+            "session_id": state["other_session_id"],
+            "note": "TEST unauthorized note",
+        }
+        r = state["coach_session"].post(f"{API}/progress-notes", json=body)
+        assert r.status_code == 403
+
+    def test_coach_cannot_filter_progress_notes_by_unassigned_student(self):
+        body = {
+            "student_id": state["other_student_id"],
+            "session_id": state["other_session_id"],
+            "note": "TEST authorized other coach note",
+        }
+        created = state["other_coach_session"].post(f"{API}/progress-notes", json=body)
+        assert created.status_code == 200, created.text
+
+        r = state["coach_session"].get(f"{API}/progress-notes", params={"student_id": state["other_student_id"]})
+        assert r.status_code == 403
+
+    def test_parent_cannot_message_arbitrary_parent(self):
+        r = state["parent_session"].post(
+            f"{API}/messages",
+            json={"to_user_id": state["other_parent_id"], "body": "TEST unauthorized parent message"},
+        )
+        assert r.status_code == 403
 
 
 # ============================================================

@@ -47,16 +47,30 @@ def create_refresh_token(user_id: str) -> str:
     return jwt.encode(payload, _secret(), algorithm=JWT_ALGORITHM)
 
 
+def _cookie_options() -> dict:
+    secure_env = os.environ.get("COOKIE_SECURE")
+    if secure_env is None:
+        secure = os.environ.get("APP_ENV", "").lower() in {"production", "prod"}
+    else:
+        secure = secure_env.lower() in {"1", "true", "yes", "on"}
+    return {
+        "httponly": True,
+        "secure": secure,
+        "samesite": "none" if secure else "lax",
+        "path": "/",
+    }
+
+
 def set_auth_cookies(response: Response, access: str, refresh: str):
-    response.set_cookie("access_token", access, httponly=True, secure=True, samesite="none",
-                        max_age=ACCESS_MIN * 60, path="/")
-    response.set_cookie("refresh_token", refresh, httponly=True, secure=True, samesite="none",
-                        max_age=REFRESH_DAYS * 86400, path="/")
+    opts = _cookie_options()
+    response.set_cookie("access_token", access, max_age=ACCESS_MIN * 60, **opts)
+    response.set_cookie("refresh_token", refresh, max_age=REFRESH_DAYS * 86400, **opts)
 
 
 def clear_auth_cookies(response: Response):
-    response.delete_cookie("access_token", path="/")
-    response.delete_cookie("refresh_token", path="/")
+    opts = _cookie_options()
+    response.delete_cookie("access_token", path=opts["path"], secure=opts["secure"], samesite=opts["samesite"])
+    response.delete_cookie("refresh_token", path=opts["path"], secure=opts["secure"], samesite=opts["samesite"])
 
 
 def _extract_token(request: Request) -> str | None:

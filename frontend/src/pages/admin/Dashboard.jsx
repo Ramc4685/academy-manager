@@ -1,19 +1,30 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import { currency, formatDate, currentPeriod } from "../../lib/api";
 import KPICard from "../../components/KPICard";
 import StatusBadge from "../../components/StatusBadge";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
+import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 
 export default function AdminDashboard() {
   const [period, setPeriod] = useState(currentPeriod());
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const chartRef = useRef(null);
+  const [chartWidth, setChartWidth] = useState(0);
 
   useEffect(() => {
     setLoading(true);
     api.get(`/dashboard/admin?period=${period}`).then((r) => setData(r.data)).finally(() => setLoading(false));
   }, [period]);
+
+  useEffect(() => {
+    if (!data || !chartRef.current) return undefined;
+    const update = () => setChartWidth(Math.floor(chartRef.current.getBoundingClientRect().width));
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(chartRef.current);
+    return () => observer.disconnect();
+  }, [data]);
 
   if (loading || !data) {
     return (
@@ -59,11 +70,11 @@ export default function AdminDashboard() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-        <div className="lg:col-span-3 bg-white border border-slate-200 rounded-xl p-6">
+        <div className="lg:col-span-3 min-w-0 bg-white border border-slate-200 rounded-xl p-6">
           <h3 className="text-lg font-display font-semibold tracking-tight text-slate-900">Profit Trend (last 6 months)</h3>
-          <div className="mt-4 h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data.trend}>
+          <div ref={chartRef} className="mt-4 h-72 min-h-72 min-w-0">
+            {chartWidth > 0 && (
+              <LineChart width={chartWidth} height={288} data={data.trend}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
                 <XAxis dataKey="period" stroke="#64748B" fontSize={12} />
                 <YAxis stroke="#64748B" fontSize={12} />
@@ -73,7 +84,7 @@ export default function AdminDashboard() {
                 <Line type="monotone" dataKey="expenses" stroke="#0F172A" strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="profit" stroke="#FACC15" strokeWidth={2.5} dot={{ r: 3 }} />
               </LineChart>
-            </ResponsiveContainer>
+            )}
           </div>
         </div>
         <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-6">

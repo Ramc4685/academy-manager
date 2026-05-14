@@ -114,8 +114,32 @@ class DiscountIn(BaseModel):
     discount: float
 
 
+class RefundPaymentIn(BaseModel):
+    amount: Optional[float] = None
+    reason: Optional[str] = ""
+
+
 class GenerateMonthlyIn(BaseModel):
     period: str  # YYYY-MM
+
+
+class SubscriptionCheckoutIn(BaseModel):
+    enrollment_id: str
+    origin_url: str
+
+
+class CustomerPortalIn(BaseModel):
+    origin_url: str
+
+
+class PauseRequestIn(BaseModel):
+    enrollment_id: str
+    period: str  # YYYY-MM
+    reason: Optional[str] = ""
+
+
+class PauseRequestDecisionIn(BaseModel):
+    note: Optional[str] = ""
 
 
 # ---- Expenses ----

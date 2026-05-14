@@ -34,6 +34,11 @@ export default function RegisterStudent() {
   }, []);
 
   const update = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  const seatsLabel = (session) => {
+    if (session.is_full) return "Full";
+    if (typeof session.available_seats === "number") return `${session.available_seats} spots left`;
+    return "Open";
+  };
 
   const validateStep1 = () => {
     if (!form.parent_name || !form.parent_email || !form.parent_phone || !form.password) {
@@ -55,8 +60,22 @@ export default function RegisterStudent() {
     setBusy(true);
     try {
       const { data } = await api.post("/auth/register-full", { ...form, session_id: form.session_id || null });
-      toast.success(`Welcome ${data.name}! Your account is active.`);
+      toast.success(data.waitlisted ? "Registration complete. Your child is on the waitlist." : data.enrollment_id ? "Registration complete. Enrollment is pending approval." : `Welcome ${data.name}! Your account is active.`);
       await refresh();
+      if (data.payment_id) {
+        try {
+          const checkout = await api.post("/billing/checkout-session", {
+            payment_id: data.payment_id,
+            origin_url: window.location.origin,
+          });
+          window.location.href = checkout.data.url;
+          return;
+        } catch (checkoutError) {
+          toast.error(formatApiError(checkoutError.response?.data?.detail));
+          navigate("/parent/payments", { replace: true });
+          return;
+        }
+      }
       navigate("/parent/dashboard", { replace: true });
     } catch (e) {
       toast.error(formatApiError(e.response?.data?.detail));
@@ -145,10 +164,19 @@ export default function RegisterStudent() {
                 <div className="text-xs text-slate-500 mt-1">Admin will enroll later</div>
               </button>
               {sessions.map((s) => (
-                <button key={s.id} onClick={() => setForm({ ...form, session_id: s.id })} className={`text-left p-4 rounded-xl border-2 transition-all ${form.session_id === s.id ? "border-blue-600 bg-blue-50" : "border-slate-200 hover:border-slate-300"}`} data-testid={`reg-session-${s.id}`}>
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => setForm({ ...form, session_id: s.id })}
+                  className={`text-left p-4 rounded-xl border-2 transition-all ${form.session_id === s.id ? "border-blue-600 bg-blue-50" : "border-slate-200 hover:border-slate-300"}`}
+                  data-testid={`reg-session-${s.id}`}
+                >
                   <div className="font-medium text-slate-900 text-sm">{s.name}</div>
                   <div className="text-xs text-slate-500 mt-1 capitalize">{s.skill_level} · {s.start_time}–{s.end_time}</div>
-                  <div className="text-blue-600 font-semibold text-sm mt-1.5">{currency(s.monthly_price)}/mo</div>
+                  <div className="flex items-center justify-between gap-2 mt-1.5">
+                    <span className="text-blue-600 font-semibold text-sm">{currency(s.monthly_price)}/mo</span>
+                    <span className={`text-xs font-semibold ${s.is_full ? "text-amber-600" : "text-emerald-600"}`}>{s.is_full ? "Join waitlist" : seatsLabel(s)}</span>
+                  </div>
                 </button>
               ))}
             </div>

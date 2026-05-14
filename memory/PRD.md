@@ -1,8 +1,8 @@
 # Badminton Academy Manager — PRD & Roadmap
 
 > **Owner:** BLno Badminton Academy
-> **Stack:** FastAPI + MongoDB Motor + JWT (httpOnly cookies) · React 19 + Tailwind + shadcn/ui + Recharts · Stripe (test mode via emergentintegrations) · Resend (transactional email)
-> **Status:** Phase 1+2+3 shipped. Phase 4+ documented below.
+> **Stack:** FastAPI + MongoDB Motor + JWT (httpOnly cookies) · React 19 + Tailwind + shadcn/ui + Recharts · Stripe SDK · Resend (transactional email)
+> **Status:** Phase 1+2+3 shipped. Phase 4 production-readiness baseline partially shipped; remaining Phase 4+ documented below.
 
 ---
 
@@ -10,15 +10,16 @@
 
 - **Backend:** `/app/backend/server.py` mounts a single `/api`-prefixed router that includes:
   - `auth_routes` — auth, invites, users (admin edit + reset password), public registration
-  - `sessions_routes` — sessions CRUD, students, enrollments, transfer, pause-month, move-log, approve
+  - `sessions_routes` — sessions CRUD, students, enrollments, transfer, pause-month, parent pause requests, move-log, approve
   - `finance_routes` — payments (incl. undo-paid, generate-monthly, discount), expenses, payout rules, coach payouts (calc/approve/pay + undo)
   - `coaching_routes` — attendance (bulk), lesson plans, progress notes
   - `comms_routes` — `/messages/contacts` (role-scoped), messages, notifications
   - `dashboard_routes` — admin / coach / parent dashboards, CSV reports, audit logs
   - `extras_routes` — dues followup w/ WhatsApp, coach payslip, pending approvals
   - `settings_routes` — academy settings singleton, payout basis per coach
-  - `billing_routes` — Stripe Checkout (create + status + webhook)
+  - `billing_routes` — Stripe Checkout, Stripe Billing subscriptions, Customer Portal, status + webhook
   - `email_routes` — Resend test email, welcome, bulk dues reminders
+  - `waitlist_routes` — waitlist listing, parent/admin join, admin conversion to enrollment
 
 - **Roles:** `admin`, `coach`, `parent`, `student` (Phase 4)
 
@@ -28,8 +29,8 @@
 
 - **Design system:** Outfit (display) + Manrope (body) fonts, blue (`#2563EB`) + yellow (`#FACC15`) + slate accents, no purple/violet gradients, card-based with subtle hover-lift
 
-- **MongoDB collections (16):**
-  `users, students, coach_profiles, sessions, enrollments, attendance, payments, expenses, payout_rules, coach_payouts, lesson_plans, progress_notes, messages, notifications, invites, audit_logs, move_log, payment_transactions, academy_settings, login_attempts, password_reset_tokens`
+- **MongoDB collections:**
+  `users, students, coach_profiles, sessions, enrollments, attendance, payments, expenses, payout_rules, coach_payouts, lesson_plans, progress_notes, messages, notifications, invites, audit_logs, move_log, payment_transactions, pause_requests, academy_settings, login_attempts, password_reset_tokens, waitlist, waiver_acceptances`
 
 - **All mutating endpoints write to `audit_logs`** via `auth.log_audit()`.
 
@@ -43,16 +44,16 @@
 `_id, email, password_hash, name, phone, role, status, must_change_password, created_at, updated_at`
 
 ### students
-`_id, parent_user_id, first_name, last_name, dob, age, skill_level, emergency_contact_{name,phone}, medical_notes, t_shirt_size, previous_experience, waiver_accepted, waiver_date, status, is_deleted, created_at`
+`_id, parent_user_id, first_name, last_name, dob, age, skill_level, emergency_contact_{name,phone}, medical_notes, t_shirt_size, previous_experience, waiver_accepted, waiver_date, waiver_accepted_at, waiver_version, waiver_text_hash, waiver_accepted_by, status, is_deleted, created_at`
 
 ### sessions
-`_id, name, skill_level, age_group, start_date, end_date, days_of_week[], start_time, end_time, location, max_students, monthly_price, coach_id, status, is_deleted, created_at`
+`_id, name, skill_level, age_group, start_date, end_date, days_of_week[], start_time, end_time, location, max_students, reserved_seats, monthly_price, coach_id, status, is_deleted, created_at`
 
 ### enrollments
-`_id, session_id, student_id, parent_user_id, billing_type ("Standard"|"NoCharge"|"Waived"), approval_status ("pending"|"approved"), status, skip_periods[] (YYYY-MM list), session_overrides{period: session_id}, enrolled_at, is_deleted`
+`_id, session_id, student_id, parent_user_id, billing_type ("Standard"|"NoCharge"|"Waived"), approval_status ("pending_payment"|"pending"|"approved"), status, payment_mode ("manual"|"autopay_pending"|"autopay"), subscription_status, stripe_customer_id, stripe_subscription_id, skip_periods[] (YYYY-MM list), session_overrides{period: session_id}, enrolled_at, is_deleted`
 
 ### payments
-`_id, parent_user_id, student_id, enrollment_id, session_id, period (YYYY-MM), amount, discount, final_amount, status ("pending"|"paid"|"failed"), payment_date, payment_method, marked_by, notes, is_deleted, created_at`
+`_id, parent_user_id, student_id, enrollment_id, session_id, period (YYYY-MM), amount, discount, final_amount, status ("pending"|"paid"|"failed"|"partially_refunded"|"refunded"), payment_date, payment_method, marked_by, notes, payment_type, invoice_number, invoice_created_at, stripe_invoice_id, stripe_subscription_id, stripe_payment_intent, refunded_amount, refund_status, refunds[], is_deleted, created_at`
 
 ### expenses
 `_id, category, description, amount, date, paid_to, status, notes, is_deleted, created_by, created_at`
@@ -85,7 +86,16 @@
 `name, zelle_handle, reminder_template, currency, default_capacity, beginner_price, intermediate_price, advanced_price`
 
 ### payment_transactions (Stripe trail)
-`_id, session_id, payment_id, user_id, user_email, amount, currency, payment_status, status, metadata, created_at, updated_at`
+`_id, session_id, payment_id, enrollment_id, type, user_id, user_email, amount, currency, payment_status, status, stripe_payment_intent, stripe_subscription_id, metadata, created_at, updated_at`
+
+### pause_requests
+`_id, enrollment_id, parent_user_id, student_id, session_id, period, reason, status ("pending"|"approved"|"declined"), payment_mode, subscription_status, decision_note, decided_by, decided_at, stripe_pause_status, created_at, updated_at`
+
+### waitlist
+`_id, session_id, student_id, parent_user_id, status ("waiting"|"offered"|"enrolled"|"expired"), requested_by, requested_at, offered_at, offer_expires_at, enrolled_at, enrollment_id, is_deleted`
+
+### waiver_acceptances
+`_id, student_id, parent_user_id, accepted_by_user_id, waiver_version, waiver_text_hash, waiver_text, accepted_at`
 
 ### audit_logs
 `_id, user_id, user_email, role, action, entity_type, entity_id, summary, created_at`
@@ -100,13 +110,13 @@
 | Method | Path | Role | Notes |
 |---|---|---|---|
 | ✅ POST | `/auth/register` | public | parent self-signup |
-| ✅ POST | `/auth/register-full` | public | parent + child + optional enrollment (replaces Google Form) |
-| ✅ GET | `/auth/public-sessions` | public | list enrollable sessions for the registration form |
+| ✅ POST | `/auth/register-full` | public | parent + child + optional enrollment or waitlist; selected-session registration creates a pending registration payment |
+| ✅ GET | `/auth/public-sessions` | public | list registration sessions with capacity fields |
 | ✅ POST | `/auth/login` | public | |
 | ✅ POST | `/auth/logout` | any | |
 | ✅ GET | `/auth/me` | any | |
 | ✅ POST | `/auth/refresh` | any | refresh cookie |
-| ✅ POST | `/auth/forgot-password` | public | logs token to backend logs (Phase 4: email it) |
+| ✅ POST | `/auth/forgot-password` | public | sends reset link by email when Resend is configured; response stays generic |
 | ✅ POST | `/auth/reset-password` | public | |
 | ✅ POST | `/invites` | admin | invite coach/parent |
 | ✅ GET | `/invites` | admin | |
@@ -120,19 +130,24 @@
 ### Sessions & enrollment
 | Method | Path | Role | Notes |
 |---|---|---|---|
-| ✅ GET/POST | `/sessions` | varied | |
+| ✅ GET/POST | `/sessions` | varied | includes capacity snapshot fields |
 | ✅ GET/PATCH/DELETE | `/sessions/{id}` | admin | |
 | ✅ POST | `/sessions/{id}/cancel` | admin | |
 | ✅ POST/GET | `/students` | varied | with t-shirt + previous experience; admin gets `enrollments[]` per student |
 | ✅ GET/PATCH/DELETE | `/students/{id}` | varied | |
-| ✅ POST/GET | `/enrollments[?session_id,student_id]` | varied | parent-created = `approval_status: pending` |
+| ✅ POST/GET | `/enrollments[?session_id,student_id]` | varied | parent-created = `approval_status: pending`; full sessions return a waitlist entry |
 | ✅ POST | `/enrollments/{id}/cancel` | varied | |
 | ✅ POST | `/enrollments/{id}/approve` | admin | |
 | ✅ POST | `/enrollments/{id}/transfer` | admin | permanent or single-month override |
 | ✅ POST | `/enrollments/{id}/pause-month?period=YYYY-MM` | admin | |
 | ✅ POST | `/enrollments/{id}/resume-month?period=YYYY-MM` | admin | |
+| ✅ GET/POST | `/pause-requests` | admin/parent | parent creates own pause request; admin lists all |
+| ✅ POST | `/pause-requests/{id}/approve` | admin | adds enrollment skip period; pauses current-month Stripe collection when applicable |
+| ✅ POST | `/pause-requests/{id}/decline` | admin | |
 | ✅ GET | `/enrollments/pending-approval` | admin | |
 | ✅ GET | `/move-log` | admin/coach | |
+| ✅ GET/POST | `/waitlist` | admin/parent | admin lists all; parent lists own or joins child to waitlist |
+| ✅ POST | `/waitlist/{id}/enroll` | admin | converts waiting/offered entry into enrollment |
 
 ### Attendance & coaching
 | ✅ POST | `/attendance/bulk` | coach/admin | statuses incl. `make_up` |
@@ -142,11 +157,12 @@
 
 ### Finance
 | ✅ GET/POST | `/payments` | varied | parent sees own only |
-| ✅ POST | `/payments/generate-monthly` | admin | skips paused months + non-Standard billing |
+| ✅ POST | `/payments/generate-monthly` | admin | skips paused months, non-Standard billing, and active auto-pay subscriptions |
 | ✅ PATCH | `/payments/{id}/mark-paid` | admin | |
 | ✅ PATCH | `/payments/{id}/apply-discount` | admin | |
 | ✅ DELETE | `/payments/{id}` | admin | soft delete |
 | ✅ POST | `/payments/{id}/undo-paid` | admin | reverts paid → pending |
+| ✅ POST | `/payments/{id}/refund` | admin | records refund; uses Stripe refund when a Stripe payment intent exists |
 | ✅ GET/POST/PATCH/DELETE | `/expenses` | admin | |
 | ✅ GET/POST | `/payout-rules` | admin | |
 | ✅ POST | `/coach-payouts/calculate` | admin | honors `rule.basis` |
@@ -159,7 +175,7 @@
 
 ### Dashboard, reports, settings
 | ✅ GET | `/dashboard/{admin|coach|parent}` | role-gated | admin returns expected/collected/waived, utilization, profitability |
-| ✅ GET | `/reports/{revenue|profit|attendance|pending-payments|coach-payouts}.csv` | admin | |
+| ✅ GET | `/reports/{revenue|profit|attendance|pending-payments|coach-payouts|waivers}.csv` | admin | |
 | ✅ GET | `/audit-logs?limit=N` | admin | |
 | ✅ GET/PATCH | `/settings` | admin | academy singleton |
 | ✅ POST | `/settings/payout-basis` | admin | per-coach |
@@ -176,11 +192,14 @@
 ### Extras
 | ✅ GET | `/dues-followup` | admin | returns parents + total_due + WhatsApp link |
 | ✅ POST | `/billing/checkout-session` | parent/admin | Stripe Checkout |
+| ✅ POST | `/billing/subscription-checkout` | parent/admin | Stripe Billing monthly auto-pay for an approved enrollment |
+| ✅ POST | `/billing/customer-portal` | parent/admin | Stripe Customer Portal for saved cards/subscription management |
 | ✅ GET | `/billing/checkout-status/{session_id}` | any | falls back to local txn state if Stripe lookup fails |
-| ✅ POST | `/webhook/stripe` | public | Stripe webhook → flips payment to paid |
+| ✅ POST | `/webhook/stripe` | public | Stripe webhook → flips one-time payments to paid; records subscription invoices; tracks failed/cancelled subscriptions |
 | ✅ POST | `/email/test` | admin | sends a probe via Resend |
-| ✅ POST | `/email/send-dues-reminders` | admin | bulk to all parents with pending |
-| ✅ POST | `/email/welcome/{parent_id}` | admin | |
+| ✅ POST | `/email/send-dues-reminders` | admin | bulk to all parents with pending; reports sent/failed/skipped |
+| ✅ POST | `/email/welcome/{parent_id}` | admin | returns 503 if provider is skipped/failed |
+| ✅ GET | `/health` | public | container/platform health check |
 
 ---
 
@@ -197,14 +216,15 @@ Public
 Admin
   /admin/dashboard             — Collected, Expected, Waived, Payouts, Pending, Net Profit + 6-mo profit chart + session utilization table
   /admin/sessions              — create/edit/cancel/delete
-  /admin/students              — Enrolled/Not enrolled filter, Pause/Resume/Move buttons per enrollment
+  /admin/students              — Enrolled/Not enrolled filter, pending pause request queue, Pause/Resume/Move buttons per enrollment
+  /admin/waitlist              — waitlist entries and admin enrollment conversion
   /admin/users                 — Tabs: coaches / parents / pending invites — Edit modal (name, email, phone, status)
-  /admin/payments              — Generate monthly, discount, mark paid, **Undo paid**
+  /admin/payments              — Generate monthly, discount, mark paid, invoice number, **Undo paid**, refund
   /admin/dues                  — 28+ parents, WhatsApp wa.me link + Copy message
   /admin/expenses              — categories, soft delete
   /admin/payouts               — Tabs: Payouts (calc + approve + pay + **Undo**), Rules
   /admin/coach-payslip         — per-coach × month: Expected | Collected | Payout (with formula)
-  /admin/reports               — 5 CSV downloads
+  /admin/reports               — 6 CSV downloads, including waiver acceptances
   /admin/audit-logs            — last 500 mutating actions
   /admin/settings              — Tabs: Academy info / Payout Basis / Email
   /messages                    — universal threaded chat
@@ -218,7 +238,7 @@ Coach
 Parent
   /parent/dashboard
   /parent/children             — register child, enroll in session
-  /parent/payments             — **Pay now (Stripe)** + history
+  /parent/payments             — **Pay now (Stripe)**, monthly auto-pay setup, billing portal, pause requests + history
   /parent/attendance, /parent/progress
 ```
 
@@ -252,11 +272,26 @@ kishore@blno.academy   / Coach@12345
   - Undo paid for student payments + coach payouts (auto-expense reversed)
   - Undo approve for coach payouts
   - Public student registration `/register-student` — 3-step form, replaces Google Form, creates parent+child+optional enrollment (pending), auto-login
-  - **Stripe Checkout** integration via `emergentintegrations` (test mode, `sk_test_emergent` proxied through Emergent's Stripe gateway)
-  - Stripe webhook + status polling with local-state fallback (works around upstream library Pydantic bug)
+  - **Stripe Checkout** integration via the official Stripe SDK
+  - Stripe webhook + status polling with local-state fallback
   - **Resend email** integration: test email, welcome, bulk dues reminders
   - Pause-month + Resume-month on enrollments — handles "kid in Apr, not May, back in June"
   - Pay-now button on parent payments page
+
+- **2026-05 — Phase 4 production-readiness baseline:**
+  - Centralized capacity reservation with `reserved_seats`, public capacity fields, and shared enrollment creation rules
+  - Public registration and parent enrollment now respect capacity; full sessions create waitlist entries instead of overbooking
+  - Waitlist collection, admin waitlist page, admin conversion flow, and first waiting entry promotion when a seat opens
+  - Registration payment gating: selected-session public registration creates `pending_payment` enrollment plus registration payment; paid webhook/manual paid advances to pending approval
+  - Coach and messaging authorization fixes: coaches are scoped to assigned sessions/students; message send/thread access is restricted to allowed contacts
+  - Invoice metadata and refund records on payments; admin refund action; Stripe refund call when a Stripe payment intent is available
+  - Waiver version/hash tracking with immutable `waiver_acceptances` export
+  - Forgot/reset password UI and reset email flow; reset tokens are no longer printed to backend logs
+  - Email routes now surface skipped/failed delivery instead of returning success-shaped responses
+  - Deployment baseline: backend health endpoint, Dockerfiles, docker-compose, nginx SPA config, `.dockerignore`, and `DEPLOYMENT.md`
+  - Resend sending domain verified for `academy.courtmastr.com`; local test email accepted by Resend
+  - Stripe test checkout validated end-to-end with Stripe CLI webhook forwarding; webhook marked a test payment paid
+  - Stripe Billing auto-pay foundation: parent subscription checkout, Customer Portal link, webhook handling for paid/failed invoices and subscription status, parent pause requests, admin approval queue
 
 ---
 
@@ -265,48 +300,55 @@ kishore@blno.academy   / Coach@12345
 Prioritized. Each item is sized so it can be picked up independently.
 
 ### P0 — Polish on shipped flows
-1. **Email deliverability** — verify `blno.academy` domain at resend.com/domains so Resend can send to all parents (not just the account's own email)
-2. **Stripe webhook secret** — set `STRIPE_WEBHOOK_SECRET` env var and wire `whsec_...` in Stripe Dashboard, then enable signature verification (`sc.handle_webhook` already supports it)
-3. **`payments` undo-paid receipt cleanup** — when undoing a Stripe-paid payment, also refund via Stripe API (optional toggle)
-4. **`coach-payouts.undo-paid`** — instead of regex match on notes, store `coach_payout_id` as first-class field on the auto-expense and match by that (testing agent's recommendation)
-5. **CORS fix verification on `shuttle-flow.preview.emergentagent.com`** — current `.env` `FRONTEND_URL` references the older `6e9f5c4d-...` host. Update once you confirm the canonical preview host
+1. **Email deliverability monitoring** — `academy.courtmastr.com` is verified in Resend; monitor bounces/complaints and keep `SENDER_EMAIL=noreply@academy.courtmastr.com`
+2. **Stripe recurring payment live validation** — one-time Checkout is tested; still run a full subscription Checkout card test and verify `invoice.paid` creates the monthly payment record
+3. **Pending-payment and waitlist expiry scheduler** — release abandoned `pending_payment` seat holds and expire offered waitlist seats after their deadline
+4. **Waitlist notifications** — email parent/admin when a waitlist offer is created, expiring, accepted, or expired
+5. **Invoice/receipt artifacts** — generate PDF/email receipts or hosted invoice views from the current invoice metadata
+6. **`payments` undo-paid guardrail** — prevent silent undo of Stripe-paid payments without using the refund workflow or an explicit admin override
+7. **`coach-payouts.undo-paid`** — instead of regex match on notes, store `coach_payout_id` as first-class field on the auto-expense and match by that (testing agent's recommendation)
+8. **Pause scheduler for future auto-pay months** — approval skips app billing immediately; future-month Stripe collection pauses need a scheduled job at the start of the paused month
+9. **Production monitoring and backups** — connect platform uptime checks, error logging, Mongo backup retention, and a restore drill to the documented deployment runbook
+10. **CORS production verification** — verify canonical production/preview hosts against `FRONTEND_URL` and `CORS_ORIGINS`
 
 ### P1 — High-value features
-6. **Scheduled automation:** APScheduler job that on the 1st of each month
+11. **Scheduled automation:** APScheduler job that on the 1st of each month
    - runs `payments/generate-monthly`
    - then emails dues reminders via Resend
    - then sends WhatsApp reminders via Twilio (requires Twilio credentials)
    *Implementation:* new file `/app/backend/jobs/monthly.py`, start scheduler in `server.py` startup event
-7. **Twilio WhatsApp auto-send** — replaces the manual "click wa.me" loop on Dues Followup. Requires Twilio Account SID + Auth Token + WhatsApp-enabled From number
-8. **Calendar view** — admin sees all classes; coach sees assigned; parent sees child's; support cancelled/rescheduled. Use `react-big-calendar` or `fullcalendar`. Backend: `GET /api/calendar/events?from=...&to=...`
-9. **Announcements** — academy-wide + session-level posts (a new collection `announcements` + frontend feed on each role dashboard)
-10. **Per-month "Roster sync" report** — replicates the spreadsheet's `Roster` view: kid × month grid showing Active/Paid/Due/Paused. Backend: `GET /api/roster?period=...` returns 2D structure; frontend renders pivoted table
+12. **Twilio WhatsApp auto-send** — replaces the manual "click wa.me" loop on Dues Followup. Requires Twilio Account SID + Auth Token + WhatsApp-enabled From number
+13. **Calendar view** — parent read-only child schedule; coach can update their assigned session calendar; admin sees all. Support iOS/Android by exposing `.ics` feeds first, then optional PWA calendar UI. Backend: `GET /api/calendar/events?from=...&to=...`
+14. **Announcements** — admin can post academy-wide; coaches can post only to their assigned sessions (a new collection `announcements` + frontend feed on each role dashboard)
+15. **App roster views** — spreadsheet roster sync is no longer the goal; coaches need an in-app roster per assigned session with payment/pause/enrollment status visible where appropriate
 
 ### P2 — Deeper coaching tools
-11. **10-metric progress scoring** — replace free-text progress notes with structured ratings (Footwork, Serve, Smash, Drop shot, Defense, Rally consistency, Match readiness, Effort, Overall). Each is 1-5 stars. Aggregate over time → parent sees a radar chart
-12. **Student deep portal** — kids 12+ can self-login (already a role, just no UI) and see their own schedule, attendance streak, progress radar
-13. **Match results & tournament fees** — new income category + per-student match record + leaderboard
-14. **Equipment loans / shop** — track rackets, shuttles, jerseys lent out vs sold
+16. **Structured progress scoring** — deferred until the academy defines why it is needed; keep free-text notes for now
+17. **Student deep portal** — deferred; current parent/student pages are enough unless separate student logins become a clear need
+18. **Match results & tournament fees** — new income category + per-student match record + leaderboard
+19. **Equipment loans / shop** — track rackets, shuttles, jerseys lent out vs sold
 
 ### P3 — Growth & analytics
-15. **Marketing landing page** at `/` (currently redirects to dashboard) — features, pricing, parent testimonials, "Register now" CTA
-16. **Referral program** — parents get $20 credit per referred parent (auto-applied as discount)
-17. **Cohort retention analytics** — % of kids in May who are still enrolled in Aug, etc.
-18. **Multi-location / multi-court** — add `location` entity, sessions reference it, dashboards filterable
-19. **Coach 1-on-1 booking** — private lesson slot system + Stripe per-slot payment
-20. **Push notifications (web + mobile PWA)** — currently in-app only
+20. **Marketing landing page** at `/` (currently redirects to dashboard) — features, pricing, parent testimonials, "Register now" CTA
+21. **Referral program** — parents get $20 credit per referred parent (auto-applied as discount)
+22. **Cohort retention analytics** — % of kids in May who are still enrolled in Aug, etc.
+23. **Multi-location / multi-court** — add `location` entity, sessions reference it, dashboards filterable
+24. **Coach 1-on-1 booking** — private lesson slot system + Stripe per-slot payment
+25. **Push notifications (web + mobile PWA)** — currently in-app only
 
 ### P4 — Mobile
-21. **PWA with offline-first attendance** — coach can mark attendance even without signal, syncs when back online
-22. **Native wrap** with Capacitor for App Store / Play Store presence
+26. **PWA with offline-first attendance** — coach can mark attendance even without signal, syncs when back online
+27. **Native wrap** with Capacitor for App Store / Play Store presence
 
 ---
 
 ## 7. Tech debt & known issues
 
-- **`emergentintegrations.payments.stripe.checkout.get_checkout_status` Pydantic bug** — already worked around; if upstream fixes it, simplify `billing_routes.checkout_status` to call the helper directly again
-- **`/api/email/send-dues-reminders`** counts attempted sends, not actual deliveries. Refactor to return `{sent, failed, rate_limited}` and throttle to Resend's 5 req/s
-- **`/api/email/test` returns `ok:true`** even on Resend test-mode rejection — improve to surface the actual provider response status
+- **Waitlist offers and pending-payment holds need scheduled expiry** — current backend can create offers/holds but does not yet run a background job to expire and release them automatically.
+- **Future-month Stripe pause requests need a scheduler** — approving a pause immediately updates app billing; current-month Stripe subscriptions are paused until the next month, but future pauses need a job to apply the pause when that month starts.
+- **Waitlist notification delivery is manual/incomplete** — offer creation does not yet email/SMS parents automatically.
+- **Invoice records are metadata only** — no PDF receipt or hosted invoice artifact exists yet.
+- **Refund workflow does not replace undo-paid completely** — `undo-paid` still exists for manual correction and should be guarded for Stripe-paid payments.
 - **Frontend ESLint warnings** about `useEffect` exhaustive-deps — harmless but should add `eslint-disable-next-line` comments or refactor
 - **Background email task** in `auth_routes.register_full` uses `asyncio.create_task` — may be cancelled when response completes. Refactor to FastAPI `BackgroundTasks`
 - **No DB migration system** — schema changes are applied via `ensure_indexes()` at startup. For production, add Alembic-style migrations or at least version the schema
@@ -317,39 +359,42 @@ Prioritized. Each item is sized so it can be picked up independently.
 ## 8. Environment variables
 
 ```bash
-# /app/backend/.env (current)
-MONGO_URL="mongodb://localhost:27017"
-DB_NAME="test_database"
-CORS_ORIGINS=""                       # let regex match preview subdomains
+# backend/.env
+APP_ENV=development
+MONGO_URL="mongodb://127.0.0.1:27017"
+DB_NAME="academy_manager_local"
+CORS_ORIGINS="http://localhost:3000,http://127.0.0.1:3000"
 JWT_SECRET="<random-256-bit-hex>"
 ADMIN_EMAIL="admin@badminton.app"
 ADMIN_PASSWORD="Admin@12345"
-FRONTEND_URL="https://<preview-host>" # used for invite accept_url
-STRIPE_API_KEY="sk_test_emergent"     # proxied through integrations.emergentagent.com/stripe
-RESEND_API_KEY="re_..."               # user-provided
-SENDER_EMAIL="onboarding@resend.dev"  # change after verifying domain
-
-# Phase 4 will need
+COOKIE_SECURE=false
+FRONTEND_URL="http://localhost:3000"
+STRIPE_API_KEY="sk_test_..."
 STRIPE_WEBHOOK_SECRET="whsec_..."
+RESEND_API_KEY="re_..."
+SENDER_EMAIL="noreply@academy.courtmastr.com"
 TWILIO_ACCOUNT_SID="AC..."
 TWILIO_AUTH_TOKEN="..."
 TWILIO_WHATSAPP_FROM="whatsapp:+1..."
+
+# frontend/.env
+REACT_APP_BACKEND_URL="http://127.0.0.1:8001"
 ```
 
 ---
 
 ## 9. Running locally / continuing on another platform
 
-1. **Backend:** `cd /app/backend && uvicorn server:app --host 0.0.0.0 --port 8001` — or `sudo supervisorctl restart backend` on Emergent
-2. **Frontend:** `cd /app/frontend && yarn install && yarn start` — listens on `:3000`
-3. **MongoDB:** any Mongo 6+ instance; `MONGO_URL` and `DB_NAME` in `.env`
-4. **Reimport BLno data:** `python3 /app/backend/scripts/import_blno.py` (requires `BLNO_XLSX` env var or `/tmp/blno.xlsx`)
-5. **Run pytest:** `cd /app && pytest backend/tests/` — iteration tests live in `backend/tests/iter*_test.py`
+1. **MongoDB:** `mongod --dbpath /tmp/academy-manager-mongo-local --bind_ip 127.0.0.1 --port 27017`
+2. **Backend:** `cd backend && source .venv/bin/activate && uvicorn server:app --host 127.0.0.1 --port 8001 --reload`
+3. **Frontend:** `cd frontend && yarn start` — listens on `:3000`
+4. **Reimport BLno data:** `cd backend && BLNO_XLSX="/Users/ramc/Downloads/BLno-Badmintion-Training.xlsx" python scripts/import_blno.py`
+5. **Run pytest:** `cd backend && pytest` — iteration tests live in `backend/tests/iter*_test.py`
 
 ---
 
 ## 10. Quick wins if you only have 1 hour
 
 - Verify `blno.academy` domain at Resend → set `SENDER_EMAIL=noreply@blno.academy` → real email to all parents starts working
-- In Stripe Dashboard: add `https://<preview-host>/api/webhook/stripe` as a webhook endpoint, copy `whsec_...`, set `STRIPE_WEBHOOK_SECRET` env var → uncomment signature verification in `billing_routes.stripe_webhook`
+- In Stripe Dashboard or Stripe CLI: add/forward to `https://<host>/api/webhook/stripe`, copy `whsec_...`, set `STRIPE_WEBHOOK_SECRET`, then restart the backend
 - Add `data-testid="..."` audit on every new interactive element (current coverage is good but not exhaustive)
