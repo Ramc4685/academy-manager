@@ -109,9 +109,21 @@ stripe listen --forward-to 127.0.0.1:8001/api/webhook/stripe
 
 Copy the printed `whsec_...` value into `STRIPE_WEBHOOK_SECRET`, then restart the backend.
 
-## Resend Email Testing
+## Resend Email Safety
 
-Email endpoints are disabled until `RESEND_API_KEY` is set in `backend/.env`.
+Email delivery is disabled by default in local/test environments, even when
+`RESEND_API_KEY` is set. This prevents integration tests and manual local runs
+from sending real parent emails.
+
+For a single-recipient smoke test, set:
+
+```bash
+EMAIL_DELIVERY_MODE=allowlist
+EMAIL_TEST_ALLOWLIST=Ramc.venkatasamy@gmail.com
+```
+
+For production sending, set `APP_ENV=production` and
+`EMAIL_DELIVERY_ENABLED=true`.
 
 For production sending, verify the academy domain in Resend and update `SENDER_EMAIL` to a sender on that verified domain.
 

@@ -126,7 +126,8 @@ class TestScheduler:
             pass
 
     def test_run_dues_reminders(self, admin):
-        if os.environ.get("RESEND_API_KEY", "").startswith("re_"):
+        delivery_mode = os.environ.get("EMAIL_DELIVERY_MODE", "disabled").strip().lower()
+        if os.environ.get("RESEND_API_KEY", "").startswith("re_") and delivery_mode in {"allowlist", "live"}:
             pytest.skip("Avoid sending bulk real emails from integration tests")
         r = admin.post(f"{API}/scheduler/run-dues-reminders", timeout=60)
         assert r.status_code == 200, r.text
@@ -137,6 +138,8 @@ class TestScheduler:
         assert isinstance(body["sent"], int)
         assert isinstance(body["failed"], int)
         assert isinstance(body["skipped"], int)
+        if delivery_mode == "disabled":
+            assert body["sent"] == 0
 
     def test_coach_forbidden_on_scheduler(self, coach):
         for path, method, body in [

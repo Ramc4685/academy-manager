@@ -20,10 +20,54 @@ def _configured() -> bool:
     return bool(key and key.startswith("re_"))
 
 
+def _truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _delivery_mode() -> str:
+    """Return disabled, allowlist, or live.
+
+    Real email is blocked by default in every non-production environment, even
+    when a real Resend key is present. Production must opt in explicitly.
+    """
+    explicit = os.environ.get("EMAIL_DELIVERY_MODE", "").strip().lower()
+    if explicit in {"disabled", "allowlist", "live"}:
+        return explicit
+    app_env = os.environ.get("APP_ENV", "development").strip().lower()
+    if app_env in {"production", "prod"} and _truthy(os.environ.get("EMAIL_DELIVERY_ENABLED")):
+        return "live"
+    return "disabled"
+
+
+def _test_allowlist() -> set[str]:
+    raw = os.environ.get("EMAIL_TEST_ALLOWLIST") or os.environ.get("EMAIL_ALLOWED_RECIPIENTS") or ""
+    emails = {item.strip().lower() for item in raw.split(",") if item.strip()}
+    return emails or {"ramc.venkatasamy@gmail.com"}
+
+
+def _delivery_block_reason(to: str) -> str | None:
+    mode = _delivery_mode()
+    if mode == "live":
+        return None
+    if mode == "allowlist" and to.strip().lower() in _test_allowlist():
+        return None
+    if mode == "allowlist":
+        return "Email recipient is not in EMAIL_TEST_ALLOWLIST"
+    return "Email delivery is disabled for this environment"
+
+
+def _is_skipped(result: dict) -> bool:
+    return result.get("id") in {"skipped", "blocked"}
+
+
 def _send_sync(to: str, subject: str, html: str) -> dict:
     if not _configured():
         log.warning("Resend not configured — would have emailed %s: %s", to, subject)
         return {"id": "skipped"}
+    blocked = _delivery_block_reason(to)
+    if blocked:
+        log.warning("Email blocked for %s: %s (%s)", to, subject, blocked)
+        return {"id": "blocked", "reason": blocked, "mode": _delivery_mode(), "to": to}
     resend.api_key = os.environ["RESEND_API_KEY"]
     return resend.Emails.send({
         "from": os.environ.get("SENDER_EMAIL", "onboarding@resend.dev"),
@@ -46,6 +90,8 @@ def _delivery_status(result: dict) -> tuple[bool, str]:
         return False, result["error"]
     if result.get("id") == "skipped":
         return False, "Email provider is not configured"
+    if result.get("id") == "blocked":
+        return False, result.get("reason") or "Email delivery is blocked"
     return True, "sent"
 
 
@@ -131,7 +177,7 @@ async def send_dues_reminders(body: SendRemindersIn, admin=Depends(require_roles
         delivered, _ = _delivery_status(result)
         if delivered:
             sent += 1
-        elif result.get("id") == "skipped":
+        elif _is_skipped(result):
             skipped += 1
         else:
             failed += 1

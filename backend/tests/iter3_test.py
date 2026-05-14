@@ -593,12 +593,28 @@ class TestPauseRequests:
 
 # --------- Email ---------
 class TestEmail:
+    def _email_delivery_mode(self):
+        explicit = os.environ.get("EMAIL_DELIVERY_MODE", "").strip().lower()
+        if explicit:
+            return explicit
+        app_env = os.environ.get("APP_ENV", "development").strip().lower()
+        enabled = os.environ.get("EMAIL_DELIVERY_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+        return "live" if app_env in {"production", "prod"} and enabled else "disabled"
+
+    def _test_recipient(self):
+        raw = os.environ.get("EMAIL_TEST_ALLOWLIST", "Ramc.venkatasamy@gmail.com")
+        return raw.split(",")[0].strip()
+
     def test_email_test_endpoint(self, admin_session):
         r = admin_session.post(f"{BASE_URL}/api/email/test",
-                               json={"to": "blnobadminton@gmail.com"}, timeout=30)
+                               json={"to": self._test_recipient()}, timeout=30)
         if not os.environ.get("RESEND_API_KEY", "").startswith("re_"):
             assert r.status_code == 503
             assert "not configured" in r.text
+            return
+        if self._email_delivery_mode() not in {"allowlist", "live"}:
+            assert r.status_code == 503
+            assert "disabled" in r.text
             return
         assert r.status_code == 200, r.text
         d = r.json()
@@ -609,6 +625,10 @@ class TestEmail:
         r = admin_session.post(f"{BASE_URL}/api/email/send-dues-reminders",
                                json={}, timeout=60)
         if not os.environ.get("RESEND_API_KEY", "").startswith("re_"):
+            assert r.status_code == 503
+            assert "No reminders were delivered" in r.text
+            return
+        if self._email_delivery_mode() != "live":
             assert r.status_code == 503
             assert "No reminders were delivered" in r.text
             return

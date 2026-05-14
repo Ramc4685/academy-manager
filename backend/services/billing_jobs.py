@@ -114,7 +114,7 @@ async def generate_monthly_invoices(period: str, actor: str = "scheduler") -> di
 async def send_dues_reminders(actor: str = "scheduler") -> dict:
     """Email every parent who has at least one pending payment.
     Mirrors POST /api/email/send-dues-reminders without admin context. Safe to call from cron."""
-    from routers.email_routes import send_email, _wrap, _delivery_status, _configured
+    from routers.email_routes import send_email, _wrap, _delivery_status, _configured, _is_skipped
 
     db = get_db()
     if not _configured():
@@ -156,7 +156,7 @@ async def send_dues_reminders(actor: str = "scheduler") -> dict:
         delivered, _ = _delivery_status(result)
         if delivered:
             sent += 1
-        elif result.get("id") == "skipped":
+        elif _is_skipped(result):
             skipped += 1
         else:
             failed += 1
