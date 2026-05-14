@@ -20,6 +20,7 @@ from routers.extras_routes import router as extras_router
 from routers.settings_routes import router as settings_router
 from routers.billing_routes import router as billing_router
 from routers.email_routes import router as email_router
+from routers.waitlist_routes import router as waitlist_router
 
 
 app = FastAPI(title="Badminton Academy Manager API")
@@ -35,11 +36,17 @@ api_router.include_router(extras_router)
 api_router.include_router(settings_router)
 api_router.include_router(billing_router)
 api_router.include_router(email_router)
+api_router.include_router(waitlist_router)
 
 
 @api_router.get("/")
 async def root():
     return {"name": "Badminton Academy Manager API", "ok": True}
+
+
+@api_router.get("/health")
+async def health():
+    return {"ok": True, "service": "academy-manager-api"}
 
 
 app.include_router(api_router)

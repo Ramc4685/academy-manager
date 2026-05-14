@@ -52,8 +52,8 @@ export default function ParentChildren() {
 
   const enroll = async () => {
     try {
-      await api.post("/enrollments", { session_id: enrollSession, student_id: enrollOpen });
-      toast.success("Enrolled successfully");
+      const { data } = await api.post("/enrollments", { session_id: enrollSession, student_id: enrollOpen });
+      toast.success(data.waitlisted ? "Session is full. Child added to waitlist." : data.approval_status === "pending" ? "Enrollment requested. Admin approval is pending." : "Enrolled successfully");
       setEnrollOpen(null); load();
     } catch (e) {
       toast.error(formatApiError(e.response?.data?.detail));
@@ -61,6 +61,11 @@ export default function ParentChildren() {
   };
 
   const childEnrollments = (sid) => enrollments.filter((e) => e.student_id === sid && e.status === "active");
+  const seatsLabel = (session) => {
+    if (session.is_full) return "Full";
+    if (typeof session.available_seats === "number") return `${session.available_seats} spots left`;
+    return "Open";
+  };
 
   return (
     <div className="space-y-6" data-testid="parent-children">
@@ -90,7 +95,10 @@ export default function ParentChildren() {
               {childEnrollments(c.id).map((e) => (
                 <div key={e.id} className="flex justify-between items-center p-2 rounded border border-slate-100 mb-1">
                   <span className="text-sm text-slate-700">{e.session?.name}</span>
-                  <span className="text-xs text-blue-600 font-semibold">{currency(e.session?.monthly_price)}/mo</span>
+                  <div className="flex items-center gap-2">
+                    {e.approval_status && e.approval_status !== "approved" && <StatusBadge status={e.approval_status} />}
+                    <span className="text-xs text-blue-600 font-semibold">{currency(e.session?.monthly_price)}/mo</span>
+                  </div>
                 </div>
               ))}
               <Button variant="outline" size="sm" onClick={() => { setEnrollOpen(c.id); setEnrollSession(""); }} data-testid={`enroll-${c.id}`} className="mt-3 text-blue-600 border-blue-200 hover:bg-blue-50">
@@ -150,7 +158,9 @@ export default function ParentChildren() {
               <SelectTrigger className="mt-1" data-testid="enroll-session-select"><SelectValue placeholder="Pick a session" /></SelectTrigger>
               <SelectContent>
                 {sessions.filter((s) => s.status === "active").map((s) => (
-                  <SelectItem key={s.id} value={s.id}>{s.name} · {currency(s.monthly_price)}/mo · {s.skill_level}</SelectItem>
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.name} · {currency(s.monthly_price)}/mo · {s.skill_level} · {s.is_full ? "Join waitlist" : seatsLabel(s)}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>

@@ -139,6 +139,16 @@ cd frontend
 yarn test --watchAll=false
 ```
 
+## Deployment
+
+Container files are included for staging smoke tests:
+
+```bash
+docker compose up --build
+```
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for production environment variables, Stripe webhook setup, email configuration, health checks, and backup/restore expectations.
+
 ## Notes
 
 - Keep real secrets only in `.env` files. Do not commit them.

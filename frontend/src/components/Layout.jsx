@@ -12,6 +12,7 @@ const adminNav = [
   { to: "/admin/dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/admin/sessions", icon: CalendarDays, label: "Sessions" },
   { to: "/admin/students", icon: GraduationCap, label: "Students" },
+  { to: "/admin/waitlist", icon: Bell, label: "Waitlist" },
   { to: "/admin/users", icon: Users, label: "Coaches & Parents" },
   { to: "/admin/payments", icon: DollarSign, label: "Payments" },
   { to: "/admin/dues", icon: Receipt, label: "Dues Followup" },

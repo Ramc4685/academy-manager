@@ -294,9 +294,10 @@ async def report_revenue(period: str | None = None, admin=Depends(require_roles(
             session["name"] if session else "",
             p.get("amount"), p.get("discount"), p.get("final_amount"),
             p.get("payment_method"), p.get("payment_date"),
+            p.get("invoice_number", ""), p.get("refund_status", "none"), p.get("refunded_amount", 0),
         ])
     return _csv_response(
-        ["Period", "Student", "Session", "Amount", "Discount", "Final", "Method", "Date"],
+        ["Period", "Student", "Session", "Amount", "Discount", "Final", "Method", "Date", "Invoice", "Refund Status", "Refunded"],
         rows, "revenue.csv",
     )
 
@@ -385,6 +386,23 @@ async def report_profit(admin=Depends(require_roles("admin"))):
         exp = exp_map.get(p, 0)
         rows.append([p, rev, exp, rev - exp])
     return _csv_response(["Period", "Revenue", "Expenses", "Profit"], rows, "profit.csv")
+
+
+@router.get("/reports/waivers.csv")
+async def report_waivers(admin=Depends(require_roles("admin"))):
+    db = get_db()
+    rows = []
+    async for w in db.waiver_acceptances.find().sort("accepted_at", -1).limit(5000):
+        student = await db.students.find_one({"_id": ObjectId(w["student_id"])}) if w.get("student_id") else None
+        parent = await db.users.find_one({"_id": ObjectId(w["parent_user_id"])}) if w.get("parent_user_id") else None
+        rows.append([
+            w.get("accepted_at"),
+            f"{student['first_name']} {student['last_name']}" if student else "",
+            parent.get("email") if parent else "",
+            w.get("waiver_version"),
+            w.get("waiver_text_hash"),
+        ])
+    return _csv_response(["Accepted At", "Student", "Parent Email", "Version", "Text Hash"], rows, "waivers.csv")
 
 
 # ----------------- /api/audit-logs -----------------

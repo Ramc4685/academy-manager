@@ -9,6 +9,7 @@ from bson import ObjectId
 
 from auth import get_current_user, log_audit
 from db import get_db
+from models import CustomerPortalIn, SubscriptionCheckoutIn
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -28,6 +29,20 @@ def _configure_stripe():
 
 def _stripe_configured() -> bool:
     return bool(os.environ.get("STRIPE_API_KEY"))
+
+
+def _stripe_dict(obj):
+    if isinstance(obj, list):
+        return [_stripe_dict(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _stripe_dict(v) for k, v in obj.items()}
+    if hasattr(obj, "to_dict_recursive"):
+        return obj.to_dict_recursive()
+    if hasattr(obj, "to_dict"):
+        return obj.to_dict()
+    if hasattr(obj, "_to_dict_recursive"):
+        return obj._to_dict_recursive()
+    return obj
 
 
 def _configured_frontend_origins() -> set[str]:
@@ -64,6 +79,71 @@ def _return_origin(origin_url: str) -> str:
 class CheckoutIn(BaseModel):
     payment_id: str
     origin_url: str  # frontend window.location.origin
+
+
+def _period_from_timestamp(ts) -> str:
+    try:
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m")
+    except Exception:
+        return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def _invoice_number(prefix: str = "INV") -> str:
+    return f"{prefix}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
+
+
+def _invoice_period(invoice: dict) -> str:
+    lines = ((invoice.get("lines") or {}).get("data") or [])
+    if lines:
+        period = lines[0].get("period") or {}
+        if period.get("start"):
+            return _period_from_timestamp(period["start"])
+    if invoice.get("period_start"):
+        return _period_from_timestamp(invoice["period_start"])
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+async def _get_or_create_customer(db, user: dict):
+    existing = await db.users.find_one({"_id": ObjectId(user["id"])}, {"stripe_customer_id": 1, "email": 1, "name": 1})
+    if existing and existing.get("stripe_customer_id"):
+        return existing["stripe_customer_id"]
+    stripe = _configure_stripe()
+    customer = _stripe_dict(await asyncio.to_thread(
+        stripe.Customer.create,
+        email=user.get("email"),
+        name=user.get("name") or user.get("email"),
+        metadata={"user_id": user["id"], "role": user.get("role", "")},
+    ))
+    await db.users.update_one(
+        {"_id": ObjectId(user["id"])},
+        {"$set": {"stripe_customer_id": customer["id"], "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return customer["id"]
+
+
+async def _activate_subscription_enrollment(db, enrollment_id: str, session: dict):
+    if not ObjectId.is_valid(enrollment_id):
+        return False
+    subscription_id = session.get("subscription")
+    if isinstance(subscription_id, dict):
+        subscription_id = subscription_id.get("id")
+    updates = {
+        "payment_mode": "autopay",
+        "subscription_status": "active",
+        "stripe_customer_id": session.get("customer"),
+        "autopay_started_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if subscription_id:
+        updates["stripe_subscription_id"] = subscription_id
+    result = await db.enrollments.update_one({"_id": ObjectId(enrollment_id)}, {"$set": updates})
+    enrollment = await db.enrollments.find_one({"_id": ObjectId(enrollment_id)})
+    if enrollment and session.get("customer"):
+        await db.users.update_one(
+            {"_id": ObjectId(enrollment["parent_user_id"])},
+            {"$set": {"stripe_customer_id": session["customer"], "updated_at": datetime.now(timezone.utc).isoformat()}},
+        )
+    return result.matched_count == 1
 
 
 @router.get("/billing/config")
@@ -135,6 +215,130 @@ async def create_checkout_session(body: CheckoutIn, request: Request, user=Depen
     return {"url": sess["url"], "session_id": sess["id"]}
 
 
+@router.post("/billing/subscription-checkout")
+async def create_subscription_checkout(body: SubscriptionCheckoutIn, request: Request, user=Depends(get_current_user)):
+    """Create a Stripe Billing subscription for a single approved enrollment."""
+    db = get_db()
+    if user.get("role") not in {"admin", "parent"}:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not ObjectId.is_valid(body.enrollment_id):
+        raise HTTPException(status_code=400, detail="Invalid enrollment id")
+    enrollment = await db.enrollments.find_one({"_id": ObjectId(body.enrollment_id), "is_deleted": {"$ne": True}})
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    if user["role"] == "parent" and enrollment.get("parent_user_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="Not your enrollment")
+    if enrollment.get("status") != "active":
+        raise HTTPException(status_code=400, detail="Only active enrollments can use auto-pay")
+    if enrollment.get("approval_status", "approved") != "approved":
+        raise HTTPException(status_code=400, detail="Enrollment must be approved before auto-pay")
+    if (enrollment.get("billing_type") or "Standard").lower() != "standard":
+        raise HTTPException(status_code=400, detail="Auto-pay is only available for standard billing")
+    if enrollment.get("stripe_subscription_id") and enrollment.get("subscription_status") in {"active", "trialing", "past_due"}:
+        raise HTTPException(status_code=400, detail="Auto-pay is already set up for this enrollment")
+
+    session_doc = await db.sessions.find_one({"_id": ObjectId(enrollment["session_id"]), "is_deleted": {"$ne": True}})
+    student = await db.students.find_one({"_id": ObjectId(enrollment["student_id"])})
+    if not session_doc:
+        raise HTTPException(status_code=404, detail="Session not found")
+    amount = float(session_doc.get("monthly_price", 0))
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Session monthly price must be greater than zero")
+
+    origin = _return_origin(body.origin_url)
+    success_url = f"{origin}/parent/payments?stripe_subscription_session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{origin}/parent/payments"
+    customer_user = user
+    if user["role"] == "admin":
+        parent = await db.users.find_one({"_id": ObjectId(enrollment["parent_user_id"])})
+        if not parent:
+            raise HTTPException(status_code=404, detail="Parent account not found")
+        customer_user = {
+            "id": str(parent["_id"]),
+            "email": parent.get("email"),
+            "name": parent.get("name"),
+            "role": parent.get("role", "parent"),
+        }
+    customer_id = await _get_or_create_customer(db, customer_user)
+    stripe = _configure_stripe()
+    student_name = f"{student['first_name']} {student['last_name']}" if student else "Student"
+    metadata = {
+        "enrollment_id": body.enrollment_id,
+        "parent_user_id": enrollment.get("parent_user_id", ""),
+        "student_id": enrollment.get("student_id", ""),
+        "session_id": enrollment.get("session_id", ""),
+        "student_name": student_name,
+        "session_name": session_doc.get("name", ""),
+    }
+    checkout = _stripe_dict(await asyncio.to_thread(
+        stripe.checkout.Session.create,
+        mode="subscription",
+        customer=customer_id,
+        line_items=[{
+            "price_data": {
+                "currency": "usd",
+                "product_data": {"name": f"{session_doc.get('name', 'Academy')} monthly tuition"},
+                "unit_amount": int(round(amount * 100)),
+                "recurring": {"interval": "month"},
+            },
+            "quantity": 1,
+        }],
+        success_url=success_url,
+        cancel_url=cancel_url,
+        client_reference_id=body.enrollment_id,
+        metadata=metadata,
+        subscription_data={"metadata": metadata},
+    ))
+    now = datetime.now(timezone.utc).isoformat()
+    await db.payment_transactions.insert_one({
+        "session_id": checkout["id"],
+        "enrollment_id": body.enrollment_id,
+        "user_id": user["id"],
+        "user_email": user["email"],
+        "type": "subscription_checkout",
+        "amount": amount,
+        "currency": "usd",
+        "payment_status": checkout.get("payment_status", "unpaid"),
+        "status": checkout.get("status", "open"),
+        "metadata": metadata,
+        "created_at": now,
+        "updated_at": now,
+    })
+    await db.enrollments.update_one(
+        {"_id": ObjectId(body.enrollment_id)},
+        {"$set": {
+            "payment_mode": "autopay_pending",
+            "stripe_customer_id": customer_id,
+            "subscription_status": "pending_checkout",
+            "updated_at": now,
+        }},
+    )
+    await log_audit(user, "subscription_checkout_create", "enrollment", body.enrollment_id, f"session={checkout['id']}")
+    return {"url": checkout["url"], "session_id": checkout["id"]}
+
+
+@router.post("/billing/customer-portal")
+async def create_customer_portal(body: CustomerPortalIn, request: Request, user=Depends(get_current_user)):
+    if user.get("role") not in {"admin", "parent"}:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    db = get_db()
+    user_doc = await db.users.find_one({"_id": ObjectId(user["id"])}, {"stripe_customer_id": 1})
+    customer_id = user_doc.get("stripe_customer_id") if user_doc else None
+    if not customer_id:
+        enrollment = await db.enrollments.find_one({"parent_user_id": user["id"], "stripe_customer_id": {"$exists": True}})
+        customer_id = enrollment.get("stripe_customer_id") if enrollment else None
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="Set up auto-pay before opening the billing portal")
+    origin = _return_origin(body.origin_url)
+    stripe = _configure_stripe()
+    portal = _stripe_dict(await asyncio.to_thread(
+        stripe.billing_portal.Session.create,
+        customer=customer_id,
+        return_url=f"{origin}/parent/payments",
+    ))
+    return {"url": portal["url"]}
+
+
 async def _apply_paid(db, payment_id: str, method: str = "stripe"):
     """Idempotently mark a payment paid."""
     if not ObjectId.is_valid(payment_id):
@@ -153,6 +357,14 @@ async def _apply_paid(db, payment_id: str, method: str = "stripe"):
             "notes": "Paid via Stripe",
         }},
     )
+    if pay.get("payment_type") == "registration" and pay.get("enrollment_id"):
+        await db.enrollments.update_one(
+            {"_id": ObjectId(pay["enrollment_id"]), "approval_status": "pending_payment"},
+            {"$set": {
+                "approval_status": "pending",
+                "payment_confirmed_at": datetime.now(timezone.utc).isoformat(),
+            }},
+        )
     # Notification for the parent
     if pay.get("parent_user_id"):
         await db.notifications.insert_one({
@@ -186,20 +398,26 @@ async def checkout_status(session_id: str, request: Request, user=Depends(get_cu
     # Best-effort Stripe lookup; failure is non-fatal — webhook is canonical
     try:
         stripe = _configure_stripe()
-        sess = await asyncio.to_thread(stripe.checkout.Session.retrieve, session_id)
+        sess = _stripe_dict(await asyncio.to_thread(stripe.checkout.Session.retrieve, session_id))
         stripe_status = sess.get("status")
         stripe_payment_status = sess.get("payment_status")
         await db.payment_transactions.update_one(
             {"session_id": session_id},
             {"$set": {"payment_status": stripe_payment_status, "status": stripe_status,
+                      "stripe_payment_intent": sess.get("payment_intent"),
                       "updated_at": datetime.now(timezone.utc).isoformat()}},
         )
-        if stripe_payment_status == "paid" and tx.get("payment_status") != "paid":
+        if tx.get("type") == "subscription_checkout" and sess.get("subscription"):
+            enrollment_id = tx.get("enrollment_id") or (sess.get("metadata") or {}).get("enrollment_id")
+            if enrollment_id:
+                await _activate_subscription_enrollment(db, enrollment_id, sess)
+        elif stripe_payment_status == "paid" and tx.get("payment_status") != "paid":
             await _apply_paid(db, tx["payment_id"])
         return {
             "session_id": session_id,
             "status": stripe_status,
             "payment_status": stripe_payment_status,
+            "subscription_status": "active" if sess.get("subscription") and stripe_status == "complete" else None,
             "amount_total": sess.get("amount_total"),
         }
     except Exception as e:
@@ -223,19 +441,129 @@ async def stripe_webhook(request: Request):
     stripe = _configure_stripe()
     try:
         evt = stripe.Webhook.construct_event(body, sig, webhook_secret)
+        evt = _stripe_dict(evt)
     except Exception as e:
         log.warning(f"Stripe webhook verify failed: {e}")
         raise HTTPException(status_code=400, detail="Invalid signature")
-    if evt.get("type") == "checkout.session.completed":
+    event_type = evt.get("type")
+    if event_type == "checkout.session.completed":
         session = evt["data"]["object"]
         tx = await db.payment_transactions.find_one({"session_id": session.get("id")})
-        payment_id = tx.get("payment_id") if tx else (session.get("metadata") or {}).get("payment_id")
+        metadata = session.get("metadata") or {}
+        payment_id = tx.get("payment_id") if tx else metadata.get("payment_id")
         if tx:
             await db.payment_transactions.update_one(
                 {"session_id": session.get("id")},
                 {"$set": {"payment_status": "paid", "status": "complete",
+                          "stripe_payment_intent": session.get("payment_intent"),
+                          "stripe_subscription_id": session.get("subscription"),
                           "updated_at": datetime.now(timezone.utc).isoformat()}},
             )
-        if payment_id:
+        enrollment_id = (tx or {}).get("enrollment_id") or metadata.get("enrollment_id")
+        if session.get("mode") == "subscription" and enrollment_id:
+            await _activate_subscription_enrollment(db, enrollment_id, session)
+        elif payment_id:
             await _apply_paid(db, payment_id)
+    elif event_type == "invoice.paid":
+        invoice = evt["data"]["object"]
+        subscription_id = invoice.get("subscription")
+        subscription_details = invoice.get("subscription_details") or {}
+        metadata = subscription_details.get("metadata") or invoice.get("metadata") or {}
+        enrollment = None
+        if subscription_id:
+            enrollment = await db.enrollments.find_one({"stripe_subscription_id": subscription_id})
+        if not enrollment and metadata.get("enrollment_id") and ObjectId.is_valid(metadata["enrollment_id"]):
+            enrollment = await db.enrollments.find_one({"_id": ObjectId(metadata["enrollment_id"])})
+        if enrollment:
+            period = _invoice_period(invoice)
+            amount = float(invoice.get("amount_paid") or 0) / 100
+            now = datetime.now(timezone.utc).isoformat()
+            payment_doc = {
+                "parent_user_id": enrollment["parent_user_id"],
+                "student_id": enrollment["student_id"],
+                "enrollment_id": str(enrollment["_id"]),
+                "session_id": enrollment["session_id"],
+                "period": period,
+                "amount": amount,
+                "discount": 0,
+                "final_amount": amount,
+                "status": "paid",
+                "payment_date": now,
+                "payment_method": "stripe_subscription",
+                "marked_by": None,
+                "notes": "Paid via Stripe auto-pay",
+                "invoice_number": invoice.get("number") or _invoice_number(),
+                "invoice_created_at": now,
+                "stripe_invoice_id": invoice.get("id"),
+                "stripe_subscription_id": subscription_id,
+                "stripe_payment_intent": invoice.get("payment_intent"),
+                "payment_type": "subscription",
+                "refunded_amount": 0,
+                "refund_status": "none",
+                "refunds": [],
+                "is_deleted": False,
+                "created_at": now,
+            }
+            existing = await db.payments.find_one({"enrollment_id": str(enrollment["_id"]), "period": period})
+            if existing:
+                await db.payments.update_one(
+                    {"_id": existing["_id"]},
+                    {"$set": {
+                        "status": "paid",
+                        "payment_date": now,
+                        "payment_method": "stripe_subscription",
+                        "notes": "Paid via Stripe auto-pay",
+                        "stripe_invoice_id": invoice.get("id"),
+                        "stripe_subscription_id": subscription_id,
+                        "stripe_payment_intent": invoice.get("payment_intent"),
+                        "payment_type": "subscription",
+                    }},
+                )
+            else:
+                await db.payments.insert_one(payment_doc)
+            await db.enrollments.update_one(
+                {"_id": enrollment["_id"]},
+                {"$set": {
+                    "payment_mode": "autopay",
+                    "subscription_status": "active",
+                    "last_autopay_at": now,
+                    "updated_at": now,
+                }},
+            )
+            await db.notifications.insert_one({
+                "user_id": enrollment["parent_user_id"],
+                "type": "payment_received",
+                "title": "Auto-pay received",
+                "message": f"${amount:.2f} for {period} confirmed.",
+                "related_entity": str(enrollment["_id"]),
+                "read": False,
+                "created_at": now,
+            })
+    elif event_type == "invoice.payment_failed":
+        invoice = evt["data"]["object"]
+        subscription_id = invoice.get("subscription")
+        enrollment = await db.enrollments.find_one({"stripe_subscription_id": subscription_id}) if subscription_id else None
+        if enrollment:
+            await db.enrollments.update_one(
+                {"_id": enrollment["_id"]},
+                {"$set": {
+                    "payment_mode": "autopay",
+                    "subscription_status": "past_due",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }},
+            )
+    elif event_type in {"customer.subscription.updated", "customer.subscription.deleted"}:
+        subscription = evt["data"]["object"]
+        subscription_id = subscription.get("id")
+        if subscription_id:
+            status = subscription.get("status", "unknown")
+            payment_mode = "manual" if event_type == "customer.subscription.deleted" else "autopay"
+            await db.enrollments.update_one(
+                {"stripe_subscription_id": subscription_id},
+                {"$set": {
+                    "payment_mode": payment_mode,
+                    "subscription_status": status,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }},
+            )
     return {"received": True}

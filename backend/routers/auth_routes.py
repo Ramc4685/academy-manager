@@ -17,9 +17,54 @@ from auth import (
     JWT_ALGORITHM,
 )
 from db import get_db
+from services.enrollment_service import (
+    capacity_snapshot,
+    create_enrollment_with_capacity,
+    release_session_seat,
+    reserve_session_seat,
+)
+from services.waitlist_service import join_waitlist
+from services.waiver_service import record_waiver_acceptance, waiver_fields
 import jwt as pyjwt
 
 router = APIRouter()
+
+
+def _current_period() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def _invoice_number(prefix: str = "INV") -> str:
+    return f"{prefix}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
+
+
+async def _create_registration_payment(db, enrollment_id: str, enrollment: dict, session: dict) -> str:
+    amount = float(session.get("monthly_price", 0) or 0)
+    doc = {
+        "parent_user_id": enrollment["parent_user_id"],
+        "student_id": enrollment["student_id"],
+        "enrollment_id": enrollment_id,
+        "session_id": enrollment["session_id"],
+        "period": _current_period(),
+        "amount": amount,
+        "discount": 0,
+        "final_amount": amount,
+        "status": "pending",
+        "payment_date": None,
+        "payment_method": None,
+        "marked_by": None,
+        "notes": "Registration payment",
+        "payment_type": "registration",
+        "invoice_number": _invoice_number("REG"),
+        "invoice_created_at": datetime.now(timezone.utc).isoformat(),
+        "refunded_amount": 0,
+        "refund_status": "none",
+        "refunds": [],
+        "is_deleted": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    result = await db.payments.insert_one(doc)
+    return str(result.inserted_id)
 
 
 def _serialize_user(u: dict) -> dict:
@@ -89,48 +134,101 @@ async def register_full(body: PublicRegisterIn, response: Response):
     email = body.parent_email.lower()
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Email already registered. Please log in.")
-    now = datetime.now(timezone.utc).isoformat()
-    # parent user
-    parent_doc = {
-        "email": email, "password_hash": hash_password(body.password),
-        "name": body.parent_name, "phone": body.parent_phone or "",
-        "role": "parent", "status": "active", "must_change_password": False,
-        "created_at": now, "updated_at": now,
-    }
-    pr = await db.users.insert_one(parent_doc)
-    parent_id = str(pr.inserted_id)
-    # student
-    try:
-        from datetime import datetime as dt
-        d = dt.fromisoformat(body.child_dob)
-        age = (dt.now() - d).days // 365
-    except Exception:
-        age = 0
-    stu_doc = {
-        "first_name": body.child_first_name, "last_name": body.child_last_name,
-        "dob": body.child_dob, "age": age, "skill_level": body.child_skill_level,
-        "emergency_contact_name": body.emergency_contact_name,
-        "emergency_contact_phone": body.emergency_contact_phone,
-        "medical_notes": body.medical_notes or "",
-        "t_shirt_size": body.t_shirt_size or "",
-        "previous_experience": body.previous_experience or "",
-        "waiver_accepted": True, "waiver_date": now,
-        "parent_user_id": parent_id, "status": "active",
-        "is_deleted": False, "created_at": now,
-    }
-    sr = await db.students.insert_one(stu_doc)
-    student_id = str(sr.inserted_id)
-    enrollment_id = None
+    seat_reserved = False
+    waitlist_requested = False
     if body.session_id:
-        sess = await db.sessions.find_one({"_id": ObjectId(body.session_id), "is_deleted": {"$ne": True}})
-        if sess:
-            er = await db.enrollments.insert_one({
-                "session_id": body.session_id, "student_id": student_id,
-                "parent_user_id": parent_id, "billing_type": "Standard",
-                "approval_status": "pending",  # admin must approve
-                "status": "active", "enrolled_at": now, "is_deleted": False,
-            })
-            enrollment_id = str(er.inserted_id)
+        try:
+            await reserve_session_seat(db, body.session_id)
+            seat_reserved = True
+        except HTTPException as exc:
+            if exc.status_code == 400 and exc.detail == "Session is full":
+                waitlist_requested = True
+            else:
+                raise
+    now = datetime.now(timezone.utc).isoformat()
+    parent_id = None
+    student_id = None
+    enrollment_id = None
+    waitlist_id = None
+    payment_id = None
+    try:
+        # parent user
+        parent_doc = {
+            "email": email, "password_hash": hash_password(body.password),
+            "name": body.parent_name, "phone": body.parent_phone or "",
+            "role": "parent", "status": "active", "must_change_password": False,
+            "created_at": now, "updated_at": now,
+        }
+        pr = await db.users.insert_one(parent_doc)
+        parent_id = str(pr.inserted_id)
+        # student
+        try:
+            from datetime import datetime as dt
+            d = dt.fromisoformat(body.child_dob)
+            age = (dt.now() - d).days // 365
+        except Exception:
+            age = 0
+        stu_doc = {
+            "first_name": body.child_first_name, "last_name": body.child_last_name,
+            "dob": body.child_dob, "age": age, "skill_level": body.child_skill_level,
+            "emergency_contact_name": body.emergency_contact_name,
+            "emergency_contact_phone": body.emergency_contact_phone,
+            "medical_notes": body.medical_notes or "",
+            "t_shirt_size": body.t_shirt_size or "",
+            "previous_experience": body.previous_experience or "",
+            "parent_user_id": parent_id, "status": "active",
+            "is_deleted": False, "created_at": now,
+            **waiver_fields(parent_id),
+        }
+        sr = await db.students.insert_one(stu_doc)
+        student_id = str(sr.inserted_id)
+        await record_waiver_acceptance(
+            db,
+            student_id=student_id,
+            parent_user_id=parent_id,
+            accepted_by_user_id=parent_id,
+        )
+        if body.session_id:
+            if seat_reserved:
+                enrollment_id, _ = await create_enrollment_with_capacity(
+                    db,
+                    session_id=body.session_id,
+                    student={**stu_doc, "_id": sr.inserted_id},
+                    actor_role="parent",
+                    billing_type="Standard",
+                    seat_reserved=True,
+                    approval_status="pending_payment",
+                )
+                session = await db.sessions.find_one({"_id": ObjectId(body.session_id)})
+                payment_id = await _create_registration_payment(
+                    db,
+                    enrollment_id,
+                    {
+                        "parent_user_id": parent_id,
+                        "student_id": student_id,
+                        "session_id": body.session_id,
+                    },
+                    session or {},
+                )
+            elif waitlist_requested:
+                waitlist_id, _ = await join_waitlist(
+                    db,
+                    session_id=body.session_id,
+                    student={**stu_doc, "_id": sr.inserted_id},
+                    requested_by=parent_id,
+                )
+    except Exception:
+        if payment_id:
+            await db.payments.delete_one({"_id": ObjectId(payment_id)})
+        if enrollment_id:
+            await db.enrollments.delete_one({"_id": ObjectId(enrollment_id)})
+        if student_id:
+            await db.students.delete_one({"_id": ObjectId(student_id)})
+        if parent_id:
+            await db.users.delete_one({"_id": ObjectId(parent_id)})
+        if seat_reserved and body.session_id:
+            await release_session_seat(db, body.session_id)
+        raise
     # Auto-login
     access = create_access_token(parent_id, email, "parent")
     refresh = create_refresh_token(parent_id)
@@ -142,7 +240,7 @@ async def register_full(body: PublicRegisterIn, response: Response):
             "type": "registration",
             "title": "New parent registration",
             "message": f"{body.parent_name} registered {body.child_first_name} {body.child_last_name}"
-                       + (f" (enrolled in session)" if enrollment_id else ""),
+                       + (" (enrolled in session)" if enrollment_id else " (joined waitlist)" if waitlist_id else ""),
             "related_entity": parent_id,
             "read": False,
             "created_at": now,
@@ -154,6 +252,7 @@ async def register_full(body: PublicRegisterIn, response: Response):
             f"<h2 style='margin:0 0 12px 0;'>Welcome, {body.parent_name}!</h2>"
             f"<p>{body.child_first_name} is registered with BLno Badminton Academy.</p>"
             + ("<p>Your child's enrollment is pending admin approval. We'll notify you soon.</p>" if enrollment_id else "")
+            + ("<p>Your child is on the waitlist. We'll notify you when a spot opens.</p>" if waitlist_id else "")
         )
         import asyncio
         asyncio.create_task(send_email(email, "Welcome to BLno Badminton Academy", html))
@@ -163,6 +262,8 @@ async def register_full(body: PublicRegisterIn, response: Response):
         "id": parent_id, "email": email, "name": body.parent_name,
         "role": "parent", "status": "active",
         "student_id": student_id, "enrollment_id": enrollment_id,
+        "waitlist_id": waitlist_id, "waitlisted": bool(waitlist_id),
+        "payment_id": payment_id,
     }
 
 
@@ -174,6 +275,7 @@ async def public_sessions():
     items = await cursor.to_list(50)
     out = []
     for s in items:
+        capacity = await capacity_snapshot(db, s)
         out.append({
             "id": str(s["_id"]),
             "name": s["name"],
@@ -183,6 +285,7 @@ async def public_sessions():
             "start_time": s.get("start_time"),
             "end_time": s.get("end_time"),
             "monthly_price": s.get("monthly_price"),
+            **capacity,
         })
     return out
 
@@ -251,7 +354,21 @@ async def forgot_password(body: ForgotPasswordIn):
             "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
             "used": False,
         })
-        print(f"[PASSWORD RESET] {body.email}: token={token}")
+        frontend = __import__("os").environ.get("FRONTEND_URL", "")
+        reset_url = f"{frontend}/reset-password/{token}" if frontend else f"/reset-password/{token}"
+        try:
+            from routers.email_routes import send_email, _wrap
+            await send_email(
+                user["email"],
+                "Reset your BLno Academy password",
+                _wrap(
+                    "<h2 style='margin:0 0 12px 0;'>Reset your password</h2>"
+                    "<p>Use the secure link below to set a new password. This link expires in one hour.</p>"
+                    f"<p><a href='{reset_url}' style='display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:10px 14px;border-radius:8px;'>Reset password</a></p>"
+                ),
+            )
+        except Exception:
+            pass
     return {"ok": True}
 
 

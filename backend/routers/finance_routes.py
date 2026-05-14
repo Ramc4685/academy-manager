@@ -4,12 +4,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from bson import ObjectId
 from models import (
     PaymentIn, MarkPaidIn, DiscountIn, GenerateMonthlyIn,
-    ExpenseIn, PayoutRuleIn, CalcPayoutIn,
+    ExpenseIn, PayoutRuleIn, CalcPayoutIn, RefundPaymentIn,
 )
 from auth import get_current_user, require_roles, log_audit
 from db import get_db
 
 router = APIRouter()
+
+
+def _invoice_number(prefix: str = "INV") -> str:
+    return f"{prefix}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
 
 
 def _oid(s: str) -> ObjectId:
@@ -65,6 +69,11 @@ async def create_payment(body: PaymentIn, admin=Depends(require_roles("admin")))
         "payment_method": None,
         "marked_by": None,
         "notes": body.notes or "",
+        "invoice_number": _invoice_number(),
+        "invoice_created_at": datetime.now(timezone.utc).isoformat(),
+        "refunded_amount": 0,
+        "refund_status": "none",
+        "refunds": [],
         "is_deleted": False,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -83,16 +92,20 @@ async def generate_monthly(body: GenerateMonthlyIn, admin=Depends(require_roles(
     enrollments = await db.enrollments.find({
         "status": "active",
         "is_deleted": {"$ne": True},
-        "approval_status": {"$ne": "pending"},
+        "approval_status": {"$nin": ["pending", "pending_payment"]},
     }).to_list(5000)
     created = 0
     skipped = 0
     skipped_no_charge = 0
     skipped_paused = 0
+    skipped_autopay = 0
     for e in enrollments:
         # Skip if this period is in the enrollment's paused list
         if body.period in (e.get("skip_periods", []) or []):
             skipped_paused += 1
+            continue
+        if e.get("payment_mode") == "autopay" and e.get("subscription_status") in {"active", "trialing", "past_due"}:
+            skipped_autopay += 1
             continue
         # Skip No Charge / Waived
         bt = e.get("billing_type", "Standard")
@@ -124,15 +137,21 @@ async def generate_monthly(body: GenerateMonthlyIn, admin=Depends(require_roles(
             "payment_method": None,
             "marked_by": None,
             "notes": "",
+            "invoice_number": _invoice_number(),
+            "invoice_created_at": datetime.now(timezone.utc).isoformat(),
+            "refunded_amount": 0,
+            "refund_status": "none",
+            "refunds": [],
             "is_deleted": False,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         await db.payments.insert_one(doc)
         created += 1
     await log_audit(admin, "generate", "payment", body.period,
-                    f"created {created} skipped {skipped} no_charge {skipped_no_charge} paused {skipped_paused}")
+                    f"created {created} skipped {skipped} no_charge {skipped_no_charge} paused {skipped_paused} autopay {skipped_autopay}")
     return {"created": created, "skipped": skipped,
-            "skipped_no_charge": skipped_no_charge, "skipped_paused": skipped_paused}
+            "skipped_no_charge": skipped_no_charge, "skipped_paused": skipped_paused,
+            "skipped_autopay": skipped_autopay}
 
 
 @router.patch("/payments/{pid}/mark-paid")
@@ -149,6 +168,15 @@ async def mark_paid(pid: str, body: MarkPaidIn, admin=Depends(require_roles("adm
             "notes": body.notes or "",
         }},
     )
+    pay = await db.payments.find_one({"_id": _oid(pid)})
+    if pay and pay.get("payment_type") == "registration" and pay.get("enrollment_id"):
+        await db.enrollments.update_one(
+            {"_id": ObjectId(pay["enrollment_id"]), "approval_status": "pending_payment"},
+            {"$set": {
+                "approval_status": "pending",
+                "payment_confirmed_at": pay_date,
+            }},
+        )
     await log_audit(admin, "mark_paid", "payment", pid, body.payment_method)
     return {"ok": True}
 
@@ -191,6 +219,55 @@ async def undo_paid(pid: str, admin=Depends(require_roles("admin"))):
     )
     await log_audit(admin, "undo_paid", "payment", pid, "")
     return {"ok": True}
+
+
+@router.post("/payments/{pid}/refund")
+async def refund_payment(pid: str, body: RefundPaymentIn, admin=Depends(require_roles("admin"))):
+    db = get_db()
+    p = await db.payments.find_one({"_id": _oid(pid), "is_deleted": {"$ne": True}})
+    if not p:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    if p.get("status") != "paid":
+        raise HTTPException(status_code=400, detail="Only paid payments can be refunded")
+    refunded = float(p.get("refunded_amount", 0) or 0)
+    final_amount = float(p.get("final_amount", 0) or 0)
+    amount = float(body.amount if body.amount is not None else final_amount - refunded)
+    if amount <= 0 or refunded + amount > final_amount:
+        raise HTTPException(status_code=400, detail="Invalid refund amount")
+
+    provider_refund_id = None
+    provider_status = "local_recorded"
+    if p.get("payment_method") == "stripe":
+        tx = await db.payment_transactions.find_one({"payment_id": pid, "payment_status": "paid"})
+        payment_intent = tx.get("stripe_payment_intent") if tx else None
+        if payment_intent and __import__("os").environ.get("STRIPE_API_KEY"):
+            import stripe
+            stripe.api_key = __import__("os").environ["STRIPE_API_KEY"]
+            refund = stripe.Refund.create(payment_intent=payment_intent, amount=int(round(amount * 100)))
+            if hasattr(refund, "to_dict_recursive"):
+                refund = refund.to_dict_recursive()
+            provider_refund_id = refund.get("id")
+            provider_status = refund.get("status", "created")
+        else:
+            provider_status = "stripe_intent_unavailable"
+
+    refund_doc = {
+        "amount": amount,
+        "reason": body.reason or "",
+        "refunded_by": admin["id"],
+        "refunded_at": datetime.now(timezone.utc).isoformat(),
+        "provider_refund_id": provider_refund_id,
+        "provider_status": provider_status,
+    }
+    new_refunded = round(refunded + amount, 2)
+    status = "refunded" if new_refunded >= final_amount else "partially_refunded"
+    await db.payments.update_one(
+        {"_id": _oid(pid)},
+        {"$set": {"refunded_amount": new_refunded, "refund_status": status, "status": status},
+         "$push": {"refunds": refund_doc}},
+    )
+    await log_audit(admin, "refund", "payment", pid, f"${amount}")
+    return {"ok": True, "refund": refund_doc, "refund_status": status, "refunded_amount": new_refunded}
 
 
 @router.post("/coach-payouts/{pid}/undo-paid")

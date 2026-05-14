@@ -38,9 +38,16 @@ async def ensure_indexes():
     await db.invites.create_index("token", unique=True)
     await db.password_reset_tokens.create_index("expires_at", expireAfterSeconds=0)
     await db.login_attempts.create_index("identifier")
+    await db.users.create_index("stripe_customer_id")
     await db.enrollments.create_index([("session_id", 1), ("student_id", 1)], unique=True)
+    await db.enrollments.create_index("stripe_subscription_id")
+    await db.waitlist.create_index([("session_id", 1), ("status", 1), ("requested_at", 1)])
+    await db.waitlist.create_index([("parent_user_id", 1), ("status", 1)])
+    await db.waiver_acceptances.create_index([("student_id", 1), ("waiver_version", 1)])
     await db.attendance.create_index([("session_id", 1), ("student_id", 1), ("date", 1)], unique=True)
     await db.payments.create_index([("enrollment_id", 1), ("period", 1)], unique=True)
+    await db.pause_requests.create_index([("enrollment_id", 1), ("period", 1), ("status", 1)])
+    await db.pause_requests.create_index([("parent_user_id", 1), ("status", 1)])
     await db.coach_payouts.create_index([("coach_id", 1), ("period", 1)], unique=True)
 
 
