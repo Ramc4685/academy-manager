@@ -1,0 +1,34 @@
+app = "courtmastr-academy-api"
+primary_region = "ord"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  APP_ENV = "production"
+  DB_NAME = "academy_manager"
+  COOKIE_SECURE = "true"
+  EMAIL_DELIVERY_ENABLED = "false"
+  FRONTEND_URL = "https://academy.courtmastr.com"
+  CORS_ORIGINS = "https://academy.courtmastr.com"
+  SCHEDULER_TZ = "America/Chicago"
+
+[http_service]
+  internal_port = 8001
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/api/health"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "1gb"

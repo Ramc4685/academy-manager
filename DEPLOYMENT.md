@@ -47,6 +47,59 @@ docker build \
   -t academy-manager-frontend ./frontend
 ```
 
+## Fly.io Backend
+
+The backend Fly app is `courtmastr-academy-api` in region `ord`.
+
+Set required secrets before the first deploy:
+
+```bash
+cd backend
+flyctl secrets set \
+  MONGO_URL='mongodb+srv://...' \
+  JWT_SECRET='<64+ random hex chars>' \
+  ADMIN_EMAIL='<owner admin email>' \
+  ADMIN_PASSWORD='<initial strong password>' \
+  STRIPE_API_KEY='sk_test_...' \
+  STRIPE_WEBHOOK_SECRET='whsec_...' \
+  RESEND_API_KEY='re_...' \
+  SENDER_EMAIL='noreply@academy.courtmastr.com' \
+  -a courtmastr-academy-api
+```
+
+Deploy:
+
+```bash
+cd backend
+flyctl deploy -a courtmastr-academy-api
+flyctl status -a courtmastr-academy-api
+flyctl logs -a courtmastr-academy-api
+```
+
+Keep `EMAIL_DELIVERY_ENABLED=false` until final production email verification is complete.
+
+## Cloudflare Pages Frontend
+
+Build command:
+
+```bash
+yarn build
+```
+
+Build output directory:
+
+```bash
+frontend/build
+```
+
+Production frontend environment:
+
+```bash
+REACT_APP_BACKEND_URL=https://api.academy.courtmastr.com
+```
+
+The frontend includes `frontend/public/_redirects` so direct navigation to React routes works on Cloudflare Pages.
+
 ## Payments
 
 1. Configure Stripe live or test keys.
