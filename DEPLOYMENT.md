@@ -60,7 +60,7 @@ flyctl secrets set \
   JWT_SECRET='<64+ random hex chars>' \
   ADMIN_EMAIL='<owner admin email>' \
   ADMIN_PASSWORD='<initial strong password>' \
-  STRIPE_API_KEY='sk_test_...' \
+  STRIPE_API_KEY='sk_live_...' \
   STRIPE_WEBHOOK_SECRET='whsec_...' \
   RESEND_API_KEY='re_...' \
   SENDER_EMAIL='noreply@academy.courtmastr.com' \
