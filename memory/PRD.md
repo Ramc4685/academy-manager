@@ -2,7 +2,7 @@
 
 > **Owner:** BLno Badminton Academy
 > **Stack:** FastAPI + MongoDB Motor + JWT (httpOnly cookies) · React 19 + Tailwind + shadcn/ui + Recharts · Stripe SDK · Resend (transactional email)
-> **Status:** Phase 1+2+3 shipped. Phase 4 production-readiness baseline partially shipped; remaining Phase 4+ documented below.
+> **Status:** Phase 1+2+3 shipped. Phase 4 production-readiness baseline shipped (autopay + waitlist + Stripe hardening merged from external GitHub commit `0a69963` on 2026-02-14 — full regression PASSED 29/29 backend, 14/14 frontend screens, zero console errors). Remaining Phase 4+ documented below.
 
 ---
 
