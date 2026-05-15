@@ -430,6 +430,88 @@ async def checkout_status(session_id: str, request: Request, user=Depends(get_cu
         }
 
 
+async def _handle_charge_refunded(db, evt: dict) -> None:
+    """Process a charge.refunded event: create a payment_refunds record and
+    update the parent payments document."""
+    charge = evt["data"]["object"]
+    payment_intent_id = charge.get("payment_intent")
+    if not payment_intent_id:
+        log.info("charge.refunded event %s has no payment_intent; skipping", evt.get("id"))
+        return
+
+    pay = await db.payments.find_one({"stripe_payment_intent": payment_intent_id})
+    if not pay:
+        tx = await db.payment_transactions.find_one({"stripe_payment_intent": payment_intent_id})
+        payment_id = tx.get("payment_id") if tx else None
+        if payment_id and ObjectId.is_valid(payment_id):
+            pay = await db.payments.find_one({"_id": ObjectId(payment_id)})
+        if not pay:
+            log.info(
+                "charge.refunded event %s: no payments doc for payment_intent=%s; skipping",
+                evt.get("id"),
+                payment_intent_id,
+            )
+            return
+
+    # Pull the first refund object from the charge for the refund id and reason.
+    refund_list = (charge.get("refunds") or {}).get("data") or []
+    stripe_refund_id = refund_list[0]["id"] if refund_list else evt["id"]
+    reason = refund_list[0].get("reason") if refund_list else None
+
+    # amount_refunded on the charge object is cumulative (in cents).
+    amount_refunded_cents = int(charge.get("amount_refunded") or 0)
+    amount_refunded = amount_refunded_cents / 100.0
+
+    # Compute the incremental refund for this event (total minus already recorded).
+    already_refunded = float(pay.get("refunded_amount") or 0)
+    incremental = max(0.0, amount_refunded - already_refunded)
+
+    now = datetime.now(timezone.utc).isoformat()
+    payment_id_str = str(pay["_id"])
+
+    # Insert the refund record (unique index on stripe_refund_id prevents duplicates).
+    try:
+        await db.payment_refunds.insert_one({
+            "stripe_refund_id": stripe_refund_id,
+            "payment_id": payment_id_str,
+            "stripe_payment_intent": payment_intent_id,
+            "amount": incremental,
+            "reason": reason,
+            "created_at": now,
+        })
+    except Exception as exc:
+        # DuplicateKeyError means we already recorded this refund — safe to skip.
+        log.warning("payment_refunds insert skipped for %s: %s", stripe_refund_id, exc)
+        return
+
+    # Update the parent payment.
+    final_amount = float(pay.get("final_amount") or 0)
+    new_refunded = round(already_refunded + incremental, 2)
+    refund_status = "refunded" if new_refunded >= final_amount else "partially_refunded"
+    refund_doc = {
+        "amount": incremental,
+        "reason": reason or "",
+        "refunded_by": "stripe_webhook",
+        "refunded_at": now,
+        "provider_refund_id": stripe_refund_id,
+        "provider_status": refund_list[0].get("status", "succeeded") if refund_list else "succeeded",
+    }
+
+    await db.payments.update_one(
+        {"_id": pay["_id"]},
+        {
+            "$set": {
+                "refunded_amount": new_refunded,
+                "refund_status": refund_status,
+                "status": refund_status,
+                "stripe_payment_intent": payment_intent_id,
+                "updated_at": now,
+            },
+            "$push": {"refunds": refund_doc},
+        },
+    )
+
+
 @router.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
     db = get_db()
@@ -445,125 +527,182 @@ async def stripe_webhook(request: Request):
     except Exception as e:
         log.warning(f"Stripe webhook verify failed: {e}")
         raise HTTPException(status_code=400, detail="Invalid signature")
+
+    event_id = evt.get("id")
     event_type = evt.get("type")
-    if event_type == "checkout.session.completed":
-        session = evt["data"]["object"]
-        tx = await db.payment_transactions.find_one({"session_id": session.get("id")})
-        metadata = session.get("metadata") or {}
-        payment_id = tx.get("payment_id") if tx else metadata.get("payment_id")
-        if tx:
-            await db.payment_transactions.update_one(
-                {"session_id": session.get("id")},
-                {"$set": {"payment_status": "paid", "status": "complete",
-                          "stripe_payment_intent": session.get("payment_intent"),
-                          "stripe_subscription_id": session.get("subscription"),
-                          "updated_at": datetime.now(timezone.utc).isoformat()}},
-            )
-        enrollment_id = (tx or {}).get("enrollment_id") or metadata.get("enrollment_id")
-        if session.get("mode") == "subscription" and enrollment_id:
-            await _activate_subscription_enrollment(db, enrollment_id, session)
-        elif payment_id:
-            await _apply_paid(db, payment_id)
-    elif event_type == "invoice.paid":
-        invoice = evt["data"]["object"]
-        subscription_id = invoice.get("subscription")
-        subscription_details = invoice.get("subscription_details") or {}
-        metadata = subscription_details.get("metadata") or invoice.get("metadata") or {}
-        enrollment = None
-        if subscription_id:
-            enrollment = await db.enrollments.find_one({"stripe_subscription_id": subscription_id})
-        if not enrollment and metadata.get("enrollment_id") and ObjectId.is_valid(metadata["enrollment_id"]):
-            enrollment = await db.enrollments.find_one({"_id": ObjectId(metadata["enrollment_id"])})
-        if enrollment:
-            period = _invoice_period(invoice)
-            amount = float(invoice.get("amount_paid") or 0) / 100
-            now = datetime.now(timezone.utc).isoformat()
-            payment_doc = {
-                "parent_user_id": enrollment["parent_user_id"],
-                "student_id": enrollment["student_id"],
-                "enrollment_id": str(enrollment["_id"]),
-                "session_id": enrollment["session_id"],
-                "period": period,
-                "amount": amount,
-                "discount": 0,
-                "final_amount": amount,
-                "status": "paid",
-                "payment_date": now,
-                "payment_method": "stripe_subscription",
-                "marked_by": None,
-                "notes": "Paid via Stripe auto-pay",
-                "invoice_number": invoice.get("number") or _invoice_number(),
-                "invoice_created_at": now,
-                "stripe_invoice_id": invoice.get("id"),
-                "stripe_subscription_id": subscription_id,
-                "stripe_payment_intent": invoice.get("payment_intent"),
-                "payment_type": "subscription",
-                "refunded_amount": 0,
-                "refund_status": "none",
-                "refunds": [],
-                "is_deleted": False,
-                "created_at": now,
-            }
-            existing = await db.payments.find_one({"enrollment_id": str(enrollment["_id"]), "period": period})
-            if existing:
-                await db.payments.update_one(
-                    {"_id": existing["_id"]},
+    now = datetime.now(timezone.utc).isoformat()
+
+    # --- Idempotency check ---
+    existing_evt = await db.stripe_webhook_events.find_one({"event_id": event_id})
+    if existing_evt and existing_evt.get("status") == "processed":
+        return {"received": True, "deduped": True}
+
+    # Insert a "processing" sentinel to claim this event.
+    try:
+        await db.stripe_webhook_events.insert_one({
+            "event_id": event_id,
+            "type": event_type,
+            "status": "processing",
+            "received_at": now,
+            "processed_at": None,
+        })
+    except Exception:
+        # Another process beat us to it; treat as deduped.
+        return {"received": True, "deduped": True}
+
+    # --- Route to handler ---
+    error_msg = None
+    try:
+        if event_type == "checkout.session.completed":
+            session = evt["data"]["object"]
+            tx = await db.payment_transactions.find_one({"session_id": session.get("id")})
+            metadata = session.get("metadata") or {}
+            payment_id = tx.get("payment_id") if tx else metadata.get("payment_id")
+            if tx:
+                await db.payment_transactions.update_one(
+                    {"session_id": session.get("id")},
+                    {"$set": {"payment_status": "paid", "status": "complete",
+                              "stripe_payment_intent": session.get("payment_intent"),
+                              "stripe_subscription_id": session.get("subscription"),
+                              "updated_at": datetime.now(timezone.utc).isoformat()}},
+                )
+            enrollment_id = (tx or {}).get("enrollment_id") or metadata.get("enrollment_id")
+            if session.get("mode") == "subscription" and enrollment_id:
+                await _activate_subscription_enrollment(db, enrollment_id, session)
+            elif payment_id:
+                if session.get("payment_intent") and ObjectId.is_valid(payment_id):
+                    await db.payments.update_one(
+                        {"_id": ObjectId(payment_id)},
+                        {"$set": {
+                            "stripe_payment_intent": session.get("payment_intent"),
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }},
+                    )
+                await _apply_paid(db, payment_id)
+        elif event_type == "checkout.session.expired":
+            session = evt["data"]["object"]
+            log.info("checkout.session.expired for session %s", session.get("id"))
+        elif event_type == "invoice.paid":
+            invoice = evt["data"]["object"]
+            subscription_id = invoice.get("subscription")
+            subscription_details = invoice.get("subscription_details") or {}
+            metadata = subscription_details.get("metadata") or invoice.get("metadata") or {}
+            enrollment = None
+            if subscription_id:
+                enrollment = await db.enrollments.find_one({"stripe_subscription_id": subscription_id})
+            if not enrollment and metadata.get("enrollment_id") and ObjectId.is_valid(metadata["enrollment_id"]):
+                enrollment = await db.enrollments.find_one({"_id": ObjectId(metadata["enrollment_id"])})
+            if enrollment:
+                period = _invoice_period(invoice)
+                amount = float(invoice.get("amount_paid") or 0) / 100
+                invoice_now = datetime.now(timezone.utc).isoformat()
+                payment_doc = {
+                    "parent_user_id": enrollment["parent_user_id"],
+                    "student_id": enrollment["student_id"],
+                    "enrollment_id": str(enrollment["_id"]),
+                    "session_id": enrollment["session_id"],
+                    "period": period,
+                    "amount": amount,
+                    "discount": 0,
+                    "final_amount": amount,
+                    "status": "paid",
+                    "payment_date": invoice_now,
+                    "payment_method": "stripe_subscription",
+                    "marked_by": None,
+                    "notes": "Paid via Stripe auto-pay",
+                    "invoice_number": invoice.get("number") or _invoice_number(),
+                    "invoice_created_at": invoice_now,
+                    "stripe_invoice_id": invoice.get("id"),
+                    "stripe_subscription_id": subscription_id,
+                    "stripe_payment_intent": invoice.get("payment_intent"),
+                    "payment_type": "subscription",
+                    "refunded_amount": 0,
+                    "refund_status": "none",
+                    "refunds": [],
+                    "is_deleted": False,
+                    "created_at": invoice_now,
+                }
+                existing = await db.payments.find_one({"enrollment_id": str(enrollment["_id"]), "period": period})
+                if existing:
+                    await db.payments.update_one(
+                        {"_id": existing["_id"]},
+                        {"$set": {
+                            "status": "paid",
+                            "payment_date": invoice_now,
+                            "payment_method": "stripe_subscription",
+                            "notes": "Paid via Stripe auto-pay",
+                            "stripe_invoice_id": invoice.get("id"),
+                            "stripe_subscription_id": subscription_id,
+                            "stripe_payment_intent": invoice.get("payment_intent"),
+                            "payment_type": "subscription",
+                        }},
+                    )
+                else:
+                    await db.payments.insert_one(payment_doc)
+                await db.enrollments.update_one(
+                    {"_id": enrollment["_id"]},
                     {"$set": {
-                        "status": "paid",
-                        "payment_date": now,
-                        "payment_method": "stripe_subscription",
-                        "notes": "Paid via Stripe auto-pay",
-                        "stripe_invoice_id": invoice.get("id"),
-                        "stripe_subscription_id": subscription_id,
-                        "stripe_payment_intent": invoice.get("payment_intent"),
-                        "payment_type": "subscription",
+                        "payment_mode": "autopay",
+                        "subscription_status": "active",
+                        "last_autopay_at": invoice_now,
+                        "updated_at": invoice_now,
                     }},
                 )
-            else:
-                await db.payments.insert_one(payment_doc)
-            await db.enrollments.update_one(
-                {"_id": enrollment["_id"]},
-                {"$set": {
-                    "payment_mode": "autopay",
-                    "subscription_status": "active",
-                    "last_autopay_at": now,
-                    "updated_at": now,
-                }},
-            )
-            await db.notifications.insert_one({
-                "user_id": enrollment["parent_user_id"],
-                "type": "payment_received",
-                "title": "Auto-pay received",
-                "message": f"${amount:.2f} for {period} confirmed.",
-                "related_entity": str(enrollment["_id"]),
-                "read": False,
-                "created_at": now,
-            })
-    elif event_type == "invoice.payment_failed":
-        invoice = evt["data"]["object"]
-        subscription_id = invoice.get("subscription")
-        enrollment = await db.enrollments.find_one({"stripe_subscription_id": subscription_id}) if subscription_id else None
-        if enrollment:
-            await db.enrollments.update_one(
-                {"_id": enrollment["_id"]},
-                {"$set": {
-                    "payment_mode": "autopay",
-                    "subscription_status": "past_due",
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }},
-            )
-    elif event_type in {"customer.subscription.updated", "customer.subscription.deleted"}:
-        subscription = evt["data"]["object"]
-        subscription_id = subscription.get("id")
-        if subscription_id:
-            status = subscription.get("status", "unknown")
-            payment_mode = "manual" if event_type == "customer.subscription.deleted" else "autopay"
-            await db.enrollments.update_one(
-                {"stripe_subscription_id": subscription_id},
-                {"$set": {
-                    "payment_mode": payment_mode,
-                    "subscription_status": status,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }},
-            )
+                await db.notifications.insert_one({
+                    "user_id": enrollment["parent_user_id"],
+                    "type": "payment_received",
+                    "title": "Auto-pay received",
+                    "message": f"${amount:.2f} for {period} confirmed.",
+                    "related_entity": str(enrollment["_id"]),
+                    "read": False,
+                    "created_at": invoice_now,
+                })
+        elif event_type == "invoice.payment_failed":
+            invoice = evt["data"]["object"]
+            subscription_id = invoice.get("subscription")
+            enrollment = await db.enrollments.find_one({"stripe_subscription_id": subscription_id}) if subscription_id else None
+            if enrollment:
+                await db.enrollments.update_one(
+                    {"_id": enrollment["_id"]},
+                    {"$set": {
+                        "payment_mode": "autopay",
+                        "subscription_status": "past_due",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }},
+                )
+        elif event_type in {"customer.subscription.updated", "customer.subscription.deleted"}:
+            subscription = evt["data"]["object"]
+            subscription_id = subscription.get("id")
+            if subscription_id:
+                status = subscription.get("status", "unknown")
+                payment_mode = "manual" if event_type == "customer.subscription.deleted" else "autopay"
+                await db.enrollments.update_one(
+                    {"stripe_subscription_id": subscription_id},
+                    {"$set": {
+                        "payment_mode": payment_mode,
+                        "subscription_status": status,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }},
+                )
+        elif event_type == "charge.refunded":
+            await _handle_charge_refunded(db, evt)
+        else:
+            log.debug("Unhandled Stripe event type: %s", event_type)
+    except Exception as exc:
+        error_msg = str(exc)
+        log.exception("Error handling Stripe event %s (%s): %s", event_id, event_type, exc)
+
+    # --- Mark the event as processed or failed ---
+    final_status = "failed" if error_msg else "processed"
+    update_fields: dict = {"status": final_status, "processed_at": datetime.now(timezone.utc).isoformat()}
+    if error_msg:
+        update_fields["error"] = error_msg
+    await db.stripe_webhook_events.update_one(
+        {"event_id": event_id},
+        {"$set": update_fields},
+    )
+
+    if error_msg:
+        raise HTTPException(status_code=500, detail="Webhook handler error")
+
     return {"received": True}
