@@ -23,7 +23,7 @@ const empty = {
 
 export default function RegisterStudent() {
   const navigate = useNavigate();
-  const { refresh } = useAuth();
+  const { registerFull } = useAuth();
   const [sessions, setSessions] = useState([]);
   const [form, setForm] = useState(empty);
   const [step, setStep] = useState(1);
@@ -59,9 +59,8 @@ export default function RegisterStudent() {
     if (!validateStep2()) return;
     setBusy(true);
     try {
-      const { data } = await api.post("/auth/register-full", { ...form, session_id: form.session_id || null });
+      const data = await registerFull({ ...form, session_id: form.session_id || null });
       toast.success(data.waitlisted ? "Registration complete. Your child is on the waitlist." : data.enrollment_id ? "Registration complete. Enrollment is pending approval." : `Welcome ${data.name}! Your account is active.`);
-      await refresh();
       if (data.payment_id) {
         try {
           const checkout = await api.post("/billing/checkout-session", {

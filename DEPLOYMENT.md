@@ -12,24 +12,74 @@ MONGO_URL=mongodb+srv://...
 DB_NAME=academy_manager
 JWT_SECRET=<64+ random hex chars>
 ADMIN_EMAIL=<owner admin email>
-ADMIN_PASSWORD=<initial strong password>
+# ADMIN_PASSWORD is only used when FIREBASE_AUTH_ENABLED is off. When Firebase
+# is on, the admin row is provisioned in Mongo with no password_hash and the
+# admin signs in via Firebase. When Firebase is off, ADMIN_PASSWORD must be
+# set explicitly or seeding aborts.
+ADMIN_PASSWORD=<initial strong password — only required when Firebase is disabled>
 COOKIE_SECURE=true
+FIREBASE_AUTH_ENABLED=true
+FIREBASE_PROJECT_ID=academy-courtmastr
+# Service account for Firebase Admin SDK (token verification + user delete).
+# Provide ONE of: FIREBASE_CREDENTIALS_FILE (path), FIREBASE_CREDENTIALS_JSON
+# (inline JSON), or rely on Application Default Credentials.
+FIREBASE_CREDENTIALS_FILE=/secrets/firebase-service-account.json
 FRONTEND_URL=https://academy.example.com
 CORS_ORIGINS=https://academy.example.com
 STRIPE_API_KEY=sk_live_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 RESEND_API_KEY=re_...
 SENDER_EMAIL=hello@academy.example.com
-EMAIL_DELIVERY_ENABLED=true
+EMAIL_DELIVERY_ENABLED=false
 ```
 
 Frontend build:
 
 ```bash
 REACT_APP_BACKEND_URL=https://api.academy.example.com
+REACT_APP_FIREBASE_API_KEY=<firebase web api key>
+REACT_APP_FIREBASE_AUTH_DOMAIN=academy-courtmastr.firebaseapp.com
+REACT_APP_FIREBASE_PROJECT_ID=academy-courtmastr
+REACT_APP_FIREBASE_STORAGE_BUCKET=academy-courtmastr.firebasestorage.app
+REACT_APP_FIREBASE_MESSAGING_SENDER_ID=953230788846
+REACT_APP_FIREBASE_APP_ID=1:953230788846:web:1f2819c11418ecf5860bff
+REACT_APP_FIREBASE_MEASUREMENT_ID=G-Z6GS6WRZY8
 ```
 
-Use exact origins for `FRONTEND_URL` and `CORS_ORIGINS`. Cookie auth will break if the frontend and API URLs do not match the configured origins.
+Use exact origins for `FRONTEND_URL` and `CORS_ORIGINS`. Firebase Auth must also
+authorize the frontend host, currently `academy.courtmastr.com`.
+
+## Auth Migration Notes
+
+With `FIREBASE_AUTH_ENABLED=true`:
+
+- **Legacy routes are disabled.** `/api/auth/login`, `/api/auth/refresh`,
+  `/api/auth/forgot-password`, and `/api/auth/reset-password` return **HTTP 410**.
+  The frontend already routes those flows through Firebase.
+- **Token verification uses Firebase Admin SDK** with `check_revoked=True`.
+  Admin-disabling a user in the Firebase console takes effect on the next
+  request — no waiting for token expiry.
+- **Email verification is enforced server-side** for any `password`-provider
+  token, both at signup and on every authenticated request. Google / Apple /
+  phone identities are accepted as verified by their provider.
+- **Invite acceptance requires Firebase identity first.** Invitees create their
+  Firebase account (or sign in with Google) using the invited email, verify the
+  email, then submit the invite token. No `password_hash` is stored.
+- **Rollback owns Firebase too.** If a registration fails mid-flight after the
+  Firebase user was created on the client, the backend deletes the Firebase
+  user via the Admin SDK before re-raising.
+- **Admin seeding** never plants a default password when Firebase is on. The
+  admin Mongo row is provisioned without `password_hash`; sign-in goes through
+  Firebase. Toggling Firebase OFF later therefore locks out the admin until
+  `ADMIN_PASSWORD` is set and seeding re-runs.
+
+**To turn Firebase off** (e.g., for an emergency fallback):
+
+1. Set `FIREBASE_AUTH_ENABLED=false` and set a real `ADMIN_PASSWORD`.
+2. Restart the backend. `seed_users` will plant the admin password hash.
+3. Existing users linked only to Firebase will need passwords issued out-of-band
+   (admin `/users/{id}/reset-password`) before they can sign in. There is no
+   automatic password recovery for Firebase-linked users in legacy mode.
 
 ## Local Container Smoke Test
 
@@ -58,8 +108,10 @@ cd backend
 flyctl secrets set \
   MONGO_URL='mongodb+srv://...' \
   JWT_SECRET='<64+ random hex chars>' \
-  ADMIN_EMAIL='<owner admin email>' \
+  ADMIN_EMAIL='ramchand4685@gmail.com' \
   ADMIN_PASSWORD='<initial strong password>' \
+  FIREBASE_AUTH_ENABLED='true' \
+  FIREBASE_PROJECT_ID='academy-courtmastr' \
   STRIPE_API_KEY='sk_live_...' \
   STRIPE_WEBHOOK_SECRET='whsec_...' \
   RESEND_API_KEY='re_...' \

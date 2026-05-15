@@ -68,17 +68,42 @@ Run these in separate terminals.
 
 Open `http://localhost:3000`.
 
-## Demo Accounts
+## Admin Account
 
-The backend seeds these accounts on startup:
+The backend seeds only the configured admin account on startup. Set `ADMIN_EMAIL`
+in `backend/.env` before using the app outside local development. Demo coach and
+parent accounts are not enabled unless `SEED_DEMO_ACCOUNTS=true` is explicitly
+set.
 
-| Role | Email | Password |
-| --- | --- | --- |
-| Admin | `admin@badminton.app` | `Admin@12345` |
-| Coach | `coach@badminton.app` | `Coach@12345` |
-| Parent | `parent@badminton.app` | `Parent@12345` |
+## Firebase Auth
 
-You can change the admin email/password in `backend/.env` with `ADMIN_EMAIL` and `ADMIN_PASSWORD`.
+Production login uses Firebase Authentication for identity and MongoDB for app
+roles and academy permissions. Firebase handles Google login, email/password,
+and password reset. The backend maps the Firebase token to the local `users`
+record by Firebase UID or by verified email on first login.
+
+Backend:
+
+```bash
+FIREBASE_AUTH_ENABLED=true
+FIREBASE_PROJECT_ID=academy-courtmastr
+ADMIN_EMAIL=ramchand4685@gmail.com
+```
+
+Frontend:
+
+```bash
+REACT_APP_FIREBASE_AUTH_DOMAIN=academy-courtmastr.firebaseapp.com
+REACT_APP_FIREBASE_PROJECT_ID=academy-courtmastr
+REACT_APP_FIREBASE_STORAGE_BUCKET=academy-courtmastr.firebasestorage.app
+REACT_APP_FIREBASE_MESSAGING_SENDER_ID=953230788846
+REACT_APP_FIREBASE_APP_ID=1:953230788846:web:1f2819c11418ecf5860bff
+REACT_APP_FIREBASE_MEASUREMENT_ID=G-Z6GS6WRZY8
+```
+
+Set `REACT_APP_FIREBASE_API_KEY` from the Firebase Web App config in deployment
+secrets. Authorized Firebase domains must include `academy.courtmastr.com` and
+`localhost` for local development.
 
 ## Import BLNO Spreadsheet Data
 
@@ -90,7 +115,7 @@ source .venv/bin/activate
 BLNO_XLSX="/Users/ramc/Downloads/BLno-Badmintion-Training.xlsx" python scripts/import_blno.py
 ```
 
-The script reads `MONGO_URL` and `DB_NAME` from `backend/.env`, keeps the seeded demo users, and replaces imported academy data collections.
+The script reads `MONGO_URL` and `DB_NAME` from `backend/.env`, keeps only the configured admin user, and replaces imported academy data collections.
 
 ## Stripe Local Testing
 

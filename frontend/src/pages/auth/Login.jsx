@@ -9,21 +9,26 @@ import { toast } from "sonner";
 const HERO = "https://static.prod-images.emergentagent.com/jobs/c735a2b3-2fb1-4fa5-a75c-2007226ca62e/images/1d1cfafe28a9d8df9f22f211189ef097f1bb5d348846857bdee5ba711ec35327.png";
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
+
+  const completeLogin = (u) => {
+    toast.success(`Welcome back, ${u.name || u.email}`);
+    const dest = u.role === "admin" ? "/admin/dashboard" : u.role === "coach" ? "/coach/dashboard" : "/parent/dashboard";
+    navigate(location.state?.from || dest, { replace: true });
+  };
 
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true);
     try {
       const u = await login(email, password);
-      toast.success(`Welcome back, ${u.name || u.email}`);
-      const dest = u.role === "admin" ? "/admin/dashboard" : u.role === "coach" ? "/coach/dashboard" : "/parent/dashboard";
-      navigate(location.state?.from || dest, { replace: true });
+      completeLogin(u);
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -31,10 +36,16 @@ export default function Login() {
     }
   };
 
-  const fillDemo = (role) => {
-    if (role === "admin") { setEmail("admin@badminton.app"); setPassword("Admin@12345"); }
-    if (role === "coach") { setEmail("coach@badminton.app"); setPassword("Coach@12345"); }
-    if (role === "parent") { setEmail("parent@badminton.app"); setPassword("Parent@12345"); }
+  const submitGoogle = async () => {
+    setGoogleBusy(true);
+    try {
+      const u = await loginWithGoogle();
+      completeLogin(u);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setGoogleBusy(false);
+    }
   };
 
   return (
@@ -86,18 +97,28 @@ export default function Login() {
             </Button>
           </form>
 
+          <div className="mt-5">
+            <div className="flex items-center gap-3 text-xs uppercase tracking-[0.18em] text-slate-400">
+              <div className="h-px flex-1 bg-slate-200" />
+              <span>or</span>
+              <div className="h-px flex-1 bg-slate-200" />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy || googleBusy}
+              onClick={submitGoogle}
+              data-testid="login-google"
+              className="mt-5 w-full border-slate-200 bg-white text-slate-800 hover:bg-slate-50 font-medium"
+            >
+              {googleBusy ? "Connecting..." : "Continue with Google"}
+            </Button>
+          </div>
+
           <div className="mt-6 text-sm text-slate-600 text-center">
             New parent? <Link to="/register-student" className="text-blue-600 hover:underline font-medium" data-testid="link-register">Register your child →</Link>
           </div>
 
-          <div className="mt-8 p-4 border border-slate-200 rounded-xl bg-white">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500 font-bold mb-3">Quick demo access</div>
-            <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={() => fillDemo("admin")} data-testid="demo-admin" className="text-xs px-3 py-1.5 rounded-full border border-slate-200 hover:bg-slate-50 text-slate-700">Admin</button>
-              <button type="button" onClick={() => fillDemo("coach")} data-testid="demo-coach" className="text-xs px-3 py-1.5 rounded-full border border-slate-200 hover:bg-slate-50 text-slate-700">Coach</button>
-              <button type="button" onClick={() => fillDemo("parent")} data-testid="demo-parent" className="text-xs px-3 py-1.5 rounded-full border border-slate-200 hover:bg-slate-50 text-slate-700">Parent</button>
-            </div>
-          </div>
         </div>
       </div>
     </div>

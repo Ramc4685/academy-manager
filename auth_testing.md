@@ -2,10 +2,10 @@
 
 ## Setup
 - Backend: FastAPI on `:8001` (supervisor), MongoDB local.
-- JWT cookie names: `access_token` (15 min), `refresh_token` (7 days). httpOnly, samesite=lax.
-- Admin seeded from `.env` on startup: `admin@badminton.app` / `Admin@12345`.
-- Demo coach: `coach@badminton.app` / `Coach@12345`
-- Demo parent: `parent@badminton.app` / `Parent@12345`
+- Firebase Auth is the primary login path when `FIREBASE_AUTH_ENABLED=true`.
+- Local JWT cookies are kept only as a fallback when Firebase auth is disabled.
+- Admin seeded from `.env` on startup via `ADMIN_EMAIL`.
+- Demo coach and parent accounts are disabled by default.
 
 ## MongoDB Indexes (created at startup)
 - `users.email` unique
@@ -18,7 +18,23 @@
 
 ## API Tests
 
-### 1. Login admin and call /me
+### 1. Firebase login and call /me
+
+The frontend signs in with Firebase and sends:
+
+```
+Authorization: Bearer <firebase_id_token>
+```
+
+Then:
+
+```
+curl -H "Authorization: Bearer <firebase_id_token>" http://localhost:8001/api/auth/me
+```
+
+Expected: returns the matching local user with `role`.
+
+### 2. Local fallback login when Firebase is disabled
 ```
 curl -c /tmp/cookies.txt -X POST http://localhost:8001/api/auth/login \
   -H "Content-Type: application/json" \
@@ -27,7 +43,7 @@ curl -b /tmp/cookies.txt http://localhost:8001/api/auth/me
 ```
 Expected: returns user with `role:"admin"`.
 
-### 2. Register parent
+### 3. Register parent
 ```
 curl -c /tmp/parent.txt -X POST http://localhost:8001/api/auth/register \
   -H "Content-Type: application/json" \

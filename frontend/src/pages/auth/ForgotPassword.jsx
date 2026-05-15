@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { api, formatApiError } from "../../lib/api";
+import { useAuth } from "../../contexts/AuthContext";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { toast } from "sonner";
 
 export default function ForgotPassword() {
+  const { resetPassword } = useAuth();
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -14,10 +15,10 @@ export default function ForgotPassword() {
     e.preventDefault();
     setBusy(true);
     try {
-      await api.post("/auth/forgot-password", { email });
+      await resetPassword(email);
       toast.success("If that email exists, a reset link has been sent.");
     } catch (err) {
-      toast.error(formatApiError(err.response?.data?.detail));
+      toast.error(err.message);
     } finally {
       setBusy(false);
     }

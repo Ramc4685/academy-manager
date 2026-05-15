@@ -35,6 +35,14 @@ def _verify(password: str, hashed: str) -> bool:
 async def ensure_indexes():
     db = get_db()
     await db.users.create_index("email", unique=True)
+    await db.users.create_index(
+        [("auth_provider", 1), ("auth_uid", 1)],
+        unique=True,
+        partialFilterExpression={
+            "auth_provider": {"$type": "string"},
+            "auth_uid": {"$type": "string"},
+        },
+    )
     await db.invites.create_index("token", unique=True)
     await db.password_reset_tokens.create_index("expires_at", expireAfterSeconds=0)
     await db.login_attempts.create_index("identifier")
@@ -51,45 +59,85 @@ async def ensure_indexes():
     await db.coach_payouts.create_index([("coach_id", 1), ("period", 1)], unique=True)
 
 
+def _firebase_mode() -> bool:
+    return os.environ.get("FIREBASE_AUTH_ENABLED", "").lower() in ("1", "true", "yes")
+
+
 async def seed_users():
     db = get_db()
+    now = datetime.now(timezone.utc).isoformat()
+    demo_emails = ["coach@badminton.app", "parent@badminton.app"]
+
+    if os.environ.get("SEED_DEMO_ACCOUNTS", "").lower() not in ("1", "true", "yes"):
+        await db.users.update_many(
+            {"email": {"$in": demo_emails}, "status": {"$ne": "deleted"}},
+            {"$set": {"status": "deleted", "updated_at": now}},
+        )
+
+    firebase_mode = _firebase_mode()
+    admin_password = os.environ.get("ADMIN_PASSWORD", "").strip()
+    if not firebase_mode and not admin_password:
+        raise RuntimeError(
+            "ADMIN_PASSWORD must be set explicitly when FIREBASE_AUTH_ENABLED is off."
+        )
+
     accounts = [
         {
-            "email": os.environ.get("ADMIN_EMAIL", "admin@badminton.app").lower(),
-            "password": os.environ.get("ADMIN_PASSWORD", "Admin@12345"),
+            "email": os.environ.get("ADMIN_EMAIL", "ramchand4685@gmail.com").lower(),
+            "password": admin_password,
             "name": "Academy Admin",
             "role": "admin",
-        },
-        {
-            "email": "coach@badminton.app",
-            "password": "Coach@12345",
-            "name": "Coach Demo",
-            "role": "coach",
-        },
-        {
-            "email": "parent@badminton.app",
-            "password": "Parent@12345",
-            "name": "Parent Demo",
-            "role": "parent",
-        },
+        }
     ]
+    if os.environ.get("SEED_DEMO_ACCOUNTS", "").lower() in ("1", "true", "yes"):
+        if firebase_mode:
+            # Demo accounts in Firebase mode have no usable password locally —
+            # they exist only as authorization rows that a Firebase signup will
+            # link to. Operators wanting working demo logins must seed those
+            # accounts in Firebase too.
+            accounts.extend([
+                {"email": "coach@badminton.app", "password": "", "name": "Coach Demo", "role": "coach"},
+                {"email": "parent@badminton.app", "password": "", "name": "Parent Demo", "role": "parent"},
+            ])
+        else:
+            accounts.extend([
+                {"email": "coach@badminton.app", "password": "Coach@12345", "name": "Coach Demo", "role": "coach"},
+                {"email": "parent@badminton.app", "password": "Parent@12345", "name": "Parent Demo", "role": "parent"},
+            ])
+
     for acc in accounts:
+        doc = {
+            "email": acc["email"],
+            "name": acc["name"],
+            "phone": "",
+            "role": acc["role"],
+            "status": "active",
+            "must_change_password": False,
+            "updated_at": now,
+        }
         existing = await db.users.find_one({"email": acc["email"]})
-        now = datetime.now(timezone.utc).isoformat()
         if existing is None:
-            await db.users.insert_one({
-                "email": acc["email"],
-                "password_hash": _hash(acc["password"]),
-                "name": acc["name"],
-                "phone": "",
+            doc["created_at"] = now
+            if not firebase_mode and acc["password"]:
+                doc["password_hash"] = _hash(acc["password"])
+            await db.users.insert_one(doc)
+        else:
+            update = {
                 "role": acc["role"],
                 "status": "active",
-                "must_change_password": False,
-                "created_at": now,
                 "updated_at": now,
-            })
-        elif not _verify(acc["password"], existing.get("password_hash", "")):
-            await db.users.update_one(
-                {"email": acc["email"]},
-                {"$set": {"password_hash": _hash(acc["password"]), "updated_at": now}},
-            )
+            }
+            if firebase_mode:
+                # Strip any lingering legacy password hash so a known-credential
+                # backdoor cannot exist on a Firebase-primary deployment.
+                await db.users.update_one(
+                    {"email": acc["email"]},
+                    {"$set": update, "$unset": {"password_hash": ""}},
+                )
+            else:
+                if acc["password"] and not _verify(acc["password"], existing.get("password_hash", "")):
+                    update["password_hash"] = _hash(acc["password"])
+                await db.users.update_one(
+                    {"email": acc["email"]},
+                    {"$set": update},
+                )
