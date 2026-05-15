@@ -47,7 +47,7 @@ jobs:
         # backend_test.py / iter2-5_test.py require a live running server (they
         # use requests against REACT_APP_BACKEND_URL). Exclude them here and run
         # only the mongomock-based unit tests that execute without a real server.
-        run: pytest tests/test_firebase_auth.py tests/test_seed_users.py tests/test_stripe_webhook_idempotency.py -v
+        run: pytest tests/test_firebase_auth.py tests/test_seed_users.py tests/test_stripe_webhook_idempotency.py tests/test_onboarding.py tests/test_coach_today.py tests/test_admin_waitlist.py -v
         env:
           MONGO_URL: mongodb://localhost:27017
           DB_NAME: academy_test
