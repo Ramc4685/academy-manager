@@ -54,9 +54,14 @@ async def ensure_indexes():
     await db.waiver_acceptances.create_index([("student_id", 1), ("waiver_version", 1)])
     await db.attendance.create_index([("session_id", 1), ("student_id", 1), ("date", 1)], unique=True)
     await db.payments.create_index([("enrollment_id", 1), ("period", 1)], unique=True)
+    await db.payments.create_index("stripe_payment_intent")
     await db.pause_requests.create_index([("enrollment_id", 1), ("period", 1), ("status", 1)])
     await db.pause_requests.create_index([("parent_user_id", 1), ("status", 1)])
     await db.coach_payouts.create_index([("coach_id", 1), ("period", 1)], unique=True)
+    await db.stripe_webhook_events.create_index("event_id", unique=True)
+    await db.payment_refunds.create_index("stripe_refund_id", unique=True)
+    await db.payment_refunds.create_index("payment_id")
+    await db.payment_refunds.create_index("created_at")
 
 
 def _firebase_mode() -> bool:
