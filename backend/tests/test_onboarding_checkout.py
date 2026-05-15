@@ -126,10 +126,10 @@ def _seed_parent(mongo_db, uid: str = "uid-parent-1", email: str = "parent@examp
 
 
 def _seed_session(mongo_db, max_students: int = 10, reserved_seats: int = 0,
-                  monthly_price: float = 150.0) -> dict:
+                  monthly_price: float = 150.0, status: str = "active") -> dict:
     doc = {
         "name": "Beginner Badminton",
-        "status": "active",
+        "status": status,
         "max_students": max_students,
         "reserved_seats": reserved_seats,
         "monthly_price": monthly_price,
@@ -346,6 +346,27 @@ class TestCheckoutCreation:
         assert body.get("error") == "session_full"
         mock_stripe.checkout.Session.create.assert_not_called()
 
+    def test_checkout_rejects_inactive_session(self, client, mongo, stub_verify):
+        parent = _seed_parent(mongo)
+        session_doc = _seed_session(mongo, status="cancelled")
+        draft = _seed_draft(
+            mongo,
+            parent_user_id=str(parent["_id"]),
+            session_id=str(session_doc["_id"]),
+        )
+        stub_verify["claim"] = _stub_token(uid=parent["auth_uid"], email=parent["email"])
+
+        mock_stripe = _make_stripe_mock()
+        with _patch_stripe_checkout(mock_stripe):
+            r = client.post(
+                f"/api/onboarding/{draft['_id']}/checkout",
+                headers={"Authorization": "Bearer FAKE"},
+            )
+
+        assert r.status_code == 400
+        assert "not open for enrollment" in r.json()["detail"]
+        mock_stripe.checkout.Session.create.assert_not_called()
+
     def test_checkout_creates_stripe_session_and_transitions_status(self, client, mongo, stub_verify):
         """Happy path: status transitions to checkout_pending, session id saved, response correct."""
         parent = _seed_parent(mongo)
@@ -467,7 +488,8 @@ class TestWebhookCompletedOnboarding:
         # Enrollment row
         enrollments = asyncio.run(mongo.enrollments.find({}).to_list(length=10))
         assert len(enrollments) == 1
-        assert enrollments[0]["status"] == "pending_approval"
+        assert enrollments[0]["status"] == "active"
+        assert enrollments[0]["approval_status"] == "pending"
         assert enrollments[0]["parent_user_id"] == parent_id
         assert enrollments[0]["session_id"] == session_id
 

@@ -433,8 +433,9 @@ async def checkout_status(session_id: str, request: Request, user=Depends(get_cu
 async def _handle_onboarding_checkout_completed(db, stripe, session: dict) -> None:
     """Handle checkout.session.completed for onboarding events (metadata.kind=onboarding).
 
-    Atomically reserves a capacity slot. On success creates a pending_approval
-    enrollment, students row, payments row, and audit log. On capacity race:
+    Atomically reserves a capacity slot. On success creates an active enrollment
+    with approval_status=pending, students row, payments row, and audit log.
+    On capacity race:
     transitions to capacity_failed_refunding, creates a waitlist entry, attempts
     stripe.Refund.create. On refund failure: transitions to
     capacity_failed_refund_failed and writes an admin-attention audit log.
@@ -446,6 +447,7 @@ async def _handle_onboarding_checkout_completed(db, stripe, session: dict) -> No
         CHECKOUT_PENDING, PENDING_APPROVAL,
         CAPACITY_FAILED_REFUNDING, CAPACITY_FAILED_REFUND_FAILED, REFUNDED,
     )
+    from services.enrollment_service import initialize_reserved_seats
 
     metadata = session.get("metadata") or {}
     onboarding_id = metadata.get("onboarding_id", "")
@@ -487,9 +489,11 @@ async def _handle_onboarding_checkout_completed(db, stripe, session: dict) -> No
         log.warning("onboarding.webhook: invalid session_id=%r on onboarding %s", session_id, onboarding_id)
         return
 
+    await initialize_reserved_seats(db, session_id)
     result = await db.sessions.update_one(
         {
             "_id": ObjectId(session_id),
+            "status": "active",
             "is_deleted": {"$ne": True},
             "$expr": {
                 "$lt": [
@@ -530,7 +534,7 @@ async def _handle_onboarding_checkout_completed(db, stripe, session: dict) -> No
             "parent_user_id": parent_user_id,
             "billing_type": "Standard",
             "approval_status": "pending",
-            "status": "pending_approval",
+            "status": "active",
             "payment_mode": "one_time_first_month",
             "enrolled_at": now,
             "is_deleted": False,

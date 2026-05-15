@@ -33,7 +33,7 @@ from pydantic import BaseModel
 from auth import get_current_user
 from db import get_db
 from routers.billing_routes import _configure_stripe
-from services.enrollment_service import capacity_snapshot
+from services.enrollment_service import capacity_snapshot, get_enrollable_session
 
 # ---------------------------------------------------------------------------
 # Status constants
@@ -427,9 +427,12 @@ async def create_onboarding_checkout(
     # Load session doc for price and capacity advisory check
     if not ObjectId.is_valid(session_id):
         raise HTTPException(status_code=400, detail="selected_session_id is not a valid id")
-    session_doc = await db.sessions.find_one({"_id": ObjectId(session_id), "is_deleted": {"$ne": True}})
-    if not session_doc:
-        raise HTTPException(status_code=400, detail="Selected session not found")
+    try:
+        session_doc = await get_enrollable_session(db, session_id)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            raise HTTPException(status_code=400, detail="Selected session not found")
+        raise
 
     # Advisory pre-check capacity (not authoritative — webhook does the atomic reserve)
     snapshot = await capacity_snapshot(db, session_doc)
