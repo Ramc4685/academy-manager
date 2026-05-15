@@ -1,4 +1,5 @@
 import axios from "axios";
+import { getFirebaseIdToken } from "./firebase";
 
 const BASE = process.env.REACT_APP_BACKEND_URL;
 
@@ -6,6 +7,15 @@ export const api = axios.create({
   baseURL: `${BASE}/api`,
   withCredentials: true,
   headers: { "Content-Type": "application/json" },
+});
+
+api.interceptors.request.use(async (config) => {
+  const token = await getFirebaseIdToken();
+  if (token) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
 });
 
 export function formatApiError(detail) {

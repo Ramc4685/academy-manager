@@ -23,7 +23,7 @@ class InviteIn(BaseModel):
 
 
 class AcceptInviteIn(BaseModel):
-    password: str = Field(min_length=6)
+    password: Optional[str] = Field(default=None, min_length=6)
     name: Optional[str] = None
     phone: Optional[str] = ""
 

@@ -14,8 +14,27 @@ from auth import (
     hash_password, verify_password, create_access_token, create_refresh_token,
     set_auth_cookies, clear_auth_cookies, get_current_user, require_roles,
     check_lockout, record_failed, clear_attempts, log_audit, _secret,
-    JWT_ALGORITHM,
+    JWT_ALGORITHM, firebase_auth_enabled, get_firebase_identity,
+    delete_firebase_user,
 )
+
+
+def _reject_when_firebase_enabled():
+    if firebase_auth_enabled():
+        raise HTTPException(
+            status_code=410,
+            detail="Legacy password auth is disabled. Use Firebase sign-in.",
+        )
+
+
+def _require_verified_signup(identity: dict) -> None:
+    if identity.get("email_verified"):
+        return
+    if identity.get("sign_in_provider") == "password":
+        raise HTTPException(
+            status_code=403,
+            detail="Verify your email address before completing registration.",
+        )
 from db import get_db
 from services.enrollment_service import (
     capacity_snapshot,
@@ -80,15 +99,25 @@ def _serialize_user(u: dict) -> dict:
 
 # ----------------- /api/auth -----------------
 @router.post("/auth/register")
-async def register(body: RegisterIn, response: Response):
+async def register(body: RegisterIn, request: Request, response: Response):
     db = get_db()
     email = body.email.lower()
-    if await db.users.find_one({"email": email}):
-        raise HTTPException(status_code=400, detail="Email already registered")
+    firebase_identity = None
+    try:
+        if firebase_auth_enabled():
+            firebase_identity = await get_firebase_identity(request)
+            if firebase_identity["email"] != email:
+                raise HTTPException(status_code=400, detail="Firebase login email does not match registration email")
+            _require_verified_signup(firebase_identity)
+        if await db.users.find_one({"email": email}):
+            raise HTTPException(status_code=400, detail="Email already registered")
+    except HTTPException:
+        if firebase_identity:
+            await delete_firebase_user(firebase_identity["auth_uid"])
+        raise
     now = datetime.now(timezone.utc).isoformat()
     doc = {
         "email": email,
-        "password_hash": hash_password(body.password),
         "name": body.name,
         "phone": body.phone or "",
         "role": "parent",
@@ -97,11 +126,20 @@ async def register(body: RegisterIn, response: Response):
         "created_at": now,
         "updated_at": now,
     }
+    if firebase_identity:
+        doc.update({
+            "auth_provider": "firebase",
+            "auth_uid": firebase_identity["auth_uid"],
+            "email_verified": True,
+        })
+    else:
+        doc["password_hash"] = hash_password(body.password)
     result = await db.users.insert_one(doc)
     user_id = str(result.inserted_id)
-    access = create_access_token(user_id, email, "parent")
-    refresh = create_refresh_token(user_id)
-    set_auth_cookies(response, access, refresh)
+    if not firebase_auth_enabled():
+        access = create_access_token(user_id, email, "parent")
+        refresh = create_refresh_token(user_id)
+        set_auth_cookies(response, access, refresh)
     return {"id": user_id, "email": email, "name": body.name, "role": "parent", "status": "active"}
 
 
@@ -125,15 +163,26 @@ class PublicRegisterIn(BaseModel):
 
 
 @router.post("/auth/register-full")
-async def register_full(body: PublicRegisterIn, response: Response):
+async def register_full(body: PublicRegisterIn, request: Request, response: Response):
     """Single-shot parent registration + child + optional enrollment.
     Replaces the Google Form workflow."""
     if not body.waiver_accepted:
         raise HTTPException(status_code=400, detail="Waiver must be accepted")
     db = get_db()
     email = body.parent_email.lower()
-    if await db.users.find_one({"email": email}):
-        raise HTTPException(status_code=400, detail="Email already registered. Please log in.")
+    firebase_identity = None
+    try:
+        if firebase_auth_enabled():
+            firebase_identity = await get_firebase_identity(request)
+            if firebase_identity["email"] != email:
+                raise HTTPException(status_code=400, detail="Firebase login email does not match registration email")
+            _require_verified_signup(firebase_identity)
+        if await db.users.find_one({"email": email}):
+            raise HTTPException(status_code=400, detail="Email already registered. Please log in.")
+    except HTTPException:
+        if firebase_identity:
+            await delete_firebase_user(firebase_identity["auth_uid"])
+        raise
     seat_reserved = False
     waitlist_requested = False
     if body.session_id:
@@ -154,11 +203,19 @@ async def register_full(body: PublicRegisterIn, response: Response):
     try:
         # parent user
         parent_doc = {
-            "email": email, "password_hash": hash_password(body.password),
+            "email": email,
             "name": body.parent_name, "phone": body.parent_phone or "",
             "role": "parent", "status": "active", "must_change_password": False,
             "created_at": now, "updated_at": now,
         }
+        if firebase_identity:
+            parent_doc.update({
+                "auth_provider": "firebase",
+                "auth_uid": firebase_identity["auth_uid"],
+                "email_verified": True,
+            })
+        else:
+            parent_doc["password_hash"] = hash_password(body.password)
         pr = await db.users.insert_one(parent_doc)
         parent_id = str(pr.inserted_id)
         # student
@@ -228,11 +285,14 @@ async def register_full(body: PublicRegisterIn, response: Response):
             await db.users.delete_one({"_id": ObjectId(parent_id)})
         if seat_reserved and body.session_id:
             await release_session_seat(db, body.session_id)
+        if firebase_identity:
+            await delete_firebase_user(firebase_identity["auth_uid"])
         raise
     # Auto-login
-    access = create_access_token(parent_id, email, "parent")
-    refresh = create_refresh_token(parent_id)
-    set_auth_cookies(response, access, refresh)
+    if not firebase_auth_enabled():
+        access = create_access_token(parent_id, email, "parent")
+        refresh = create_refresh_token(parent_id)
+        set_auth_cookies(response, access, refresh)
     # Notify admins
     async for admin_user in db.users.find({"role": "admin", "status": "active"}):
         await db.notifications.insert_one({
@@ -292,6 +352,7 @@ async def public_sessions():
 
 @router.post("/auth/login")
 async def login(body: LoginIn, request: Request, response: Response):
+    _reject_when_firebase_enabled()
     db = get_db()
     email = body.email.lower()
     ident = f"{request.client.host if request.client else 'x'}:{email}"
@@ -323,6 +384,7 @@ async def me(user: dict = Depends(get_current_user)):
 
 @router.post("/auth/refresh")
 async def refresh_token(request: Request, response: Response):
+    _reject_when_firebase_enabled()
     token = request.cookies.get("refresh_token")
     if not token:
         raise HTTPException(status_code=401, detail="No refresh token")
@@ -344,6 +406,7 @@ async def refresh_token(request: Request, response: Response):
 
 @router.post("/auth/forgot-password")
 async def forgot_password(body: ForgotPasswordIn):
+    _reject_when_firebase_enabled()
     db = get_db()
     user = await db.users.find_one({"email": body.email.lower()})
     if user:
@@ -374,6 +437,7 @@ async def forgot_password(body: ForgotPasswordIn):
 
 @router.post("/auth/reset-password")
 async def reset_password(body: ResetPasswordIn):
+    _reject_when_firebase_enabled()
     db = get_db()
     rec = await db.password_reset_tokens.find_one({"token": body.token, "used": False})
     if not rec:
@@ -446,17 +510,36 @@ async def invite_info(token: str):
 
 
 @router.post("/invites/accept/{token}")
-async def accept_invite(token: str, body: AcceptInviteIn, response: Response):
+async def accept_invite(token: str, body: AcceptInviteIn, request: Request, response: Response):
     db = get_db()
     inv = await db.invites.find_one({"token": token, "status": "pending"})
     if not inv:
         raise HTTPException(status_code=404, detail="Invite not found or already used")
-    if await db.users.find_one({"email": inv["email"]}):
-        raise HTTPException(status_code=400, detail="User already exists")
+
+    firebase_identity = None
+    if firebase_auth_enabled():
+        firebase_identity = await get_firebase_identity(request)
+        if firebase_identity["email"] != inv["email"].lower():
+            raise HTTPException(
+                status_code=403,
+                detail="Sign in with the invited email address to accept this invite.",
+            )
+        _require_verified_signup(firebase_identity)
+    else:
+        if not body.password:
+            raise HTTPException(status_code=400, detail="Password required")
+
+    try:
+        if await db.users.find_one({"email": inv["email"]}):
+            raise HTTPException(status_code=400, detail="User already exists")
+    except HTTPException:
+        if firebase_identity:
+            await delete_firebase_user(firebase_identity["auth_uid"])
+        raise
+
     now = datetime.now(timezone.utc).isoformat()
     doc = {
         "email": inv["email"],
-        "password_hash": hash_password(body.password),
         "name": body.name or inv.get("name") or inv["email"].split("@")[0],
         "phone": body.phone or "",
         "role": inv["role"],
@@ -465,12 +548,22 @@ async def accept_invite(token: str, body: AcceptInviteIn, response: Response):
         "created_at": now,
         "updated_at": now,
     }
+    if firebase_identity:
+        doc.update({
+            "auth_provider": "firebase",
+            "auth_uid": firebase_identity["auth_uid"],
+            "email_verified": True,
+        })
+    else:
+        doc["password_hash"] = hash_password(body.password)
+
     result = await db.users.insert_one(doc)
     await db.invites.update_one({"_id": inv["_id"]}, {"$set": {"status": "accepted"}})
     uid = str(result.inserted_id)
-    access = create_access_token(uid, doc["email"], doc["role"])
-    refresh = create_refresh_token(uid)
-    set_auth_cookies(response, access, refresh)
+    if not firebase_auth_enabled():
+        access = create_access_token(uid, doc["email"], doc["role"])
+        refresh = create_refresh_token(uid)
+        set_auth_cookies(response, access, refresh)
     return {"id": uid, "email": doc["email"], "name": doc["name"], "role": doc["role"], "status": "active"}
 
 

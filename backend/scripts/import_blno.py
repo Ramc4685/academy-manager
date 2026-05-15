@@ -5,8 +5,8 @@ Reads /tmp/blno.xlsx (or provided path) and seeds the DB.
 WARNING: drops existing transactional collections (sessions, students,
 enrollments, payments, expenses, attendance, lesson_plans, progress_notes,
 coach_payouts, payout_rules, move_log, messages, notifications, invites).
-Keeps users (preserves admin/coach/parent demo accounts) then adds the
-two real coaches + all parents from the sheet.
+Keeps only the configured admin account, then adds the two real coaches
+and all parents from the sheet.
 """
 import os
 import re
@@ -43,7 +43,13 @@ def now() -> str:
 def period_from_date(dt) -> str:
     if isinstance(dt, datetime):
         return dt.strftime("%Y-%m")
-    return str(dt)
+    raw = str(dt or "").strip()
+    for fmt in ("%b-%Y", "%B-%Y", "%Y-%m"):
+        try:
+            return datetime.strptime(raw, fmt).strftime("%Y-%m")
+        except ValueError:
+            pass
+    return raw
 
 
 SESSION_RE = re.compile(r"(?P<day>\w+)\s+(?P<start>\d{1,2}:\d{2}\s*[AP]M)\s*[–-]\s*(?P<end>\d{1,2}:\d{2}\s*[AP]M)\s+(?P<level>\w+)\(Coach\s*-\s*(?P<coach>\w+)\)")
@@ -102,16 +108,14 @@ async def main():
             out.append({h: v for h, v in zip(headers, r) if h})
         return out
 
-    # 1) Drop transactional data — keep users (3 demo seeded accounts)
+    # 1) Drop transactional data; keep only the configured admin user.
     for c in ("sessions", "students", "enrollments", "payments", "expenses",
               "attendance", "lesson_plans", "progress_notes", "coach_payouts",
               "payout_rules", "move_log", "messages", "notifications", "invites",
               "audit_logs"):
         await db[c].drop()
-    # Drop non-demo users so we re-import parents/coaches fresh
-    await db.users.delete_many({"email": {"$nin": [
-        "admin@badminton.app", "coach@badminton.app", "parent@badminton.app"
-    ]}})
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@badminton.app").lower()
+    await db.users.delete_many({"email": {"$ne": admin_email}})
     print("Cleared transactional collections.")
 
     # 2) Inputs sheet — pricing, capacity, payout %, expenses
@@ -142,9 +146,9 @@ async def main():
     for i, r in enumerate(inp_rows):
         if r and isinstance(r[0], str) and r[0].strip().lower() == "month":
             for r2 in inp_rows[i + 1:]:
-                if r2 and r2[0] and isinstance(r2[0], (datetime,)):
+                if r2 and r2[0]:
                     months_data.append({
-                        "period": r2[0].strftime("%Y-%m"),
+                        "period": period_from_date(r2[0]),
                         "rent": float(r2[1]) if r2[1] else 0,
                         "other": float(r2[2]) if r2[2] else 0,
                     })
