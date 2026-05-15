@@ -441,12 +441,17 @@ async def _handle_charge_refunded(db, evt: dict) -> None:
 
     pay = await db.payments.find_one({"stripe_payment_intent": payment_intent_id})
     if not pay:
-        log.info(
-            "charge.refunded event %s: no payments doc for payment_intent=%s; skipping",
-            evt.get("id"),
-            payment_intent_id,
-        )
-        return
+        tx = await db.payment_transactions.find_one({"stripe_payment_intent": payment_intent_id})
+        payment_id = tx.get("payment_id") if tx else None
+        if payment_id and ObjectId.is_valid(payment_id):
+            pay = await db.payments.find_one({"_id": ObjectId(payment_id)})
+        if not pay:
+            log.info(
+                "charge.refunded event %s: no payments doc for payment_intent=%s; skipping",
+                evt.get("id"),
+                payment_intent_id,
+            )
+            return
 
     # Pull the first refund object from the charge for the refund id and reason.
     refund_list = (charge.get("refunds") or {}).get("data") or []
@@ -481,16 +486,29 @@ async def _handle_charge_refunded(db, evt: dict) -> None:
 
     # Update the parent payment.
     final_amount = float(pay.get("final_amount") or 0)
-    new_refunded = already_refunded + incremental
-    refund_status = "full" if new_refunded >= final_amount else "partial"
+    new_refunded = round(already_refunded + incremental, 2)
+    refund_status = "refunded" if new_refunded >= final_amount else "partially_refunded"
+    refund_doc = {
+        "amount": incremental,
+        "reason": reason or "",
+        "refunded_by": "stripe_webhook",
+        "refunded_at": now,
+        "provider_refund_id": stripe_refund_id,
+        "provider_status": refund_list[0].get("status", "succeeded") if refund_list else "succeeded",
+    }
 
     await db.payments.update_one(
         {"_id": pay["_id"]},
-        {"$set": {
-            "refunded_amount": new_refunded,
-            "refund_status": refund_status,
-            "updated_at": now,
-        }},
+        {
+            "$set": {
+                "refunded_amount": new_refunded,
+                "refund_status": refund_status,
+                "status": refund_status,
+                "stripe_payment_intent": payment_intent_id,
+                "updated_at": now,
+            },
+            "$push": {"refunds": refund_doc},
+        },
     )
 
 
@@ -552,6 +570,14 @@ async def stripe_webhook(request: Request):
             if session.get("mode") == "subscription" and enrollment_id:
                 await _activate_subscription_enrollment(db, enrollment_id, session)
             elif payment_id:
+                if session.get("payment_intent") and ObjectId.is_valid(payment_id):
+                    await db.payments.update_one(
+                        {"_id": ObjectId(payment_id)},
+                        {"$set": {
+                            "stripe_payment_intent": session.get("payment_intent"),
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }},
+                    )
                 await _apply_paid(db, payment_id)
         elif event_type == "checkout.session.expired":
             session = evt["data"]["object"]

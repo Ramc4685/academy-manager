@@ -187,6 +187,7 @@ class TestDuplicateEventIdempotency:
             mongo.payments.find_one({"_id": ObjectId(payment_id_str)})
         )
         assert pay_after_first["status"] == "paid"
+        assert pay_after_first["stripe_payment_intent"] == "pi_dup001"
 
         webhook_evt = asyncio.run(
             mongo.stripe_webhook_events.find_one({"event_id": "evt_dup001"})
@@ -303,10 +304,11 @@ class TestChargeRefunded:
         # Parent payment updated
         pay = asyncio.run(mongo.payments.find_one({"_id": ObjectId(payment_id_str)}))
         assert pay["refunded_amount"] == pytest.approx(30.0)
-        assert pay["refund_status"] == "partial"
+        assert pay["refund_status"] == "partially_refunded"
+        assert pay["status"] == "partially_refunded"
 
-    def test_charge_refunded_full_refund_sets_full_status(self, client, mongo):
-        """When refunded_amount >= final_amount, refund_status must be 'full'."""
+    def test_charge_refunded_full_refund_sets_refunded_status(self, client, mongo):
+        """When refunded_amount >= final_amount, payment status must be refunded."""
         from bson import ObjectId
         payment_id_str = "5f43a0d88a1b2c0001000003"
         stripe_pi = "pi_refund002"
@@ -335,8 +337,65 @@ class TestChargeRefunded:
         assert r.status_code == 200
 
         pay = asyncio.run(mongo.payments.find_one({"_id": ObjectId(payment_id_str)}))
-        assert pay["refund_status"] == "full"
+        assert pay["refund_status"] == "refunded"
+        assert pay["status"] == "refunded"
         assert pay["refunded_amount"] == pytest.approx(50.0)
+
+    def test_charge_refunded_falls_back_to_payment_transaction_intent(self, client, mongo):
+        """One-time checkout stores payment_intent on payment_transactions;
+        refunds must still resolve the parent payment."""
+        from bson import ObjectId
+        payment_id_str = "5f43a0d88a1b2c0001000005"
+        stripe_pi = "pi_tx_only_refund"
+        now = datetime.now(timezone.utc).isoformat()
+        asyncio.run(mongo.payments.insert_one({
+            "_id": ObjectId(payment_id_str),
+            "status": "paid",
+            "final_amount": 75.0,
+            "refunded_amount": 0,
+            "refund_status": "none",
+            "parent_user_id": "user_4",
+            "student_id": "stu_4",
+            "period": "2026-05",
+            "payment_type": "one_off",
+            "created_at": now,
+        }))
+        asyncio.run(mongo.payment_transactions.insert_one({
+            "session_id": "cs_tx_only",
+            "payment_id": payment_id_str,
+            "stripe_payment_intent": stripe_pi,
+            "payment_status": "paid",
+            "status": "complete",
+            "created_at": now,
+            "updated_at": now,
+        }))
+
+        event_dict = _make_stripe_event(
+            event_id="evt_refund_tx_only",
+            event_type="charge.refunded",
+            obj={
+                "payment_intent": stripe_pi,
+                "amount_refunded": 2500,
+                "refunds": {
+                    "data": [
+                        {
+                            "id": "re_tx_only",
+                            "amount": 2500,
+                            "reason": "requested_by_customer",
+                        }
+                    ]
+                },
+            },
+        )
+
+        r = _post_webhook(client, event_dict)
+        assert r.status_code == 200
+
+        pay = asyncio.run(mongo.payments.find_one({"_id": ObjectId(payment_id_str)}))
+        assert pay["stripe_payment_intent"] == stripe_pi
+        assert pay["refunded_amount"] == pytest.approx(25.0)
+        assert pay["refund_status"] == "partially_refunded"
+        assert pay["status"] == "partially_refunded"
 
     def test_charge_refunded_no_matching_payment_is_noop(self, client, mongo):
         """If no payments doc matches the payment_intent, the event must still
