@@ -442,7 +442,10 @@ async def create_onboarding_checkout(
             content={"error": "session_full", "detail": "The selected session is currently full"},
         )
 
-    amount = float(session_doc.get("monthly_price", 0))
+    try:
+        amount = float(session_doc.get("monthly_price") or 0)
+    except (TypeError, ValueError):
+        amount = 0
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Session monthly price must be greater than zero")
 
