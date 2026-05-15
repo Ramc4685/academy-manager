@@ -14,19 +14,28 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   REACT_APP_BACKEND_URL: https://api.academy.courtmastr.com
+  REACT_APP_FIREBASE_API_KEY: ${{ vars.REACT_APP_FIREBASE_API_KEY }}
+  REACT_APP_FIREBASE_AUTH_DOMAIN: ${{ vars.REACT_APP_FIREBASE_AUTH_DOMAIN }}
+  REACT_APP_FIREBASE_PROJECT_ID: ${{ vars.REACT_APP_FIREBASE_PROJECT_ID }}
+  REACT_APP_FIREBASE_STORAGE_BUCKET: ${{ vars.REACT_APP_FIREBASE_STORAGE_BUCKET }}
+  REACT_APP_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.REACT_APP_FIREBASE_MESSAGING_SENDER_ID }}
+  REACT_APP_FIREBASE_APP_ID: ${{ vars.REACT_APP_FIREBASE_APP_ID }}
+  REACT_APP_FIREBASE_MEASUREMENT_ID: ${{ vars.REACT_APP_FIREBASE_MEASUREMENT_ID }}
 
 jobs:
   validate:
     name: Validate
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: github.ref == 'refs/heads/main'
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -50,8 +59,12 @@ jobs:
           REACT_APP_BACKEND_URL: ${{ env.REACT_APP_BACKEND_URL }}
         run: pytest --collect-only -q
 
+      - name: Run safe backend tests
+        working-directory: backend
+        run: pytest tests/test_firebase_auth.py tests/test_seed_users.py -q
+
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: yarn
@@ -74,9 +87,13 @@ jobs:
           REACT_APP_BACKEND_URL: ${{ env.REACT_APP_BACKEND_URL }}
         run: yarn build
 
+      - name: Verify frontend build config
+        run: scripts/smoke/verify_frontend_bundle.sh frontend/build
+
   production-approval:
     name: Production Approval
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: validate
     if: github.ref == 'refs/heads/main'
     environment: production
@@ -87,11 +104,12 @@ jobs:
   deploy-backend:
     name: Deploy Backend
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: production-approval
     if: github.ref == 'refs/heads/main'
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Flyctl
         uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
@@ -105,14 +123,15 @@ jobs:
   deploy-frontend:
     name: Deploy Frontend
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: deploy-backend
     if: github.ref == 'refs/heads/main'
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: yarn
@@ -129,7 +148,17 @@ jobs:
         working-directory: frontend
         env:
           REACT_APP_BACKEND_URL: ${{ env.REACT_APP_BACKEND_URL }}
+          REACT_APP_FIREBASE_API_KEY: ${{ env.REACT_APP_FIREBASE_API_KEY }}
+          REACT_APP_FIREBASE_AUTH_DOMAIN: ${{ env.REACT_APP_FIREBASE_AUTH_DOMAIN }}
+          REACT_APP_FIREBASE_PROJECT_ID: ${{ env.REACT_APP_FIREBASE_PROJECT_ID }}
+          REACT_APP_FIREBASE_STORAGE_BUCKET: ${{ env.REACT_APP_FIREBASE_STORAGE_BUCKET }}
+          REACT_APP_FIREBASE_MESSAGING_SENDER_ID: ${{ env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID }}
+          REACT_APP_FIREBASE_APP_ID: ${{ env.REACT_APP_FIREBASE_APP_ID }}
+          REACT_APP_FIREBASE_MEASUREMENT_ID: ${{ env.REACT_APP_FIREBASE_MEASUREMENT_ID }}
         run: yarn build
+
+      - name: Verify frontend build config
+        run: scripts/smoke/verify_frontend_bundle.sh frontend/build
 
       - name: Deploy frontend to Cloudflare Pages
         working-directory: frontend
@@ -141,11 +170,12 @@ jobs:
   smoke:
     name: Production Smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: deploy-frontend
     if: github.ref == 'refs/heads/main'
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Run production smoke checks
         run: scripts/smoke/production_smoke.sh
