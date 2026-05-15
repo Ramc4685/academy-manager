@@ -33,6 +33,8 @@ def _verify(password: str, hashed: str) -> bool:
 
 
 async def ensure_indexes():
+    from routers.onboarding_routes import seed_waiver_version
+
     db = get_db()
     await db.users.create_index("email", unique=True)
     await db.users.create_index(
@@ -62,6 +64,26 @@ async def ensure_indexes():
     await db.payment_refunds.create_index("stripe_refund_id", unique=True)
     await db.payment_refunds.create_index("payment_id")
     await db.payment_refunds.create_index("created_at")
+
+    # Onboarding applications
+    await db.onboarding_applications.create_index("expires_at", expireAfterSeconds=0)
+    await db.onboarding_applications.create_index("parent_user_id")
+    await db.onboarding_applications.create_index("status")
+    await db.onboarding_applications.create_index("stripe_checkout_session_id")
+
+    # Waiver versions
+    await db.waiver_versions.create_index("version", unique=True)
+    await db.waiver_versions.create_index("effective_from")
+
+    # Waiver acceptances
+    await db.waiver_acceptances.create_index(
+        [("parent_user_id", 1), ("child_id", 1), ("waiver_version", 1)],
+        unique=True,
+        partialFilterExpression={"child_id": {"$type": "string"}},
+    )
+
+    # Seed the current waiver version idempotently
+    await seed_waiver_version(db)
 
 
 def _firebase_mode() -> bool:

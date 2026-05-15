@@ -74,9 +74,9 @@ const baseSession = {
   end_time: "17:30",
   roster: [],
   shortcuts: {
-    attendance_path: "/coach/sessions/sess-1/attendance",
-    lesson_plan_path: "/coach/sessions/sess-1/plan",
-    progress_note_path: "/coach/sessions/sess-1/progress",
+    attendance_path: "/coach/sessions/sess-1",
+    lesson_plan_path: "/coach/sessions/sess-1",
+    progress_note_path: "/coach/sessions/sess-1",
   },
 };
 

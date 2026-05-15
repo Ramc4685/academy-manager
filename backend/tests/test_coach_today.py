@@ -23,7 +23,7 @@ os.environ.setdefault("DB_NAME", "academy_test")
 os.environ.setdefault("JWT_SECRET", "test-secret")
 os.environ["FIREBASE_AUTH_ENABLED"] = "true"
 os.environ["FIREBASE_PROJECT_ID"] = "academy-courtmastr-test"
-os.environ["ACADEMY_TIMEZONE"] = "America/Chicago"
+os.environ["SCHEDULER_TZ"] = "America/Chicago"
 
 from mongomock_motor import AsyncMongoMockClient  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
@@ -98,7 +98,8 @@ def _seed_user(mongo, uid: str, email: str, role: str) -> str:
 
 def _seed_session(mongo, coach_id: str, name: str = "Beginner Badminton",
                    start_date: str = "2026-01-01", end_date: str = "2026-12-31",
-                   days_of_week=None, start_time: str = "16:00", end_time: str = "17:30") -> str:
+                   days_of_week=None, start_time: str = "16:00", end_time: str = "17:30",
+                   status: str = "active") -> str:
     if days_of_week is None:
         days_of_week = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     res = asyncio.run(mongo.sessions.insert_one({
@@ -109,7 +110,7 @@ def _seed_session(mongo, coach_id: str, name: str = "Beginner Badminton",
         "days_of_week": days_of_week,
         "start_time": start_time,
         "end_time": end_time,
-        "status": "active",
+        "status": status,
         "is_deleted": False,
     }))
     return str(res.inserted_id)
@@ -125,12 +126,13 @@ def _seed_student(mongo, first: str = "Kid", last: str = "One", medical_notes: s
     return str(res.inserted_id)
 
 
-def _seed_enrollment(mongo, session_id: str, student_id: str) -> str:
+def _seed_enrollment(mongo, session_id: str, student_id: str, skip_periods=None) -> str:
     res = asyncio.run(mongo.enrollments.insert_one({
         "session_id": session_id,
         "student_id": student_id,
         "status": "active",
         "is_deleted": False,
+        "skip_periods": skip_periods or [],
     }))
     return str(res.inserted_id)
 
@@ -150,6 +152,16 @@ def test_today_returns_only_assigned_sessions(client, mongo, stub_verify):
     ids = [s["id"] for s in body["sessions"]]
     assert sess_x in ids
     assert sess_y not in ids
+
+
+def test_today_excludes_cancelled_sessions(client, mongo, stub_verify):
+    coach = _seed_user(mongo, "uid-a", "a@example.com", "coach")
+    _seed_session(mongo, coach_id=coach, name="Cancelled", days_of_week=["Fri"], status="cancelled")
+
+    stub_verify["claim"] = _stub_token("uid-a", "a@example.com")
+    r = client.get("/api/coach/today?date=2026-05-15", headers={"Authorization": "Bearer FAKE"})
+    assert r.status_code == 200, r.text
+    assert r.json()["sessions"] == []
 
 
 def test_today_ignores_client_supplied_coach_id(client, mongo, stub_verify):
@@ -240,7 +252,8 @@ def test_today_roster_includes_medical_and_pause_flags(client, mongo, stub_verif
     asyncio.run(mongo.pause_requests.insert_one({
         "enrollment_id": e_pause,
         "student_id": s_pause,
-        "status": "active",
+        "period": "2026-05",
+        "status": "approved",
     }))
 
     stub_verify["claim"] = _stub_token("uid-a", "a@example.com")
@@ -252,6 +265,19 @@ def test_today_roster_includes_medical_and_pause_flags(client, mongo, stub_verif
     assert by_id[s_pause]["has_medical_notes"] is False
     assert by_id[s_pause]["is_paused"] is True
     assert by_id[s_med]["is_paused"] is False
+
+
+def test_today_pause_flag_uses_enrollment_skip_periods(client, mongo, stub_verify):
+    coach = _seed_user(mongo, "uid-a", "a@example.com", "coach")
+    sess = _seed_session(mongo, coach_id=coach, days_of_week=["Fri"])
+    s_pause = _seed_student(mongo, "Pause", "Kid")
+    _seed_enrollment(mongo, sess, s_pause, skip_periods=["2026-05"])
+
+    stub_verify["claim"] = _stub_token("uid-a", "a@example.com")
+    r = client.get("/api/coach/today?date=2026-05-15", headers={"Authorization": "Bearer FAKE"})
+    assert r.status_code == 200, r.text
+    row = r.json()["sessions"][0]["roster"][0]
+    assert row["is_paused"] is True
 
 
 def test_today_roster_excludes_payment_badges(client, mongo, stub_verify):

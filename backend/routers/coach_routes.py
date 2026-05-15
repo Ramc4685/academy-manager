@@ -25,7 +25,7 @@ _WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
 def _academy_tz() -> ZoneInfo:
-    name = os.environ.get("ACADEMY_TIMEZONE", "America/Chicago")
+    name = os.environ.get("SCHEDULER_TZ") or os.environ.get("ACADEMY_TIMEZONE", "America/Chicago")
     try:
         return ZoneInfo(name)
     except Exception:
@@ -55,7 +55,7 @@ async def coach_today(
         raise HTTPException(status_code=403, detail="Forbidden")
 
     tz = _academy_tz()
-    tz_name = os.environ.get("ACADEMY_TIMEZONE", "America/Chicago")
+    tz_name = os.environ.get("SCHEDULER_TZ") or os.environ.get("ACADEMY_TIMEZONE", "America/Chicago")
 
     if date:
         try:
@@ -76,6 +76,7 @@ async def coach_today(
     sess_cursor = db.sessions.find({
         "coach_id": coach_id,
         "is_deleted": {"$ne": True},
+        "status": {"$ne": "cancelled"},
     })
     sessions_raw = await sess_cursor.to_list(500)
 
@@ -111,11 +112,13 @@ async def coach_today(
 
         # Active pause requests on these enrollments.
         enrollment_ids = [str(e["_id"]) for e in enrollments]
+        target_period = date_str[:7]
         paused_enrollment_ids: set = set()
         if enrollment_ids:
             async for pr in db.pause_requests.find({
                 "enrollment_id": {"$in": enrollment_ids},
-                "status": "active",
+                "status": {"$in": ["active", "approved"]},
+                "period": target_period,
             }):
                 paused_enrollment_ids.add(pr.get("enrollment_id"))
 
@@ -135,7 +138,10 @@ async def coach_today(
                 "student_id": sid,
                 "name": name,
                 "has_medical_notes": bool((stu.get("medical_notes") or "").strip()),
-                "is_paused": str(e["_id"]) in paused_enrollment_ids,
+                "is_paused": (
+                    target_period in (e.get("skip_periods", []) or [])
+                    or str(e["_id"]) in paused_enrollment_ids
+                ),
                 "attendance_status": attendance_by_student.get(sid),
             })
 
@@ -146,9 +152,9 @@ async def coach_today(
             "end_time": s.get("end_time"),
             "roster": roster,
             "shortcuts": {
-                "attendance_path": f"/coach/sessions/{session_id}/attendance",
-                "lesson_plan_path": f"/coach/sessions/{session_id}/plan",
-                "progress_note_path": f"/coach/sessions/{session_id}/progress",
+                "attendance_path": f"/coach/sessions/{session_id}",
+                "lesson_plan_path": f"/coach/sessions/{session_id}",
+                "progress_note_path": f"/coach/sessions/{session_id}",
             },
         })
 
