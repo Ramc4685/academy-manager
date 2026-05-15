@@ -10,6 +10,7 @@ from starlette.responses import Response, JSONResponse
 from auth import get_current_user, require_roles, log_audit
 from db import get_db
 from models import EnrollmentIn
+from services.enrollment_service import capacity_snapshot, initialize_reserved_seats
 from services.waitlist_service import enroll_waitlist_offer, join_waitlist
 
 router = APIRouter()
@@ -102,10 +103,10 @@ async def admin_list_waitlist(session_id: str, admin=Depends(require_roles("admi
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # Determine if session has free capacity using same reserved_seats pattern
-    max_students = int(session.get("max_students", 0) or 0)
-    reserved_seats = int(session.get("reserved_seats", 0) or 0)
-    has_free_seat = (max_students > 0) and (reserved_seats < max_students)
+    await initialize_reserved_seats(db, session_id)
+    session = await db.sessions.find_one({"_id": _oid(session_id)})
+    snapshot = await capacity_snapshot(db, session)
+    has_free_seat = not snapshot["is_full"]
 
     # Fetch all non-deleted waitlist entries for this session, FIFO order
     raw_items = await db.waitlist.find(
@@ -183,16 +184,13 @@ async def admin_enroll_waitlist(waitlist_id: str, admin=Depends(require_roles("a
 
     session_id = entry["session_id"]
 
-    # Initialise reserved_seats if not present (mirrors enrollment_service pattern)
-    await db.sessions.update_one(
-        {"_id": _oid(session_id), "reserved_seats": {"$exists": False}},
-        {"$set": {"reserved_seats": 0}},
-    )
+    await initialize_reserved_seats(db, session_id)
 
     # Atomic capacity check + increment — same $expr pattern as Slice 3
     result = await db.sessions.update_one(
         {
             "_id": _oid(session_id),
+            "status": "active",
             "is_deleted": {"$ne": True},
             "$expr": {
                 "$lt": [
@@ -206,13 +204,16 @@ async def admin_enroll_waitlist(waitlist_id: str, admin=Depends(require_roles("a
     if result.modified_count != 1:
         return JSONResponse(status_code=409, content={"error": "session_full"})
 
-    # Create enrollment with pending_approval status
+    # Create active enrollment that remains pending admin approval.
     now = datetime.now(timezone.utc).isoformat()
     enrollment_doc = {
         "session_id": session_id,
         "student_id": entry["student_id"],
         "parent_user_id": entry.get("parent_user_id"),
-        "status": "pending_approval",
+        "billing_type": "Standard",
+        "approval_status": "pending",
+        "status": "active",
+        "enrolled_at": now,
         "created_at": now,
         "is_deleted": False,
     }

@@ -430,6 +430,242 @@ async def checkout_status(session_id: str, request: Request, user=Depends(get_cu
         }
 
 
+async def _handle_onboarding_checkout_completed(db, stripe, session: dict) -> None:
+    """Handle checkout.session.completed for onboarding events (metadata.kind=onboarding).
+
+    Atomically reserves a capacity slot. On success creates an active enrollment
+    with approval_status=pending, students row, payments row, and audit log.
+    On capacity race:
+    transitions to capacity_failed_refunding, creates a waitlist entry, attempts
+    stripe.Refund.create. On refund failure: transitions to
+    capacity_failed_refund_failed and writes an admin-attention audit log.
+
+    TTL race (onboarding doc missing): logs structured warning and writes an
+    admin-attention audit_logs row; never silently swallows real money.
+    """
+    from routers.onboarding_routes import (
+        CHECKOUT_PENDING, PENDING_APPROVAL,
+        CAPACITY_FAILED_REFUNDING, CAPACITY_FAILED_REFUND_FAILED, REFUNDED,
+    )
+    from services.enrollment_service import initialize_reserved_seats
+
+    metadata = session.get("metadata") or {}
+    onboarding_id = metadata.get("onboarding_id", "")
+    parent_user_id = metadata.get("parent_user_id", "")
+    session_id = metadata.get("session_id", "")
+    payment_intent = session.get("payment_intent")
+    now = datetime.now(timezone.utc).isoformat()
+
+    # --- Look up onboarding doc ---
+    ob_doc = None
+    if ObjectId.is_valid(onboarding_id):
+        ob_doc = await db.onboarding_applications.find_one({"_id": ObjectId(onboarding_id)})
+
+    if ob_doc is None:
+        # TTL race: doc deleted between checkout creation and webhook arrival.
+        log.warning(
+            "onboarding.webhook_missing_doc: onboarding_id=%s parent_user_id=%s "
+            "payment_intent=%s — writing admin-attention audit log",
+            onboarding_id, parent_user_id, payment_intent,
+        )
+        await db.audit_logs.insert_one({
+            "user_id": parent_user_id,
+            "user_email": "",
+            "role": "system",
+            "action": "onboarding.webhook_missing_doc",
+            "entity_type": "onboarding_application",
+            "entity_id": onboarding_id,
+            "summary": (
+                f"checkout.session.completed received for onboarding_id={onboarding_id!r} "
+                f"but document was not found (possible TTL expiry). "
+                f"payment_intent={payment_intent!r}. Admin attention required."
+            ),
+            "created_at": now,
+        })
+        return
+
+    # --- Atomically reserve a capacity slot ---
+    if not ObjectId.is_valid(session_id):
+        log.warning("onboarding.webhook: invalid session_id=%r on onboarding %s", session_id, onboarding_id)
+        return
+
+    await initialize_reserved_seats(db, session_id)
+    result = await db.sessions.update_one(
+        {
+            "_id": ObjectId(session_id),
+            "status": "active",
+            "is_deleted": {"$ne": True},
+            "$expr": {
+                "$lt": [
+                    {"$ifNull": ["$reserved_seats", 0]},
+                    {"$ifNull": ["$max_students", 0]},
+                ],
+            },
+        },
+        {"$inc": {"reserved_seats": 1}},
+    )
+    capacity_reserved = result.modified_count == 1
+
+    if capacity_reserved:
+        # --- Capacity available: enroll ---
+        child_profile = ob_doc.get("child_profile") or {}
+        child_name_parts = (child_profile.get("name") or "").split(None, 1)
+        first_name = child_name_parts[0] if child_name_parts else "Student"
+        last_name = child_name_parts[1] if len(child_name_parts) > 1 else ""
+        student_doc = {
+            "parent_user_id": parent_user_id,
+            "first_name": first_name,
+            "last_name": last_name,
+            "dob": child_profile.get("dob", ""),
+            "medical_notes": child_profile.get("medical_notes", ""),
+            "skill_level": "beginner",
+            "emergency_contact_name": "",
+            "emergency_contact_phone": "",
+            "waiver_accepted": True,
+            "is_deleted": False,
+            "created_at": now,
+        }
+        student_result = await db.students.insert_one(student_doc)
+        student_id = str(student_result.inserted_id)
+
+        enrollment_doc = {
+            "session_id": session_id,
+            "student_id": student_id,
+            "parent_user_id": parent_user_id,
+            "billing_type": "Standard",
+            "approval_status": "pending",
+            "status": "active",
+            "payment_mode": "one_time_first_month",
+            "enrolled_at": now,
+            "is_deleted": False,
+            "created_at": now,
+        }
+        enrollment_result = await db.enrollments.insert_one(enrollment_doc)
+        enrollment_id = str(enrollment_result.inserted_id)
+
+        # Load session for price
+        session_doc = await db.sessions.find_one({"_id": ObjectId(session_id)})
+        amount = float((session_doc or {}).get("monthly_price", 0))
+
+        payment_doc = {
+            "parent_user_id": parent_user_id,
+            "student_id": student_id,
+            "enrollment_id": enrollment_id,
+            "session_id": session_id,
+            "period": datetime.now(timezone.utc).strftime("%Y-%m"),
+            "amount": amount,
+            "discount": 0,
+            "final_amount": amount,
+            "status": "paid",
+            "payment_date": now,
+            "payment_method": "stripe_onboarding",
+            "marked_by": None,
+            "notes": "First-month payment via Stripe onboarding checkout",
+            "stripe_payment_intent": payment_intent,
+            "payment_type": "one_time_first_month",
+            "refunded_amount": 0,
+            "refund_status": "none",
+            "refunds": [],
+            "is_deleted": False,
+            "created_at": now,
+        }
+        await db.payments.insert_one(payment_doc)
+
+        # Transition onboarding
+        await db.onboarding_applications.update_one(
+            {"_id": ob_doc["_id"]},
+            {"$set": {"status": PENDING_APPROVAL, "updated_at": now}},
+        )
+
+        await db.audit_logs.insert_one({
+            "user_id": parent_user_id,
+            "user_email": ob_doc.get("parent_email", ""),
+            "role": "system",
+            "action": "onboarding.pending_approval_created",
+            "entity_type": "onboarding_application",
+            "entity_id": onboarding_id,
+            "summary": (
+                f"Onboarding enrollment created: enrollment_id={enrollment_id} "
+                f"student_id={student_id} session_id={session_id} "
+                f"payment_intent={payment_intent!r}"
+            ),
+            "created_at": now,
+        })
+    else:
+        # --- Capacity race: seat taken before webhook ---
+        await db.onboarding_applications.update_one(
+            {"_id": ob_doc["_id"]},
+            {"$set": {"status": CAPACITY_FAILED_REFUNDING, "updated_at": now}},
+        )
+
+        # Create a waitlist entry (status=waiting, no student doc yet)
+        child_profile = ob_doc.get("child_profile") or {}
+        waitlist_doc = {
+            "session_id": session_id,
+            "student_id": None,  # no student row at this point
+            "parent_user_id": parent_user_id,
+            "onboarding_id": onboarding_id,
+            "status": "waiting",
+            "requested_by": "onboarding_capacity_race",
+            "requested_at": now,
+            "offer_expires_at": None,
+            "offered_at": None,
+            "enrolled_at": None,
+            "child_profile": child_profile,
+            "is_deleted": False,
+        }
+        await db.waitlist.insert_one(waitlist_doc)
+
+        # Attempt refund
+        try:
+            await asyncio.to_thread(stripe.Refund.create, payment_intent=payment_intent)
+            await db.onboarding_applications.update_one(
+                {"_id": ob_doc["_id"]},
+                {"$set": {"status": REFUNDED, "updated_at": now}},
+            )
+            await db.audit_logs.insert_one({
+                "user_id": parent_user_id,
+                "user_email": ob_doc.get("parent_email", ""),
+                "role": "system",
+                "action": "onboarding.capacity_race_refunded",
+                "entity_type": "onboarding_application",
+                "entity_id": onboarding_id,
+                "summary": (
+                    f"Capacity race on session_id={session_id}: refund issued for "
+                    f"payment_intent={payment_intent!r}. Onboarding placed on waitlist."
+                ),
+                "created_at": now,
+            })
+        except Exception as refund_exc:
+            refund_error = str(refund_exc)
+            log.error(
+                "onboarding.refund_failed: onboarding_id=%s payment_intent=%s error=%s",
+                onboarding_id, payment_intent, refund_error,
+            )
+            await db.onboarding_applications.update_one(
+                {"_id": ob_doc["_id"]},
+                {"$set": {
+                    "status": CAPACITY_FAILED_REFUND_FAILED,
+                    "refund_error": refund_error,
+                    "updated_at": now,
+                }},
+            )
+            await db.audit_logs.insert_one({
+                "user_id": parent_user_id,
+                "user_email": ob_doc.get("parent_email", ""),
+                "role": "system",
+                "action": "onboarding.refund_failed",
+                "entity_type": "onboarding_application",
+                "entity_id": onboarding_id,
+                "summary": (
+                    f"ADMIN ATTENTION: Capacity race refund failed for onboarding_id={onboarding_id!r} "
+                    f"payment_intent={payment_intent!r} session_id={session_id!r}. "
+                    f"Error: {refund_error}. Manual refund required."
+                ),
+                "created_at": now,
+            })
+
+
 async def _handle_charge_refunded(db, evt: dict) -> None:
     """Process a charge.refunded event: create a payment_refunds record and
     update the parent payments document."""
@@ -555,33 +791,60 @@ async def stripe_webhook(request: Request):
     try:
         if event_type == "checkout.session.completed":
             session = evt["data"]["object"]
-            tx = await db.payment_transactions.find_one({"session_id": session.get("id")})
             metadata = session.get("metadata") or {}
-            payment_id = tx.get("payment_id") if tx else metadata.get("payment_id")
-            if tx:
-                await db.payment_transactions.update_one(
-                    {"session_id": session.get("id")},
-                    {"$set": {"payment_status": "paid", "status": "complete",
-                              "stripe_payment_intent": session.get("payment_intent"),
-                              "stripe_subscription_id": session.get("subscription"),
-                              "updated_at": datetime.now(timezone.utc).isoformat()}},
-                )
-            enrollment_id = (tx or {}).get("enrollment_id") or metadata.get("enrollment_id")
-            if session.get("mode") == "subscription" and enrollment_id:
-                await _activate_subscription_enrollment(db, enrollment_id, session)
-            elif payment_id:
-                if session.get("payment_intent") and ObjectId.is_valid(payment_id):
-                    await db.payments.update_one(
-                        {"_id": ObjectId(payment_id)},
-                        {"$set": {
-                            "stripe_payment_intent": session.get("payment_intent"),
-                            "updated_at": datetime.now(timezone.utc).isoformat(),
-                        }},
+
+            if metadata.get("kind") == "onboarding":
+                # Onboarding-specific path — must stay inside this sentinel try/except.
+                await _handle_onboarding_checkout_completed(db, stripe, session)
+            else:
+                # Existing non-onboarding path — unchanged.
+                tx = await db.payment_transactions.find_one({"session_id": session.get("id")})
+                payment_id = tx.get("payment_id") if tx else metadata.get("payment_id")
+                if tx:
+                    await db.payment_transactions.update_one(
+                        {"session_id": session.get("id")},
+                        {"$set": {"payment_status": "paid", "status": "complete",
+                                  "stripe_payment_intent": session.get("payment_intent"),
+                                  "stripe_subscription_id": session.get("subscription"),
+                                  "updated_at": datetime.now(timezone.utc).isoformat()}},
                     )
-                await _apply_paid(db, payment_id)
+                enrollment_id = (tx or {}).get("enrollment_id") or metadata.get("enrollment_id")
+                if session.get("mode") == "subscription" and enrollment_id:
+                    await _activate_subscription_enrollment(db, enrollment_id, session)
+                elif payment_id:
+                    if session.get("payment_intent") and ObjectId.is_valid(payment_id):
+                        await db.payments.update_one(
+                            {"_id": ObjectId(payment_id)},
+                            {"$set": {
+                                "stripe_payment_intent": session.get("payment_intent"),
+                                "updated_at": datetime.now(timezone.utc).isoformat(),
+                            }},
+                        )
+                    await _apply_paid(db, payment_id)
         elif event_type == "checkout.session.expired":
             session = evt["data"]["object"]
             log.info("checkout.session.expired for session %s", session.get("id"))
+            metadata = session.get("metadata") or {}
+            if metadata.get("kind") == "onboarding":
+                onboarding_id = metadata.get("onboarding_id", "")
+                if ObjectId.is_valid(onboarding_id):
+                    from routers.onboarding_routes import CHECKOUT_PENDING, CHECKOUT_EXPIRED
+                    now_exp = datetime.now(timezone.utc).isoformat()
+                    result = await db.onboarding_applications.update_one(
+                        {"_id": ObjectId(onboarding_id), "status": CHECKOUT_PENDING},
+                        {"$set": {"status": CHECKOUT_EXPIRED, "updated_at": now_exp}},
+                    )
+                    if result.modified_count == 1:
+                        await db.audit_logs.insert_one({
+                            "user_id": metadata.get("parent_user_id", ""),
+                            "user_email": "",
+                            "role": "system",
+                            "action": "onboarding.checkout_expired",
+                            "entity_type": "onboarding_application",
+                            "entity_id": onboarding_id,
+                            "summary": f"Checkout session expired for onboarding_id={onboarding_id!r}",
+                            "created_at": now_exp,
+                        })
         elif event_type == "invoice.paid":
             invoice = evt["data"]["object"]
             subscription_id = invoice.get("subscription")

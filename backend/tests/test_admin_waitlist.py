@@ -158,16 +158,19 @@ def _seed_parent(mongo, uid="uid-parent", email="parent@example.com") -> dict:
     return doc
 
 
-def _seed_session(mongo, *, capacity: int = 10, enrolled_count: int = 0) -> str:
+def _seed_session(mongo, *, capacity: int = 10, enrolled_count: int = 0,
+                  include_reserved_seats: bool = True) -> str:
     sid = ObjectId()
-    asyncio.run(mongo.sessions.insert_one({
+    doc = {
         "_id": sid,
         "name": "Test Session",
         "status": "active",
         "max_students": capacity,
-        "reserved_seats": enrolled_count,
         "is_deleted": False,
-    }))
+    }
+    if include_reserved_seats:
+        doc["reserved_seats"] = enrolled_count
+    asyncio.run(mongo.sessions.insert_one(doc))
     return str(sid)
 
 
@@ -345,10 +348,11 @@ class TestAdminEnroll:
         assert body["waitlist_id"] == wid
         assert body["status"] == "enrolled"
 
-        # Enrollment created with pending_approval status
+        # Enrollment created as active but still pending admin approval.
         enrollment = asyncio.run(mongo.enrollments.find_one({"_id": ObjectId(body["enrollment_id"])}))
         assert enrollment is not None
-        assert enrollment["status"] == "pending_approval"
+        assert enrollment["status"] == "active"
+        assert enrollment["approval_status"] == "pending"
         assert enrollment["student_id"] == student_id
         assert enrollment["session_id"] == session_id
 
@@ -383,6 +387,43 @@ class TestAdminEnroll:
         # Waitlist entry still waiting
         entry = asyncio.run(mongo.waitlist.find_one({"_id": ObjectId(wid)}))
         assert entry["status"] == "waiting"
+
+    def test_admin_enroll_409_when_legacy_session_full_without_reserved_seats(
+        self, client, mongo, stub_verify
+    ):
+        """Legacy sessions without reserved_seats must seed from active enrollment count."""
+        admin = _seed_admin(mongo)
+        stub_verify["claim"] = _stub_token(uid=admin["auth_uid"], email=admin["email"])
+
+        parent = _seed_parent(mongo)
+        parent_id = str(asyncio.run(mongo.users.find_one({"email": parent["email"]}))["_id"])
+        session_id = _seed_session(mongo, capacity=2, enrolled_count=0, include_reserved_seats=False)
+        for idx in range(2):
+            existing_student_id = _seed_student(
+                mongo,
+                parent_user_id=parent_id,
+                first_name=f"Existing{idx}",
+            )
+            asyncio.run(mongo.enrollments.insert_one({
+                "session_id": session_id,
+                "student_id": existing_student_id,
+                "parent_user_id": parent_id,
+                "status": "active",
+                "is_deleted": False,
+            }))
+        student_id = _seed_student(mongo, parent_user_id=parent_id, first_name="Waitlisted")
+        wid = _seed_waitlist_entry(
+            mongo,
+            session_id=session_id,
+            student_id=student_id,
+            parent_user_id=parent_id,
+        )
+
+        r = client.post(f"/api/admin/waitlist/{wid}/enroll", headers={"Authorization": "Bearer FAKE"})
+        assert r.status_code == 409, r.text
+        assert asyncio.run(mongo.enrollments.count_documents({"student_id": student_id})) == 0
+        session = asyncio.run(mongo.sessions.find_one({"_id": ObjectId(session_id)}))
+        assert session["reserved_seats"] == 2
 
     def test_admin_enroll_rejects_non_waiting_status(self, client, mongo, stub_verify):
         """Waitlist already skipped -> 400."""
