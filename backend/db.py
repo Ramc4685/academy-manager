@@ -79,6 +79,7 @@ async def ensure_indexes():
     await db.waiver_acceptances.create_index(
         [("parent_user_id", 1), ("child_id", 1), ("waiver_version", 1)],
         unique=True,
+        partialFilterExpression={"child_id": {"$type": "string"}},
     )
 
     # Seed the current waiver version idempotently

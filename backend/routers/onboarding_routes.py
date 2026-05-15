@@ -138,6 +138,10 @@ def _expires_at() -> datetime:
     return datetime.now(timezone.utc) + timedelta(days=7)
 
 
+def _child_identity(profile: dict[str, Any]) -> tuple[str, str]:
+    return (str(profile.get("name", "")), str(profile.get("dob", "")))
+
+
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
@@ -236,12 +240,19 @@ async def patch_onboarding(
         updates["parent_profile"] = merged
 
     if body.child_profile is not None:
+        previous_child_profile = app_doc.get("child_profile", {})
         filtered = {
             k: v for k, v in body.child_profile.items()
             if k in _ALLOWED_CHILD_KEYS
         }
         merged = {**app_doc.get("child_profile", {}), **filtered}
         updates["child_profile"] = merged
+        if (
+            app_doc.get("waiver_acceptance")
+            and body.waiver_acceptance is None
+            and _child_identity(merged) != _child_identity(previous_child_profile)
+        ):
+            updates["waiver_acceptance"] = None
 
     if body.selected_session_id is not None:
         updates["selected_session_id"] = body.selected_session_id
@@ -280,6 +291,8 @@ async def patch_onboarding(
                     "child_id": child_id,
                     "waiver_version": wa.version,
                     "content_hash": waiver_version_doc["content_hash"],
+                    "waiver_text_hash": waiver_version_doc["content_hash"],
+                    "waiver_text": waiver_version_doc["text"],
                     "text_snapshot": waiver_version_doc["text"],
                     "accepted_at": now_iso,
                 }
@@ -290,6 +303,8 @@ async def patch_onboarding(
             "version": wa.version,
             "accepted": True,
             "accepted_at": now_iso,
+            "child_id": child_id,
+            "waiver_text_hash": waiver_version_doc["content_hash"],
         }
 
     if updates:
