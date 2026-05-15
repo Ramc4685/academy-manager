@@ -87,6 +87,9 @@ jobs:
           REACT_APP_BACKEND_URL: ${{ env.REACT_APP_BACKEND_URL }}
         run: yarn build
 
+      - name: Verify frontend build config
+        run: scripts/smoke/verify_frontend_bundle.sh frontend/build
+
   production-approval:
     name: Production Approval
     runs-on: ubuntu-latest
@@ -153,6 +156,9 @@ jobs:
           REACT_APP_FIREBASE_APP_ID: ${{ env.REACT_APP_FIREBASE_APP_ID }}
           REACT_APP_FIREBASE_MEASUREMENT_ID: ${{ env.REACT_APP_FIREBASE_MEASUREMENT_ID }}
         run: yarn build
+
+      - name: Verify frontend build config
+        run: scripts/smoke/verify_frontend_bundle.sh frontend/build
 
       - name: Deploy frontend to Cloudflare Pages
         working-directory: frontend

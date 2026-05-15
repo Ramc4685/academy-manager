@@ -63,5 +63,6 @@ Run the same production smoke check locally:
 scripts/smoke/production_smoke.sh
 ```
 
-The script checks backend health, CORS for `https://academy.courtmastr.com`, and frontend reachability.
+The deploy workflow runs `scripts/smoke/verify_frontend_bundle.sh` before publishing the Cloudflare Pages build.
+The production smoke script checks backend health, CORS for `https://academy.courtmastr.com`, and frontend reachability.
 It also verifies that the deployed frontend bundle contains the production API URL and Firebase project id so missing build-time configuration fails the deploy.

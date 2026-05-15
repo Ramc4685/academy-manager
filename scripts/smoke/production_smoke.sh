@@ -55,12 +55,12 @@ else
 fi
 
 bundle="$(curl -fsS "${script_url}")"
-if ! grep -q "${EXPECTED_BACKEND_URL}" <<<"${bundle}"; then
+if ! grep -qF "${EXPECTED_BACKEND_URL}" <<<"${bundle}"; then
   echo "Frontend check failed: built bundle does not contain ${EXPECTED_BACKEND_URL}" >&2
   exit 1
 fi
 
-if ! grep -q "${EXPECTED_FIREBASE_PROJECT_ID}" <<<"${bundle}"; then
+if ! grep -qF "${EXPECTED_FIREBASE_PROJECT_ID}" <<<"${bundle}"; then
   echo "Frontend check failed: built bundle does not contain Firebase project ${EXPECTED_FIREBASE_PROJECT_ID}" >&2
   exit 1
 fi
