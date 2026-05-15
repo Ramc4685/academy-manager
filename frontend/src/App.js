@@ -29,6 +29,7 @@ import RegisterStudent from "./pages/auth/RegisterStudent";
 import CoachDashboard from "./pages/coach/Dashboard";
 import CoachSessions from "./pages/coach/Sessions";
 import CoachSessionDetail from "./pages/coach/SessionDetail";
+import CoachToday from "./pages/coach/CoachToday";
 
 import ParentDashboard from "./pages/parent/Dashboard";
 import ParentChildren from "./pages/parent/Children";
@@ -90,6 +91,7 @@ function App() {
             <Route path="/admin/settings" element={LR(AdminSettings, ["admin"])} />
 
             <Route path="/coach/dashboard" element={LR(CoachDashboard, ["coach"])} />
+            <Route path="/coach/today" element={LR(CoachToday, ["coach"])} />
             <Route path="/coach/sessions" element={LR(CoachSessions, ["coach"])} />
             <Route path="/coach/sessions/:id" element={LR(CoachSessionDetail, ["coach", "admin"])} />
 

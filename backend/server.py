@@ -23,6 +23,7 @@ from routers.email_routes import router as email_router
 from routers.waitlist_routes import router as waitlist_router
 from routers.scheduler_routes import router as scheduler_router
 from routers.calendar_routes import router as calendar_router
+from routers.coach_routes import router as coach_router
 from routers.onboarding_routes import router as onboarding_router
 from services.scheduler import start_scheduler, shutdown_scheduler
 
@@ -43,6 +44,7 @@ api_router.include_router(email_router)
 api_router.include_router(waitlist_router)
 api_router.include_router(scheduler_router)
 api_router.include_router(calendar_router)
+api_router.include_router(coach_router)
 api_router.include_router(onboarding_router)
 
 
