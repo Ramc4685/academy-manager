@@ -28,6 +28,7 @@ FRONTEND_URL=https://academy.example.com
 CORS_ORIGINS=https://academy.example.com
 STRIPE_API_KEY=sk_live_...
 STRIPE_WEBHOOK_SECRET=whsec_...
+SCHEDULER_TZ=America/Chicago
 RESEND_API_KEY=re_...
 SENDER_EMAIL=hello@academy.example.com
 EMAIL_DELIVERY_ENABLED=false
@@ -57,7 +58,7 @@ The following variables were introduced in Phase 5 and must be set in production
 |---|---|---|
 | `STRIPE_API_KEY` | Yes | Stripe secret key (`sk_live_...` or `sk_test_...`). Without this, all billing endpoints return 503. |
 | `STRIPE_WEBHOOK_SECRET` | Yes | Stripe webhook signing secret (`whsec_...`). Without this, `POST /api/webhook/stripe` returns 503 and all Stripe payment confirmations are silently dropped. |
-| `ACADEMY_TIMEZONE` | No | IANA timezone for scheduled billing jobs (default: `America/Chicago`). Set if the academy is in a different timezone. |
+| `SCHEDULER_TZ` | No | IANA timezone for scheduled billing jobs. The backend default is `UTC`; production sets `America/Chicago` in `backend/fly.toml`. |
 
 Set these on Fly with:
 
@@ -65,7 +66,6 @@ Set these on Fly with:
 flyctl secrets set \
   STRIPE_API_KEY='sk_live_...' \
   STRIPE_WEBHOOK_SECRET='whsec_...' \
-  ACADEMY_TIMEZONE='America/Chicago' \
   -a courtmastr-academy-api
 ```
 
