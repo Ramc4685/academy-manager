@@ -65,4 +65,16 @@ if ! grep -qF "${EXPECTED_FIREBASE_PROJECT_ID}" <<<"${bundle}"; then
   exit 1
 fi
 
+echo "Checking Stripe webhook signature rejection..."
+webhook_status="$(curl -s -o /dev/null -w '%{http_code}' \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -H 'Stripe-Signature: t=0,v1=invalid' \
+  -d '{}' \
+  "${API_URL}/api/webhook/stripe")"
+if [[ "${webhook_status}" != "400" ]]; then
+  echo "Stripe webhook signature check failed: expected 400 for invalid signature, got ${webhook_status}" >&2
+  exit 1
+fi
+
 echo "Production smoke checks passed"

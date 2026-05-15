@@ -49,6 +49,26 @@ REACT_APP_FIREBASE_MEASUREMENT_ID=G-Z6GS6WRZY8
 Use exact origins for `FRONTEND_URL` and `CORS_ORIGINS`. Firebase Auth must also
 authorize the frontend host, currently `academy.courtmastr.com`.
 
+## Phase 5 environment variables
+
+The following variables were introduced in Phase 5 and must be set in production. Firebase env vars are documented above.
+
+| Variable | Required | Description |
+|---|---|---|
+| `STRIPE_API_KEY` | Yes | Stripe secret key (`sk_live_...` or `sk_test_...`). Without this, all billing endpoints return 503. |
+| `STRIPE_WEBHOOK_SECRET` | Yes | Stripe webhook signing secret (`whsec_...`). Without this, `POST /api/webhook/stripe` returns 503 and all Stripe payment confirmations are silently dropped. |
+| `ACADEMY_TIMEZONE` | No | IANA timezone for scheduled billing jobs (default: `America/Chicago`). Set if the academy is in a different timezone. |
+
+Set these on Fly with:
+
+```bash
+flyctl secrets set \
+  STRIPE_API_KEY='sk_live_...' \
+  STRIPE_WEBHOOK_SECRET='whsec_...' \
+  ACADEMY_TIMEZONE='America/Chicago' \
+  -a courtmastr-academy-api
+```
+
 ## Auth Migration Notes
 
 With `FIREBASE_AUTH_ENABLED=true`:

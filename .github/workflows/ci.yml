@@ -43,11 +43,17 @@ jobs:
       - name: Compile Python files
         run: python -m compileall .
 
-      - name: Collect tests
-        run: pytest --collect-only -q
-
-      - name: Run safe backend tests
-        run: pytest tests/test_firebase_auth.py tests/test_seed_users.py -q
+      - name: Run tests
+        # backend_test.py / iter2-5_test.py require a live running server (they
+        # use requests against REACT_APP_BACKEND_URL). Exclude them here and run
+        # only the mongomock-based unit tests that execute without a real server.
+        run: pytest tests/test_firebase_auth.py tests/test_seed_users.py tests/test_stripe_webhook_idempotency.py -v
+        env:
+          MONGO_URL: mongodb://localhost:27017
+          DB_NAME: academy_test
+          JWT_SECRET: ci-test-secret
+          FIREBASE_AUTH_ENABLED: "true"
+          FIREBASE_PROJECT_ID: academy-courtmastr-test
 
   frontend:
     name: Frontend
