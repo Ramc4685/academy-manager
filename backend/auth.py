@@ -1,6 +1,8 @@
 import os
 import jwt
 import bcrypt
+import requests
+import cachecontrol
 from datetime import datetime, timezone, timedelta
 from fastapi import HTTPException, Request, Response, Depends
 from fastapi.concurrency import run_in_threadpool
@@ -15,7 +17,17 @@ except ImportError:  # pragma: no cover
     firebase_admin_auth = None
     firebase_admin_credentials = None
 
+try:
+    from google.auth import exceptions as google_auth_exceptions
+    from google.auth.transport import requests as google_auth_requests
+    from google.oauth2 import id_token as google_id_token
+except ImportError:  # pragma: no cover
+    google_auth_exceptions = None
+    google_auth_requests = None
+    google_id_token = None
+
 _firebase_app = None
+_google_public_cert_request = None
 
 
 def _ensure_firebase_app():
@@ -163,7 +175,54 @@ def _serialize_auth_user(user: dict) -> dict:
     return user
 
 
-def _verify_firebase_token(token: str) -> dict:
+def _get_google_public_cert_request():
+    global _google_public_cert_request
+    if google_auth_requests is None:
+        raise HTTPException(
+            status_code=500,
+            detail="google-auth is required for Firebase token verification",
+        )
+    if _google_public_cert_request is None:
+        cached_session = cachecontrol.CacheControl(requests.Session())
+        _google_public_cert_request = google_auth_requests.Request(session=cached_session)
+    return _google_public_cert_request
+
+
+def _verify_firebase_token_with_public_certs(token: str) -> dict:
+    if google_id_token is None:
+        raise HTTPException(
+            status_code=500,
+            detail="google-auth is required for Firebase token verification",
+        )
+    project_id = firebase_project_id()
+    try:
+        payload = google_id_token.verify_firebase_token(
+            token,
+            _get_google_public_cert_request(),
+            audience=project_id,
+            clock_skew_in_seconds=10,
+        )
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid Firebase token") from None
+    except Exception as exc:
+        transport_error = (
+            google_auth_exceptions is not None
+            and isinstance(exc, google_auth_exceptions.TransportError)
+        )
+        if transport_error:
+            raise HTTPException(
+                status_code=503,
+                detail="Firebase token verification unavailable",
+            ) from exc
+        raise
+
+    expected_issuer = f"https://securetoken.google.com/{project_id}"
+    if payload.get("iss") != expected_issuer:
+        raise HTTPException(status_code=401, detail="Invalid Firebase token")
+    return payload
+
+
+def _verify_firebase_token_with_admin_sdk(token: str) -> dict:
     _ensure_firebase_app()
     try:
         return firebase_admin_auth.verify_id_token(token, check_revoked=True)
@@ -175,6 +234,19 @@ def _verify_firebase_token(token: str) -> dict:
         raise HTTPException(status_code=403, detail="Firebase user disabled")
     except (firebase_admin_auth.InvalidIdTokenError, ValueError):
         raise HTTPException(status_code=401, detail="Invalid Firebase token")
+
+
+def _verify_firebase_token(token: str) -> dict:
+    try:
+        return _verify_firebase_token_with_admin_sdk(token)
+    except Exception as exc:
+        default_credentials_error = (
+            google_auth_exceptions is not None
+            and isinstance(exc, google_auth_exceptions.DefaultCredentialsError)
+        )
+        if default_credentials_error:
+            return _verify_firebase_token_with_public_certs(token)
+        raise
 
 
 def _identity_provider(payload: dict) -> str:

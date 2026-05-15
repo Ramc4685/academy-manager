@@ -259,6 +259,81 @@ class TestVerificationEnforcement:
         assert r.status_code == 200
         assert r.json()["email"] == "ok@example.com"
 
+    def test_me_links_seeded_admin_without_service_account_credentials(
+        self, client, mongo, monkeypatch
+    ):
+        """Fly deploys do not have Application Default Credentials. In that
+        case the backend must still verify Firebase ID tokens with Google's
+        public Firebase certs and link the seeded admin by verified email."""
+        for key in (
+            "FIREBASE_CREDENTIALS_JSON",
+            "FIREBASE_CREDENTIALS_FILE",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+        ):
+            monkeypatch.delenv(key, raising=False)
+
+        email = "ramchand4685@gmail.com"
+        asyncio.run(
+            mongo.users.insert_one({
+                "email": email,
+                "role": "admin",
+                "status": "active",
+                "name": "Academy Admin",
+            })
+        )
+        claim = _stub_token(
+            uid="firebase-admin-uid",
+            email=email,
+            email_verified=True,
+            provider="google.com",
+        )
+        claim["iss"] = "https://securetoken.google.com/academy-courtmastr-test"
+
+        with patch.object(auth_module, "_ensure_firebase_app", lambda: None), patch.object(
+            auth_module.google_id_token,
+            "verify_firebase_token",
+            return_value=claim,
+        ) as verify_public, patch.object(
+            auth_module.firebase_admin_auth,
+            "verify_id_token",
+            side_effect=auth_module.google_auth_exceptions.DefaultCredentialsError("no adc"),
+        ):
+            r = client.get("/api/auth/me", headers={"Authorization": "Bearer FAKE"})
+
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["email"] == email
+        assert body["role"] == "admin"
+        verify_public.assert_called_once()
+        user = asyncio.run(mongo.users.find_one({"email": email}))
+        assert user["auth_provider"] == "firebase"
+        assert user["auth_uid"] == "firebase-admin-uid"
+
+    def test_public_cert_transport_failure_returns_503(self, client, mongo):
+        asyncio.run(
+            mongo.users.insert_one({
+                "email": "ok@example.com",
+                "auth_provider": "firebase",
+                "auth_uid": "uid-ok",
+                "role": "parent",
+                "status": "active",
+            })
+        )
+
+        with patch.object(auth_module, "_ensure_firebase_app", lambda: None), patch.object(
+            auth_module.firebase_admin_auth,
+            "verify_id_token",
+            side_effect=auth_module.google_auth_exceptions.DefaultCredentialsError("no adc"),
+        ), patch.object(
+            auth_module.google_id_token,
+            "verify_firebase_token",
+            side_effect=auth_module.google_auth_exceptions.TransportError("cert fetch failed"),
+        ):
+            r = client.get("/api/auth/me", headers={"Authorization": "Bearer FAKE"})
+
+        assert r.status_code == 503
+        assert r.json()["detail"] == "Firebase token verification unavailable"
+
 
 # ---------------------------------------------------------------------------
 # 3. Invite acceptance is Firebase-first
