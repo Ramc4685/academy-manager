@@ -1,12 +1,13 @@
-"""Parent onboarding backend — Phase 5 Slice 2.
+"""Parent onboarding backend — Phase 5 Slices 2 & 3.
 
 Provides:
   POST   /onboarding/start
   PATCH  /onboarding/{id}
   GET    /onboarding/{id}/status
+  POST   /onboarding/{id}/checkout   <- Slice 3
 
-Status constants (other transitions land in Slice 3):
-  DRAFT                         -> written by this slice
+Status constants:
+  DRAFT                         -> Slice 2
   CHECKOUT_PENDING              -> Slice 3
   CHECKOUT_EXPIRED              -> Slice 3
   PAYMENT_PROCESSING            -> Slice 3
@@ -18,16 +19,21 @@ Status constants (other transitions land in Slice 3):
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import os
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from auth import get_current_user
 from db import get_db
+from routers.billing_routes import _configure_stripe
+from services.enrollment_service import capacity_snapshot
 
 # ---------------------------------------------------------------------------
 # Status constants
@@ -344,4 +350,140 @@ async def get_onboarding_status(
         "selected_session_id": app_doc.get("selected_session_id"),
         "child_name": child_name,
         "updated_at": app_doc.get("updated_at"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Slice 3 helpers
+# ---------------------------------------------------------------------------
+
+
+def _frontend_url() -> str:
+    """Return the configured frontend base URL, defaulting to production."""
+    return os.environ.get("FRONTEND_URL", "https://academy.courtmastr.com").rstrip("/")
+
+
+# ---------------------------------------------------------------------------
+# POST /onboarding/{id}/checkout
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{app_id}/checkout")
+async def create_onboarding_checkout(
+    app_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Create a Stripe Checkout Session (mode=payment) for a draft onboarding application.
+
+    Validates ownership, draft status, required fields, and advisory capacity.
+    Does NOT reserve a seat — the webhook is the authoritative source.
+
+    Stripe session expires_at is left at Stripe's default (~30 minutes from now),
+    which aligns with the intent of keeping a short checkout window. The Stripe
+    default avoids a separate 30-min delta calculation and is documented here as
+    the intentional choice.
+    """
+    db = get_db()
+
+    try:
+        oid = ObjectId(app_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    app_doc = await db.onboarding_applications.find_one({"_id": oid})
+    if app_doc is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    # Owner-only check
+    if app_doc["parent_user_id"] != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Must be in DRAFT status
+    if app_doc["status"] != DRAFT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Checkout only allowed in draft status; current status is {app_doc['status']!r}",
+        )
+
+    # Validate required fields
+    if not app_doc.get("waiver_acceptance"):
+        raise HTTPException(status_code=400, detail="waiver_acceptance is required before checkout")
+
+    child_profile = app_doc.get("child_profile") or {}
+    if not child_profile.get("name") or not child_profile.get("dob"):
+        raise HTTPException(
+            status_code=400,
+            detail="child_profile.name and child_profile.dob are required before checkout",
+        )
+
+    if not app_doc.get("selected_session_id"):
+        raise HTTPException(status_code=400, detail="selected_session_id is required before checkout")
+
+    # Validate Stripe configured
+    stripe = _configure_stripe()
+
+    session_id = app_doc["selected_session_id"]
+
+    # Load session doc for price and capacity advisory check
+    if not ObjectId.is_valid(session_id):
+        raise HTTPException(status_code=400, detail="selected_session_id is not a valid id")
+    session_doc = await db.sessions.find_one({"_id": ObjectId(session_id), "is_deleted": {"$ne": True}})
+    if not session_doc:
+        raise HTTPException(status_code=400, detail="Selected session not found")
+
+    # Advisory pre-check capacity (not authoritative — webhook does the atomic reserve)
+    snapshot = await capacity_snapshot(db, session_doc)
+    if snapshot["is_full"]:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "session_full", "detail": "The selected session is currently full"},
+        )
+
+    amount = float(session_doc.get("monthly_price", 0))
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Session monthly price must be greater than zero")
+
+    frontend_url = _frontend_url()
+    success_url = f"{frontend_url}/onboarding/{app_id}/status?checkout=success"
+    cancel_url = f"{frontend_url}/onboarding/{app_id}/status?checkout=cancel"
+
+    metadata = {
+        "onboarding_id": app_id,
+        "parent_user_id": app_doc["parent_user_id"],
+        "session_id": session_id,
+        "kind": "onboarding",
+    }
+
+    stripe_session = await asyncio.to_thread(
+        stripe.checkout.Session.create,
+        mode="payment",
+        line_items=[{
+            "price_data": {
+                "currency": "usd",
+                "product_data": {"name": f"Academy first-month fee — {session_doc.get('name', '')}".strip(" —")},
+                "unit_amount": int(round(amount * 100)),
+            },
+            "quantity": 1,
+        }],
+        success_url=success_url,
+        cancel_url=cancel_url,
+        customer_email=current_user["email"],
+        metadata=metadata,
+    )
+
+    # Persist and transition status
+    now = _now_iso()
+    await db.onboarding_applications.update_one(
+        {"_id": oid},
+        {"$set": {
+            "stripe_checkout_session_id": stripe_session.id,
+            "status": CHECKOUT_PENDING,
+            "updated_at": now,
+        }},
+    )
+
+    return {
+        "checkout_url": stripe_session.url,
+        "checkout_session_id": stripe_session.id,
+        "status": CHECKOUT_PENDING,
     }
