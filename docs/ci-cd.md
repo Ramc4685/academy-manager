@@ -7,6 +7,7 @@ Production deployment is handled by GitHub Actions.
 - `.github/workflows/ci.yml` runs on pull requests and pushes to `main`.
 - `.github/workflows/deploy.yml` runs on pushes to `main` and manual dispatches from `main`.
 - Deployments validate the app first, wait for the protected `production` GitHub Environment gate, deploy the Fly backend, deploy the Cloudflare Pages frontend, then run production smoke checks.
+- Tags do not deploy production. A merge to `main` is the release event; the approval gate is the final production control.
 
 ## Production Targets
 
@@ -26,7 +27,23 @@ CLOUDFLARE_ACCOUNT_ID=<Cloudflare account id>
 
 The Cloudflare token needs permission to deploy the `courtmastr-academy` Pages project. The Fly token needs permission to deploy `courtmastr-academy-api`.
 
+## Required GitHub Variables
+
+These values are embedded into the frontend at build time by GitHub Actions:
+
+```bash
+REACT_APP_FIREBASE_API_KEY=<Firebase web API key>
+REACT_APP_FIREBASE_AUTH_DOMAIN=academy-courtmastr.firebaseapp.com
+REACT_APP_FIREBASE_PROJECT_ID=academy-courtmastr
+REACT_APP_FIREBASE_STORAGE_BUCKET=academy-courtmastr.firebasestorage.app
+REACT_APP_FIREBASE_MESSAGING_SENDER_ID=953230788846
+REACT_APP_FIREBASE_APP_ID=1:953230788846:web:1f2819c11418ecf5860bff
+REACT_APP_FIREBASE_MEASUREMENT_ID=G-Z6GS6WRZY8
+```
+
 Use a protected GitHub Environment named `production` with required reviewers before launch. That keeps automatic deploys from `main` under an explicit approval gate.
+
+Protect the `main` branch with required status checks for the `Backend` and `Frontend` CI jobs. Direct pushes to `main` should stay disabled outside emergency operations.
 
 ## Manual Deploy
 
@@ -47,3 +64,4 @@ scripts/smoke/production_smoke.sh
 ```
 
 The script checks backend health, CORS for `https://academy.courtmastr.com`, and frontend reachability.
+It also verifies that the deployed frontend bundle contains the production API URL and Firebase project id so missing build-time configuration fails the deploy.

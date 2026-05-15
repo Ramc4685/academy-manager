@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+    branches:
+      - main
   push:
     branches:
       - main
@@ -13,6 +15,7 @@ jobs:
   backend:
     name: Backend
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: backend
@@ -40,9 +43,13 @@ jobs:
       - name: Collect tests
         run: pytest --collect-only -q
 
+      - name: Run safe backend tests
+        run: pytest tests/test_firebase_auth.py tests/test_seed_users.py -q
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: frontend
