@@ -208,12 +208,24 @@ test("test_profile_step_hydrates_existing_draft", async () => {
   );
 });
 
-// 3. Waiver step patches acceptance on submit
+// 3. Waiver step: GET succeeds — renders content, patches with API version on submit
 test("test_waiver_step_patches_acceptance_on_submit", async () => {
-  __mockGet.mockRejectedValue({ response: { status: 404 } });
+  __mockGet.mockResolvedValue({
+    data: {
+      version: "2026.1",
+      content: "Real waiver text from the server.",
+      content_hash: "a".repeat(64),
+      effective_from: "2026-01-01T00:00:00+00:00",
+    },
+  });
   __mockPatch.mockResolvedValue({ data: { status: "draft" } });
 
   const { container } = await render(OnboardingWaiver);
+
+  // Real content must be visible
+  const waiverTextEl = container.querySelector("[data-testid='waiver-text']");
+  expect(waiverTextEl).not.toBeNull();
+  expect(waiverTextEl.textContent).toContain("Real waiver text from the server.");
 
   const checkbox = container.querySelector("[data-testid='waiver-checkbox']");
   expect(checkbox).not.toBeNull();
@@ -231,6 +243,7 @@ test("test_waiver_step_patches_acceptance_on_submit", async () => {
     await flushPromises();
   });
 
+  // Version comes from the API response, not a hardcoded constant
   expect(__mockPatch).toHaveBeenCalledWith(
     "/onboarding/app-123",
     expect.objectContaining({
@@ -240,6 +253,76 @@ test("test_waiver_step_patches_acceptance_on_submit", async () => {
       }),
     })
   );
+});
+
+// 3b. Waiver step: GET fails — shows error notice, submit disabled
+test("test_waiver_step_fetch_failure_disables_submit_and_shows_error", async () => {
+  __mockGet.mockRejectedValue({ response: { status: 503 } });
+
+  const { container } = await render(OnboardingWaiver);
+
+  // Error notice must be present
+  const errorEl = container.querySelector("[data-testid='waiver-fetch-error']");
+  expect(errorEl).not.toBeNull();
+  expect(errorEl.textContent).toMatch(/could not load/i);
+
+  // Submit must be disabled when text hasn't loaded
+  const submitBtn = container.querySelector("[data-testid='waiver-submit']");
+  expect(submitBtn).not.toBeNull();
+  expect(submitBtn.disabled).toBe(true);
+
+  // PATCH must not have been called
+  expect(__mockPatch).not.toHaveBeenCalled();
+});
+
+// 3c. Waiver step: empty content from API still blocks acceptance
+test("test_waiver_step_empty_content_disables_submit", async () => {
+  __mockGet.mockResolvedValue({
+    data: {
+      version: "2026.1",
+      content: "   ",
+      content_hash: "a".repeat(64),
+      effective_from: "2026-01-01T00:00:00+00:00",
+    },
+  });
+
+  const { container } = await render(OnboardingWaiver);
+
+  const checkbox = container.querySelector("[data-testid='waiver-checkbox']");
+  const submitBtn = container.querySelector("[data-testid='waiver-submit']");
+
+  expect(checkbox).not.toBeNull();
+  expect(submitBtn).not.toBeNull();
+  expect(checkbox.disabled).toBe(true);
+  expect(submitBtn.disabled).toBe(true);
+  expect(__mockPatch).not.toHaveBeenCalled();
+});
+
+// 3d. Waiver step: version in PATCH comes from API response, not hardcoded string
+test("test_waiver_step_version_comes_from_api_response", async () => {
+  __mockGet.mockResolvedValue({
+    data: {
+      version: "2026.99",
+      content: "Future waiver text.",
+      content_hash: "b".repeat(64),
+      effective_from: "2026-07-01T00:00:00+00:00",
+    },
+  });
+  __mockPatch.mockResolvedValue({ data: { status: "draft" } });
+
+  const { container } = await render(OnboardingWaiver);
+
+  const checkbox = container.querySelector("[data-testid='waiver-checkbox']");
+  await act(async () => { checkbox.click(); });
+
+  const submitBtn = container.querySelector("[data-testid='waiver-submit']");
+  await act(async () => {
+    submitBtn.click();
+    await flushPromises();
+  });
+
+  const patchCall = __mockPatch.mock.calls[0];
+  expect(patchCall[1].waiver_acceptance.version).toBe("2026.99");
 });
 
 // 4. Session step disables full sessions

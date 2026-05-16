@@ -175,6 +175,37 @@ _ALLOWED_PARENT_KEYS = {"phone", "address", "emergency_contact", "emergency_phon
 _ALLOWED_CHILD_KEYS = {"name", "dob", "medical_notes", "consent_to_treat"}
 
 
+@router.get("/waiver/current")
+async def get_current_waiver(
+    current_user: dict = Depends(get_current_user),
+):
+    """Return the most-recent active waiver version (effective_from <= now).
+
+    Authenticated parents use this to fetch the canonical waiver text before
+    accepting. The frontend must render this text and send the ``version`` field
+    back in the PATCH waiver_acceptance payload.
+    """
+    db = get_db()
+    now_iso = _now_iso()
+
+    # Find the most-recent effective waiver (effective_from <= now), desc order.
+    cursor = db.waiver_versions.find(
+        {"effective_from": {"$lte": now_iso}}
+    ).sort("effective_from", -1).limit(1)
+    docs = await cursor.to_list(length=1)
+
+    if not docs:
+        raise HTTPException(status_code=404, detail="No active waiver version found")
+
+    doc = docs[0]
+    return {
+        "version": doc["version"],
+        "content": doc["text"],
+        "content_hash": doc["content_hash"],
+        "effective_from": doc["effective_from"],
+    }
+
+
 @router.post("/start")
 async def start_onboarding(
     current_user: dict = Depends(get_current_user),
