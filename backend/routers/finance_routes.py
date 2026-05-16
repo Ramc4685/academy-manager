@@ -1,13 +1,44 @@
 """Payments + Expenses + Payout rules + Coach payouts."""
+import stripe  # noqa: F401 – imported so tests can patch routers.finance_routes.stripe
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from bson import ObjectId
+from pydantic import BaseModel
+from typing import Optional
 from models import (
     PaymentIn, MarkPaidIn, DiscountIn, GenerateMonthlyIn,
     ExpenseIn, PayoutRuleIn, CalcPayoutIn, RefundPaymentIn,
 )
 from auth import get_current_user, require_roles, log_audit
 from db import get_db
+
+
+# ---------------------------------------------------------------------------
+# Helper: detect whether a payment is Stripe-linked
+# ---------------------------------------------------------------------------
+
+_STRIPE_METHODS = {"stripe", "stripe_subscription", "stripe_onboarding"}
+
+
+def _is_stripe_linked(payment: dict) -> bool:
+    """Return True if this payment was processed through Stripe."""
+    if payment.get("payment_method") in _STRIPE_METHODS:
+        return True
+    if payment.get("stripe_payment_intent"):
+        return True
+    if payment.get("stripe_invoice_id"):
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Request body for admin refund endpoint
+# ---------------------------------------------------------------------------
+
+class AdminRefundIn(BaseModel):
+    amount: Optional[float] = None
+    reason: str = ""
 
 router = APIRouter()
 
@@ -212,6 +243,24 @@ async def undo_paid(pid: str, admin=Depends(require_roles("admin"))):
         raise HTTPException(status_code=404, detail="Payment not found")
     if p.get("status") != "paid":
         raise HTTPException(status_code=400, detail="Payment is not paid")
+
+    # Block manual undo for any Stripe-linked payment — require refund workflow.
+    if _is_stripe_linked(p):
+        await log_audit(
+            admin,
+            "payment.undo_paid_blocked",
+            "payment",
+            pid,
+            f"blocked undo-paid for Stripe-linked payment (method={p.get('payment_method')})",
+        )
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "stripe_paid_use_refund",
+                "detail": "Stripe-paid payments must use the refund workflow.",
+            },
+        )
+
     await db.payments.update_one(
         {"_id": _oid(pid)},
         {"$set": {"status": "pending", "payment_date": None, "payment_method": None,
@@ -268,6 +317,143 @@ async def refund_payment(pid: str, body: RefundPaymentIn, admin=Depends(require_
     )
     await log_audit(admin, "refund", "payment", pid, f"${amount}")
     return {"ok": True, "refund": refund_doc, "refund_status": status, "refunded_amount": new_refunded}
+
+
+@router.post("/admin/payments/{payment_id}/refund")
+async def admin_refund_payment(
+    payment_id: str,
+    body: AdminRefundIn,
+    admin=Depends(require_roles("admin")),
+):
+    """Admin-triggered Stripe refund.
+
+    Requires a non-empty reason. Only works for Stripe-linked payments.
+    Calls stripe.Refund.create, writes a payment_refunds row (idempotency
+    guaranteed by the unique stripe_refund_id index from Slice 1), updates
+    the parent payment, and writes a payment.refunded audit log.
+    """
+    import os as _os
+
+    if not body.reason or not body.reason.strip():
+        raise HTTPException(status_code=400, detail={"error": "reason_required", "detail": "A reason is required for refunds."})
+
+    db = get_db()
+    p = await db.payments.find_one({"_id": _oid(payment_id), "is_deleted": {"$ne": True}})
+    if not p:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    if not _is_stripe_linked(p):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "not_stripe_paid",
+                "detail": "This payment was not processed through Stripe. Use the manual undo-paid workflow instead.",
+            },
+        )
+
+    if p.get("status") not in ("paid", "refunded", "partially_refunded"):
+        raise HTTPException(status_code=400, detail="Payment is not in a refundable state")
+
+    final_amount = float(p.get("final_amount", 0) or 0)
+    already_refunded = float(p.get("refunded_amount", 0) or 0)
+    amount = float(body.amount) if body.amount is not None else final_amount - already_refunded
+
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Refund amount must be positive")
+    if already_refunded + amount > final_amount + 0.001:
+        raise HTTPException(status_code=400, detail="Refund amount exceeds remaining balance")
+
+    # Determine the Stripe payment_intent to refund.
+    payment_intent = p.get("stripe_payment_intent")
+    if not payment_intent:
+        tx = await db.payment_transactions.find_one({"payment_id": payment_id, "payment_status": "paid"})
+        if tx:
+            payment_intent = tx.get("stripe_payment_intent")
+
+    if not payment_intent:
+        raise HTTPException(status_code=400, detail="No Stripe payment_intent found for this payment")
+
+    # Call Stripe.
+    stripe.api_key = _os.environ.get("STRIPE_API_KEY", "")
+    try:
+        stripe_refund = stripe.Refund.create(
+            payment_intent=payment_intent,
+            amount=int(round(amount * 100)),
+            reason=body.reason.strip(),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Stripe refund failed: {exc}") from exc
+
+    # Extract refund id.
+    if hasattr(stripe_refund, "to_dict_recursive"):
+        refund_data = stripe_refund.to_dict_recursive()
+    elif hasattr(stripe_refund, "to_dict"):
+        refund_data = stripe_refund.to_dict()
+    else:
+        refund_data = dict(stripe_refund) if not isinstance(stripe_refund, dict) else stripe_refund
+    stripe_refund_id = refund_data.get("id") or getattr(stripe_refund, "id", None)
+    refund_status_str = refund_data.get("status", "succeeded")
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Persist the payment_refunds row (unique index on stripe_refund_id guards duplicates).
+    refund_row = {
+        "stripe_refund_id": stripe_refund_id,
+        "payment_id": payment_id,
+        "stripe_payment_intent": payment_intent,
+        "amount": amount,
+        "reason": body.reason.strip(),
+        "refunded_by": admin["id"],
+        "refunded_at": now,
+        "provider_status": refund_status_str,
+    }
+    try:
+        await db.payment_refunds.insert_one(refund_row)
+    except Exception:
+        # Duplicate — already recorded by webhook; safe to continue.
+        pass
+
+    # Update parent payment.
+    new_refunded = round(already_refunded + amount, 2)
+    new_refund_status = "refunded" if new_refunded >= final_amount - 0.001 else "partially_refunded"
+    refund_doc_embedded = {
+        "amount": amount,
+        "reason": body.reason.strip(),
+        "refunded_by": admin["id"],
+        "refunded_at": now,
+        "provider_refund_id": stripe_refund_id,
+        "provider_status": refund_status_str,
+    }
+    await db.payments.update_one(
+        {"_id": _oid(payment_id)},
+        {
+            "$set": {
+                "refunded_amount": new_refunded,
+                "refund_status": new_refund_status,
+                "status": new_refund_status,
+                "updated_at": now,
+            },
+            "$push": {"refunds": refund_doc_embedded},
+        },
+    )
+
+    await log_audit(
+        admin,
+        "payment.refunded",
+        "payment",
+        payment_id,
+        f"${amount} reason={body.reason.strip()} stripe_refund_id={stripe_refund_id}",
+    )
+
+    return {
+        "stripe_refund_id": stripe_refund_id,
+        "payment_id": payment_id,
+        "amount": amount,
+        "reason": body.reason.strip(),
+        "refund_status": new_refund_status,
+        "refunded_amount": new_refunded,
+        "provider_status": refund_status_str,
+    }
 
 
 @router.post("/coach-payouts/{pid}/undo-paid")
