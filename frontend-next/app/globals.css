@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light dark;
+}
+
+@layer base {
+  /* Mobile-safe: always-visible focus rings for accessibility. */
+  *:focus-visible {
+    @apply outline-2 outline-offset-2 outline-blue-500;
+  }
+  /* Disable iOS tap highlight in favor of explicit :active states. */
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+  html {
+    /* Prevent text size adjustment on orientation change. */
+    -webkit-text-size-adjust: 100%;
+  }
+}

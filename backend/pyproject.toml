@@ -1,0 +1,114 @@
+[project]
+name = "academy-manager-backend"
+version = "0.1.0"
+description = "Academy Manager backend (legacy + v2)"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["scripts/", "tests/"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "ASYNC", "RUF"]
+ignore = ["E501"]  # line length handled by formatter
+
+[tool.ruff.lint.per-file-ignores]
+"v2/migrations/*.py" = ["F401"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["v2"]
+exclude = ["legacy", "scripts", "tests"]
+plugins = ["pydantic.mypy"]
+mypy_path = ".."
+namespace_packages = true
+explicit_package_bases = true
+follow_imports = "normal"
+# Third-party libs without type stubs — declared explicitly so the
+# `import-untyped` warnings stop dominating the output.
+[[tool.mypy.overrides]]
+module = ["motor.*", "mongomock_motor.*", "stripe.*", "firebase_admin.*", "cachecontrol.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+# NOTE: testpaths intentionally NOT set here. The legacy CI workflow
+# invokes pytest without a path arg and would otherwise pick up v2/tests
+# (which need v2-only deps installed). v2-backend.yml passes
+# `v2/tests/` as the path arg.
+addopts = "-ra --strict-markers"
+
+[tool.coverage.run]
+source = ["v2/shared", "v2/contexts", "v2/interfaces"]
+omit = ["v2/tests/*", "v2/migrations/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
+
+# ---------------------------------------------------------------------------
+# import-linter — enforces ADR-0005 layering and ADR-0006 tenancy rules.
+# ---------------------------------------------------------------------------
+
+[tool.importlinter]
+# grimp (import-linter's graph builder) requires a single top-level
+# package name, not a dotted path. Point it at `backend` and reference
+# subpackages by their full dotted path in the contracts below.
+root_packages = ["backend"]
+include_external_packages = false
+
+# Rule 1: Domain may not import from infrastructure, application, or
+# interfaces. Domain MAY import `shared.events.base.DomainEvent` (a Pydantic
+# base class — pure domain helper) but NOT the dispatcher/outbox/store
+# modules which pull in motor/I/O.
+[[tool.importlinter.contracts]]
+name = "domain-is-pure"
+type = "forbidden"
+source_modules = ["backend.v2.contexts.*.domain"]
+forbidden_modules = [
+    "backend.v2.contexts.*.infrastructure",
+    "backend.v2.contexts.*.application",
+    "backend.v2.interfaces",
+    "backend.v2.shared.events.dispatcher",
+    "backend.v2.shared.events.outbox",
+    "backend.v2.shared.idempotency.mongo_store",
+]
+
+# Rule 2: Application may not import infrastructure.
+[[tool.importlinter.contracts]]
+name = "application-does-not-import-infrastructure"
+type = "forbidden"
+source_modules = ["backend.v2.contexts.*.application"]
+forbidden_modules = ["backend.v2.contexts.*.infrastructure", "backend.v2.interfaces"]
+
+# Rule 3: Infrastructure may not import interfaces.
+[[tool.importlinter.contracts]]
+name = "infrastructure-does-not-import-interfaces"
+type = "forbidden"
+source_modules = ["backend.v2.contexts.*.infrastructure"]
+forbidden_modules = ["backend.v2.interfaces"]
+
+# Rule 4: Interfaces may not import infrastructure or domain DIRECTLY.
+# Indirect imports through `application/` are legal (interface → use case →
+# domain is the canonical flow). `allow_indirect_imports = true` whitelists
+# the transitive chain so only direct violations fail the build.
+[[tool.importlinter.contracts]]
+name = "interfaces-do-not-import-infrastructure-or-domain-directly"
+type = "forbidden"
+source_modules = ["backend.v2.interfaces"]
+forbidden_modules = ["backend.v2.contexts.*.infrastructure", "backend.v2.contexts.*.domain"]
+allow_indirect_imports = "true"
+
+# Rule 5: No cross-context imports. Each context is self-contained.
+# (Enforced by the structural test for now; import-linter "independence"
+# contracts will be added per wave as contexts land.)
+
+# Rule 6: academy_id literals forbidden outside shared/tenancy and */infrastructure.
+# import-linter cannot match on literals; this is enforced by a separate
+# pytest check (tests/structural/test_tenancy_literals.py — landed alongside
+# the first repository in W1A-02).

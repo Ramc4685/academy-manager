@@ -1,0 +1,72 @@
+{
+  "name": "academy-manager-next",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "generate:api": "openapi-typescript http://localhost:8001/openapi.json -o lib/api/generated/v2.d.ts",
+    "size": "size-limit",
+    "lhci": "lhci autorun",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui"
+  },
+  "dependencies": {
+    "next": "15.0.3",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "@tanstack/react-query": "5.59.16",
+    "@tanstack/react-query-persist-client": "5.59.16",
+    "@tanstack/query-sync-storage-persister": "5.59.16",
+    "firebase": "11.0.2",
+    "ulid": "2.3.0",
+    "web-vitals": "4.2.4",
+    "@serwist/next": "9.0.10",
+    "serwist": "9.0.10",
+    "tailwind-merge": "2.5.4",
+    "clsx": "2.1.1",
+    "@radix-ui/react-dialog": "1.1.2",
+    "@radix-ui/react-slot": "1.1.0",
+    "lucide-react": "0.453.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.8.6",
+    "@types/react": "19.0.1",
+    "@types/react-dom": "19.0.1",
+    "typescript": "5.6.3",
+    "tailwindcss": "3.4.14",
+    "postcss": "8.4.47",
+    "autoprefixer": "10.4.20",
+    "eslint": "9.13.0",
+    "eslint-config-next": "15.0.3",
+    "openapi-typescript": "7.4.2",
+    "size-limit": "11.1.6",
+    "@size-limit/preset-app": "11.1.6",
+    "@lhci/cli": "0.14.0",
+    "@playwright/test": "1.48.1",
+    "@fullcalendar/react": "6.1.15",
+    "@fullcalendar/daygrid": "6.1.15",
+    "recharts": "2.13.3"
+  },
+  "size-limit": [
+    {
+      "name": "(coach)/today",
+      "path": ".next/static/chunks/app/(coach)/today/**/*.js",
+      "limit": "150 KB",
+      "ignore": ["sharp"]
+    },
+    {
+      "name": "(parent)/onboarding",
+      "path": ".next/static/chunks/app/(parent)/onboarding/**/*.js",
+      "limit": "200 KB"
+    },
+    {
+      "name": "(admin)",
+      "path": ".next/static/chunks/app/(admin)/**/*.js",
+      "limit": "300 KB"
+    }
+  ]
+}

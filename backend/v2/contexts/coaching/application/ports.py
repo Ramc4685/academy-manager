@@ -1,0 +1,29 @@
+"""Coaching application ports."""
+
+from __future__ import annotations
+
+from datetime import date
+from typing import Protocol
+
+from backend.v2.contexts.coaching.domain.models import Attendance
+
+
+class AttendanceRepository(Protocol):
+    async def save(self, attendance: Attendance) -> None: ...
+    async def find_existing(self, session_id: str, student_id: str) -> Attendance | None: ...
+    async def find_by_attendance_id(self, attendance_id: str) -> Attendance | None: ...
+
+
+class SessionLookup(Protocol):
+    """Coaching reads sessions through this port — the implementation wraps
+    the Enrollment SessionQuery, but Coaching never imports Enrollment
+    directly (ADR-0005, rule 5).
+    """
+
+    async def is_coach_assigned(self, coach_id: str, session_id: str, on_date: date) -> bool: ...
+    async def is_cancelled(self, session_id: str) -> bool: ...
+    async def session_date(self, session_id: str) -> date | None: ...
+
+
+class EnrollmentLookup(Protocol):
+    async def is_active(self, session_id: str, student_id: str) -> bool: ...

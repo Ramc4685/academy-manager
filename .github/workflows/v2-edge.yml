@@ -1,0 +1,32 @@
+name: v2-edge
+
+on:
+  pull_request:
+    paths:
+      - "edge/**"
+      - ".github/workflows/v2-edge.yml"
+  push:
+    branches: [main]
+    paths:
+      - "edge/**"
+      - ".github/workflows/v2-edge.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: edge router routing-table tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: edge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install --no-save tsx@4 typescript@5
+      - name: Routing table tests
+        run: npx tsx router.test.ts

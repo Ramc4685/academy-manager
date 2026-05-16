@@ -1,0 +1,24 @@
+{
+  "date": "2026-05-16",
+  "sessions": [
+    {
+      "session_id": "s-today-1",
+      "title": "Junior A",
+      "location": "Court 1",
+      "start_at": "2026-05-16T09:00:00Z",
+      "end_at": "2026-05-16T10:30:00Z",
+      "roster": [
+        { "student_id": "st1", "full_name": "Alice", "enrollment_status": "active" },
+        { "student_id": "st2", "full_name": "Bob", "enrollment_status": "active" }
+      ]
+    },
+    {
+      "session_id": "s-today-2",
+      "title": "Adult B",
+      "location": "Court 2",
+      "start_at": "2026-05-16T18:00:00Z",
+      "end_at": "2026-05-16T19:30:00Z",
+      "roster": []
+    }
+  ]
+}

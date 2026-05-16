@@ -1,0 +1,18 @@
+"""Onboarding application ports."""
+
+from __future__ import annotations
+
+from typing import Protocol
+
+from backend.v2.contexts.onboarding.domain.models import Application, Waiver
+
+
+class ApplicationRepository(Protocol):
+    async def save(self, app: Application) -> None: ...
+    async def get(self, application_id: str) -> Application | None: ...
+    async def latest_for_parent(self, parent_user_id: str) -> Application | None: ...
+    async def get_by_payment_id(self, payment_id: str) -> Application | None: ...
+
+
+class WaiverRepository(Protocol):
+    async def get_active(self) -> Waiver | None: ...

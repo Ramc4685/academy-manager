@@ -1,0 +1,192 @@
+"""Use-case tests for MarkAttendance with port fakes.
+
+Covers all four rejection paths + idempotency + outbox emission.
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime, timezone
+from typing import Any
+
+import pytest
+
+from backend.v2.contexts.coaching.application.use_cases.mark_attendance import (
+    MarkAttendance,
+    MarkAttendanceCommand,
+)
+from backend.v2.contexts.coaching.domain.errors import (
+    ConflictAttendanceExists,
+    SessionCancelled,
+    SessionNotAssigned,
+    StudentNotEnrolled,
+)
+from backend.v2.contexts.coaching.domain.models import Attendance
+
+FIXED_NOW = datetime(2026, 5, 16, 9, 30, tzinfo=timezone.utc)
+FIXED_DATE = date(2026, 5, 16)
+
+
+class InMemoryIdempotency:
+    def __init__(self) -> None:
+        self.data: dict[str, dict[str, Any]] = {}
+
+    async def get(self, key: str) -> dict[str, Any] | None:
+        return self.data.get(key)
+
+    async def put(self, key: str, value: dict[str, Any]) -> None:
+        self.data[key] = value
+
+
+class FakeAttendanceRepo:
+    def __init__(self) -> None:
+        self.saved: list[Attendance] = []
+
+    async def save(self, attendance: Attendance) -> None:
+        self.saved.append(attendance)
+
+    async def find_existing(self, session_id: str, student_id: str) -> Attendance | None:
+        for a in self.saved:
+            if a.session_id == session_id and a.student_id == student_id:
+                return a
+        return None
+
+    async def find_by_attendance_id(self, attendance_id: str) -> Attendance | None:
+        for a in self.saved:
+            if a.attendance_id == attendance_id:
+                return a
+        return None
+
+
+class FakeSessionLookup:
+    def __init__(
+        self,
+        *,
+        assigned: bool = True,
+        cancelled: bool = False,
+        session_date: date | None = FIXED_DATE,
+    ) -> None:
+        self.assigned = assigned
+        self.cancelled = cancelled
+        self.session_date_val = session_date
+
+    async def is_coach_assigned(self, coach_id: str, session_id: str, on_date: date) -> bool:
+        return self.assigned
+
+    async def is_cancelled(self, session_id: str) -> bool:
+        return self.cancelled
+
+    async def session_date(self, session_id: str) -> date | None:
+        return self.session_date_val
+
+
+class FakeEnrollmentLookup:
+    def __init__(self, active: bool = True) -> None:
+        self.active = active
+
+    async def is_active(self, session_id: str, student_id: str) -> bool:
+        return self.active
+
+
+class FakeOutbox:
+    def __init__(self) -> None:
+        self.appended: list[Any] = []
+
+    async def append(self, event, *, session=None) -> None:  # noqa: ANN001
+        self.appended.append(event)
+
+    async def pull_unprocessed(self, limit: int = 100):
+        return []
+
+    async def mark_processed(self, event_id: str) -> None:
+        pass
+
+
+def _cmd(mutation_id: str = "mut-1", student_id: str = "st1", status: str = "present") -> MarkAttendanceCommand:
+    return MarkAttendanceCommand(
+        mutation_id=mutation_id,
+        session_id="sess-1",
+        student_id=student_id,
+        status=status,  # type: ignore[arg-type]
+    )
+
+
+def _build(**overrides) -> MarkAttendance:
+    repo = overrides.pop("attendance_repo", FakeAttendanceRepo())
+    sessions = overrides.pop("session_lookup", FakeSessionLookup())
+    enrollments = overrides.pop("enrollment_lookup", FakeEnrollmentLookup())
+    outbox = overrides.pop("outbox", FakeOutbox())
+    idem = overrides.pop("idempotency_store", InMemoryIdempotency())
+    return MarkAttendance(
+        attendance_repo=repo,
+        session_lookup=sessions,
+        enrollment_lookup=enrollments,
+        outbox=outbox,
+        idempotency_store=idem,
+        academy_id="test-academy",
+        clock=lambda: FIXED_NOW,
+    )
+
+
+@pytest.mark.asyncio
+async def test_happy_path_persists_and_emits_event() -> None:
+    repo = FakeAttendanceRepo()
+    outbox = FakeOutbox()
+    uc = _build(attendance_repo=repo, outbox=outbox)
+    result = await uc.execute(_cmd(), coach_id="coach-1")
+    assert result.attendance_id == "mut-1"
+    assert result.status == "present"
+    assert len(repo.saved) == 1
+    assert len(outbox.appended) == 1
+    event = outbox.appended[0]
+    assert event.name == "Coaching.AttendanceMarked"
+    assert event.payload.attendance_id == "mut-1"
+
+
+@pytest.mark.asyncio
+async def test_idempotent_replay_returns_same_result_one_save() -> None:
+    repo = FakeAttendanceRepo()
+    outbox = FakeOutbox()
+    uc = _build(attendance_repo=repo, outbox=outbox)
+    first = await uc.execute(_cmd(), coach_id="coach-1")
+    second = await uc.execute(_cmd(), coach_id="coach-1")
+    assert first == second
+    assert len(repo.saved) == 1
+    assert len(outbox.appended) == 1
+
+
+@pytest.mark.asyncio
+async def test_session_not_found_raises_not_assigned() -> None:
+    uc = _build(session_lookup=FakeSessionLookup(session_date=None))
+    with pytest.raises(SessionNotAssigned):
+        await uc.execute(_cmd(), coach_id="coach-1")
+
+
+@pytest.mark.asyncio
+async def test_cancelled_session_rejected() -> None:
+    uc = _build(session_lookup=FakeSessionLookup(cancelled=True))
+    with pytest.raises(SessionCancelled):
+        await uc.execute(_cmd(), coach_id="coach-1")
+
+
+@pytest.mark.asyncio
+async def test_unassigned_coach_rejected() -> None:
+    uc = _build(session_lookup=FakeSessionLookup(assigned=False))
+    with pytest.raises(SessionNotAssigned):
+        await uc.execute(_cmd(), coach_id="coach-1")
+
+
+@pytest.mark.asyncio
+async def test_unenrolled_student_rejected() -> None:
+    uc = _build(enrollment_lookup=FakeEnrollmentLookup(active=False))
+    with pytest.raises(StudentNotEnrolled):
+        await uc.execute(_cmd(), coach_id="coach-1")
+
+
+@pytest.mark.asyncio
+async def test_conflict_when_different_mutation_id_exists() -> None:
+    repo = FakeAttendanceRepo()
+    uc = _build(attendance_repo=repo)
+    await uc.execute(_cmd(mutation_id="mut-1"), coach_id="coach-1")
+    # Different mutation hits same (session, student) — must conflict.
+    with pytest.raises(ConflictAttendanceExists):
+        await uc.execute(_cmd(mutation_id="mut-2"), coach_id="coach-1")

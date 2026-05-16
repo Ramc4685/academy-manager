@@ -1,0 +1,719 @@
+"""Interface-test fixtures.
+
+Builds a FastAPI app with the coach router and an in-memory test
+composition so we never spin up Mongo. Auth is injected via FastAPI's
+dependency override.
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime, timezone
+from typing import Iterator, Literal
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from backend.v2.contexts.coaching.application.use_cases.mark_attendance import MarkAttendance
+from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
+    GetSessionRoster,
+)
+from backend.v2.contexts.enrollment.application.use_cases.list_coach_sessions_for_date import (
+    ListCoachSessionsForDate,
+)
+from backend.v2.contexts.enrollment.domain.models import Enrollment, RosterEntry, Session, Student
+from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
+from backend.v2.interfaces.coach.router import router as coach_router
+from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
+from backend.v2.shared.http import register_exception_handlers
+
+
+# --- in-memory fakes ---
+
+
+class FakeSessionQuery:
+    def __init__(self, sessions: list[Session]) -> None:
+        self._sessions = sessions
+
+    async def for_coach_on_date(self, coach_id: str, on_date: date) -> list[Session]:
+        return [
+            s for s in self._sessions if s.coach_id == coach_id and s.start_at.date() == on_date
+        ]
+
+    async def get(self, session_id: str) -> Session | None:
+        for s in self._sessions:
+            if s.session_id == session_id:
+                return s
+        return None
+
+
+class FakeEnrollmentQuery:
+    def __init__(self, enrollments: list[Enrollment]) -> None:
+        self._enrollments = enrollments
+
+    async def active_for_session(self, session_id: str) -> list[Enrollment]:
+        return [
+            e for e in self._enrollments if e.session_id == session_id and e.status == "active"
+        ]
+
+    async def is_active(self, session_id: str, student_id: str) -> bool:
+        return any(
+            e.session_id == session_id and e.student_id == student_id and e.status == "active"
+            for e in self._enrollments
+        )
+
+
+class FakeStudentQuery:
+    def __init__(self, students: list[Student]) -> None:
+        self._by_id = {s.student_id: s for s in students}
+
+    async def by_ids(self, student_ids: list[str]) -> list[Student]:
+        return [self._by_id[s] for s in student_ids if s in self._by_id]
+
+
+class FakeAttendanceRepo:
+    def __init__(self) -> None:
+        self.saved: list = []
+
+    async def save(self, attendance) -> None:
+        self.saved.append(attendance)
+
+    async def find_existing(self, session_id, student_id):
+        for a in self.saved:
+            if a.session_id == session_id and a.student_id == student_id:
+                return a
+        return None
+
+    async def find_by_attendance_id(self, attendance_id):
+        for a in self.saved:
+            if a.attendance_id == attendance_id:
+                return a
+        return None
+
+
+class FakeOutbox:
+    def __init__(self) -> None:
+        self.appended: list = []
+
+    async def append(self, event, *, session=None) -> None:
+        self.appended.append(event)
+
+    async def pull_unprocessed(self, limit: int = 100):
+        return []
+
+    async def mark_processed(self, event_id: str) -> None:
+        pass
+
+
+class FakeIdempotencyStore:
+    def __init__(self) -> None:
+        self.data: dict = {}
+
+    async def get(self, key: str):
+        return self.data.get(key)
+
+    async def put(self, key: str, value) -> None:
+        self.data[key] = value
+
+
+# --- seed data ---
+
+
+def _now() -> datetime:
+    return datetime(2026, 5, 16, 9, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture()
+def seed():
+    sessions = [
+        Session(
+            session_id="s-today-1",
+            academy_id="test-academy",
+            coach_id="coach-1",
+            title="Junior A",
+            location="Court 1",
+            start_at=datetime(2026, 5, 16, 9, 0, tzinfo=timezone.utc),
+            end_at=datetime(2026, 5, 16, 10, 30, tzinfo=timezone.utc),
+            capacity=8,
+            status="scheduled",
+        ),
+        Session(
+            session_id="s-today-2",
+            academy_id="test-academy",
+            coach_id="coach-1",
+            title="Adult B",
+            location="Court 2",
+            start_at=datetime(2026, 5, 16, 18, 0, tzinfo=timezone.utc),
+            end_at=datetime(2026, 5, 16, 19, 30, tzinfo=timezone.utc),
+            capacity=10,
+            status="scheduled",
+        ),
+        Session(
+            session_id="s-other-coach",
+            academy_id="test-academy",
+            coach_id="coach-2",
+            title="Not mine",
+            location="Court 3",
+            start_at=datetime(2026, 5, 16, 12, 0, tzinfo=timezone.utc),
+            end_at=datetime(2026, 5, 16, 13, 0, tzinfo=timezone.utc),
+            capacity=4,
+            status="scheduled",
+        ),
+    ]
+    enrollments = [
+        Enrollment(
+            enrollment_id="e1",
+            academy_id="test-academy",
+            session_id="s-today-1",
+            student_id="st1",
+            status="active",
+        ),
+        Enrollment(
+            enrollment_id="e2",
+            academy_id="test-academy",
+            session_id="s-today-1",
+            student_id="st2",
+            status="active",
+        ),
+    ]
+    students = [
+        Student(student_id="st1", academy_id="test-academy", parent_id="p1", full_name="Alice"),
+        Student(student_id="st2", academy_id="test-academy", parent_id="p2", full_name="Bob"),
+    ]
+    return {
+        "sessions": sessions,
+        "enrollments": enrollments,
+        "students": students,
+    }
+
+
+def _coach_claims() -> AuthClaims:
+    return AuthClaims(
+        user_id="coach-1",
+        email="coach1@example.com",
+        academy_id="test-academy",
+        roles=("coach",),
+    )
+
+
+def _parent_claims() -> AuthClaims:
+    return AuthClaims(
+        user_id="p1",
+        email="parent@example.com",
+        academy_id="test-academy",
+        roles=("parent",),
+    )
+
+
+def _admin_claims() -> AuthClaims:
+    return AuthClaims(
+        user_id="adm",
+        email="admin@example.com",
+        academy_id="test-academy",
+        roles=("admin",),
+    )
+
+
+def _build_use_cases(seed_data) -> CoachUseCases:
+    sessions = FakeSessionQuery(seed_data["sessions"])
+    enrollments = FakeEnrollmentQuery(seed_data["enrollments"])
+    students = FakeStudentQuery(seed_data["students"])
+
+    # Adapters wiring coach lookups to enrollment queries.
+    class _SL:
+        async def is_coach_assigned(self, coach_id, sid, on_date):
+            s = await sessions.get(sid)
+            return s is not None and s.coach_id == coach_id and s.start_at.date() == on_date
+
+        async def is_cancelled(self, sid):
+            s = await sessions.get(sid)
+            return s is not None and s.status == "cancelled"
+
+        async def session_date(self, sid):
+            s = await sessions.get(sid)
+            return s.start_at.date() if s else None
+
+    class _EL:
+        async def is_active(self, sid, student_id):
+            return await enrollments.is_active(sid, student_id)
+
+    return CoachUseCases(
+        list_today=ListCoachSessionsForDate(sessions=sessions),
+        get_roster=GetSessionRoster(enrollments=enrollments, students=students),
+        mark_attendance=MarkAttendance(
+            attendance_repo=FakeAttendanceRepo(),
+            session_lookup=_SL(),
+            enrollment_lookup=_EL(),
+            outbox=FakeOutbox(),
+            idempotency_store=FakeIdempotencyStore(),
+            academy_id="test-academy",
+            clock=_now,
+        ),
+    )
+
+
+def _make_app(claims: AuthClaims, use_cases: CoachUseCases) -> FastAPI:
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(coach_router, prefix="/api/v2")
+
+    async def _override_claims():
+        return claims
+
+    def _override_use_cases():
+        return use_cases
+
+    app.dependency_overrides[get_auth_claims] = _override_claims
+    app.dependency_overrides[get_coach_use_cases] = _override_use_cases
+    return app
+
+
+@pytest.fixture()
+def coach_client(seed) -> Iterator[TestClient]:
+    use_cases = _build_use_cases(seed)
+    app = _make_app(_coach_claims(), use_cases)
+    with TestClient(app) as client:
+        client.coach_use_cases = use_cases  # type: ignore[attr-defined]
+        yield client
+
+
+@pytest.fixture()
+def parent_client(seed) -> Iterator[TestClient]:
+    """Same routes mounted, but token represents a parent — wrong persona."""
+    use_cases = _build_use_cases(seed)
+    app = _make_app(_parent_claims(), use_cases)
+    with TestClient(app) as client:
+        yield client
+
+
+@pytest.fixture()
+def admin_client(seed) -> Iterator[TestClient]:
+    use_cases = _build_use_cases(seed)
+    app = _make_app(_admin_claims(), use_cases)
+    with TestClient(app) as client:
+        yield client
+
+
+@pytest.fixture()
+def anon_client(seed) -> Iterator[TestClient]:
+    """No auth claims; the dependency raises 401."""
+    use_cases = _build_use_cases(seed)
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(coach_router, prefix="/api/v2")
+    app.dependency_overrides[get_coach_use_cases] = lambda: use_cases
+    # Do NOT override get_auth_claims; the default raises 401.
+    with TestClient(app) as client:
+        yield client
+
+# ====================================================================
+# Admin BFF fixtures (Wave 3)
+# ====================================================================
+
+
+from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
+from typing import Any, Iterator
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from backend.v2.contexts.billing.application.use_cases.finance import (
+    AcademyRevenueQuery,
+    Expense,
+    Payout,
+    RecordExpense,
+)
+from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
+from backend.v2.contexts.billing.domain.models import Payment
+from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
+    FakeStripeGateway,
+)
+from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
+    CancelEnrollment,
+    CancelSession,
+    CreateSession,
+    EditRosterAdd,
+    JoinWaitlist,
+    PauseEnrollment,
+    RemoveFromWaitlist,
+    ResumeEnrollment,
+    SkipFromWaitlist,
+)
+from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
+    PromoteFromWaitlist,
+)
+from backend.v2.contexts.enrollment.domain.models import Session
+from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
+from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
+from backend.v2.interfaces.admin.router import router as admin_router
+from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
+from backend.v2.shared.comms import CommsService, Message
+from backend.v2.shared.http import register_exception_handlers
+
+
+# --- in-memory port fakes ---
+
+
+@dataclass
+class _AdminFakeOutbox:
+    events: list[Any] = field(default_factory=list)
+
+    async def append(self, event, *, session=None):
+        self.events.append(event)
+
+    async def pull_unprocessed(self, limit=100):
+        return []
+
+    async def mark_processed(self, _):
+        pass
+
+
+@dataclass
+class _AdminFakeIdempotencyStore:
+    data: dict[str, Any] = field(default_factory=dict)
+
+    async def get(self, key):
+        return self.data.get(key)
+
+    async def put(self, key, value):
+        self.data[key] = value
+
+
+@dataclass
+class FakeSessionWriter:
+    """Implements SessionWriter + minimal SessionQuery for the admin reads."""
+
+    sessions: dict[str, Session] = field(default_factory=dict)
+    reserved: dict[str, int] = field(default_factory=dict)
+
+    async def try_reserve_seat(self, session_id):
+        s = self.sessions.get(session_id)
+        if s is None or s.status != "scheduled":
+            return False
+        if self.reserved.get(session_id, 0) >= s.capacity:
+            return False
+        self.reserved[session_id] = self.reserved.get(session_id, 0) + 1
+        return True
+
+    async def release_seat(self, session_id):
+        self.reserved[session_id] = max(0, self.reserved.get(session_id, 0) - 1)
+
+    async def update_status(self, session_id, status):
+        s = self.sessions[session_id]
+        self.sessions[session_id] = s.model_copy(update={"status": status})
+
+    async def create(self, session):
+        self.sessions[session.session_id] = session
+
+    async def update(self, session):
+        self.sessions[session.session_id] = session
+
+
+@dataclass
+class FakeEnrollmentWriter:
+    rows: dict[str, Any] = field(default_factory=dict)
+
+    async def create(self, enrollment):
+        self.rows[enrollment.enrollment_id] = enrollment
+
+    async def update_status(self, enrollment_id, status):
+        e = self.rows.get(enrollment_id)
+        if e is not None:
+            self.rows[enrollment_id] = e.model_copy(update={"status": status})
+
+    async def get(self, enrollment_id):
+        return self.rows.get(enrollment_id)
+
+
+@dataclass
+class _AdminFakeEnrollmentQuery:
+    rows: dict[str, Any] = field(default_factory=dict)
+
+    async def active_for_session(self, session_id):
+        return [e for e in self.rows.values() if e.session_id == session_id and e.status == "active"]
+
+    async def is_active(self, session_id, student_id):
+        return any(
+            e.session_id == session_id and e.student_id == student_id and e.status == "active"
+            for e in self.rows.values()
+        )
+
+
+@dataclass
+class FakeStudentWriter:
+    students: dict[str, Any] = field(default_factory=dict)
+
+    async def upsert(self, student):
+        self.students[student.student_id] = student
+
+
+@dataclass
+class FakeWaitlistRepo:
+    entries: dict[str, WaitlistEntry] = field(default_factory=dict)
+
+    async def add(self, entry):
+        self.entries[entry.waitlist_id] = entry
+
+    async def next_waiting(self, session_id):
+        waiting = sorted(
+            (e for e in self.entries.values() if e.session_id == session_id and e.status == "waiting"),
+            key=lambda e: e.joined_at,
+        )
+        return waiting[0] if waiting else None
+
+    async def update_status(self, waitlist_id, status):
+        e = self.entries.get(waitlist_id)
+        if e is not None:
+            self.entries[waitlist_id] = e.model_copy(update={"status": status})
+
+
+@dataclass
+class FakePaymentRepo:
+    rows: dict[str, Payment] = field(default_factory=dict)
+
+    async def save(self, p):
+        self.rows[p.payment_id] = p
+
+    async def get(self, payment_id):
+        return self.rows.get(payment_id)
+
+    async def get_by_stripe_pi(self, _):
+        return None
+
+    async def get_by_checkout_session(self, _):
+        return None
+
+    async def list_for_parent(self, parent_id):
+        return [p for p in self.rows.values() if p.parent_id == parent_id]
+
+
+@dataclass
+class FakeExpenseRepo:
+    rows: dict[str, Expense] = field(default_factory=dict)
+
+    async def add(self, e):
+        self.rows[e.expense_id] = e
+
+    async def list_recent(self, limit: int = 200):
+        return sorted(self.rows.values(), key=lambda e: e.incurred_on, reverse=True)[:limit]
+
+
+@dataclass
+class FakePayoutRepo:
+    rows: dict[str, Payout] = field(default_factory=dict)
+
+    async def list_all(self):
+        return sorted(self.rows.values(), key=lambda p: p.period_start, reverse=True)
+
+    async def list_for_coach(self, coach_id):
+        return [p for p in self.rows.values() if p.coach_id == coach_id]
+
+
+@dataclass
+class FakeMessageRepo:
+    rows: dict[str, Message] = field(default_factory=dict)
+
+    async def insert(self, m):
+        self.rows[m.message_id] = m
+
+    async def for_recipient(self, recipient_id):
+        return sorted(
+            (
+                m
+                for m in self.rows.values()
+                if m.recipient_id == recipient_id or m.kind == "announcement"
+            ),
+            key=lambda m: m.created_at,
+            reverse=True,
+        )
+
+    async def list_announcements(self):
+        return [m for m in self.rows.values() if m.kind == "announcement"]
+
+
+# --- seed data ---
+
+
+def _now() -> datetime:
+    return datetime(2026, 5, 16, 9, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture
+def admin_seed():
+    sessions = FakeSessionWriter()
+    sessions.sessions["sess-1"] = Session(
+        session_id="sess-1",
+        academy_id="acad",
+        coach_id="coach-1",
+        title="Junior A",
+        location="Court 1",
+        start_at=datetime(2026, 5, 16, 9, 0, tzinfo=timezone.utc),
+        end_at=datetime(2026, 5, 16, 10, 30, tzinfo=timezone.utc),
+        capacity=8,
+        status="scheduled",
+    )
+    return {
+        "sessions": sessions,
+        "enrollments": FakeEnrollmentWriter(),
+        "enrollment_query": _AdminFakeEnrollmentQuery(),
+        "students": FakeStudentWriter(),
+        "waitlist": FakeWaitlistRepo(),
+        "payments": FakePaymentRepo(),
+        "expenses": FakeExpenseRepo(),
+        "payouts": FakePayoutRepo(),
+        "messages": FakeMessageRepo(),
+        "outbox": _AdminFakeOutbox(),
+        "idempotency": _AdminFakeIdempotencyStore(),
+        "stripe": FakeStripeGateway(),
+    }
+
+
+def _build_admin_use_cases(seed) -> AdminUseCases:
+    sessions = seed["sessions"]
+    enrollments_w = seed["enrollments"]
+    enrollments_q = seed["enrollment_query"]
+    students = seed["students"]
+    waitlist = seed["waitlist"]
+    payments = seed["payments"]
+    outbox = seed["outbox"]
+    idem = seed["idempotency"]
+    stripe = seed["stripe"]
+    expenses = seed["expenses"]
+    payouts = seed["payouts"]
+    messages = seed["messages"]
+    comms = CommsService(messages=messages, academy_id="acad")  # type: ignore[arg-type]
+
+    create_session = CreateSession(sessions=sessions, academy_id="acad")
+    cancel_session = CancelSession(
+        sessions=sessions,
+        enrollments_query=enrollments_q,
+        enrollments_writer=enrollments_w,
+        outbox=outbox,
+        academy_id="acad",
+    )
+    edit_roster_add = EditRosterAdd(
+        sessions=sessions,
+        enrollments=enrollments_w,
+        students=students,
+        academy_id="acad",
+    )
+    cancel_enrollment = CancelEnrollment(
+        enrollments=enrollments_w,
+        sessions=sessions,
+        outbox=outbox,
+        academy_id="acad",
+    )
+    pause_enrollment = PauseEnrollment(enrollments=enrollments_w)
+    resume_enrollment = ResumeEnrollment(enrollments=enrollments_w)
+    join_waitlist = JoinWaitlist(waitlist=waitlist, academy_id="acad")
+    promote = PromoteFromWaitlist(waitlist=waitlist, outbox=outbox, academy_id="acad")
+    skip = SkipFromWaitlist(waitlist=waitlist)
+    remove = RemoveFromWaitlist(waitlist=waitlist)
+    issue_refund = IssueRefund(
+        payment_repo=payments, stripe=stripe, outbox=outbox, idempotency_store=idem
+    )
+    record_expense = RecordExpense(expenses=expenses, academy_id="acad")  # type: ignore[arg-type]
+    revenue_query = AcademyRevenueQuery(payments=payments)
+
+    async def list_admin_sessions(on_date):
+        if on_date is None:
+            on_date = _now().date()
+        return [
+            s
+            for s in sessions.sessions.values()
+            if s.start_at.date() == on_date
+        ]
+
+    async def list_admin_enrollments_for_session(session_id):
+        active = await enrollments_q.active_for_session(session_id)
+        out = []
+        for e in active:
+            st = students.students.get(e.student_id)
+            out.append(
+                {
+                    "enrollment_id": e.enrollment_id,
+                    "session_id": e.session_id,
+                    "student_id": e.student_id,
+                    "student_name": st.full_name if st else "(unknown)",
+                    "parent_id": st.parent_id if st else "",
+                    "status": e.status,
+                }
+            )
+        return out
+
+    async def list_waitlist_for_session(session_id):
+        return [e for e in waitlist.entries.values() if e.session_id == session_id]
+
+    async def list_payments_recent():
+        return list(payments.rows.values())
+
+    return AdminUseCases(
+        create_session=create_session,
+        cancel_session=cancel_session,
+        edit_roster_add=edit_roster_add,
+        cancel_enrollment=cancel_enrollment,
+        pause_enrollment=pause_enrollment,
+        resume_enrollment=resume_enrollment,
+        join_waitlist=join_waitlist,
+        promote_from_waitlist=promote,
+        skip_from_waitlist=skip,
+        remove_from_waitlist=remove,
+        issue_refund=issue_refund,
+        list_payments_recent=list_payments_recent,
+        record_expense=record_expense,
+        expenses=expenses,  # type: ignore[arg-type]
+        payouts=payouts,  # type: ignore[arg-type]
+        revenue_query=revenue_query,
+        list_admin_sessions=list_admin_sessions,
+        list_admin_enrollments_for_session=list_admin_enrollments_for_session,
+        list_waitlist_for_session=list_waitlist_for_session,
+        comms=comms,
+    )
+
+
+def _claims(role: str) -> AuthClaims:
+    return AuthClaims(
+        user_id=f"u-{role}",
+        email=f"{role}@example.com",
+        academy_id="acad",
+        roles=(role,),  # type: ignore[arg-type]
+    )
+
+
+def _make_admin_app(claims: AuthClaims, use_cases: AdminUseCases) -> FastAPI:
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(admin_router, prefix="/api/v2")
+    app.dependency_overrides[get_auth_claims] = lambda: claims
+    app.dependency_overrides[get_admin_use_cases] = lambda: use_cases
+    return app
+
+
+@pytest.fixture
+def admin_client(admin_seed) -> Iterator[TestClient]:
+    uc = _build_admin_use_cases(admin_seed)
+    app = _make_admin_app(_claims("admin"), uc)
+    with TestClient(app) as client:
+        client.seed = admin_seed  # type: ignore[attr-defined]
+        client.use_cases = uc  # type: ignore[attr-defined]
+        yield client
+
+
+@pytest.fixture
+def coach_on_admin_client(admin_seed) -> Iterator[TestClient]:
+    """Coach token hitting admin routes → must 404."""
+    uc = _build_admin_use_cases(admin_seed)
+    app = _make_admin_app(_claims("coach"), uc)
+    with TestClient(app) as client:
+        yield client
+
+
+@pytest.fixture
+def parent_on_admin_client(admin_seed) -> Iterator[TestClient]:
+    """Parent token hitting admin routes → must 404."""
+    uc = _build_admin_use_cases(admin_seed)
+    app = _make_admin_app(_claims("parent"), uc)
+    with TestClient(app) as client:
+        yield client
