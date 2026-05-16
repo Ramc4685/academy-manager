@@ -7,6 +7,9 @@ from pymongo.errors import DuplicateKeyError
 from pymongo import ReturnDocument
 
 
+APPROVED_ENROLLMENT_APPROVAL_STATUS = {"$nin": ["pending", "pending_payment"]}
+
+
 def _oid(s: str) -> ObjectId:
     try:
         return ObjectId(s)

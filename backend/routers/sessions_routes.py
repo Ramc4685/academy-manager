@@ -11,6 +11,7 @@ from models import (
 from auth import get_current_user, require_roles, log_audit
 from db import get_db
 from services.enrollment_service import (
+    APPROVED_ENROLLMENT_APPROVAL_STATUS,
     capacity_snapshot,
     create_enrollment_with_capacity,
     initialize_reserved_seats,
@@ -99,6 +100,7 @@ async def _coach_can_access_student(db, coach_id: str, student_id: str) -> bool:
         "session_id": {"$in": session_ids},
         "student_id": student_id,
         "status": "active",
+        "approval_status": APPROVED_ENROLLMENT_APPROVAL_STATUS,
         "is_deleted": {"$ne": True},
     })
     return enrollment is not None
@@ -225,17 +227,20 @@ async def create_student(body: StudentIn, user=Depends(get_current_user)):
 async def list_students(session_id: str | None = None, user=Depends(get_current_user)):
     db = get_db()
     q: dict = {"is_deleted": {"$ne": True}}
+    coach_session_ids = None
     if user["role"] == "parent":
         q["parent_user_id"] = user["id"]
     elif user["role"] == "coach":
         # Coach only sees students enrolled in their sessions
         sids = await _coach_session_ids(db, user["id"])
+        coach_session_ids = sids
         if not sids:
             return []
         if session_id and session_id not in sids:
             raise HTTPException(status_code=403, detail="Forbidden")
         enrollment_query = {"session_id": session_id or {"$in": sids}, "status": "active"}
         enrollment_query["is_deleted"] = {"$ne": True}
+        enrollment_query["approval_status"] = APPROVED_ENROLLMENT_APPROVAL_STATUS
         enrolls = await db.enrollments.find(enrollment_query, {"student_id": 1}).to_list(2000)
         stu_ids = [ObjectId(e["student_id"]) for e in enrolls]
         q["_id"] = {"$in": stu_ids}
@@ -255,10 +260,14 @@ async def list_students(session_id: str | None = None, user=Depends(get_current_
             parents[str(p["_id"])] = {"name": p.get("name"), "email": p.get("email"), "phone": p.get("phone")}
     # Enrollments per student
     student_ids_str = [str(it["_id"]) for it in items]
-    enrolls = await db.enrollments.find({
+    enrollments_query = {
         "student_id": {"$in": student_ids_str},
         "status": "active", "is_deleted": {"$ne": True},
-    }).to_list(5000)
+    }
+    if user["role"] == "coach":
+        enrollments_query["session_id"] = {"$in": coach_session_ids or []}
+        enrollments_query["approval_status"] = APPROVED_ENROLLMENT_APPROVAL_STATUS
+    enrolls = await db.enrollments.find(enrollments_query).to_list(5000)
     sess_ids = {e["session_id"] for e in enrolls}
     sessions = {}
     if sess_ids:

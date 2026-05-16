@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from auth import get_current_user
 from db import get_db
+from services.enrollment_service import APPROVED_ENROLLMENT_APPROVAL_STATUS
 
 router = APIRouter(prefix="/coach", tags=["coach"])
 
@@ -98,6 +99,7 @@ async def coach_today(
         enroll_cursor = db.enrollments.find({
             "session_id": session_id,
             "status": "active",
+            "approval_status": APPROVED_ENROLLMENT_APPROVAL_STATUS,
             "is_deleted": {"$ne": True},
         })
         enrollments = await enroll_cursor.to_list(500)

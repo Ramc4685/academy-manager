@@ -126,13 +126,19 @@ def _seed_student(mongo, first: str = "Kid", last: str = "One", medical_notes: s
     return str(res.inserted_id)
 
 
-def _seed_enrollment(mongo, session_id: str, student_id: str, skip_periods=None) -> str:
-    res = asyncio.run(mongo.enrollments.insert_one({
+def _seed_enrollment(mongo, session_id: str, student_id: str, skip_periods=None,
+                     approval_status: str | None = None) -> str:
+    doc = {
         "session_id": session_id,
         "student_id": student_id,
         "status": "active",
         "is_deleted": False,
         "skip_periods": skip_periods or [],
+    }
+    if approval_status is not None:
+        doc["approval_status"] = approval_status
+    res = asyncio.run(mongo.enrollments.insert_one({
+        **doc,
     }))
     return str(res.inserted_id)
 
@@ -265,6 +271,23 @@ def test_today_roster_includes_medical_and_pause_flags(client, mongo, stub_verif
     assert by_id[s_pause]["has_medical_notes"] is False
     assert by_id[s_pause]["is_paused"] is True
     assert by_id[s_med]["is_paused"] is False
+
+
+def test_today_roster_excludes_pending_approval_enrollments(client, mongo, stub_verify):
+    coach = _seed_user(mongo, "uid-a", "a@example.com", "coach")
+    sess = _seed_session(mongo, coach_id=coach, days_of_week=["Fri"])
+    approved_student = _seed_student(mongo, "Approved", "Kid")
+    pending_student = _seed_student(mongo, "Pending", "Kid")
+    pending_payment_student = _seed_student(mongo, "Payment", "Kid")
+    _seed_enrollment(mongo, sess, approved_student, approval_status="approved")
+    _seed_enrollment(mongo, sess, pending_student, approval_status="pending")
+    _seed_enrollment(mongo, sess, pending_payment_student, approval_status="pending_payment")
+
+    stub_verify["claim"] = _stub_token("uid-a", "a@example.com")
+    r = client.get("/api/coach/today?date=2026-05-15", headers={"Authorization": "Bearer FAKE"})
+    assert r.status_code == 200, r.text
+    roster = r.json()["sessions"][0]["roster"]
+    assert [row["student_id"] for row in roster] == [approved_student]
 
 
 def test_today_pause_flag_uses_enrollment_skip_periods(client, mongo, stub_verify):
