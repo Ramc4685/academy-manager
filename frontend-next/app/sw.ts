@@ -12,21 +12,18 @@
  * them here until 1A holds 1 week in production.
  */
 
-import {
-  defaultCache,
-  type PrecacheEntry,
-  type SerwistGlobalConfig,
-} from "@serwist/next/worker";
+import { defaultCache } from "@serwist/next/worker";
 import {
   Serwist,
   StaleWhileRevalidate,
   NetworkOnly,
   CacheFirst,
   ExpirationPlugin,
+  type PrecacheEntry,
 } from "serwist";
 
 declare global {
-  interface WorkerGlobalScope extends SerwistGlobalConfig {
+  interface WorkerGlobalScope {
     __SW_MANIFEST: (PrecacheEntry | string)[] | undefined;
   }
 }
