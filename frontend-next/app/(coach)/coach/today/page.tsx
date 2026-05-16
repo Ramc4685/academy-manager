@@ -39,7 +39,7 @@ export default function CoachTodayPage() {
 
       {isError && (
         <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-          <p>Couldn't load today.</p>
+          <p>Couldn&apos;t load today.</p>
           <button onClick={() => void refetch()} className="mt-2 min-h-touch rounded-md border px-3">
             Retry
           </button>

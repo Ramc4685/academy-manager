@@ -226,7 +226,7 @@ function WaiverStep({ accepted, onAccept, saving }: { accepted: boolean; onAccep
     <div className="space-y-4">
       <h2 className="text-xl font-semibold">Waiver</h2>
       <p className="text-sm text-neutral-700 dark:text-neutral-300">
-        I acknowledge the program's standard liability waiver and agree to its terms.
+        I acknowledge the program&apos;s standard liability waiver and agree to its terms.
       </p>
       <button onClick={onAccept} disabled={saving || accepted} className="primary">
         {accepted ? "Accepted ✓" : "Accept"}

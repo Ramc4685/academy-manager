@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -72,12 +73,12 @@ export default function AdminSessionDetailPage() {
       {/* Header */}
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <a
+          <Link
             href="/admin/sessions"
             className="text-sm text-blue-600 hover:underline dark:text-blue-400"
           >
             ← Sessions
-          </a>
+          </Link>
           {sessionsQuery.isLoading ? (
             <div className="mt-1 h-8 w-48 animate-pulse rounded bg-neutral-100 dark:bg-neutral-800" />
           ) : session ? (

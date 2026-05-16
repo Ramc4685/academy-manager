@@ -1,0 +1,12 @@
+{
+  "extends": ["next/core-web-vitals"],
+  "rules": {
+    "@next/next/no-img-element": "off"
+  },
+  "ignorePatterns": [
+    "node_modules/",
+    ".next/",
+    "public/sw.js",
+    "lib/api/generated/"
+  ]
+}
