@@ -22,6 +22,9 @@ export default defineConfig({
     url: `http://localhost:${PORT}/login`,
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
+    env: {
+      NEXT_PUBLIC_E2E_AUTH_BYPASS: "1",
+    },
   },
   projects: [
     {

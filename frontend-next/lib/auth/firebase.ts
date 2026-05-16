@@ -40,8 +40,11 @@ export function auth(): Auth {
   return _auth;
 }
 
+const E2E_BYPASS = process.env.NEXT_PUBLIC_E2E_AUTH_BYPASS === "1";
+
 export async function getIdToken(): Promise<string | null> {
   if (typeof window === "undefined") return null;
+  if (E2E_BYPASS) return "e2e-fake-token";
   const user = auth().currentUser;
   if (!user) return null;
   return user.getIdToken();
@@ -63,6 +66,17 @@ export async function signOutCurrent(): Promise<void> {
 }
 
 export function onAuthChange(cb: (user: User | null) => void): () => void {
+  if (E2E_BYPASS) {
+    // E2E mode: synthesise a logged-in fake user immediately. Returns a
+    // no-op unsubscribe so the layout's useEffect cleanup works.
+    const fakeUser = {
+      uid: "e2e-coach",
+      email: "coach@example.com",
+      getIdToken: async () => "e2e-fake-token",
+    } as unknown as User;
+    queueMicrotask(() => cb(fakeUser));
+    return () => undefined;
+  }
   return onAuthStateChanged(auth(), cb);
 }
 
