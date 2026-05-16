@@ -141,6 +141,7 @@ beforeEach(() => {
   __mockGet.mockReset();
   __mockPost.mockReset();
   __mockPatch.mockReset();
+  __mockPost.mockResolvedValue({ data: { _id: "app-123", status: "draft" } });
   __navigateFn.mockReset();
   __setParams({ id: "app-123" });
   // Default window.location.search to empty
@@ -180,6 +181,31 @@ test("test_profile_step_blocks_advance_without_required_fields", async () => {
   // Button is disabled because all required fields are empty
   expect(nextBtn.disabled).toBe(true);
   expect(__mockPatch).not.toHaveBeenCalled();
+});
+
+// 2b. Profile step hydrates saved draft values when resuming
+test("test_profile_step_hydrates_existing_draft", async () => {
+  __mockPost.mockResolvedValue({
+    data: {
+      _id: "app-123",
+      status: "draft",
+      parent_profile: {
+        phone: "5551234567",
+        address: "123 Main St",
+        emergency_contact: "Alex Parent",
+        emergency_phone: "5559876543",
+      },
+    },
+  });
+
+  const { container } = await render(OnboardingProfile);
+
+  expect(container.querySelector("[data-testid='profile-phone']").value).toBe(
+    "5551234567"
+  );
+  expect(container.querySelector("[data-testid='profile-next']").disabled).toBe(
+    false
+  );
 });
 
 // 3. Waiver step patches acceptance on submit

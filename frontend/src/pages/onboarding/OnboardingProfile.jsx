@@ -4,7 +4,7 @@
  *
  * Phase 5 Slice 5.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
 import { Button } from "../../components/ui/button";
@@ -25,6 +25,26 @@ export default function OnboardingProfile() {
   const navigate = useNavigate();
   const [form, setForm] = useState(empty);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api
+      .post("/onboarding/start", {})
+      .then((r) => {
+        const draftId = r.data?._id || r.data?.id;
+        if (draftId && draftId !== id) {
+          navigate(`/onboarding/${draftId}/profile`, { replace: true });
+          return;
+        }
+        const saved = r.data?.parent_profile || {};
+        setForm({
+          phone: saved.phone || "",
+          address: saved.address || "",
+          emergency_contact: saved.emergency_contact || "",
+          emergency_phone: saved.emergency_phone || "",
+        });
+      })
+      .catch(() => {});
+  }, [id, navigate]);
 
   const update = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 

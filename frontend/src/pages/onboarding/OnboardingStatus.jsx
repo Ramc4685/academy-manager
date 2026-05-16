@@ -205,6 +205,7 @@ export default function OnboardingStatus() {
       return;
     }
 
+    stopped.current = false;
     poll();
     return () => stopPolling();
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -29,19 +29,40 @@ export default function OnboardingSession() {
       setSessionFullBanner(true);
     }
 
+    api
+      .post("/onboarding/start", {})
+      .then((r) => {
+        const draftId = r.data?._id || r.data?.id;
+        if (draftId && draftId !== id) {
+          navigate(`/onboarding/${draftId}/session${window.location.search}`, {
+            replace: true,
+          });
+          return;
+        }
+        if (r.data?.selected_session_id) {
+          setSelected(r.data.selected_session_id);
+        }
+      })
+      .catch(() => {});
+
     // Reuse the public sessions endpoint that RegisterStudent uses.
     api
       .get("/auth/public-sessions")
       .then((r) => setSessions(r.data || []))
       .catch(() => setSessions([]))
       .finally(() => setLoadingSession(false));
-  }, []);
+  }, [id, navigate]);
 
   const isFull = (s) =>
     s.is_full ||
     (typeof s.enrolled_count === "number" &&
       typeof s.capacity === "number" &&
       s.enrolled_count >= s.capacity);
+
+  const dayLabel = (s) => {
+    if (Array.isArray(s.days_of_week)) return s.days_of_week.join(", ");
+    return s.day_of_week || s.days_of_week;
+  };
 
   const submit = async () => {
     if (!selected) {
@@ -125,7 +146,7 @@ export default function OnboardingSession() {
                   {s.name}
                 </div>
                 <div className="text-xs text-slate-500 mt-1 capitalize">
-                  {[s.skill_level, s.day_of_week, s.start_time && s.end_time ? `${s.start_time}–${s.end_time}` : s.start_time]
+                  {[s.skill_level, dayLabel(s), s.start_time && s.end_time ? `${s.start_time}–${s.end_time}` : s.start_time]
                     .filter(Boolean)
                     .join(" · ")}
                 </div>
