@@ -8,7 +8,6 @@ from backend.v2.contexts.onboarding.application.use_cases.manage_application imp
     PatchApplicationCommand,
     StartApplicationCommand,
 )
-from backend.v2.contexts.onboarding.domain.models import ChildProfile, ParentProfile
 from backend.v2.interfaces.parent.deps import ParentUseCases, get_parent_use_cases
 from backend.v2.interfaces.parent.views import (
     ApplicationView,
@@ -67,16 +66,8 @@ async def patch(
     app = await use_cases.patch_application.execute(
         PatchApplicationCommand(
             application_id=application_id,
-            parent_profile=(
-                ParentProfile.model_validate(body.parent_profile.model_dump())
-                if body.parent_profile
-                else None
-            ),
-            child_profile=(
-                ChildProfile.model_validate(body.child_profile.model_dump())
-                if body.child_profile
-                else None
-            ),
+            parent_profile=body.parent_profile.model_dump() if body.parent_profile else None,
+            child_profile=body.child_profile.model_dump() if body.child_profile else None,
             selected_session_id=body.selected_session_id,
             accept_waiver=body.accept_waiver,
         )

@@ -47,7 +47,10 @@ exclude_lines = [
 root_packages = ["backend.v2"]
 include_external_packages = false
 
-# Rule 1: Domain may not import from infrastructure or interfaces.
+# Rule 1: Domain may not import from infrastructure, application, or
+# interfaces. Domain MAY import `shared.events.base.DomainEvent` (a Pydantic
+# base class — pure domain helper) but NOT the dispatcher/outbox/store
+# modules which pull in motor/I/O.
 [[tool.importlinter.contracts]]
 name = "domain-is-pure"
 type = "forbidden"
@@ -56,8 +59,9 @@ forbidden_modules = [
     "backend.v2.contexts.*.infrastructure",
     "backend.v2.contexts.*.application",
     "backend.v2.interfaces",
-    "backend.v2.shared.events",
-    "backend.v2.shared.idempotency",
+    "backend.v2.shared.events.dispatcher",
+    "backend.v2.shared.events.outbox",
+    "backend.v2.shared.idempotency.mongo_store",
 ]
 
 # Rule 2: Application may not import infrastructure.
@@ -74,12 +78,16 @@ type = "forbidden"
 source_modules = ["backend.v2.contexts.*.infrastructure"]
 forbidden_modules = ["backend.v2.interfaces"]
 
-# Rule 4: Interfaces may not import infrastructure directly (composition root only).
+# Rule 4: Interfaces may not import infrastructure or domain DIRECTLY.
+# Indirect imports through `application/` are legal (interface → use case →
+# domain is the canonical flow). `allow_indirect_imports = true` whitelists
+# the transitive chain so only direct violations fail the build.
 [[tool.importlinter.contracts]]
-name = "interfaces-do-not-import-infrastructure-directly"
+name = "interfaces-do-not-import-infrastructure-or-domain-directly"
 type = "forbidden"
 source_modules = ["backend.v2.interfaces"]
 forbidden_modules = ["backend.v2.contexts.*.infrastructure", "backend.v2.contexts.*.domain"]
+allow_indirect_imports = "true"
 
 # Rule 5: No cross-context imports. Each context is self-contained.
 # (Enforced by the structural test for now; import-linter "independence"

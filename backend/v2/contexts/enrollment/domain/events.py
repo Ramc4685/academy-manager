@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from backend.v2.shared.events import DomainEvent
+from backend.v2.shared.events.base import DomainEvent
 
 
 class EnrollmentConfirmedPayload(BaseModel):

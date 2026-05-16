@@ -74,8 +74,11 @@ class StartApplication:
 class PatchApplicationCommand(BaseModel):
     model_config = {"frozen": True}
     application_id: str
-    parent_profile: ParentProfile | None = None
-    child_profile: ChildProfile | None = None
+    # Raw dicts at the application boundary so the interface layer doesn't
+    # have to import from domain (ADR-0005 rule 4). Domain types are
+    # constructed inside the use case.
+    parent_profile: dict[str, object] | None = None
+    child_profile: dict[str, object] | None = None
     selected_session_id: str | None = None
     accept_waiver: bool = False
 
@@ -115,8 +118,16 @@ class PatchApplication:
 
         updated = app.model_copy(
             update={
-                "parent_profile": cmd.parent_profile or app.parent_profile,
-                "child_profile": cmd.child_profile or app.child_profile,
+                "parent_profile": (
+                    ParentProfile.model_validate(cmd.parent_profile)
+                    if cmd.parent_profile
+                    else app.parent_profile
+                ),
+                "child_profile": (
+                    ChildProfile.model_validate(cmd.child_profile)
+                    if cmd.child_profile
+                    else app.child_profile
+                ),
                 "selected_session_id": cmd.selected_session_id or app.selected_session_id,
                 "waiver_acceptance": waiver_acceptance,
                 "updated_at": self._now(),
