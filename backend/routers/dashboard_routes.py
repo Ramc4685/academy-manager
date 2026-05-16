@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from bson import ObjectId
 from auth import get_current_user, require_roles
 from db import get_db
+from services.enrollment_service import APPROVED_ENROLLMENT_APPROVAL_STATUS
 
 router = APIRouter()
 
@@ -174,7 +175,11 @@ async def coach_dashboard(coach=Depends(require_roles("coach"))):
     db = get_db()
     sessions = await db.sessions.find({"coach_id": coach["id"], "is_deleted": {"$ne": True}}).to_list(200)
     sess_ids = [str(s["_id"]) for s in sessions]
-    students = await db.enrollments.count_documents({"session_id": {"$in": sess_ids}, "status": "active"})
+    students = await db.enrollments.count_documents({
+        "session_id": {"$in": sess_ids},
+        "status": "active",
+        "approval_status": APPROVED_ENROLLMENT_APPROVAL_STATUS,
+    })
     # next 7-day upcoming
     today = datetime.now(timezone.utc)
     day_map = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]

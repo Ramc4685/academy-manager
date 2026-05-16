@@ -5,6 +5,7 @@ from bson import ObjectId
 from models import MessageIn
 from auth import get_current_user
 from db import get_db
+from services.enrollment_service import APPROVED_ENROLLMENT_APPROVAL_STATUS
 
 router = APIRouter()
 
@@ -42,7 +43,12 @@ async def _allowed_contact_ids(db, user: dict) -> set[str]:
         ).to_list(500)
         session_ids = [str(s["_id"]) for s in sessions]
         enrolls = await db.enrollments.find(
-            {"session_id": {"$in": session_ids}, "status": "active", "is_deleted": {"$ne": True}},
+            {
+                "session_id": {"$in": session_ids},
+                "status": "active",
+                "approval_status": APPROVED_ENROLLMENT_APPROVAL_STATUS,
+                "is_deleted": {"$ne": True},
+            },
             {"parent_user_id": 1},
         ).to_list(2000)
         allowed.update(e["parent_user_id"] for e in enrolls if e.get("parent_user_id"))
@@ -53,7 +59,12 @@ async def _allowed_contact_ids(db, user: dict) -> set[str]:
         ).to_list(50)
         student_ids = [str(s["_id"]) for s in students]
         enrolls = await db.enrollments.find(
-            {"student_id": {"$in": student_ids}, "status": "active", "is_deleted": {"$ne": True}},
+            {
+                "student_id": {"$in": student_ids},
+                "status": "active",
+                "approval_status": APPROVED_ENROLLMENT_APPROVAL_STATUS,
+                "is_deleted": {"$ne": True},
+            },
             {"session_id": 1},
         ).to_list(500)
         session_ids = list({e["session_id"] for e in enrolls})

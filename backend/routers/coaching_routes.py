@@ -5,6 +5,7 @@ from bson import ObjectId
 from models import AttendanceBulkIn, LessonPlanIn, ProgressNoteIn
 from auth import get_current_user, require_roles, log_audit
 from db import get_db
+from services.enrollment_service import APPROVED_ENROLLMENT_APPROVAL_STATUS
 
 router = APIRouter()
 
@@ -56,6 +57,7 @@ async def _coach_can_access_student(db, coach_id: str, student_id: str, session_
         "session_id": session_filter,
         "student_id": student_id,
         "status": "active",
+        "approval_status": APPROVED_ENROLLMENT_APPROVAL_STATUS,
         "is_deleted": {"$ne": True},
     })
     return enrollment is not None
@@ -144,7 +146,11 @@ async def list_lesson_plans(session_id: str | None = None, user=Depends(get_curr
     elif user["role"] == "parent":
         # only sessions for own students
         sids = await _parent_student_ids(db, user["id"])
-        enrolls = await db.enrollments.find({"student_id": {"$in": sids}, "status": "active"}, {"session_id": 1}).to_list(500)
+        enrolls = await db.enrollments.find({
+            "student_id": {"$in": sids},
+            "status": "active",
+            "approval_status": APPROVED_ENROLLMENT_APPROVAL_STATUS,
+        }, {"session_id": 1}).to_list(500)
         sess_ids = list({e["session_id"] for e in enrolls})
         if session_id and session_id not in sess_ids:
             raise HTTPException(status_code=403, detail="Forbidden")
@@ -204,7 +210,11 @@ async def list_progress_notes(student_id: str | None = None, user=Depends(get_cu
     if user["role"] == "coach":
         # See notes only for students in coach's sessions
         sids = await _coach_session_ids(db, user["id"])
-        enrolls = await db.enrollments.find({"session_id": {"$in": sids}, "status": "active"}, {"student_id": 1}).to_list(2000)
+        enrolls = await db.enrollments.find({
+            "session_id": {"$in": sids},
+            "status": "active",
+            "approval_status": APPROVED_ENROLLMENT_APPROVAL_STATUS,
+        }, {"student_id": 1}).to_list(2000)
         stu_ids = list({e["student_id"] for e in enrolls})
         if student_id and student_id not in stu_ids:
             raise HTTPException(status_code=403, detail="Forbidden")
