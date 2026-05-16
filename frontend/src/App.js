@@ -40,6 +40,14 @@ import ParentProgress from "./pages/parent/Progress";
 import Messages from "./pages/shared/Messages";
 import Calendar from "./pages/shared/Calendar";
 
+import OnboardingStart from "./pages/onboarding/OnboardingStart";
+import OnboardingProfile from "./pages/onboarding/OnboardingProfile";
+import OnboardingChild from "./pages/onboarding/OnboardingChild";
+import OnboardingWaiver from "./pages/onboarding/OnboardingWaiver";
+import OnboardingSession from "./pages/onboarding/OnboardingSession";
+import OnboardingReview from "./pages/onboarding/OnboardingReview";
+import OnboardingStatus from "./pages/onboarding/OnboardingStatus";
+
 function RoleRedirect() {
   const { user } = useAuth();
   if (user === null) return null;
@@ -103,6 +111,64 @@ function App() {
 
             <Route path="/messages" element={L(Messages)} />
             <Route path="/calendar" element={L(Calendar)} />
+
+            {/* Onboarding flow — parent only (role enforced inside each component) */}
+            <Route
+              path="/onboarding/start"
+              element={
+                <ProtectedRoute>
+                  <OnboardingStart />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/onboarding/:id/profile"
+              element={
+                <ProtectedRoute roles={["parent"]}>
+                  <OnboardingProfile />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/onboarding/:id/child"
+              element={
+                <ProtectedRoute roles={["parent"]}>
+                  <OnboardingChild />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/onboarding/:id/waiver"
+              element={
+                <ProtectedRoute roles={["parent"]}>
+                  <OnboardingWaiver />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/onboarding/:id/session"
+              element={
+                <ProtectedRoute roles={["parent"]}>
+                  <OnboardingSession />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/onboarding/:id/review"
+              element={
+                <ProtectedRoute roles={["parent"]}>
+                  <OnboardingReview />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/onboarding/:id/status"
+              element={
+                <ProtectedRoute roles={["parent"]}>
+                  <OnboardingStatus />
+                </ProtectedRoute>
+              }
+            />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
