@@ -1,0 +1,19 @@
+{
+  "id": "evt_1Q3X4Y0000000008",
+  "object": "event",
+  "api_version": "2024-06-20",
+  "created": 1736007000,
+  "type": "charge.dispute.created",
+  "livemode": false,
+  "data": {
+    "object": {
+      "id": "dp_test_0000000008",
+      "object": "dispute",
+      "amount": 15000,
+      "charge": "ch_test_0000000008",
+      "currency": "usd",
+      "reason": "fraudulent",
+      "status": "warning_needs_response"
+    }
+  }
+}

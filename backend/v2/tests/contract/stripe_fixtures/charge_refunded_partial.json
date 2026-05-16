@@ -1,0 +1,21 @@
+{
+  "id": "evt_1Q3X4Y0000000004",
+  "object": "event",
+  "api_version": "2024-06-20",
+  "created": 1736003000,
+  "type": "charge.refunded",
+  "livemode": false,
+  "data": {
+    "object": {
+      "id": "ch_test_0000000004",
+      "object": "charge",
+      "amount": 15000,
+      "amount_captured": 15000,
+      "amount_refunded": 5000,
+      "currency": "usd",
+      "payment_intent": "pi_test_0000000004",
+      "refunded": false,
+      "status": "succeeded"
+    }
+  }
+}
