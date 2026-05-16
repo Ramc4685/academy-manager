@@ -1,0 +1,209 @@
+# AGENTS.md
+
+Agent guidance for `academy-manager`.
+
+Applies to Claude Code, Codex, and any AI coding agent.
+
+This file is the root router. Detailed rules live in `docs/agent/`.
+
+---
+
+## Read First
+
+Before coding, read:
+
+1. `README.md`
+2. `DEPLOYMENT.md`
+3. `test_result.md`
+4. The focused rule file for the task.
+
+If the branch contains `docs/tickets/`, also read:
+
+1. `docs/tickets/README.md`
+2. The current phase or wave ticket sheet.
+3. Any ADR or policy doc referenced by the ticket.
+
+Do not treat `.claude/worktrees/*` as canonical project source unless the user explicitly asks about that worktree.
+
+---
+
+## Task Routing
+
+| Task type | Read |
+| --- | --- |
+| Architecture / DDD / BFF / migration plan | `docs/agent/architecture-rules.md` |
+| Backend / API / Mongo / auth / payments | `docs/agent/backend-api-rules.md` |
+| Frontend / React / UI / PWA | `docs/agent/frontend-rules.md` |
+| Testing / verification / bug fixing | `docs/agent/testing-verification.md` |
+| Status handoff / agent loop / ticket updates | `docs/agent/feedback-loop.md` |
+
+---
+
+## Project Snapshot
+
+Current production app:
+
+- Backend: FastAPI, Motor/PyMongo, MongoDB, Firebase Admin SDK, Stripe, Resend, APScheduler.
+- Frontend: Create React App with CRACO, React, React Router, Radix UI, Tailwind, Firebase Web SDK.
+- Auth: Firebase Authentication in production; legacy password auth can be disabled with `FIREBASE_AUTH_ENABLED=true`.
+- Deployment: Fly.io backend app `courtmastr-academy-api`; Cloudflare Pages frontend.
+- Local services: backend `http://127.0.0.1:8001/api`, frontend `http://localhost:3000`, MongoDB `mongodb://127.0.0.1:27017`.
+
+Migration direction:
+
+- Keep legacy `/api/*` stable.
+- Add v2 capabilities incrementally behind flags and edge routing.
+- v2 backend uses BFF + DDD boundaries under `backend/v2/` when present.
+- v2 frontend uses `frontend-next/` when present.
+- Do not big-bang rewrite.
+
+---
+
+## Golden Rules
+
+- Read existing code before editing.
+- Make small, surgical changes.
+- Preserve working behavior.
+- Keep legacy bug fixes isolated from v2 migration work.
+- Follow DDD boundaries in `backend/v2`.
+- Keep BFF APIs persona-shaped, not generic CRUD.
+- Keep frontend presentation-focused; business truth belongs to backend.
+- Update `test_result.md` before handing work to a testing agent.
+- Verify before claiming done.
+- Be honest about skipped checks and failures.
+
+---
+
+## Planning Rules
+
+For non-trivial work, create a short plan before editing.
+
+The plan must include:
+
+1. Current behavior found.
+2. Files likely affected.
+3. Proposed change.
+4. Risks.
+5. Verification steps.
+
+For ticketed work, map the plan to the ticket ID and acceptance criteria.
+
+---
+
+## Architecture Rules
+
+- Legacy backend routers live under `backend/routers/`.
+- Legacy frontend pages live under `frontend/src/pages/`.
+- v2 DDD contexts live under `backend/v2/contexts/`.
+- v2 BFF routes live under `backend/v2/interfaces/<persona>/`.
+- v2 frontend route groups live under `frontend-next/app/`.
+- Application use cases own workflow orchestration.
+- Domain owns business rules.
+- Infrastructure owns MongoDB, Firebase, Stripe, Resend, and external adapters.
+- Interfaces/BFF own HTTP, persona shaping, auth dependencies, and DTOs.
+
+---
+
+## Non-Negotiables
+
+- Do not commit real secrets, `.env` files, service account JSON, API keys, Stripe keys, or Firebase credentials.
+- Do not use `CORS_ORIGINS=*` with cookie auth.
+- Do not send real email from local/test environments.
+- Do not run production deploys without explicit user approval.
+- Do not perform destructive MongoDB operations without explicit user approval.
+- Do not rewrite legacy flows into v2 unless the ticket or user asks for that workflow migration.
+- Do not mark a phase or wave complete until its exit checklist is actually verified.
+
+---
+
+## Common Commands
+
+Backend:
+
+```bash
+cd backend
+source .venv/bin/activate
+pytest
+uvicorn server:app --host 127.0.0.1 --port 8001 --reload
+```
+
+Frontend:
+
+```bash
+cd frontend
+yarn install
+yarn test --watchAll=false
+yarn build
+yarn start
+```
+
+Container smoke:
+
+```bash
+docker compose up --build
+curl http://127.0.0.1:8001/api/health
+```
+
+v2, when present:
+
+```bash
+cd backend
+pytest v2/tests
+uvicorn v2.main:app --reload --port 8001
+
+cd frontend-next
+pnpm typecheck
+pnpm build
+pnpm generate:api
+```
+
+---
+
+## Git Rules
+
+Before editing and before finishing:
+
+```bash
+git status --short --branch
+git diff
+```
+
+Commit only related changes. Do not sweep unrelated dirty work into a commit.
+
+Never run without explicit approval:
+
+```bash
+rm -rf
+git reset --hard
+git clean -fd
+```
+
+---
+
+## Feedback Loop
+
+Use `docs/agent/feedback-loop.md`.
+
+Minimum loop:
+
+1. Read current status: `git status`, `test_result.md`, tickets if present.
+2. Implement the smallest coherent change.
+3. Update `test_result.md` with what changed and what needs retesting.
+4. Run focused verification.
+5. Record results and remaining risks.
+6. Update ticket checkboxes only when acceptance criteria are verified.
+7. Leave a handoff note if work is incomplete.
+
+---
+
+## Final Response Format
+
+Final response must include:
+
+1. What changed.
+2. Files changed.
+3. Verification performed.
+4. Remaining risks or skipped checks.
+5. Next recommended step, if useful.
+
+Keep it short. Do not fake verification.
