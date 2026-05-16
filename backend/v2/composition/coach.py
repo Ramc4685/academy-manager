@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from dataclasses import dataclass
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -40,7 +42,7 @@ class CoachComposition:
 
 
 def compose_coach(
-    db: AsyncIOMotorDatabase,
+    db: AsyncIOMotorDatabase[Any],
     outbox: Outbox,
     idempotency_store: IdempotencyStore,
 ) -> CoachComposition:

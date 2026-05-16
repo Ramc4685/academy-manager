@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from datetime import date, datetime, time, timezone
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -60,7 +62,7 @@ from backend.v2.shared.idempotency import IdempotencyStore
 
 
 def compose_admin(
-    db: AsyncIOMotorDatabase,
+    db: AsyncIOMotorDatabase[Any],
     outbox: Outbox,
     idempotency_store: IdempotencyStore,
     stripe: StripeGateway,

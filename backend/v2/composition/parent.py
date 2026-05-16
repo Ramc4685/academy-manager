@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -74,7 +74,7 @@ class ParentComposition:
 
 
 def compose_parent(
-    db: AsyncIOMotorDatabase,
+    db: AsyncIOMotorDatabase[Any],
     outbox: Outbox,
     idempotency_store: IdempotencyStore,
     stripe: StripeGateway,
