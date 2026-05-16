@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from bson import ObjectId
+from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel
 from typing import Optional
 from models import (
@@ -334,7 +335,8 @@ async def admin_refund_payment(
     """
     import os as _os
 
-    if not body.reason or not body.reason.strip():
+    admin_reason = body.reason.strip() if body.reason else ""
+    if not admin_reason:
         raise HTTPException(status_code=400, detail={"error": "reason_required", "detail": "A reason is required for refunds."})
 
     db = get_db()
@@ -375,11 +377,20 @@ async def admin_refund_payment(
 
     # Call Stripe.
     stripe.api_key = _os.environ.get("STRIPE_API_KEY", "")
+    amount_cents = int(round(amount * 100))
+    already_refunded_cents = int(round(already_refunded * 100))
+    idempotency_key = f"admin-refund:{payment_id}:{amount_cents}:{already_refunded_cents}"
     try:
         stripe_refund = stripe.Refund.create(
             payment_intent=payment_intent,
-            amount=int(round(amount * 100)),
-            reason=body.reason.strip(),
+            amount=amount_cents,
+            reason="requested_by_customer",
+            metadata={
+                "admin_reason": admin_reason,
+                "payment_id": payment_id,
+                "refunded_by_email": admin.get("email", ""),
+            },
+            idempotency_key=idempotency_key,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Stripe refund failed: {exc}") from exc
@@ -402,14 +413,14 @@ async def admin_refund_payment(
         "payment_id": payment_id,
         "stripe_payment_intent": payment_intent,
         "amount": amount,
-        "reason": body.reason.strip(),
+        "reason": admin_reason,
         "refunded_by": admin["id"],
         "refunded_at": now,
         "provider_status": refund_status_str,
     }
     try:
         await db.payment_refunds.insert_one(refund_row)
-    except Exception:
+    except DuplicateKeyError:
         # Duplicate — already recorded by webhook; safe to continue.
         pass
 
@@ -418,7 +429,7 @@ async def admin_refund_payment(
     new_refund_status = "refunded" if new_refunded >= final_amount - 0.001 else "partially_refunded"
     refund_doc_embedded = {
         "amount": amount,
-        "reason": body.reason.strip(),
+        "reason": admin_reason,
         "refunded_by": admin["id"],
         "refunded_at": now,
         "provider_refund_id": stripe_refund_id,
@@ -442,14 +453,14 @@ async def admin_refund_payment(
         "payment.refunded",
         "payment",
         payment_id,
-        f"${amount} reason={body.reason.strip()} stripe_refund_id={stripe_refund_id}",
+        f"${amount} reason={admin_reason} stripe_refund_id={stripe_refund_id}",
     )
 
     return {
         "stripe_refund_id": stripe_refund_id,
         "payment_id": payment_id,
         "amount": amount,
-        "reason": body.reason.strip(),
+        "reason": admin_reason,
         "refund_status": new_refund_status,
         "refunded_amount": new_refunded,
         "provider_status": refund_status_str,

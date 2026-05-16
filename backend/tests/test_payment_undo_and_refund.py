@@ -12,12 +12,12 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import stripe
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
@@ -26,7 +26,6 @@ os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
 os.environ.setdefault("DB_NAME", "academy_test")
 os.environ.setdefault("JWT_SECRET", "test-secret")
 os.environ.setdefault("STRIPE_API_KEY", "sk_test_dummy")
-os.environ["FIREBASE_AUTH_ENABLED"] = "false"
 
 from mongomock_motor import AsyncMongoMockClient  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
@@ -34,7 +33,6 @@ from fastapi.testclient import TestClient  # noqa: E402
 from bson import ObjectId  # noqa: E402
 
 import db as db_module  # noqa: E402
-import auth as auth_module  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +347,13 @@ class TestAdminRefundEndpoint:
         mock_stripe.Refund.create.assert_called_once_with(
             payment_intent="pi_full",
             amount=5000,
-            reason="Customer dissatisfaction",
+            reason="requested_by_customer",
+            metadata={
+                "admin_reason": "Customer dissatisfaction",
+                "payment_id": pid,
+                "refunded_by_email": ADMIN_USER["email"],
+            },
+            idempotency_key=f"admin-refund:{pid}:5000:0",
         )
 
         # payment_refunds row created
@@ -392,7 +396,13 @@ class TestAdminRefundEndpoint:
         mock_stripe.Refund.create.assert_called_once_with(
             payment_intent="pi_partial",
             amount=1050,
-            reason="Partial service failure",
+            reason="requested_by_customer",
+            metadata={
+                "admin_reason": "Partial service failure",
+                "payment_id": pid,
+                "refunded_by_email": ADMIN_USER["email"],
+            },
+            idempotency_key=f"admin-refund:{pid}:1050:0",
         )
 
         payment = asyncio.run(mongo.payments.find_one({"_id": ObjectId(pid)}))
@@ -440,7 +450,11 @@ class TestAdminRefundEndpoint:
         pid = _make_stripe_payment(mongo, stripe_payment_intent="pi_stripe_error")
 
         mock_stripe = MagicMock()
-        mock_stripe.Refund.create.side_effect = Exception("card_error: Your card was declined")
+        mock_stripe.Refund.create.side_effect = stripe.error.CardError(
+            "Your card was declined",
+            param=None,
+            code="card_declined",
+        )
 
         with patch("routers.finance_routes.stripe", mock_stripe, create=True):
             r = admin_client.post(
