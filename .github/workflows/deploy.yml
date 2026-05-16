@@ -57,7 +57,11 @@ jobs:
         working-directory: backend
         env:
           REACT_APP_BACKEND_URL: ${{ env.REACT_APP_BACKEND_URL }}
-        run: pytest --collect-only -q
+        # `--ignore=v2` — v2 has its own .github/workflows/v2-backend.yml
+        # which installs requirements-v2.txt and runs `pytest v2/tests`.
+        # Deploy validates only legacy; pulling v2 tests in here would
+        # ModuleNotFoundError on v2-only deps (ulid, motor, pydantic-settings).
+        run: pytest --collect-only -q --ignore=v2
 
       - name: Run safe backend tests
         working-directory: backend
