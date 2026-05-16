@@ -1,0 +1,22 @@
+{
+  "name": "Academy Manager",
+  "short_name": "Academy",
+  "description": "Badminton academy management — coach, parent, admin.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-256.png", "sizes": "256x256", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Today", "short_name": "Today", "url": "/coach/today" },
+    { "name": "Onboarding", "short_name": "Enroll", "url": "/parent/onboarding" }
+  ],
+  "categories": ["sports", "education", "productivity"]
+}

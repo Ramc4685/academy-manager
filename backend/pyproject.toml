@@ -1,0 +1,91 @@
+[project]
+name = "academy-manager-backend"
+version = "0.1.0"
+description = "Academy Manager backend (legacy + v2)"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["scripts/", "tests/"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "ASYNC", "RUF"]
+ignore = ["E501"]  # line length handled by formatter
+
+[tool.ruff.lint.per-file-ignores]
+"v2/migrations/*.py" = ["F401"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["v2"]
+exclude = ["legacy", "scripts", "tests"]
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["v2/tests"]
+addopts = "-ra --strict-markers"
+
+[tool.coverage.run]
+source = ["v2/shared", "v2/contexts", "v2/interfaces"]
+omit = ["v2/tests/*", "v2/migrations/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
+
+# ---------------------------------------------------------------------------
+# import-linter — enforces ADR-0005 layering and ADR-0006 tenancy rules.
+# ---------------------------------------------------------------------------
+
+[tool.importlinter]
+root_packages = ["backend.v2"]
+include_external_packages = false
+
+# Rule 1: Domain may not import from infrastructure or interfaces.
+[[tool.importlinter.contracts]]
+name = "domain-is-pure"
+type = "forbidden"
+source_modules = ["backend.v2.contexts.*.domain"]
+forbidden_modules = [
+    "backend.v2.contexts.*.infrastructure",
+    "backend.v2.contexts.*.application",
+    "backend.v2.interfaces",
+    "backend.v2.shared.events",
+    "backend.v2.shared.idempotency",
+]
+
+# Rule 2: Application may not import infrastructure.
+[[tool.importlinter.contracts]]
+name = "application-does-not-import-infrastructure"
+type = "forbidden"
+source_modules = ["backend.v2.contexts.*.application"]
+forbidden_modules = ["backend.v2.contexts.*.infrastructure", "backend.v2.interfaces"]
+
+# Rule 3: Infrastructure may not import interfaces.
+[[tool.importlinter.contracts]]
+name = "infrastructure-does-not-import-interfaces"
+type = "forbidden"
+source_modules = ["backend.v2.contexts.*.infrastructure"]
+forbidden_modules = ["backend.v2.interfaces"]
+
+# Rule 4: Interfaces may not import infrastructure directly (composition root only).
+[[tool.importlinter.contracts]]
+name = "interfaces-do-not-import-infrastructure-directly"
+type = "forbidden"
+source_modules = ["backend.v2.interfaces"]
+forbidden_modules = ["backend.v2.contexts.*.infrastructure", "backend.v2.contexts.*.domain"]
+
+# Rule 5: No cross-context imports. Each context is self-contained.
+# (Enforced by the structural test for now; import-linter "independence"
+# contracts will be added per wave as contexts land.)
+
+# Rule 6: academy_id literals forbidden outside shared/tenancy and */infrastructure.
+# import-linter cannot match on literals; this is enforced by a separate
+# pytest check (tests/structural/test_tenancy_literals.py — landed alongside
+# the first repository in W1A-02).

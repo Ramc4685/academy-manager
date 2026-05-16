@@ -61,6 +61,19 @@ async def health():
 app.include_router(api_router)
 
 
+# v2 mount — gated behind env flag so legacy boot is unaffected if v2 deps
+# aren't installed. See backend/v2/README.md and docs/adr/0005-*.md.
+if os.environ.get("V2_ENABLED", "0") == "1":
+    try:
+        from v2.main import app as v2_app  # type: ignore[import-not-found]
+
+        app.mount("", v2_app)  # v2 owns /api/v2/* paths
+    except ImportError as _v2_err:  # pragma: no cover - boot-time logging
+        logging.getLogger(__name__).warning(
+            "V2_ENABLED=1 but failed to import backend.v2: %s", _v2_err
+        )
+
+
 # CORS — use explicit origins to support httpOnly cookies with credentials
 _frontend = os.environ.get("FRONTEND_URL", "")
 _origins_env = os.environ.get("CORS_ORIGINS", "")
