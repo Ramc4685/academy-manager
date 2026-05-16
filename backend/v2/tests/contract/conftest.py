@@ -29,12 +29,34 @@ async def db() -> AsyncIterator[object]:
 
 @pytest_asyncio.fixture
 async def acad():
-    with tenant_scope("test-academy"):
+    """Activate tenant ContextVar for the test. Sync set/reset works fine
+    inside the async test body; pytest-asyncio's teardown across event
+    loops trips up the context-manager form."""
+    from backend.v2.shared.tenancy.context import _current as _tv
+
+    token = _tv.set("test-academy")
+    try:
         yield "test-academy"
+    finally:
+        try:
+            _tv.reset(token)
+        except (ValueError, LookupError):
+            # The reset can fail if pytest-asyncio finalises us from a
+            # different Context; that's harmless — the next test sets its
+            # own value.
+            pass
 
 
 @pytest_asyncio.fixture
 async def other_acad():
     """Used to assert tenant isolation."""
-    with tenant_scope("other-academy"):
+    from backend.v2.shared.tenancy.context import _current as _tv
+
+    token = _tv.set("other-academy")
+    try:
         yield "other-academy"
+    finally:
+        try:
+            _tv.reset(token)
+        except (ValueError, LookupError):
+            pass
