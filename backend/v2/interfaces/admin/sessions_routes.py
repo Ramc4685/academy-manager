@@ -53,7 +53,7 @@ async def create_session(
     return AdminSessionView(**session.model_dump(exclude={"academy_id"}))
 
 
-@router.delete("/sessions/{session_id}", status_code=204, summary="Cancel session + emit cascades")
+@router.delete("/sessions/{session_id}", status_code=204, summary="Cancel session + emit cascades", response_model=None)
 async def cancel_session(
     session_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
@@ -99,7 +99,7 @@ async def add_to_roster(
     )
 
 
-@router.delete("/enrollments/{enrollment_id}", status_code=204)
+@router.delete("/enrollments/{enrollment_id}", status_code=204, response_model=None)
 async def cancel_enrollment(
     enrollment_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
@@ -110,7 +110,7 @@ async def cancel_enrollment(
     )
 
 
-@router.post("/enrollments/{enrollment_id}/pause", status_code=204)
+@router.post("/enrollments/{enrollment_id}/pause", status_code=204, response_model=None)
 async def pause_enrollment(
     enrollment_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
@@ -121,7 +121,7 @@ async def pause_enrollment(
     )
 
 
-@router.post("/enrollments/{enrollment_id}/resume", status_code=204)
+@router.post("/enrollments/{enrollment_id}/resume", status_code=204, response_model=None)
 async def resume_enrollment(
     enrollment_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),

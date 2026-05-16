@@ -47,7 +47,7 @@ async def promote_next(
     return {"promoted_waitlist_id": promoted_id}
 
 
-@router.post("/waitlist/{waitlist_id}/skip", status_code=204)
+@router.post("/waitlist/{waitlist_id}/skip", status_code=204, response_model=None)
 async def skip(
     waitlist_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
@@ -56,7 +56,7 @@ async def skip(
     await use_cases.skip_from_waitlist.execute(waitlist_id)
 
 
-@router.delete("/waitlist/{waitlist_id}", status_code=204)
+@router.delete("/waitlist/{waitlist_id}", status_code=204, response_model=None)
 async def remove(
     waitlist_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),

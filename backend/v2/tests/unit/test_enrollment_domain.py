@@ -29,8 +29,12 @@ def _session() -> Session:
 
 
 def test_session_capacity_must_be_positive() -> None:
+    # model_copy(update=...) skips validation by default; construct a fresh
+    # Session to force re-validation of the `capacity >= 1` invariant.
+    base = _session().model_dump()
+    base["capacity"] = 0
     with pytest.raises(ValidationError):
-        _session().model_copy(update={"capacity": 0})
+        Session(**base)
 
 
 def test_session_frozen() -> None:

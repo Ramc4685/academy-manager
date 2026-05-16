@@ -19,8 +19,8 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import ASGIApp
 
-from backend.v2.contexts.identity.domain.errors import InvalidToken, UserInactive, UserNotFound
 from backend.v2.shared.auth.claims import AuthClaims
+from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.tenancy.context import _current as _tenant_var
 
 log = logging.getLogger(__name__)
@@ -48,9 +48,12 @@ class TenancyMiddleware(BaseHTTPMiddleware):
         if token and self._load_claims is not None:
             try:
                 claims = await self._load_claims(token)
-            except (InvalidToken, UserNotFound, UserInactive) as exc:
+            except DomainError as exc:
+                # Catch the shared base — concrete subclasses (InvalidToken,
+                # UserNotFound, UserInactive) live in contexts/identity/, which
+                # `shared/` is not allowed to import (ADR-0005 layering rule).
                 # We don't 401 here — the route's `Depends(get_auth_claims)`
-                # will raise 401 if it actually needs auth. Unauthenticated
+                # raises 401 if it actually needs auth. Unauthenticated
                 # routes (healthz) keep working.
                 log.info("auth_failed: %s", exc.code)
 
