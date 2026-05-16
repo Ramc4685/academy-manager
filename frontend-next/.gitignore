@@ -9,6 +9,8 @@ out/
 next-env.d.ts
 .next-typed-routes
 *.tsbuildinfo
+playwright-report/
+test-results/
 public/sw.js
 public/sw.js.map
 public/swe-worker-*.js
