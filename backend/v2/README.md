@@ -64,10 +64,30 @@ The Identity context built in W1A-02 is the canonical example to copy from.
 
 ## Running
 
+The v2 code uses absolute imports rooted at `backend.v2.*`, so the
+repo root must be on `PYTHONPATH`. Run from the repo root, not from
+`backend/`:
+
+```bash
+# From repo root (recommended):
+PYTHONPATH=. uvicorn backend.v2.main:app --reload --port 8001
+
+# Tests:
+PYTHONPATH=. pytest backend/v2/tests
+PYTHONPATH=. lint-imports --config backend/pyproject.toml
+```
+
+If you must run from `backend/`, set `PYTHONPATH=..`:
+
 ```bash
 cd backend
-uvicorn v2.main:app --reload --port 8001
+PYTHONPATH=.. uvicorn backend.v2.main:app --reload --port 8001
+PYTHONPATH=.. pytest v2/tests
+PYTHONPATH=.. lint-imports --config pyproject.toml
 ```
+
+CI uses `PYTHONPATH=${{ github.workspace }}` on every step. See
+`.github/workflows/v2-backend.yml`.
 
 v2 mounts under `/api/v2/*`. Legacy stays on `/api/*`.
 

@@ -44,7 +44,12 @@ async def test_unique_index_rejects_duplicate_session_student(db) -> None:
         await repo.save(first)
 
         second = first.model_copy(update={"attendance_id": "mut-B", "status": "absent"})
-        with pytest.raises(Exception) as exc_info:
+        # The repo translates Mongo's DuplicateKeyError into the domain
+        # `ConflictAttendanceExists` so the BFF returns 409 (not 500)
+        # for offline-policy case #4. See PR review feedback on PR #18.
+        from backend.v2.contexts.coaching.domain.errors import ConflictAttendanceExists
+
+        with pytest.raises(ConflictAttendanceExists) as exc_info:
             await repo.save(second)
-        # mongomock raises DuplicateKeyError, real Mongo same.
-        assert "duplicate" in str(exc_info.value).lower() or "E11000" in str(exc_info.value)
+        assert exc_info.value.code == "Coaching.ConflictAttendanceExists"
+        assert exc_info.value.details["existing_attendance_id"] == "mut-A"

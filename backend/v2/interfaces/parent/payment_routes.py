@@ -30,8 +30,11 @@ async def start_checkout(
     claims: AuthClaims = Depends(require_persona("parent")),
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> StartCheckoutResponse:
-    # Pull the application -> session_id binding.
-    app = await use_cases.get_application_status.execute(body.application_id)
+    # Pull the application -> session_id binding. Pass caller_user_id so
+    # a parent can't start checkout for another parent's application.
+    app = await use_cases.get_application_status.execute(
+        body.application_id, caller_user_id=claims.user_id
+    )
     assert app.selected_session_id, "application must have a selected session"
     result = await use_cases.start_checkout.execute(
         StartCheckoutCommand(

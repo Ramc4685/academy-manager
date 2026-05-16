@@ -28,3 +28,11 @@ class IncompleteApplication(DomainError):
 class NoActiveWaiver(DomainError):
     code = "Onboarding.NoActiveWaiver"
     status_code = 500
+
+
+class ApplicationOwnedByAnotherParent(DomainError):
+    """Returned as 404 (not 403) so a parent can't probe the existence
+    of another parent's application id."""
+
+    code = "Onboarding.ApplicationNotFound"
+    status_code = 404

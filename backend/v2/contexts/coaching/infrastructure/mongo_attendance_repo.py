@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pymongo.errors import DuplicateKeyError
+
+from backend.v2.contexts.coaching.domain.errors import ConflictAttendanceExists
 from backend.v2.contexts.coaching.domain.models import Attendance
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -24,18 +27,34 @@ class MongoAttendanceRepository(TenantScopedRepository):
         )
 
     async def save(self, attendance: Attendance) -> None:
-        await self._insert_one(
-            {
-                "attendance_id": attendance.attendance_id,
-                "session_id": attendance.session_id,
-                "student_id": attendance.student_id,
-                "marked_by": attendance.marked_by,
-                "marked_at": attendance.marked_at,
-                "marked_at_client": attendance.marked_at_client,
-                "status": attendance.status,
-                "client_app_version": attendance.client_app_version,
-            }
-        )
+        """Insert the attendance row. On a unique-index collision
+        (two offline devices marked the same session+student
+        concurrently and both passed the use case's pre-insert
+        existence check), translate to the domain
+        `ConflictAttendanceExists` error so the BFF returns the
+        documented 409 instead of a transient 500 — see
+        docs/offline-policy.md conflict case #4."""
+        try:
+            await self._insert_one(
+                {
+                    "attendance_id": attendance.attendance_id,
+                    "session_id": attendance.session_id,
+                    "student_id": attendance.student_id,
+                    "marked_by": attendance.marked_by,
+                    "marked_at": attendance.marked_at,
+                    "marked_at_client": attendance.marked_at_client,
+                    "status": attendance.status,
+                    "client_app_version": attendance.client_app_version,
+                }
+            )
+        except DuplicateKeyError:
+            existing = await self.find_existing(attendance.session_id, attendance.student_id)
+            raise ConflictAttendanceExists(
+                "another mutation raced ahead and recorded attendance",
+                session_id=attendance.session_id,
+                student_id=attendance.student_id,
+                existing_attendance_id=existing.attendance_id if existing else None,
+            ) from None
 
     async def find_existing(self, session_id: str, student_id: str) -> Attendance | None:
         doc = await self._find_one({"session_id": session_id, "student_id": student_id})

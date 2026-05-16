@@ -60,12 +60,13 @@ async def start(
 async def patch(
     application_id: str,
     body: PatchApplicationRequest,
-    _claims: AuthClaims = Depends(require_persona("parent")),
+    claims: AuthClaims = Depends(require_persona("parent")),
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> ApplicationView:
     app = await use_cases.patch_application.execute(
         PatchApplicationCommand(
             application_id=application_id,
+            caller_user_id=claims.user_id,
             parent_profile=body.parent_profile.model_dump() if body.parent_profile else None,
             child_profile=body.child_profile.model_dump() if body.child_profile else None,
             selected_session_id=body.selected_session_id,
@@ -82,8 +83,10 @@ async def patch(
 )
 async def status_route(
     application_id: str,
-    _claims: AuthClaims = Depends(require_persona("parent")),
+    claims: AuthClaims = Depends(require_persona("parent")),
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> ApplicationView:
-    app = await use_cases.get_application_status.execute(application_id)
+    app = await use_cases.get_application_status.execute(
+        application_id, caller_user_id=claims.user_id
+    )
     return _view(app)

@@ -74,6 +74,10 @@ class StartApplication:
 class PatchApplicationCommand(BaseModel):
     model_config = {"frozen": True}
     application_id: str
+    # The route layer must pass the caller's user_id — the use case rejects
+    # the request if the application belongs to a different parent. This is
+    # the security-matrix "own resource" enforcement for the parent persona.
+    caller_user_id: str
     # Raw dicts at the application boundary so the interface layer doesn't
     # have to import from domain (ADR-0005 rule 4). Domain types are
     # constructed inside the use case.
@@ -97,7 +101,9 @@ class PatchApplication:
 
     async def execute(self, cmd: PatchApplicationCommand) -> Application:
         app = await self._apps.get(cmd.application_id)
-        if app is None:
+        if app is None or app.parent_user_id != cmd.caller_user_id:
+            # 404 (not 403) so a parent can't probe other parents'
+            # application ids. Per docs/security-matrix.md.
             raise ApplicationNotFound("application missing", application_id=cmd.application_id)
         if app.status not in _EDITABLE:
             raise ApplicationNotEditable(
@@ -141,9 +147,18 @@ class GetApplicationStatus:
     def __init__(self, apps: ApplicationRepository) -> None:
         self._apps = apps
 
-    async def execute(self, application_id: str) -> Application:
+    async def execute(
+        self, application_id: str, *, caller_user_id: str | None = None
+    ) -> Application:
+        """Returns the application status. When `caller_user_id` is
+        supplied (the parent BFF passes it from auth claims), the use
+        case 404s on mismatch — preventing parent A from reading parent
+        B's onboarding status. Webhook handlers and admin callers pass
+        None to skip the check."""
         app = await self._apps.get(application_id)
-        if app is None:
+        if app is None or (
+            caller_user_id is not None and app.parent_user_id != caller_user_id
+        ):
             raise ApplicationNotFound("application missing", application_id=application_id)
         return app
 
