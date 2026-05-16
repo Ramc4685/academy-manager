@@ -431,6 +431,100 @@ class TestWaiverSeed:
 
 
 # ---------------------------------------------------------------------------
+# NEW: GET /api/onboarding/waiver/current
+# ---------------------------------------------------------------------------
+
+
+class TestGetCurrentWaiver:
+    def test_get_current_waiver_returns_seeded_version(self, client, mongo, stub_verify):
+        """Verified parent GETs the endpoint; response matches seeded version."""
+        _seed_waiver(mongo)
+        parent = _seed_parent(mongo)
+        stub_verify["claim"] = _stub_token(
+            uid=parent["auth_uid"], email=parent["email"]
+        )
+        r = client.get(
+            "/api/onboarding/waiver/current",
+            headers={"Authorization": "Bearer FAKE"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["version"] == "2026.1"
+        assert len(body["content"]) > 0
+        assert len(body["content_hash"]) == 64
+        assert "effective_from" in body
+
+    def test_get_current_waiver_requires_auth(self, client, mongo):
+        """No auth header -> 401."""
+        _seed_waiver(mongo)
+        r = client.get("/api/onboarding/waiver/current")
+        assert r.status_code == 401
+
+    def test_get_current_waiver_unverified_password_user_blocked(
+        self, client, mongo, stub_verify
+    ):
+        """Unverified Firebase password user -> 403 (inherits get_current_user enforcement)."""
+        _seed_waiver(mongo)
+        parent = _seed_parent(mongo)
+        stub_verify["claim"] = _stub_token(
+            uid=parent["auth_uid"],
+            email=parent["email"],
+            email_verified=False,
+            provider="password",
+        )
+        r = client.get(
+            "/api/onboarding/waiver/current",
+            headers={"Authorization": "Bearer FAKE"},
+        )
+        assert r.status_code == 403
+
+    def test_get_current_waiver_picks_most_recent_effective(
+        self, client, mongo, stub_verify
+    ):
+        """When multiple rows exist, endpoint returns the one with the latest effective_from."""
+        _seed_waiver(mongo)
+        # Insert a newer waiver version with a past effective_from that is
+        # later than the seed's effective_from (which is set at test runtime).
+        # Use a fixed timestamp far enough in the past to be "now <= effective_from"
+        # but more recent than the seed row written moments before.
+        # We pick 2020-06-01 for the seed row and 2020-07-01 for the newer one;
+        # both are in the past relative to the running clock, but the sort order
+        # ensures the newer one wins.  We achieve this by directly inserting with
+        # an explicit earlier effective_from for the seed-equivalent row, then
+        # inserting the newer one with a later-but-still-past timestamp.
+        asyncio.run(
+            mongo.waiver_versions.update_one(
+                {"version": "2026.1"},
+                {"$set": {"effective_from": "2020-01-01T00:00:00+00:00"}},
+            )
+        )
+        asyncio.run(
+            mongo.waiver_versions.insert_one(
+                {
+                    "version": "2026.2",
+                    "text": "Newer waiver text for version 2026.2.",
+                    "content_hash": "a" * 64,
+                    "effective_from": "2020-07-01T00:00:00+00:00",
+                    "created_at": "2020-07-01T00:00:00+00:00",
+                }
+            )
+        )
+
+        parent = _seed_parent(mongo)
+        stub_verify["claim"] = _stub_token(
+            uid=parent["auth_uid"], email=parent["email"]
+        )
+        r = client.get(
+            "/api/onboarding/waiver/current",
+            headers={"Authorization": "Bearer FAKE"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["version"] == "2026.2"
+        assert body["content"] == "Newer waiver text for version 2026.2."
+
+
+# ---------------------------------------------------------------------------
 # 5. Index assertions
 # ---------------------------------------------------------------------------
 
