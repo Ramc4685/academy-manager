@@ -16,7 +16,10 @@ test.use({ baseURL: "http://localhost:3001" });
 
 const NEEDS_REVIEW_URL = "/coach/needs-review";
 
-test.describe("Wave 1B — offline writes + sync", () => {
+// Wave 1B is opt-in behind NEXT_PUBLIC_W1B_OFFLINE_WRITES=1. Per the
+// architect's rule, this suite stays skipped in CI until W1A holds
+// 1 week in production and the flag flips.
+test.describe.skip("Wave 1B — offline writes + sync", () => {
   test("case #1: same student marked twice offline collapses to one mutation", async ({
     page,
     context,

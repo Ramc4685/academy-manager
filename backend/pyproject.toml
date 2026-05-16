@@ -34,7 +34,10 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["v2/tests"]
+# NOTE: testpaths intentionally NOT set here. The legacy CI workflow
+# invokes pytest without a path arg and would otherwise pick up v2/tests
+# (which need v2-only deps installed). v2-backend.yml passes
+# `v2/tests/` as the path arg.
 addopts = "-ra --strict-markers"
 
 [tool.coverage.run]
@@ -53,7 +56,10 @@ exclude_lines = [
 # ---------------------------------------------------------------------------
 
 [tool.importlinter]
-root_packages = ["backend.v2"]
+# grimp (import-linter's graph builder) requires a single top-level
+# package name, not a dotted path. Point it at `backend` and reference
+# subpackages by their full dotted path in the contracts below.
+root_packages = ["backend"]
 include_external_packages = false
 
 # Rule 1: Domain may not import from infrastructure, application, or
