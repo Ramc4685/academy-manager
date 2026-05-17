@@ -10,8 +10,10 @@ import { FirebaseApp, getApps, initializeApp } from "firebase/app";
 import {
   Auth,
   GoogleAuthProvider,
+  connectAuthEmulator,
   getAuth,
   onAuthStateChanged,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
@@ -27,6 +29,7 @@ const firebaseConfig = {
 
 let _app: FirebaseApp | null = null;
 let _auth: Auth | null = null;
+let _emulatorConnected = false;
 
 function app(): FirebaseApp {
   if (_app) return _app;
@@ -37,6 +40,11 @@ function app(): FirebaseApp {
 export function auth(): Auth {
   if (_auth) return _auth;
   _auth = getAuth(app());
+  const emulatorHost = process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST;
+  if (emulatorHost && !_emulatorConnected) {
+    connectAuthEmulator(_auth, emulatorHost, { disableWarnings: true });
+    _emulatorConnected = true;
+  }
   return _auth;
 }
 
@@ -59,6 +67,10 @@ export async function signInWithGoogle(): Promise<User> {
   const provider = new GoogleAuthProvider();
   const { user } = await signInWithPopup(auth(), provider);
   return user;
+}
+
+export async function sendPasswordReset(email: string): Promise<void> {
+  await sendPasswordResetEmail(auth(), email);
 }
 
 export async function signOutCurrent(): Promise<void> {

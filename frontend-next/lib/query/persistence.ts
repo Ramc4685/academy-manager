@@ -29,9 +29,13 @@ export async function attachPersistence(client: QueryClient): Promise<void> {
       persister: createSyncStoragePersister({ storage: window.localStorage }) as unknown as Parameters<
         typeof persistQueryClient
       >[0]["persister"],
+      buster: "coach-success-only-v1",
       maxAge: 24 * 60 * 60 * 1000,
       dehydrateOptions: {
-        shouldDehydrateQuery: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "coach",
+        shouldDehydrateQuery: (q) =>
+          Array.isArray(q.queryKey) &&
+          q.queryKey[0] === "coach" &&
+          q.state.status === "success",
       },
     });
   } catch (err) {

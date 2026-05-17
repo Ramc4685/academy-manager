@@ -1,6 +1,19 @@
 import type { Metadata, Viewport } from "next";
+import { Manrope, Outfit } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/lib/providers";
+
+const manrope = Manrope({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-manrope",
+});
+
+const outfit = Outfit({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-outfit",
+});
 
 export const metadata: Metadata = {
   title: "Academy Manager",
@@ -23,8 +36,10 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-white text-neutral-900 antialiased dark:bg-neutral-950 dark:text-neutral-100">
+    <html lang="en" suppressHydrationWarning>
+      <body
+        className={`${manrope.variable} ${outfit.variable} min-h-screen bg-white font-body text-neutral-900 antialiased dark:bg-neutral-950 dark:text-neutral-100`}
+      >
         <Providers>{children}</Providers>
       </body>
     </html>

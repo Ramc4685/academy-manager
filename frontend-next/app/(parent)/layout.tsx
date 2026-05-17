@@ -1,28 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { onAuthChange } from "@/lib/auth/firebase";
+import { usePersonaAuth } from "@/lib/auth/use-persona-auth";
 import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
 
 export default function ParentLayout({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
   const online = useOnline();
   const { hasUpdate, applyUpdate } = useServiceWorkerUpdate();
-  const [checked, setChecked] = useState(false);
+  const auth = usePersonaAuth("parent");
 
-  useEffect(
-    () =>
-      onAuthChange((u) => {
-        if (!u) router.replace("/login");
-        setChecked(true);
-      }),
-    [router]
-  );
-
-  if (!checked) {
+  if (!auth.checked) {
     return <div className="min-h-screen flex items-center justify-center text-neutral-500">Loading…</div>;
+  }
+
+  if (!auth.authorized) {
+    return <div className="min-h-screen flex items-center justify-center text-neutral-500">Redirecting…</div>;
   }
 
   return (
