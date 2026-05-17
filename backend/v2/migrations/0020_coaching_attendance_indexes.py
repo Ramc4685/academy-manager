@@ -24,8 +24,10 @@ async def up(db: AsyncIOMotorDatabase) -> None:
         [("academy_id", 1), ("marked_by", 1), ("marked_at", 1)],
         name="coach_history",
     )
+    await attendance.update_many({"attendance_id": None}, {"$unset": {"attendance_id": ""}})
     await attendance.create_index(
         "attendance_id",
         unique=True,
         name="attendance_id_unique",
+        sparse=True,
     )

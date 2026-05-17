@@ -9,7 +9,12 @@ version = "0040"
 
 async def up(db: AsyncIOMotorDatabase) -> None:
     apps = db["onboarding_applications"]
-    await apps.create_index("application_id", unique=True, name="application_id_unique")
+    await apps.create_index(
+        "application_id",
+        unique=True,
+        name="application_id_unique",
+        partialFilterExpression={"application_id": {"$type": "string"}},
+    )
     await apps.create_index(
         [("academy_id", 1), ("parent_user_id", 1), ("created_at", -1)],
         name="parent_recent",
