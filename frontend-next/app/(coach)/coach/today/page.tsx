@@ -22,6 +22,7 @@ export default function CoachTodayPage() {
     queryFn: () => getCoachToday(date),
     staleTime: 5 * 60 * 1000,
   });
+  const sessions = Array.isArray(data?.sessions) ? data.sessions : [];
 
   useMemo(() => reportVitals("coach.today"), []);
 
@@ -46,12 +47,12 @@ export default function CoachTodayPage() {
         </div>
       )}
 
-      {data && data.sessions.length === 0 && (
+      {!isError && data && sessions.length === 0 && (
         <p className="text-neutral-500" data-testid="empty-state">No sessions today.</p>
       )}
 
       <ul className="space-y-3" data-testid="session-list">
-        {data?.sessions.map((s) => (
+        {sessions.map((s) => (
           <li key={s.session_id}>
             <Link
               href={`/coach/sessions/${s.session_id}` as Parameters<typeof Link>[0]["href"]}
