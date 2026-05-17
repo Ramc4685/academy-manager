@@ -16,7 +16,9 @@ const config: Config = {
         "touch-android": "48px",
       },
       fontFamily: {
-        sans: ["Inter", "system-ui", "sans-serif"],
+        sans: ["var(--font-manrope)", "system-ui", "sans-serif"],
+        body: ["var(--font-manrope)", "system-ui", "sans-serif"],
+        display: ["var(--font-outfit)", "var(--font-manrope)", "system-ui", "sans-serif"],
       },
     },
   },

@@ -34,6 +34,15 @@ const config: NextConfig = {
       },
     ];
   },
+  async rewrites() {
+    const bffOrigin = process.env.BFF_API_ORIGIN ?? "http://127.0.0.1:8001";
+    return [
+      {
+        source: "/api/v2/:path*",
+        destination: `${bffOrigin}/api/v2/:path*`,
+      },
+    ];
+  },
 };
 
 export default withSerwist(config);

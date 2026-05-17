@@ -1,0 +1,58 @@
+CourtMastr Academy Manager — Proprietary Software License
+Copyright (c) 2024–2026 RamC Venkatasamy / CourtMastr. All rights reserved.
+
+THIS SOFTWARE IS PROPRIETARY AND CONFIDENTIAL.
+
+1. Ownership. The CourtMastr Academy Manager source code, binaries, schemas,
+   designs, documentation, and all related assets (collectively, the "Software")
+   are the exclusive property of RamC Venkatasamy ("Licensor"). The Software is
+   licensed, not sold. No title or ownership interest is transferred.
+
+2. No License Granted. No right or license, express or implied, is granted to
+   any person or entity to use, copy, modify, merge, publish, distribute,
+   sublicense, sell, host, fork, mirror, reverse engineer, decompile,
+   disassemble, train machine-learning models on, or create derivative works
+   from the Software, in whole or in part, without the prior, written, and
+   signed permission of the Licensor.
+
+3. Source Visibility ≠ License. Visibility of the source code in any
+   repository, archive, container image, package, or build artifact does not
+   constitute a license, transfer of rights, or invitation to contribute. Any
+   access granted to view this repository is provided solely for the Licensor's
+   internal development, evaluation by authorized reviewers, and lawful
+   security research, and is revocable at any time.
+
+4. Customer / Subscriber Use. Customers of the hosted CourtMastr Academy
+   Manager service ("Service") receive only the limited, non-exclusive,
+   non-transferable, revocable right to access and use the Service in
+   accordance with the separately executed subscription agreement, order form,
+   or terms of service governing their account. That right does not extend to
+   the Software itself.
+
+5. Confidentiality. The Software and any non-public information about it,
+   including architecture, prompts, data schemas, infrastructure configuration,
+   and security controls, are Confidential Information of the Licensor.
+
+6. Trademarks. "CourtMastr", the CourtMastr logo, "Academy Manager", and
+   related names and marks are trademarks of the Licensor. No license to any
+   trademark is granted.
+
+7. No Warranty. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+8. Limitation of Liability. IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY
+   CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT,
+   OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR
+   THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+9. Termination. Any rights inadvertently or implicitly granted terminate
+   automatically upon any breach of this license, upon revocation by the
+   Licensor, or upon termination of any related subscription or evaluation
+   agreement.
+
+10. Governing Law. This license is governed by the laws of the State of Texas,
+    United States, without regard to its conflict-of-laws principles.
+
+For licensing inquiries, partnerships, or authorized use, contact:
+ramchand4685@gmail.com

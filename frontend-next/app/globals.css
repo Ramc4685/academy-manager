@@ -4,6 +4,14 @@
 
 :root {
   color-scheme: light dark;
+  --academy-ink: #111827;
+  --academy-muted: #667085;
+  --academy-panel: #f7f8fb;
+  --academy-line: #dce3ee;
+  --academy-blue: #2563eb;
+  --academy-blue-hover: #1d4ed8;
+  --academy-gold: #ffd21f;
+  --academy-night: #06121f;
 }
 
 @layer base {
@@ -18,5 +26,8 @@
   html {
     /* Prevent text size adjustment on orientation change. */
     -webkit-text-size-adjust: 100%;
+  }
+  body {
+    text-rendering: geometricPrecision;
   }
 }
