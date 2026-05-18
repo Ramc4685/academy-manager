@@ -40,7 +40,7 @@ export default function LandingPage() {
             <span className={styles.dot} />
             v2.0 - Online
           </span>
-          <Link href="/login" className={styles.signinLink} suppressHydrationWarning>
+          <Link href="/login" className={styles.signinLink}>
             Sign in
             <svg
               viewBox="0 0 24 24"
@@ -78,7 +78,7 @@ export default function LandingPage() {
             attendance, take payments, manage waitlists, and run the academy from one app.
           </p>
           <div className={styles.ctaRow}>
-            <Link href="/login" className={styles.btnPrimary} suppressHydrationWarning>
+            <Link href="/login" className={styles.btnPrimary}>
               Sign in
               <span className={styles.arrow}>
                 <svg
@@ -96,7 +96,7 @@ export default function LandingPage() {
                 </svg>
               </span>
             </Link>
-            <a href="#roles" className={styles.btnSecondary} suppressHydrationWarning>
+            <a href="#roles" className={styles.btnSecondary}>
               See what&apos;s inside
             </a>
           </div>
@@ -128,7 +128,7 @@ export default function LandingPage() {
       </div>
 
       <section className={styles.roles}>
-        <Link href="/login" className={styles.role} suppressHydrationWarning>
+        <Link href="/login" className={styles.role}>
           <div className={`${styles.preview} ${styles.pvAdmin}`}>
             <div className={styles.row}>
               <div className={styles.kpi}>
@@ -198,7 +198,7 @@ export default function LandingPage() {
           </div>
         </Link>
 
-        <Link href="/register" className={styles.role} suppressHydrationWarning>
+        <Link href="/register" className={styles.role}>
           <div className={`${styles.preview} ${styles.pvParent}`}>
             <div className={styles.hello}>Tuesday - Good morning</div>
             <div className={styles.name}>Hi, Rohan</div>
@@ -263,7 +263,7 @@ export default function LandingPage() {
           </div>
         </Link>
 
-        <Link href="/login" className={styles.role} suppressHydrationWarning>
+        <Link href="/login" className={styles.role}>
           <div className={`${styles.preview} ${styles.pvCoach}`}>
             <div className={styles.ch}>
               <span className={styles.ll}>ON COURT</span>
@@ -351,9 +351,9 @@ export default function LandingPage() {
       <div className={styles.foot}>
         <span>(c) 2026 - Academy Manager - v2.0</span>
         <div className={styles.right}>
-          <Link href="/register" suppressHydrationWarning>Register</Link>
-          <a href="https://api.academy.courtmastr.com/api/v2/healthz" suppressHydrationWarning>Status</a>
-          <Link href="/login" suppressHydrationWarning>Sign in</Link>
+          <Link href="/register">Register</Link>
+          <a href="https://api.academy.courtmastr.com/api/v2/healthz">Status</a>
+          <Link href="/login">Sign in</Link>
         </div>
       </div>
     </div>
