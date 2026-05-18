@@ -31,6 +31,10 @@ const cases: Array<[string, string, Env, "proxy:legacy-api" | "proxy:v2-api" | "
   ["GET", "/coach/today", withFlags({ FLAG_COACH_TODAY: "v2" }), "proxy:v2-web"],
   ["GET", "/coach/sessions/abc", withFlags({ FLAG_COACH_TODAY: "v2" }), "proxy:legacy-web"], // others still legacy
   ["GET", "/coach/sessions/abc", withFlags({ FLAG_COACH_ALL: "v2" }), "proxy:v2-web"],
+  ["GET", "/_next/static/app.js", withFlags({ FLAG_COACH_ALL: "v2" }), "proxy:v2-web"],
+  ["GET", "/sw.js", withFlags({ FLAG_PARENT_ALL: "v2" }), "proxy:v2-web"],
+  ["GET", "/manifest.webmanifest", withFlags({ FLAG_ADMIN_ALL: "v2" }), "proxy:v2-web"],
+  ["GET", "/manifest.webmanifest", baseEnv, "proxy:legacy-web"],
 
   // Wave 4A: FLAG_LEGACY_API_GONE=1 returns 410.
   ["GET", "/api/users/me", withFlags({ FLAG_LEGACY_API_GONE: "1" }), "gone"],

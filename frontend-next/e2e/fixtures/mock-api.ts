@@ -54,6 +54,20 @@ export const test = base.extend<{ mock: MockState; signIn: () => Promise<void> }
       attendanceCalls: [],
     };
 
+    await page.route("**/api/v2/me", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          user_id: "user-coach-e2e",
+          email: "coach@example.com",
+          academy_id: "academy-e2e",
+          roles: ["coach"],
+        }),
+      });
+    });
+
     await page.route("**/api/v2/coach/today*", async (route: Route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return route.fulfill({
@@ -85,6 +99,24 @@ export const test = base.extend<{ mock: MockState; signIn: () => Promise<void> }
           status: body.status,
           marked_at: new Date().toISOString(),
         }),
+      });
+    });
+
+    await page.route("**/api/v2/coach/sessions/*/lesson-plans", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ plans: [] }),
+      });
+    });
+
+    await page.route("**/api/v2/coach/sessions/*/progress-notes", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ notes: [] }),
       });
     });
 
