@@ -8,6 +8,7 @@ That makes this repository intentionally unscoped for reads; the resulting
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import re
 from typing import Any
 
@@ -60,6 +61,55 @@ class MongoUserRepository:
             {"$or": [{"user_id": user_id}, {"auth_uid": user_id}, {"_id": user_id}]}
         )
         return self._to_domain(doc) if doc else None
+
+    async def ensure_parent_user(
+        self, *, email: str, display_name: str, firebase_uid: str
+    ) -> User:
+        existing = await self.collection.find_one(
+            {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}
+        )
+        now = datetime.now(timezone.utc)
+        if existing:
+            roles = set(self._to_domain(existing).roles)
+            roles.add("parent")
+            await self.collection.update_one(
+                {"_id": existing["_id"]},
+                {
+                    "$set": {
+                        "display_name": display_name,
+                        "roles": sorted(roles),
+                        "role": existing.get("role") or "parent",
+                        "auth_provider": existing.get("auth_provider") or "firebase",
+                        "auth_uid": existing.get("auth_uid") or firebase_uid,
+                        "firebase_uid": existing.get("firebase_uid") or firebase_uid,
+                        "is_active": existing.get("is_active", True),
+                        "status": existing.get("status") or "active",
+                        "updated_at": now,
+                    }
+                },
+            )
+            updated = await self.collection.find_one({"_id": existing["_id"]})
+            assert updated is not None
+            return self._to_domain(updated)
+
+        doc = {
+            "user_id": firebase_uid,
+            "auth_uid": firebase_uid,
+            "firebase_uid": firebase_uid,
+            "auth_provider": "firebase",
+            "email": email,
+            "display_name": display_name,
+            "roles": ["parent"],
+            "role": "parent",
+            "status": "active",
+            "is_active": True,
+            "academy_id": self._default_academy_id,
+            "created_at": now,
+            "updated_at": now,
+        }
+        result = await self.collection.insert_one(doc)
+        doc["_id"] = result.inserted_id
+        return self._to_domain(doc)
 
     @staticmethod
     def _role_filter(role: Role) -> dict[str, object]:

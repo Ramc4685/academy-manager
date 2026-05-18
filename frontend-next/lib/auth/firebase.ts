@@ -11,6 +11,7 @@ import {
   Auth,
   GoogleAuthProvider,
   connectAuthEmulator,
+  createUserWithEmailAndPassword,
   getAuth,
   onAuthStateChanged,
   sendPasswordResetEmail,
@@ -60,6 +61,11 @@ export async function getIdToken(): Promise<string | null> {
 
 export async function signInWithEmail(email: string, password: string): Promise<User> {
   const { user } = await signInWithEmailAndPassword(auth(), email, password);
+  return user;
+}
+
+export async function registerWithEmail(email: string, password: string): Promise<User> {
+  const { user } = await createUserWithEmailAndPassword(auth(), email, password);
   return user;
 }
 

@@ -9,7 +9,7 @@ export interface CurrentUser {
   roles: UserRole[];
 }
 
-export type RoleHome = "/admin" | "/coach/dashboard" | "/parent/dashboard" | "/login";
+export type RoleHome = "/admin" | "/coach/today" | "/parent/payments" | "/login";
 
 export function getCurrentUser(): Promise<CurrentUser> {
   return apiFetch<CurrentUser>("/me", { method: "GET", dedup: false });
@@ -17,7 +17,7 @@ export function getCurrentUser(): Promise<CurrentUser> {
 
 export function homeForRoles(roles: UserRole[]): RoleHome {
   if (roles.includes("admin")) return "/admin";
-  if (roles.includes("coach")) return "/coach/dashboard";
-  if (roles.includes("parent")) return "/parent/dashboard";
+  if (roles.includes("coach")) return "/coach/today";
+  if (roles.includes("parent")) return "/parent/payments";
   return "/login";
 }
