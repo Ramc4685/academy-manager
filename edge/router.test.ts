@@ -8,45 +8,29 @@
 import { decide, type Env } from "./router";
 
 const baseEnv: Env = {
-  LEGACY_API_ORIGIN: "https://legacy-api.example",
-  V2_API_ORIGIN: "https://v2-api.example",
-  LEGACY_WEB_ORIGIN: "https://legacy-web.example",
-  V2_WEB_ORIGIN: "https://v2-web.example",
+  API_ORIGIN: "https://api.example",
+  WEB_ORIGIN: "https://web.example",
 };
 
-function withFlags(flags: Record<string, string>): Env {
-  return { ...baseEnv, ...flags } as Env;
-}
-
-const cases: Array<[string, string, Env, "proxy:legacy-api" | "proxy:v2-api" | "proxy:legacy-web" | "proxy:v2-web" | "gone"]> = [
-  // Default Phase 0 state: legacy everywhere.
-  ["GET", "/api/users/me", baseEnv, "proxy:legacy-api"],
-  ["GET", "/api/v2/coach/today", baseEnv, "proxy:v2-api"],
-  ["GET", "/coach/today", baseEnv, "proxy:legacy-web"],
-  ["GET", "/parent/onboarding", baseEnv, "proxy:legacy-web"],
-  ["GET", "/admin/sessions", baseEnv, "proxy:legacy-web"],
-  ["GET", "/", baseEnv, "proxy:legacy-web"],
-
-  // Wave 1A: FLAG_COACH_TODAY=v2 routes coach traffic to v2 web.
-  ["GET", "/coach/today", withFlags({ FLAG_COACH_TODAY: "v2" }), "proxy:v2-web"],
-  ["GET", "/coach/sessions/abc", withFlags({ FLAG_COACH_TODAY: "v2" }), "proxy:legacy-web"], // others still legacy
-  ["GET", "/coach/sessions/abc", withFlags({ FLAG_COACH_ALL: "v2" }), "proxy:v2-web"],
-  ["GET", "/_next/static/app.js", withFlags({ FLAG_COACH_ALL: "v2" }), "proxy:v2-web"],
-  ["GET", "/sw.js", withFlags({ FLAG_PARENT_ALL: "v2" }), "proxy:v2-web"],
-  ["GET", "/manifest.webmanifest", withFlags({ FLAG_ADMIN_ALL: "v2" }), "proxy:v2-web"],
-  ["GET", "/manifest.webmanifest", baseEnv, "proxy:legacy-web"],
-
-  // Wave 4A: FLAG_LEGACY_API_GONE=1 returns 410.
-  ["GET", "/api/users/me", withFlags({ FLAG_LEGACY_API_GONE: "1" }), "gone"],
-  ["GET", "/api/v2/coach/today", withFlags({ FLAG_LEGACY_API_GONE: "1" }), "proxy:v2-api"], // v2 unaffected
+const cases: Array<[string, string, Env, "proxy:api" | "proxy:web"]> = [
+  ["GET", "/api", baseEnv, "proxy:api"],
+  ["GET", "/api/users/me", baseEnv, "proxy:api"],
+  ["GET", "/api/v2/coach/today", baseEnv, "proxy:api"],
+  ["GET", "/coach/today", baseEnv, "proxy:web"],
+  ["GET", "/coach/sessions/abc", baseEnv, "proxy:web"],
+  ["GET", "/parent/onboarding", baseEnv, "proxy:web"],
+  ["GET", "/admin/sessions", baseEnv, "proxy:web"],
+  ["GET", "/login", baseEnv, "proxy:web"],
+  ["GET", "/register", baseEnv, "proxy:web"],
+  ["GET", "/_next/static/app.js", baseEnv, "proxy:web"],
+  ["GET", "/sw.js", baseEnv, "proxy:web"],
+  ["GET", "/manifest.webmanifest", baseEnv, "proxy:web"],
+  ["GET", "/", baseEnv, "proxy:web"],
 ];
 
 function tag(d: ReturnType<typeof decide>, env: Env): string {
-  if (d.kind === "gone") return "gone";
-  if (d.origin === env.LEGACY_API_ORIGIN) return "proxy:legacy-api";
-  if (d.origin === env.V2_API_ORIGIN) return "proxy:v2-api";
-  if (d.origin === env.LEGACY_WEB_ORIGIN) return "proxy:legacy-web";
-  if (d.origin === env.V2_WEB_ORIGIN) return "proxy:v2-web";
+  if (d.origin === env.API_ORIGIN) return "proxy:api";
+  if (d.origin === env.WEB_ORIGIN) return "proxy:web";
   return `unknown:${d.origin}`;
 }
 

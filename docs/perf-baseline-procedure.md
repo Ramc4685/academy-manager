@@ -8,7 +8,7 @@ The plan (§0.10) is explicit: **CI budgets are informational until baselines ex
 
 ## When to run this
 
-- Before flipping `size-limit` and `lhci` from `continue-on-error: true` to blocking in `.github/workflows/v2-frontend.yml`.
+- Before flipping `size-limit` and `lhci` from `continue-on-error: true` to blocking in `.github/workflows/production.yml`.
 - Whenever you add a heavy dependency (e.g., a new icon pack, a chart library).
 - During the Wave 1A cutover review (W1A-20 step "pre-flight").
 
@@ -89,7 +89,7 @@ Per the plan, **CI budget = measured + 15%**, with the stretch target documented
 After the baseline lands and the budgets are populated in
 `frontend-next/package.json`:
 
-1. Edit `.github/workflows/v2-frontend.yml`:
+1. Edit `.github/workflows/production.yml`:
    - Remove `continue-on-error: true` from the `Size limit` step.
    - Remove `continue-on-error: true` from the `Lighthouse CI` step.
 2. Open a PR; the workflow runs against the same commit and confirms the

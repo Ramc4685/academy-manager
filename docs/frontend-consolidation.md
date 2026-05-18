@@ -1,21 +1,19 @@
-# Frontend Consolidation Plan
+# Frontend Consolidation
 
-CourtMastr is converging on one production frontend: `frontend-next/`.
+CourtMastr now has one production frontend deployable: `frontend-next/`.
 
 ## Target
 
 - `frontend-next/` is the active v2 app for admin, coach, parent, login, and public parent registration.
-- `frontend/` is legacy fallback only until `academy.courtmastr.com` is cut over and the soak window clears.
+- `frontend/` is deprecated CRA source retained only for reference until a deletion PR.
 - New UI work, BFF integration, PWA/offline behavior, and Firebase Auth changes belong in `frontend-next/`.
 
 ## Cutover Sequence
 
-1. Keep `academy-next.courtmastr.com` serving `frontend-next/`.
-2. Verify admin, coach, parent, login, and public registration against production BFFs.
-3. Move `academy.courtmastr.com` to the v2 Next app.
-4. Keep legacy reachable only through the documented fallback route during the quiet window.
-5. Stop deploying `frontend/` after the quiet window.
-6. Delete or archive `frontend/` once no production route depends on it.
+1. Deploy only `frontend-next/` from GitHub Actions.
+2. Route `academy.courtmastr.com` to the Next frontend through `academy-edge-router`.
+3. Verify admin, coach, parent, login, and public registration against production BFFs.
+4. Delete or archive `frontend/` once no operator needs it for code reference.
 
 ## Rules
 

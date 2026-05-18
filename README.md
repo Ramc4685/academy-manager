@@ -54,10 +54,10 @@ intended for self-hosting.
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│  Browsers / PWA   ──►  Cloudflare Edge (Worker + Pages)            │
+│  Browsers / PWA   ──►  Cloudflare Edge + Next.js Worker            │
 │                              │                                     │
 │                              ▼                                     │
-│  Frontend (Next.js v2 target, legacy CRA fallback during cutover)  │
+│  Frontend (Next.js App Router, PWA)                                │
 │                              │                                     │
 │                              ▼                                     │
 │  Backend API (FastAPI, Python 3.12) on Fly.io — region `ord`       │
@@ -72,8 +72,7 @@ intended for self-hosting.
 | Layer | Technology | Where it runs |
 |---|---|---|
 | Edge routing | Cloudflare Worker (`academy-edge-router`) | Cloudflare global edge |
-| Web — target | Next.js 15 / React 19 (App Router, PWA) | Cloudflare Pages project `academy-next` |
-| Web — fallback | React 18 (CRA) | Cloudflare Pages project `courtmastr-academy` |
+| Web | Next.js 15 / React 19 (App Router, PWA) | Cloudflare Workers project `academy-next` |
 | API | FastAPI + Uvicorn (Python 3.12) | Fly.io app `courtmastr-academy-api` (region `ord`) |
 | Database | MongoDB (Atlas) | Managed |
 | Auth / identity | Firebase Authentication | Project `academy-courtmastr` |
@@ -81,27 +80,20 @@ intended for self-hosting.
 | Transactional email | Resend | Verified `courtmastr.com` sender domain |
 | Scheduler timezone | `America/Chicago` | Set on backend |
 
-The edge worker is the cutover switch between the legacy fallback and the
-Next.js v2 frontend. Flags (`FLAG_COACH_TODAY`, `FLAG_PARENT_ALL`,
-`FLAG_ADMIN_ALL`, etc.) are flipped per environment via Wrangler secrets and
-let us canary individual surfaces while converging on `frontend-next/` as the
-single frontend.
+The edge worker routes API paths to Fly and all browser paths to the maintained
+Next.js frontend. The legacy CRA app is no longer a production deployable.
 
 ### Deployment pipeline
 
-`.github/workflows/deploy.yml` ships production from `main`:
+`.github/workflows/production.yml` is the single GitHub Actions control plane:
 
-1. **Validate** — backend compile + safe pytest, frontend builds + tests,
-   bundle config verification.
+1. **Validate** — backend compile/tests, v2 DDD boundary checks, Next.js
+   typecheck/lint/build/E2E, and edge routing tests.
 2. **Production approval** — manual gate (GitHub `production` environment).
 3. **Backend deploy** — `flyctl deploy --remote-only --app courtmastr-academy-api`.
-4. **Frontend deploy** — publish `frontend-next/` to `academy-next`; legacy CRA
-   remains fallback until the domain cutover is complete.
-5. **Smoke** — `scripts/smoke/production_smoke.sh` against the live URLs.
-
-Separate workflows (`v2-backend.yml`, `v2-frontend.yml`, `v2-edge.yml`) gate
-the v2 stack on typecheck, lint, build, OpenAPI drift, size budgets, and
-Lighthouse before any edge flag is flipped.
+4. **Frontend deploy** — publish `frontend-next/` to the Next/Cloudflare Worker.
+5. **Edge deploy** — publish the thin router for `academy.courtmastr.com`.
+6. **Smoke** — `scripts/smoke/production_smoke.sh` against the live URLs.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for the operator runbook —
 environment variables, secret rotation, Stripe webhook configuration,
@@ -165,9 +157,9 @@ It is **not** an open-source project.
 ```
 backend/        FastAPI service, deployed to Fly.io
 backend/v2/     Clean-architecture backend (in-process during Phase 0)
-frontend/       Legacy CRA fallback during the v2 domain cutover
+frontend/       Deprecated CRA source retained only for reference until deletion
 frontend-next/  Next.js 15 app (single frontend target, PWA)
-edge/           Cloudflare Worker — flag-based traffic split
+edge/           Cloudflare Worker — API/web origin router
 docs/           ADRs, tickets, security matrix, event rules
 scripts/        Smoke tests, importers, ops utilities
 ```

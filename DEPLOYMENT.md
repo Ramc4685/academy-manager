@@ -37,14 +37,15 @@ EMAIL_DELIVERY_ENABLED=false
 Frontend build:
 
 ```bash
-REACT_APP_BACKEND_URL=https://api.academy.example.com
-REACT_APP_FIREBASE_API_KEY=<firebase web api key>
-REACT_APP_FIREBASE_AUTH_DOMAIN=academy-courtmastr.firebaseapp.com
-REACT_APP_FIREBASE_PROJECT_ID=academy-courtmastr
-REACT_APP_FIREBASE_STORAGE_BUCKET=academy-courtmastr.firebasestorage.app
-REACT_APP_FIREBASE_MESSAGING_SENDER_ID=953230788846
-REACT_APP_FIREBASE_APP_ID=1:953230788846:web:1f2819c11418ecf5860bff
-REACT_APP_FIREBASE_MEASUREMENT_ID=G-Z6GS6WRZY8
+BFF_API_ORIGIN=https://api.academy.example.com
+NEXT_PUBLIC_API_BASE=/api/v2
+NEXT_PUBLIC_FIREBASE_API_KEY=<firebase web api key>
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=academy-courtmastr.firebaseapp.com
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=academy-courtmastr
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=academy-courtmastr.firebasestorage.app
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=953230788846
+NEXT_PUBLIC_FIREBASE_APP_ID=1:953230788846:web:1f2819c11418ecf5860bff
+NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=G-Z6GS6WRZY8
 ```
 
 Use exact origins for `FRONTEND_URL` and `CORS_ORIGINS`. Firebase Auth must also
@@ -101,20 +102,14 @@ With `FIREBASE_AUTH_ENABLED=true`:
    (admin `/users/{id}/reset-password`) before they can sign in. There is no
    automatic password recovery for Firebase-linked users in legacy mode.
 
-## Local Container Smoke Test
+## Local Smoke Test
 
 ```bash
 docker compose up --build
 curl http://127.0.0.1:8001/api/health
-open http://localhost:3000
-```
-
-For a staging or production image, pass the public API URL into the frontend build:
-
-```bash
-docker build \
-  --build-arg REACT_APP_BACKEND_URL=https://api.academy.example.com \
-  -t academy-manager-frontend ./frontend
+cd frontend-next
+BFF_API_ORIGIN=http://127.0.0.1:8001 pnpm dev
+open http://localhost:3001
 ```
 
 ## Fly.io Backend
@@ -150,27 +145,34 @@ flyctl logs -a courtmastr-academy-api
 
 Keep `EMAIL_DELIVERY_ENABLED=false` until final production email verification is complete.
 
-## Cloudflare Pages Frontend
+## Next Frontend
+
+The only production frontend deployable is `frontend-next/`.
 
 Build command:
 
 ```bash
-yarn build
+cd frontend-next
+pnpm build
 ```
 
-Build output directory:
+Deploy command:
 
 ```bash
-frontend/build
+cd frontend-next
+pnpm deploy:cloudflare
 ```
 
 Production frontend environment:
 
 ```bash
-REACT_APP_BACKEND_URL=https://api.academy.courtmastr.com
+BFF_API_ORIGIN=https://api.academy.courtmastr.com
+NEXT_PUBLIC_API_BASE=/api/v2
 ```
 
-The frontend includes `frontend/public/_redirects` so direct navigation to React routes works on Cloudflare Pages.
+`academy.courtmastr.com` is routed to the Next frontend by the Cloudflare edge
+worker. The old CRA app under `frontend/` is deprecated and is not deployed by
+GitHub Actions.
 
 ## Payments
 
