@@ -57,7 +57,7 @@ intended for self-hosting.
 │  Browsers / PWA   ──►  Cloudflare Edge (Worker + Pages)            │
 │                              │                                     │
 │                              ▼                                     │
-│  Frontend (legacy CRA + Next.js v2) on Cloudflare Pages            │
+│  Frontend (Next.js v2 target, legacy CRA fallback during cutover)  │
 │                              │                                     │
 │                              ▼                                     │
 │  Backend API (FastAPI, Python 3.12) on Fly.io — region `ord`       │
@@ -72,8 +72,8 @@ intended for self-hosting.
 | Layer | Technology | Where it runs |
 |---|---|---|
 | Edge routing | Cloudflare Worker (`academy-edge-router`) | Cloudflare global edge |
-| Web — current | React 18 (CRA) | Cloudflare Pages project `courtmastr-academy` |
-| Web — v2 | Next.js 15 / React 19 (App Router, PWA) | Cloudflare Pages project `academy-next` |
+| Web — target | Next.js 15 / React 19 (App Router, PWA) | Cloudflare Pages project `academy-next` |
+| Web — fallback | React 18 (CRA) | Cloudflare Pages project `courtmastr-academy` |
 | API | FastAPI + Uvicorn (Python 3.12) | Fly.io app `courtmastr-academy-api` (region `ord`) |
 | Database | MongoDB (Atlas) | Managed |
 | Auth / identity | Firebase Authentication | Project `academy-courtmastr` |
@@ -81,20 +81,22 @@ intended for self-hosting.
 | Transactional email | Resend | Verified `courtmastr.com` sender domain |
 | Scheduler timezone | `America/Chicago` | Set on backend |
 
-The edge worker performs per-route flag-based traffic splitting between the
-legacy frontend and the v2 frontend. Flags (`FLAG_COACH_TODAY`,
-`FLAG_PARENT_ALL`, `FLAG_ADMIN_ALL`, etc.) are flipped per environment via
-Wrangler secrets and let us canary individual surfaces.
+The edge worker is the cutover switch between the legacy fallback and the
+Next.js v2 frontend. Flags (`FLAG_COACH_TODAY`, `FLAG_PARENT_ALL`,
+`FLAG_ADMIN_ALL`, etc.) are flipped per environment via Wrangler secrets and
+let us canary individual surfaces while converging on `frontend-next/` as the
+single frontend.
 
 ### Deployment pipeline
 
 `.github/workflows/deploy.yml` ships production from `main`:
 
-1. **Validate** — backend compile + safe pytest, frontend build + tests,
+1. **Validate** — backend compile + safe pytest, frontend builds + tests,
    bundle config verification.
 2. **Production approval** — manual gate (GitHub `production` environment).
 3. **Backend deploy** — `flyctl deploy --remote-only --app courtmastr-academy-api`.
-4. **Frontend deploy** — `wrangler pages deploy build --project-name courtmastr-academy`.
+4. **Frontend deploy** — publish `frontend-next/` to `academy-next`; legacy CRA
+   remains fallback until the domain cutover is complete.
 5. **Smoke** — `scripts/smoke/production_smoke.sh` against the live URLs.
 
 Separate workflows (`v2-backend.yml`, `v2-frontend.yml`, `v2-edge.yml`) gate
@@ -139,8 +141,9 @@ from your existing spreadsheets and CRM.
 - **Security disclosure:** ramchand4685@gmail.com (subject line:
   `SECURITY DISCLOSURE`)
 
-Self-serve sign-up is not currently open; new tenants are onboarded by the
-CourtMastr team.
+Parent self-registration is open through Firebase Auth and the v2 parent
+onboarding flow. New academy tenants are still onboarded by the CourtMastr
+team.
 
 ---
 
@@ -162,8 +165,8 @@ It is **not** an open-source project.
 ```
 backend/        FastAPI service, deployed to Fly.io
 backend/v2/     Clean-architecture backend (in-process during Phase 0)
-frontend/       Legacy CRA app, current production web
-frontend-next/  Next.js 15 app (v2 surface, PWA)
+frontend/       Legacy CRA fallback during the v2 domain cutover
+frontend-next/  Next.js 15 app (single frontend target, PWA)
 edge/           Cloudflare Worker — flag-based traffic split
 docs/           ADRs, tickets, security matrix, event rules
 scripts/        Smoke tests, importers, ops utilities
