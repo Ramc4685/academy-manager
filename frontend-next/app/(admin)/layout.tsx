@@ -11,8 +11,17 @@ import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
 const NAV_ITEMS = [
   { href: "/admin", label: "Dashboard", match: (p: string) => p === "/admin" },
   { href: "/admin/sessions", label: "Sessions", match: (p: string) => p.startsWith("/admin/sessions") },
-  { href: "/admin/billing", label: "Billing", match: (p: string) => p.startsWith("/admin/billing") },
+  { href: "/admin/students", label: "Students", match: (p: string) => p.startsWith("/admin/students") },
+  { href: "/admin/waitlist", label: "Waitlist", match: (p: string) => p.startsWith("/admin/waitlist") },
+  { href: "/admin/pause-requests", label: "Pause requests", match: (p: string) => p.startsWith("/admin/pause-requests") },
+  { href: "/admin/users", label: "Coaches & Parents", match: (p: string) => p.startsWith("/admin/users") },
+  { href: "/admin/billing", label: "Billing", match: (p: string) => p.startsWith("/admin/billing") || p.startsWith("/admin/payments") },
   { href: "/admin/finance", label: "Finance", match: (p: string) => p.startsWith("/admin/finance") },
+  { href: "/admin/dues", label: "Dues followup", match: (p: string) => p.startsWith("/admin/dues") },
+  { href: "/admin/coach-payslip", label: "Coach payslip", match: (p: string) => p.startsWith("/admin/coach-payslip") },
+  { href: "/admin/reports", label: "Reports", match: (p: string) => p.startsWith("/admin/reports") },
+  { href: "/admin/audit-logs", label: "Audit logs", match: (p: string) => p.startsWith("/admin/audit-logs") },
+  { href: "/admin/settings", label: "Settings", match: (p: string) => p.startsWith("/admin/settings") },
   { href: "/admin/comms", label: "Comms", match: (p: string) => p.startsWith("/admin/comms") },
 ] as const;
 
@@ -46,7 +55,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       {/* ------------------------------------------------------------------ */}
       <aside className="hidden lg:flex lg:flex-col lg:w-56 lg:shrink-0 lg:border-r lg:border-neutral-200 lg:dark:border-neutral-800 lg:bg-white lg:dark:bg-neutral-950">
         <div className="px-5 py-5 border-b border-neutral-200 dark:border-neutral-800">
-          <span className="font-semibold text-lg">Academy Admin</span>
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-yellow-400 font-display text-lg font-bold text-slate-900">
+              B
+            </div>
+            <div className="leading-tight">
+              <div className="font-display font-bold text-slate-950 dark:text-white">Badminton</div>
+              <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Admin</div>
+            </div>
+          </div>
         </div>
         <nav className="flex-1 overflow-y-auto py-4 px-2" aria-label="Admin navigation">
           <ul className="space-y-1">

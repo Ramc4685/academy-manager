@@ -59,6 +59,10 @@ export interface CreateEnrollmentRequest {
   full_name: string;
 }
 
+export interface TransferEnrollmentRequest {
+  target_session_id: string;
+}
+
 export type WaitlistStatus = "waiting" | "skipped" | "promoted" | "removed";
 
 export interface AdminWaitlistEntry {
@@ -80,17 +84,31 @@ export interface PromoteWaitlistResponse {
   promoted_waitlist_id: string;
 }
 
-export type PaymentStatus = "succeeded" | "pending" | "refunded" | "partially_refunded" | "failed";
+export type PaymentStatus =
+  | "succeeded"
+  | "pending"
+  | "refunded"
+  | "partially_refunded"
+  | "failed"
+  | "expired";
 
 export interface AdminPaymentView {
   payment_id: string;
   parent_id: string;
   student_id: string | null;
+  student_name: string | null;
+  enrollment_id: string | null;
   session_id: string | null;
+  period: string | null;
   amount_cents: number;
+  discount_cents: number;
+  final_amount_cents: number | null;
   currency: string;
   status: PaymentStatus;
   refunded_cents: number;
+  invoice_number: string | null;
+  payment_method: string | null;
+  stripe_linked: boolean;
   created_at: string;
 }
 
@@ -109,6 +127,27 @@ export interface RefundResponse {
   stripe_refund_id: string;
   refunded_cents: number;
   total_refunded_cents: number;
+}
+
+export interface GenerateMonthlyPaymentsRequest {
+  period: string;
+}
+
+export interface GenerateMonthlyPaymentsResponse {
+  created: number;
+  skipped_existing: number;
+  skipped_no_charge: number;
+  skipped_autopay: number;
+  skipped_paused: number;
+}
+
+export interface MarkPaymentPaidRequest {
+  payment_method: string;
+  notes?: string;
+}
+
+export interface ApplyPaymentDiscountRequest {
+  discount_cents: number;
 }
 
 export interface AdminPayoutView {
@@ -169,6 +208,93 @@ export interface DmRequest {
   body: string;
 }
 
+export type AdminUserRole = "admin" | "coach" | "parent";
+
+export interface AdminUserView {
+  user_id: string;
+  email: string;
+  display_name: string;
+  role: AdminUserRole;
+  status: string;
+}
+
+export interface AdminUserList {
+  users: AdminUserView[];
+}
+
+export interface AdminStudentView {
+  student_id: string;
+  full_name: string;
+  parent_id: string;
+  status: string;
+  active_session_count: number;
+  last_seen_at: string | null;
+}
+
+export interface AdminStudentList {
+  students: AdminStudentView[];
+}
+
+export interface AdminPauseRequestView {
+  pause_request_id: string;
+  parent_id: string;
+  enrollment_id: string;
+  period: string;
+  reason: string | null;
+  status: "pending" | "approved" | "declined";
+  requested_at: string;
+  decided_at: string | null;
+  decided_by: string | null;
+}
+
+export interface AdminPauseRequestList {
+  requests: AdminPauseRequestView[];
+}
+
+export interface AdminAuditLogView {
+  audit_id: string;
+  actor_id: string | null;
+  action: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  created_at: string;
+}
+
+export interface AdminAuditLogList {
+  logs: AdminAuditLogView[];
+}
+
+export interface DuesFollowupParentView {
+  parent_id: string;
+  parent_name: string | null;
+  email: string | null;
+  pending_count: number;
+  total_due_cents: number;
+}
+
+export interface DuesFollowupResponse {
+  parents: DuesFollowupParentView[];
+}
+
+export interface SendDuesRemindersResponse {
+  sent: number;
+  blocked: boolean;
+  reason: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Directory
+// ---------------------------------------------------------------------------
+
+export function listAdminUsers(role?: AdminUserRole): Promise<AdminUserList> {
+  const q = role ? `?role=${encodeURIComponent(role)}` : "";
+  return apiFetch<AdminUserList>(`/admin/users${q}`, { method: "GET" });
+}
+
+export function listAdminStudents(): Promise<AdminStudentList> {
+  return apiFetch<AdminStudentList>("/admin/students", { method: "GET" });
+}
+
 // ---------------------------------------------------------------------------
 // Sessions
 // ---------------------------------------------------------------------------
@@ -208,6 +334,16 @@ export function createEnrollment(payload: CreateEnrollmentRequest): Promise<Admi
 
 export function deleteEnrollment(enrollmentId: string): Promise<void> {
   return apiFetch<void>(`/admin/enrollments/${enrollmentId}`, { method: "DELETE" });
+}
+
+export function transferEnrollment(
+  enrollmentId: string,
+  payload: TransferEnrollmentRequest
+): Promise<AdminEnrollmentView> {
+  return apiFetch<AdminEnrollmentView>(`/admin/enrollments/${enrollmentId}/transfer`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function pauseEnrollment(enrollmentId: string): Promise<void> {
@@ -255,6 +391,36 @@ export function refundPayment(payload: RefundRequest): Promise<RefundResponse> {
   });
 }
 
+export function generateMonthlyPayments(
+  payload: GenerateMonthlyPaymentsRequest
+): Promise<GenerateMonthlyPaymentsResponse> {
+  return apiFetch<GenerateMonthlyPaymentsResponse>("/admin/payments/generate-monthly", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function markPaymentPaid(paymentId: string, payload: MarkPaymentPaidRequest): Promise<void> {
+  return apiFetch<void>(`/admin/payments/${paymentId}/mark-paid`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function applyPaymentDiscount(
+  paymentId: string,
+  payload: ApplyPaymentDiscountRequest
+): Promise<void> {
+  return apiFetch<void>(`/admin/payments/${paymentId}/discount`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function undoPaymentPaid(paymentId: string): Promise<void> {
+  return apiFetch<void>(`/admin/payments/${paymentId}/undo-paid`, { method: "POST" });
+}
+
 // ---------------------------------------------------------------------------
 // Finance
 // ---------------------------------------------------------------------------
@@ -297,5 +463,43 @@ export function sendDm(payload: DmRequest): Promise<AdminMessageView> {
   return apiFetch<AdminMessageView>("/admin/messages/dm", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Pause requests / audit / dues / reports
+// ---------------------------------------------------------------------------
+
+export function listAdminPauseRequests(): Promise<AdminPauseRequestList> {
+  return apiFetch<AdminPauseRequestList>("/admin/pause-requests", { method: "GET" });
+}
+
+export function approvePauseRequest(pauseRequestId: string): Promise<AdminPauseRequestView> {
+  return apiFetch<AdminPauseRequestView>(`/admin/pause-requests/${pauseRequestId}/approve`, {
+    method: "POST",
+  });
+}
+
+export function declinePauseRequest(pauseRequestId: string): Promise<AdminPauseRequestView> {
+  return apiFetch<AdminPauseRequestView>(`/admin/pause-requests/${pauseRequestId}/decline`, {
+    method: "POST",
+  });
+}
+
+export function listAuditLogs(): Promise<AdminAuditLogList> {
+  return apiFetch<AdminAuditLogList>("/admin/audit-logs", { method: "GET" });
+}
+
+export function listDuesFollowup(): Promise<DuesFollowupResponse> {
+  return apiFetch<DuesFollowupResponse>("/admin/dues-followup", { method: "GET" });
+}
+
+export function sendDuesReminders(): Promise<SendDuesRemindersResponse> {
+  return apiFetch<SendDuesRemindersResponse>("/admin/dues-reminders", { method: "POST" });
+}
+
+export function exportAdminReportCsv(reportName: string): Promise<string> {
+  return apiFetch<string>(`/admin/reports/${encodeURIComponent(reportName)}.csv`, {
+    method: "GET",
   });
 }

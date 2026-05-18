@@ -42,6 +42,69 @@ export interface ParentPayment {
   session_id: string | null;
 }
 
+export interface ParentAvailableSession {
+  session_id: string;
+  title: string;
+  location: string;
+  start_at: string;
+  end_at: string;
+  capacity: number;
+  enrolled_count: number;
+  available_seats: number;
+  amount_cents: number;
+}
+
+export interface ParentChild {
+  student_id: string;
+  full_name: string;
+  status: string;
+  active_session_count: number;
+  attended_count: number;
+  absent_count: number;
+}
+
+export interface ParentEnrollment {
+  enrollment_id: string;
+  student_id: string;
+  student_name: string;
+  session_id: string;
+  session_title: string;
+  status: string;
+  payment_mode: string | null;
+  subscription_status: string | null;
+}
+
+export interface ParentAttendanceRecord {
+  attendance_id: string;
+  student_id: string;
+  student_name: string;
+  session_id: string;
+  session_title: string;
+  status: string;
+  marked_at: string;
+}
+
+export interface ParentProgressNote {
+  note_id: string;
+  student_id: string;
+  student_name: string;
+  coach_id: string | null;
+  body: string;
+  created_at: string;
+}
+
+export interface ParentPauseRequest {
+  pause_request_id: string;
+  parent_id: string;
+  enrollment_id: string;
+  period: string;
+  reason: string | null;
+  status: "pending" | "approved" | "declined";
+  requested_at: string;
+  decided_at: string | null;
+  decided_by: string | null;
+}
+
 export function startOnboarding(): Promise<OnboardingApplication> {
   return apiFetch("/parent/onboarding/start", { method: "POST", body: "{}" });
 }
@@ -67,7 +130,6 @@ export function getOnboardingStatus(application_id: string): Promise<OnboardingA
 
 export function startCheckout(payload: {
   application_id: string;
-  amount_cents: number;
   success_url: string;
   cancel_url: string;
 }): Promise<{ payment_id: string; redirect_url: string }> {
@@ -77,6 +139,70 @@ export function startCheckout(payload: {
   });
 }
 
+export function startAutopay(payload: {
+  enrollment_id: string;
+  success_url: string;
+  cancel_url: string;
+}): Promise<{ subscription_id: string; redirect_url: string }> {
+  return apiFetch("/parent/autopay/start", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function openBillingPortal(payload: {
+  return_url: string;
+}): Promise<{ redirect_url: string }> {
+  return apiFetch("/parent/billing/portal", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getCheckoutStatus(checkoutSessionId: string): Promise<{
+  checkout_session_id: string;
+  payment_id: string | null;
+  status: string;
+  parent_id: string;
+}> {
+  return apiFetch(`/parent/checkout/status/${checkoutSessionId}`, { method: "GET" });
+}
+
+export function listAvailableParentSessions(): Promise<{ sessions: ParentAvailableSession[] }> {
+  return apiFetch("/parent/sessions/available", { method: "GET" });
+}
+
 export function listParentPayments(): Promise<{ payments: ParentPayment[] }> {
   return apiFetch("/parent/payments", { method: "GET" });
+}
+
+export function listParentChildren(): Promise<{ children: ParentChild[] }> {
+  return apiFetch("/parent/children", { method: "GET" });
+}
+
+export function listParentEnrollments(): Promise<{ enrollments: ParentEnrollment[] }> {
+  return apiFetch("/parent/enrollments", { method: "GET" });
+}
+
+export function listParentAttendance(): Promise<{ records: ParentAttendanceRecord[] }> {
+  return apiFetch("/parent/attendance", { method: "GET" });
+}
+
+export function listParentProgress(): Promise<{ notes: ParentProgressNote[] }> {
+  return apiFetch("/parent/progress", { method: "GET" });
+}
+
+export function listParentPauseRequests(): Promise<{ requests: ParentPauseRequest[] }> {
+  return apiFetch("/parent/pause-requests", { method: "GET" });
+}
+
+export function createParentPauseRequest(payload: {
+  enrollment_id: string;
+  period: string;
+  reason?: string;
+}): Promise<ParentPauseRequest> {
+  return apiFetch("/parent/pause-requests", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }

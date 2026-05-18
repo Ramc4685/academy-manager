@@ -33,3 +33,8 @@ class RefundFailed(DomainError):
 class CheckoutCreationFailed(DomainError):
     code = "Billing.CheckoutCreationFailed"
     status_code = 502
+
+
+class PaymentOperationNotAllowed(DomainError):
+    code = "Billing.PaymentOperationNotAllowed"
+    status_code = 400

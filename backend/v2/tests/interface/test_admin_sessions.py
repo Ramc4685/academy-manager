@@ -7,6 +7,7 @@ Routes covered:
 - GET    /api/v2/admin/sessions/{id}/enrollments
 - POST   /api/v2/admin/enrollments
 - DELETE /api/v2/admin/enrollments/{id}
+- POST   /api/v2/admin/enrollments/{id}/transfer
 - POST   /api/v2/admin/enrollments/{id}/pause
 - POST   /api/v2/admin/enrollments/{id}/resume
 """
@@ -124,6 +125,49 @@ def test_pause_and_resume_enrollment(admin_client):
     res = admin_client.post(f"/api/v2/admin/enrollments/{enrollment_id}/resume")
     assert res.status_code == 204
     assert admin_client.seed["enrollments"].rows[enrollment_id].status == "active"
+
+
+def test_transfer_enrollment_reserves_target_and_releases_source(admin_client):
+    create_target = admin_client.post(
+        "/api/v2/admin/sessions",
+        json={
+            "coach_id": "coach-2",
+            "title": "Adult B",
+            "location": "Court 2",
+            "start_at": "2026-05-17T09:00:00Z",
+            "end_at": "2026-05-17T10:30:00Z",
+            "capacity": 6,
+        },
+    )
+    target_session_id = create_target.json()["session_id"]
+    add = admin_client.post(
+        "/api/v2/admin/enrollments",
+        json={
+            "session_id": "sess-1",
+            "student_id": "st-1",
+            "parent_id": "p-1",
+            "full_name": "Alice",
+        },
+    )
+    enrollment_id = add.json()["enrollment_id"]
+
+    r = admin_client.post(
+        f"/api/v2/admin/enrollments/{enrollment_id}/transfer",
+        json={"target_session_id": target_session_id},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["session_id"] == target_session_id
+    assert admin_client.seed["enrollments"].rows[enrollment_id].session_id == target_session_id
+    assert admin_client.seed["enrollments"].move_history == [
+        {
+            "enrollment_id": enrollment_id,
+            "from_session_id": "sess-1",
+            "to_session_id": target_session_id,
+        }
+    ]
+    assert admin_client.seed["sessions"].reserved[target_session_id] == 1
+    assert admin_client.seed["sessions"].reserved["sess-1"] == 0
 
 
 def test_cancel_enrollment_emits_event(admin_client):

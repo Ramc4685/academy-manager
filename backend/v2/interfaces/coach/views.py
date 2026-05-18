@@ -32,6 +32,14 @@ class CoachTodayResponse(BaseModel):
     sessions: list[CoachSession]
 
 
+class CoachDashboardResponse(BaseModel):
+    active_student_count: int
+    sessions_today: int
+    attendance_percentage: float
+    expected_cut_cents: int
+    marked_attendance_count: int
+
+
 class MarkAttendanceRequest(BaseModel):
     mutation_id: str
     session_id: str
@@ -47,3 +55,39 @@ class MarkAttendanceResponse(BaseModel):
     student_id: str
     status: Literal["present", "absent", "late"]
     marked_at: datetime
+
+
+class LessonPlanView(BaseModel):
+    lesson_plan_id: str
+    session_id: str
+    coach_id: str
+    title: str
+    body: str
+    created_at: datetime
+
+
+class LessonPlanList(BaseModel):
+    plans: list[LessonPlanView]
+
+
+class CreateLessonPlanRequest(BaseModel):
+    title: str
+    body: str
+
+
+class ProgressNoteView(BaseModel):
+    note_id: str
+    session_id: str
+    student_id: str
+    coach_id: str
+    body: str
+    created_at: datetime
+
+
+class ProgressNoteList(BaseModel):
+    notes: list[ProgressNoteView]
+
+
+class CreateProgressNoteRequest(BaseModel):
+    student_id: str
+    body: str

@@ -15,8 +15,10 @@ import * as Dialog from "@radix-ui/react-dialog";
 
 import {
   listAdminSessions,
+  listAdminUsers,
   createAdminSession,
   deleteAdminSession,
+  type AdminUserView,
   type AdminSessionView,
   type CreateSessionRequest,
 } from "@/lib/api/admin";
@@ -261,6 +263,12 @@ function CreateSessionDialog({
 }) {
   const [form, setForm] = useState<CreateSessionRequest>(EMPTY_FORM);
   const [error, setError] = useState<string | null>(null);
+  const coachesQuery = useQuery({
+    queryKey: queryKeys.admin.users("coach"),
+    queryFn: () => listAdminUsers("coach"),
+    enabled: open,
+  });
+  const coaches = coachesQuery.data?.users ?? [];
 
   const mutation = useMutation({
     mutationFn: (payload: CreateSessionRequest) => createAdminSession(payload),
@@ -300,15 +308,23 @@ function CreateSessionDialog({
           )}
 
           <form onSubmit={handleSubmit} className="space-y-3">
-            <Field label="Coach ID" required>
-              <input
-                type="text"
-                required
-                value={form.coach_id}
-                onChange={(e) => setForm((f) => ({ ...f, coach_id: e.target.value }))}
-                className={inputClass}
-                placeholder="uid-…"
-              />
+            <Field label="Coach" required>
+              {coaches.length > 0 ? (
+                <CoachSelect
+                  coaches={coaches}
+                  value={form.coach_id}
+                  onChange={(coachId) => setForm((f) => ({ ...f, coach_id: coachId }))}
+                />
+              ) : (
+                <input
+                  type="text"
+                  required
+                  value={form.coach_id}
+                  onChange={(e) => setForm((f) => ({ ...f, coach_id: e.target.value }))}
+                  className={inputClass}
+                  placeholder={coachesQuery.isLoading ? "Loading coaches…" : "Coach Mongo ID"}
+                />
+              )}
             </Field>
             <Field label="Title" required>
               <input
@@ -382,6 +398,32 @@ function CreateSessionDialog({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+function CoachSelect({
+  coaches,
+  value,
+  onChange,
+}: {
+  coaches: AdminUserView[];
+  value: string;
+  onChange: (coachId: string) => void;
+}) {
+  return (
+    <select
+      required
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={inputClass}
+    >
+      <option value="">Select coach</option>
+      {coaches.map((coach) => (
+        <option key={coach.user_id} value={coach.user_id}>
+          {coach.display_name} ({coach.email})
+        </option>
+      ))}
+    </select>
   );
 }
 

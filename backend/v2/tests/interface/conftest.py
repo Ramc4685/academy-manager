@@ -15,6 +15,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.v2.contexts.coaching.application.use_cases.mark_attendance import MarkAttendance
+from backend.v2.contexts.coaching.application.use_cases.session_notes import (
+    CreateLessonPlan,
+    CreateProgressNote,
+    ListLessonPlans,
+    ListProgressNotes,
+)
 from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
     GetSessionRoster,
 )
@@ -83,6 +89,24 @@ class FakeAttendanceRepo:
             if a.session_id == session_id and a.student_id == student_id:
                 return a
         return None
+
+
+class FakeCoachingNotesRepo:
+    def __init__(self) -> None:
+        self.plans: list = []
+        self.notes: list = []
+
+    async def add_lesson_plan(self, plan):
+        self.plans.append(plan)
+
+    async def list_lesson_plans(self, session_id, coach_id):
+        return [p for p in self.plans if p.session_id == session_id and p.coach_id == coach_id]
+
+    async def add_progress_note(self, note):
+        self.notes.append(note)
+
+    async def list_progress_notes(self, session_id, coach_id):
+        return [n for n in self.notes if n.session_id == session_id and n.coach_id == coach_id]
 
     async def find_by_attendance_id(self, attendance_id):
         for a in self.saved:
@@ -221,9 +245,11 @@ def _build_use_cases(seed_data) -> CoachUseCases:
 
     # Adapters wiring coach lookups to enrollment queries.
     class _SL:
-        async def is_coach_assigned(self, coach_id, sid, on_date):
+        async def is_coach_assigned(self, coach_id, sid, on_date=None):
             s = await sessions.get(sid)
-            return s is not None and s.coach_id == coach_id and s.start_at.date() == on_date
+            if s is None or s.coach_id != coach_id:
+                return False
+            return on_date is None or s.start_at.date() == on_date
 
         async def is_cancelled(self, sid):
             s = await sessions.get(sid)
@@ -237,18 +263,38 @@ def _build_use_cases(seed_data) -> CoachUseCases:
         async def is_active(self, sid, student_id):
             return await enrollments.is_active(sid, student_id)
 
+    async def _dashboard(_coach_id):
+        return {
+            "active_student_count": 2,
+            "sessions_today": 2,
+            "attendance_percentage": 0.0,
+            "expected_cut_cents": 0,
+            "marked_attendance_count": 0,
+        }
+
+    notes = FakeCoachingNotesRepo()
+    session_lookup = _SL()
     return CoachUseCases(
         list_today=ListCoachSessionsForDate(sessions=sessions),
         get_roster=GetSessionRoster(enrollments=enrollments, students=students),
         mark_attendance=MarkAttendance(
             attendance_repo=FakeAttendanceRepo(),
-            session_lookup=_SL(),
+            session_lookup=session_lookup,
             enrollment_lookup=_EL(),
             outbox=FakeOutbox(),
             idempotency_store=FakeIdempotencyStore(),
             academy_id="test-academy",
             clock=_now,
         ),
+        get_dashboard_metrics=_dashboard,
+        create_lesson_plan=CreateLessonPlan(notes=notes, sessions=session_lookup),
+        list_lesson_plans=ListLessonPlans(notes=notes, sessions=session_lookup),
+        create_progress_note=CreateProgressNote(
+            notes=notes,
+            sessions=session_lookup,
+            enrollments=enrollments,
+        ),
+        list_progress_notes=ListProgressNotes(notes=notes, sessions=session_lookup),
     )
 
 
@@ -325,7 +371,18 @@ from backend.v2.contexts.billing.application.use_cases.finance import (
     Payout,
     RecordExpense,
 )
+from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
+    ApplyPaymentDiscount,
+    GenerateMonthlyPayments,
+    GenerateMonthlyPaymentsResult,
+    MarkPaymentPaid,
+    UndoPaymentPaid,
+)
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
+from backend.v2.contexts.billing.domain.errors import (
+    PaymentNotFound,
+    PaymentOperationNotAllowed,
+)
 from backend.v2.contexts.billing.domain.models import Payment
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
@@ -340,12 +397,25 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     RemoveFromWaitlist,
     ResumeEnrollment,
     SkipFromWaitlist,
+    TransferEnrollment,
+)
+from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
+    ApprovePauseRequest,
+    DeclinePauseRequest,
+    ListAdminPauseRequests,
+    PauseRequest,
 )
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
 from backend.v2.contexts.enrollment.domain.models import Session
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
+from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    AdminStudentSummary,
+)
+from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+    AdminUserSummary,
+)
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
@@ -414,6 +484,7 @@ class FakeSessionWriter:
 @dataclass
 class FakeEnrollmentWriter:
     rows: dict[str, Any] = field(default_factory=dict)
+    move_history: list[dict[str, str]] = field(default_factory=list)
 
     async def create(self, enrollment):
         self.rows[enrollment.enrollment_id] = enrollment
@@ -422,6 +493,18 @@ class FakeEnrollmentWriter:
         e = self.rows.get(enrollment_id)
         if e is not None:
             self.rows[enrollment_id] = e.model_copy(update={"status": status})
+
+    async def update_session(self, enrollment_id, session_id):
+        e = self.rows.get(enrollment_id)
+        if e is not None:
+            self.move_history.append(
+                {
+                    "enrollment_id": enrollment_id,
+                    "from_session_id": e.session_id,
+                    "to_session_id": session_id,
+                }
+            )
+            self.rows[enrollment_id] = e.model_copy(update={"session_id": session_id})
 
     async def get(self, enrollment_id):
         return self.rows.get(enrollment_id)
@@ -470,8 +553,44 @@ class FakeWaitlistRepo:
 
 
 @dataclass
+class FakePauseRequestRepo:
+    rows: dict[str, PauseRequest] = field(default_factory=dict)
+
+    async def add(self, request):
+        self.rows[request.pause_request_id] = request
+
+    async def get(self, pause_request_id):
+        return self.rows.get(pause_request_id)
+
+    async def list_for_parent(self, parent_id):
+        return [r for r in self.rows.values() if r.parent_id == parent_id]
+
+    async def list_pending(self):
+        return [r for r in self.rows.values() if r.status == "pending"]
+
+    async def approve(self, pause_request_id, *, admin_id):
+        row = self.rows[pause_request_id].model_copy(
+            update={"status": "approved", "decided_by": admin_id}
+        )
+        self.rows[pause_request_id] = row
+        return row
+
+    async def decline(self, pause_request_id, *, admin_id):
+        row = self.rows[pause_request_id].model_copy(
+            update={"status": "declined", "decided_by": admin_id}
+        )
+        self.rows[pause_request_id] = row
+        return row
+
+    async def enrollment_belongs_to_parent(self, _enrollment_id, _parent_id):
+        return True
+
+
+@dataclass
 class FakePaymentRepo:
     rows: dict[str, Payment] = field(default_factory=dict)
+    discounts: dict[str, int] = field(default_factory=dict)
+    generated_periods: list[str] = field(default_factory=list)
 
     async def save(self, p):
         self.rows[p.payment_id] = p
@@ -487,6 +606,38 @@ class FakePaymentRepo:
 
     async def list_for_parent(self, parent_id):
         return [p for p in self.rows.values() if p.parent_id == parent_id]
+
+    async def generate_monthly_payments(self, period):
+        self.generated_periods.append(period)
+        return GenerateMonthlyPaymentsResult(created=1, skipped_existing=0)
+
+    async def mark_payment_paid(self, payment_id, *, payment_method, notes):
+        p = self.rows.get(payment_id)
+        if p is None:
+            raise PaymentNotFound("no such payment", payment_id=payment_id)
+        if p.status not in ("pending", "failed"):
+            raise PaymentOperationNotAllowed("only pending payments can be marked paid")
+        self.rows[payment_id] = p.model_copy(update={"status": "succeeded"})
+
+    async def apply_payment_discount(self, payment_id, discount_cents):
+        p = self.rows.get(payment_id)
+        if p is None:
+            raise PaymentNotFound("no such payment", payment_id=payment_id)
+        if p.status != "pending":
+            raise PaymentOperationNotAllowed("only pending payments can be discounted")
+        if discount_cents > p.amount_cents:
+            raise PaymentOperationNotAllowed("discount cannot exceed payment amount")
+        self.discounts[payment_id] = discount_cents
+
+    async def undo_payment_paid(self, payment_id):
+        p = self.rows.get(payment_id)
+        if p is None:
+            raise PaymentNotFound("no such payment", payment_id=payment_id)
+        if p.stripe_payment_intent_id:
+            raise PaymentOperationNotAllowed("Stripe-linked payments must be refunded")
+        if p.status != "succeeded":
+            raise PaymentOperationNotAllowed("only paid payments can be undone")
+        self.rows[payment_id] = p.model_copy(update={"status": "pending"})
 
 
 @dataclass
@@ -560,6 +711,7 @@ def admin_seed():
         "enrollment_query": _AdminFakeEnrollmentQuery(),
         "students": FakeStudentWriter(),
         "waitlist": FakeWaitlistRepo(),
+        "pause_requests": FakePauseRequestRepo(),
         "payments": FakePaymentRepo(),
         "expenses": FakeExpenseRepo(),
         "payouts": FakePayoutRepo(),
@@ -576,6 +728,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     enrollments_q = seed["enrollment_query"]
     students = seed["students"]
     waitlist = seed["waitlist"]
+    pause_requests = seed["pause_requests"]
     payments = seed["payments"]
     outbox = seed["outbox"]
     idem = seed["idempotency"]
@@ -605,15 +758,23 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         outbox=outbox,
         academy_id="acad",
     )
+    transfer_enrollment = TransferEnrollment(enrollments=enrollments_w, sessions=sessions)
     pause_enrollment = PauseEnrollment(enrollments=enrollments_w)
     resume_enrollment = ResumeEnrollment(enrollments=enrollments_w)
     join_waitlist = JoinWaitlist(waitlist=waitlist, academy_id="acad")
     promote = PromoteFromWaitlist(waitlist=waitlist, outbox=outbox, academy_id="acad")
     skip = SkipFromWaitlist(waitlist=waitlist)
     remove = RemoveFromWaitlist(waitlist=waitlist)
+    list_admin_pause_requests = ListAdminPauseRequests(pause_requests=pause_requests)
+    approve_pause_request = ApprovePauseRequest(pause_requests=pause_requests)
+    decline_pause_request = DeclinePauseRequest(pause_requests=pause_requests)
     issue_refund = IssueRefund(
         payment_repo=payments, stripe=stripe, outbox=outbox, idempotency_store=idem
     )
+    generate_monthly_payments = GenerateMonthlyPayments(payments=payments)
+    mark_payment_paid = MarkPaymentPaid(payments=payments)
+    apply_payment_discount = ApplyPaymentDiscount(payments=payments)
+    undo_payment_paid = UndoPaymentPaid(payments=payments)
     record_expense = RecordExpense(expenses=expenses, academy_id="acad")  # type: ignore[arg-type]
     revenue_query = AcademyRevenueQuery(payments=payments)
 
@@ -649,19 +810,81 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     async def list_payments_recent():
         return list(payments.rows.values())
 
+    async def list_audit_logs():
+        return []
+
+    async def list_dues_followup():
+        return []
+
+    async def send_dues_reminders():
+        return {"sent": 0, "blocked": True, "reason": "test safety block"}
+
+    async def export_report_csv(report_name):
+        return f"name\n{report_name}\n"
+
+    class _ListAdminUsers:
+        async def execute(self, role=None):
+            users = [
+                AdminUserSummary(
+                    user_id="coach-1",
+                    email="coach@example.com",
+                    display_name="Coach One",
+                    role="coach",
+                    status="active",
+                ),
+                AdminUserSummary(
+                    user_id="p-1",
+                    email="parent@example.com",
+                    display_name="Parent One",
+                    role="parent",
+                    status="active",
+                ),
+                AdminUserSummary(
+                    user_id="adm",
+                    email="admin@example.com",
+                    display_name="Admin One",
+                    role="admin",
+                    status="active",
+                ),
+            ]
+            return [u for u in users if role is None or u.role == role]
+
+    class _ListAdminStudents:
+        async def execute(self):
+            return [
+                AdminStudentSummary(
+                    student_id=s.student_id,
+                    full_name=s.full_name,
+                    parent_id=s.parent_id,
+                    status="active",
+                    active_session_count=1,
+                )
+                for s in students.students.values()
+            ]
+
     return AdminUseCases(
+        list_admin_users=_ListAdminUsers(),  # type: ignore[arg-type]
+        list_admin_students=_ListAdminStudents(),  # type: ignore[arg-type]
         create_session=create_session,
         cancel_session=cancel_session,
         edit_roster_add=edit_roster_add,
         cancel_enrollment=cancel_enrollment,
+        transfer_enrollment=transfer_enrollment,
         pause_enrollment=pause_enrollment,
         resume_enrollment=resume_enrollment,
         join_waitlist=join_waitlist,
         promote_from_waitlist=promote,
         skip_from_waitlist=skip,
         remove_from_waitlist=remove,
+        list_admin_pause_requests=list_admin_pause_requests,
+        approve_pause_request=approve_pause_request,
+        decline_pause_request=decline_pause_request,
         issue_refund=issue_refund,
         list_payments_recent=list_payments_recent,
+        generate_monthly_payments=generate_monthly_payments,
+        mark_payment_paid=mark_payment_paid,
+        apply_payment_discount=apply_payment_discount,
+        undo_payment_paid=undo_payment_paid,
         record_expense=record_expense,
         expenses=expenses,  # type: ignore[arg-type]
         payouts=payouts,  # type: ignore[arg-type]
@@ -669,6 +892,10 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         list_admin_sessions=list_admin_sessions,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
+        list_audit_logs=list_audit_logs,
+        list_dues_followup=list_dues_followup,
+        send_dues_reminders=send_dues_reminders,
+        export_report_csv=export_report_csv,
         comms=comms,
     )
 

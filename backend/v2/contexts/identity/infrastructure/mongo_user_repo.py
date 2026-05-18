@@ -12,6 +12,9 @@ import re
 from typing import Any
 
 from backend.v2.contexts.identity.domain.models import Role, User
+from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+    AdminUserSummary,
+)
 
 
 class MongoUserRepository:
@@ -57,3 +60,24 @@ class MongoUserRepository:
             {"$or": [{"user_id": user_id}, {"auth_uid": user_id}, {"_id": user_id}]}
         )
         return self._to_domain(doc) if doc else None
+
+    @staticmethod
+    def _role_filter(role: Role) -> dict[str, object]:
+        return {"$or": [{"role": role}, {"roles": role}, {"roles": {"$in": [role]}}]}
+
+    def _to_admin_summary(self, doc: dict[str, object]) -> AdminUserSummary:
+        user = self._to_domain(doc)
+        primary_role = user.roles[0] if user.roles else "parent"
+        status = str(doc.get("status") or ("active" if user.is_active else "inactive"))
+        return AdminUserSummary(
+            user_id=user.user_id,
+            email=user.email,
+            display_name=user.display_name,
+            role=primary_role,
+            status=status,
+        )
+
+    async def list_users(self, role: Role | None = None) -> list[AdminUserSummary]:
+        query = self._role_filter(role) if role else {}
+        cursor = self.collection.find(query).sort([("role", 1), ("display_name", 1), ("email", 1)])
+        return [self._to_admin_summary(doc) async for doc in cursor]

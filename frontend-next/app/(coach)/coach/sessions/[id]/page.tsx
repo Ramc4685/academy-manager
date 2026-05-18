@@ -4,7 +4,17 @@ import { use, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ulid } from "ulid";
 
-import { getCoachToday, markAttendance, type AttendanceStatus, type CoachRosterEntry, type CoachSession } from "@/lib/api/coach";
+import {
+  createLessonPlan,
+  createProgressNote,
+  getCoachToday,
+  listLessonPlans,
+  listProgressNotes,
+  markAttendance,
+  type AttendanceStatus,
+  type CoachRosterEntry,
+  type CoachSession,
+} from "@/lib/api/coach";
 import { queryKeys } from "@/lib/query/keys";
 import { useOnline } from "@/lib/pwa/online";
 import { enqueue } from "@/lib/offline/queue";
@@ -45,6 +55,37 @@ export default function SessionDetailPage({ params }: PageProps) {
   );
 
   const [localMarks, setLocalMarks] = useState<Record<string, OptimisticEntry>>({});
+  const [lessonTitle, setLessonTitle] = useState("");
+  const [lessonBody, setLessonBody] = useState("");
+  const [noteStudentId, setNoteStudentId] = useState("");
+  const [noteBody, setNoteBody] = useState("");
+
+  const lessonPlans = useQuery({
+    queryKey: ["coach", "lesson-plans", id],
+    queryFn: () => listLessonPlans(id),
+    enabled: Boolean(session),
+  });
+  const progressNotes = useQuery({
+    queryKey: ["coach", "progress-notes", id],
+    queryFn: () => listProgressNotes(id),
+    enabled: Boolean(session),
+  });
+
+  const lessonMutation = useMutation({
+    mutationFn: () => createLessonPlan(id, { title: lessonTitle, body: lessonBody }),
+    onSuccess: () => {
+      setLessonTitle("");
+      setLessonBody("");
+      void queryClient.invalidateQueries({ queryKey: ["coach", "lesson-plans", id] });
+    },
+  });
+  const noteMutation = useMutation({
+    mutationFn: () => createProgressNote(id, { student_id: noteStudentId, body: noteBody }),
+    onSuccess: () => {
+      setNoteBody("");
+      void queryClient.invalidateQueries({ queryKey: ["coach", "progress-notes", id] });
+    },
+  });
 
   const mutation = useMutation({
     mutationFn: async (vars: { student_id: string; status: AttendanceStatus }) => {
@@ -154,9 +195,107 @@ export default function SessionDetailPage({ params }: PageProps) {
           />
         ))}
       </ul>
+
+      <div className="mt-8 grid gap-6 lg:grid-cols-2">
+        <section className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
+          <h2 className="text-lg font-semibold">Lesson plan</h2>
+          <form
+            className="mt-3 space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              lessonMutation.mutate();
+            }}
+          >
+            <input
+              value={lessonTitle}
+              onChange={(event) => setLessonTitle(event.target.value)}
+              required
+              className={inputClass}
+              placeholder="Focus for this session"
+            />
+            <textarea
+              value={lessonBody}
+              onChange={(event) => setLessonBody(event.target.value)}
+              required
+              className={inputClass}
+              rows={4}
+              placeholder="Drills, rotations, and coaching notes"
+            />
+            <button
+              type="submit"
+              disabled={lessonMutation.isPending}
+              className="min-h-touch rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+            >
+              {lessonMutation.isPending ? "Saving..." : "Save plan"}
+            </button>
+          </form>
+          <ul className="mt-4 space-y-2">
+            {(lessonPlans.data?.plans ?? []).map((plan) => (
+              <li key={plan.lesson_plan_id} className="rounded-md bg-neutral-50 p-3 text-sm dark:bg-neutral-900">
+                <p className="font-medium">{plan.title}</p>
+                <p className="mt-1 text-neutral-600 dark:text-neutral-300">{plan.body}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
+          <h2 className="text-lg font-semibold">Progress note</h2>
+          <form
+            className="mt-3 space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              noteMutation.mutate();
+            }}
+          >
+            <select
+              value={noteStudentId}
+              onChange={(event) => setNoteStudentId(event.target.value)}
+              required
+              className={inputClass}
+            >
+              <option value="">Select student</option>
+              {session.roster.map((student) => (
+                <option key={student.student_id} value={student.student_id}>
+                  {student.full_name}
+                </option>
+              ))}
+            </select>
+            <textarea
+              value={noteBody}
+              onChange={(event) => setNoteBody(event.target.value)}
+              required
+              className={inputClass}
+              rows={4}
+              placeholder="What changed for this student today"
+            />
+            <button
+              type="submit"
+              disabled={noteMutation.isPending}
+              className="min-h-touch rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+            >
+              {noteMutation.isPending ? "Saving..." : "Save note"}
+            </button>
+          </form>
+          <ul className="mt-4 space-y-2">
+            {(progressNotes.data?.notes ?? []).map((note) => {
+              const student = session.roster.find((row) => row.student_id === note.student_id);
+              return (
+                <li key={note.note_id} className="rounded-md bg-neutral-50 p-3 text-sm dark:bg-neutral-900">
+                  <p className="font-medium">{student?.full_name ?? note.student_id}</p>
+                  <p className="mt-1 text-neutral-600 dark:text-neutral-300">{note.body}</p>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      </div>
     </section>
   );
 }
+
+const inputClass =
+  "w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-900";
 
 function RosterRow({
   student,

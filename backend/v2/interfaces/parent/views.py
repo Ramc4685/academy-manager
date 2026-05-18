@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 # --- Onboarding ---
@@ -55,8 +55,9 @@ class PatchApplicationRequest(BaseModel):
 
 
 class StartCheckoutRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     application_id: str
-    amount_cents: int
     success_url: str
     cancel_url: str
 
@@ -64,6 +65,32 @@ class StartCheckoutRequest(BaseModel):
 class StartCheckoutResponse(BaseModel):
     payment_id: str
     redirect_url: str
+
+
+class StartAutopayRequest(BaseModel):
+    enrollment_id: str
+    success_url: str
+    cancel_url: str
+
+
+class StartAutopayResponse(BaseModel):
+    subscription_id: str
+    redirect_url: str
+
+
+class BillingPortalRequest(BaseModel):
+    return_url: str
+
+
+class BillingPortalResponse(BaseModel):
+    redirect_url: str
+
+
+class CheckoutStatusResponse(BaseModel):
+    checkout_session_id: str
+    payment_id: str | None = None
+    status: str
+    parent_id: str
 
 
 # --- Payments ---
@@ -81,3 +108,102 @@ class ParentPaymentView(BaseModel):
 
 class ParentPaymentHistoryResponse(BaseModel):
     payments: list[ParentPaymentView]
+
+
+# --- Children / attendance / progress ---
+
+
+class ParentChildView(BaseModel):
+    student_id: str
+    full_name: str
+    status: str
+    active_session_count: int
+    attended_count: int
+    absent_count: int
+
+
+class ParentEnrollmentView(BaseModel):
+    enrollment_id: str
+    student_id: str
+    student_name: str
+    session_id: str
+    session_title: str
+    status: str
+    payment_mode: str | None = None
+    subscription_status: str | None = None
+
+
+class ParentEnrollmentsResponse(BaseModel):
+    enrollments: list[ParentEnrollmentView]
+
+
+class PauseRequestView(BaseModel):
+    pause_request_id: str
+    enrollment_id: str
+    parent_id: str
+    period: str
+    reason: str
+    status: str
+    created_at: datetime
+    decided_at: datetime | None = None
+    decided_by: str | None = None
+
+
+class PauseRequestsResponse(BaseModel):
+    requests: list[PauseRequestView]
+
+
+class CreatePauseRequest(BaseModel):
+    enrollment_id: str
+    period: str
+    reason: str = ""
+
+
+class ParentChildrenResponse(BaseModel):
+    children: list[ParentChildView]
+
+
+class ParentAttendanceRecordView(BaseModel):
+    attendance_id: str
+    student_id: str
+    student_name: str
+    session_id: str
+    session_title: str
+    status: str
+    marked_at: datetime
+
+
+class ParentAttendanceResponse(BaseModel):
+    records: list[ParentAttendanceRecordView]
+
+
+class ParentProgressNoteView(BaseModel):
+    note_id: str
+    student_id: str
+    student_name: str
+    coach_id: str | None = None
+    body: str
+    created_at: datetime
+
+
+class ParentProgressResponse(BaseModel):
+    notes: list[ParentProgressNoteView]
+
+
+# --- Sessions ---
+
+
+class ParentAvailableSessionView(BaseModel):
+    session_id: str
+    title: str
+    location: str
+    start_at: datetime
+    end_at: datetime
+    capacity: int
+    enrolled_count: int
+    available_seats: int
+    amount_cents: int
+
+
+class ParentAvailableSessionsResponse(BaseModel):
+    sessions: list[ParentAvailableSessionView]
