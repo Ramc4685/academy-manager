@@ -290,7 +290,7 @@ jobs:
           set -euo pipefail
           pages_projects="$(npx wrangler@4 pages project list)"
           printf '%s\n' "$pages_projects"
-          if printf '%s\n' "$pages_projects" | grep -q 'courtmastr-academy'; then
+          if printf '%s\n' "$pages_projects" | grep -qw 'courtmastr-academy'; then
             npx wrangler@4 pages project delete courtmastr-academy --yes
           else
             echo "Legacy Pages project courtmastr-academy is already absent."
