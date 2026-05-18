@@ -1,42 +1,38 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useEffect } from "react";
+import { usePathname } from "next/navigation";
 import Link from "next/link";
 
-import { onAuthChange } from "@/lib/auth/firebase";
+import { usePersonaAuth } from "@/lib/auth/use-persona-auth";
 import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
 import { startAutoSync } from "@/lib/offline/sync";
 import { CoachInstallCard } from "@/components/coach/install-card";
 
 export default function CoachLayout({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
   const pathname = usePathname();
   const online = useOnline();
   const { hasUpdate, applyUpdate } = useServiceWorkerUpdate();
-  const [authChecked, setAuthChecked] = useState(false);
-
-  useEffect(
-    () =>
-      onAuthChange((user) => {
-        if (!user) router.replace("/login");
-        setAuthChecked(true);
-      }),
-    [router]
-  );
+  const auth = usePersonaAuth("coach");
 
   useEffect(() => startAutoSync(), []);
 
-  if (!authChecked) {
+  if (!auth.checked) {
     return <div className="min-h-screen flex items-center justify-center text-neutral-500">Loading…</div>;
+  }
+
+  if (!auth.authorized) {
+    return <div className="min-h-screen flex items-center justify-center text-neutral-500">Redirecting…</div>;
   }
 
   return (
     <div className="min-h-screen flex flex-col bg-white dark:bg-neutral-950">
       <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-neutral-200 dark:border-neutral-800 bg-white/90 dark:bg-neutral-950/90 backdrop-blur px-4 py-3">
         <div className="flex items-center gap-2">
-          <span className="font-semibold">Academy</span>
+          <Link href="/coach/dashboard" className="font-semibold">
+            Academy
+          </Link>
           {!online && (
             <span
               data-testid="offline-indicator"
@@ -64,6 +60,11 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
 
       <nav className="fixed bottom-0 left-0 right-0 border-t border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950">
         <div className="mx-auto flex max-w-md">
+          <BottomTab
+            href="/coach/dashboard"
+            label="Home"
+            active={pathname === "/coach/dashboard"}
+          />
           <BottomTab href="/coach/today" label="Today" active={pathname?.startsWith("/coach/today") ?? false} />
           <BottomTab
             href="/coach/sessions"

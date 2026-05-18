@@ -16,6 +16,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from ulid import ULID
+
 from backend.v2.contexts.billing.application.ports import (
     PaymentRepository,
     StripeEventDedup,
@@ -35,7 +37,9 @@ from backend.v2.contexts.billing.domain.events import (
     SubscriptionUpdated,
     SubscriptionUpdatedPayload,
 )
+from backend.v2.contexts.billing.domain.models import Payment
 from backend.v2.shared.events import Outbox
+from backend.v2.shared.tenancy import tenant_scope
 
 log = logging.getLogger(__name__)
 
@@ -71,18 +75,19 @@ class HandleWebhookEvent:
         if not event_id or not event_type:
             raise InvalidWebhookSignature("event missing id or type")
 
-        claimed = await self._dedup.claim(event_id, event_type)
-        if not claimed:
-            log.info("stripe_webhook_deduped event_id=%s", event_id)
-            return {"received": True, "deduped": True}
+        with tenant_scope(self._academy_id):
+            claimed = await self._dedup.claim(event_id, event_type)
+            if not claimed:
+                log.info("stripe_webhook_deduped event_id=%s", event_id)
+                return {"received": True, "deduped": True}
 
-        try:
-            await self._dispatch(event_type, event)
-            await self._dedup.mark_processed(event_id)
-            return {"received": True, "type": event_type}
-        except Exception as exc:
-            await self._dedup.mark_failed(event_id, str(exc))
-            raise
+            try:
+                await self._dispatch(event_type, event)
+                await self._dedup.mark_processed(event_id)
+                return {"received": True, "type": event_type}
+            except Exception as exc:
+                await self._dedup.mark_failed(event_id, str(exc))
+                raise
 
     async def _dispatch(self, event_type: str, event: dict[str, Any]) -> None:
         if event_type == "checkout.session.completed":
@@ -91,6 +96,10 @@ class HandleWebhookEvent:
             await self._on_checkout_expired(event)
         elif event_type == "payment_intent.payment_failed":
             await self._on_payment_failed(event)
+        elif event_type == "invoice.paid":
+            await self._on_invoice_paid(event)
+        elif event_type == "invoice.payment_failed":
+            await self._on_invoice_payment_failed(event)
         elif event_type == "charge.refunded":
             await self._on_charge_refunded(event)
         elif event_type in (
@@ -174,6 +183,46 @@ class HandleWebhookEvent:
             )
         )
 
+    async def _on_invoice_paid(self, event: dict[str, Any]) -> None:
+        invoice = event["data"]["object"]
+        payment = await self._payment_from_invoice(invoice, status="succeeded")
+        if payment is None:
+            return
+        await self._payments.save(payment)
+        await self._outbox.append(
+            PaymentSucceeded(
+                aggregate_id=payment.payment_id,
+                academy_id=payment.academy_id,
+                payload=PaymentSucceededPayload(
+                    payment_id=payment.payment_id,
+                    parent_id=payment.parent_id,
+                    session_id=payment.session_id,
+                    amount_cents=payment.amount_cents,
+                    currency=payment.currency,
+                    succeeded_at=payment.updated_at,
+                ),
+            )
+        )
+
+    async def _on_invoice_payment_failed(self, event: dict[str, Any]) -> None:
+        invoice = event["data"]["object"]
+        payment = await self._payment_from_invoice(invoice, status="failed")
+        if payment is None:
+            return
+        await self._payments.save(payment)
+        await self._outbox.append(
+            PaymentFailed(
+                aggregate_id=payment.payment_id,
+                academy_id=payment.academy_id,
+                payload=PaymentFailedPayload(
+                    payment_id=payment.payment_id,
+                    parent_id=payment.parent_id,
+                    session_id=payment.session_id,
+                    reason=str(invoice.get("last_finalization_error", {}).get("message", "invoice payment failed")),
+                ),
+            )
+        )
+
     async def _on_charge_refunded(self, event: dict[str, Any]) -> None:
         ch = event["data"]["object"]
         pi_id = ch.get("payment_intent")
@@ -241,3 +290,33 @@ class HandleWebhookEvent:
             "incomplete_expired": "cancelled",
         }
         return mapping.get(stripe_status, "incomplete")
+
+    async def _payment_from_invoice(self, invoice: dict[str, Any], *, status: str) -> Payment | None:
+        stripe_sub_id = invoice.get("subscription")
+        if not stripe_sub_id:
+            return None
+        subscription = await self._subscriptions.get_by_stripe_sub(str(stripe_sub_id))
+        if subscription is None:
+            log.warning("invoice webhook for unknown subscription=%s", stripe_sub_id)
+            return None
+
+        stripe_pi = str(invoice.get("payment_intent") or invoice.get("id"))
+        existing = await self._payments.get_by_stripe_pi(stripe_pi)
+        if existing is not None:
+            return None
+
+        now = self._now()
+        amount_key = "amount_paid" if status == "succeeded" else "amount_due"
+        return Payment(
+            payment_id=str(ULID()),
+            academy_id=subscription.academy_id,
+            parent_id=subscription.parent_id,
+            session_id=subscription.session_id,
+            subscription_id=subscription.subscription_id,
+            stripe_payment_intent_id=stripe_pi,
+            amount_cents=int(invoice.get(amount_key) or invoice.get("amount_due") or 0),
+            currency=str(invoice.get("currency") or "usd").lower(),
+            status=status,  # type: ignore[arg-type]
+            created_at=now,
+            updated_at=now,
+        )

@@ -38,6 +38,7 @@ from backend.v2.contexts.identity.infrastructure.mongo_user_repo import (
 )
 from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.interfaces.coach.router import router as coach_router
+from backend.v2.interfaces.me_routes import router as me_router
 from backend.v2.interfaces.parent.router import router as parent_router
 from backend.v2.migrations import run_pending_migrations
 from backend.v2.shared.auth.middleware import TenancyMiddleware
@@ -75,7 +76,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.idempotency_store = idempotency_store
 
     # Identity wiring — needed by TenancyMiddleware for token verification.
-    users_repo = MongoUserRepository(db)
+    users_repo = MongoUserRepository(db, default_academy_id=settings.default_academy_id)
     verifier = FirebaseTokenVerifier()
     load_claims = LoadAuthClaims(verifier=verifier, users=users_repo)
     app.state.load_auth_claims = load_claims
@@ -117,6 +118,7 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     # Persona route packages.
+    app.include_router(me_router, prefix="/api/v2")
     app.include_router(coach_router, prefix="/api/v2")
     app.include_router(parent_router, prefix="/api/v2")
     app.include_router(admin_router, prefix="/api/v2")

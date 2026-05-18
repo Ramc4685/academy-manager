@@ -23,6 +23,7 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
     env: {
+      PORT,
       NEXT_PUBLIC_E2E_AUTH_BYPASS: "1",
     },
   },

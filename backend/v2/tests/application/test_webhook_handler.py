@@ -16,7 +16,7 @@ import pytest
 from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
     HandleWebhookEvent,
 )
-from backend.v2.contexts.billing.domain.models import Payment
+from backend.v2.contexts.billing.domain.models import Payment, Subscription
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
 )
@@ -52,11 +52,17 @@ class FakePaymentRepo:
 
 
 class FakeSubscriptionRepo:
-    async def save(self, _):
-        pass
+    def __init__(self) -> None:
+        self.by_stripe_sub: dict[str, Subscription] = {}
 
-    async def get_by_stripe_sub(self, _):
-        return None
+    def seed(self, subscription: Subscription) -> None:
+        self.by_stripe_sub[subscription.stripe_subscription_id] = subscription
+
+    async def save(self, _):
+        self.seed(_)
+
+    async def get_by_stripe_sub(self, stripe_sub):
+        return self.by_stripe_sub.get(stripe_sub)
 
 
 class FakeDedup:
@@ -91,12 +97,12 @@ class FakeOutbox:
         pass
 
 
-def _build(repo, outbox=None, dedup=None):
+def _build(repo, outbox=None, dedup=None, subscriptions=None):
     return HandleWebhookEvent(
         stripe=FakeStripeGateway(),
         dedup=dedup or FakeDedup(),
         payments=repo,
-        subscriptions=FakeSubscriptionRepo(),
+        subscriptions=subscriptions or FakeSubscriptionRepo(),
         outbox=outbox or FakeOutbox(),
         academy_id="acad",
     )
@@ -191,6 +197,90 @@ async def test_payment_failed_marks_failed_and_emits() -> None:
     ).encode()
     await uc.execute(body, "test_signature")
     assert repo.by_id["pay-1"].status == "failed"
+    assert outbox.events[0].name == "Billing.PaymentFailed"
+
+
+@pytest.mark.asyncio
+async def test_invoice_paid_creates_subscription_payment_and_emits() -> None:
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(timezone.utc)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-1",
+            academy_id="acad",
+            parent_id="p1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-1",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    outbox = FakeOutbox()
+    uc = _build(repo, outbox=outbox, subscriptions=subs)
+    body = json.dumps(
+        {
+            "id": "evt_invoice_1",
+            "type": "invoice.paid",
+            "data": {
+                "object": {
+                    "id": "in_1",
+                    "subscription": "stripe-sub-1",
+                    "payment_intent": "pi_invoice_1",
+                    "amount_paid": 16000,
+                    "currency": "usd",
+                }
+            },
+        }
+    ).encode()
+    await uc.execute(body, "test_signature")
+    payment = repo.by_pi["pi_invoice_1"]
+    assert payment.status == "succeeded"
+    assert payment.subscription_id == "sub-1"
+    assert payment.session_id == "s1"
+    assert outbox.events[0].name == "Billing.PaymentSucceeded"
+
+
+@pytest.mark.asyncio
+async def test_invoice_payment_failed_creates_failed_subscription_payment() -> None:
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(timezone.utc)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-2",
+            academy_id="acad",
+            parent_id="p1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-2",
+            status="past_due",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    outbox = FakeOutbox()
+    uc = _build(repo, outbox=outbox, subscriptions=subs)
+    body = json.dumps(
+        {
+            "id": "evt_invoice_2",
+            "type": "invoice.payment_failed",
+            "data": {
+                "object": {
+                    "id": "in_2",
+                    "subscription": "stripe-sub-2",
+                    "payment_intent": "pi_invoice_2",
+                    "amount_due": 16000,
+                    "currency": "usd",
+                    "last_finalization_error": {"message": "card declined"},
+                }
+            },
+        }
+    ).encode()
+    await uc.execute(body, "test_signature")
+    payment = repo.by_pi["pi_invoice_2"]
+    assert payment.status == "failed"
+    assert payment.subscription_id == "sub-2"
     assert outbox.events[0].name == "Billing.PaymentFailed"
 
 

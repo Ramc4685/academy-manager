@@ -2,17 +2,17 @@ name = "academy-edge-router"
 main = "router.ts"
 compatibility_date = "2026-05-16"
 
-# Bound to the production hostname during Phase 0 deploys.
-# routes = [
-#   { pattern = "academy.courtmastr.com/*", custom_domain = true }
-# ]
+# Bind this worker to the production hostname when the v2 canary starts.
+routes = [
+  { pattern = "academy.courtmastr.com", custom_domain = true }
+]
 
 [vars]
 # Origins — replace with real hostnames before deploy.
 LEGACY_API_ORIGIN = "https://courtmastr-academy-api.fly.dev"
 V2_API_ORIGIN = "https://courtmastr-academy-api.fly.dev"  # Phase 0: v2 mounted in-process
-LEGACY_WEB_ORIGIN = "https://academy-legacy.pages.dev"
-V2_WEB_ORIGIN = "https://academy-next.pages.dev"
+LEGACY_WEB_ORIGIN = "https://courtmastr-academy.pages.dev"
+V2_WEB_ORIGIN = "https://academy-next.courtmastr.com"
 
 # --- Per-route flip flags ---
 # Set per environment (preview / staging / prod) via Wrangler secrets:
@@ -29,6 +29,25 @@ FLAG_LEGACY_HATCH_OPEN = "0"      # flip to "1" during Wave 4A's 30-day soak; fl
 
 [env.preview.vars]
 FLAG_V2_MARKETING = "v2"          # preview env always shows v2 marketing
+
+[env.prod]
+name = "academy-edge-router"
+routes = [
+  { pattern = "academy.courtmastr.com", custom_domain = true }
+]
+
+[env.prod.vars]
+LEGACY_API_ORIGIN = "https://courtmastr-academy-api.fly.dev"
+V2_API_ORIGIN = "https://courtmastr-academy-api.fly.dev"
+LEGACY_WEB_ORIGIN = "https://courtmastr-academy.pages.dev"
+V2_WEB_ORIGIN = "https://academy-next.courtmastr.com"
+FLAG_V2_MARKETING = "v2"
+FLAG_COACH_TODAY = "v2"
+FLAG_COACH_ALL = "v2"
+FLAG_PARENT_ALL = "v2"
+FLAG_ADMIN_ALL = "v2"
+FLAG_LEGACY_API_GONE = "0"
+FLAG_LEGACY_HATCH_OPEN = "0"
 
 [observability]
 enabled = true

@@ -1,189 +1,179 @@
-# Badminton Academy Manager
+# CourtMastr Academy Manager
 
-Local full-stack app for managing a badminton academy: sessions, students, enrollments, attendance, payments, coach payouts, parent access, messaging, reports, and admin settings.
+**The all-in-one operating system for sports academies.**
+Run sessions, enrollments, attendance, billing, coach payouts, and parent
+communication from one place — on the web, on the court, and on your phone.
 
-## Local Services
+> Proprietary software. © 2024–2026 CourtMastr. All rights reserved.
+> Access to this repository does **not** grant a license to use, copy, or
+> redistribute the software. See [LICENSE](LICENSE).
 
-- Frontend: `http://localhost:3000`
-- Backend API: `http://127.0.0.1:8001/api`
-- MongoDB: `mongodb://127.0.0.1:27017`
-- Local database name: `academy_manager_local`
+---
 
-## First-Time Setup
+## Product
 
-1. Create environment files:
+CourtMastr Academy Manager is a hosted SaaS platform for badminton, tennis,
+and racquet-sports academies. It replaces the spreadsheets, group chats, and
+manual receipts that academies usually run on with a single, role-aware
+system for owners, coaches, and parents.
 
-   ```bash
-   cp backend/.env.example backend/.env
-   cp frontend/.env.example frontend/.env
-   ```
+### What it does
 
-2. Generate a local JWT secret and put it in `backend/.env`:
+| Area | Capabilities |
+|---|---|
+| **Scheduling** | Recurring sessions, court allocation, coach assignment, calendar views, conflict detection |
+| **Enrollments** | Programs, batches, waitlists, trial classes, capacity rules, prorated joins |
+| **Attendance** | Coach mobile check-in, makeups, absentee tracking, retention reports |
+| **Billing** | Stripe-backed invoices, monthly tuition, one-off charges, refunds, failed-payment recovery |
+| **Coach Payouts** | Per-session rates, hours worked, automated payout statements |
+| **Parents** | Self-serve portal, payment history, child progress, push/email notifications |
+| **Admin** | Multi-academy ready, role-based access, audit logs, exportable reports |
+| **Auth** | Firebase Authentication — Google sign-in, email/password, server-enforced email verification |
 
-   ```bash
-   python -c "import secrets; print(secrets.token_hex(32))"
-   ```
+### Who it's for
 
-3. Install backend dependencies:
+- **Academy owners** who want a clean P&L without chasing receipts.
+- **Head coaches** who need a single source of truth for who shows up,
+  who paid, and who's owed.
+- **Parents** who want one app for schedules, payments, and progress instead
+  of three group chats.
 
-   ```bash
-   cd backend
-   python -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   ```
+### Live Service
 
-4. Install frontend dependencies:
+- **Web app:** <https://academy.courtmastr.com>
+- **API:** <https://api.academy.courtmastr.com>
+- **Status / health:** `GET https://api.academy.courtmastr.com/api/health`
 
-   ```bash
-   cd frontend
-   yarn install
-   ```
+---
 
-## Start Locally
+## Architecture
 
-Run these in separate terminals.
+CourtMastr Academy Manager runs as a managed, multi-region cloud service.
+The codebase in this repository powers the hosted product — it is not
+intended for self-hosting.
 
-1. Start MongoDB:
-
-   ```bash
-   mkdir -p /tmp/academy-manager-mongo-local
-   mongod --dbpath /tmp/academy-manager-mongo-local --bind_ip 127.0.0.1 --port 27017
-   ```
-
-2. Start the backend:
-
-   ```bash
-   cd backend
-   source .venv/bin/activate
-   uvicorn server:app --host 127.0.0.1 --port 8001 --reload
-   ```
-
-3. Start the frontend:
-
-   ```bash
-   cd frontend
-   yarn start
-   ```
-
-Open `http://localhost:3000`.
-
-## Admin Account
-
-The backend seeds only the configured admin account on startup. Set `ADMIN_EMAIL`
-in `backend/.env` before using the app outside local development. Demo coach and
-parent accounts are not enabled unless `SEED_DEMO_ACCOUNTS=true` is explicitly
-set.
-
-## Firebase Auth
-
-Production login uses Firebase Authentication for identity and MongoDB for app
-roles and academy permissions. Firebase handles Google login, email/password,
-and password reset. The backend maps the Firebase token to the local `users`
-record by Firebase UID or by verified email on first login.
-
-Backend:
-
-```bash
-FIREBASE_AUTH_ENABLED=true
-FIREBASE_PROJECT_ID=academy-courtmastr
-ADMIN_EMAIL=ramchand4685@gmail.com
+```
+┌────────────────────────────────────────────────────────────────────┐
+│  Browsers / PWA   ──►  Cloudflare Edge (Worker + Pages)            │
+│                              │                                     │
+│                              ▼                                     │
+│  Frontend (legacy CRA + Next.js v2) on Cloudflare Pages            │
+│                              │                                     │
+│                              ▼                                     │
+│  Backend API (FastAPI, Python 3.12) on Fly.io — region `ord`       │
+│        │                │                │              │          │
+│        ▼                ▼                ▼              ▼          │
+│  MongoDB Atlas    Firebase Auth      Stripe        Resend Email    │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-Frontend:
+### Production stack
 
-```bash
-REACT_APP_FIREBASE_AUTH_DOMAIN=academy-courtmastr.firebaseapp.com
-REACT_APP_FIREBASE_PROJECT_ID=academy-courtmastr
-REACT_APP_FIREBASE_STORAGE_BUCKET=academy-courtmastr.firebasestorage.app
-REACT_APP_FIREBASE_MESSAGING_SENDER_ID=953230788846
-REACT_APP_FIREBASE_APP_ID=1:953230788846:web:1f2819c11418ecf5860bff
-REACT_APP_FIREBASE_MEASUREMENT_ID=G-Z6GS6WRZY8
+| Layer | Technology | Where it runs |
+|---|---|---|
+| Edge routing | Cloudflare Worker (`academy-edge-router`) | Cloudflare global edge |
+| Web — current | React 18 (CRA) | Cloudflare Pages project `courtmastr-academy` |
+| Web — v2 | Next.js 15 / React 19 (App Router, PWA) | Cloudflare Pages project `academy-next` |
+| API | FastAPI + Uvicorn (Python 3.12) | Fly.io app `courtmastr-academy-api` (region `ord`) |
+| Database | MongoDB (Atlas) | Managed |
+| Auth / identity | Firebase Authentication | Project `academy-courtmastr` |
+| Payments | Stripe (live mode) | Webhook at `/api/webhook/stripe` |
+| Transactional email | Resend | Verified `courtmastr.com` sender domain |
+| Scheduler timezone | `America/Chicago` | Set on backend |
+
+The edge worker performs per-route flag-based traffic splitting between the
+legacy frontend and the v2 frontend. Flags (`FLAG_COACH_TODAY`,
+`FLAG_PARENT_ALL`, `FLAG_ADMIN_ALL`, etc.) are flipped per environment via
+Wrangler secrets and let us canary individual surfaces.
+
+### Deployment pipeline
+
+`.github/workflows/deploy.yml` ships production from `main`:
+
+1. **Validate** — backend compile + safe pytest, frontend build + tests,
+   bundle config verification.
+2. **Production approval** — manual gate (GitHub `production` environment).
+3. **Backend deploy** — `flyctl deploy --remote-only --app courtmastr-academy-api`.
+4. **Frontend deploy** — `wrangler pages deploy build --project-name courtmastr-academy`.
+5. **Smoke** — `scripts/smoke/production_smoke.sh` against the live URLs.
+
+Separate workflows (`v2-backend.yml`, `v2-frontend.yml`, `v2-edge.yml`) gate
+the v2 stack on typecheck, lint, build, OpenAPI drift, size budgets, and
+Lighthouse before any edge flag is flipped.
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the operator runbook —
+environment variables, secret rotation, Stripe webhook configuration,
+email verification, backups, and rollback procedure.
+
+---
+
+## Security & Compliance
+
+- **HTTPS-only.** Strict transport, secure cookies, force-https at the edge.
+- **HttpOnly cookies + Firebase ID tokens.** Server-side token revocation
+  takes effect on the next request — disabling a user in the Firebase
+  console immediately revokes access.
+- **Email verification enforced.** Password-provider tokens must be
+  email-verified server-side at every authenticated request.
+- **Explicit CORS allow-list.** No wildcard origins.
+- **Atomic invite acceptance.** Mid-flight registration failures roll back
+  the Firebase user via the Admin SDK.
+- **Local/test email is hard-blocked** — production email requires
+  `APP_ENV=production`, a verified Resend sender, and an explicit enable
+  flag, so non-prod environments cannot accidentally email real parents.
+- **Backups.** Managed MongoDB snapshots + documented restore drill
+  cadence in `DEPLOYMENT.md`.
+- **Audit logs.** Authentication, admin role changes, and payment events
+  are recorded for review.
+
+---
+
+## Pricing & Access
+
+CourtMastr Academy Manager is sold as a subscription. Pricing scales by
+active student count and academy locations. Onboarding includes data import
+from your existing spreadsheets and CRM.
+
+- **Sales / demos:** ramchand4685@gmail.com
+- **Support:** ramchand4685@gmail.com
+- **Security disclosure:** ramchand4685@gmail.com (subject line:
+  `SECURITY DISCLOSURE`)
+
+Self-serve sign-up is not currently open; new tenants are onboarded by the
+CourtMastr team.
+
+---
+
+## Repository
+
+This repository is the production source tree for the hosted service.
+It is **not** an open-source project.
+
+- **No external contributions** are accepted via pull request without a
+  signed contributor agreement.
+- **No license** to use, fork, mirror, redistribute, host, or train models
+  on this code is granted by virtue of its visibility. See
+  [LICENSE](LICENSE).
+- **Issues and security reports** from authorized reviewers should be sent
+  privately to the contact above.
+
+### Layout (for internal contributors)
+
+```
+backend/        FastAPI service, deployed to Fly.io
+backend/v2/     Clean-architecture backend (in-process during Phase 0)
+frontend/       Legacy CRA app, current production web
+frontend-next/  Next.js 15 app (v2 surface, PWA)
+edge/           Cloudflare Worker — flag-based traffic split
+docs/           ADRs, tickets, security matrix, event rules
+scripts/        Smoke tests, importers, ops utilities
 ```
 
-Set `REACT_APP_FIREBASE_API_KEY` from the Firebase Web App config in deployment
-secrets. Authorized Firebase domains must include `academy.courtmastr.com` and
-`localhost` for local development.
+Internal engineering notes live in [AGENTS.md](AGENTS.md) and
+[`docs/`](docs/). Production operations and rollout phases are tracked in
+[DEPLOYMENT.md](DEPLOYMENT.md) and `docs/tickets/`.
 
-## Import BLNO Spreadsheet Data
+### Trademarks
 
-The importer loads sessions, coaches, parents, students, enrollments, attendance, and payment records from the spreadsheet.
-
-```bash
-cd backend
-source .venv/bin/activate
-BLNO_XLSX="/Users/ramc/Downloads/BLno-Badmintion-Training.xlsx" python scripts/import_blno.py
-```
-
-The script reads `MONGO_URL` and `DB_NAME` from `backend/.env`, keeps only the configured admin user, and replaces imported academy data collections.
-
-## Stripe Local Testing
-
-Stripe checkout is disabled until these values are set in `backend/.env`:
-
-```bash
-STRIPE_API_KEY=sk_test_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-```
-
-For webhook testing, run Stripe CLI in another terminal:
-
-```bash
-stripe listen --forward-to 127.0.0.1:8001/api/webhook/stripe
-```
-
-Copy the printed `whsec_...` value into `STRIPE_WEBHOOK_SECRET`, then restart the backend.
-
-## Resend Email Safety
-
-Email delivery is disabled by default in local/test environments, even when
-`RESEND_API_KEY` is set. This prevents integration tests and manual local runs
-from sending real parent emails.
-
-Local/test email is always blocked. Do not use local/test for live email smoke
-tests.
-
-For production sending, set `APP_ENV=production` and
-`EMAIL_DELIVERY_ENABLED=true`.
-
-For production sending, verify the academy domain in Resend and update `SENDER_EMAIL` to a sender on that verified domain.
-
-## Verification Commands
-
-Backend tests:
-
-```bash
-cd backend
-source .venv/bin/activate
-pytest
-```
-
-Frontend build:
-
-```bash
-cd frontend
-yarn build
-```
-
-Frontend tests:
-
-```bash
-cd frontend
-yarn test --watchAll=false
-```
-
-## Deployment
-
-Container files are included for staging smoke tests:
-
-```bash
-docker compose up --build
-```
-
-See [DEPLOYMENT.md](DEPLOYMENT.md) for production environment variables, Stripe webhook setup, email configuration, health checks, and backup/restore expectations.
-
-## Notes
-
-- Keep real secrets only in `.env` files. Do not commit them.
-- Use explicit CORS origins for cookie-based auth. Do not use `CORS_ORIGINS=*`.
-- The app uses httpOnly JWT cookies, so frontend requests must use the configured backend URL and credentials.
+"CourtMastr", the CourtMastr logo, and "Academy Manager" are trademarks of
+the Licensor. All other marks belong to their respective owners.

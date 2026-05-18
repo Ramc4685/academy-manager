@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
 
@@ -12,6 +12,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     CreateSessionCommand,
     EditRosterAddCommand,
     PauseEnrollmentCommand,
+    TransferEnrollmentCommand,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
@@ -21,6 +22,7 @@ from backend.v2.interfaces.admin.views import (
     AdminSessionView,
     CreateSessionRequest,
     EditRosterAddRequest,
+    TransferEnrollmentRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
@@ -36,9 +38,11 @@ async def list_sessions(
 ) -> AdminSessionList:
     parsed = date.fromisoformat(on_date) if on_date else None
     sessions = await use_cases.list_admin_sessions(parsed)  # type: ignore[operator]
-    return AdminSessionList(
-        sessions=[AdminSessionView(**s.model_dump(exclude={"academy_id"})) for s in sessions]
-    )
+    rows = [
+        s if isinstance(s, dict) else s.model_dump(exclude={"academy_id"})
+        for s in sessions
+    ]
+    return AdminSessionList(sessions=[AdminSessionView(**s) for s in rows])
 
 
 @router.post("/sessions", response_model=AdminSessionView, summary="Create a session")
@@ -73,7 +77,14 @@ async def list_enrollments(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminEnrollmentList:
     rows = await use_cases.list_admin_enrollments_for_session(session_id)  # type: ignore[operator]
-    return AdminEnrollmentList(enrollments=[AdminEnrollmentView(**r) for r in rows])
+    normalized = [
+        {
+            **r,
+            "full_name": r.get("full_name") or r.get("student_name") or "(unknown)",
+        }
+        for r in rows
+    ]
+    return AdminEnrollmentList(enrollments=[AdminEnrollmentView(**r) for r in normalized])
 
 
 @router.post(
@@ -94,8 +105,10 @@ async def add_to_roster(
         session_id=enrollment.session_id,
         student_id=enrollment.student_id,
         student_name=body.full_name,
+        full_name=body.full_name,
         parent_id=body.parent_id,
         status=enrollment.status,
+        enrolled_at=datetime.now(timezone.utc),
     )
 
 
@@ -107,6 +120,31 @@ async def cancel_enrollment(
 ) -> None:
     await use_cases.cancel_enrollment.execute(
         CancelEnrollmentCommand(enrollment_id=enrollment_id, reason="admin_cancel")
+    )
+
+
+@router.post("/enrollments/{enrollment_id}/transfer", response_model=AdminEnrollmentView)
+async def transfer_enrollment(
+    enrollment_id: str,
+    body: TransferEnrollmentRequest,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminEnrollmentView:
+    enrollment = await use_cases.transfer_enrollment.execute(
+        TransferEnrollmentCommand(
+            enrollment_id=enrollment_id,
+            target_session_id=body.target_session_id,
+        )
+    )
+    return AdminEnrollmentView(
+        enrollment_id=enrollment.enrollment_id,
+        session_id=enrollment.session_id,
+        student_id=enrollment.student_id,
+        student_name="",
+        full_name="",
+        parent_id="",
+        status=enrollment.status,
+        enrolled_at=datetime.now(timezone.utc),
     )
 
 

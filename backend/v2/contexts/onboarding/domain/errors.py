@@ -25,6 +25,11 @@ class IncompleteApplication(DomainError):
     status_code = 400
 
 
+class MissingSelectedSession(DomainError):
+    code = "Onboarding.MissingSelectedSession"
+    status_code = 422
+
+
 class NoActiveWaiver(DomainError):
     code = "Onboarding.NoActiveWaiver"
     status_code = 500

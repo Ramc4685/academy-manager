@@ -22,19 +22,32 @@ async def list_waitlist(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminWaitlistList:
     entries = await use_cases.list_waitlist_for_session(session_id)  # type: ignore[operator]
-    return AdminWaitlistList(
-        entries=[
-            AdminWaitlistEntry(
-                waitlist_id=e.waitlist_id,
-                session_id=e.session_id,
-                student_id=e.student_id,
-                parent_id=e.parent_id,
-                joined_at=e.joined_at,
-                status=e.status,
-            )
-            for e in entries
-        ]
-    )
+    rows = [
+        e
+        if isinstance(e, dict)
+        else {
+            "waitlist_id": e.waitlist_id,
+            "session_id": e.session_id,
+            "student_id": e.student_id,
+            "parent_id": e.parent_id,
+            "joined_at": e.joined_at,
+            "added_at": e.joined_at,
+            "status": e.status,
+        }
+        for e in entries
+    ]
+    normalized = [
+        AdminWaitlistEntry(
+            **{
+                **row,
+                "position": int(row.get("position") or idx),
+                "full_name": str(row.get("full_name") or "(unknown)"),
+                "added_at": row.get("added_at") or row["joined_at"],
+            }
+        )
+        for idx, row in enumerate(rows, start=1)
+    ]
+    return AdminWaitlistList(entries=normalized, waitlist=normalized)
 
 
 @router.post("/sessions/{session_id}/waitlist/promote", status_code=200)

@@ -9,7 +9,19 @@ from fastapi import Request
 from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
     HandleWebhookEvent,
 )
+from backend.v2.contexts.billing.application.use_cases.parent_billing import (
+    CreateCustomerPortalSession,
+    GetCheckoutStatus,
+    StartSubscriptionCheckout,
+)
 from backend.v2.contexts.billing.application.use_cases.start_checkout import StartCheckout
+from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_sessions import (
+    ListParentAvailableSessions,
+)
+from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
+    ListParentPauseRequests,
+    RequestEnrollmentPause,
+)
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     GetApplicationStatus,
     PatchApplication,
@@ -25,8 +37,19 @@ class ParentUseCases:
     get_application_status: GetApplicationStatus
     transition_application: TransitionApplication
     start_checkout: StartCheckout
+    start_checkout_for_application: object  # callable
+    start_autopay_for_enrollment: object  # callable
+    open_billing_portal: object  # callable
+    get_checkout_status: object  # callable
     handle_webhook_event: HandleWebhookEvent
+    list_available_sessions: ListParentAvailableSessions
     list_payments_for_parent: object  # bound to a callable in composition; opaque to routes
+    list_children_for_parent: object  # callable
+    list_enrollments_for_parent: object  # callable
+    request_enrollment_pause: RequestEnrollmentPause
+    list_parent_pause_requests: ListParentPauseRequests
+    list_attendance_for_parent: object  # callable
+    list_progress_for_parent: object  # callable
 
 
 def get_parent_use_cases(request: Request) -> ParentUseCases:

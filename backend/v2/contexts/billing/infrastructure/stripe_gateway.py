@@ -54,6 +54,62 @@ class RealStripeGateway(StripeGateway):
         result = await asyncio.to_thread(_create)
         return str(result.id), str(result.url)
 
+    async def create_subscription_checkout_session(
+        self,
+        *,
+        parent_id: str,
+        enrollment_id: str,
+        session_id: str,
+        amount_cents: int,
+        success_url: str,
+        cancel_url: str,
+        metadata: dict[str, str],
+    ) -> tuple[str, str, str]:
+        def _create() -> Any:
+            return self._stripe.checkout.Session.create(
+                mode="subscription",
+                payment_method_types=["card"],
+                line_items=[
+                    {
+                        "price_data": {
+                            "currency": "usd",
+                            "product_data": {"name": f"Academy session {session_id}"},
+                            "unit_amount": amount_cents,
+                            "recurring": {"interval": "month"},
+                        },
+                        "quantity": 1,
+                    }
+                ],
+                success_url=success_url,
+                cancel_url=cancel_url,
+                client_reference_id=parent_id,
+                metadata=metadata,
+                subscription_data={"metadata": metadata | {"enrollment_id": enrollment_id}},
+            )
+
+        result = await asyncio.to_thread(_create)
+        stripe_subscription_id = str(getattr(result, "subscription", "") or "")
+        return str(result.id), str(result.url), stripe_subscription_id
+
+    async def create_customer_portal_session(
+        self,
+        *,
+        parent_id: str,
+        return_url: str,
+        stripe_customer_id: str | None,
+    ) -> str:
+        if not stripe_customer_id:
+            raise ValueError(f"parent {parent_id} has no Stripe customer")
+
+        def _create() -> Any:
+            return self._stripe.billing_portal.Session.create(
+                customer=stripe_customer_id,
+                return_url=return_url,
+            )
+
+        result = await asyncio.to_thread(_create)
+        return str(result.url)
+
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, object]:
         return self._stripe.Webhook.construct_event(
             payload, signature, self._webhook_secret

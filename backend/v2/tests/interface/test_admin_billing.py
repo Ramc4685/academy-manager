@@ -8,14 +8,20 @@ from backend.v2.contexts.billing.application.use_cases.finance import Expense, P
 from backend.v2.contexts.billing.domain.models import Payment
 
 
-def _seed_payment(seed, payment_id: str, amount_cents: int = 15000, status: str = "succeeded"):
+def _seed_payment(
+    seed,
+    payment_id: str,
+    amount_cents: int = 15000,
+    status: str = "succeeded",
+    stripe: bool = True,
+):
     now = datetime.now(timezone.utc)
     seed["payments"].rows[payment_id] = Payment(
         payment_id=payment_id,
         academy_id="acad",
         parent_id=f"parent-{payment_id}",
         session_id="sess-1",
-        stripe_payment_intent_id=f"pi_{payment_id}",
+        stripe_payment_intent_id=f"pi_{payment_id}" if stripe else None,
         amount_cents=amount_cents,
         currency="usd",
         status=status,  # type: ignore[arg-type]
@@ -72,6 +78,51 @@ def test_issue_refund_wrong_persona_404(parent_on_admin_client):
         json={"payment_id": "pay-x", "amount_cents": 1},
     )
     assert r.status_code == 404
+
+
+def test_generate_monthly_payments(admin_client):
+    r = admin_client.post(
+        "/api/v2/admin/payments/generate-monthly",
+        json={"period": "2026-05"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["created"] == 1
+    assert admin_client.seed["payments"].generated_periods == ["2026-05"]
+
+
+def test_mark_payment_paid(admin_client):
+    _seed_payment(admin_client.seed, "pay-manual", status="pending", stripe=False)
+    r = admin_client.post(
+        "/api/v2/admin/payments/pay-manual/mark-paid",
+        json={"payment_method": "cash", "notes": "desk"},
+    )
+    assert r.status_code == 200, r.text
+    assert admin_client.seed["payments"].rows["pay-manual"].status == "succeeded"
+
+
+def test_apply_payment_discount(admin_client):
+    _seed_payment(admin_client.seed, "pay-pending", status="pending", stripe=False)
+    r = admin_client.post(
+        "/api/v2/admin/payments/pay-pending/discount",
+        json={"discount_cents": 2500},
+    )
+    assert r.status_code == 200, r.text
+    assert admin_client.seed["payments"].discounts["pay-pending"] == 2500
+
+
+def test_undo_manual_paid_blocks_stripe_linked(admin_client):
+    _seed_payment(admin_client.seed, "pay-stripe", status="succeeded", stripe=True)
+    r = admin_client.post("/api/v2/admin/payments/pay-stripe/undo-paid")
+    assert r.status_code == 400, r.text
+    assert r.json()["error"]["code"] == "Billing.PaymentOperationNotAllowed"
+
+
+def test_undo_manual_paid(admin_client):
+    _seed_payment(admin_client.seed, "pay-cash", status="succeeded", stripe=False)
+    r = admin_client.post("/api/v2/admin/payments/pay-cash/undo-paid")
+    assert r.status_code == 200, r.text
+    assert admin_client.seed["payments"].rows["pay-cash"].status == "pending"
 
 
 # --- # FINANCE ---

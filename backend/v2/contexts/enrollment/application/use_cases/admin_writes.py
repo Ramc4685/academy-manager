@@ -218,6 +218,39 @@ class CancelEnrollment:
         )
 
 
+class TransferEnrollmentCommand(BaseModel):
+    model_config = {"frozen": True}
+    enrollment_id: str
+    target_session_id: str
+
+
+class TransferEnrollment:
+    """Move an active or paused enrollment to another session.
+
+    The target seat is reserved first; only after the enrollment points at the
+    new session do we release the old session seat.
+    """
+
+    def __init__(self, *, enrollments: EnrollmentWriter, sessions: SessionWriter) -> None:
+        self._enrollments = enrollments
+        self._sessions = sessions
+
+    async def execute(self, cmd: TransferEnrollmentCommand) -> Enrollment:
+        enrollment = await self._enrollments.get(cmd.enrollment_id)
+        if enrollment is None:
+            raise EnrollmentNotFound("enrollment missing", enrollment_id=cmd.enrollment_id)
+        if enrollment.session_id == cmd.target_session_id:
+            return enrollment
+        reserved = await self._sessions.try_reserve_seat(cmd.target_session_id)
+        if not reserved:
+            from backend.v2.contexts.enrollment.domain.errors import CapacityExceeded
+
+            raise CapacityExceeded("target session full", session_id=cmd.target_session_id)
+        await self._enrollments.update_session(enrollment.enrollment_id, cmd.target_session_id)
+        await self._sessions.release_seat(enrollment.session_id)
+        return enrollment.model_copy(update={"session_id": cmd.target_session_id})
+
+
 class PauseEnrollmentCommand(BaseModel):
     model_config = {"frozen": True}
     enrollment_id: str

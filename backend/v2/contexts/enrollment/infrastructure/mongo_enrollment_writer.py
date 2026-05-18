@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from backend.v2.contexts.enrollment.domain.models import Enrollment
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -16,6 +18,23 @@ class MongoEnrollmentWriter(TenantScopedRepository):
     async def update_status(self, enrollment_id: str, status: str) -> None:
         await self._update_one(
             {"enrollment_id": enrollment_id}, {"$set": {"status": status}}
+        )
+
+    async def update_session(self, enrollment_id: str, session_id: str) -> None:
+        existing = await self._find_one({"enrollment_id": enrollment_id})
+        previous_session_id = existing.get("session_id") if existing else None
+        await self._update_one(
+            {"enrollment_id": enrollment_id},
+            {
+                "$set": {"session_id": session_id},
+                "$push": {
+                    "move_history": {
+                        "from_session_id": previous_session_id,
+                        "to_session_id": session_id,
+                        "moved_at": datetime.now(timezone.utc),
+                    }
+                },
+            },
         )
 
     @staticmethod

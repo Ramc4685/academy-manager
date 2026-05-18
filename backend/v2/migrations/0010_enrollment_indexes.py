@@ -11,6 +11,16 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 version = "0010"
 
 
+async def _unique_v2_id(collection, field: str, name: str) -> None:
+    await collection.update_many({field: None}, {"$unset": {field: ""}})
+    await collection.create_index(
+        field,
+        unique=True,
+        name=name,
+        sparse=True,
+    )
+
+
 async def up(db: AsyncIOMotorDatabase) -> None:
     sessions = db["sessions"]
     await sessions.create_index(
@@ -21,7 +31,7 @@ async def up(db: AsyncIOMotorDatabase) -> None:
         [("academy_id", 1), ("start_at", 1)],
         name="academy_calendar",
     )
-    await sessions.create_index("session_id", unique=True, name="session_id_unique")
+    await _unique_v2_id(sessions, "session_id", "session_id_unique")
 
     enrollments = db["enrollments"]
     await enrollments.create_index(
@@ -36,11 +46,11 @@ async def up(db: AsyncIOMotorDatabase) -> None:
         [("academy_id", 1), ("status", 1), ("session_id", 1)],
         name="capacity_check",
     )
-    await enrollments.create_index("enrollment_id", unique=True, name="enrollment_id_unique")
+    await _unique_v2_id(enrollments, "enrollment_id", "enrollment_id_unique")
 
     students = db["students"]
     await students.create_index(
         [("academy_id", 1), ("parent_id", 1)],
         name="parent_children",
     )
-    await students.create_index("student_id", unique=True, name="student_id_unique")
+    await _unique_v2_id(students, "student_id", "student_id_unique")

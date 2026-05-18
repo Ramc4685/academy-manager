@@ -8,12 +8,15 @@
 export const queryKeys = {
   coach: {
     all: ["coach"] as const,
+    dashboard: () => ["coach", "dashboard"] as const,
     today: (date: string) => ["coach", "today", date] as const,
     session: (sessionId: string) => ["coach", "session", sessionId] as const,
   },
   admin: {
     all: ["admin"] as const,
     sessions: (date?: string) => ["admin", "sessions", date ?? "all"] as const,
+    users: (role?: string) => ["admin", "users", role ?? "all"] as const,
+    students: () => ["admin", "students"] as const,
     sessionDetail: (sessionId: string) => ["admin", "session", sessionId] as const,
     enrollments: (sessionId: string) => ["admin", "enrollments", sessionId] as const,
     waitlist: (sessionId: string) => ["admin", "waitlist", sessionId] as const,

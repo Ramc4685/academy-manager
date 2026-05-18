@@ -7,9 +7,10 @@ direct os.environ reads outside this module.
 from __future__ import annotations
 
 from functools import lru_cache
+import os
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -48,6 +49,37 @@ class Settings(BaseSettings):
     stripe_api_key: str | None = Field(default=None)
     stripe_webhook_secret: str | None = Field(default=None)
     stripe_use_fake_gateway: bool = Field(default=True)
+
+    @model_validator(mode="after")
+    def apply_legacy_deploy_fallbacks(self) -> "Settings":
+        """Reuse existing production deploy env names when V2_* is absent.
+
+        The legacy Fly app already owns MONGO_URL, DB_NAME, STRIPE_API_KEY,
+        and STRIPE_WEBHOOK_SECRET. V2-specific names still win when present,
+        but these fallbacks let v2 mount in the existing deployment without
+        duplicating hidden secrets.
+        """
+
+        if "V2_ENV" not in os.environ:
+            app_env = os.environ.get("APP_ENV", "").lower()
+            if app_env in {"production", "prod"}:
+                self.env = "prod"
+            elif app_env == "staging":
+                self.env = "staging"
+            elif app_env == "test":
+                self.env = "test"
+
+        if "V2_MONGO_URL" not in os.environ:
+            self.mongo_url = os.environ.get("MONGO_URL", self.mongo_url)
+        if "V2_MONGO_DB" not in os.environ:
+            self.mongo_db = os.environ.get("DB_NAME", self.mongo_db)
+        if "V2_STRIPE_API_KEY" not in os.environ:
+            self.stripe_api_key = os.environ.get("STRIPE_API_KEY", self.stripe_api_key)
+        if "V2_STRIPE_WEBHOOK_SECRET" not in os.environ:
+            self.stripe_webhook_secret = os.environ.get(
+                "STRIPE_WEBHOOK_SECRET", self.stripe_webhook_secret
+            )
+        return self
 
 
 @lru_cache(maxsize=1)

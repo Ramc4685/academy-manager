@@ -12,9 +12,7 @@ const withSerwist = withSerwistInit({
 const config: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  experimental: {
-    typedRoutes: true,
-  },
+  typedRoutes: true,
   images: {
     formats: ["image/avif", "image/webp"],
     remotePatterns: [
@@ -31,6 +29,15 @@ const config: NextConfig = {
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
         ],
+      },
+    ];
+  },
+  async rewrites() {
+    const bffOrigin = process.env.BFF_API_ORIGIN ?? "http://127.0.0.1:8001";
+    return [
+      {
+        source: "/api/v2/:path*",
+        destination: `${bffOrigin}/api/v2/:path*`,
       },
     ];
   },

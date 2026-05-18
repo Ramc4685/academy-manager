@@ -35,6 +35,28 @@ function flag(env: Env, name: string): string | undefined {
   return env[`FLAG_${name}` as `FLAG_${string}`];
 }
 
+function isV2FrontendEnabled(env: Env): boolean {
+  return (
+    flag(env, "V2_MARKETING") === "v2" ||
+    flag(env, "COACH_TODAY") === "v2" ||
+    flag(env, "COACH_ALL") === "v2" ||
+    flag(env, "PARENT_ALL") === "v2" ||
+    flag(env, "ADMIN_ALL") === "v2"
+  );
+}
+
+function isSharedV2AssetPath(path: string): boolean {
+  return (
+    path.startsWith("/_next/") ||
+    path.startsWith("/icons/") ||
+    path.startsWith("/workbox-") ||
+    path.startsWith("/swe-worker-") ||
+    path === "/favicon.ico" ||
+    path === "/manifest.webmanifest" ||
+    path === "/sw.js"
+  );
+}
+
 function decide(url: URL, env: Env): Decision {
   const path = url.pathname;
 
@@ -64,6 +86,13 @@ function decide(url: URL, env: Env): Decision {
       return { kind: "gone" };
     }
     return { kind: "proxy", origin: env.LEGACY_API_ORIGIN };
+  }
+
+  // Next.js emits global asset URLs (/_next/*, /sw.js, icons, etc.). Once any
+  // v2 frontend route is live, these must follow the v2 app or persona pages
+  // render HTML from v2 with static assets from legacy.
+  if (isSharedV2AssetPath(path) && isV2FrontendEnabled(env)) {
+    return { kind: "proxy", origin: env.V2_WEB_ORIGIN };
   }
 
   // --- Persona-prefixed frontend paths: per-flag routing. ---
@@ -96,7 +125,7 @@ function decide(url: URL, env: Env): Decision {
   }
 
   // --- v2 marketing & shared paths during Phase 0 (login, post-login). ---
-  if (path === "/login" || path === "/post-login" || path === "/manifest.webmanifest") {
+  if (path === "/login" || path === "/post-login") {
     return flag(env, "V2_MARKETING") === "v2"
       ? { kind: "proxy", origin: env.V2_WEB_ORIGIN }
       : { kind: "proxy", origin: env.LEGACY_WEB_ORIGIN };

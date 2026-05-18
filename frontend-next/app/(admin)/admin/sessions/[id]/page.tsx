@@ -8,17 +8,20 @@ import * as Dialog from "@radix-ui/react-dialog";
 
 import {
   listAdminSessions,
+  listAdminStudents,
   listSessionEnrollments,
   listSessionWaitlist,
   createEnrollment,
   deleteEnrollment,
   pauseEnrollment,
   resumeEnrollment,
+  transferEnrollment,
   deleteAdminSession,
   promoteWaitlist,
   skipWaitlistEntry,
   deleteWaitlistEntry,
   type AdminEnrollmentView,
+  type AdminStudentView,
   type AdminWaitlistEntry,
   type CreateEnrollmentRequest,
 } from "@/lib/api/admin";
@@ -29,6 +32,7 @@ export default function AdminSessionDetailPage() {
   const sessionId = params.id as string;
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
+  const [transferTarget, setTransferTarget] = useState<AdminEnrollmentView | null>(null);
 
   // Fetch the session from today's list to get metadata.
   // We use sessionDetail key for this specific query.
@@ -164,6 +168,7 @@ export default function AdminSessionDetailPage() {
                 })
               )
             }
+            onTransfer={(enrollment) => setTransferTarget(enrollment)}
           />
         )}
       </div>
@@ -221,6 +226,20 @@ export default function AdminSessionDetailPage() {
           });
         }}
       />
+      <TransferEnrollmentDialog
+        enrollment={transferTarget}
+        currentSessionId={sessionId}
+        onClose={() => setTransferTarget(null)}
+        onMoved={() => {
+          setTransferTarget(null);
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.admin.enrollments(sessionId),
+          });
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.admin.sessions(),
+          });
+        }}
+      />
     </section>
   );
 }
@@ -234,11 +253,13 @@ function RosterTable({
   onDelete,
   onPause,
   onResume,
+  onTransfer,
 }: {
   enrollments: AdminEnrollmentView[];
   onDelete: (id: string) => void;
   onPause: (id: string) => void;
   onResume: (id: string) => void;
+  onTransfer: (enrollment: AdminEnrollmentView) => void;
 }) {
   return (
     <div className="overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800">
@@ -282,6 +303,12 @@ function RosterTable({
                       Resume
                     </button>
                   ) : null}
+                  <button
+                    onClick={() => onTransfer(e)}
+                    className="min-h-touch rounded-md border border-neutral-300 px-2 text-xs hover:bg-neutral-50 dark:border-neutral-700"
+                  >
+                    Move
+                  </button>
                   <button
                     onClick={() => onDelete(e.enrollment_id)}
                     className="min-h-touch rounded-md border border-red-200 px-2 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400"
@@ -425,6 +452,12 @@ function AddToRosterDialog({
     full_name: "",
   });
   const [error, setError] = useState<string | null>(null);
+  const studentsQuery = useQuery({
+    queryKey: queryKeys.admin.students(),
+    queryFn: listAdminStudents,
+    enabled: open,
+  });
+  const students = studentsQuery.data?.students ?? [];
 
   const mutation = useMutation({
     mutationFn: (payload: CreateEnrollmentRequest) => createEnrollment(payload),
@@ -463,35 +496,53 @@ function AddToRosterDialog({
           )}
 
           <form onSubmit={handleSubmit} className="space-y-3">
-            <Field label="Full name" required>
-              <input
-                type="text"
-                required
-                value={form.full_name}
-                onChange={(e) => setForm((f) => ({ ...f, full_name: e.target.value }))}
-                className={inputClass}
-              />
-            </Field>
-            <Field label="Student ID" required>
-              <input
-                type="text"
-                required
-                value={form.student_id}
-                onChange={(e) => setForm((f) => ({ ...f, student_id: e.target.value }))}
-                className={inputClass}
-                placeholder="uid-…"
-              />
-            </Field>
-            <Field label="Parent ID" required>
-              <input
-                type="text"
-                required
-                value={form.parent_id}
-                onChange={(e) => setForm((f) => ({ ...f, parent_id: e.target.value }))}
-                className={inputClass}
-                placeholder="uid-…"
-              />
-            </Field>
+            {students.length > 0 ? (
+              <Field label="Student" required>
+                <StudentSelect
+                  students={students}
+                  value={form.student_id}
+                  onChange={(student) =>
+                    setForm({
+                      student_id: student.student_id,
+                      parent_id: student.parent_id,
+                      full_name: student.full_name,
+                    })
+                  }
+                />
+              </Field>
+            ) : (
+              <>
+                <Field label="Full name" required>
+                  <input
+                    type="text"
+                    required
+                    value={form.full_name}
+                    onChange={(e) => setForm((f) => ({ ...f, full_name: e.target.value }))}
+                    className={inputClass}
+                  />
+                </Field>
+                <Field label="Student ID" required>
+                  <input
+                    type="text"
+                    required
+                    value={form.student_id}
+                    onChange={(e) => setForm((f) => ({ ...f, student_id: e.target.value }))}
+                    className={inputClass}
+                    placeholder={studentsQuery.isLoading ? "Loading students…" : "Student Mongo ID"}
+                  />
+                </Field>
+                <Field label="Parent ID" required>
+                  <input
+                    type="text"
+                    required
+                    value={form.parent_id}
+                    onChange={(e) => setForm((f) => ({ ...f, parent_id: e.target.value }))}
+                    className={inputClass}
+                    placeholder="Parent Mongo ID"
+                  />
+                </Field>
+              </>
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <Dialog.Close asChild>
                 <button
@@ -513,6 +564,132 @@ function AddToRosterDialog({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+function TransferEnrollmentDialog({
+  enrollment,
+  currentSessionId,
+  onClose,
+  onMoved,
+}: {
+  enrollment: AdminEnrollmentView | null;
+  currentSessionId: string;
+  onClose: () => void;
+  onMoved: () => void;
+}) {
+  const [targetSessionId, setTargetSessionId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const sessionsQuery = useQuery({
+    queryKey: queryKeys.admin.sessions(),
+    queryFn: () => listAdminSessions(),
+    enabled: enrollment !== null,
+  });
+  const sessions =
+    sessionsQuery.data?.sessions.filter((session) => session.session_id !== currentSessionId) ?? [];
+  const mutation = useMutation({
+    mutationFn: () => transferEnrollment(enrollment!.enrollment_id, { target_session_id: targetSessionId }),
+    onSuccess: () => {
+      setTargetSessionId("");
+      setError(null);
+      onMoved();
+    },
+    onError: (err: Error) => setError(err.message ?? "Failed to move enrollment."),
+  });
+
+  return (
+    <Dialog.Root open={enrollment !== null} onOpenChange={(open) => !open && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <Dialog.Content
+          className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-xl focus:outline-none dark:bg-neutral-900"
+          aria-describedby="transfer-enrollment-desc"
+        >
+          <Dialog.Title className="mb-1 text-lg font-semibold">Move enrollment</Dialog.Title>
+          <Dialog.Description id="transfer-enrollment-desc" className="mb-4 text-sm text-neutral-500">
+            {enrollment ? `Move ${enrollment.full_name} to another session.` : ""}
+          </Dialog.Description>
+          {error && (
+            <p role="alert" className="mb-3 rounded-md bg-red-50 p-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+              {error}
+            </p>
+          )}
+          <form
+            className="space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              mutation.mutate();
+            }}
+          >
+            <Field label="Target session" required>
+              <select
+                required
+                value={targetSessionId}
+                onChange={(event) => setTargetSessionId(event.target.value)}
+                className={inputClass}
+              >
+                <option value="">
+                  {sessionsQuery.isLoading ? "Loading sessions..." : "Select session"}
+                </option>
+                {sessions.map((session) => (
+                  <option key={session.session_id} value={session.session_id}>
+                    {session.title} - {new Date(session.start_at).toLocaleTimeString([], {
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="min-h-touch rounded-md border border-neutral-300 px-4 text-sm dark:border-neutral-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={mutation.isPending || sessions.length === 0}
+                className="min-h-touch rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+              >
+                {mutation.isPending ? "Moving..." : "Move"}
+              </button>
+            </div>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function StudentSelect({
+  students,
+  value,
+  onChange,
+}: {
+  students: AdminStudentView[];
+  value: string;
+  onChange: (student: AdminStudentView) => void;
+}) {
+  return (
+    <select
+      required
+      value={value}
+      onChange={(e) => {
+        const selected = students.find((student) => student.student_id === e.target.value);
+        if (selected) onChange(selected);
+      }}
+      className={inputClass}
+    >
+      <option value="">Select student</option>
+      {students.map((student) => (
+        <option key={student.student_id} value={student.student_id}>
+          {student.full_name}
+        </option>
+      ))}
+    </select>
   );
 }
 

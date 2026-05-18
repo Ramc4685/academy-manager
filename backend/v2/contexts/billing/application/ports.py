@@ -44,6 +44,28 @@ class StripeGateway(Protocol):
     ) -> tuple[str, str]:
         """Returns (checkout_session_id, redirect_url)."""
 
+    async def create_subscription_checkout_session(
+        self,
+        *,
+        parent_id: str,
+        enrollment_id: str,
+        session_id: str,
+        amount_cents: int,
+        success_url: str,
+        cancel_url: str,
+        metadata: dict[str, str],
+    ) -> tuple[str, str, str]:
+        """Returns (checkout_session_id, redirect_url, stripe_subscription_id)."""
+
+    async def create_customer_portal_session(
+        self,
+        *,
+        parent_id: str,
+        return_url: str,
+        stripe_customer_id: str | None,
+    ) -> str:
+        """Returns portal redirect URL."""
+
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, object]: ...
 
     async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
