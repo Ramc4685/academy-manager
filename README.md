@@ -79,7 +79,8 @@ intended for self-hosting.
 | Transactional email | Resend | Verified `courtmastr.com` sender domain |
 | Scheduler timezone | `America/Chicago` | Set on backend |
 
-The `academy-next` Cloudflare Worker owns `academy.courtmastr.com` directly.
+The `academy-next` Cloudflare Worker owns `academy.courtmastr.com/*` directly
+through a Worker Route.
 The legacy CRA app is no longer a production deployable.
 
 ### Deployment pipeline

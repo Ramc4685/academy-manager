@@ -170,7 +170,7 @@ BFF_API_ORIGIN=https://api.academy.courtmastr.com
 NEXT_PUBLIC_API_BASE=/api/v2
 ```
 
-`academy.courtmastr.com` is a custom domain on the `academy-next` Cloudflare
+`academy.courtmastr.com/*` is a Worker Route on the `academy-next` Cloudflare
 Worker. The old CRA app under `frontend/` is deprecated and is not deployed by
 GitHub Actions.
 

@@ -377,3 +377,7 @@ agent_communication:
     message: "Post-merge production smoke found academy.courtmastr.com still serving the legacy CRA app while academy-next.courtmastr.com and api.academy.courtmastr.com were healthy. Hotfix in progress: make frontend-next the direct custom-domain owner for academy.courtmastr.com and retire/delete the separate academy-edge-router deployment."
   - agent: "main"
     message: "Primary frontend cutover hotfix verified locally: production workflow YAML parse passed; production smoke script syntax passed; retired edge router unit test passed (13); frontend-next typecheck passed; frontend-next production build passed; OpenNext Cloudflare build passed; frontend-next Wrangler dry-run passed; git diff --check passed."
+  - agent: "main"
+    message: "Production deploy follow-up: Cloudflare rejected custom_domain=true for academy.courtmastr.com because existing externally managed DNS records already exist (Cloudflare error 100117). Root cause is wrong trigger mode; switching frontend-next/wrangler.jsonc to a Worker Route pattern academy.courtmastr.com/* with zone_name courtmastr.com."
+  - agent: "main"
+    message: "Cloudflare Worker Route fix verified locally: frontend-next wrangler deploy --dry-run passed with academy.courtmastr.com/* route, workflow YAML parse passed, production smoke script syntax passed, and git diff --check passed."
