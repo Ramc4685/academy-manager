@@ -4,81 +4,58 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { sendPasswordReset, signInWithEmail, signInWithGoogle } from "@/lib/auth/firebase";
+import { registerPublicParent } from "@/lib/api/registration";
+import { registerWithEmail, signInWithGoogle } from "@/lib/auth/firebase";
 
 const HERO_IMAGE =
   "https://static.prod-images.emergentagent.com/jobs/c735a2b3-2fb1-4fa5-a75c-2007226ca62e/images/1d1cfafe28a9d8df9f22f211189ef097f1bb5d348846857bdee5ba711ec35327.png";
 
-export default function LoginPage() {
+export default function RegisterPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [resetLoading, setResetLoading] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     setHydrated(true);
   }, []);
 
-  async function handleEmailSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    setNotice(null);
-    try {
-      await signInWithEmail(email, password);
-      router.push("/post-login");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Sign-in failed. Please try again.";
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
+  async function finishParentRegistration() {
+    await registerPublicParent();
+    router.push("/parent/onboarding");
   }
 
   async function handleGoogle() {
     setGoogleLoading(true);
     setError(null);
-    setNotice(null);
     try {
       await signInWithGoogle();
-      router.push("/post-login");
+      await finishParentRegistration();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Google sign-in failed. Please try again.";
-      setError(msg);
+      setError(err instanceof Error ? err.message : "Google registration failed.");
     } finally {
       setGoogleLoading(false);
     }
   }
 
-  async function handlePasswordReset() {
-    const trimmedEmail = email.trim();
+  async function handleEmailSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setLoading(true);
     setError(null);
-    setNotice(null);
-
-    if (!trimmedEmail) {
-      setError("Enter your email first, then request a password reset.");
-      return;
-    }
-
-    setResetLoading(true);
     try {
-      await sendPasswordReset(trimmedEmail);
-      setNotice("If that email exists, Firebase has sent a reset link.");
+      await registerWithEmail(email.trim(), password);
+      await finishParentRegistration();
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : "Password reset failed. Please try again.";
-      setError(msg);
+      setError(err instanceof Error ? err.message : "Registration failed. Please try again.");
     } finally {
-      setResetLoading(false);
+      setLoading(false);
     }
   }
 
-  const busy = !hydrated || loading || googleLoading || resetLoading;
+  const busy = !hydrated || loading || googleLoading;
 
   return (
     <main className="min-h-dvh bg-slate-50 font-body text-slate-950">
@@ -96,12 +73,11 @@ export default function LoginPage() {
 
             <div>
               <h1 className="font-display text-4xl font-bold leading-[1.05] lg:text-5xl">
-                Run a premium academy.{" "}
-                <span className="text-yellow-400">Powered by precision.</span>
+                Start your child&apos;s academy journey.{" "}
+                <span className="text-yellow-400">Built for serious training.</span>
               </h1>
               <p className="mt-4 max-w-md leading-relaxed text-white/80">
-                Sessions, students, payments, payouts, attendance, and profit - all in one
-                professional dashboard.
+                Register, choose a session, and manage payments from one parent portal.
               </p>
             </div>
           </div>
@@ -115,14 +91,30 @@ export default function LoginPage() {
 
             <div>
               <h2 className="font-display text-3xl font-bold leading-none text-slate-900 md:text-4xl">
-                Sign in
+                Register your child
               </h2>
               <p className="mt-2 text-sm text-slate-600">
-                Welcome back. Enter your credentials.
+                Use Google, or create an email and password account.
               </p>
             </div>
 
-            <form onSubmit={handleEmailSubmit} className="mt-8 space-y-5" data-testid="login-form">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={handleGoogle}
+              data-testid="register-google"
+              className="mt-8 flex min-h-touch w-full items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {googleLoading ? "Connecting..." : "Continue with Google"}
+            </button>
+
+            <div className="mt-5 flex items-center gap-3 text-xs uppercase text-slate-400">
+              <div className="h-px flex-1 bg-slate-200" />
+              <span>or</span>
+              <div className="h-px flex-1 bg-slate-200" />
+            </div>
+
+            <form onSubmit={handleEmailSubmit} className="mt-5 space-y-5" data-testid="register-form">
               <Field
                 id="email"
                 label="Email"
@@ -132,36 +124,16 @@ export default function LoginPage() {
                 value={email}
                 onChange={setEmail}
               />
-              <div>
-                <Field
-                  id="password"
-                  label="Password"
-                  type="password"
-                  autoComplete="current-password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={setPassword}
-                />
-                <div className="mt-1.5 text-right">
-                  <button
-                    type="button"
-                    className="text-xs font-medium text-blue-600 transition hover:underline focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={busy}
-                    onClick={handlePasswordReset}
-                  >
-                    {resetLoading ? "Sending reset..." : "Forgot password?"}
-                  </button>
-                </div>
-              </div>
-
-              {notice ? (
-                <p
-                  role="status"
-                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800"
-                >
-                  {notice}
-                </p>
-              ) : null}
+              <Field
+                id="password"
+                label="Password"
+                type="password"
+                autoComplete="new-password"
+                placeholder="••••••••"
+                value={password}
+                onChange={setPassword}
+                minLength={8}
+              />
 
               {error ? (
                 <p
@@ -175,37 +147,20 @@ export default function LoginPage() {
               <button
                 type="submit"
                 disabled={busy}
-                data-testid="login-submit"
+                data-testid="register-submit"
                 className="flex min-h-touch w-full items-center justify-center rounded-md bg-blue-600 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {loading ? "Signing in..." : "Sign in"}
+                {loading ? "Creating account..." : "Create account"}
               </button>
             </form>
 
-            <div className="mt-5 flex items-center gap-3 text-xs uppercase text-slate-400">
-              <div className="h-px flex-1 bg-slate-200" />
-              <span>or</span>
-              <div className="h-px flex-1 bg-slate-200" />
-            </div>
-
-            <button
-              type="button"
-              disabled={busy}
-              onClick={handleGoogle}
-              data-testid="login-google"
-              className="mt-5 flex min-h-touch w-full items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {googleLoading ? "Connecting..." : "Continue with Google"}
-            </button>
-
             <p className="mt-6 text-center text-sm text-slate-600">
-              New parent?{" "}
+              Already registered?{" "}
               <Link
-                href="/register"
+                href="/login"
                 className="font-medium text-blue-600 transition hover:underline"
-                data-testid="link-register"
               >
-                Register your child →
+                Sign in
               </Link>
             </p>
           </div>
@@ -244,6 +199,7 @@ function Field({
   placeholder,
   value,
   onChange,
+  minLength,
 }: {
   id: string;
   label: string;
@@ -252,6 +208,7 @@ function Field({
   placeholder: string;
   value: string;
   onChange: (value: string) => void;
+  minLength?: number;
 }) {
   return (
     <div>
@@ -264,10 +221,11 @@ function Field({
         type={type}
         autoComplete={autoComplete}
         required
+        minLength={minLength}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        data-testid={`login-${id}`}
+        data-testid={`register-${id}`}
         className="mt-1.5 min-h-touch w-full rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-900 shadow-sm transition placeholder:text-slate-400 hover:border-slate-300 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-100"
       />
     </div>

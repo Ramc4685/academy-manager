@@ -81,3 +81,49 @@ async def test_admin_user_listing_is_scoped_to_academy(db) -> None:
     users = await repo.list_users(role="admin", academy_id="academy-a")
 
     assert [u.user_id for u in users] == ["u-a"]
+
+
+@pytest.mark.asyncio
+async def test_user_repo_bootstraps_new_public_parent(db) -> None:
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    user = await repo.ensure_parent_user(
+        email="parent@example.com",
+        display_name="Parent One",
+        firebase_uid="firebase-parent-1",
+    )
+
+    assert user.user_id == "firebase-parent-1"
+    assert user.roles == ("parent",)
+    assert user.academy_id == "academy-a"
+
+    stored = await db["users"].find_one({"email": "parent@example.com"})
+    assert stored["auth_provider"] == "firebase"
+    assert stored["firebase_uid"] == "firebase-parent-1"
+
+
+@pytest.mark.asyncio
+async def test_user_repo_adds_parent_role_without_dropping_existing_roles(db) -> None:
+    await db["users"].insert_one(
+        {
+            "user_id": "coach-1",
+            "email": "coach-parent@example.com",
+            "display_name": "Coach Parent",
+            "roles": ["coach"],
+            "role": "coach",
+            "status": "active",
+            "is_active": True,
+            "academy_id": "academy-a",
+        }
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    user = await repo.ensure_parent_user(
+        email="coach-parent@example.com",
+        display_name="Coach Parent",
+        firebase_uid="firebase-coach-parent",
+    )
+
+    assert user.roles == ("coach", "parent")
+    stored = await db["users"].find_one({"email": "coach-parent@example.com"})
+    assert stored["role"] == "coach"

@@ -18,6 +18,14 @@ class UserRepository(Protocol):
     async def get_by_id(self, user_id: str) -> User | None: ...
 
 
+class PublicParentRegistrationRepository(UserRepository, Protocol):
+    """Write port for first-time parent self-registration."""
+
+    async def ensure_parent_user(
+        self, *, email: str, display_name: str, firebase_uid: str
+    ) -> User: ...
+
+
 class TokenVerifier(Protocol):
     """Verifies a Firebase ID token and returns a dict of claims.
 
