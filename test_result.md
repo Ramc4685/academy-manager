@@ -381,3 +381,5 @@ agent_communication:
     message: "Production deploy follow-up: Cloudflare rejected custom_domain=true for academy.courtmastr.com because existing externally managed DNS records already exist (Cloudflare error 100117). Root cause is wrong trigger mode; switching frontend-next/wrangler.jsonc to a Worker Route pattern academy.courtmastr.com/* with zone_name courtmastr.com."
   - agent: "main"
     message: "Cloudflare Worker Route fix verified locally: frontend-next wrangler deploy --dry-run passed with academy.courtmastr.com/* route, workflow YAML parse passed, production smoke script syntax passed, and git diff --check passed."
+  - agent: "main"
+    message: "Production deploy confirmed academy-next Worker route deploys, but smoke still received the legacy CRA bundle from academy.courtmastr.com. Root cause is the old courtmastr-academy Cloudflare Pages custom domain still winning over the Worker route. Adding production cleanup to delete that legacy Pages project before deploying academy-next."

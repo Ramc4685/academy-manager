@@ -282,6 +282,20 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Retire legacy Pages frontend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          pages_projects="$(npx wrangler@4 pages project list)"
+          printf '%s\n' "$pages_projects"
+          if printf '%s\n' "$pages_projects" | grep -qw 'courtmastr-academy'; then
+            npx wrangler@4 pages project delete courtmastr-academy --yes
+          else
+            echo "Legacy Pages project courtmastr-academy is already absent."
+          fi
+
       - name: Retire legacy edge router route
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

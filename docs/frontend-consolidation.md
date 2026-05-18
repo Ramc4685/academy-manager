@@ -19,6 +19,7 @@ CourtMastr now has one production frontend deployable: `frontend-next/`.
 
 - Do not add new product pages to `frontend/`.
 - Do not duplicate a workflow across both apps.
+- Do not leave the old `courtmastr-academy` Cloudflare Pages project bound to `academy.courtmastr.com`; it wins over the Worker route and serves the deprecated CRA bundle.
 - Do not route production browser traffic through the retired `academy-edge-router`.
 - If a legacy page still has required behavior, port it into `frontend-next/` using v2 BFF endpoints before cutover.
 - The backend source of truth remains Firebase Auth for authentication and MongoDB for authorization.
