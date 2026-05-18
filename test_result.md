@@ -296,10 +296,24 @@ frontend:
       - working: true
         agent: "main"
         comment: "Closed the remaining high-signal parity gaps: parent autopay/customer portal/checkout status/pause requests, admin pause approval/dues/audit/report exports, coach lesson plans/progress notes, Stripe subscription invoice webhooks, enrollment transfer move history, and the Mongo payment list_for_parent runtime fix found by browser smoke."
+  - task: "single frontend production workflow"
+    implemented: true
+    working: true
+    file: ".github/workflows/production.yml"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Consolidated GitHub Actions into one Production workflow, removed legacy CRA build/deploy workflows, made frontend-next the only frontend deployable, simplified edge routing to API vs Next web origins, and updated deployment docs/smoke checks. Verification pending."
+      - working: true
+        agent: "main"
+        comment: "Verified workflow YAML parses, backend/v2 tests pass, frontend-next typecheck/lint/build/size/E2E pass, OpenAPI drift check skips cleanly with no snapshot, edge routing tests pass, edge wrangler prod dry-run passes, OpenNext Cloudflare build passes, smoke script syntax passes, and git diff --check passes."
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 12
+  test_sequence: 13
   run_ui: true
 test_plan:
   current_focus: []
@@ -355,3 +369,7 @@ agent_communication:
     message: "Public parent registration bootstrap: added /api/v2/register/parent to verify a Firebase token without requiring an existing Mongo role and create/add the parent authorization role only; added /register in the Next v2 app with Google-first signup plus email/password fallback; fixed post-login homes to existing v2 routes. Verification: focused registration/auth repo/interface tests passed (12), full backend/v2 suite passed (153), frontend-next pnpm typecheck passed, pnpm build passed, git diff --check passed. Browser render check opened /register on desktop and 390px mobile with no warning/error console entries. Production Mongo admin authorization row for ramchand4685@gmail.com was upserted as active admin."
   - agent: "main"
     message: "Unified frontend redesign pass: integrated the courtmastr-ui-redesign landing page into frontend-next as the single frontend target, adjusted role CTAs to current auth routes (/login for staff, /register for parents), switched preview copy to USD/current product language, and added docs/frontend-consolidation.md to document frontend-next as the target and frontend/ as temporary fallback. Verification: frontend-next pnpm typecheck passed, pnpm build passed, git diff --check passed, and Playwright rendered / at desktop and 390px mobile with no warning/error console entries."
+  - agent: "main"
+    message: "Single frontend production workflow implementation started: removed ci.yml/deploy.yml/v2-* workflows and replaced them with .github/workflows/production.yml; removed legacy CRA frontend build/deploy path; simplified edge worker to route /api/* to Fly and all browser paths to frontend-next; updated production smoke/docs. Focused verification next."
+  - agent: "main"
+    message: "Single frontend production workflow verified: workflow YAML parse passed; backend/v2 tests 153 passed; frontend-next pnpm typecheck/lint/build/size passed; frontend-next E2E passed on PLAYWRIGHT_PORT=3301 with 6 passed/14 planned skips after avoiding an existing local port-3001 dev server; OpenAPI drift check skipped because no snapshot exists; edge routing tests passed (12); edge wrangler prod dry-run passed; OpenNext Cloudflare build passed; bash -n production_smoke and git diff --check passed."

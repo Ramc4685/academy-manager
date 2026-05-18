@@ -59,20 +59,17 @@
   "size-limit": [
     {
       "name": "(coach)/today",
-      "path": ".next/static/chunks/app/(coach)/today/**/*.js",
-      "limit": "150 KB",
-      "ignore": [
-        "sharp"
-      ]
+      "path": ".next/static/chunks/app/**/coach/today/*.js",
+      "limit": "150 KB"
     },
     {
       "name": "(parent)/onboarding",
-      "path": ".next/static/chunks/app/(parent)/onboarding/**/*.js",
+      "path": ".next/static/chunks/app/**/parent/onboarding/*.js",
       "limit": "200 KB"
     },
     {
       "name": "(admin)",
-      "path": ".next/static/chunks/app/(admin)/**/*.js",
+      "path": ".next/static/chunks/app/**/admin/**/*.js",
       "limit": "300 KB"
     }
   ],
