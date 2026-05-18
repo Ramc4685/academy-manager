@@ -4,7 +4,7 @@ compatibility_date = "2026-05-16"
 
 # Bind this worker to the production hostname when the v2 canary starts.
 routes = [
-  { pattern = "academy.courtmastr.com", custom_domain = true }
+  { pattern = "academy.courtmastr.com/*", zone_name = "courtmastr.com" }
 ]
 
 [vars]
@@ -33,7 +33,7 @@ FLAG_V2_MARKETING = "v2"          # preview env always shows v2 marketing
 [env.prod]
 name = "academy-edge-router"
 routes = [
-  { pattern = "academy.courtmastr.com", custom_domain = true }
+  { pattern = "academy.courtmastr.com/*", zone_name = "courtmastr.com" }
 ]
 
 [env.prod.vars]
