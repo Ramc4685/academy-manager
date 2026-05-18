@@ -17,8 +17,8 @@
   ],
   "routes": [
     {
-      "pattern": "academy.courtmastr.com",
-      "custom_domain": true
+      "pattern": "academy.courtmastr.com/*",
+      "zone_name": "courtmastr.com"
     }
   ],
   "observability": {
