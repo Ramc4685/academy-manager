@@ -170,8 +170,8 @@ BFF_API_ORIGIN=https://api.academy.courtmastr.com
 NEXT_PUBLIC_API_BASE=/api/v2
 ```
 
-`academy.courtmastr.com` is routed to the Next frontend by the Cloudflare edge
-worker. The old CRA app under `frontend/` is deprecated and is not deployed by
+`academy.courtmastr.com` is a custom domain on the `academy-next` Cloudflare
+Worker. The old CRA app under `frontend/` is deprecated and is not deployed by
 GitHub Actions.
 
 ## Payments

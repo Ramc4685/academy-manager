@@ -18,7 +18,6 @@ Production deployment is handled by one GitHub Actions workflow:
 - **Frontend** installs `frontend-next/` with pnpm, then runs typecheck, lint,
   build, OpenAPI drift check, size budget reporting, Lighthouse when configured,
   and Playwright E2E.
-- **Edge** runs the Cloudflare router table tests.
 
 The legacy CRA app under `frontend/` is deprecated and is not built, tested, or
 deployed by the production workflow.
@@ -29,7 +28,6 @@ deployed by the production workflow.
 - Backend API: `https://api.academy.courtmastr.com`
 - Fly app: `courtmastr-academy-api`
 - Next/Cloudflare frontend project: `academy-next`
-- Edge worker: `academy-edge-router`
 
 ## Required GitHub Secrets
 
@@ -39,9 +37,9 @@ CLOUDFLARE_API_TOKEN=<Cloudflare Workers deploy token>
 CLOUDFLARE_ACCOUNT_ID=<Cloudflare account id>
 ```
 
-The Cloudflare token needs permission to deploy the Next frontend worker and
-the `academy-edge-router` worker. The Fly token needs permission to deploy
-`courtmastr-academy-api`.
+The Cloudflare token needs permission to deploy the Next frontend Worker and
+delete the retired `academy-edge-router` Worker if it still exists. The Fly
+token needs permission to deploy `courtmastr-academy-api`.
 
 ## Required GitHub Variables
 
@@ -60,7 +58,7 @@ REACT_APP_FIREBASE_MEASUREMENT_ID=G-Z6GS6WRZY8
 
 Use a protected GitHub Environment named `production` with required reviewers
 before launch. Protect the `main` branch with required status checks for the
-`Backend`, `Frontend`, and `Edge` jobs from the `Production` workflow.
+`Backend` and `Frontend` jobs from the `Production` workflow.
 
 ## Manual Deploy
 
