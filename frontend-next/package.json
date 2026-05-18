@@ -75,5 +75,14 @@
       "path": ".next/static/chunks/app/(admin)/**/*.js",
       "limit": "300 KB"
     }
-  ]
+  ],
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "protobufjs",
+      "sharp",
+      "unrs-resolver",
+      "workerd"
+    ]
+  }
 }
