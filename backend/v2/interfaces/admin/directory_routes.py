@@ -25,7 +25,7 @@ async def list_users(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminUserList:
-    users = await use_cases.list_admin_users.execute(role)
+    users = await use_cases.list_admin_users.execute(role, academy_id=_claims.academy_id)
     return AdminUserList(users=[AdminUserView(**u.model_dump()) for u in users])
 
 

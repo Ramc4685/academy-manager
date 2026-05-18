@@ -39,6 +39,7 @@ from backend.v2.contexts.billing.domain.events import (
 )
 from backend.v2.contexts.billing.domain.models import Payment
 from backend.v2.shared.events import Outbox
+from backend.v2.shared.tenancy import tenant_scope
 
 log = logging.getLogger(__name__)
 
@@ -74,18 +75,19 @@ class HandleWebhookEvent:
         if not event_id or not event_type:
             raise InvalidWebhookSignature("event missing id or type")
 
-        claimed = await self._dedup.claim(event_id, event_type)
-        if not claimed:
-            log.info("stripe_webhook_deduped event_id=%s", event_id)
-            return {"received": True, "deduped": True}
+        with tenant_scope(self._academy_id):
+            claimed = await self._dedup.claim(event_id, event_type)
+            if not claimed:
+                log.info("stripe_webhook_deduped event_id=%s", event_id)
+                return {"received": True, "deduped": True}
 
-        try:
-            await self._dispatch(event_type, event)
-            await self._dedup.mark_processed(event_id)
-            return {"received": True, "type": event_type}
-        except Exception as exc:
-            await self._dedup.mark_failed(event_id, str(exc))
-            raise
+            try:
+                await self._dispatch(event_type, event)
+                await self._dedup.mark_processed(event_id)
+                return {"received": True, "type": event_type}
+            except Exception as exc:
+                await self._dedup.mark_failed(event_id, str(exc))
+                raise
 
     async def _dispatch(self, event_type: str, event: dict[str, Any]) -> None:
         if event_type == "checkout.session.completed":

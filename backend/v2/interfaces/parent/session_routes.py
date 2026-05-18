@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends
 
 from backend.v2.interfaces.parent.deps import ParentUseCases, get_parent_use_cases
@@ -14,6 +16,9 @@ from backend.v2.shared.http import require_persona
 
 router = APIRouter(tags=["parent.sessions"])
 
+ParentClaims = Annotated[AuthClaims, Depends(require_persona("parent"))]
+ParentUseCasesDep = Annotated[ParentUseCases, Depends(get_parent_use_cases)]
+
 
 @router.get(
     "/sessions/available",
@@ -21,8 +26,8 @@ router = APIRouter(tags=["parent.sessions"])
     summary="Parent-safe session catalog for onboarding",
 )
 async def list_available_sessions(
-    _: AuthClaims = Depends(require_persona("parent")),
-    use_cases: ParentUseCases = Depends(get_parent_use_cases),
+    _: ParentClaims,
+    use_cases: ParentUseCasesDep,
 ) -> ParentAvailableSessionsResponse:
     sessions = await use_cases.list_available_sessions.execute()
     return ParentAvailableSessionsResponse(

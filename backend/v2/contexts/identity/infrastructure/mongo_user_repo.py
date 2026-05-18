@@ -77,7 +77,11 @@ class MongoUserRepository:
             status=status,
         )
 
-    async def list_users(self, role: Role | None = None) -> list[AdminUserSummary]:
-        query = self._role_filter(role) if role else {}
+    async def list_users(
+        self, role: Role | None = None, academy_id: str | None = None
+    ) -> list[AdminUserSummary]:
+        query: dict[str, object] = {"academy_id": academy_id or self._default_academy_id}
+        if role:
+            query = {"$and": [query, self._role_filter(role)]}
         cursor = self.collection.find(query).sort([("role", 1), ("display_name", 1), ("email", 1)])
         return [self._to_admin_summary(doc) async for doc in cursor]

@@ -200,7 +200,10 @@ def compose_parent(
 
     async def _parent_students(parent_id: str) -> list[dict[str, Any]]:
         cursor = db["students"].find(
-            {"academy_id": academy_id, "parent_id": parent_id}
+            {
+                "academy_id": academy_id,
+                "$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}],
+            }
         ).sort([("full_name", 1)])
         return [doc async for doc in cursor]
 

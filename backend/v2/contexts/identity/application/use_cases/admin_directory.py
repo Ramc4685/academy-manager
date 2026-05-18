@@ -20,12 +20,18 @@ class AdminUserSummary(BaseModel):
 
 
 class AdminUserDirectoryQuery(Protocol):
-    async def list_users(self, role: Role | None = None) -> list[AdminUserSummary]: ...
+    async def list_users(
+        self, role: Role | None = None, academy_id: str | None = None
+    ) -> list[AdminUserSummary]: ...
 
 
 class ListAdminUsers:
     def __init__(self, users: AdminUserDirectoryQuery) -> None:
         self._users = users
 
-    async def execute(self, role: Literal["admin", "coach", "parent"] | None = None) -> list[AdminUserSummary]:
-        return await self._users.list_users(role)
+    async def execute(
+        self,
+        role: Literal["admin", "coach", "parent"] | None = None,
+        academy_id: str | None = None,
+    ) -> list[AdminUserSummary]:
+        return await self._users.list_users(role, academy_id=academy_id)

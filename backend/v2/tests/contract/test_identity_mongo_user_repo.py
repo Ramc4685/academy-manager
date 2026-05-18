@@ -51,3 +51,33 @@ async def test_user_repo_maps_v2_user_shape(db) -> None:
     assert user.user_id == "u-admin"
     assert user.roles == ("admin",)
     assert user.academy_id == "academy-a"
+
+
+@pytest.mark.asyncio
+async def test_admin_user_listing_is_scoped_to_academy(db) -> None:
+    await db["users"].insert_many(
+        [
+            {
+                "user_id": "u-a",
+                "email": "admin-a@example.com",
+                "display_name": "Admin A",
+                "roles": ["admin"],
+                "status": "active",
+                "academy_id": "academy-a",
+            },
+            {
+                "user_id": "u-b",
+                "email": "admin-b@example.com",
+                "display_name": "Admin B",
+                "roles": ["admin"],
+                "status": "active",
+                "academy_id": "academy-b",
+            },
+        ]
+    )
+
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    users = await repo.list_users(role="admin", academy_id="academy-a")
+
+    assert [u.user_id for u in users] == ["u-a"]

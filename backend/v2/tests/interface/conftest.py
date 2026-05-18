@@ -823,7 +823,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         return f"name\n{report_name}\n"
 
     class _ListAdminUsers:
-        async def execute(self, role=None):
+        async def execute(self, role=None, academy_id=None):
+            _ = academy_id
             users = [
                 AdminUserSummary(
                     user_id="coach-1",
