@@ -6,6 +6,7 @@ load_dotenv(ROOT_DIR / ".env")
 
 import os
 import logging
+from typing import Any
 from fastapi import FastAPI, APIRouter
 from starlette.middleware.cors import CORSMiddleware
 
@@ -60,6 +61,9 @@ async def health():
 
 app.include_router(api_router)
 
+_v2_app = None
+_v2_lifespan_cm: Any | None = None
+
 
 # v2 mount — gated behind env flag so legacy boot is unaffected if v2 deps
 # aren't installed. See backend/v2/README.md and docs/adr/0005-*.md.
@@ -67,6 +71,7 @@ if os.environ.get("V2_ENABLED", "0") == "1":
     try:
         from v2.main import app as v2_app  # type: ignore[import-not-found]
 
+        _v2_app = v2_app
         app.mount("", v2_app)  # v2 owns /api/v2/* paths
     except ImportError as _v2_err:  # pragma: no cover - boot-time logging
         logging.getLogger(__name__).warning(
@@ -99,6 +104,10 @@ logger = logging.getLogger(__name__)
 async def on_startup():
     await ensure_indexes()
     await seed_users()
+    if _v2_app is not None:
+        global _v2_lifespan_cm
+        _v2_lifespan_cm = _v2_app.router.lifespan_context(_v2_app)
+        await _v2_lifespan_cm.__aenter__()
     start_scheduler()
     logger.info("Startup complete — indexes ready, admin seeded, scheduler running.")
 
@@ -106,3 +115,5 @@ async def on_startup():
 @app.on_event("shutdown")
 async def on_shutdown():
     shutdown_scheduler()
+    if _v2_lifespan_cm is not None:
+        await _v2_lifespan_cm.__aexit__(None, None, None)
