@@ -2,10 +2,9 @@ name = "academy-edge-router"
 main = "router.ts"
 compatibility_date = "2026-05-16"
 
-# Bind this worker to the production hostname when the v2 canary starts.
-routes = [
-  { pattern = "academy.courtmastr.com/*", zone_name = "courtmastr.com" }
-]
+# Deprecated. Production traffic is served directly by the `academy-next`
+# Cloudflare Worker configured in `frontend-next/wrangler.jsonc`.
+routes = []
 
 [vars]
 API_ORIGIN = "http://127.0.0.1:8001"
@@ -13,13 +12,11 @@ WEB_ORIGIN = "http://localhost:3001"
 
 [env.prod]
 name = "academy-edge-router"
-routes = [
-  { pattern = "academy.courtmastr.com/*", zone_name = "courtmastr.com" }
-]
+routes = []
 
 [env.prod.vars]
-API_ORIGIN = "https://courtmastr-academy-api.fly.dev"
-WEB_ORIGIN = "https://academy-next.courtmastr.com"
+API_ORIGIN = "https://api.academy.courtmastr.com"
+WEB_ORIGIN = "https://academy.courtmastr.com"
 
 [observability]
 enabled = true

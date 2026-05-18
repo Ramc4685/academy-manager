@@ -11,7 +11,7 @@ CourtMastr now has one production frontend deployable: `frontend-next/`.
 ## Cutover Sequence
 
 1. Deploy only `frontend-next/` from GitHub Actions.
-2. Route `academy.courtmastr.com` to the Next frontend through `academy-edge-router`.
+2. Route `academy.courtmastr.com` directly to the `academy-next` Cloudflare Worker.
 3. Verify admin, coach, parent, login, and public registration against production BFFs.
 4. Delete or archive `frontend/` once no operator needs it for code reference.
 
@@ -19,5 +19,6 @@ CourtMastr now has one production frontend deployable: `frontend-next/`.
 
 - Do not add new product pages to `frontend/`.
 - Do not duplicate a workflow across both apps.
+- Do not route production browser traffic through the retired `academy-edge-router`.
 - If a legacy page still has required behavior, port it into `frontend-next/` using v2 BFF endpoints before cutover.
 - The backend source of truth remains Firebase Auth for authentication and MongoDB for authorization.

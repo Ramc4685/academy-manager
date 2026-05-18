@@ -71,7 +71,6 @@ intended for self-hosting.
 
 | Layer | Technology | Where it runs |
 |---|---|---|
-| Edge routing | Cloudflare Worker (`academy-edge-router`) | Cloudflare global edge |
 | Web | Next.js 15 / React 19 (App Router, PWA) | Cloudflare Workers project `academy-next` |
 | API | FastAPI + Uvicorn (Python 3.12) | Fly.io app `courtmastr-academy-api` (region `ord`) |
 | Database | MongoDB (Atlas) | Managed |
@@ -80,20 +79,19 @@ intended for self-hosting.
 | Transactional email | Resend | Verified `courtmastr.com` sender domain |
 | Scheduler timezone | `America/Chicago` | Set on backend |
 
-The edge worker routes API paths to Fly and all browser paths to the maintained
-Next.js frontend. The legacy CRA app is no longer a production deployable.
+The `academy-next` Cloudflare Worker owns `academy.courtmastr.com` directly.
+The legacy CRA app is no longer a production deployable.
 
 ### Deployment pipeline
 
 `.github/workflows/production.yml` is the single GitHub Actions control plane:
 
-1. **Validate** — backend compile/tests, v2 DDD boundary checks, Next.js
-   typecheck/lint/build/E2E, and edge routing tests.
+1. **Validate** — backend compile/tests, v2 DDD boundary checks, and Next.js
+   typecheck/lint/build/E2E.
 2. **Production approval** — manual gate (GitHub `production` environment).
 3. **Backend deploy** — `flyctl deploy --remote-only --app courtmastr-academy-api`.
 4. **Frontend deploy** — publish `frontend-next/` to the Next/Cloudflare Worker.
-5. **Edge deploy** — publish the thin router for `academy.courtmastr.com`.
-6. **Smoke** — `scripts/smoke/production_smoke.sh` against the live URLs.
+5. **Smoke** — `scripts/smoke/production_smoke.sh` against the live URLs.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for the operator runbook —
 environment variables, secret rotation, Stripe webhook configuration,
@@ -159,7 +157,7 @@ backend/        FastAPI service, deployed to Fly.io
 backend/v2/     Clean-architecture backend (in-process during Phase 0)
 frontend/       Deprecated CRA source retained only for reference until deletion
 frontend-next/  Next.js 15 app (single frontend target, PWA)
-edge/           Cloudflare Worker — API/web origin router
+edge/           Retired Cloudflare Worker router kept for historical reference
 docs/           ADRs, tickets, security matrix, event rules
 scripts/        Smoke tests, importers, ops utilities
 ```

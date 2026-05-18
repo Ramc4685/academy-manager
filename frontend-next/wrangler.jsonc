@@ -4,7 +4,7 @@
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-05-18",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
-  "workers_dev": true,
+  "workers_dev": false,
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
@@ -17,7 +17,7 @@
   ],
   "routes": [
     {
-      "pattern": "academy-next.courtmastr.com",
+      "pattern": "academy.courtmastr.com",
       "custom_domain": true
     }
   ],
