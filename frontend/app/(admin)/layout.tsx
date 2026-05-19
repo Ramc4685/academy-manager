@@ -8,25 +8,22 @@ import { usePersonaAuth } from "@/lib/auth/use-persona-auth";
 import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
 
-const NAV_ITEMS = [
-  { href: "/admin", label: "Dashboard", match: (p: string) => p === "/admin" },
-  { href: "/admin/sessions", label: "Sessions", match: (p: string) => p.startsWith("/admin/sessions") },
-  { href: "/admin/students", label: "Students", match: (p: string) => p.startsWith("/admin/students") },
-  { href: "/admin/waitlist", label: "Waitlist", match: (p: string) => p.startsWith("/admin/waitlist") },
-  { href: "/admin/pause-requests", label: "Pause requests", match: (p: string) => p.startsWith("/admin/pause-requests") },
-  { href: "/admin/users", label: "Coaches & Parents", match: (p: string) => p.startsWith("/admin/users") },
-  { href: "/admin/billing", label: "Billing", match: (p: string) => p.startsWith("/admin/billing") || p.startsWith("/admin/payments") },
-  { href: "/admin/finance", label: "Finance", match: (p: string) => p.startsWith("/admin/finance") },
-  { href: "/admin/dues", label: "Dues followup", match: (p: string) => p.startsWith("/admin/dues") },
-  { href: "/admin/coach-payslip", label: "Coach payslip", match: (p: string) => p.startsWith("/admin/coach-payslip") },
-  { href: "/admin/reports", label: "Reports", match: (p: string) => p.startsWith("/admin/reports") },
-  { href: "/admin/audit-logs", label: "Audit logs", match: (p: string) => p.startsWith("/admin/audit-logs") },
-  { href: "/admin/settings", label: "Settings", match: (p: string) => p.startsWith("/admin/settings") },
-  { href: "/admin/comms", label: "Comms", match: (p: string) => p.startsWith("/admin/comms") },
-] as const;
+import { Avatar } from "@/components/ds/avatar";
+import { Icon } from "@/components/ds/icons";
+import { ShuttleMark } from "@/components/ds/shuttle";
+import {
+  ADMIN_NAV,
+  metaForPath,
+  type AdminNavItem,
+  type AdminNavIconKey,
+} from "@/components/admin/screen-meta";
+import {
+  AdminActionSlotOutlet,
+  AdminActionSlotProvider,
+} from "@/components/admin/admin-action-slot";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
+  const pathname = usePathname() ?? "/admin";
   const online = useOnline();
   const { hasUpdate, applyUpdate } = useServiceWorkerUpdate();
   const auth = usePersonaAuth("admin");
@@ -48,155 +45,308 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     );
   }
 
+  const meta = metaForPath(pathname);
+  const adminName = auth.user?.email ?? "Admin";
+
   return (
-    <div className="min-h-screen flex bg-neutral-50 dark:bg-neutral-950">
-      {/* ------------------------------------------------------------------ */}
-      {/* Sidebar — visible on lg+, hidden on mobile                          */}
-      {/* ------------------------------------------------------------------ */}
-      <aside className="hidden lg:flex lg:flex-col lg:w-56 lg:shrink-0 lg:border-r lg:border-neutral-200 lg:dark:border-neutral-800 lg:bg-white lg:dark:bg-neutral-950">
-        <div className="px-5 py-5 border-b border-neutral-200 dark:border-neutral-800">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-yellow-400 font-display text-lg font-bold text-slate-900">
-              B
-            </div>
-            <div className="leading-tight">
-              <div className="font-display font-bold text-slate-950 dark:text-white">Badminton</div>
-              <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Admin</div>
-            </div>
-          </div>
-        </div>
-        <nav className="flex-1 overflow-y-auto py-4 px-2" aria-label="Admin navigation">
-          <ul className="space-y-1">
-            {NAV_ITEMS.map((item) => (
-              <li key={item.href}>
-                <SidebarLink
-                  href={item.href}
-                  label={item.label}
-                  active={item.match(pathname ?? "")}
-                />
-              </li>
-            ))}
-          </ul>
-        </nav>
-        <div className="p-4 border-t border-neutral-200 dark:border-neutral-800 text-xs text-neutral-400">
-          {!online && (
-            <span
-              data-testid="offline-indicator"
-              className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900 dark:text-amber-100"
-            >
-              Offline
-            </span>
-          )}
-        </div>
-      </aside>
+    <AdminActionSlotProvider>
+      <div className="min-h-screen flex bg-rally-paper">
+        {/* Sidebar — desktop only */}
+        <DesktopSidebar pathname={pathname} adminName={adminName} />
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Mobile drawer overlay                                               */}
-      {/* ------------------------------------------------------------------ */}
-      {drawerOpen && (
-        <div className="fixed inset-0 z-40 lg:hidden">
-          {/* Backdrop */}
-          <div
-            className="absolute inset-0 bg-black/40"
-            aria-hidden="true"
-            onClick={() => setDrawerOpen(false)}
+        {/* Mobile drawer */}
+        {drawerOpen && (
+          <MobileDrawer
+            pathname={pathname}
+            adminName={adminName}
+            onClose={() => setDrawerOpen(false)}
           />
-          {/* Drawer panel */}
-          <aside className="relative z-50 flex flex-col w-64 h-full bg-white dark:bg-neutral-950 shadow-xl">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-200 dark:border-neutral-800">
-              <span className="font-semibold">Academy Admin</span>
-              <button
-                aria-label="Close menu"
-                onClick={() => setDrawerOpen(false)}
-                className="min-h-touch min-w-touch flex items-center justify-center rounded-md text-neutral-500"
-              >
-                ✕
-              </button>
-            </div>
-            <nav className="flex-1 overflow-y-auto py-4 px-2" aria-label="Admin navigation mobile">
-              <ul className="space-y-1">
-                {NAV_ITEMS.map((item) => (
-                  <li key={item.href}>
-                    <SidebarLink
-                      href={item.href}
-                      label={item.label}
-                      active={item.match(pathname ?? "")}
-                      onClick={() => setDrawerOpen(false)}
-                    />
-                  </li>
-                ))}
-              </ul>
-            </nav>
-          </aside>
+        )}
+
+        {/* Main column */}
+        <div className="flex flex-col flex-1 min-w-0">
+          <RallyTopbar
+            title={meta.title}
+            subtitle={meta.subtitle}
+            breadcrumbs={meta.breadcrumbs}
+            online={online}
+            hasUpdate={hasUpdate}
+            onApplyUpdate={applyUpdate}
+            onOpenDrawer={() => setDrawerOpen(true)}
+          />
+          <main className="flex-1 p-4 md:p-6 overflow-y-auto">{children}</main>
         </div>
-      )}
+      </div>
+    </AdminActionSlotProvider>
+  );
+}
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Main content column                                                 */}
-      {/* ------------------------------------------------------------------ */}
-      <div className="flex flex-col flex-1 min-w-0">
-        {/* Top bar */}
-        <header className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-neutral-200 dark:border-neutral-800 bg-white/90 dark:bg-neutral-950/90 backdrop-blur px-4 py-3">
-          <div className="flex items-center gap-3">
-            {/* Hamburger — mobile only */}
-            <button
-              aria-label="Open menu"
-              onClick={() => setDrawerOpen(true)}
-              className="lg:hidden min-h-touch min-w-touch flex items-center justify-center rounded-md text-neutral-500"
-            >
-              ☰
-            </button>
-            <span className="font-semibold lg:hidden">Admin</span>
-          </div>
-          <div className="flex items-center gap-2">
-            {!online && (
-              <span
-                data-testid="offline-indicator"
-                className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900 dark:text-amber-100"
-              >
-                Offline
-              </span>
-            )}
-            {hasUpdate && (
-              <button
-                onClick={applyUpdate}
-                data-testid="sw-update-button"
-                className="min-h-touch rounded-md bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700"
-              >
-                Refresh
-              </button>
-            )}
-          </div>
-        </header>
+// ─────────────────────────────────────────────────────────────────────────────
+// Sidebar (desktop)
+// ─────────────────────────────────────────────────────────────────────────────
 
-        <main className="flex-1 p-4 md:p-6 overflow-y-auto">{children}</main>
+function DesktopSidebar({
+  pathname,
+  adminName,
+}: {
+  pathname: string;
+  adminName: string;
+}) {
+  return (
+    <aside
+      className="hidden lg:flex lg:flex-col lg:w-60 lg:shrink-0 lg:h-screen lg:sticky lg:top-0 lg:overflow-y-auto"
+      style={{
+        background: "#0a0f1c",
+        color: "#cbd5e1",
+        borderRight: "1px solid #1e293b",
+      }}
+      aria-label="Admin navigation"
+    >
+      <SidebarBrand />
+      <nav className="flex-1 py-2">
+        {ADMIN_NAV.map((group) => (
+          <NavGroup key={group.group} group={group.group} items={group.items} pathname={pathname} />
+        ))}
+      </nav>
+      <SidebarUserPill name={adminName} />
+    </aside>
+  );
+}
+
+function SidebarBrand() {
+  return (
+    <div className="px-5 py-5 border-b" style={{ borderColor: "#1e293b" }}>
+      <div className="flex items-center gap-2.5">
+        <div
+          className="relative flex h-8 w-8 items-center justify-center overflow-hidden rounded-md"
+          style={{ background: "#0f172a", border: "1px solid #1e293b" }}
+        >
+          <span
+            className="absolute left-0 right-0"
+            style={{ top: "50%", height: 2, background: "#facc15", transform: "translateY(-50%)" }}
+          />
+          <ShuttleMark size={18} />
+        </div>
+        <div className="leading-tight">
+          <div className="font-display font-bold text-[15px] text-white tracking-[-0.01em]">Rally Academy</div>
+          <div className="font-mono text-[9px] font-bold tracking-lane mt-0.5" style={{ color: "#64748b" }}>
+            ADMIN · COURT 7
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-function SidebarLink({
-  href,
-  label,
-  active,
-  onClick,
+function NavGroup({
+  group,
+  items,
+  pathname,
 }: {
-  href: string;
-  label: string;
-  active: boolean;
-  onClick?: () => void;
+  group: string;
+  items: ReadonlyArray<AdminNavItem>;
+  pathname: string;
 }) {
   return (
+    <div className="pt-3.5 pb-1">
+      <div
+        className="px-[18px] pb-2 font-mono text-[9px] font-bold tracking-[0.22em]"
+        style={{ color: "#475569" }}
+      >
+        {group}
+      </div>
+      {items.map((item) => (
+        <NavRow key={item.href} item={item} active={item.match(pathname)} />
+      ))}
+    </div>
+  );
+}
+
+function NavRow({ item, active }: { item: AdminNavItem; active: boolean }) {
+  return (
     <Link
-      href={href as Parameters<typeof Link>[0]["href"]}
-      onClick={onClick}
-      className={`flex items-center min-h-touch rounded-md px-3 text-sm font-medium transition-colors ${
-        active
-          ? "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-          : "text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
-      }`}
+      href={item.href as Parameters<typeof Link>[0]["href"]}
+      data-testid={`admin-nav-${slug(item.label)}`}
+      className="flex items-center gap-2.5 px-[18px] py-[9px] text-[13px] transition-colors"
+      style={{
+        background: active ? "#1e293b" : "transparent",
+        borderLeft: `2px solid ${active ? "#facc15" : "transparent"}`,
+        color: active ? "#fff" : "#94a3b8",
+        fontWeight: active ? 600 : 500,
+      }}
     >
-      {label}
+      <span className="flex" style={{ color: active ? "#facc15" : "#64748b" }}>
+        {renderNavIcon(item.icon, 16, "currentColor")}
+      </span>
+      <span className="flex-1">{item.label}</span>
+      {item.count != null && (
+        <span
+          className="font-mono text-[10px] font-bold tracking-[0.05em] px-1.5 rounded-[3px]"
+          style={{
+            background: item.urgent ? "#facc15" : "rgba(255,255,255,0.08)",
+            color: item.urgent ? "#0f172a" : "#cbd5e1",
+            padding: "1px 6px",
+          }}
+        >
+          {item.count}
+        </span>
+      )}
     </Link>
+  );
+}
+
+function renderNavIcon(key: AdminNavIconKey, size: number, color: string) {
+  const fn = Icon[key];
+  if (typeof fn === "function") return fn(size, color);
+  return Icon.home(size, color);
+}
+
+function slug(label: string): string {
+  return label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function SidebarUserPill({ name }: { name: string }) {
+  return (
+    <div className="p-3.5 border-t" style={{ borderColor: "#1e293b" }}>
+      <div
+        className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg"
+        style={{ background: "#101a2e" }}
+      >
+        <Avatar name={name} size={32} />
+        <div className="flex-1 min-w-0">
+          <div className="text-[13px] font-semibold text-white tracking-[-0.005em] truncate">{name}</div>
+          <div
+            className="font-mono text-[9px] font-bold tracking-[0.15em] mt-0.5"
+            style={{ color: "#64748b" }}
+          >
+            ADMIN
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mobile drawer
+// ─────────────────────────────────────────────────────────────────────────────
+
+function MobileDrawer({
+  pathname,
+  adminName,
+  onClose,
+}: {
+  pathname: string;
+  adminName: string;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-40 lg:hidden">
+      <div
+        className="absolute inset-0 bg-black/40"
+        aria-hidden="true"
+        onClick={onClose}
+      />
+      <aside
+        className="relative z-50 flex flex-col w-64 h-full shadow-xl overflow-y-auto"
+        style={{ background: "#0a0f1c", color: "#cbd5e1" }}
+        aria-label="Admin navigation"
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "#1e293b" }}>
+          <SidebarBrand />
+          <button
+            aria-label="Close menu"
+            onClick={onClose}
+            className="min-h-touch min-w-touch flex items-center justify-center rounded-md"
+            style={{ color: "#94a3b8" }}
+          >
+            ✕
+          </button>
+        </div>
+        <nav className="flex-1 py-2" onClick={onClose}>
+          {ADMIN_NAV.map((group) => (
+            <NavGroup key={group.group} group={group.group} items={group.items} pathname={pathname} />
+          ))}
+        </nav>
+        <SidebarUserPill name={adminName} />
+      </aside>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Topbar
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface TopbarProps {
+  title: string;
+  subtitle: string;
+  breadcrumbs: ReadonlyArray<string>;
+  online: boolean;
+  hasUpdate: boolean;
+  onApplyUpdate: () => void;
+  onOpenDrawer: () => void;
+}
+
+function RallyTopbar({
+  title,
+  subtitle,
+  breadcrumbs,
+  online,
+  hasUpdate,
+  onApplyUpdate,
+  onOpenDrawer,
+}: TopbarProps) {
+  return (
+    <header
+      className="sticky top-0 z-30 border-b bg-white/95 backdrop-blur px-4 py-3 md:px-6"
+      style={{ borderColor: "var(--rally-line)" }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <button
+            aria-label="Open menu"
+            onClick={onOpenDrawer}
+            className="lg:hidden min-h-touch min-w-touch flex items-center justify-center rounded-md text-rally-muted"
+          >
+            ☰
+          </button>
+          <div className="min-w-0">
+            {breadcrumbs.length > 0 && (
+              <div className="font-mono text-[10px] font-bold tracking-overline uppercase text-rally-muted truncate">
+                {breadcrumbs.join(" · ")}
+              </div>
+            )}
+            <h1 className="font-display text-[22px] font-semibold tracking-[-0.02em] text-rally-ink leading-tight">
+              {title}
+            </h1>
+            {subtitle && (
+              <p className="text-[13px] text-rally-muted mt-0.5 truncate">{subtitle}</p>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <AdminActionSlotOutlet />
+          {!online && (
+            <span
+              data-testid="offline-indicator"
+              className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
+            >
+              Offline
+            </span>
+          )}
+          {hasUpdate && (
+            <button
+              onClick={onApplyUpdate}
+              data-testid="sw-update-button"
+              className="min-h-touch rounded-md bg-rally-cobalt-600 px-3 text-sm font-medium text-white hover:bg-rally-cobalt-700"
+              style={{ background: "var(--rally-cobalt)" }}
+            >
+              Refresh
+            </button>
+          )}
+        </div>
+      </div>
+    </header>
   );
 }
