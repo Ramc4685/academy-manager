@@ -311,6 +311,8 @@ Expected: no error.
 
 - [ ] **B1.2.1: Write the failing test**
 
+**Real-data note (discovered Phase 3 close-out):** the running Mongo `academy_manager_local` has no `academies` collection. The codebase references `academy_id: "default-academy"` everywhere as a foreign-key string but no doc backs it. **`GetAcademyUseCase` must upsert with safe defaults on first read**, not raise — otherwise the very first Settings load 404s on a fresh DB.
+
 ```python
 # backend/v2/tests/application/identity/test_academy_use_cases.py
 import pytest
@@ -335,12 +337,23 @@ async def test_get_academy_returns_view_when_found():
     assert output.contact_email is None  # absent optional field
 
 @pytest.mark.asyncio
-async def test_get_academy_raises_when_missing():
+async def test_get_academy_upserts_with_defaults_when_missing():
+    # On a fresh DB the academy doc may not exist. Use case must create
+    # it with safe defaults rather than raising — see Phase 3 gap report.
     repo = AsyncMock()
     repo.find_by_id.return_value = None
+    repo.upsert_defaults.return_value = {
+        "_id": "default-academy",
+        "display_name": "default-academy",
+        "timezone": "UTC",
+    }
     use_case = GetAcademyUseCase(academy_repo=repo)
-    with pytest.raises(LookupError):
-        await use_case.execute(GetAcademyInput(academy_id="missing"))
+    output = await use_case.execute(GetAcademyInput(academy_id="default-academy"))
+    assert output.academy_id == "default-academy"
+    assert output.display_name == "default-academy"
+    assert output.timezone == "UTC"
+    assert output.contact_email is None
+    repo.upsert_defaults.assert_awaited_once_with("default-academy")
 ```
 
 - [ ] **B1.2.2: Run test, expect import failure**
@@ -360,6 +373,7 @@ from typing import Optional, Protocol
 
 class AcademyRepo(Protocol):
     async def find_by_id(self, academy_id: str) -> Optional[dict]: ...
+    async def upsert_defaults(self, academy_id: str) -> dict: ...
 
 @dataclass(frozen=True)
 class GetAcademyInput:
@@ -375,6 +389,17 @@ class GetAcademyOutput:
     hours_text: Optional[str] = None
     address: Optional[str] = None
 
+def _to_output(doc: dict) -> GetAcademyOutput:
+    return GetAcademyOutput(
+        academy_id=doc["_id"],
+        display_name=doc.get("display_name", doc["_id"]),
+        timezone=doc.get("timezone", "UTC"),
+        contact_email=doc.get("contact_email"),
+        contact_phone=doc.get("contact_phone"),
+        hours_text=doc.get("hours_text"),
+        address=doc.get("address"),
+    )
+
 class GetAcademyUseCase:
     def __init__(self, academy_repo: AcademyRepo):
         self._repo = academy_repo
@@ -382,17 +407,13 @@ class GetAcademyUseCase:
     async def execute(self, input: GetAcademyInput) -> GetAcademyOutput:
         doc = await self._repo.find_by_id(input.academy_id)
         if not doc:
-            raise LookupError(f"academy {input.academy_id} not found")
-        return GetAcademyOutput(
-            academy_id=doc["_id"],
-            display_name=doc.get("display_name", ""),
-            timezone=doc.get("timezone", "UTC"),
-            contact_email=doc.get("contact_email"),
-            contact_phone=doc.get("contact_phone"),
-            hours_text=doc.get("hours_text"),
-            address=doc.get("address"),
-        )
+            # Fresh DB has no academies collection (Phase 3 gap report).
+            # Upsert with safe defaults rather than 404 on first load.
+            doc = await self._repo.upsert_defaults(input.academy_id)
+        return _to_output(doc)
 ```
+
+The `upsert_defaults(academy_id)` repo method does an idempotent Mongo `update_one` with `{"$setOnInsert": {"_id": academy_id, "display_name": academy_id, "timezone": "UTC"}}, upsert=True`, then returns the resulting doc. Existing fields are not overwritten; only-on-insert defaults seed the row.
 
 - [ ] **B1.2.4: Run test, expect pass**
 
@@ -517,26 +538,38 @@ The exact file name varies; locate via:
 cd backend && grep -rn "class.*AcademyRepo\|class.*Academy.*Repo" v2/contexts/identity/infrastructure/
 ```
 
-- [ ] **B1.4.1: Add `find_by_id` and `update_by_id` methods if not present**
+- [ ] **B1.4.1: Add `find_by_id`, `update_by_id`, and `upsert_defaults` methods if not present**
 
 Pattern (Motor/Mongo):
 
 ```python
+from pymongo import ReturnDocument
+
 async def find_by_id(self, academy_id: str) -> Optional[dict]:
     return await self._collection.find_one({"_id": academy_id})
 
 async def update_by_id(self, academy_id: str, fields: dict) -> Optional[dict]:
     if not fields:
         return await self.find_by_id(academy_id)
-    result = await self._collection.find_one_and_update(
+    return await self._collection.find_one_and_update(
         {"_id": academy_id},
         {"$set": fields},
-        return_document=True,
+        return_document=ReturnDocument.AFTER,
     )
-    return result
+
+async def upsert_defaults(self, academy_id: str) -> dict:
+    # Idempotent: only-on-insert defaults; existing docs are untouched.
+    # Required because fresh installs don't have an academies collection
+    # (real-data check found 0 docs against 'default-academy' references).
+    return await self._collection.find_one_and_update(
+        {"_id": academy_id},
+        {"$setOnInsert": {"_id": academy_id, "display_name": academy_id, "timezone": "UTC"}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
 ```
 
-If methods already exist with these signatures, skip.
+If `find_by_id` / `update_by_id` already exist with these signatures, skip them and only add `upsert_defaults`.
 
 - [ ] **B1.4.2: Run any existing repo tests**
 
