@@ -72,8 +72,8 @@ Cover authenticated parent success, wrong persona 404, checkout request without 
 ### Task 4: Parent Onboarding UI
 
 **Files:**
-- Modify: `frontend-next/lib/api/parent.ts`
-- Modify: `frontend-next/app/(parent)/parent/onboarding/page.tsx`
+- Modify: `frontend/lib/api/parent.ts`
+- Modify: `frontend/app/(parent)/parent/onboarding/page.tsx`
 
 - [ ] **Step 1: Add typed API client**
 
@@ -98,7 +98,7 @@ Run the focused parent interface/application tests first, then `backend/.venv/bi
 
 - [ ] **Step 2: Run frontend checks**
 
-Run `pnpm typecheck` and `pnpm build` in `frontend-next`.
+Run `pnpm typecheck` and `pnpm build` in `frontend`.
 
 - [ ] **Step 3: Browser/E2E smoke**
 

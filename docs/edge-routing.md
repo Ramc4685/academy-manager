@@ -6,7 +6,7 @@
 
 Production browser traffic now goes directly to the `academy-next` Cloudflare
 Worker through the custom domain in
-[`frontend-next/wrangler.jsonc`](../frontend-next/wrangler.jsonc). The Next app
+[`frontend/wrangler.jsonc`](../frontend/wrangler.jsonc). The Next app
 rewrites `/api/v2/*` to the FastAPI BFF origin.
 
 ## Former Decisions
@@ -31,12 +31,12 @@ Production values live under `[env.prod.vars]`, but the production GitHub
 workflow no longer deploys this Worker.
 
 There are no per-persona legacy flags in production anymore. Admin, coach,
-parent, login, and registration all live in `frontend-next/`.
+parent, login, and registration all live in `frontend/`.
 
 ## Deploy
 
 Do not deploy `academy-edge-router` for production. The production GitHub
-workflow deletes the old Worker route before deploying `frontend-next/`.
+workflow deletes the old Worker route before deploying `frontend/`.
 
 ## Tests
 

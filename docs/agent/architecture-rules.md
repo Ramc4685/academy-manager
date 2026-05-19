@@ -30,10 +30,9 @@ backend/
   tests/                    Backend pytest suites
 
 frontend/
-  src/App.js                CRA route composition
-  src/pages/                Admin, coach, parent, auth pages
-  src/lib/api.js            Legacy API client
-  src/contexts/AuthContext.jsx
+  app/                      Next.js App Router route groups
+  lib/api/                  Typed BFF clients
+  lib/pwa/                  PWA and offline plumbing
 
 docs/
   ci-cd.md                  Deployment/CI documentation
@@ -51,11 +50,6 @@ backend/v2/
   shared/                   Cross-cutting auth, tenancy, events, idempotency
   migrations/               v2 Mongo index/migration scripts
   tests/                    v2 unit/application/contract/interface tests
-
-frontend-next/
-  app/                      Next.js App Router route groups
-  lib/api/                  Typed v2 clients
-  lib/pwa/                  PWA and offline plumbing
 
 edge/
   router.ts                 Edge route switching prototype

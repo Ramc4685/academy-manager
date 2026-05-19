@@ -13,7 +13,7 @@ The migration plan requires a fast, installable, mobile-first PWA with persona-s
 
 ## Decision
 
-Migrate the frontend to **Next.js 15 App Router** under a new `frontend-next/` directory. Build it in parallel to the legacy CRA app. Cut over per-persona via Cloudflare edge routing (ADR-0003 dependency).
+Migrate the frontend to **Next.js 15 App Router** and promote it to the canonical `frontend/` directory after cutover. Build it in parallel during migration, then remove the legacy CRA app once production traffic is on Next.js.
 
 - App Router (not Pages Router) for built-in route groups, layouts, RSC where it helps.
 - React Server Components for the admin shell (data-dense tables, dashboards).
@@ -128,6 +128,6 @@ The cost of Next's learning curve is real but is bounded: Wave 1A is a small sli
 ## Action Items
 
 1. [x] Reject Vite, CRA-bolt-on, and Remix.
-2. [ ] Scaffold `frontend-next/` with App Router (P0-17).
+2. [ ] Scaffold `frontend/` with App Router (P0-17).
 3. [ ] Write a Wave-1A handoff doc that explains RSC vs client component boundaries.
 4. [ ] Verify Cloudflare Pages adapter end-to-end before Wave 1A starts (P0-20).

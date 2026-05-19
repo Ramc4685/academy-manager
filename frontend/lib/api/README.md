@@ -18,7 +18,7 @@ cd backend
 V2_ENABLED=1 uvicorn server:app --reload --port 8001
 
 # Terminal 2
-cd frontend-next
+cd frontend
 pnpm generate:api
 ```
 

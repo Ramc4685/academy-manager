@@ -85,16 +85,15 @@ Done as a sequence of small PRs so review is tractable. **Each PR builds on the 
 - Update CI workflow path filters.
 - Verify a full backend test + lint run is green.
 
-### PR 3: Delete legacy frontend
+### PR 3: Delete legacy frontend (completed)
 
-- Remove `frontend/` (CRA app).
-- Cloudflare Pages: archive the legacy project, keep its name reserved.
+- Legacy CRA source has been removed from `frontend/`.
+- Cloudflare Pages `courtmastr-academy` is unbound/deleted by the production workflow if it still exists.
 
-### PR 4: Promote `frontend-next/` → `frontend/`
+### PR 4: Promote frontend to canonical path (completed)
 
-- `git mv frontend-next/* frontend/`
-- Update Cloudflare Pages deploy target.
-- Update CI workflow path filters.
+- `frontend/` is now the canonical Next.js app.
+- GitHub Actions deploys `frontend/` to the `academy-next` Cloudflare Worker.
 
 ### PR 5: Simplify edge worker
 

@@ -47,12 +47,12 @@
 ### W4-07 — Delete legacy frontend
 - **Type:** Code removal
 - **Estimate:** 2h
-- Remove `frontend/` (CRA app).
+- Completed by promoting the Next.js app into `frontend/` and removing the old CRA source.
 
-### W4-08 — Promote frontend-next → canonical
+### W4-08 — Promote frontend → canonical
 - **Type:** Code
 - **Estimate:** 3h
-- Move `frontend-next/` → `frontend/`. Update Cloudflare Pages deploy target.
+- `frontend/` is the canonical Next.js app. Deployment targets the `academy-next` Cloudflare Worker.
 
 ### W4-09 — Single CI pipeline
 - **Type:** Ops / CI

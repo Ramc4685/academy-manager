@@ -1,6 +1,6 @@
 # Observability — Wave 1A
 
-**Status:** Authoritative. Implemented across `backend/v2/shared/observability/`, `frontend-next/lib/pwa/vitals.ts`, and the dashboards described below.
+**Status:** Authoritative. Implemented across `backend/v2/shared/observability/`, `frontend/lib/pwa/vitals.ts`, and the dashboards described below.
 **Ticket:** W1A-19
 **Last reviewed:** 2026-05-16
 
@@ -76,6 +76,6 @@ the OTel UI for the matching server span.
   failures, check `dead_letter_events`, then OTel traces for the slow
   spans. The Mongo span typically tells you the culprit.
 - **Stale install metrics:** Confirm PostHog snippet loaded on
-  `frontend-next` (Wave 1A initially loads it from `app/layout.tsx`).
+  `frontend` (Wave 1A initially loads it from `app/layout.tsx`).
 - **Dead-letter accumulating:** `python -m backend.v2.scripts.replay_event
   <event_id>` after the root cause is fixed.

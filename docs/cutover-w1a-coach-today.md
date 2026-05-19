@@ -102,7 +102,7 @@ remain healthy for the duration of the migration.
 - [ ] Legacy coach pages reachable via direct URL.
 - [ ] Legacy E2E suite green on `main`.
 - [ ] No service worker installed on the legacy origin (the SW belongs
-      only to `frontend-next`). Confirmed by visiting the legacy origin
+      only to `frontend`). Confirmed by visiting the legacy origin
       in incognito and checking `chrome://serviceworker-internals/`.
 
 ## Sign-off

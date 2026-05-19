@@ -44,17 +44,17 @@ Do not treat `.claude/worktrees/*` as canonical project source unless the user e
 Current production app:
 
 - Backend: FastAPI, Motor/PyMongo, MongoDB, Firebase Admin SDK, Stripe, Resend, APScheduler.
-- Frontend: Create React App with CRACO, React, React Router, Radix UI, Tailwind, Firebase Web SDK.
+- Frontend: Next.js 15 App Router, React 19, Tailwind, Firebase Web SDK, PWA.
 - Auth: Firebase Authentication in production; legacy password auth can be disabled with `FIREBASE_AUTH_ENABLED=true`.
-- Deployment: Fly.io backend app `courtmastr-academy-api`; Cloudflare Pages frontend.
-- Local services: backend `http://127.0.0.1:8001/api`, frontend `http://localhost:3000`, MongoDB `mongodb://127.0.0.1:27017`.
+- Deployment: Fly.io backend app `courtmastr-academy-api`; Cloudflare Worker frontend `academy-next`.
+- Local services: backend `http://127.0.0.1:8001/api`, frontend `http://localhost:3001`, MongoDB `mongodb://127.0.0.1:27017`.
 
 Migration direction:
 
 - Keep legacy `/api/*` stable.
 - Add v2 capabilities incrementally behind flags and edge routing.
 - v2 backend uses BFF + DDD boundaries under `backend/v2/` when present.
-- v2 frontend uses `frontend-next/` when present.
+- Frontend uses the canonical Next.js app under `frontend/`.
 - Do not big-bang rewrite.
 
 ---
@@ -93,10 +93,9 @@ For ticketed work, map the plan to the ticket ID and acceptance criteria.
 ## Architecture Rules
 
 - Legacy backend routers live under `backend/routers/`.
-- Legacy frontend pages live under `frontend/src/pages/`.
 - v2 DDD contexts live under `backend/v2/contexts/`.
 - v2 BFF routes live under `backend/v2/interfaces/<persona>/`.
-- v2 frontend route groups live under `frontend-next/app/`.
+- Frontend route groups live under `frontend/app/`.
 - Application use cases own workflow orchestration.
 - Domain owns business rules.
 - Infrastructure owns MongoDB, Firebase, Stripe, Resend, and external adapters.
@@ -131,10 +130,11 @@ Frontend:
 
 ```bash
 cd frontend
-yarn install
-yarn test --watchAll=false
-yarn build
-yarn start
+pnpm install
+pnpm dev
+pnpm typecheck
+pnpm build
+pnpm generate:api
 ```
 
 Container smoke:
@@ -142,19 +142,6 @@ Container smoke:
 ```bash
 docker compose up --build
 curl http://127.0.0.1:8001/api/health
-```
-
-v2, when present:
-
-```bash
-cd backend
-pytest v2/tests
-uvicorn v2.main:app --reload --port 8001
-
-cd frontend-next
-pnpm typecheck
-pnpm build
-pnpm generate:api
 ```
 
 ---

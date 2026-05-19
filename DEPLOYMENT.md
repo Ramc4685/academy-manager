@@ -107,7 +107,7 @@ With `FIREBASE_AUTH_ENABLED=true`:
 ```bash
 docker compose up --build
 curl http://127.0.0.1:8001/api/health
-cd frontend-next
+cd frontend
 BFF_API_ORIGIN=http://127.0.0.1:8001 pnpm dev
 open http://localhost:3001
 ```
@@ -147,19 +147,19 @@ Keep `EMAIL_DELIVERY_ENABLED=false` until final production email verification is
 
 ## Next Frontend
 
-The only production frontend deployable is `frontend-next/`.
+The only production frontend deployable is `frontend/`.
 
 Build command:
 
 ```bash
-cd frontend-next
+cd frontend
 pnpm build
 ```
 
 Deploy command:
 
 ```bash
-cd frontend-next
+cd frontend
 pnpm deploy:cloudflare
 ```
 
@@ -171,8 +171,8 @@ NEXT_PUBLIC_API_BASE=/api/v2
 ```
 
 `academy.courtmastr.com/*` is a Worker Route on the `academy-next` Cloudflare
-Worker. The old CRA app under `frontend/` is deprecated and is not deployed by
-GitHub Actions.
+Worker. The old CRA frontend has been removed and is not deployed by GitHub
+Actions.
 
 ## Payments
 

@@ -3,7 +3,7 @@ main = "router.ts"
 compatibility_date = "2026-05-16"
 
 # Deprecated. Production traffic is served directly by the `academy-next`
-# Cloudflare Worker configured in `frontend-next/wrangler.jsonc`.
+# Cloudflare Worker configured in `frontend/wrangler.jsonc`.
 routes = []
 
 [vars]

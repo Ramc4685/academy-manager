@@ -156,7 +156,7 @@
 - **Type:** Frontend / UI
 - **Depends on:** P0-17, P0-18
 - **Estimate:** 5h
-- **Description:** Create `frontend-next/app/(coach)/layout.tsx`:
+- **Description:** Create `frontend/app/(coach)/layout.tsx`:
   - Bottom tab navigation (Today / Sessions / Profile). 44pt minimum touch targets.
   - Top bar with academy name + offline indicator.
   - Route guard: redirects to `/login` if no auth; redirects to `/(parent)` or `/(admin)` if wrong role.

@@ -81,7 +81,7 @@ intended for self-hosting.
 
 The `academy-next` Cloudflare Worker owns `academy.courtmastr.com/*` directly
 through a Worker Route.
-The legacy CRA app is no longer a production deployable.
+The legacy CRA app has been removed from the canonical source tree.
 
 ### Deployment pipeline
 
@@ -91,7 +91,7 @@ The legacy CRA app is no longer a production deployable.
    typecheck/lint/build/E2E.
 2. **Production approval** — manual gate (GitHub `production` environment).
 3. **Backend deploy** — `flyctl deploy --remote-only --app courtmastr-academy-api`.
-4. **Frontend deploy** — publish `frontend-next/` to the Next/Cloudflare Worker.
+4. **Frontend deploy** — publish `frontend/` to the Next/Cloudflare Worker.
 5. **Smoke** — `scripts/smoke/production_smoke.sh` against the live URLs.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for the operator runbook —
@@ -156,8 +156,7 @@ It is **not** an open-source project.
 ```
 backend/        FastAPI service, deployed to Fly.io
 backend/v2/     Clean-architecture backend (in-process during Phase 0)
-frontend/       Deprecated CRA source retained only for reference until deletion
-frontend-next/  Next.js 15 app (single frontend target, PWA)
+frontend/       Next.js 15 app (single frontend target, PWA)
 edge/           Retired Cloudflare Worker router kept for historical reference
 docs/           ADRs, tickets, security matrix, event rules
 scripts/        Smoke tests, importers, ops utilities

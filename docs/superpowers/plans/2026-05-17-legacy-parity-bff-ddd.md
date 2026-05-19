@@ -19,8 +19,8 @@
 - Modify: `backend/v2/interfaces/admin/billing_routes.py`
 - Modify: `backend/v2/interfaces/admin/deps.py`
 - Modify: `backend/v2/composition/admin.py`
-- Modify: `frontend-next/lib/api/admin.ts`
-- Modify: `frontend-next/app/(admin)/admin/billing/page.tsx`
+- Modify: `frontend/lib/api/admin.ts`
+- Modify: `frontend/app/(admin)/admin/billing/page.tsx`
 - Test: `backend/v2/tests/interface/test_admin_billing_ops.py`
 
 - [ ] Generate monthly payments from active enrollments.
@@ -34,7 +34,7 @@
 - Modify: `backend/v2/contexts/enrollment/application/use_cases/admin_writes.py`
 - Modify: `backend/v2/contexts/enrollment/infrastructure/mongo_enrollment_writer.py`
 - Modify: `backend/v2/interfaces/admin/sessions_routes.py`
-- Modify: `frontend-next/app/(admin)/admin/sessions/[id]/page.tsx`
+- Modify: `frontend/app/(admin)/admin/sessions/[id]/page.tsx`
 - Test: `backend/v2/tests/interface/test_admin_sessions.py`
 
 - [ ] Transfer an active enrollment to another session.
