@@ -39,11 +39,10 @@ CLOUDFLARE_API_TOKEN=<Cloudflare Workers deploy token>
 CLOUDFLARE_ACCOUNT_ID=<Cloudflare account id>
 ```
 
-The Cloudflare token needs permission to deploy the Next frontend Worker, delete
-the retired `academy-edge-router` Worker if it still exists, detach custom
-domains from the old `courtmastr-academy` Pages project, and delete that Pages
-project if it still exists. The Fly token needs permission to deploy
-`courtmastr-academy-api`.
+The Cloudflare token needs Workers deploy/delete access plus Cloudflare
+`Pages Write` permission to detach custom domains from the old
+`courtmastr-academy` Pages project and delete that Pages project if it still
+exists. The Fly token needs permission to deploy `courtmastr-academy-api`.
 
 ## Required GitHub Variables
 
