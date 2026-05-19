@@ -251,6 +251,7 @@ function MobileDrawer({
         className="relative z-50 flex flex-col w-64 h-full shadow-xl overflow-y-auto"
         style={{ background: "#0a0f1c", color: "#cbd5e1" }}
         aria-label="Admin navigation"
+        data-testid="admin-mobile-drawer"
       >
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "#1e293b" }}>
           <SidebarBrand />
@@ -306,6 +307,7 @@ function RallyTopbar({
         <div className="flex items-center gap-3 min-w-0">
           <button
             aria-label="Open menu"
+            data-testid="admin-open-drawer"
             onClick={onOpenDrawer}
             className="lg:hidden min-h-touch min-w-touch flex items-center justify-center rounded-md text-rally-muted"
           >

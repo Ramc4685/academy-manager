@@ -77,8 +77,7 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
   {
     group: "COMMS · OPS",
     items: [
-      // Phase 3 renames /admin/comms -> /admin/messages; until then point at /admin/comms.
-      { href: "/admin/comms", label: "Messages", icon: "msg", match: (p) => p.startsWith("/admin/comms") || p.startsWith("/admin/messages") },
+      { href: "/admin/messages", label: "Messages", icon: "msg", match: (p) => p.startsWith("/admin/messages") || p.startsWith("/admin/comms") },
       { href: "/admin/settings", label: "Settings", icon: "cog", match: startsWith("/admin/settings") },
       { href: "/admin/audit-logs", label: "Audit logs", icon: "filter", match: startsWith("/admin/audit-logs") },
     ],
