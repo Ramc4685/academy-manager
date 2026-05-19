@@ -291,6 +291,19 @@ jobs:
           pages_projects="$(npx wrangler@4 pages project list)"
           printf '%s\n' "$pages_projects"
           if printf '%s\n' "$pages_projects" | grep -qw 'courtmastr-academy'; then
+            echo "Detaching academy.courtmastr.com from legacy Pages project."
+            detach_response="$(
+              curl -sS \
+                -X DELETE \
+                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+                -H "Content-Type: application/json" \
+                "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/courtmastr-academy/domains/academy.courtmastr.com"
+            )"
+            printf '%s\n' "$detach_response"
+            if printf '%s\n' "$detach_response" | grep -q '"success":false'; then
+              echo "::error::Failed to detach academy.courtmastr.com from courtmastr-academy Pages project."
+              exit 1
+            fi
             npx wrangler@4 pages project delete courtmastr-academy --yes
           else
             echo "Legacy Pages project courtmastr-academy is already absent."

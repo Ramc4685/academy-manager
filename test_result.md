@@ -383,3 +383,5 @@ agent_communication:
     message: "Cloudflare Worker Route fix verified locally: frontend-next wrangler deploy --dry-run passed with academy.courtmastr.com/* route, workflow YAML parse passed, production smoke script syntax passed, and git diff --check passed."
   - agent: "main"
     message: "Production deploy confirmed academy-next Worker route deploys, but smoke still received the legacy CRA bundle from academy.courtmastr.com. Root cause is the old courtmastr-academy Cloudflare Pages custom domain still winning over the Worker route. Adding production cleanup to delete that legacy Pages project before deploying academy-next."
+  - agent: "main"
+    message: "Production deploy cleanup failed because Cloudflare Pages requires all custom domains to be removed before deleting a Pages project (code 8000028). Next fix detaches academy.courtmastr.com from courtmastr-academy via the Cloudflare Pages domains API, then deletes the legacy Pages project and deploys academy-next."
