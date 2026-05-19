@@ -25,7 +25,7 @@ This spec covers what comes next: a one-time approval for the remaining arc (she
 2. Build a Rally Settings page with 7 panels: 5 fully real + read-only Gateway + 1 fully Coming-next (Branding) + Data panel partial.
 3. Restyle the 12 remaining admin pages to Rally aesthetics, preserving every BFF call and action.
 4. Reconcile the route map: rename completed in Phase 3 (`comms` → `messages`); delete `admin/billing/`, `admin/comms/`, and possibly `admin/finance/` after replacements verified.
-5. Add the additive backend endpoints needed for Settings (4 new, all under `backend/v2/interfaces/admin/`).
+5. Add the additive backend endpoint handlers needed for Settings — **7 handlers across 5 resource paths** (`/admin/academy` GET+PATCH, `/admin/academy/fees` GET+PATCH, `/admin/academy/gateway` GET, `/admin/academy/notifications` GET+PATCH, `/admin/users/{id}/role` PATCH; optionally `/admin/users/invite` POST per the conditional rule in Settings Roles panel below). All under `backend/v2/interfaces/admin/`.
 6. Land a Playwright smoke spec covering the full Rally admin map.
 7. Update `test_result.md` with the verification matrix + remaining risks per AGENTS.md.
 
@@ -74,13 +74,19 @@ URL state: `?panel=academy|fees|gateway|notify|roles|branding|data` (default `ac
 | **Fees** | Real read/write | `fees-panel.tsx` | `GET/PATCH /api/v2/admin/academy/fees` — default_monthly_cents, late_fee_cents, grace_days. Sub-document on academy. |
 | **Gateway** | Real **read-only** | `gateway-panel.tsx` | `GET /api/v2/admin/academy/gateway` — returns `{ stripe_connected: bool, stripe_account_id_masked: str \| null, manual_methods: string[] }`. No write endpoint (Stripe Connect onboarding is a separate workstream). UI shows "Connected to Stripe" with masked ID, or "Not connected — onboarding deferred". |
 | **Notify** | Real read/write | `notify-panel.tsx` | `GET/PATCH /api/v2/admin/academy/notifications` — toggles for dues_reminders, attendance_alerts, daily_digest_to_admin. Drives existing scheduler. |
-| **Roles** | Real read/write | `roles-panel.tsx` | Reuse existing `GET /api/v2/admin/users` for list. New `PATCH /api/v2/admin/users/{user_id}/role` to change a user's role (admin-only). Invite-new-admin = email-input form posting to `POST /api/v2/admin/users/invite` (new). |
+| **Roles** | Real read/write | `roles-panel.tsx` | Reuse existing `GET /api/v2/admin/users` for list. New `PATCH /api/v2/admin/users/{user_id}/role` to change a user's role (admin-only). Invite flow: **decision rule** — if `backend/v2/contexts/identity/application/` already exposes a send-invite use case (check during B3), wire a `POST /api/v2/admin/users/invite` and ship the invite form as real. Otherwise, ship the invite form section as a Coming-next card (no POST endpoint) and queue the comms-side invite flow for a follow-on workstream. Roles list + role-PATCH ship real either way. |
 | **Branding** | **Coming-next** | `branding-panel.tsx` | None. Logo upload + primary color + email signature require object-storage backend. Renders Rally `Card` with `Overline` "Coming next" + honest copy + no fake fields. |
 | **Data** | Partial — exports real, deletion Coming-next | `data-panel.tsx` | Reuse existing `GET /api/v2/admin/reports/*.csv` endpoints; render as a download list. Deletion section is Coming-next. |
 
 ### Save UX
 
 Each writable panel uses TanStack Query with a `useMutation` save handler. Dirty detection by shallow diff against the original payload. Save button: `Button variant="volt"` when dirty, `Button variant="secondary" disabled` when clean. Success: inline `Alert tone="green"` for 2s + query invalidate. Error: `Alert tone="red"` with the BFF error message.
+
+### Page ↔ panel contract
+
+- `settings/page.tsx` owns the tab strip + reads the active panel key from `useSearchParams()` (`?panel=academy` default). It renders exactly one panel at a time and updates the URL via `router.replace` on tab click (shallow).
+- Each panel component is self-contained: owns its own query + mutation + dirty state. It does NOT read URL params or own routing. The page hands it nothing — it just gets mounted/unmounted as the active panel changes.
+- Coming-next panels follow the same mount/unmount contract; they just render the empty-state card and have no query/mutation logic.
 
 ### Coming-next card spec
 
@@ -122,6 +128,13 @@ Once expenses + payouts + reports are real Rally pages, the original `finance/pa
 - Commit message lists pages touched + any DTO gaps surfaced for Phase 6 backlog.
 - DTO gaps default to omitted fields, not faked.
 
+### Cross-cutting conventions for restyles
+
+- **`AdminActionSlot`**: when a page has a primary topbar action (e.g. "Create session", "Export CSV", "Send reminders"), use `useAdminAction(<Button … />)` from `components/admin/admin-action-slot.tsx` (already in the layout). Do **not** render duplicate action buttons inside the page body.
+- **`data-testid` convention**: `admin-<page-slug>` for the page root section (e.g. `admin-students`, `admin-dues`), `admin-<page-slug>-row-<id>` for table rows where applicable, `admin-<page-slug>-empty` for empty states, `admin-stub-card` for any Coming-next card.
+- **`screen-meta.ts` touch-ups**: minor title/subtitle/breadcrumb adjustments travel with whichever page group's commit they belong to (e.g. C1 may touch the WORK entries; no separate `screen-meta.ts` commit).
+- **Charts primitive (`MiniBars`)** is exported from `frontend/components/ds/charts.tsx` (confirmed; reports/page.tsx imports from `@/components/ds/charts`).
+
 ## Backend additions
 
 Five small additive endpoints, all under `backend/v2/interfaces/admin/`:
@@ -134,12 +147,13 @@ Five small additive endpoints, all under `backend/v2/interfaces/admin/`:
 | `/admin/academy/gateway` | GET | admin | Read Stripe / manual gateway status | No write. Masks Stripe account ID. |
 | `/admin/academy/notifications` | GET / PATCH | admin | Read/write notify toggles | Sub-document on academy: `dues_reminders`, `attendance_alerts`, `daily_digest_to_admin`. |
 | `/admin/users/{user_id}/role` | PATCH | admin | Change a user's role | Validates target user is in same academy. Returns updated `AdminUserView`. |
-| `/admin/users/invite` | POST | admin | Invite new admin | Body: `{email, role}`. Sends invite via existing comms infrastructure or returns invite token for manual share. Defer if comms infra not ready — Coming-next on UI side. |
+| `/admin/users/invite` | POST | admin | Invite new admin | **Conditional on B3 decision rule** (see Roles panel). Body: `{email, role}`. Sends invite via existing comms infrastructure. If comms send-invite use case is absent from `backend/v2/contexts/identity/application/`, this endpoint is dropped from B3 and the UI section ships as Coming-next. |
 
 ### Architecture
 
 - **Domain:** No new domain entities. Settings config is application-layer concern over the existing identity/billing contexts.
-- **Application:** New use cases under `backend/v2/contexts/identity/application/` for academy read/write; reuse existing identity context for user-role changes. Fees + notifications config could live in identity or billing — pick during implementation based on which context already touches the academy doc most.
+- **Application:** New use cases under `backend/v2/contexts/identity/application/` for academy read/write; reuse existing identity context for user-role changes.
+- **Fees + notifications context ownership (deferred sub-decision):** Both config blocks could live in the `identity` context (alongside academy doc) OR the `billing` context (since fees drive billing). **B1 commit message captures the call**; subsequent panels follow the same context choice. Default: `identity` (academy doc already lives there). Confirmable during B1 implementation; do not re-prompt.
 - **Infrastructure:** Reuse existing Mongo academy collection. Fees/notifications config are nested fields, no new collections.
 - **Interfaces:** New `backend/v2/interfaces/admin/academy_routes.py` for academy + fees + notifications + gateway. Extend existing `directory_routes.py` for role-change endpoints.
 - **Tests:** Contract tests under `backend/v2/tests/contract/` per endpoint. Use-case tests under `backend/v2/tests/application/` for new code paths. Interface tests under `backend/v2/tests/interface/` for HTTP behavior.
@@ -165,10 +179,10 @@ Extend `frontend/lib/api/admin.ts` with new types + functions (~80 LOC):
 | **B4** | Settings: Data + Branding Coming-next | `data-panel.tsx`, `branding-panel.tsx` | session 3 |
 | **C1** | WORK pages restyle: students + users + waitlist + pause-requests | 4 page files | session 4 |
 | **C2** | MONEY pages restyle: dues + reports + coach-payslip | 3 page files | session 4 |
-| **C3** | Finance split: expenses + payouts + finance roll-up decision | `expenses/page.tsx`, `payouts/page.tsx`, `finance/page.tsx` | session 5 |
+| **C3** | Finance split: expenses + payouts + finance roll-up decision (captured in commit message) | `expenses/page.tsx`, `payouts/page.tsx`, `finance/page.tsx` | session 5 |
 | **C4** | OPS pages restyle: audit-logs | 1 page file | session 5 |
 | **D1** | Phase 6 DTO enrichment (only if surfaced): optional `coach_name` on AdminSessionView | backend `views.py` + `sessions_routes.py` + tests | session 5 or follow-on |
-| **D2** | Route cleanup: delete `admin/billing/`, `admin/comms/`, possibly `admin/finance/` | directory deletes + final link sweep | session 5 |
+| **D2** | Route cleanup: delete `admin/billing/`, `admin/comms/`, and `admin/finance/` per the call captured in C3's commit message | directory deletes + final link sweep | session 5 |
 | **D3** | Playwright admin-shell.spec expansion + test_result.md handoff | `e2e/specs/admin-shell.spec.ts`, `test_result.md` | session 5 |
 
 **5-session estimate.** User approves the spec once; each session executes its slice, commits, reports back with verification output. User only re-engages for sub-decisions (e.g. finance fate at C3, or DTO field naming).
@@ -197,7 +211,7 @@ Extend `frontend/lib/api/admin.ts` with new types + functions (~80 LOC):
 | Finance roll-up dispute at C3 | Default = delete after splits land. Confirm in C3 commit before deleting. Easy to keep as a Money overview if user prefers. |
 | Playwright port collisions with other worktrees | Run with `PLAYWRIGHT_PORT=<free>` env. Document in `test_result.md`. |
 | DTO gaps surface that need new fields | Queue for Phase 6 D1 commit; additive optional fields only, no endpoint behavior changes. |
-| `coach_name` lookup causes N+1 queries | Batch the lookup in the admin sessions BFF use case (single `find({_id: {$in: [...]}})` over coach IDs). Covered by a contract test asserting field presence. |
+| `coach_name` lookup causes N+1 queries (**only applies if D1 ships**) | D1 is conditional on a real DTO gap surfacing during restyle. If it ships, batch the lookup in the admin sessions BFF use case (single `find({_id: {$in: [...]}})` over coach IDs) and add a contract test asserting field presence + no extra DB calls. If D1 doesn't ship, this row is moot. |
 
 ## References
 
