@@ -21,7 +21,8 @@ Production deployment is handled by one GitHub Actions workflow:
 
 The legacy CRA app under `frontend/` is deprecated, is not built/tested/deployed
 by the production workflow, and its old Cloudflare Pages project
-`courtmastr-academy` is deleted during production deploy if it still exists.
+`courtmastr-academy` is unbound from `academy.courtmastr.com` and deleted during
+production deploy if it still exists.
 
 ## Production Targets
 
@@ -38,10 +39,10 @@ CLOUDFLARE_API_TOKEN=<Cloudflare Workers deploy token>
 CLOUDFLARE_ACCOUNT_ID=<Cloudflare account id>
 ```
 
-The Cloudflare token needs permission to deploy the Next frontend Worker, delete
-the retired `academy-edge-router` Worker if it still exists, and delete the old
-`courtmastr-academy` Pages project if it still exists. The Fly token needs
-permission to deploy `courtmastr-academy-api`.
+The Cloudflare token needs Workers deploy/delete access plus Cloudflare
+`Pages Write` permission to detach custom domains from the old
+`courtmastr-academy` Pages project and delete that Pages project if it still
+exists. The Fly token needs permission to deploy `courtmastr-academy-api`.
 
 ## Required GitHub Variables
 

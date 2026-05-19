@@ -60,18 +60,18 @@ if ! grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"${frontend_v2_health_bo
   exit 1
 fi
 
-mapfile -t next_scripts < <(
-  grep -Eo 'src="[^"]*_next/static/[^"]+\.js"' <<<"${frontend_html}" |
-    sed -E 's/^src="([^"]+)"/\1/' |
-    sort -u
-)
-if [[ "${#next_scripts[@]}" -eq 0 ]]; then
-  echo "Frontend check failed: could not find Next.js script chunks" >&2
+login_html="$(curl -fsS "${FRONTEND_URL}/login")"
+next_scripts="$(grep -Eo 'src="[^"]*_next/static/[^"]+\.js"' <<<"${login_html}" |
+  sed -E 's/^src="([^"]+)"/\1/' |
+  sort -u || true)"
+if [[ -z "${next_scripts}" ]]; then
+  echo "Frontend check failed: could not find Next.js login script chunks" >&2
   exit 1
 fi
 
 firebase_config_found=0
-for script_path in "${next_scripts[@]}"; do
+while IFS= read -r script_path; do
+  [[ -n "${script_path}" ]] || continue
   if [[ "${script_path}" == http* ]]; then
     script_url="${script_path}"
   else
@@ -81,7 +81,7 @@ for script_path in "${next_scripts[@]}"; do
     firebase_config_found=1
     break
   fi
-done
+done <<<"${next_scripts}"
 
 if [[ "${firebase_config_found}" != "1" ]]; then
   echo "Frontend check failed: built Next.js chunks do not contain Firebase project ${EXPECTED_FIREBASE_PROJECT_ID}" >&2
