@@ -29,11 +29,11 @@
 ### Task 2: Admin Frontend Uses Real Directories
 
 **Files:**
-- Modify: `frontend-next/lib/api/admin.ts`
-- Modify: `frontend-next/app/(admin)/admin/users/page.tsx`
-- Modify: `frontend-next/app/(admin)/admin/students/page.tsx`
-- Modify: `frontend-next/app/(admin)/admin/sessions/page.tsx`
-- Modify: `frontend-next/app/(admin)/admin/sessions/[id]/page.tsx`
+- Modify: `frontend/lib/api/admin.ts`
+- Modify: `frontend/app/(admin)/admin/users/page.tsx`
+- Modify: `frontend/app/(admin)/admin/students/page.tsx`
+- Modify: `frontend/app/(admin)/admin/sessions/page.tsx`
+- Modify: `frontend/app/(admin)/admin/sessions/[id]/page.tsx`
 
 - [ ] Replace placeholder users/students screens with BFF-driven tables.
 - [ ] Use the real coach list when creating sessions.
@@ -66,7 +66,7 @@
 **Commands:**
 - `backend/.venv/bin/python -m pytest backend/v2/tests/interface/test_admin_directory.py backend/v2/tests/interface/test_admin_sessions.py backend/v2/tests/interface/test_admin_waitlist.py -q`
 - `backend/.venv/bin/python -m pytest backend/v2/tests -q`
-- `cd frontend-next && pnpm typecheck && pnpm build`
+- `cd frontend && pnpm typecheck && pnpm build`
 - Browser/Playwright smoke on `http://localhost:3001/login` for admin, coach, and parent.
 
 - [ ] Record actual command/browser results in `test_result.md`.

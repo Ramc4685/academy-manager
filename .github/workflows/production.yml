@@ -142,7 +142,7 @@ jobs:
     timeout-minutes: 20
     defaults:
       run:
-        working-directory: frontend-next
+        working-directory: frontend
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -157,7 +157,7 @@ jobs:
         with:
           node-version: "22"
           cache: pnpm
-          cache-dependency-path: frontend-next/pnpm-lock.yaml
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -221,7 +221,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: frontend-next/playwright-report
+          path: frontend/playwright-report
           retention-days: 7
 
   production-approval:
@@ -262,7 +262,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     defaults:
       run:
-        working-directory: frontend-next
+        working-directory: frontend
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -277,7 +277,7 @@ jobs:
         with:
           node-version: "22"
           cache: pnpm
-          cache-dependency-path: frontend-next/pnpm-lock.yaml
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile

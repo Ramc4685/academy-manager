@@ -185,10 +185,10 @@ backend:
         agent: "main"
         comment: "Added Enrollment use case and admin BFF endpoint to move a student between sessions by reserving the target seat, updating the enrollment, and releasing the source seat. Interface tests cover the reservation/release behavior."
 frontend:
-  - task: "frontend-next local BFF proxy"
+  - task: "frontend local BFF proxy"
     implemented: true
     working: true
-    file: "frontend-next/next.config.ts"
+    file: "frontend/next.config.ts"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
@@ -202,7 +202,7 @@ frontend:
   - task: "coach today error-state hardening"
     implemented: true
     working: true
-    file: "frontend-next/app/(coach)/coach/today/page.tsx"
+    file: "frontend/app/(coach)/coach/today/page.tsx"
     stuck_count: 0
     priority: "medium"
     needs_retesting: false
@@ -213,10 +213,10 @@ frontend:
       - working: true
         agent: "main"
         comment: "Guarded sessions rendering; manual browser now shows the load error state instead of crashing."
-  - task: "frontend-next production-style login theme"
+  - task: "frontend production-style login theme"
     implemented: true
     working: true
-    file: "frontend-next/app/(marketing)/login/page.tsx"
+    file: "frontend/app/(marketing)/login/page.tsx"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
@@ -226,14 +226,14 @@ frontend:
         comment: "Ported the production split-login visual language into the Next app: same badminton hero photo, Badminton Academy Manager lockup, gold/blue theme, responsive desktop/mobile layout, and PWA icon assets. Verified /login renders locally on desktop and 390px mobile with no console errors beyond the normal React DevTools dev message."
       - working: true
         agent: "main"
-        comment: "Replaced the temporary forgot-password message with Firebase Auth sendPasswordResetEmail via frontend-next/lib/auth/firebase.ts. Empty-email path is guarded locally; real reset delivery stays entirely in Firebase Auth."
+        comment: "Replaced the temporary forgot-password message with Firebase Auth sendPasswordResetEmail via frontend/lib/auth/firebase.ts. Empty-email path is guarded locally; real reset delivery stays entirely in Firebase Auth."
       - working: true
         agent: "main"
         comment: "Aligned v2 login typography and proportions to the production reference: Outfit display font, Manrope body font, compact legacy-style form controls, half-photo desktop split, and mobile layout parity. Verified desktop and 390px mobile snapshots."
   - task: "parent onboarding session selection"
     implemented: true
     working: true
-    file: "frontend-next/app/(parent)/parent/onboarding/page.tsx"
+    file: "frontend/app/(parent)/parent/onboarding/page.tsx"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
@@ -244,7 +244,7 @@ frontend:
   - task: "admin real directory screens"
     implemented: true
     working: true
-    file: "frontend-next/app/(admin)/admin/users/page.tsx"
+    file: "frontend/app/(admin)/admin/users/page.tsx"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
@@ -255,7 +255,7 @@ frontend:
   - task: "parent real activity screens"
     implemented: true
     working: true
-    file: "frontend-next/app/(parent)/parent/children/page.tsx"
+    file: "frontend/app/(parent)/parent/children/page.tsx"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
@@ -266,7 +266,7 @@ frontend:
   - task: "admin billing parity controls"
     implemented: true
     working: true
-    file: "frontend-next/app/(admin)/admin/billing/page.tsx"
+    file: "frontend/app/(admin)/admin/billing/page.tsx"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
@@ -277,7 +277,7 @@ frontend:
   - task: "admin session roster move control"
     implemented: true
     working: true
-    file: "frontend-next/app/(admin)/admin/sessions/[id]/page.tsx"
+    file: "frontend/app/(admin)/admin/sessions/[id]/page.tsx"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
@@ -306,10 +306,21 @@ frontend:
     status_history:
       - working: "NA"
         agent: "main"
-        comment: "Consolidated GitHub Actions into one Production workflow, removed legacy CRA build/deploy workflows, made frontend-next the only frontend deployable, simplified edge routing to API vs Next web origins, and updated deployment docs/smoke checks. Verification pending."
+        comment: "Consolidated GitHub Actions into one Production workflow, removed legacy CRA build/deploy workflows, made frontend the only frontend deployable, simplified edge routing to API vs Next web origins, and updated deployment docs/smoke checks. Verification pending."
       - working: true
         agent: "main"
-        comment: "Verified workflow YAML parses, backend/v2 tests pass, frontend-next typecheck/lint/build/size/E2E pass, OpenAPI drift check skips cleanly with no snapshot, edge routing tests pass, edge wrangler prod dry-run passes, OpenNext Cloudflare build passes, smoke script syntax passes, and git diff --check passes."
+        comment: "Verified workflow YAML parses, backend/v2 tests pass, frontend typecheck/lint/build/size/E2E pass, OpenAPI drift check skips cleanly with no snapshot, edge routing tests pass, edge wrangler prod dry-run passes, OpenNext Cloudflare build passes, smoke script syntax passes, and git diff --check passes."
+  - task: "canonical frontend path consolidation"
+    implemented: true
+    working: true
+    file: "frontend"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Removed the legacy CRA frontend, promoted the Next.js BFF/DDD frontend to the canonical frontend/ path, updated CI/docs/deployment references, and verified only one top-level frontend directory remains."
 metadata:
   created_by: "main_agent"
   version: "1.0"
@@ -332,15 +343,15 @@ agent_communication:
   - agent: "main"
     message: "Login visual match update: pnpm typecheck passed; pnpm build passed; Playwright desktop/mobile snapshots verified the production-style Outfit + Manrope typography and compact form proportions."
   - agent: "main"
-    message: "Persona workflow verification after interruption: full backend v2 suite passed (117 tests); focused coach/admin BFF interface suite passed (49 tests); focused parent onboarding/checkout/webhook/cross-context suite passed (25 tests); architecture/DDD/tenancy/auth contracts passed (14 tests); frontend-next typecheck/build passed; Playwright coach workflow passed (6 passed, 14 planned skips). Live frontend proxy confirms mounted coach/parent/admin BFF paths and returns 401 on protected workflow endpoints without Firebase token."
+    message: "Persona workflow verification after interruption: full backend v2 suite passed (117 tests); focused coach/admin BFF interface suite passed (49 tests); focused parent onboarding/checkout/webhook/cross-context suite passed (25 tests); architecture/DDD/tenancy/auth contracts passed (14 tests); frontend typecheck/build passed; Playwright coach workflow passed (6 passed, 14 planned skips). Live frontend proxy confirms mounted coach/parent/admin BFF paths and returns 401 on protected workflow endpoints without Firebase token."
   - agent: "main"
     message: "Firebase emulator verification: listed local Mongo users; added identity Mongo repo support for auth bootstrap and legacy user shape; added frontend Auth emulator support via NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST. Firebase Auth emulator on 127.0.0.1:9099 issued tokens for admin/coach/parent demo users. Emulator-backed v2 backend on 8011 returned 200 for admin /api/v2/admin/sessions, coach /api/v2/coach/today, parent /api/v2/parent/payments, and 404 for parent token on coach route. Browser login through localhost:3001 emulator mode reached coach/parent/admin pages without auth errors. backend/v2 tests => 119 passed; frontend typecheck/build passed."
   - agent: "main"
     message: "Post-login role routing fix: added /api/v2/me endpoint backed by AuthClaims, added frontend getCurrentUser/homeForRoles, and replaced the /post-login placeholder with role-aware redirects. Browser E2E through Firebase Auth emulator now redirects coach -> /coach/today, parent -> /parent/payments, admin -> /admin with no placeholder visible. Focused auth tests passed (9), full backend v2 suite passed (121), frontend typecheck/build passed."
   - agent: "main"
-    message: "Hydration warning triage: Chrome screenshot showed rtrvr-* attributes injected on <html>/<a> before React hydration, consistent with a browser extension/automation helper rather than app markup. Added suppressHydrationWarning to frontend-next/app/layout.tsx at the root <html> only. In-app browser reload of http://localhost:3001/ showed expected landing content with no console warn/error logs; pnpm typecheck passed."
+    message: "Hydration warning triage: Chrome screenshot showed rtrvr-* attributes injected on <html>/<a> before React hydration, consistent with a browser extension/automation helper rather than app markup. Added suppressHydrationWarning to frontend/app/layout.tsx at the root <html> only. In-app browser reload of http://localhost:3001/ showed expected landing content with no console warn/error logs; pnpm typecheck passed."
   - agent: "main"
-    message: "Coach auth/cache fix: updated frontend-next/app/(coach)/layout.tsx so unauthenticated coach routes render a redirect state instead of mounting child queries, and updated frontend-next/lib/query/persistence.ts to persist only successful coach queries with a new cache buster. Verified Firebase Auth emulator 9099, frontend BFF proxy 3001, and BFF 8011 all return 200. Browser login with coach@badminton.app / Password123! reached /coach/today, rendered Today/No sessions today, and in-app browser console warn/error logs were empty. pnpm typecheck passed."
+    message: "Coach auth/cache fix: updated frontend/app/(coach)/layout.tsx so unauthenticated coach routes render a redirect state instead of mounting child queries, and updated frontend/lib/query/persistence.ts to persist only successful coach queries with a new cache buster. Verified Firebase Auth emulator 9099, frontend BFF proxy 3001, and BFF 8011 all return 200. Browser login with coach@badminton.app / Password123! reached /coach/today, rendered Today/No sessions today, and in-app browser console warn/error logs were empty. pnpm typecheck passed."
   - agent: "main"
     message: "Persona validation/fix: added missing coach tab pages /coach/sessions and /coach/profile, added Mongo-backed role authorization via /api/v2/me before rendering coach/parent/admin layouts, and disabled the login submit path until client hydration so native form submit cannot leak credentials into the URL. Verification: pnpm typecheck passed; frontend proxy 3001, BFF 8011, Firebase emulator 9099 returned 200; headless Playwright E2E logged in through Firebase emulator and validated coach /today /sessions /profile, parent /payments /onboarding, admin / /sessions /billing, plus admin->coach wrong-role redirect back to /admin. Console errors were empty in that clean browser run."
   - agent: "main"
@@ -356,9 +367,9 @@ agent_communication:
   - agent: "main"
     message: "Production readiness config pass: recovered prior deploy data from Fly/GitHub/Cloudflare, enabled V2_ENABLED in backend/fly.toml, added v2 Settings fallbacks so existing MONGO_URL/DB_NAME/STRIPE_API_KEY/STRIPE_WEBHOOK_SECRET secrets can be reused, and made legacy server startup explicitly enter the mounted v2 app lifespan so BFF composition initializes in production. Verification: backend/v2 suite passed (144), legacy safe auth/seed tests passed (22), settings/health/layering focused tests passed (6), compileall for server.py/settings.py passed, git diff --check passed."
   - agent: "main"
-    message: "PR/deploy unblock pass: fixed v2 frontend Playwright mocks for /api/v2/me and coach detail companion endpoints, made Playwright dev server honor PLAYWRIGHT_PORT, added OpenNext Cloudflare deployment config for frontend-next, configured production deploy workflow to publish legacy fallback + Next v2 + edge router, and updated edge routing so Next shared assets follow v2 once persona flags are on. Verification: backend/v2 suite passed (144), frontend-next typecheck/lint/build passed, OpenNext build passed, frontend-next wrangler dry-run passed, edge wrangler prod dry-run passed, edge router tests passed (15), frontend-next Playwright passed (6 passed, 14 planned skips), git diff --check passed."
+    message: "PR/deploy unblock pass: fixed v2 frontend Playwright mocks for /api/v2/me and coach detail companion endpoints, made Playwright dev server honor PLAYWRIGHT_PORT, added OpenNext Cloudflare deployment config for frontend, configured production deploy workflow to publish legacy fallback + Next v2 + edge router, and updated edge routing so Next shared assets follow v2 once persona flags are on. Verification: backend/v2 suite passed (144), frontend typecheck/lint/build passed, OpenNext build passed, frontend wrangler dry-run passed, edge wrangler prod dry-run passed, edge router tests passed (15), frontend Playwright passed (6 passed, 14 planned skips), git diff --check passed."
   - agent: "main"
-    message: "PR review-blocker pass: addressed unresolved review threads by scoping admin user listings to academy_id, supporting legacy parent_user_id in parent children/activity reads, preserving null session IDs in enrollment move history, switching parent session route dependencies to Annotated, and wrapping unauthenticated Stripe webhook handling in tenant_scope(default academy). Verification: backend/v2 suite passed (145), frontend-next typecheck passed, git diff --check passed."
+    message: "PR review-blocker pass: addressed unresolved review threads by scoping admin user listings to academy_id, supporting legacy parent_user_id in parent children/activity reads, preserving null session IDs in enrollment move history, switching parent session route dependencies to Annotated, and wrapping unauthenticated Stripe webhook handling in tenant_scope(default academy). Verification: backend/v2 suite passed (145), frontend typecheck passed, git diff --check passed."
   - agent: "main"
     message: "Production bootstrap/auth pass: created Firebase Auth test users for the admin and coach smoke accounts, wrote temporary credentials to a local-only file with 0600 permissions, and upserted matching production Mongo authorization rows with roles/admin+coach, academy_id=default-academy, auth_provider=firebase, and email_verified=true. Verification: Firebase users created and Mongo rows verified by Fly SSH query. Authenticated BFF smoke found production /api/v2 still 404 because the Fly image layout made backend.v2 imports fail."
   - agent: "main"
@@ -366,21 +377,21 @@ agent_communication:
   - agent: "main"
     message: "Production auth/proxy follow-up: direct production v2 health returned 200 after the image fix, but authenticated /api/v2/me failed because the v2 Firebase verifier was not using the legacy project-aware/public-cert fallback. Updated the v2 verifier to delegate to the legacy verifier and added the missing BFF_API_ORIGIN build/deploy env for the Next v2 worker."
   - agent: "main"
-    message: "Public parent registration bootstrap: added /api/v2/register/parent to verify a Firebase token without requiring an existing Mongo role and create/add the parent authorization role only; added /register in the Next v2 app with Google-first signup plus email/password fallback; fixed post-login homes to existing v2 routes. Verification: focused registration/auth repo/interface tests passed (12), full backend/v2 suite passed (153), frontend-next pnpm typecheck passed, pnpm build passed, git diff --check passed. Browser render check opened /register on desktop and 390px mobile with no warning/error console entries. Production Mongo admin authorization row for ramchand4685@gmail.com was upserted as active admin."
+    message: "Public parent registration bootstrap: added /api/v2/register/parent to verify a Firebase token without requiring an existing Mongo role and create/add the parent authorization role only; added /register in the Next v2 app with Google-first signup plus email/password fallback; fixed post-login homes to existing v2 routes. Verification: focused registration/auth repo/interface tests passed (12), full backend/v2 suite passed (153), frontend pnpm typecheck passed, pnpm build passed, git diff --check passed. Browser render check opened /register on desktop and 390px mobile with no warning/error console entries. Production Mongo admin authorization row for ramchand4685@gmail.com was upserted as active admin."
   - agent: "main"
-    message: "Unified frontend redesign pass: integrated the courtmastr-ui-redesign landing page into frontend-next as the single frontend target, adjusted role CTAs to current auth routes (/login for staff, /register for parents), switched preview copy to USD/current product language, and added docs/frontend-consolidation.md to document frontend-next as the target and frontend/ as temporary fallback. Verification: frontend-next pnpm typecheck passed, pnpm build passed, git diff --check passed, and Playwright rendered / at desktop and 390px mobile with no warning/error console entries."
+    message: "Unified frontend redesign pass: integrated the courtmastr-ui-redesign landing page into frontend as the single frontend target, adjusted role CTAs to current auth routes (/login for staff, /register for parents), switched preview copy to USD/current product language, and added docs/frontend-consolidation.md to document frontend as the target and frontend/ as temporary fallback. Verification: frontend pnpm typecheck passed, pnpm build passed, git diff --check passed, and Playwright rendered / at desktop and 390px mobile with no warning/error console entries."
   - agent: "main"
-    message: "Single frontend production workflow implementation started: removed ci.yml/deploy.yml/v2-* workflows and replaced them with .github/workflows/production.yml; removed legacy CRA frontend build/deploy path; simplified edge worker to route /api/* to Fly and all browser paths to frontend-next; updated production smoke/docs. Focused verification next."
+    message: "Single frontend production workflow implementation started: removed ci.yml/deploy.yml/v2-* workflows and replaced them with .github/workflows/production.yml; removed legacy CRA frontend build/deploy path; simplified edge worker to route /api/* to Fly and all browser paths to frontend; updated production smoke/docs. Focused verification next."
   - agent: "main"
-    message: "Single frontend production workflow verified: workflow YAML parse passed; backend/v2 tests 153 passed; frontend-next pnpm typecheck/lint/build/size passed; frontend-next E2E passed on PLAYWRIGHT_PORT=3301 with 6 passed/14 planned skips after avoiding an existing local port-3001 dev server; OpenAPI drift check skipped because no snapshot exists; edge routing tests passed (12); edge wrangler prod dry-run passed; OpenNext Cloudflare build passed; bash -n production_smoke and git diff --check passed."
+    message: "Single frontend production workflow verified: workflow YAML parse passed; backend/v2 tests 153 passed; frontend pnpm typecheck/lint/build/size passed; frontend E2E passed on PLAYWRIGHT_PORT=3301 with 6 passed/14 planned skips after avoiding an existing local port-3001 dev server; OpenAPI drift check skipped because no snapshot exists; edge routing tests passed (12); edge wrangler prod dry-run passed; OpenNext Cloudflare build passed; bash -n production_smoke and git diff --check passed."
   - agent: "main"
-    message: "Post-merge production smoke found academy.courtmastr.com still serving the legacy CRA app while academy-next.courtmastr.com and api.academy.courtmastr.com were healthy. Hotfix in progress: make frontend-next the direct custom-domain owner for academy.courtmastr.com and retire/delete the separate academy-edge-router deployment."
+    message: "Post-merge production smoke found academy.courtmastr.com still serving the legacy CRA app while academy-next.courtmastr.com and api.academy.courtmastr.com were healthy. Hotfix in progress: make frontend the direct custom-domain owner for academy.courtmastr.com and retire/delete the separate academy-edge-router deployment."
   - agent: "main"
-    message: "Primary frontend cutover hotfix verified locally: production workflow YAML parse passed; production smoke script syntax passed; retired edge router unit test passed (13); frontend-next typecheck passed; frontend-next production build passed; OpenNext Cloudflare build passed; frontend-next Wrangler dry-run passed; git diff --check passed."
+    message: "Primary frontend cutover hotfix verified locally: production workflow YAML parse passed; production smoke script syntax passed; retired edge router unit test passed (13); frontend typecheck passed; frontend production build passed; OpenNext Cloudflare build passed; frontend Wrangler dry-run passed; git diff --check passed."
   - agent: "main"
-    message: "Production deploy follow-up: Cloudflare rejected custom_domain=true for academy.courtmastr.com because existing externally managed DNS records already exist (Cloudflare error 100117). Root cause is wrong trigger mode; switching frontend-next/wrangler.jsonc to a Worker Route pattern academy.courtmastr.com/* with zone_name courtmastr.com."
+    message: "Production deploy follow-up: Cloudflare rejected custom_domain=true for academy.courtmastr.com because existing externally managed DNS records already exist (Cloudflare error 100117). Root cause is wrong trigger mode; switching frontend/wrangler.jsonc to a Worker Route pattern academy.courtmastr.com/* with zone_name courtmastr.com."
   - agent: "main"
-    message: "Cloudflare Worker Route fix verified locally: frontend-next wrangler deploy --dry-run passed with academy.courtmastr.com/* route, workflow YAML parse passed, production smoke script syntax passed, and git diff --check passed."
+    message: "Cloudflare Worker Route fix verified locally: frontend wrangler deploy --dry-run passed with academy.courtmastr.com/* route, workflow YAML parse passed, production smoke script syntax passed, and git diff --check passed."
   - agent: "main"
     message: "Production deploy confirmed academy-next Worker route deploys, but smoke still received the legacy CRA bundle from academy.courtmastr.com. Root cause is the old courtmastr-academy Cloudflare Pages custom domain still winning over the Worker route. Adding production cleanup to delete that legacy Pages project before deploying academy-next."
   - agent: "main"
@@ -389,3 +400,7 @@ agent_communication:
     message: "Cloudflare cutover recovery: detached academy.courtmastr.com from the legacy courtmastr-academy Pages project through the Cloudflare Pages domains API, deleted the legacy Pages project via Wrangler, then corrected the remaining DNS record in the Cloudflare dashboard so academy.courtmastr.com points at the academy-next Worker route. Verification: dig academy.courtmastr.com resolved to Cloudflare IPs, https://academy.courtmastr.com/api/v2/healthz returned {\"status\":\"ok\"}, and production_smoke.sh passed after making its Next chunk/Firebase check portable on macOS Bash and targeted at /login where Firebase is actually loaded."
   - agent: "main"
     message: "PR #34 review comments addressed: made the legacy Pages domain detach step idempotent by allowing Cloudflare 404/already-detached responses before deleting the project, and documented that the Cloudflare token needs Pages Write permission. Verification: production workflow YAML parse passed, jq is available locally, production_smoke.sh passed, and git diff --check passed."
+  - agent: "main"
+    message: "Canonical frontend path consolidation: removed the old CRA frontend, moved the active Next.js BFF/DDD app into frontend/, replaced stale split-frontend references, and updated docs/AGENTS/deployment/CI notes so there is one frontend deployable. Verification: pnpm install --frozen-lockfile, pnpm typecheck, pnpm lint, pnpm build, PLAYWRIGHT_PORT=3302 pnpm e2e (6 passed/14 planned skips), pnpm size, OpenNext Cloudflare build, frontend wrangler deploy --dry-run, workflow YAML parse, production_smoke.sh syntax check, stale-path reference sweep, one-frontend directory check, and git diff --check all passed."
+  - agent: "main"
+    message: "PR #35 review fix: restored the frontend Docker build target for docker compose with a Next.js Dockerfile/.dockerignore, updated docker-compose.yml to use BFF_API_ORIGIN/NEXT_PUBLIC_* args and map localhost:3000 to the Next server, and made backend/.env optional for clean-checkout compose config. Verification: docker compose config passed, frontend pnpm typecheck/lint/build passed, and git diff --check passed. docker compose build frontend could not run because the local Docker daemon is not running."

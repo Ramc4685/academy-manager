@@ -28,13 +28,13 @@ V2_ENABLED=1 V2_RUN_MIGRATIONS_ON_BOOT=1 V2_MONGO_URL=mongodb://localhost:27017 
 python backend/v2/scripts/seed_baseline.py   # see docs/dev-setup.md (Wave 1A polish)
 
 # Terminal 2 — frontend, production build
-cd frontend-next
+cd frontend
 pnpm install
 pnpm build
 pnpm start --port 3001 &
 
 # Terminal 3 — measurements
-cd frontend-next
+cd frontend
 pnpm size > /tmp/size.txt           # bundle weight per route
 pnpm lhci collect --url=http://localhost:3001/coach/today  # Lighthouse JSON
 ```
@@ -87,7 +87,7 @@ Per the plan, **CI budget = measured + 15%**, with the stretch target documented
 ## Flipping CI gates from informational → blocking
 
 After the baseline lands and the budgets are populated in
-`frontend-next/package.json`:
+`frontend/package.json`:
 
 1. Edit `.github/workflows/production.yml`:
    - Remove `continue-on-error: true` from the `Size limit` step.

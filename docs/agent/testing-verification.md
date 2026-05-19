@@ -20,8 +20,8 @@ Frontend:
 
 ```bash
 cd frontend
-yarn test --watchAll=false
-yarn build
+pnpm typecheck
+pnpm build
 ```
 
 Container smoke:
@@ -31,15 +31,11 @@ docker compose up --build
 curl http://127.0.0.1:8001/api/health
 ```
 
-v2, when present:
+v2 backend:
 
 ```bash
 cd backend
 pytest v2/tests
-
-cd frontend-next
-pnpm typecheck
-pnpm build
 ```
 
 ---

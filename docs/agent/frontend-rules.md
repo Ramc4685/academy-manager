@@ -1,25 +1,13 @@
 # Frontend Rules
 
-Use this file for CRA React, Next.js v2 frontend, routing, UI, PWA, auth screens, admin/coach/parent pages, and browser verification.
+Use this file for the Next.js frontend, routing, UI, PWA, auth screens, admin/coach/parent pages, and browser verification.
 
 ---
 
 ## Commands
 
-Legacy CRA frontend:
-
 ```bash
 cd frontend
-yarn install
-yarn start
-yarn test --watchAll=false
-yarn build
-```
-
-v2 Next frontend, when present:
-
-```bash
-cd frontend-next
 pnpm install
 pnpm dev
 pnpm typecheck
@@ -29,21 +17,7 @@ pnpm generate:api
 
 ---
 
-## Legacy Frontend Rules
-
-- Legacy app entry point is `frontend/src/App.js`.
-- Legacy API client is `frontend/src/lib/api.js`.
-- Auth state lives in `frontend/src/contexts/AuthContext.jsx` and related auth libs.
-- Pages are grouped by persona under `frontend/src/pages/admin`, `coach`, `parent`, `auth`, and `shared`.
-- Keep existing UI patterns unless the task is specifically redesign work.
-- Do not add new global state libraries without a clear need.
-- Use existing Radix/shadcn-style components and `lucide-react` where appropriate.
-
----
-
-## v2 Frontend Rules
-
-When `frontend-next/` exists:
+## Frontend Rules
 
 - Use Next.js App Router.
 - Keep persona route groups separate: `(coach)`, `(parent)`, `(admin)`.
@@ -96,7 +70,6 @@ For UI changes:
 Useful URLs:
 
 ```txt
-Legacy frontend: http://localhost:3000
 Legacy API health: http://127.0.0.1:8001/api/health
-v2 frontend, when present: http://localhost:3001
+Frontend: http://localhost:3001
 ```

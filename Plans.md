@@ -27,9 +27,9 @@
 
 | Task | 内容 | DoD | Depends | Status |
 |------|------|-----|---------|--------|
-| 2.1 | Commit frontend auth plumbing: firebase emulator support, /me API client, usePersonaAuth hook, post-login role routing, persona layout auth guards, suppressHydrationWarning [tdd:skip:already-implemented-and-passing] | `git log --oneline -1` shows commit; `pnpm --dir frontend-next typecheck` exits 0 | Phase 1 | cc:TODO |
-| 2.2 | Commit coach persona tab pages: sessions list + profile page + today error-state hardening [tdd:skip:already-implemented-and-passing] | `git log --oneline -1` shows commit; `pnpm --dir frontend-next build` exits 0 | 2.1 | cc:TODO |
-| 2.3 | Commit login visual polish + PWA icons + next.config BFF proxy + tailwind + globals.css + README + test_result.md + LICENSE [tdd:skip:assets-and-config] | `git log --oneline -1` shows commit; `pnpm --dir frontend-next build` exits 0; `git status` is clean | 2.2 | cc:TODO |
+| 2.1 | Commit frontend auth plumbing: firebase emulator support, /me API client, usePersonaAuth hook, post-login role routing, persona layout auth guards, suppressHydrationWarning [tdd:skip:already-implemented-and-passing] | `git log --oneline -1` shows commit; `pnpm --dir frontend typecheck` exits 0 | Phase 1 | cc:TODO |
+| 2.2 | Commit coach persona tab pages: sessions list + profile page + today error-state hardening [tdd:skip:already-implemented-and-passing] | `git log --oneline -1` shows commit; `pnpm --dir frontend build` exits 0 | 2.1 | cc:TODO |
+| 2.3 | Commit login visual polish + PWA icons + next.config BFF proxy + tailwind + globals.css + README + test_result.md + LICENSE [tdd:skip:assets-and-config] | `git log --oneline -1` shows commit; `pnpm --dir frontend build` exits 0; `git status` is clean | 2.2 | cc:TODO |
 
 ---
 
@@ -37,4 +37,4 @@
 
 | Task | 内容 | DoD | Depends | Status |
 |------|------|-----|---------|--------|
-| 3.1 | Run full test suite: backend pytest + frontend typecheck + build + E2E [tdd:skip:verification-not-implementation] | `pytest backend/v2/tests -q` ≥ 121 passed; `pnpm --dir frontend-next typecheck` exits 0; `pnpm --dir frontend-next build` exits 0; `pnpm --dir frontend-next e2e` ≥ 6 passed | Phase 2 | cc:TODO |
+| 3.1 | Run full test suite: backend pytest + frontend typecheck + build + E2E [tdd:skip:verification-not-implementation] | `pytest backend/v2/tests -q` ≥ 121 passed; `pnpm --dir frontend typecheck` exits 0; `pnpm --dir frontend build` exits 0; `pnpm --dir frontend e2e` ≥ 6 passed | Phase 2 | cc:TODO |

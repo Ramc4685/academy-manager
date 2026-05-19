@@ -15,12 +15,11 @@ Production deployment is handled by one GitHub Actions workflow:
 - **Backend** installs legacy + v2 Python dependencies, compiles backend code,
   runs the broad non-live legacy pytest suite, runs v2 import-linter
   boundaries, and runs `backend/v2/tests` with shared coverage.
-- **Frontend** installs `frontend-next/` with pnpm, then runs typecheck, lint,
+- **Frontend** installs `frontend/` with pnpm, then runs typecheck, lint,
   build, OpenAPI drift check, size budget reporting, Lighthouse when configured,
   and Playwright E2E.
 
-The legacy CRA app under `frontend/` is deprecated, is not built/tested/deployed
-by the production workflow, and its old Cloudflare Pages project
+The legacy CRA app has been removed. The old Cloudflare Pages project
 `courtmastr-academy` is unbound from `academy.courtmastr.com` and deleted during
 production deploy if it still exists.
 
@@ -47,7 +46,7 @@ exists. The Fly token needs permission to deploy `courtmastr-academy-api`.
 ## Required GitHub Variables
 
 The workflow maps these existing `REACT_APP_*` variables into the
-`NEXT_PUBLIC_*` names used by `frontend-next/`:
+`NEXT_PUBLIC_*` names used by `frontend/`:
 
 ```bash
 REACT_APP_FIREBASE_API_KEY=<Firebase web API key>

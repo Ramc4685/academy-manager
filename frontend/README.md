@@ -1,70 +1,70 @@
-# Getting Started with Create React App
+# frontend
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Next.js 15 App Router PWA for academy-manager v2. See [ADR-0002](../docs/adr/0002-nextjs-app-router.md).
 
-## Available Scripts
+This is the only frontend app in the repository. The old CRA app was removed
+after production cutover.
 
-In the project directory, you can run:
+## Stack
 
-### `npm start`
+- Next.js 15 (App Router, RSC for admin, client components for coach/parent)
+- React 19, TypeScript strict
+- Tailwind + Radix + shadcn-style primitives
+- TanStack Query (with persistence for coach offline reads)
+- Firebase Web SDK (modular `firebase/auth` only)
+- Serwist (Workbox successor) for service worker
+- ULID for client mutation IDs
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+## Layout
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+```
+app/
+├── (marketing)/         # public landing, login
+├── (coach)/             # Wave 1A target — mobile-first, bottom-tab nav
+├── (parent)/            # Wave 2
+└── (admin)/             # Wave 3
+lib/
+├── api/                 # base client + per-persona typed clients
+│   └── generated/       # openapi-typescript output, committed
+├── auth/                # modular Firebase auth
+├── pwa/                 # install prompt, update flow, offline indicator
+├── offline/             # IndexedDB mutation queue (Wave 1B only)
+└── query/               # TanStack Query setup + keys
+components/
+├── ui/                  # touch-sized primitives
+├── coach/               # coach-only, dynamically imported
+├── parent/
+└── admin/
+public/
+├── manifest.webmanifest
+├── icons/               # 180/192/256/512/maskable
+└── splash/              # iOS splash screens
+```
 
-### `npm test`
+## Persona route groups
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+Each persona is a [route group](https://nextjs.org/docs/app/building-your-application/routing/route-groups). The folder name in parens does not appear in URLs:
 
-### `npm run build`
+- `app/(coach)/coach/today/page.tsx` → `/coach/today`
+- `app/(parent)/parent/onboarding/page.tsx` → `/parent/onboarding`
+- `app/(admin)/admin/sessions/page.tsx` → `/admin/sessions`
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+Each group has its own `layout.tsx` so the coach shell (bottom nav, no calendar lib) is fully separate from the admin shell (sidebar, calendar dynamic-imported).
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+## Bundle budgets
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+Set in `package.json` under `size-limit`. Phase 0 budgets are placeholders;
+real values land per wave after baseline measurement (W1A-01).
 
-### `npm run eject`
+## Scripts
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
-
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+```bash
+cp .env.example .env.local
+pnpm dev          # next dev on :3001
+pnpm build        # production build
+pnpm typecheck    # tsc --noEmit
+pnpm lint
+pnpm generate:api # regenerate lib/api/generated/v2.d.ts from the local v2 OpenAPI
+pnpm size         # size-limit check
+pnpm lhci         # Lighthouse CI run
+```

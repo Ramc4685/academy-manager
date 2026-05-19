@@ -2,7 +2,7 @@
 
 **Goal:** Ship the contracts (ADRs + policy docs) and the empty-but-runnable v2 skeleton (backend + frontend + edge routing + CI) before any Wave 1A code is written.
 
-**Exit gate (from plan):** ADRs merged. `backend/v2/main.py` boots. `frontend-next` builds. Edge route prototype demonstrated end-to-end.
+**Exit gate (from plan):** ADRs merged. `backend/v2/main.py` boots. `frontend` builds. Edge route prototype demonstrated end-to-end.
 
 **Estimate:** ~1 week.
 
@@ -165,11 +165,11 @@
 
 ## Frontend Skeleton
 
-### P0-17 — frontend-next scaffold (marketing + login only)
+### P0-17 — frontend scaffold (marketing + login only)
 - **Type:** Frontend / Infra
 - **Depends on:** P0-02
 - **Estimate:** 6h
-- **Description:** Create `frontend-next/` with Next.js 15 App Router. Implement only:
+- **Description:** Create `frontend/` with Next.js 15 App Router. Implement only:
   - `app/(marketing)/page.tsx` (placeholder landing).
   - `app/(marketing)/login/page.tsx` with Firebase Auth (modular imports — `firebase/auth` only).
   - `lib/auth/firebase.ts`, `lib/api/client.ts` (auth header injector, retry, dedup).
@@ -197,16 +197,16 @@
 - **Acceptance:**
   - Lighthouse PWA ≥ 90 on `/login` route, including installable check.
   - Install verified manually on real Android Chrome and iOS Safari (placeholder icons accepted).
-  - Service worker only loads on `frontend-next`; legacy CRA unaffected.
+  - Service worker only loads on `frontend`; legacy CRA unaffected.
 
 ### P0-19 — openapi-typescript pipeline
 - **Type:** Frontend / Infra
 - **Depends on:** P0-11, P0-17
 - **Estimate:** 3h
-- **Description:** CI step runs `openapi-typescript` against the FastAPI v2 OpenAPI JSON and writes `frontend-next/lib/api/generated/v2.d.ts`. Generated file committed. PR fails if regenerated output differs from committed file (catches drift).
+- **Description:** CI step runs `openapi-typescript` against the FastAPI v2 OpenAPI JSON and writes `frontend/lib/api/generated/v2.d.ts`. Generated file committed. PR fails if regenerated output differs from committed file (catches drift).
 - **Acceptance:**
   - `pnpm generate:api` produces `lib/api/generated/v2.d.ts`.
-  - CI job `frontend-next/generate-api` fails on drift.
+  - CI job `frontend/generate-api` fails on drift.
 
 ---
 
@@ -217,12 +217,12 @@
 - **Depends on:** P0-11, P0-17
 - **Estimate:** 5h
 - **Description:** Cloudflare Worker (or `_routes.json`) that:
-  - Routes `/v2/*` and selected `/api/v2/*` to `frontend-next` / backend v2.
+  - Routes `/v2/*` and selected `/api/v2/*` to `frontend` / backend v2.
   - Falls through everything else to legacy.
   - Env-var-controlled per-path flip table (`ROUTE_COACH_TODAY=v2|legacy`) so cutovers are config-only.
   - 410 Gone path for future legacy disablement (Wave 4A).
 - **Acceptance:**
-  - End-to-end demo: a `/v2/login` request hits frontend-next; flipping a flag back to `legacy` returns the CRA login. No app-code changes required to flip.
+  - End-to-end demo: a `/v2/login` request hits frontend; flipping a flag back to `legacy` returns the CRA login. No app-code changes required to flip.
   - Documented in `docs/edge-routing.md` with a runbook for cutover/rollback.
 
 ---
@@ -243,7 +243,7 @@
 - **Type:** Ops / CI
 - **Depends on:** P0-21
 - **Estimate:** 3h
-- **Description:** Install `size-limit` with per-route group configs (empty thresholds for now — populated per wave after baseline). Install `@lhci/cli`, configure to run against built `frontend-next` against `/login` route. Posts PR comment with results. Marked informational until Wave 1A baselines (P0-10 policy / W1A-01).
+- **Description:** Install `size-limit` with per-route group configs (empty thresholds for now — populated per wave after baseline). Install `@lhci/cli`, configure to run against built `frontend` against `/login` route. Posts PR comment with results. Marked informational until Wave 1A baselines (P0-10 policy / W1A-01).
 - **Acceptance:** PR comment appears with bundle and Lighthouse numbers. No PR blocked yet.
 
 ---
@@ -256,5 +256,5 @@
 - [ ] P0-20 merged (edge routing prototype demoed).
 - [ ] P0-21, P0-22 merged (CI workflows running, informational gates active).
 - [ ] `backend/v2/main.py` boots in prod (gated behind env flag, serving only `/healthz`).
-- [ ] `frontend-next` deployed to a staging Cloudflare Pages project.
+- [ ] `frontend` deployed to a staging Cloudflare Pages project.
 - [ ] Phase 0 retro: document any deviations from plan as ADR amendments.
