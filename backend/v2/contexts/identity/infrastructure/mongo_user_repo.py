@@ -12,6 +12,9 @@ from datetime import datetime, timezone
 import re
 from typing import Any
 
+from bson import ObjectId
+from pymongo import ReturnDocument
+
 from backend.v2.contexts.identity.domain.models import Role, User
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserSummary,
@@ -135,3 +138,25 @@ class MongoUserRepository:
             query = {"$and": [query, self._role_filter(role)]}
         cursor = self.collection.find(query).sort([("role", 1), ("display_name", 1), ("email", 1)])
         return [self._to_admin_summary(doc) async for doc in cursor]
+
+    async def change_role(
+        self, user_id: str, role: Role, *, academy_id: str
+    ) -> AdminUserSummary | None:
+        ids: list[object] = [user_id]
+        if ObjectId.is_valid(user_id):
+            ids.append(ObjectId(user_id))
+        now = datetime.now(timezone.utc)
+        doc = await self.collection.find_one_and_update(
+            {
+                "academy_id": academy_id,
+                "$or": [
+                    {"user_id": user_id},
+                    {"auth_uid": user_id},
+                    {"firebase_uid": user_id},
+                    {"_id": {"$in": ids}},
+                ],
+            },
+            {"$set": {"role": role, "roles": [role], "updated_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return self._to_admin_summary(doc) if doc else None

@@ -9,6 +9,9 @@ import {
   type AdminUserView,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
+import { Card } from "@/components/ds/card";
+import { Chip } from "@/components/ds/chip";
+import { Avatar } from "@/components/ds/avatar";
 
 const roles: Array<{ label: string; value: AdminUserRole | undefined }> = [
   { label: "All", value: undefined },
@@ -25,30 +28,22 @@ export default function AdminUsersPage() {
   });
 
   return (
-    <section data-testid="admin-users">
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Coaches & parents</h1>
-          <p className="mt-1 text-sm text-neutral-500">
-            Firebase signs them in; Mongo controls their app role.
-          </p>
-        </div>
-        <div className="flex overflow-hidden rounded-md border border-neutral-200 dark:border-neutral-800">
-          {roles.map((r) => (
-            <button
-              key={r.label}
-              type="button"
-              onClick={() => setRole(r.value)}
-              className={`min-h-touch px-3 text-sm font-medium ${
-                role === r.value
-                  ? "bg-blue-600 text-white"
-                  : "bg-white text-neutral-700 hover:bg-neutral-50 dark:bg-neutral-900 dark:text-neutral-300"
-              }`}
-            >
-              {r.label}
-            </button>
-          ))}
-        </div>
+    <section data-testid="admin-users" className="space-y-6">
+      <div className="flex gap-2">
+        {roles.map((r) => (
+          <button
+            key={r.label}
+            type="button"
+            onClick={() => setRole(r.value)}
+            className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+              role === r.value
+                ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
+                : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-700"
+            }`}
+          >
+            {r.label}
+          </button>
+        ))}
       </div>
 
       {isError ? (
@@ -58,39 +53,54 @@ export default function AdminUsersPage() {
       ) : isLoading ? (
         <Skeleton />
       ) : (data?.users.length ?? 0) === 0 ? (
-        <p className="text-sm text-neutral-500">No users found.</p>
+        <p className="text-sm text-rally-subtle" data-testid="admin-users-empty">
+          No users found.
+        </p>
       ) : (
-        <UsersTable users={data!.users} />
+        <Card p={20}>
+          <UsersTable users={data!.users} />
+        </Card>
       )}
     </section>
   );
 }
 
+function mapRoleToStatus(role: string): any {
+  if (role === "admin") return "enrolled";
+  if (role === "coach") return "autopayOn";
+  return "manual";
+}
+
 function UsersTable({ users }: { users: AdminUserView[] }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+    <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-neutral-200 text-left text-neutral-500 dark:border-neutral-800">
-            <th className="px-4 py-3 font-medium">Name</th>
-            <th className="px-4 py-3 font-medium">Email</th>
-            <th className="px-4 py-3 font-medium">Role</th>
-            <th className="px-4 py-3 font-medium">Status</th>
-            <th className="px-4 py-3 font-medium">Mongo ID</th>
+          <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
+            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Name</th>
+            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Email</th>
+            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Role</th>
+            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Status</th>
+            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Mongo ID</th>
           </tr>
         </thead>
         <tbody>
           {users.map((user) => (
-            <tr key={user.user_id} className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
-              <td className="px-4 py-3 font-medium">{user.display_name}</td>
-              <td className="px-4 py-3 text-neutral-600 dark:text-neutral-400">{user.email}</td>
-              <td className="px-4 py-3 capitalize">{user.role}</td>
-              <td className="px-4 py-3">
-                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-                  {user.status}
-                </span>
+            <tr key={user.user_id} data-testid={`admin-users-row-${user.user_id}`} className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
+              <td className="px-2 py-3">
+                <div className="flex items-center gap-3">
+                  <Avatar name={user.display_name} size={32} />
+                  <div className="font-medium text-rally-base">{user.display_name}</div>
+                </div>
               </td>
-              <td className="px-4 py-3 font-mono text-xs text-neutral-500">{user.user_id}</td>
+              <td className="px-2 py-3 text-rally-base">{user.email}</td>
+              <td className="px-2 py-3">
+                <Chip variant={mapRoleToStatus(user.role)} label={user.role.toUpperCase()} />
+              </td>
+              <td className="px-2 py-3">
+                <Chip variant={user.status === "active" ? "enrolled" : "expired"} label={user.status.toUpperCase()} />
+              </td>
+              <td className="px-2 py-3 font-mono text-[10px] text-rally-subtle">{user.user_id}</td>
             </tr>
           ))}
         </tbody>

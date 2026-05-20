@@ -3,6 +3,10 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { listAdminSessions, listAdminUsers } from "@/lib/api/admin";
+import { Card } from "@/components/ds/card";
+import { Avatar } from "@/components/ds/avatar";
+import { BigNum } from "@/components/ds/typography";
+import { Chip } from "@/components/ds/chip";
 
 function money(cents: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
@@ -36,12 +40,7 @@ export default function AdminCoachPayslipPage() {
 
   return (
     <section data-testid="admin-coach-payslip" className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-semibold">Coach payslip</h1>
-        <p className="mt-1 text-sm text-neutral-500">
-          Today&apos;s coach payout preview from assigned sessions and active roster counts.
-        </p>
-      </div>
+
 
       {error ? (
         <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
@@ -50,34 +49,43 @@ export default function AdminCoachPayslipPage() {
       ) : loading ? (
         <Skeleton />
       ) : rows.length === 0 ? (
-        <p className="text-sm text-neutral-500">No coaches found.</p>
+        <p data-testid="admin-coach-payslip-empty" className="text-sm text-neutral-500">No coaches found.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
-          <table className="w-full min-w-[720px] text-sm">
-            <thead>
-              <tr className="border-b border-neutral-200 text-left text-neutral-500 dark:border-neutral-800">
-                <th className="px-4 py-3 font-medium">Coach</th>
-                <th className="px-4 py-3 font-medium text-right">Sessions</th>
-                <th className="px-4 py-3 font-medium text-right">Students</th>
-                <th className="px-4 py-3 font-medium text-right">Expected cut</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.coach.user_id} className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
-                  <td className="px-4 py-3">
-                    <div className="font-medium">{row.coach.display_name || row.coach.email}</div>
-                    <div className="font-mono text-xs text-neutral-500">{row.coach.user_id}</div>
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">{row.sessions}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{row.students}</td>
-                  <td className="px-4 py-3 text-right font-medium tabular-nums">
-                    {money(row.expectedCutCents)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {rows.map((row) => (
+            <Card key={row.coach.user_id} p={20} className="flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3 truncate">
+                  <Avatar name={row.coach.display_name || row.coach.email || "Coach"} />
+                  <div className="truncate">
+                    <div className="font-semibold leading-tight truncate">{row.coach.display_name || row.coach.email}</div>
+                    <div className="font-mono text-xs text-neutral-500 truncate">{row.coach.user_id}</div>
+                  </div>
+                </div>
+                <div className="shrink-0 pl-2">
+                  <Chip variant="draft" label="TODAY" />
+                </div>
+              </div>
+
+              <div className="mt-2 flex-1">
+                <p className="text-xs font-medium uppercase tracking-wide text-neutral-500 mb-1">Net Earnings</p>
+                <BigNum size={32}>
+                  {money(row.expectedCutCents)}
+                </BigNum>
+              </div>
+
+              <div className="flex flex-col gap-1 border-t border-neutral-100 pt-3 dark:border-neutral-800 text-sm">
+                <div className="flex justify-between items-center">
+                  <span className="text-neutral-500">Sessions</span>
+                  <span className="font-mono font-medium">{row.sessions}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-neutral-500">Students</span>
+                  <span className="font-mono font-medium">{row.students}</span>
+                </div>
+              </div>
+            </Card>
+          ))}
         </div>
       )}
     </section>
@@ -86,9 +94,9 @@ export default function AdminCoachPayslipPage() {
 
 function Skeleton() {
   return (
-    <div className="space-y-2">
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {[0, 1, 2].map((i) => (
-        <div key={i} className="h-14 animate-pulse rounded-lg bg-neutral-100 dark:bg-neutral-800" />
+        <div key={i} className="h-40 animate-pulse rounded-xl bg-neutral-100 dark:bg-neutral-800" />
       ))}
     </div>
   );

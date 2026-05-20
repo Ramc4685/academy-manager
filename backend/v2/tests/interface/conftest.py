@@ -11,6 +11,7 @@ from datetime import date, datetime, timezone
 from typing import Iterator, Literal
 
 import pytest
+from unittest.mock import AsyncMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -908,6 +909,14 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         send_dues_reminders=send_dues_reminders,
         export_report_csv=export_report_csv,
         comms=comms,
+        get_academy_use_case=AsyncMock(),
+        update_academy_use_case=AsyncMock(),
+        get_academy_fees_use_case=AsyncMock(),
+        update_academy_fees_use_case=AsyncMock(),
+        get_academy_notifications_use_case=AsyncMock(),
+        update_academy_notifications_use_case=AsyncMock(),
+        get_academy_gateway_use_case=AsyncMock(),
+        change_user_role=AsyncMock(),
     )
 
 

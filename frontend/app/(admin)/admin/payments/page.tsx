@@ -3,14 +3,9 @@
 /**
  * Admin payments — Rally restyle.
  *
- * Promotes the real billing implementation from /admin/billing into
- * /admin/payments per the Rally route map. Preserves: generate-monthly,
+ * Rally MONEY route for payments. Preserves: generate-monthly,
  * apply-discount, mark-paid, undo-paid, refund. Refund disabled when
  * payment isn't eligible.
- *
- * /admin/billing keeps its current implementation as a stale fallback
- * until Phase 7 cleanup deletes it (no reverse redirect; that needs
- * separate user approval).
  */
 
 import { useState } from "react";

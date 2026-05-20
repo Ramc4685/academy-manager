@@ -14,6 +14,7 @@ import { apiFetch } from "./client";
 export interface AdminSessionView {
   session_id: string;
   coach_id: string;
+  coach_name: string | null;
   title: string;
   location: string;
   start_at: string; // ISO 8601
@@ -152,10 +153,11 @@ export interface ApplyPaymentDiscountRequest {
 
 export interface AdminPayoutView {
   payout_id: string;
+  coach_id: string;
   amount_cents: number;
-  currency: string;
-  arrival_date: string;
-  status: string;
+  period_start: string;
+  period_end: string;
+  paid_at: string | null;
 }
 
 export interface AdminPayoutList {
@@ -166,9 +168,8 @@ export interface AdminExpenseView {
   expense_id: string;
   category: string;
   amount_cents: number;
-  note: string | null;
-  incurred_on: string; // YYYY-MM-DD
-  created_at: string;
+  note: string;
+  incurred_on: string;
 }
 
 export interface AdminExpenseList {
@@ -176,7 +177,7 @@ export interface AdminExpenseList {
 }
 
 export interface CreateExpenseRequest {
-  category: string;
+  category: "rent" | "equipment" | "salary" | "marketing" | "other";
   amount_cents: number;
   note?: string;
   incurred_on?: string;
@@ -271,6 +272,7 @@ export interface DuesFollowupParentView {
   parent_name: string | null;
   email: string | null;
   pending_count: number;
+  followup_stage?: string;
   total_due_cents: number;
 }
 
@@ -284,6 +286,47 @@ export interface SendDuesRemindersResponse {
   reason: string | null;
 }
 
+export interface AdminAcademyView {
+  academy_id: string;
+  display_name: string;
+  timezone: string;
+  contact_email: string | null;
+  contact_phone: string | null;
+  hours_text: string | null;
+  address: string | null;
+}
+
+export type UpdateAdminAcademyRequest = Partial<{
+  display_name: string | null;
+  timezone: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+  hours_text: string | null;
+  address: string | null;
+}>;
+
+export interface AdminFeesView {
+  default_monthly_cents: number | null;
+  late_fee_cents: number | null;
+  grace_days: number | null;
+}
+
+export type UpdateAdminFeesRequest = Partial<AdminFeesView>;
+
+export interface AdminNotificationsView {
+  dues_reminders: boolean;
+  attendance_alerts: boolean;
+  daily_digest_to_admin: boolean;
+}
+
+export type UpdateAdminNotificationsRequest = Partial<AdminNotificationsView>;
+
+export interface AdminGatewayView {
+  stripe_connected: boolean;
+  stripe_account_id_masked: string | null;
+  manual_methods: string[];
+}
+
 // ---------------------------------------------------------------------------
 // Directory
 // ---------------------------------------------------------------------------
@@ -295,6 +338,16 @@ export function listAdminUsers(role?: AdminUserRole): Promise<AdminUserList> {
 
 export function listAdminStudents(): Promise<AdminStudentList> {
   return apiFetch<AdminStudentList>("/admin/students", { method: "GET" });
+}
+
+export function updateAdminUserRole(
+  userId: string,
+  role: AdminUserRole
+): Promise<AdminUserView> {
+  return apiFetch<AdminUserView>(`/admin/users/${encodeURIComponent(userId)}/role`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -510,4 +563,49 @@ export function exportAdminReportCsv(reportName: string): Promise<string> {
   return apiFetch<string>(`/admin/reports/${encodeURIComponent(reportName)}.csv`, {
     method: "GET",
   });
+}
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+export function getAdminAcademy(): Promise<AdminAcademyView> {
+  return apiFetch<AdminAcademyView>("/admin/academy", { method: "GET" });
+}
+
+export function updateAdminAcademy(
+  payload: UpdateAdminAcademyRequest
+): Promise<AdminAcademyView> {
+  return apiFetch<AdminAcademyView>("/admin/academy", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getAdminFees(): Promise<AdminFeesView> {
+  return apiFetch<AdminFeesView>("/admin/academy/fees", { method: "GET" });
+}
+
+export function updateAdminFees(payload: UpdateAdminFeesRequest): Promise<AdminFeesView> {
+  return apiFetch<AdminFeesView>("/admin/academy/fees", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getAdminNotifications(): Promise<AdminNotificationsView> {
+  return apiFetch<AdminNotificationsView>("/admin/academy/notifications", { method: "GET" });
+}
+
+export function updateAdminNotifications(
+  payload: UpdateAdminNotificationsRequest
+): Promise<AdminNotificationsView> {
+  return apiFetch<AdminNotificationsView>("/admin/academy/notifications", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getAdminGateway(): Promise<AdminGatewayView> {
+  return apiFetch<AdminGatewayView>("/admin/academy/gateway", { method: "GET" });
 }

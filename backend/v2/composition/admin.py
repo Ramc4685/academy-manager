@@ -80,6 +80,15 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     ListAdminUsers,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
+from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
+from backend.v2.contexts.identity.application.get_academy_use_case import GetAcademyUseCase
+from backend.v2.contexts.identity.application.update_academy_use_case import UpdateAcademyUseCase
+from backend.v2.contexts.identity.application.get_academy_fees_use_case import GetAcademyFeesUseCase
+from backend.v2.contexts.identity.application.update_academy_fees_use_case import UpdateAcademyFeesUseCase
+from backend.v2.contexts.identity.application.get_academy_notifications_use_case import GetAcademyNotificationsUseCase
+from backend.v2.contexts.identity.application.update_academy_notifications_use_case import UpdateAcademyNotificationsUseCase
+from backend.v2.contexts.identity.application.get_academy_gateway_use_case import GetAcademyGatewayUseCase
+from backend.v2.contexts.identity.application.change_user_role_use_case import ChangeUserRole
 from backend.v2.interfaces.admin.deps import AdminUseCases
 from backend.v2.shared.comms import CommsService, MongoMessageRepository
 from backend.v2.shared.config import get_settings
@@ -160,6 +169,17 @@ def compose_admin(
     # Comms
     messages_repo = MongoMessageRepository(db)
     comms = CommsService(messages=messages_repo, academy_id=academy_id)
+    # Identity / Settings
+    academy_repo = MongoAcademyRepository(db)
+    get_academy_use_case = GetAcademyUseCase(academy_repo)
+    update_academy_use_case = UpdateAcademyUseCase(academy_repo)
+    get_academy_fees_use_case = GetAcademyFeesUseCase(academy_repo)
+    update_academy_fees_use_case = UpdateAcademyFeesUseCase(academy_repo)
+    get_academy_notifications_use_case = GetAcademyNotificationsUseCase(academy_repo)
+    update_academy_notifications_use_case = UpdateAcademyNotificationsUseCase(academy_repo)
+    get_academy_gateway_use_case = GetAcademyGatewayUseCase(academy_repo)
+    change_user_role = ChangeUserRole(users_r)
+
     list_admin_users = ListAdminUsers(users_r)
     list_admin_students = ListAdminStudents(students_r)
 
@@ -199,6 +219,36 @@ def compose_admin(
                     "waitlist_count": waitlist_count,
                 }
             )
+
+        # Batch coach-name enrichment (one DB call, no N+1).
+        coach_ids = list({r["coach_id"] for r in rows if r["coach_id"]})
+        coach_map: dict[str, str] = {}
+        if coach_ids:
+            oid_ids = [BsonObjectId(c) for c in coach_ids if BsonObjectId.is_valid(c)]
+            or_filter: list[dict[str, object]] = [
+                {"user_id": {"$in": coach_ids}},
+                {"firebase_uid": {"$in": coach_ids}},
+            ]
+            if oid_ids:
+                or_filter.append({"_id": {"$in": oid_ids}})
+            users_cursor = db["users"].find({"$or": or_filter})
+            async for user_doc in users_cursor:
+                name = str(
+                    user_doc.get("display_name")
+                    or f"{user_doc.get('first_name', '')} {user_doc.get('last_name', '')}".strip()
+                    or ""
+                )
+                for key in (
+                    str(user_doc.get("user_id") or ""),
+                    str(user_doc.get("firebase_uid") or ""),
+                    str(user_doc.get("_id") or ""),
+                ):
+                    if key and key in coach_ids:
+                        coach_map[key] = name
+
+            for row in rows:
+                row["coach_name"] = coach_map.get(row["coach_id"])
+
         return rows
 
     async def list_admin_sessions(on_date: date | None, *, window: str | None = None):
@@ -480,4 +530,12 @@ def compose_admin(
         send_dues_reminders=send_dues_reminders,
         export_report_csv=export_report_csv,
         comms=comms,
+        get_academy_use_case=get_academy_use_case,
+        update_academy_use_case=update_academy_use_case,
+        get_academy_fees_use_case=get_academy_fees_use_case,
+        update_academy_fees_use_case=update_academy_fees_use_case,
+        get_academy_notifications_use_case=get_academy_notifications_use_case,
+        update_academy_notifications_use_case=update_academy_notifications_use_case,
+        get_academy_gateway_use_case=get_academy_gateway_use_case,
+        change_user_role=change_user_role,
     )

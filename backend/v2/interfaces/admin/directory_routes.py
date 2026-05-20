@@ -12,6 +12,7 @@ from backend.v2.interfaces.admin.views import (
     AdminStudentView,
     AdminUserList,
     AdminUserView,
+    UpdateAdminUserRoleRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
@@ -27,6 +28,27 @@ async def list_users(
 ) -> AdminUserList:
     users = await use_cases.list_admin_users.execute(role, academy_id=_claims.academy_id)
     return AdminUserList(users=[AdminUserView(**u.model_dump()) for u in users])
+
+
+@router.patch("/users/{user_id}/role", response_model=AdminUserView)
+async def update_user_role(
+    user_id: str,
+    payload: UpdateAdminUserRoleRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminUserView:
+    if user_id == claims.user_id:
+        from backend.v2.shared.http.errors import DomainError
+
+        class SelfRoleChangeForbidden(DomainError):
+            code = "Identity.SelfRoleChangeForbidden"
+            status_code = 400
+
+        raise SelfRoleChangeForbidden("cannot change your own role")
+    user = await use_cases.change_user_role.execute(
+        user_id, payload.role, academy_id=claims.academy_id
+    )
+    return AdminUserView(**user.model_dump())
 
 
 @router.get("/students", response_model=AdminStudentList)

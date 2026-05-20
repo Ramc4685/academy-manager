@@ -47,6 +47,7 @@ class AdminStudentList(BaseModel):
 class AdminSessionView(BaseModel):
     session_id: str
     coach_id: str
+    coach_name: str | None = None
     title: str
     location: str
     start_at: datetime
@@ -282,3 +283,59 @@ class BroadcastRequest(BaseModel):
 class DMRequest(BaseModel):
     recipient_id: str
     body: str
+
+
+# --- Settings ---
+
+
+class AdminAcademyView(BaseModel):
+    academy_id: str
+    display_name: str
+    timezone: str
+    contact_email: str | None = None
+    contact_phone: str | None = None
+    hours_text: str | None = None
+    address: str | None = None
+
+
+class UpdateAdminAcademyRequest(BaseModel):
+    display_name: str | None = None
+    timezone: str | None = None
+    contact_email: str | None = None
+    contact_phone: str | None = None
+    hours_text: str | None = None
+    address: str | None = None
+
+
+class AdminFeesView(BaseModel):
+    default_monthly_cents: int | None = None
+    late_fee_cents: int | None = None
+    grace_days: int | None = None
+
+
+class UpdateAdminFeesRequest(BaseModel):
+    default_monthly_cents: int | None = None
+    late_fee_cents: int | None = None
+    grace_days: int | None = None
+
+
+class AdminNotificationsView(BaseModel):
+    dues_reminders: bool = False
+    attendance_alerts: bool = False
+    daily_digest_to_admin: bool = False
+
+
+class UpdateAdminNotificationsRequest(BaseModel):
+    dues_reminders: bool | None = None
+    attendance_alerts: bool | None = None
+    daily_digest_to_admin: bool | None = None
+
+
+class AdminGatewayView(BaseModel):
+    stripe_connected: bool
+    stripe_account_id_masked: str | None = None
+    manual_methods: list[str]
+
+
+class UpdateAdminUserRoleRequest(BaseModel):
+    role: Literal["admin", "coach", "parent"]
