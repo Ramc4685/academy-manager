@@ -39,7 +39,7 @@ load_dotenv(ROOT / ".env")
 
 import bcrypt
 from motor.motor_asyncio import AsyncIOMotorClient
-from ulid import ULID
+from ulid import new as new_ulid
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +105,7 @@ def now_str() -> str:
 
 
 def new_id() -> str:
-    return str(ULID())
+    return str(new_ulid())
 
 
 # ---------------------------------------------------------------------------

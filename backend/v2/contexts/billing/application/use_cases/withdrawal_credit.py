@@ -7,7 +7,7 @@ from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
-from ulid import ULID
+from ulid import new as new_ulid
 
 from backend.v2.contexts.billing.application.ports import (
     CreditLedgerRepository,
@@ -161,7 +161,7 @@ class ApproveWithdrawalCredit:
 
         credit_id: str | None = None
         if preview.credit_amount_cents > 0:
-            credit_id = str(ULID())
+            credit_id = str(new_ulid())
             await self._credits.create(
                 CreditLedgerEntry(
                     credit_id=credit_id,

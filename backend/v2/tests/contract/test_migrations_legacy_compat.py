@@ -67,6 +67,18 @@ async def test_attendance_migration_tolerates_legacy_rows_without_v2_ids(db) -> 
 
 
 @pytest.mark.asyncio
+async def test_admin_student_directory_migration_declares_attendance_lookup_index(db) -> None:
+    migration = importlib.import_module("backend.v2.migrations.0070_admin_student_directory_indexes")
+    await migration.up(db)
+
+    indexes = await db["attendance"].index_information()
+    assert any(
+        info["key"] == [("academy_id", 1), ("student_id", 1), ("marked_at", -1)]
+        for info in indexes.values()
+    )
+
+
+@pytest.mark.asyncio
 async def test_billing_migration_accepts_existing_stripe_event_id_index(db) -> None:
     await db["stripe_webhook_events"].create_index("event_id", unique=True)
 

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from pymongo.errors import DuplicateKeyError
-from ulid import ULID
+from ulid import new as new_ulid
 
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
@@ -145,7 +145,7 @@ class MongoCreditLedgerRepository(TenantScopedRepository):
             except DuplicateKeyError:
                 pass  # idempotent replay — audit already exists, credit doc is authoritative
             applied = CreditLedgerEntry(
-                credit_id=str(ULID()),
+                credit_id=str(new_ulid()),
                 academy_id=academy_id,
                 parent_id=parent_id,
                 invoice_id=invoice_id,

@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from pydantic import BaseModel
-from ulid import ULID
+from ulid import new as new_ulid
 
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentQuery,
@@ -93,7 +93,7 @@ class ConfirmEnrollment:
             )
             raise CapacityExceeded("session is full", session_id=cmd.session_id)
 
-        student_id = str(ULID())
+        student_id = str(new_ulid())
         student = Student(
             student_id=student_id,
             academy_id=self._academy_id,
@@ -103,7 +103,7 @@ class ConfirmEnrollment:
         await self._students.upsert(student)
 
         enrollment = Enrollment(
-            enrollment_id=str(ULID()),
+            enrollment_id=str(new_ulid()),
             academy_id=self._academy_id,
             session_id=cmd.session_id,
             student_id=student_id,

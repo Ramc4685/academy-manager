@@ -36,6 +36,7 @@ const ADMIN_ROUTES = [
   { href: "/admin/payouts", testid: "admin-payouts" },
   { href: "/admin/audit-logs", testid: "admin-audit-logs" },
   { href: "/admin/messages", testid: "admin-messages" },
+  { href: "/admin/waivers", testid: "admin-waivers" },
 ] as const;
 
 const SETTINGS_PANELS = [
@@ -131,6 +132,38 @@ async function stubAdminBff(page: Page) {
   await page.route("**/api/v2/admin/messages*", (route) =>
     fulfillJson(route, { messages: [] })
   );
+  await page.route("**/api/v2/admin/waivers*", (route) =>
+    fulfillJson(route, {
+      summary: {
+        signed_current: 0,
+        pending_signature: 0,
+        expiring_30d: 0,
+        outdated_version: 0,
+        active_students: 0,
+        adoption_rate: null,
+      },
+      current_waiver: null,
+      waivers: [],
+    })
+  );
+  await page.route("**/api/v2/admin/waitlist", (route) =>
+    fulfillJson(route, { total_waitlisted: 0, sessions: [] })
+  );
+  await page.route("**/api/v2/admin/dashboard/attention*", (route) =>
+    fulfillJson(route, {
+      items: [
+        {
+          attention_id: "waiver-status",
+          kind: "waivers",
+          title: "Waivers need review",
+          detail: "2 pending, 1 outdated.",
+          severity: "medium",
+          href: "/admin/waivers",
+          count: 3,
+        },
+      ],
+    })
+  );
   await page.route("**/api/v2/admin/pause-requests*", (route) =>
     fulfillJson(route, { requests: [] })
   );
@@ -210,9 +243,22 @@ test.describe("Rally admin shell", () => {
     await expect(drawer.getByText("WORK", { exact: true })).toBeVisible();
     await expect(drawer.getByText("MONEY", { exact: true })).toBeVisible();
     await expect(drawer.getByText("COMMS · OPS", { exact: true })).toBeVisible();
+    await expect(drawer.getByRole("link", { name: /waivers/i })).toBeVisible();
     await drawer.getByLabel("Close menu").click();
     await expect(drawer).toBeHidden();
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("dashboard renders real attention items from the BFF", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard-attention")).toBeVisible();
+    await expect(page.getByRole("link", { name: /Waivers need review/i })).toHaveAttribute(
+      "href",
+      "/admin/waivers"
+    );
+    expect(errors, `App console errors on dashboard attention: ${errors.join("\n")}`).toEqual([]);
   });
 
   for (const route of ADMIN_ROUTES) {
@@ -238,6 +284,85 @@ test.describe("Rally admin shell", () => {
       await expect(page.getByTestId(panel.testid)).toBeVisible();
     }
     expect(errors, `App console errors on settings: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("students search sends BFF query and renders returned rich fields", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    const seenSearches: string[] = [];
+    await page.route("**/api/v2/admin/students*", (route) => {
+      const url = new URL(route.request().url());
+      seenSearches.push(url.searchParams.get("search") ?? "");
+      return fulfillJson(route, {
+        students: [
+          {
+            student_id: "st-alice",
+            full_name: "Alice Chen",
+            parent_id: "parent-1",
+            parent_name: "Maya Chen",
+            parent_email: "maya@example.com",
+            status: "active",
+            active_session_count: 2,
+            last_seen_at: "2026-05-17T12:00:00Z",
+            attendance_rate: 0.85,
+            dues_status: "due",
+          },
+        ],
+        next_cursor: null,
+      });
+    });
+
+    await page.goto("/admin/students");
+    await page.getByPlaceholder("Search students or parents").fill("alice");
+
+    await expect
+      .poll(() => seenSearches, { message: "students search query should be sent" })
+      .toContain("alice");
+    const row = page.getByTestId("admin-students-row-st-alice");
+    await expect(row.getByText("Alice Chen")).toBeVisible();
+    await expect(row.getByText("85%")).toBeVisible();
+    await expect(row.getByText("DUE")).toBeVisible();
+    expect(errors, `Console errors on students search: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("students status filter resets pagination cursor", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    const requests: Array<{ status: string; cursor: string }> = [];
+    await page.route("**/api/v2/admin/students*", (route) => {
+      const url = new URL(route.request().url());
+      requests.push({
+        status: url.searchParams.get("status") ?? "",
+        cursor: url.searchParams.get("cursor") ?? "",
+      });
+      const cursor = url.searchParams.get("cursor");
+      return fulfillJson(route, {
+        students: [
+          {
+            student_id: cursor ? "st-page-2" : "st-page-1",
+            full_name: cursor ? "Bob Rao" : "Alice Chen",
+            parent_id: "parent-1",
+            parent_name: "Maya Chen",
+            parent_email: "maya@example.com",
+            status: url.searchParams.get("status") || "active",
+            active_session_count: 1,
+            last_seen_at: null,
+            attendance_rate: null,
+            dues_status: "current",
+          },
+        ],
+        next_cursor: cursor ? null : "next-cursor",
+      });
+    });
+
+    await page.goto("/admin/students");
+    await page.getByRole("button", { name: "Next page" }).click();
+    await page.getByRole("button", { name: /Paused/i }).click();
+
+    await expect
+      .poll(() => requests.some((req) => req.status === "paused" && req.cursor === ""))
+      .toBe(true);
+    expect(errors, `Console errors on students pagination: ${errors.join("\n")}`).toEqual([]);
   });
 
   test("session detail page mounts", async ({ page }) => {

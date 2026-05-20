@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
-from ulid import ULID
+from ulid import new as new_ulid
 
 from backend.v2.contexts.enrollment.domain.errors import EnrollmentNotFound
 
@@ -65,7 +65,7 @@ class RequestEnrollmentPause:
         if not belongs:
             raise EnrollmentNotFound("enrollment missing", enrollment_id=cmd.enrollment_id)
         request = PauseRequest(
-            pause_request_id=str(ULID()),
+            pause_request_id=str(new_ulid()),
             enrollment_id=cmd.enrollment_id,
             parent_id=cmd.parent_id,
             period=cmd.period,

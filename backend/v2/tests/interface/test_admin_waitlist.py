@@ -29,6 +29,22 @@ def test_list_waitlist_returns_entries(admin_client):
     assert ids == {"w1", "w2"}
 
 
+def test_list_global_waitlist_groups_waiting_entries(admin_client):
+    _add(admin_client.seed, "w1", datetime(2026, 5, 16, 8, 0, tzinfo=timezone.utc))
+    _add(admin_client.seed, "w2", datetime(2026, 5, 16, 9, 0, tzinfo=timezone.utc))
+
+    r = admin_client.get("/api/v2/admin/waitlist")
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["total_waitlisted"] == 2
+    assert body["sessions"][0]["session_id"] == "sess-1"
+    assert [entry["waitlist_id"] for entry in body["sessions"][0]["entries"]] == [
+        "w1",
+        "w2",
+    ]
+
+
 def test_list_waitlist_wrong_persona_404(coach_on_admin_client):
     r = coach_on_admin_client.get("/api/v2/admin/sessions/sess-1/waitlist")
     assert r.status_code == 404

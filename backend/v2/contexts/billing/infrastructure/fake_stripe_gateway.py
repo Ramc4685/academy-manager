@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from ulid import ULID
+from ulid import new as new_ulid
 
 from backend.v2.contexts.billing.application.ports import StripeGateway
 
@@ -30,7 +30,7 @@ class FakeStripeGateway(StripeGateway):
         cancel_url: str,
         metadata: dict[str, str],
     ) -> tuple[str, str]:
-        checkout_id = f"cs_test_{ULID()}"
+        checkout_id = f"cs_test_{new_ulid()}"
         record = {
             "checkout_id": checkout_id,
             "parent_id": parent_id,
@@ -54,8 +54,8 @@ class FakeStripeGateway(StripeGateway):
         cancel_url: str,
         metadata: dict[str, str],
     ) -> tuple[str, str, str]:
-        checkout_id = f"cs_sub_test_{ULID()}"
-        stripe_subscription_id = f"sub_test_{ULID()}"
+        checkout_id = f"cs_sub_test_{new_ulid()}"
+        stripe_subscription_id = f"sub_test_{new_ulid()}"
         self.subscription_checkouts.append(
             {
                 "checkout_id": checkout_id,
@@ -78,7 +78,7 @@ class FakeStripeGateway(StripeGateway):
         return_url: str,
         stripe_customer_id: str | None,
     ) -> str:
-        portal_id = f"bps_test_{ULID()}"
+        portal_id = f"bps_test_{new_ulid()}"
         self.portal_sessions.append(
             {
                 "portal_id": portal_id,
@@ -96,7 +96,7 @@ class FakeStripeGateway(StripeGateway):
         return json.loads(payload.decode("utf-8"))
 
     async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
-        refund_id = f"re_test_{ULID()}"
+        refund_id = f"re_test_{new_ulid()}"
         self.refunds.append(
             {
                 "refund_id": refund_id,

@@ -1,15 +1,21 @@
 "use client";
 
-import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
-import { listAdminSessions, type AdminSessionView } from "@/lib/api/admin";
+import {
+  listGlobalWaitlist,
+  type AdminGlobalWaitlistSession,
+  type AdminWaitlistEntry,
+} from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
+import { Avatar } from "@/components/ds/avatar";
+import { BigNum, Overline } from "@/components/ds/typography";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
+import { LaneHeader } from "@/components/ds/lane";
 
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
+function formatDate(isoString: string): string {
+  return new Date(isoString).toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 function formatTime(isoString: string): string {
@@ -17,71 +23,137 @@ function formatTime(isoString: string): string {
 }
 
 export default function AdminWaitlistPage() {
-  const date = todayISO();
-  const { data, isLoading, isError } = useQuery({
-    queryKey: queryKeys.admin.sessions(date),
-    queryFn: () => listAdminSessions(date),
+  const query = useQuery({
+    queryKey: queryKeys.admin.globalWaitlist(),
+    queryFn: listGlobalWaitlist,
   });
-
-  const sessions = data?.sessions ?? [];
-  const waitlisted = sessions.filter((session) => session.waitlist_count > 0);
+  const sessions = query.data?.sessions ?? [];
+  const total = query.data?.total_waitlisted ?? 0;
 
   return (
     <section data-testid="admin-waitlist" className="space-y-6">
-      {isLoading ? <p className="text-sm text-rally-subtle">Loading waitlist...</p> : null}
-      {isError ? <p className="text-sm text-red-600">Could not load sessions.</p> : null}
+      <div className="grid gap-4 md:grid-cols-3">
+        <Metric label="Total waitlisted" value={String(total)} />
+        <Metric label="Sessions with queue" value={String(sessions.length)} />
+        <Metric
+          label="Largest queue"
+          value={String(Math.max(0, ...sessions.map((session) => session.entries.length)))}
+        />
+      </div>
 
-      {!isLoading && !isError && waitlisted.length === 0 ? (
-        <p className="text-sm text-rally-subtle" data-testid="admin-waitlist-empty">
-          No waitlisted students on today&apos;s sessions.
-        </p>
-      ) : null}
+      <LaneHeader index="01" title="By session" />
 
-      {waitlisted.length > 0 && (
+      {query.isError ? (
         <Card p={20}>
-          <WaitlistTable sessions={waitlisted} />
+          <p role="alert" className="text-sm text-red-700">Could not load waitlist.</p>
         </Card>
+      ) : query.isLoading ? (
+        <Skeleton />
+      ) : sessions.length === 0 ? (
+        <Card p={20}>
+          <p className="text-sm text-rally-subtle" data-testid="admin-waitlist-empty">
+            No waitlisted students.
+          </p>
+        </Card>
+      ) : (
+        <div className="space-y-4">
+          {sessions.map((session) => (
+            <SessionWaitlist key={session.session_id} session={session} />
+          ))}
+        </div>
       )}
     </section>
   );
 }
 
-function WaitlistTable({ sessions }: { sessions: AdminSessionView[] }) {
+function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
-            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Session</th>
-            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Location</th>
-            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted text-right">Time</th>
-            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted text-right">Waitlist</th>
-            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted text-right">Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sessions.map((session) => (
-            <tr key={session.session_id} data-testid={`admin-waitlist-row-${session.session_id}`} className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
-              <td className="px-2 py-3 font-medium text-rally-base">{session.title}</td>
-              <td className="px-2 py-3 text-rally-subtle">{session.location}</td>
-              <td className="px-2 py-3 text-right text-rally-subtle">
-                {formatTime(session.start_at)}
-              </td>
-              <td className="px-2 py-3 text-right">
-                <Chip variant="waitlist" label={`${session.waitlist_count} WAITING`} />
-              </td>
-              <td className="px-2 py-3 text-right">
-                <Link
-                  href={`/admin/sessions/${session.session_id}` as Parameters<typeof Link>[0]["href"]}
-                  className="font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-                >
-                  Manage
-                </Link>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <Card p={20}>
+      <Overline>{label}</Overline>
+      <div className="mt-2">
+        <BigNum size={28}>{value}</BigNum>
+      </div>
+    </Card>
+  );
+}
+
+function SessionWaitlist({ session }: { session: AdminGlobalWaitlistSession }) {
+  return (
+    <Card p={0}>
+      <div className="flex flex-col gap-4 border-b border-rally-line p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <Overline>Session</Overline>
+          <h2 className="mt-1 font-display text-[20px] font-semibold text-rally-ink">
+            {session.title}
+          </h2>
+          <p className="mt-1 text-sm text-rally-muted">
+            {session.location || "No location"} · {formatDate(session.start_at)} · {formatTime(session.start_at)}
+          </p>
+          <p className="mt-1 font-mono text-[10px] uppercase tracking-overline text-rally-subtle">
+            {session.enrolled_count} / {session.capacity} enrolled · {session.waitlist_count} waiting
+          </p>
+        </div>
+        <a
+          href={`/admin/sessions/${session.session_id}`}
+          className="inline-flex h-[30px] items-center justify-center rounded-lg bg-rally-cobalt px-3 font-body text-[12px] font-semibold text-white"
+        >
+          Manage session
+        </a>
+      </div>
+      <div>
+        {session.entries.map((entry, index) => (
+          <WaitlistRow
+            key={entry.waitlist_id}
+            entry={entry}
+            position={entry.position || index + 1}
+          />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function WaitlistRow({
+  entry,
+  position,
+}: {
+  entry: AdminWaitlistEntry;
+  position: number;
+}) {
+  return (
+    <div
+      data-testid={`admin-waitlist-row-${entry.waitlist_id}`}
+      className="grid gap-4 border-b border-rally-line p-5 last:border-0 md:grid-cols-[56px_1fr_180px_140px]"
+    >
+      <div className="flex h-11 w-11 items-center justify-center rounded-md bg-rally-paper font-display text-lg font-bold text-rally-ink">
+        #{position}
+      </div>
+      <div className="flex min-w-0 items-center gap-3">
+        <Avatar name={entry.full_name} size={34} />
+        <div className="min-w-0">
+          <div className="truncate font-semibold text-rally-ink">{entry.full_name}</div>
+          <div className="font-mono text-[10px] text-rally-subtle">{entry.parent_id}</div>
+        </div>
+      </div>
+      <div>
+        <Overline>Joined queue</Overline>
+        <div className="mt-1 font-mono text-[12px] font-semibold uppercase tracking-[0.05em] text-rally-ink">
+          {formatDate(entry.added_at)}
+        </div>
+      </div>
+      <div className="flex items-center md:justify-end">
+        <Chip variant="waitlist" label={entry.status.toUpperCase()} />
+      </div>
+    </div>
+  );
+}
+
+function Skeleton() {
+  return (
+    <div className="space-y-3">
+      {[0, 1].map((i) => (
+        <div key={i} className="h-32 animate-pulse rounded-lg bg-rally-paper" />
+      ))}
     </div>
   );
 }

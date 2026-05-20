@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from pydantic import BaseModel
-from ulid import ULID
+from ulid import new as new_ulid
 
 from backend.v2.contexts.billing.application.ports import (
     PaymentRepository,
@@ -53,7 +53,7 @@ class StartCheckout:
         self._now = clock
 
     async def execute(self, cmd: StartCheckoutCommand) -> StartCheckoutResult:
-        payment_id = str(ULID())
+        payment_id = str(new_ulid())
         try:
             checkout_id, url = await self._stripe.create_checkout_session(
                 parent_id=cmd.parent_id,

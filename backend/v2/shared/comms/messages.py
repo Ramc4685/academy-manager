@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-from ulid import ULID
+from ulid import new as new_ulid
 
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -84,7 +84,7 @@ class CommsService:
         body: str,
     ) -> Message:
         m = Message(
-            message_id=str(ULID()),
+            message_id=str(new_ulid()),
             academy_id=self.academy_id,
             kind="dm",
             sender_id=sender_id,
@@ -98,7 +98,7 @@ class CommsService:
 
     async def send_broadcast(self, *, sender_id: str, body: str) -> Message:
         m = Message(
-            message_id=str(ULID()),
+            message_id=str(new_ulid()),
             academy_id=self.academy_id,
             kind="announcement",
             sender_id=sender_id,

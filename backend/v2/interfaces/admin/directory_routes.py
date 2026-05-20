@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
@@ -13,6 +13,9 @@ from backend.v2.interfaces.admin.views import (
     AdminUserList,
     AdminUserView,
     UpdateAdminUserRoleRequest,
+)
+from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    decode_student_cursor,
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
@@ -53,10 +56,25 @@ async def update_user_role(
 
 @router.get("/students", response_model=AdminStudentList)
 async def list_students(
+    search: str | None = Query(default=None, min_length=1, max_length=80),
+    status: str | None = Query(default=None, max_length=32),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=512),
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminStudentList:
-    students = await use_cases.list_admin_students.execute()
+    try:
+        if cursor is not None:
+            decode_student_cursor(cursor)
+        page = await use_cases.list_admin_students.execute(
+            search=search,
+            status=status,
+            limit=limit,
+            cursor=cursor,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return AdminStudentList(
-        students=[AdminStudentView(**s.model_dump()) for s in students]
+        students=[AdminStudentView(**s.model_dump()) for s in page.students],
+        next_cursor=page.next_cursor,
     )

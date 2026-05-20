@@ -16,7 +16,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from ulid import ULID
+from ulid import new as new_ulid
 
 from backend.v2.contexts.billing.application.ports import (
     PaymentRepository,
@@ -308,7 +308,7 @@ class HandleWebhookEvent:
         now = self._now()
         amount_key = "amount_paid" if status == "succeeded" else "amount_due"
         return Payment(
-            payment_id=str(ULID()),
+            payment_id=str(new_ulid()),
             academy_id=subscription.academy_id,
             parent_id=subscription.parent_id,
             session_id=subscription.session_id,

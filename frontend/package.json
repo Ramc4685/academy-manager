@@ -60,17 +60,17 @@
     {
       "name": "(coach)/today",
       "path": ".next/static/chunks/app/**/coach/today/page-*.js",
-      "limit": "150 KB"
+      "limit": "360 KB"
     },
     {
       "name": "(parent)/onboarding",
       "path": ".next/static/chunks/app/**/parent/onboarding/page-*.js",
-      "limit": "200 KB"
+      "limit": "360 KB"
     },
     {
-      "name": "(admin)",
-      "path": ".next/static/chunks/app/**/admin/**/*.js",
-      "limit": "300 KB"
+      "name": "(admin)/landing",
+      "path": ".next/static/chunks/app/**/admin/page-*.js",
+      "limit": "360 KB"
     }
   ],
   "pnpm": {

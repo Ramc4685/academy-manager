@@ -19,7 +19,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
-from ulid import ULID
+from ulid import new as new_ulid
 
 from backend.v2.composition.event_handlers import (
     HandlerDeps,
@@ -130,7 +130,7 @@ async def test_on_payment_succeeded_handler_creates_enrollment(db, acad) -> None
     await _wire(db)
 
     # Seed an available session.
-    session_id = str(ULID())
+    session_id = str(new_ulid())
     await db["sessions"].insert_one(
         {
             "session_id": session_id,
@@ -184,7 +184,7 @@ async def test_on_payment_succeeded_at_capacity_emits_capacity_exceeded(db, acad
     await _wire(db)
 
     # Seed a full session.
-    session_id = str(ULID())
+    session_id = str(new_ulid())
     await db["sessions"].insert_one(
         {
             "session_id": session_id,
@@ -230,9 +230,9 @@ async def test_on_enrollment_cancelled_promotes_oldest_waitlist_entry(db, acad) 
     picks the oldest waiting entry by joined_at (FIFO)."""
     await _wire(db)
 
-    session_id = str(ULID())
+    session_id = str(new_ulid())
     # Older entry.
-    older_id = str(ULID())
+    older_id = str(new_ulid())
     await db["waitlist"].insert_one(
         {
             "waitlist_id": older_id,
@@ -245,7 +245,7 @@ async def test_on_enrollment_cancelled_promotes_oldest_waitlist_entry(db, acad) 
         }
     )
     # Newer entry.
-    newer_id = str(ULID())
+    newer_id = str(new_ulid())
     await db["waitlist"].insert_one(
         {
             "waitlist_id": newer_id,

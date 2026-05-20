@@ -35,10 +35,13 @@ class AdminStudentView(BaseModel):
     status: str
     active_session_count: int
     last_seen_at: datetime | None = None
+    attendance_rate: float | None = None
+    dues_status: Literal["current", "due", "overdue"] = "current"
 
 
 class AdminStudentList(BaseModel):
     students: list[AdminStudentView]
+    next_cursor: str | None = None
 
 
 # --- Sessions ---
@@ -118,6 +121,22 @@ class AdminWaitlistEntry(BaseModel):
 class AdminWaitlistList(BaseModel):
     entries: list[AdminWaitlistEntry]
     waitlist: list[AdminWaitlistEntry]
+
+
+class AdminGlobalWaitlistSessionView(BaseModel):
+    session_id: str
+    title: str
+    location: str
+    start_at: datetime
+    capacity: int
+    enrolled_count: int = 0
+    waitlist_count: int = 0
+    entries: list[AdminWaitlistEntry]
+
+
+class AdminGlobalWaitlistList(BaseModel):
+    total_waitlisted: int
+    sessions: list[AdminGlobalWaitlistSessionView]
 
 
 class AdminPauseRequestView(BaseModel):
@@ -324,6 +343,72 @@ class AdminMessageList(BaseModel):
     messages: list[AdminMessageView]
 
 
+AdminWaiverStatus = Literal["signed", "pending", "expiring", "outdated"]
+
+
+class AdminWaiverSummaryView(BaseModel):
+    signed_current: int
+    pending_signature: int
+    expiring_30d: int
+    outdated_version: int
+    active_students: int = 0
+    adoption_rate: float | None = None
+
+
+class AdminWaiverDocumentView(BaseModel):
+    title: str
+    version: str
+    description: str | None = None
+    effective_at: datetime | None = None
+    last_edited_at: datetime | None = None
+    signed_count: int | None = None
+    total_count: int | None = None
+    adoption_rate: float | None = None
+
+
+class AdminWaiverStudentView(BaseModel):
+    waiver_id: str
+    student_id: str
+    student_name: str
+    parent_id: str
+    parent_name: str | None = None
+    parent_email: str | None = None
+    status: AdminWaiverStatus
+    version: str | None = None
+    signed_at: datetime | None = None
+    method: str | None = None
+    expires_at: datetime | None = None
+
+
+class AdminWaiverList(BaseModel):
+    summary: AdminWaiverSummaryView
+    current_waiver: AdminWaiverDocumentView | None = None
+    waivers: list[AdminWaiverStudentView] = []
+
+
+AdminAttentionSeverity = Literal["high", "medium", "low"]
+AdminAttentionKind = Literal[
+    "overdue_dues",
+    "pause_requests",
+    "waivers",
+    "session_pressure",
+]
+
+
+class AdminAttentionItemView(BaseModel):
+    attention_id: str
+    kind: AdminAttentionKind
+    title: str
+    detail: str
+    severity: AdminAttentionSeverity
+    href: str
+    count: int = 1
+
+
+class AdminAttentionList(BaseModel):
+    items: list[AdminAttentionItemView]
+
+
 class BroadcastRequest(BaseModel):
     body: str
 
@@ -344,6 +429,8 @@ class AdminAcademyView(BaseModel):
     contact_phone: str | None = None
     hours_text: str | None = None
     address: str | None = None
+    logo_url: str | None = None
+    brand_color: str | None = None
 
 
 class UpdateAdminAcademyRequest(BaseModel):
@@ -353,6 +440,8 @@ class UpdateAdminAcademyRequest(BaseModel):
     contact_phone: str | None = None
     hours_text: str | None = None
     address: str | None = None
+    logo_url: str | None = None
+    brand_color: str | None = None
 
 
 class AdminFeesView(BaseModel):

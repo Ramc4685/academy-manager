@@ -77,6 +77,7 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
     group: "COMMS · OPS",
     items: [
       { href: "/admin/messages", label: "Messages", icon: "msg", match: startsWith("/admin/messages") },
+      { href: "/admin/waivers", label: "Waivers", icon: "check", match: startsWith("/admin/waivers") },
       { href: "/admin/settings", label: "Settings", icon: "cog", match: startsWith("/admin/settings") },
       { href: "/admin/audit-logs", label: "Audit logs", icon: "filter", match: startsWith("/admin/audit-logs") },
     ],
@@ -109,6 +110,7 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin/coach-payslip": { title: "Coach payslip", subtitle: "Derived earnings", breadcrumbs: ["Admin", "Money", "Coach payslip"] },
   "/admin/reports": { title: "Reports", subtitle: "Exports and summaries", breadcrumbs: ["Admin", "Money", "Reports"] },
   "/admin/messages": { title: "Messages", subtitle: "Inbox and broadcasts", breadcrumbs: ["Admin", "Comms", "Messages"] },
+  "/admin/waivers": { title: "Waivers", subtitle: "Student signatures and expiry", breadcrumbs: ["Admin", "Comms", "Waivers"] },
   "/admin/settings": { title: "Settings", subtitle: "Academy preferences", breadcrumbs: ["Admin", "Settings"] },
   "/admin/audit-logs": { title: "Audit logs", subtitle: "Recent admin actions", breadcrumbs: ["Admin", "Audit logs"] },
 };

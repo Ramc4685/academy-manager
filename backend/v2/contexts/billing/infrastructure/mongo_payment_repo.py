@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from bson import ObjectId as BsonObjectId
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
-from ulid import ULID
+from ulid import new as new_ulid
 
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     GenerateMonthlyPaymentsResult,
@@ -361,8 +361,8 @@ class MongoPaymentRepository(TenantScopedRepository):
             if not parent_id:
                 skipped_no_charge += 1
                 continue
-            payment_id = str(ULID())
-            invoice_key_id = str(ULID())
+            payment_id = str(new_ulid())
+            invoice_key_id = str(new_ulid())
             try:
                 await self._db["billing_invoice_keys"].insert_one(
                     {
@@ -461,7 +461,7 @@ class MongoPaymentRepository(TenantScopedRepository):
     ) -> BillingCalculationSnapshot:
         """Stamp snapshot_id / expires_at, insert as OPEN, return stored copy."""
         academy_id = current_academy_id()
-        snapshot_id = str(ULID())
+        snapshot_id = str(new_ulid())
         expires_at = now + timedelta(minutes=ttl_minutes)
         stored = snapshot.model_copy(
             update={"snapshot_id": snapshot_id, "status": "OPEN", "expires_at": expires_at}
@@ -827,7 +827,7 @@ def _build_proration_snapshot_for_first_month(
     enrollment_id: str,
 ) -> BillingCalculationSnapshot:
     """Compute a CONSUMED first-month proration snapshot (no I/O)."""
-    snapshot_id = str(ULID())
+    snapshot_id = str(new_ulid())
     raw = FirstMonthProrationPolicy().quote(
         monthly_price_cents=amount_cents,
         discount_cents=0,
@@ -853,7 +853,7 @@ def _build_monthly_tuition_snapshot(
         for occ in sorted(occurrences, key=lambda o: o.occurrence_id)
         if FirstMonthProrationPolicy._is_eligible(occ, billing_period)
     ]
-    snapshot_id = str(ULID())
+    snapshot_id = str(new_ulid())
     included = [occ.occurrence_id for occ in eligible]
     return BillingCalculationSnapshot(
         snapshot_id=snapshot_id,

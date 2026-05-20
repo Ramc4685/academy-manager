@@ -16,7 +16,7 @@ import sys
 from datetime import datetime, timezone
 
 from motor.motor_asyncio import AsyncIOMotorClient
-from ulid import ULID
+from ulid import new as new_ulid
 
 from backend.v2.shared.config import get_settings
 
@@ -31,7 +31,7 @@ async def _replay(event_id: str) -> None:
             print(f"No dead-letter event found with event_id={event_id!r}", file=sys.stderr)
             sys.exit(2)
         original = dead["event"]
-        new_event_id = str(ULID())
+        new_event_id = str(new_ulid())
         new_doc = {
             **original,
             "event_id": new_event_id,

@@ -73,12 +73,12 @@ class _FakeSnapshotWriter:
         ttl_minutes: int,
         now: datetime,
     ) -> BillingCalculationSnapshot:
-        from ulid import ULID
+        from ulid import new as new_ulid
         from datetime import timedelta
 
         stored = snapshot.model_copy(
             update={
-                "snapshot_id": str(ULID()),
+                "snapshot_id": str(new_ulid()),
                 "status": "OPEN",
                 "expires_at": now + timedelta(minutes=ttl_minutes),
             }

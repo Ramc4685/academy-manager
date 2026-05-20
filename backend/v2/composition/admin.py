@@ -104,6 +104,12 @@ from backend.v2.contexts.identity.application.get_academy_notifications_use_case
 from backend.v2.contexts.identity.application.update_academy_notifications_use_case import UpdateAcademyNotificationsUseCase
 from backend.v2.contexts.identity.application.get_academy_gateway_use_case import GetAcademyGatewayUseCase
 from backend.v2.contexts.identity.application.change_user_role_use_case import ChangeUserRole
+from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
+    ListAdminWaivers,
+)
+from backend.v2.contexts.onboarding.infrastructure.mongo_admin_waiver_repo import (
+    MongoAdminWaiverRepository,
+)
 from backend.v2.interfaces.admin.deps import AdminUseCases
 from backend.v2.shared.comms import CommsService, MongoMessageRepository
 from backend.v2.shared.config import get_settings
@@ -198,6 +204,8 @@ def compose_admin(
     # Comms
     messages_repo = MongoMessageRepository(db)
     comms = CommsService(messages=messages_repo, academy_id=academy_id)
+    waivers_repo = MongoAdminWaiverRepository(db)
+    list_admin_waivers = ListAdminWaivers(waivers_repo)
     # Identity / Settings
     academy_repo = MongoAcademyRepository(db)
     get_academy_use_case = GetAcademyUseCase(academy_repo)
@@ -578,6 +586,7 @@ def compose_admin(
         send_dues_reminders=send_dues_reminders,
         export_report_csv=export_report_csv,
         comms=comms,
+        list_admin_waivers=list_admin_waivers,
         get_academy_use_case=get_academy_use_case,
         update_academy_use_case=update_academy_use_case,
         get_academy_fees_use_case=get_academy_fees_use_case,
