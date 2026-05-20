@@ -607,6 +607,9 @@ class FakePaymentRepo:
     async def list_for_parent(self, parent_id):
         return [p for p in self.rows.values() if p.parent_id == parent_id]
 
+    async def list_all(self):
+        return list(self.rows.values())
+
     async def generate_monthly_payments(self, period):
         self.generated_periods.append(period)
         return GenerateMonthlyPaymentsResult(created=1, skipped_existing=0)
@@ -778,7 +781,14 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     record_expense = RecordExpense(expenses=expenses, academy_id="acad")  # type: ignore[arg-type]
     revenue_query = AcademyRevenueQuery(payments=payments)
 
-    async def list_admin_sessions(on_date):
+    async def list_admin_sessions(on_date, *, window=None):
+        if window == "upcoming":
+            today = _now().date()
+            return [
+                s
+                for s in sessions.sessions.values()
+                if s.start_at.date() >= today
+            ]
         if on_date is None:
             on_date = _now().date()
         return [

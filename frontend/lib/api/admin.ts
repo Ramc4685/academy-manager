@@ -226,6 +226,8 @@ export interface AdminStudentView {
   student_id: string;
   full_name: string;
   parent_id: string;
+  parent_name: string | null;
+  parent_email: string | null;
   status: string;
   active_session_count: number;
   last_seen_at: string | null;
@@ -299,8 +301,14 @@ export function listAdminStudents(): Promise<AdminStudentList> {
 // Sessions
 // ---------------------------------------------------------------------------
 
-export function listAdminSessions(date?: string): Promise<AdminSessionList> {
-  const q = date ? `?date=${encodeURIComponent(date)}` : "";
+export function listAdminSessions(
+  date?: string,
+  opts?: { window?: "upcoming" },
+): Promise<AdminSessionList> {
+  const params = new URLSearchParams();
+  if (date) params.set("date", date);
+  if (opts?.window) params.set("window", opts.window);
+  const q = params.toString() ? `?${params.toString()}` : "";
   return apiFetch<AdminSessionList>(`/admin/sessions${q}`, { method: "GET" });
 }
 

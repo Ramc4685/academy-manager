@@ -1,0 +1,138 @@
+/**
+ * Rally admin navigation + per-route topbar metadata.
+ *
+ * Subtitles are static — the shell does NOT fetch data. Pages that
+ * want to surface live counts in the topbar should use AdminActionSlot
+ * or render their own header inside the page body.
+ */
+
+export type AdminNavIconKey =
+  | "home" | "calendar" | "user" | "list" | "check"
+  | "pay" | "card" | "bell" | "whistle" | "chart"
+  | "msg" | "cog" | "trophy" | "signal" | "filter";
+
+export interface AdminNavItem {
+  /** Route URL. */
+  href: string;
+  /** Label shown in sidebar. */
+  label: string;
+  /** Icon key resolved against the Rally Icon set. */
+  icon: AdminNavIconKey;
+  /** Optional count badge. */
+  count?: number;
+  /** Highlight the badge with volt-yellow if true. */
+  urgent?: boolean;
+  /** True if pathname `p` should highlight this item. */
+  match: (p: string) => boolean;
+}
+
+export interface AdminNavGroup {
+  /** Mono uppercase label. */
+  group: string;
+  items: ReadonlyArray<AdminNavItem>;
+}
+
+const startsWith = (prefix: string) => (p: string) => p.startsWith(prefix);
+const eq = (route: string) => (p: string) => p === route;
+
+/**
+ * Rally admin nav, grouped per `assets/admin-screens.jsx:10-30`.
+ * Existing admin routes (users, audit-logs, pause-requests, coach-payslip,
+ * finance) are preserved as part of the group they fit in.
+ */
+export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
+  {
+    group: "WORK",
+    items: [
+      { href: "/admin", label: "Dashboard", icon: "home", match: eq("/admin") },
+      { href: "/admin/sessions", label: "Sessions", icon: "calendar", match: startsWith("/admin/sessions") },
+      { href: "/admin/students", label: "Students", icon: "user", match: startsWith("/admin/students") },
+      { href: "/admin/users", label: "Coaches & Parents", icon: "user", match: startsWith("/admin/users") },
+      { href: "/admin/waitlist", label: "Waitlist", icon: "list", match: startsWith("/admin/waitlist") },
+      { href: "/admin/pause-requests", label: "Pause requests", icon: "check", match: startsWith("/admin/pause-requests") },
+    ],
+  },
+  {
+    group: "MONEY",
+    items: [
+      {
+        href: "/admin/payments",
+        label: "Payments",
+        icon: "pay",
+        match: (p) => p.startsWith("/admin/payments") || p.startsWith("/admin/billing"),
+      },
+      { href: "/admin/dues", label: "Dues follow-up", icon: "bell", match: startsWith("/admin/dues") },
+      {
+        href: "/admin/expenses",
+        label: "Expenses",
+        icon: "card",
+        // /admin/expenses currently redirects to /admin/finance; highlight both
+        match: (p) => p.startsWith("/admin/expenses") || p === "/admin/finance",
+      },
+      { href: "/admin/payouts", label: "Coach payouts", icon: "whistle", match: startsWith("/admin/payouts") },
+      { href: "/admin/coach-payslip", label: "Coach payslip", icon: "signal", match: startsWith("/admin/coach-payslip") },
+      { href: "/admin/reports", label: "Reports", icon: "chart", match: startsWith("/admin/reports") },
+    ],
+  },
+  {
+    group: "COMMS · OPS",
+    items: [
+      { href: "/admin/messages", label: "Messages", icon: "msg", match: (p) => p.startsWith("/admin/messages") || p.startsWith("/admin/comms") },
+      { href: "/admin/settings", label: "Settings", icon: "cog", match: startsWith("/admin/settings") },
+      { href: "/admin/audit-logs", label: "Audit logs", icon: "filter", match: startsWith("/admin/audit-logs") },
+    ],
+  },
+];
+
+export interface AdminScreenMeta {
+  title: string;
+  subtitle: string;
+  breadcrumbs: ReadonlyArray<string>;
+}
+
+/**
+ * Per-route topbar metadata. Subtitles are static descriptors, not
+ * data-driven counts. Pages that need live numbers (e.g. "3 pending
+ * approvals") should expose them in their own page body.
+ */
+export const SCREEN_META: Record<string, AdminScreenMeta> = {
+  "/admin": { title: "Dashboard", subtitle: "Daily overview", breadcrumbs: ["Admin", "Dashboard"] },
+  "/admin/dashboard": { title: "Dashboard", subtitle: "Daily overview", breadcrumbs: ["Admin", "Dashboard"] },
+  "/admin/sessions": { title: "Sessions", subtitle: "Schedule and rosters", breadcrumbs: ["Admin", "Sessions"] },
+  "/admin/students": { title: "Students", subtitle: "Roster and enrollment", breadcrumbs: ["Admin", "Students"] },
+  "/admin/users": { title: "Coaches & Parents", subtitle: "Directory", breadcrumbs: ["Admin", "Users"] },
+  "/admin/waitlist": { title: "Waitlist", subtitle: "Pending offers and queues", breadcrumbs: ["Admin", "Waitlist"] },
+  "/admin/pause-requests": { title: "Pause requests", subtitle: "Pending parent requests", breadcrumbs: ["Admin", "Pause requests"] },
+  "/admin/payments": { title: "Payments", subtitle: "Transactions and refunds", breadcrumbs: ["Admin", "Money", "Payments"] },
+  "/admin/billing": { title: "Billing", subtitle: "Invoices and billing controls", breadcrumbs: ["Admin", "Money", "Billing"] },
+  "/admin/dues": { title: "Dues follow-up", subtitle: "Outstanding balances", breadcrumbs: ["Admin", "Money", "Dues"] },
+  "/admin/expenses": { title: "Expenses", subtitle: "Categorised academy spend", breadcrumbs: ["Admin", "Money", "Expenses"] },
+  "/admin/payouts": { title: "Coach payouts", subtitle: "Payout cycles", breadcrumbs: ["Admin", "Money", "Payouts"] },
+  "/admin/coach-payslip": { title: "Coach payslip", subtitle: "Derived earnings", breadcrumbs: ["Admin", "Money", "Coach payslip"] },
+  "/admin/reports": { title: "Reports", subtitle: "Exports and summaries", breadcrumbs: ["Admin", "Money", "Reports"] },
+  "/admin/finance": { title: "Finance", subtitle: "Roll-up of money operations", breadcrumbs: ["Admin", "Money", "Finance"] },
+  "/admin/comms": { title: "Messages", subtitle: "Inbox and broadcasts", breadcrumbs: ["Admin", "Comms", "Messages"] },
+  "/admin/messages": { title: "Messages", subtitle: "Inbox and broadcasts", breadcrumbs: ["Admin", "Comms", "Messages"] },
+  "/admin/settings": { title: "Settings", subtitle: "Academy preferences", breadcrumbs: ["Admin", "Settings"] },
+  "/admin/audit-logs": { title: "Audit logs", subtitle: "Recent admin actions", breadcrumbs: ["Admin", "Audit logs"] },
+};
+
+const FALLBACK_META: AdminScreenMeta = {
+  title: "Admin",
+  subtitle: "",
+  breadcrumbs: ["Admin"],
+};
+
+/** Resolve topbar metadata for a pathname. Falls back to a safe default. */
+export function metaForPath(pathname: string): AdminScreenMeta {
+  if (SCREEN_META[pathname]) return SCREEN_META[pathname];
+  // Dynamic segments (e.g. /admin/sessions/[id]) — match by longest prefix.
+  const keys = Object.keys(SCREEN_META).sort((a, b) => b.length - a.length);
+  for (const key of keys) {
+    if (pathname.startsWith(key + "/")) {
+      const base = SCREEN_META[key];
+      return { ...base, breadcrumbs: [...base.breadcrumbs, "Detail"] };
+    }
+  }
+  return FALLBACK_META;
+}

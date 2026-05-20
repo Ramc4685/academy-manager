@@ -27,15 +27,16 @@ class MongoSessionRepository(TenantScopedRepository):
 
     @staticmethod
     def _to_domain(doc: dict[str, object]) -> Session:
+        # Normalise legacy schema (name/max_students) to v2 schema (title/capacity).
         return Session(
-            session_id=str(doc["session_id"]),
-            academy_id=str(doc["academy_id"]),
-            coach_id=str(doc["coach_id"]),
-            title=str(doc["title"]),
-            location=str(doc["location"]),
+            session_id=str(doc.get("session_id") or doc.get("_id")),
+            academy_id=str(doc.get("academy_id") or "default-academy"),
+            coach_id=str(doc.get("coach_id") or ""),
+            title=str(doc.get("title") or doc.get("name") or "Session"),
+            location=str(doc.get("location") or ""),
             start_at=doc["start_at"],  # type: ignore[arg-type]
             end_at=doc["end_at"],  # type: ignore[arg-type]
-            capacity=int(doc["capacity"]),  # type: ignore[arg-type]
+            capacity=int(doc.get("capacity") or doc.get("max_students") or 15),  # type: ignore[arg-type]
             status=doc.get("status", "scheduled"),  # type: ignore[arg-type]
         )
 

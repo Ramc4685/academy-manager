@@ -135,7 +135,7 @@ class AcademyRevenueQuery:
         payments = (
             await self._payments.list_for_parent(parent_id_filter)
             if parent_id_filter
-            else []
+            else await self._payments.list_all()
         )
         for p in payments:
             if p.status not in ("succeeded", "partially_refunded", "refunded"):

@@ -33,11 +33,12 @@ router = APIRouter(tags=["admin.sessions"])
 @router.get("/sessions", response_model=AdminSessionList, summary="List sessions for a date range")
 async def list_sessions(
     on_date: str = Query(default=None, alias="date"),
+    window: str | None = Query(default=None, description="Set to 'upcoming' to return all sessions starting from today through the next 30 days. Overrides 'date' when both are passed."),
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionList:
     parsed = date.fromisoformat(on_date) if on_date else None
-    sessions = await use_cases.list_admin_sessions(parsed)  # type: ignore[operator]
+    sessions = await use_cases.list_admin_sessions(parsed, window=window)  # type: ignore[operator]
     rows = [
         s if isinstance(s, dict) else s.model_dump(exclude={"academy_id"})
         for s in sessions

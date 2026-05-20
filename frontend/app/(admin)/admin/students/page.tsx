@@ -42,7 +42,7 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
         <thead>
           <tr className="border-b border-neutral-200 text-left text-neutral-500 dark:border-neutral-800">
             <th className="px-4 py-3 font-medium">Student</th>
-            <th className="px-4 py-3 font-medium">Parent ID</th>
+            <th className="px-4 py-3 font-medium">Parent</th>
             <th className="px-4 py-3 font-medium text-right">Active sessions</th>
             <th className="px-4 py-3 font-medium">Last attendance</th>
             <th className="px-4 py-3 font-medium">Status</th>
@@ -55,7 +55,12 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
                 <div className="font-medium">{student.full_name}</div>
                 <div className="font-mono text-xs text-neutral-500">{student.student_id}</div>
               </td>
-              <td className="px-4 py-3 font-mono text-xs text-neutral-500">{student.parent_id || "-"}</td>
+              <td className="px-4 py-3">
+                <div className="text-sm">{student.parent_name || student.parent_email || "-"}</div>
+                {student.parent_email && student.parent_name && (
+                  <div className="text-xs text-neutral-500">{student.parent_email}</div>
+                )}
+              </td>
               <td className="px-4 py-3 text-right tabular-nums">{student.active_session_count}</td>
               <td className="px-4 py-3 text-neutral-600 dark:text-neutral-400">
                 {student.last_seen_at ? new Date(student.last_seen_at).toLocaleDateString() : "-"}

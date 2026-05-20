@@ -41,6 +41,16 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 dump.rdb
+firebase-debug.log
+firebase-debug.*.log
+.firebase/
+
+# Playwright MCP capture directory + ad-hoc verification screenshots from
+# the manual browser tests during the Rally admin foundation work. Not
+# part of the test suite; the canonical Playwright outputs live under
+# frontend/test-results/ and are already covered by .next/coverage etc.
+.playwright-mcp/
+rally-*.png
 
 # System files
 .DS_Store

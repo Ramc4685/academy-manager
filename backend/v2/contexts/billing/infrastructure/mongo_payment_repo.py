@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from bson import ObjectId as BsonObjectId
 from ulid import ULID
 
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
@@ -121,6 +122,13 @@ class MongoPaymentRepository(TenantScopedRepository):
         )
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def list_all(self) -> list[Payment]:
+        cursor = self._find_many(
+            {"is_deleted": {"$ne": True}},
+            sort=[("created_at", -1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def list_recent_admin(self, limit: int = 200) -> list[dict[str, object]]:
         cursor = self._find_many(
             {"is_deleted": {"$ne": True}},
@@ -137,15 +145,17 @@ class MongoPaymentRepository(TenantScopedRepository):
         )
         students: dict[str, dict[str, object]] = {}
         if student_ids:
+            oid_ids = [BsonObjectId(s) for s in student_ids if BsonObjectId.is_valid(s)]
+            or_filter: list[dict[str, object]] = [{"student_id": {"$in": student_ids}}]
+            if oid_ids:
+                or_filter.append({"_id": {"$in": oid_ids}})
             student_cursor = self._db["students"].find(
-                {
-                    "academy_id": current_academy_id(),
-                    "student_id": {"$in": student_ids},
-                }
+                {"academy_id": current_academy_id(), "$or": or_filter}
             )
-            students = {
-                str(doc.get("student_id") or doc.get("_id")): doc async for doc in student_cursor
-            }
+            async for doc in student_cursor:
+                key = str(doc.get("student_id") or doc.get("_id"))
+                students[key] = doc
+                students[str(doc["_id"])] = doc
         return [self._to_admin_row(doc, students.get(str(doc.get("student_id")))) for doc in docs]
 
     @classmethod
