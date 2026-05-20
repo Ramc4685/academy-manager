@@ -86,6 +86,15 @@ async function stubMe(page: Page, body = ADMIN_ME) {
 
 async function stubAdminBff(page: Page) {
   await stubMe(page, ADMIN_ME);
+  // Catch-all FIRST. Playwright route handlers match in LIFO order
+  // (later-registered = higher priority), so registering this first means
+  // the specific stubs below override it. Keeps any new admin endpoint
+  // that the spec hasn't explicitly stubbed from returning {} and
+  // crashing pages that expect a known shape.
+  await page.route("**/api/v2/admin/**", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, {});
+  });
   await page.route("**/api/v2/admin/sessions*", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, { sessions: [] });
@@ -173,10 +182,6 @@ async function stubAdminBff(page: Page) {
       address: null,
     })
   );
-  await page.route("**/api/v2/admin/**", (route) => {
-    if (route.request().method() !== "GET") return route.fallback();
-    return fulfillJson(route, {});
-  });
 }
 
 async function stubCoachBff(page: Page) {

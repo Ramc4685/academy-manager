@@ -27,6 +27,10 @@ export default function AdminUsersPage() {
     queryFn: () => listAdminUsers(role),
   });
 
+  // Defensive: webkit's production build crashes on data.users.length
+  // when the BFF returns a partial shape (e.g. {} from a catch-all stub).
+  const users = data?.users ?? [];
+
   return (
     <section data-testid="admin-users" className="space-y-6">
       <div className="flex gap-2">
@@ -52,13 +56,13 @@ export default function AdminUsersPage() {
         </p>
       ) : isLoading ? (
         <Skeleton />
-      ) : (data?.users.length ?? 0) === 0 ? (
+      ) : users.length === 0 ? (
         <p className="text-sm text-rally-subtle" data-testid="admin-users-empty">
           No users found.
         </p>
       ) : (
         <Card p={20}>
-          <UsersTable users={data!.users} />
+          <UsersTable users={users} />
         </Card>
       )}
     </section>
