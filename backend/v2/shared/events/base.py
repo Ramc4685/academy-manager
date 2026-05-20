@@ -10,11 +10,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel, Field
-from ulid import ULID
+from ulid import new as new_ulid
 
 
 def _new_event_id() -> str:
-    return str(ULID())
+    return str(new_ulid())
 
 
 def _now() -> datetime:

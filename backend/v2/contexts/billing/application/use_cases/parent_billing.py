@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
-from ulid import ULID
+from ulid import new as new_ulid
 
 from backend.v2.contexts.billing.application.ports import (
     PaymentRepository,
@@ -61,7 +61,7 @@ class StartSubscriptionCheckout:
     async def execute(
         self, cmd: StartSubscriptionCheckoutCommand
     ) -> StartSubscriptionCheckoutResult:
-        subscription_id = str(ULID())
+        subscription_id = str(new_ulid())
         try:
             checkout_id, url, stripe_subscription_id = (
                 await self._stripe.create_subscription_checkout_session(

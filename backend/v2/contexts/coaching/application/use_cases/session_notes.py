@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Protocol
 
 from pydantic import BaseModel
-from ulid import ULID
+from ulid import new as new_ulid
 
 from backend.v2.contexts.coaching.domain.errors import SessionNotAssigned, StudentNotEnrolled
 
@@ -78,7 +78,7 @@ class CreateLessonPlan:
         if not await self._sessions.is_coach_assigned(cmd.coach_id, cmd.session_id):
             raise SessionNotAssigned("session not assigned", session_id=cmd.session_id)
         plan = LessonPlan(
-            lesson_plan_id=str(ULID()),
+            lesson_plan_id=str(new_ulid()),
             session_id=cmd.session_id,
             coach_id=cmd.coach_id,
             title=cmd.title,
@@ -123,7 +123,7 @@ class CreateProgressNote:
         if not await self._enrollments.is_active(cmd.session_id, cmd.student_id):
             raise StudentNotEnrolled("student not active in session", student_id=cmd.student_id)
         note = ProgressNote(
-            note_id=str(ULID()),
+            note_id=str(new_ulid()),
             session_id=cmd.session_id,
             student_id=cmd.student_id,
             coach_id=cmd.coach_id,

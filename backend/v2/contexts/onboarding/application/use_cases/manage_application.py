@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from pydantic import BaseModel
-from ulid import ULID
+from ulid import new as new_ulid
 
 from backend.v2.contexts.onboarding.application.ports import (
     ApplicationRepository,
@@ -58,7 +58,7 @@ class StartApplication:
             return existing
         now = self._now()
         app = Application(
-            application_id=str(ULID()),
+            application_id=str(new_ulid()),
             academy_id=self._academy_id,
             parent_user_id=cmd.parent_user_id,
             parent_email=cmd.parent_email,

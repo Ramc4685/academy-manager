@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from bson import ObjectId as BsonObjectId
-from ulid import ULID
+from ulid import new as new_ulid
 
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     GenerateMonthlyPaymentsResult,
@@ -258,7 +258,7 @@ class MongoPaymentRepository(TenantScopedRepository):
             if not parent_id:
                 skipped_no_charge += 1
                 continue
-            payment_id = str(ULID())
+            payment_id = str(new_ulid())
             await self._insert_one(
                 {
                     "payment_id": payment_id,

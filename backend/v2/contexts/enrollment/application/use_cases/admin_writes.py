@@ -14,7 +14,7 @@ from datetime import date, datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field
-from ulid import ULID
+from ulid import new as new_ulid
 
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentQuery,
@@ -59,7 +59,7 @@ class CreateSession:
 
     async def execute(self, cmd: CreateSessionCommand) -> Session:
         session = Session(
-            session_id=str(ULID()),
+            session_id=str(new_ulid()),
             academy_id=self._academy_id,
             coach_id=cmd.coach_id,
             title=cmd.title,
@@ -166,7 +166,7 @@ class EditRosterAdd:
             )
         )
         enrollment = Enrollment(
-            enrollment_id=str(ULID()),
+            enrollment_id=str(new_ulid()),
             academy_id=self._academy_id,
             session_id=cmd.session_id,
             student_id=cmd.student_id,
@@ -304,7 +304,7 @@ class JoinWaitlist:
 
     async def execute(self, cmd: JoinWaitlistCommand) -> WaitlistEntry:
         entry = WaitlistEntry(
-            waitlist_id=str(ULID()),
+            waitlist_id=str(new_ulid()),
             academy_id=self._academy_id,
             session_id=cmd.session_id,
             student_id=cmd.student_id,

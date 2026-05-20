@@ -111,7 +111,7 @@ export default function LandingPage() {
             </div>
             <div className={styles.item}>
               <div className={styles.v}>
-                12<span style={{ color: "#94a3b8" }}>/wk</span>
+                12<span style={{ color: "#64748b" }}>/wk</span>
               </div>
               <div className={styles.l}>Sessions</div>
             </div>
@@ -181,7 +181,7 @@ export default function LandingPage() {
           </div>
           <div className={styles.body}>
             <div className={styles.roleTag}>For admins - Desktop</div>
-            <h3>Operations</h3>
+            <h2>Operations</h2>
             <p className={styles.desc}>
               A data-terminal-grade dashboard. Track payments, expenses, attendance, and waitlists
               from one screen.
@@ -246,7 +246,7 @@ export default function LandingPage() {
           </div>
           <div className={styles.body}>
             <div className={styles.roleTag}>For parents - Mobile</div>
-            <h3>Parent portal</h3>
+            <h2>Parent portal</h2>
             <p className={styles.desc}>
               Everything a parent needs in one place. Register, pay, track attendance, and message
               the academy.
@@ -307,7 +307,7 @@ export default function LandingPage() {
           </div>
           <div className={styles.body}>
             <div className={styles.roleTag}>For coaches - Mobile</div>
-            <h3>Field tool</h3>
+            <h2>Field tool</h2>
             <p className={styles.desc}>
               Built for courtside. Mark attendance with a swipe, log notes, and see your payout in
               real-time.
