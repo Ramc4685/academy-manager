@@ -607,6 +607,9 @@ class FakePaymentRepo:
     async def list_for_parent(self, parent_id):
         return [p for p in self.rows.values() if p.parent_id == parent_id]
 
+    async def list_all(self):
+        return list(self.rows.values())
+
     async def generate_monthly_payments(self, period):
         self.generated_periods.append(period)
         return GenerateMonthlyPaymentsResult(created=1, skipped_existing=0)

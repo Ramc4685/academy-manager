@@ -8,6 +8,8 @@ from datetime import date, datetime, time, timezone
 import csv
 import io
 
+from bson import ObjectId as BsonObjectId
+
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from backend.v2.contexts.billing.application.ports import StripeGateway
@@ -162,35 +164,81 @@ def compose_admin(
     list_admin_students = ListAdminStudents(students_r)
 
     # Closures for the BFF deps that need composed reads.
+    # Day-of-week abbreviations used by the legacy seed schema.
+    _DOW_MAP = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
+
     async def list_admin_sessions(on_date: date | None):
         if on_date is None:
             on_date = datetime.now(timezone.utc).date()
         start = datetime.combine(on_date, time.min, tzinfo=timezone.utc)
         end = datetime.combine(on_date, time.max, tzinfo=timezone.utc)
-        cursor = sessions_r._find_many(  # type: ignore[attr-defined]
+
+        # Query both v2 sessions (start_at field) and legacy recurring templates
+        # (days_of_week field). The two schemas coexist during migration.
+        all_docs: list[dict[str, Any]] = []
+
+        # v2 schema: individual session instances with start_at/end_at
+        v2_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
             {"start_at": {"$gte": start, "$lte": end}},
             sort=[("start_at", 1)],
         )
+        async for doc in v2_cursor:
+            all_docs.append(doc)
+
+        # Legacy schema: recurring templates with days_of_week + start_time/end_time
+        today_dow = on_date.weekday()  # Mon=0 … Sun=6
+        legacy_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
+            {"days_of_week": {"$exists": True}, "start_at": {"$exists": False}},
+        )
+        async for doc in legacy_cursor:
+            dow_strs: list[str] = list(doc.get("days_of_week") or [])
+            dow_ints = [_DOW_MAP[d] for d in dow_strs if d in _DOW_MAP]
+            if today_dow not in dow_ints:
+                continue
+            # Synthetic start_at/end_at for the queried date
+            st_str = str(doc.get("start_time") or "00:00")
+            et_str = str(doc.get("end_time") or "00:00")
+            sh, sm = int(st_str[:2]), int(st_str[3:5])
+            eh, em = int(et_str[:2]), int(et_str[3:5])
+            doc = dict(doc)
+            doc["start_at"] = datetime.combine(on_date, time(sh, sm), tzinfo=timezone.utc)
+            doc["end_at"] = datetime.combine(on_date, time(eh, em), tzinfo=timezone.utc)
+            # Normalise to v2 field names so _build_row works uniformly
+            if "session_id" not in doc:
+                doc["session_id"] = str(doc["_id"])
+            if "title" not in doc:
+                doc["title"] = str(doc.get("name") or "Session")
+            if "capacity" not in doc:
+                doc["capacity"] = doc.get("max_students", 15)
+            all_docs.append(doc)
+
         rows: list[dict[str, Any]] = []
-        async for doc in cursor:
-            session = sessions_r._to_domain(doc)  # type: ignore[attr-defined]
+        for doc in all_docs:
+            session_id = str(doc.get("session_id") or doc.get("_id"))
             enrolled_count = await enrollments_r.collection.count_documents(
                 {
                     "academy_id": academy_id,
-                    "session_id": session.session_id,
+                    "session_id": session_id,
                     "status": "active",
                 }
             )
             waitlist_count = await waitlist.collection.count_documents(
                 {
                     "academy_id": academy_id,
-                    "session_id": session.session_id,
+                    "session_id": session_id,
                     "status": "waiting",
                 }
             )
             rows.append(
                 {
-                    **session.model_dump(exclude={"academy_id"}),
+                    "session_id": session_id,
+                    "title": str(doc.get("title") or doc.get("name") or "Session"),
+                    "location": str(doc.get("location") or ""),
+                    "start_at": doc["start_at"],
+                    "end_at": doc["end_at"],
+                    "capacity": int(doc.get("capacity") or doc.get("max_students") or 15),
+                    "status": "scheduled" if str(doc.get("status") or "scheduled") == "active" else str(doc.get("status") or "scheduled"),
+                    "coach_id": str(doc.get("coach_id") or ""),
                     "enrolled_count": enrolled_count,
                     "waitlist_count": waitlist_count,
                 }
@@ -298,24 +346,28 @@ def compose_admin(
             entry["pending_count"] += 1
             entry["total_due_cents"] += int(row["final_amount_cents"])
         if totals:
-            users = db["users"].find(
-                {
-                    "academy_id": academy_id,
-                    "$or": [
-                        {"user_id": {"$in": list(totals)}},
-                        {"firebase_uid": {"$in": list(totals)}},
-                    ],
-                }
-            )
+            parent_id_list = list(totals)
+            oid_ids = [BsonObjectId(p) for p in parent_id_list if BsonObjectId.is_valid(p)]
+            or_filter: list[dict[str, object]] = [
+                {"user_id": {"$in": parent_id_list}},
+                {"firebase_uid": {"$in": parent_id_list}},
+            ]
+            if oid_ids:
+                or_filter.append({"_id": {"$in": oid_ids}})
+            users = db["users"].find({"academy_id": academy_id, "$or": or_filter})
             async for user in users:
-                key = str(user.get("user_id") or user.get("firebase_uid"))
-                if key in totals:
-                    totals[key]["parent_name"] = str(
-                        user.get("display_name")
-                        or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
-                        or ""
-                    )
-                    totals[key]["email"] = user.get("email")
+                for key in (
+                    str(user.get("user_id") or ""),
+                    str(user.get("firebase_uid") or ""),
+                    str(user["_id"]),
+                ):
+                    if key and key in totals:
+                        totals[key]["parent_name"] = str(
+                            user.get("display_name")
+                            or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+                            or ""
+                        )
+                        totals[key]["email"] = user.get("email")
         return sorted(totals.values(), key=lambda row: int(row["total_due_cents"]), reverse=True)
 
     async def send_dues_reminders():

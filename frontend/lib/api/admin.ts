@@ -226,6 +226,8 @@ export interface AdminStudentView {
   student_id: string;
   full_name: string;
   parent_id: string;
+  parent_name: string | null;
+  parent_email: string | null;
   status: string;
   active_session_count: number;
   last_seen_at: string | null;
