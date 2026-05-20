@@ -279,6 +279,49 @@ class AdminMessageList(BaseModel):
     messages: list[AdminMessageView]
 
 
+AdminWaiverStatus = Literal["signed", "pending", "expiring", "outdated"]
+
+
+class AdminWaiverSummaryView(BaseModel):
+    signed_current: int
+    pending_signature: int
+    expiring_30d: int
+    outdated_version: int
+    active_students: int = 0
+    adoption_rate: float | None = None
+
+
+class AdminWaiverDocumentView(BaseModel):
+    title: str
+    version: str
+    description: str | None = None
+    effective_at: datetime | None = None
+    last_edited_at: datetime | None = None
+    signed_count: int | None = None
+    total_count: int | None = None
+    adoption_rate: float | None = None
+
+
+class AdminWaiverStudentView(BaseModel):
+    waiver_id: str
+    student_id: str
+    student_name: str
+    parent_id: str
+    parent_name: str | None = None
+    parent_email: str | None = None
+    status: AdminWaiverStatus
+    version: str | None = None
+    signed_at: datetime | None = None
+    method: str | None = None
+    expires_at: datetime | None = None
+
+
+class AdminWaiverList(BaseModel):
+    summary: AdminWaiverSummaryView
+    current_waiver: AdminWaiverDocumentView | None = None
+    waivers: list[AdminWaiverStudentView] = []
+
+
 class BroadcastRequest(BaseModel):
     body: str
 

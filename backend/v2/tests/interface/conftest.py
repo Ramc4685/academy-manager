@@ -421,6 +421,10 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserSummary,
 )
+from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
+    AdminWaiverReport,
+    AdminWaiverSummary,
+)
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
@@ -693,6 +697,26 @@ class FakeMessageRepo:
         return [m for m in self.rows.values() if m.kind == "announcement"]
 
 
+@dataclass
+class FakeAdminWaivers:
+    report: AdminWaiverReport = field(
+        default_factory=lambda: AdminWaiverReport(
+            summary=AdminWaiverSummary(
+                total_students=0,
+                signed_count=0,
+                current_count=0,
+                pending_count=0,
+                outdated_count=0,
+            ),
+            active_waiver=None,
+            rows=[],
+        )
+    )
+
+    async def execute(self) -> AdminWaiverReport:
+        return self.report
+
+
 # --- seed data ---
 
 
@@ -725,6 +749,7 @@ def admin_seed():
         "expenses": FakeExpenseRepo(),
         "payouts": FakePayoutRepo(),
         "messages": FakeMessageRepo(),
+        "waivers": FakeAdminWaivers(),
         "outbox": _AdminFakeOutbox(),
         "idempotency": _AdminFakeIdempotencyStore(),
         "stripe": FakeStripeGateway(),
@@ -745,6 +770,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     expenses = seed["expenses"]
     payouts = seed["payouts"]
     messages = seed["messages"]
+    waivers = seed["waivers"]
     comms = CommsService(messages=messages, academy_id="acad")  # type: ignore[arg-type]
 
     create_session = CreateSession(sessions=sessions, academy_id="acad")
@@ -957,6 +983,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         send_dues_reminders=send_dues_reminders,
         export_report_csv=export_report_csv,
         comms=comms,
+        list_admin_waivers=waivers,  # type: ignore[arg-type]
         get_academy_use_case=AsyncMock(),
         update_academy_use_case=AsyncMock(),
         get_academy_fees_use_case=AsyncMock(),

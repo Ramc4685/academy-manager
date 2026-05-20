@@ -190,6 +190,17 @@ backend:
       - working: true
         agent: "main"
         comment: "Added Enrollment use case and admin BFF endpoint to move a student between sessions by reserving the target seat, updating the enrollment, and releasing the source seat. Interface tests cover the reservation/release behavior."
+  - task: "Rally admin waivers backend slice"
+    implemented: true
+    working: true
+    file: "backend/v2/interfaces/admin/waiver_routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Slice 2 backend implemented: added read-only GET /api/v2/admin/waivers, onboarding use-case/report models, Mongo admin waiver query over waivers/waiver_versions, waiver_acceptances, students, and users, plus interface/application/repo tests. BFF route shapes the neutral use-case report into the Rally admin contract (summary/current_waiver/waivers). Focused verification passed: uv run pytest v2/tests/application/test_admin_waivers.py v2/tests/interface/test_admin_waivers.py v2/tests/contract/test_admin_waivers_mongo_repo.py -q => 6 passed."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -338,10 +349,27 @@ frontend:
       - working: true
         agent: "main"
         comment: "Slice 1 implemented: admin students now calls listAdminStudents with search/status/limit/cursor, uses cursor-backed next-page loading, resets pagination through query-key changes when search/status changes, renders attendance_rate and dues_status only from BFF data, and shows Rally search/filter plus loading/error/empty states. Verification: new admin-students spec passed 6/6; combined admin-shell + students smoke passed 48/48 serially on PLAYWRIGHT_PORT=3803 after a parallel run exposed Next dev-server .next cache/manifest corruption; frontend typecheck/build passed."
+  - task: "Rally admin waivers frontend slice"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/admin/waivers/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Slice 2 frontend implemented without backend edits: added /admin/waivers route, COMMS OPS nav/meta entry, typed listAdminWaivers client, admin waiver query key, BFF-only summary/current-waiver/table rendering, and focused Playwright smoke/empty-state coverage. Verification pending."
+      - working: true
+        agent: "main"
+        comment: "Verified frontend slice: pnpm typecheck passed; PLAYWRIGHT_PORT=3804 admin-waivers spec passed 4/4 across chromium-mobile and webkit-mobile after tightening one ambiguous test selector; admin-shell spec passed 44/44 with /admin/waivers route and drawer nav included; pnpm build passed with /admin/waivers at 5.56 kB and admin first-load 155 kB. Browser plugin render check against a local mock BFF loaded /admin/waivers, saw nav/header/current document/two rows/status chips, and reported no warn/error logs."
+      - working: true
+        agent: "main"
+        comment: "Re-verified after backend/frontend contract alignment in the shared worktree: frontend pnpm typecheck passed; frontend pnpm build passed; PLAYWRIGHT_PORT=3806 admin-waivers spec passed 4/4; PLAYWRIGHT_PORT=3807 admin-shell spec passed 44/44 including /admin/waivers, coach smoke, and parent smoke."
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 14
+  test_sequence: 17
   run_ui: true
 test_plan:
   current_focus: []
@@ -349,6 +377,14 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "Rally admin waivers Slice 2 committed verification set: backend focused waiver suite passed 6/6; frontend pnpm typecheck/build passed; focused admin-waivers Playwright passed 4/4 on PLAYWRIGHT_PORT=3806; admin-shell Playwright passed 44/44 on PLAYWRIGHT_PORT=3807, including waivers nav plus coach/parent smoke routes. Full backend suite, full Playwright suite, Lighthouse, and real-data browser smoke were not rerun for this slice."
+  - agent: "main"
+    message: "Rally admin waivers backend slice verified: focused pytest for application/contract/interface waiver tests passed 6/6; admin waiver + admin directory + structural layering subset passed 15/15. Full backend/v2 suite was attempted and failed outside this slice on the existing Python 3.14 ULID() no-argument TypeError across event/billing/attendance tests; no waiver tests failed."
+  - agent: "main"
+    message: "Rally admin waivers frontend slice ready for verification: exercise /admin/waivers with mocked GET /api/v2/admin/waivers, confirm summary counts, current waiver metadata fallback, BFF-returned rows only, empty state, and nav route mounting. No backend files edited."
+  - agent: "main"
+    message: "Rally admin waivers frontend slice verified: frontend pnpm typecheck passed; focused admin-waivers Playwright passed 4/4 on chromium-mobile + webkit-mobile; admin-shell Playwright passed 44/44 on chromium-mobile + webkit-mobile with the waivers route mounted; frontend pnpm build passed; Browser plugin render check on localhost:3804 with a local mock BFF confirmed nav/header/current document/two rows/status chips and no warn/error logs. Backend files currently dirty in the shared worktree belong to another worker and were not edited by this frontend slice."
   - agent: "main"
     message: "Verification: backend/.venv/bin/python -m pytest backend/v2/tests -q => 117 passed; pnpm build => passed; pnpm typecheck => passed; pnpm e2e => 6 passed, 14 skipped; v2 backend booted against academy_manager_local and /api/v2/healthz returned 200."
   - agent: "main"

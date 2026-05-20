@@ -36,6 +36,7 @@ const ADMIN_ROUTES = [
   { href: "/admin/payouts", testid: "admin-payouts" },
   { href: "/admin/audit-logs", testid: "admin-audit-logs" },
   { href: "/admin/messages", testid: "admin-messages" },
+  { href: "/admin/waivers", testid: "admin-waivers" },
 ] as const;
 
 const SETTINGS_PANELS = [
@@ -131,6 +132,20 @@ async function stubAdminBff(page: Page) {
   await page.route("**/api/v2/admin/messages*", (route) =>
     fulfillJson(route, { messages: [] })
   );
+  await page.route("**/api/v2/admin/waivers*", (route) =>
+    fulfillJson(route, {
+      summary: {
+        signed_current: 0,
+        pending_signature: 0,
+        expiring_30d: 0,
+        outdated_version: 0,
+        active_students: 0,
+        adoption_rate: null,
+      },
+      current_waiver: null,
+      waivers: [],
+    })
+  );
   await page.route("**/api/v2/admin/pause-requests*", (route) =>
     fulfillJson(route, { requests: [] })
   );
@@ -210,6 +225,7 @@ test.describe("Rally admin shell", () => {
     await expect(drawer.getByText("WORK", { exact: true })).toBeVisible();
     await expect(drawer.getByText("MONEY", { exact: true })).toBeVisible();
     await expect(drawer.getByText("COMMS · OPS", { exact: true })).toBeVisible();
+    await expect(drawer.getByRole("link", { name: /waivers/i })).toBeVisible();
     await drawer.getByLabel("Close menu").click();
     await expect(drawer).toBeHidden();
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);

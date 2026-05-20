@@ -200,6 +200,48 @@ export interface AdminMessageList {
   messages: AdminMessageView[];
 }
 
+export type AdminWaiverStatus = "signed" | "pending" | "expiring" | "outdated";
+
+export interface AdminWaiverSummary {
+  signed_current: number;
+  pending_signature: number;
+  expiring_30d: number;
+  outdated_version: number;
+  active_students?: number;
+  adoption_rate?: number | null;
+}
+
+export interface AdminCurrentWaiverView {
+  title: string;
+  version: string;
+  description?: string | null;
+  effective_at?: string | null;
+  last_edited_at?: string | null;
+  signed_count?: number | null;
+  total_count?: number | null;
+  adoption_rate?: number | null;
+}
+
+export interface AdminWaiverStudentRow {
+  waiver_id: string;
+  student_id: string;
+  student_name: string;
+  parent_id: string;
+  parent_name: string | null;
+  parent_email: string | null;
+  status: AdminWaiverStatus;
+  version: string | null;
+  signed_at: string | null;
+  method: string | null;
+  expires_at: string | null;
+}
+
+export interface AdminWaiverList {
+  summary: AdminWaiverSummary;
+  current_waiver?: AdminCurrentWaiverView | null;
+  waivers: AdminWaiverStudentRow[];
+}
+
 export interface BroadcastRequest {
   body: string;
 }
@@ -553,6 +595,10 @@ export function sendDm(payload: DmRequest): Promise<AdminMessageView> {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export function listAdminWaivers(): Promise<AdminWaiverList> {
+  return apiFetch<AdminWaiverList>("/admin/waivers", { method: "GET" });
 }
 
 // ---------------------------------------------------------------------------

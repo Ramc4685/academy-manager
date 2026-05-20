@@ -42,6 +42,9 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
+    ListAdminWaivers,
+)
 from backend.v2.shared.comms import CommsService
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     ListAdminUsers,
@@ -100,6 +103,8 @@ class AdminUseCases:
     export_report_csv: object  # callable
     # comms
     comms: CommsService
+    # waivers
+    list_admin_waivers: ListAdminWaivers
     # settings
     get_academy_use_case: GetAcademyUseCase
     update_academy_use_case: UpdateAcademyUseCase
