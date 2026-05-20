@@ -84,7 +84,10 @@ class RealStripeGateway(StripeGateway):
                 cancel_url=cancel_url,
                 client_reference_id=parent_id,
                 metadata=metadata,
-                subscription_data={"metadata": metadata | {"enrollment_id": enrollment_id}},
+                subscription_data={
+                    "metadata": metadata | {"enrollment_id": enrollment_id},
+                    "proration_behavior": "none",
+                },
             )
 
         result = await asyncio.to_thread(_create)
@@ -124,3 +127,17 @@ class RealStripeGateway(StripeGateway):
 
         result = await asyncio.to_thread(_create)
         return str(result.id)
+
+    async def cancel_subscription(
+        self, stripe_subscription_id: str, *, at_period_end: bool
+    ) -> None:
+        def _cancel() -> None:
+            if at_period_end:
+                self._stripe.Subscription.modify(
+                    stripe_subscription_id,
+                    cancel_at_period_end=True,
+                )
+            else:
+                self._stripe.Subscription.delete(stripe_subscription_id)
+
+        await asyncio.to_thread(_cancel)

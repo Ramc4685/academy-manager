@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 
-from backend.v2.contexts.billing.domain.models import Payment, Subscription
+from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment, Subscription
+from backend.v2.contexts.billing.domain.proration import (
+    BillingCalculationSnapshot,
+    BillingPeriod,
+    ClassOccurrence,
+)
 
 
 class PaymentRepository(Protocol):
@@ -19,6 +25,19 @@ class PaymentRepository(Protocol):
 class SubscriptionRepository(Protocol):
     async def save(self, subscription: Subscription) -> None: ...
     async def get_by_stripe_sub(self, stripe_sub: str) -> Subscription | None: ...
+    async def latest_for_enrollment(self, enrollment_id: str) -> Subscription | None: ...
+
+
+class CreditLedgerRepository(Protocol):
+    async def create(self, entry: CreditLedgerEntry) -> None: ...
+    async def list_for_parent(self, parent_id: str) -> list[CreditLedgerEntry]: ...
+    async def balance_for_parent(self, parent_id: str) -> int: ...
+    async def apply_available_credits(
+        self, *, parent_id: str, invoice_id: str, amount_due_cents: int
+    ) -> int: ...
+    async def find_active_for_enrollment(
+        self, *, enrollment_id: str, type: str
+    ) -> CreditLedgerEntry | None: ...
 
 
 class StripeEventDedup(Protocol):
@@ -72,6 +91,11 @@ class StripeGateway(Protocol):
     async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
         """Returns Stripe refund id."""
 
+    async def cancel_subscription(
+        self, stripe_subscription_id: str, *, at_period_end: bool
+    ) -> None:
+        """Cancel a Stripe subscription now or at period end."""
+
 
 class CapacityReservation(Protocol):
     """Cross-context port: Billing uses this to ask Enrollment whether a
@@ -80,3 +104,67 @@ class CapacityReservation(Protocol):
 
     async def try_reserve(self, session_id: str) -> bool: ...
     async def release(self, session_id: str) -> None: ...
+
+
+# ---------------------------------------------------------------------------
+# Ports for QuoteEnrollment use case
+# ---------------------------------------------------------------------------
+
+
+class SessionLoader(Protocol):
+    """Fetch a raw session document by its ID."""
+
+    async def get_by_id(self, session_id: str) -> dict | None: ...
+
+
+class OccurrenceCatalog(Protocol):
+    """Enumerate class occurrences for a session within a billing period."""
+
+    async def list_for_session(
+        self, session_doc: dict, period: BillingPeriod
+    ) -> list[ClassOccurrence]: ...
+
+
+class SnapshotWriter(Protocol):
+    """Persist billing calculation snapshots (storage only, no policy)."""
+
+    async def persist_open(
+        self,
+        *,
+        snapshot: BillingCalculationSnapshot,
+        session_id: str,
+        parent_id: str | None,
+        student_id: str | None,
+        enrollment_id: str | None,
+        ttl_minutes: int,
+        now: datetime,
+    ) -> BillingCalculationSnapshot:
+        """Store snapshot as OPEN and return the stored copy with snapshot_id / expires_at."""
+        ...
+
+    async def consume(self, snapshot_id: str) -> BillingCalculationSnapshot | None:
+        """Atomically transition OPEN → CONSUMED and return the updated snapshot."""
+        ...
+
+    async def persist_consumed_first_month(
+        self,
+        *,
+        snapshot: BillingCalculationSnapshot,
+        enrollment_id: str,
+        session_id: str,
+        student_id: str,
+        now: datetime,
+    ) -> str:
+        """Store a CONSUMED first-month proration snapshot; return snapshot_id."""
+        ...
+
+    async def persist_monthly_tuition(
+        self,
+        *,
+        snapshot: BillingCalculationSnapshot,
+        enrollment_id: str,
+        session_id: str,
+        student_id: str,
+    ) -> str:
+        """Store a CONSUMED monthly-tuition snapshot; return snapshot_id."""
+        ...

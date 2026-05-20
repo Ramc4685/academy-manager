@@ -11,7 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-EnrollmentStatus = Literal["active", "paused", "cancelled"]
+EnrollmentStatus = Literal["active", "paused", "cancelled", "withdrawn"]
 SessionStatus = Literal["scheduled", "cancelled", "completed"]
 
 

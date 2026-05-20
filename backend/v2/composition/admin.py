@@ -7,6 +7,7 @@ from typing import Any
 from datetime import date, datetime, time, timedelta, timezone
 import csv
 import io
+from zoneinfo import ZoneInfo
 
 from bson import ObjectId as BsonObjectId
 
@@ -19,6 +20,10 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     MarkPaymentPaid,
     UndoPaymentPaid,
 )
+from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
+    QuoteEnrollment,
+    QuoteEnrollmentCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
     AcademyRevenueQuery,
     MongoExpenseRepository,
@@ -26,8 +31,18 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
     RecordExpense,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
+from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
+    ApproveWithdrawalCredit,
+    PreviewWithdrawalCredit,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
+    MongoCreditLedgerRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
+    MongoSubscriptionRepository,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     CancelEnrollment,
@@ -148,7 +163,9 @@ def compose_admin(
     decline_pause_request = DeclinePauseRequest(pause_requests=pause_requests)
 
     # Billing
-    payments_repo = MongoPaymentRepository(db)
+    credits_repo = MongoCreditLedgerRepository(db)
+    payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
+    subscriptions_repo = MongoSubscriptionRepository(db)
     issue_refund = IssueRefund(
         payment_repo=payments_repo,
         stripe=stripe,
@@ -159,6 +176,18 @@ def compose_admin(
     mark_payment_paid = MarkPaymentPaid(payments=payments_repo)
     apply_payment_discount = ApplyPaymentDiscount(payments=payments_repo)
     undo_payment_paid = UndoPaymentPaid(payments=payments_repo)
+    preview_withdrawal_credit = PreviewWithdrawalCredit(
+        payments=payments_repo,
+        enrollments=enrollments_w,
+    )
+    approve_withdrawal_credit = ApproveWithdrawalCredit(
+        payments=payments_repo,
+        credits=credits_repo,
+        enrollments=enrollments_w,
+        subscriptions=subscriptions_repo,
+        stripe=stripe,
+        academy_id=academy_id,
+    )
 
     # Finance (# FINANCE)
     expenses_repo = MongoExpenseRepository(db)
@@ -378,6 +407,22 @@ def compose_admin(
     async def list_payments_recent():
         return await payments_repo.list_recent_admin()
 
+    _quote_enrollment_uc = QuoteEnrollment(
+        sessions=payments_repo,
+        snapshots=payments_repo,
+        occurrences=payments_repo,
+    )
+
+    async def quote_enrollment(*, session_id: str, student_id: str | None = None, start_date: str | None = None):
+        return await _quote_enrollment_uc.execute(
+            QuoteEnrollmentCommand(
+                session_id=session_id,
+                billing_start_at=_start_date_to_datetime(start_date),
+                calculated_by="admin",
+                student_id=student_id,
+            )
+        )
+
     async def list_audit_logs():
         cursor = db["audit_logs"].find({"academy_id": academy_id}).sort([("created_at", -1)]).limit(200)
         rows: list[dict[str, Any]] = []
@@ -513,6 +558,9 @@ def compose_admin(
         approve_pause_request=approve_pause_request,
         decline_pause_request=decline_pause_request,
         issue_refund=issue_refund,
+        quote_enrollment=quote_enrollment,
+        preview_withdrawal_credit=preview_withdrawal_credit,
+        approve_withdrawal_credit=approve_withdrawal_credit,
         list_payments_recent=list_payments_recent,
         generate_monthly_payments=generate_monthly_payments,
         mark_payment_paid=mark_payment_paid,
@@ -539,3 +587,14 @@ def compose_admin(
         get_academy_gateway_use_case=get_academy_gateway_use_case,
         change_user_role=change_user_role,
     )
+
+
+def _start_date_to_datetime(value: str | None) -> datetime:
+    if not value:
+        return datetime.now(timezone.utc)
+    local = datetime.combine(
+        datetime.fromisoformat(value).date(),
+        time.min,
+        tzinfo=ZoneInfo("America/Chicago"),
+    )
+    return local.astimezone(timezone.utc)

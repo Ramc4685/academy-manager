@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from bson import ObjectId
 
 from db import get_db
+from services.billing_proration import persist_legacy_snapshot, prorated_first_month_quote
 
 log = logging.getLogger(__name__)
 
@@ -63,7 +64,26 @@ async def generate_monthly_invoices(period: str, actor: str = "scheduler") -> di
         session = await db.sessions.find_one({"_id": ObjectId(session_id)})
         if not session:
             continue
-        price = float(session.get("monthly_price", 0))
+        now = datetime.now(timezone.utc)
+        quote = prorated_first_month_quote(
+            session=session,
+            enrollment=e,
+            period=period,
+            calculated_at=now,
+            calculated_by=actor,
+        )
+        snapshot_id = None
+        if quote is not None:
+            price = quote.final_amount_cents / 100
+            snapshot_id = await persist_legacy_snapshot(
+                db,
+                quote=quote,
+                enrollment=e,
+                session=session,
+                period=period,
+            )
+        else:
+            price = float(session.get("monthly_price", 0))
         doc = {
             "parent_user_id": e["parent_user_id"],
             "student_id": e["student_id"],
@@ -73,6 +93,7 @@ async def generate_monthly_invoices(period: str, actor: str = "scheduler") -> di
             "amount": price,
             "discount": 0,
             "final_amount": price,
+            "calculation_snapshot_id": snapshot_id,
             "status": "pending",
             "payment_date": None,
             "payment_method": None,

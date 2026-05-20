@@ -184,6 +184,28 @@ backend:
       - working: true
         agent: "main"
         comment: "Added Enrollment use case and admin BFF endpoint to move a student between sessions by reserving the target seat, updating the enrollment, and releasing the source seat. Interface tests cover the reservation/release behavior."
+  - task: "first-month class-count proration quote snapshots"
+    implemented: true
+    working: true
+    file: "backend/v2/contexts/billing/domain/proration.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added the shared first-month proration policy, persisted quote snapshots, v2 parent/admin quote endpoints, legacy billing bridge usage, invoice-key idempotency for monthly generation, and snapshot traceability on payments. Focused proration/BFF tests passed, full backend v2 suite passed, and frontend build/typecheck passed."
+  - task: "early withdrawal account credits"
+    implemented: true
+    working: true
+    file: "backend/v2/contexts/billing/application/use_cases/withdrawal_credit.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Implemented Slice 2 withdrawal credits: net-paid credit policy, account credit ledger, admin preview/approval BFF endpoints, subscription cancellation, parent credit balance endpoint, and automatic FIFO credit application during monthly generation. Full backend v2 suite passed."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -321,10 +343,32 @@ frontend:
       - working: true
         agent: "main"
         comment: "Removed the legacy CRA frontend, promoted the Next.js BFF/DDD frontend to the canonical frontend/ path, updated CI/docs/deployment references, and verified only one top-level frontend directory remains."
+  - task: "parent/admin proration quote display"
+    implemented: true
+    working: true
+    file: "frontend/app/(parent)/parent/onboarding/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Parent onboarding review and admin roster add dialog now request server-issued quote snapshots and display first-month amount plus billed-for N of M class text. Verified with frontend typecheck and production build."
+  - task: "withdrawal credit admin and parent UI"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/admin/sessions/[id]/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added admin roster withdrawal dialog with credit preview/approval and parent payments available-credit display. Verified with frontend typecheck and production build; browser smoke not run."
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 13
+  test_sequence: 15
   run_ui: true
 test_plan:
   current_focus: []
@@ -405,6 +449,10 @@ agent_communication:
   - agent: "main"
     message: "PR #35 review fix: restored the frontend Docker build target for docker compose with a Next.js Dockerfile/.dockerignore, updated docker-compose.yml to use BFF_API_ORIGIN/NEXT_PUBLIC_* args and map localhost:3000 to the Next server, and made backend/.env optional for clean-checkout compose config. Verification: docker compose config passed, frontend pnpm typecheck/lint/build passed, and git diff --check passed. docker compose build frontend could not run because the local Docker daemon is not running."
   - agent: "main"
+    message: "Monthly proration Slice 1 implementation: added shared billing proration domain policy/snapshots, v2 parent/admin quote endpoints, payment snapshot traceability, monthly invoice-key idempotency, legacy bridge usage, migration indexes, and parent/admin quote displays. Verification: backend focused proration/BFF suite passed (30), backend/v2 suite passed (156), frontend pnpm build passed, frontend pnpm typecheck passed when rerun after build, and git diff --check passed. One parallel typecheck attempt failed because Next build was regenerating .next/types concurrently; rerun succeeded."
+  - agent: "main"
+    message: "Withdrawal credits Slice 2 implementation: added EarlyWithdrawalCreditPolicy, account_credit_ledger repository/indexes, admin withdrawal credit preview/approval, enrollment withdrawal status updates, Stripe subscription cancellation at period end by default, parent credit balance endpoint/UI, and automatic FIFO credit application to generated monthly payments. Verification: focused Slice 2 backend suite passed (14), full backend/v2 suite passed (168), frontend pnpm typecheck passed, frontend pnpm build passed, compileall passed for touched backend packages, and git diff --check passed. Browser smoke was not run."
+  - agent: "main"
     message: "Rally admin Chunk 2 pre-flight: real-data sweep against academy_manager_local Mongo (44 users, 46 students, 4 sessions, 73 payments, 46 enrollments, 8 attendance, 3 expenses, 2 payout_rules, 46 waiver_acceptances). Empty collections: waitlist, coach_payouts, pause_requests, invites — Rally pages for those will render the existing empty states (not a code gap). Sessions/Payments/Students/Expenses DTOs all hydrate correctly through the v2 BFF (BFF translates dollars->cents, name->title, first_name+last_name->full_name). Key gap discovered: no academies collection exists; every doc references academy_id='default-academy' but no backing doc. Patched docs/superpowers/plans/2026-05-19-rally-admin-shell-settings-restyles.md so GetAcademyUseCase upserts safe defaults on first read (display_name=academy_id, timezone=UTC) instead of 404-ing. AcademyRepo gains upsert_defaults using $setOnInsert (idempotent, no migration). Other observed gaps deferred per Chunk 2 contract: AdminSessionView lacks coach_name (Phase 6/D1), AdminStudentView lacks attendance_rate (separate follow-on), invite endpoint stays conditional on B3 decision rule. No code changes this commit; plan-only update so Chunk 2 implementation lands correctly on fresh DBs."
   - agent: "main"
     message: "Rally admin arc — Phase 3 close-out verified on branch feat/rally-admin-foundation. Restyled dashboard (admin/page.tsx), sessions list, sessions detail, payments (promoted real impl out of billing/page.tsx, no reverse redirect), and renamed admin/comms → admin/messages (git mv; backend BFF path /admin/messages/* unchanged). Updated (shared)/messages link target and the screen-meta.ts nav match. New Playwright spec frontend/e2e/specs/admin-shell.spec.ts: 12/12 pass on PLAYWRIGHT_PORT=3801 (collision-free port; port 3001 is held by an unrelated worktree's dev server). Dashboard JSX normalized once near the query-derived values (sessions/payments/revenueByMonth as empty defaults) to prevent the Cannot-read-'length'-of-undefined TypeError that surfaced when the BFF returned partial payloads — this was also the indirect cause of an earlier mobile-drawer flake, which cleared once the runtime crash was gone. Verifications: pnpm typecheck clean, pnpm build clean (admin landing chunk 2.96 kB / 152 kB First Load, well under the 300 KB budget), pnpm exec playwright test e2e/specs/admin-shell.spec.ts 12/12 pass (chromium-mobile + webkit-mobile). Cross-persona regression smoke not yet captured — coach/parent pages were not touched and the Playwright suite doesn't currently include broad coach/parent regression coverage; manual cross-persona check is a follow-on. Skipped checks: full pnpm exec playwright test (this conversation only ran the new admin-shell spec); Lighthouse perf budget (relied on next-build chunk sizes); pytest backend/v2/tests (no backend changes in Phase 3). Carried-forward follow-ons captured in docs/superpowers/plans/2026-05-19-rally-admin-shell-settings-restyles.md: Phase 4-9 (Settings deep dive with 7 panels + 7 new BFF endpoint handlers across 5 paths under /api/v2/admin/, restyle remaining 12 pages, finance split, route cleanup, expanded e2e). Spec at docs/superpowers/specs/2026-05-19-rally-admin-shell-settings-restyles-design.md. Playwright benign-warning ignore-list: /Download the React DevTools/i, /Fast Refresh/i, /HMR/i, /webpack-internal/i."
@@ -421,3 +469,5 @@ agent_communication:
       Remaining risks and follow-ons: dashboard attention endpoint, Branding storage backend, Stripe Connect onboarding writes, GDPR account deletion, richer Students filtering/search/pagination, and an overlap audit between legacy /admin/users and Settings Roles.
   - agent: "main"
     message: "Additional real local smoke after user-requested testing: started the worktree backend on 127.0.0.1:8012 with FIREBASE_AUTH_ENABLED=true and the existing Firebase Auth emulator on 127.0.0.1:9099, then started the frontend on localhost:3802 with BFF_API_ORIGIN=http://127.0.0.1:8012. Health checks passed through both backend and frontend proxy. Signed into the Firebase Auth emulator as ramchand4685@gmail.com / Admin@12345 and confirmed real BFF responses for /api/v2/me, /api/v2/admin/academy, /api/v2/admin/academy/gateway, /api/v2/admin/users, /api/v2/admin/finance/expenses, and /api/v2/admin/finance/payouts. Browser smoke through the real login UI mounted /admin, /admin/sessions, /admin/students, /admin/users, /admin/waitlist, /admin/pause-requests, /admin/payments, /admin/dues, /admin/reports, /admin/coach-payslip, /admin/expenses, /admin/payouts, /admin/audit-logs, /admin/messages, and every Settings panel (academy, fees, gateway, notify, roles, branding, data). The smoke caught no API 4xx/5xx responses and no app console errors. Stopped the backend/frontend dev servers after the run."
+  - agent: "main"
+    message: "PR #40 review fixes: (1) Credit ledger atomicity — apply_available_credits now decrements remaining_amount_cents and pushes invoice_id onto a new applied_invoice_ids array in a single find_one_and_update; credit_applications becomes audit-only. Removes the race where a crash between insert_one and update_one orphaned a dedup record. (2) Snapshot enrollment_id backfill — _handle_onboarding_checkout_completed updates billing_calculation_snapshots.enrollment_id to the real enrollment_id after the enrollment row is created, so _amount_for_invoice can match the snapshot. (3) Zero-proration 422 — the misleading 400 'monthly price must be > 0' is now scoped to the fallback path; when proration legitimately yields $0 a 422 with accurate detail is returned and Stripe is not called. (4) DDD boundary refactor — extracted QuoteEnrollment application use case + SessionLoader/OccurrenceCatalog/SnapshotWriter ports; MongoPaymentRepository class methods no longer instantiate FirstMonthProrationPolicy; admin/parent composition closures call the use case instead of the repo. Verification: backend/v2/tests => 172 passed; targeted backend/tests on onboarding/billing/proration/credit/refund modules => 34 passed (test_onboarding_checkout 18, test_payment_undo_and_refund 15, test_billing_proration_bridge 1). Followups: generate_monthly_payments still sits on MongoPaymentRepository (its calculation now delegates to module-level functions); extracting it into a proper application use case is a future slice."

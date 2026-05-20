@@ -380,11 +380,16 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     UndoPaymentPaid,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
+from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
+    ApproveWithdrawalCreditResult,
+    WithdrawalCreditPreviewResult,
+)
 from backend.v2.contexts.billing.domain.errors import (
     PaymentNotFound,
     PaymentOperationNotAllowed,
 )
 from backend.v2.contexts.billing.domain.models import Payment
+from backend.v2.contexts.billing.domain.proration import BillingCalculationSnapshot
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
 )
@@ -644,6 +649,31 @@ class FakePaymentRepo:
         self.rows[payment_id] = p.model_copy(update={"status": "pending"})
 
 
+class _FakePreviewWithdrawalCredit:
+    async def execute(self, cmd):
+        _ = cmd
+        return WithdrawalCreditPreviewResult(
+            credit_amount_cents=3750,
+            paid_tuition_cents=10_000,
+            refunded_tuition_cents=0,
+            net_paid_tuition_cents=10_000,
+            unused_eligible_classes=3,
+            paid_period_eligible_classes=8,
+            formula="max(10000 - 0, 0) * 3 / 8",
+        )
+
+
+class _FakeApproveWithdrawalCredit:
+    async def execute(self, cmd):
+        _ = cmd
+        return ApproveWithdrawalCreditResult(
+            status="APPROVED",
+            credit_amount_cents=3750,
+            credit_balance_cents=3750,
+            credit_id="credit-1",
+        )
+
+
 @dataclass
 class FakeExpenseRepo:
     rows: dict[str, Expense] = field(default_factory=dict)
@@ -821,6 +851,25 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     async def list_payments_recent():
         return list(payments.rows.values())
 
+    async def quote_enrollment(*, session_id, student_id=None, start_date=None):
+        _ = (session_id, student_id, start_date)
+        return BillingCalculationSnapshot(
+            snapshot_id="snap-1",
+            monthly_price_cents=10_000,
+            billing_period_start=datetime(2026, 5, 1, tzinfo=timezone.utc),
+            billing_period_end=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            billing_period_label="2026-05",
+            timezone="America/Chicago",
+            total_eligible_classes=8,
+            billable_remaining_classes=3,
+            proration_ratio="3/8",
+            final_amount_cents=3_750,
+            included_occurrence_ids=["class-6", "class-7", "class-8"],
+            excluded_occurrences={"class-1": "ELAPSED_BEFORE_ENROLLMENT"},
+            calculated_at=datetime(2026, 5, 16, tzinfo=timezone.utc),
+            calculated_by="admin",
+        )
+
     async def list_audit_logs():
         return []
 
@@ -892,6 +941,9 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         approve_pause_request=approve_pause_request,
         decline_pause_request=decline_pause_request,
         issue_refund=issue_refund,
+        quote_enrollment=quote_enrollment,
+        preview_withdrawal_credit=_FakePreviewWithdrawalCredit(),  # type: ignore[arg-type]
+        approve_withdrawal_credit=_FakeApproveWithdrawalCredit(),  # type: ignore[arg-type]
         list_payments_recent=list_payments_recent,
         generate_monthly_payments=generate_monthly_payments,
         mark_payment_paid=mark_payment_paid,

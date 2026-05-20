@@ -137,6 +137,24 @@ pnpm build
 pnpm generate:api
 ```
 
+Local testing stack:
+
+```bash
+scripts/local_test_stack.sh status
+scripts/local_test_stack.sh all
+scripts/local_test_stack.sh smoke
+scripts/local_test_stack.sh seed
+scripts/local_test_stack.sh stop
+```
+
+Use this helper for local manual testing. It checks/starts MongoDB,
+Firebase Auth emulator, backend, and frontend with the local Firebase/Mongo/BFF
+environment wired together. It writes logs and PID files under
+`/tmp/academy-manager-local`. `stop` only stops processes started by this
+script. The frontend still needs a real public Firebase web API key in
+`frontend/.env.local`, `frontend/.env`, or the environment; do not fall back to
+`dummy` for Firebase Auth testing.
+
 Container smoke:
 
 ```bash
