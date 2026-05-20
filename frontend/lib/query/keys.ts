@@ -28,6 +28,7 @@ export const queryKeys = {
     academy: () => ["admin", "academy"] as const,
     fees: () => ["admin", "academy", "fees"] as const,
     notifications: () => ["admin", "academy", "notifications"] as const,
+    gateway: () => ["admin", "academy", "gateway"] as const,
   },
 } as const;
 

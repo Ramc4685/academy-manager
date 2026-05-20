@@ -915,6 +915,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         update_academy_fees_use_case=AsyncMock(),
         get_academy_notifications_use_case=AsyncMock(),
         update_academy_notifications_use_case=AsyncMock(),
+        get_academy_gateway_use_case=AsyncMock(),
+        change_user_role=AsyncMock(),
     )
 
 

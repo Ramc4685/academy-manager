@@ -34,6 +34,7 @@ class MongoAcademyRepository:
                 "late_fee_cents": None,
                 "grace_days": None,
             },
+            "manual_methods": ["cash", "check"],
             "notifications": {
                 "dues_reminders": False,
                 "attendance_alerts": False,

@@ -9,6 +9,12 @@ from backend.v2.contexts.identity.application.get_academy_notifications_use_case
     GetAcademyNotificationsOutput,
 )
 from backend.v2.contexts.identity.application.get_academy_use_case import GetAcademyOutput
+from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
+    GetAcademyGatewayOutput,
+)
+from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+    AdminUserSummary,
+)
 
 
 def test_get_academy_contract(admin_client):
@@ -107,3 +113,50 @@ def test_get_and_patch_notifications_contract(admin_client):
     admin_client.use_cases.update_academy_notifications_use_case.execute.assert_awaited_once_with(
         "acad", {"attendance_alerts": True}
     )
+
+
+def test_get_gateway_contract(admin_client):
+    admin_client.use_cases.get_academy_gateway_use_case.execute.return_value = (
+        GetAcademyGatewayOutput(
+            stripe_connected=True,
+            stripe_account_id_masked="acct...1234",
+            manual_methods=["cash", "check"],
+        )
+    )
+
+    response = admin_client.get("/api/v2/admin/academy/gateway")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "stripe_connected": True,
+        "stripe_account_id_masked": "acct...1234",
+        "manual_methods": ["cash", "check"],
+    }
+    admin_client.use_cases.get_academy_gateway_use_case.execute.assert_awaited_once_with("acad")
+
+
+def test_patch_user_role_contract(admin_client):
+    admin_client.use_cases.change_user_role.execute.return_value = AdminUserSummary(
+        user_id="coach-1",
+        email="coach@example.com",
+        display_name="Coach One",
+        role="admin",
+        status="active",
+    )
+
+    response = admin_client.patch(
+        "/api/v2/admin/users/coach-1/role", json={"role": "admin"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["role"] == "admin"
+    admin_client.use_cases.change_user_role.execute.assert_awaited_once_with(
+        "coach-1", "admin", academy_id="acad"
+    )
+
+
+def test_patch_user_role_forbids_self_lockout(admin_client):
+    response = admin_client.patch("/api/v2/admin/users/u-admin/role", json={"role": "coach"})
+
+    assert response.status_code == 400, response.text
+    admin_client.use_cases.change_user_role.execute.assert_not_awaited()

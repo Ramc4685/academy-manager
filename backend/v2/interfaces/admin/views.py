@@ -329,3 +329,13 @@ class UpdateAdminNotificationsRequest(BaseModel):
     dues_reminders: bool | None = None
     attendance_alerts: bool | None = None
     daily_digest_to_admin: bool | None = None
+
+
+class AdminGatewayView(BaseModel):
+    stripe_connected: bool
+    stripe_account_id_masked: str | None = None
+    manual_methods: list[str]
+
+
+class UpdateAdminUserRoleRequest(BaseModel):
+    role: Literal["admin", "coach", "parent"]
