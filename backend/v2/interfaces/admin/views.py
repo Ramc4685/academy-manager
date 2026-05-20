@@ -365,6 +365,8 @@ class AdminAcademyView(BaseModel):
     contact_phone: str | None = None
     hours_text: str | None = None
     address: str | None = None
+    logo_url: str | None = None
+    brand_color: str | None = None
 
 
 class UpdateAdminAcademyRequest(BaseModel):
@@ -374,6 +376,8 @@ class UpdateAdminAcademyRequest(BaseModel):
     contact_phone: str | None = None
     hours_text: str | None = None
     address: str | None = None
+    logo_url: str | None = None
+    brand_color: str | None = None
 
 
 class AdminFeesView(BaseModel):

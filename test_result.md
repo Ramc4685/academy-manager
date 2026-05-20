@@ -212,6 +212,17 @@ backend:
       - working: true
         agent: "main"
         comment: "Slice 3 backend implemented: added GET /api/v2/admin/dashboard/attention as a BFF-level aggregator over existing dues follow-up, pending pause requests, waiver status, and session pressure signals. Focused interface verification passed: uv run pytest v2/tests/interface/test_admin_dashboard_attention.py -q => 3 passed."
+  - task: "Rally admin settings branding backend slice"
+    implemented: true
+    working: true
+    file: "backend/v2/interfaces/admin/academy_routes.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Slice 4 settings depth: extended the existing academy BFF profile with real persisted logo_url and brand_color fields. No upload/storage or destructive data controls were added. Focused settings interface tests passed: uv run pytest v2/tests/interface/test_admin_settings.py -q => 7 passed."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -388,10 +399,21 @@ frontend:
       - working: true
         agent: "main"
         comment: "Slice 3 frontend implemented: dashboard now calls listAdminAttention and renders a Rally Needs your attention lane with BFF-provided links/counts, plus truthful loading/error/empty states. Verification: frontend pnpm typecheck passed; frontend pnpm build passed after rerunning without concurrent Playwright; PLAYWRIGHT_PORT=3808 admin-shell spec passed 46/46 including the attention assertion and coach/parent smoke routes."
+  - task: "Rally admin settings branding and data-policy slice"
+    implemented: true
+    working: true
+    file: "frontend/components/admin/settings/branding-panel.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Slice 4 settings depth: replaced the Branding coming-next card with a real URL/color form backed by the existing academy BFF, kept upload/email signature work honestly deferred, and added docs/policy/data-retention.md so Data deletion remains policy-gated. Verification: frontend pnpm typecheck passed; frontend pnpm build passed sequentially; PLAYWRIGHT_PORT=3809 admin-shell spec passed 46/46."
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 18
+  test_sequence: 19
   run_ui: true
 test_plan:
   current_focus: []
@@ -399,6 +421,8 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "Rally admin Settings Slice 4 verified: academy BFF now includes persisted logo_url and brand_color; Branding panel edits those real fields; docs/policy/data-retention.md created to gate destructive Data controls. Backend focused settings test passed 7/7; frontend pnpm typecheck/build passed; PLAYWRIGHT_PORT=3809 admin-shell spec passed 46/46. Upload/storage, email signatures, Stripe Connect writes, invites, and deletion/anonymization remain deferred."
   - agent: "main"
     message: "Rally admin dashboard attention Slice 3 verified: backend focused dashboard-attention interface test passed 3/3; frontend pnpm typecheck passed; frontend pnpm build passed when run alone; PLAYWRIGHT_PORT=3808 admin-shell spec passed 46/46 including the new dashboard attention assertion plus coach/parent smoke. A concurrent build+Playwright attempt hit the known Next .next cache race and was discarded; sequential rerun passed."
   - agent: "main"

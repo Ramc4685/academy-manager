@@ -32,4 +32,6 @@ class UpdateAcademyUseCase:
             contact_phone=doc.get("contact_phone"),
             hours_text=doc.get("hours_text"),
             address=doc.get("address"),
+            logo_url=doc.get("logo_url"),
+            brand_color=doc.get("brand_color"),
         )

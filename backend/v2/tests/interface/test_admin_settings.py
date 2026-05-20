@@ -23,6 +23,8 @@ def test_get_academy_contract(admin_client):
         display_name="Court 7",
         timezone="America/Chicago",
         contact_email="ops@example.com",
+        logo_url="https://cdn.example.com/logo.png",
+        brand_color="#2563eb",
     )
 
     r = admin_client.get("/api/v2/admin/academy")
@@ -36,6 +38,8 @@ def test_get_academy_contract(admin_client):
         "contact_phone": None,
         "hours_text": None,
         "address": None,
+        "logo_url": "https://cdn.example.com/logo.png",
+        "brand_color": "#2563eb",
     }
     admin_client.use_cases.get_academy_use_case.execute.assert_awaited_once_with("acad")
 
@@ -45,13 +49,18 @@ def test_patch_academy_contract(admin_client):
         academy_id="acad",
         display_name="Court 7",
         timezone="UTC",
+        brand_color="#facc15",
     )
 
-    r = admin_client.patch("/api/v2/admin/academy", json={"display_name": "Court 7"})
+    r = admin_client.patch(
+        "/api/v2/admin/academy",
+        json={"display_name": "Court 7", "brand_color": "#facc15"},
+    )
 
     assert r.status_code == 200, r.text
+    assert r.json()["brand_color"] == "#facc15"
     admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with(
-        "acad", {"display_name": "Court 7"}
+        "acad", {"display_name": "Court 7", "brand_color": "#facc15"}
     )
 
 

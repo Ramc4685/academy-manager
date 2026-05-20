@@ -20,6 +20,8 @@ class GetAcademyOutput:
     contact_phone: Optional[str] = None
     hours_text: Optional[str] = None
     address: Optional[str] = None
+    logo_url: Optional[str] = None
+    brand_color: Optional[str] = None
 
 
 class GetAcademyUseCase:
@@ -38,4 +40,6 @@ class GetAcademyUseCase:
             contact_phone=doc.get("contact_phone"),
             hours_text=doc.get("hours_text"),
             address=doc.get("address"),
+            logo_url=doc.get("logo_url"),
+            brand_color=doc.get("brand_color"),
         )

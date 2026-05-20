@@ -372,6 +372,8 @@ export interface AdminAcademyView {
   contact_phone: string | null;
   hours_text: string | null;
   address: string | null;
+  logo_url: string | null;
+  brand_color: string | null;
 }
 
 export type UpdateAdminAcademyRequest = Partial<{
@@ -381,6 +383,8 @@ export type UpdateAdminAcademyRequest = Partial<{
   contact_phone: string | null;
   hours_text: string | null;
   address: string | null;
+  logo_url: string | null;
+  brand_color: string | null;
 }>;
 
 export interface AdminFeesView {
