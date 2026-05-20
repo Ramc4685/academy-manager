@@ -273,7 +273,9 @@ def compose_admin(
                     "full_name": full_name,
                     "parent_id": s.parent_id if s else "",
                     "status": e.status,
-                    "enrolled_at": doc.get("created_at"),
+                    # Prefer the semantic enrolled_at field (v2/seed); fall back
+                    # to created_at for any legacy docs that only have that.
+                    "enrolled_at": doc.get("enrolled_at") or doc.get("created_at"),
                 }
             )
         return out
