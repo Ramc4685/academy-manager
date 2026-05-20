@@ -87,6 +87,8 @@ from backend.v2.contexts.identity.application.get_academy_fees_use_case import G
 from backend.v2.contexts.identity.application.update_academy_fees_use_case import UpdateAcademyFeesUseCase
 from backend.v2.contexts.identity.application.get_academy_notifications_use_case import GetAcademyNotificationsUseCase
 from backend.v2.contexts.identity.application.update_academy_notifications_use_case import UpdateAcademyNotificationsUseCase
+from backend.v2.contexts.identity.application.get_academy_gateway_use_case import GetAcademyGatewayUseCase
+from backend.v2.contexts.identity.application.change_user_role_use_case import ChangeUserRole
 from backend.v2.interfaces.admin.deps import AdminUseCases
 from backend.v2.shared.comms import CommsService, MongoMessageRepository
 from backend.v2.shared.config import get_settings
@@ -175,6 +177,8 @@ def compose_admin(
     update_academy_fees_use_case = UpdateAcademyFeesUseCase(academy_repo)
     get_academy_notifications_use_case = GetAcademyNotificationsUseCase(academy_repo)
     update_academy_notifications_use_case = UpdateAcademyNotificationsUseCase(academy_repo)
+    get_academy_gateway_use_case = GetAcademyGatewayUseCase(academy_repo)
+    change_user_role = ChangeUserRole(users_r)
 
     list_admin_users = ListAdminUsers(users_r)
     list_admin_students = ListAdminStudents(students_r)
@@ -532,4 +536,6 @@ def compose_admin(
         update_academy_fees_use_case=update_academy_fees_use_case,
         get_academy_notifications_use_case=get_academy_notifications_use_case,
         update_academy_notifications_use_case=update_academy_notifications_use_case,
+        get_academy_gateway_use_case=get_academy_gateway_use_case,
+        change_user_role=change_user_role,
     )

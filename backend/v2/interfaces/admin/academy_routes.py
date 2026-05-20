@@ -10,6 +10,7 @@ from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
     AdminAcademyView,
     AdminFeesView,
+    AdminGatewayView,
     AdminNotificationsView,
     UpdateAdminAcademyRequest,
     UpdateAdminFeesRequest,
@@ -55,6 +56,15 @@ async def get_academy_fees(
 ) -> AdminFeesView:
     out = await use_cases.get_academy_fees_use_case.execute(claims.academy_id)
     return AdminFeesView(**asdict(out))
+
+
+@router.get("/academy/gateway", response_model=AdminGatewayView)
+async def get_academy_gateway(
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminGatewayView:
+    out = await use_cases.get_academy_gateway_use_case.execute(claims.academy_id)
+    return AdminGatewayView(**asdict(out))
 
 
 @router.patch("/academy/fees", response_model=AdminFeesView)

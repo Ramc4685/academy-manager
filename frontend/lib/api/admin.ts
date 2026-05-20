@@ -153,10 +153,11 @@ export interface ApplyPaymentDiscountRequest {
 
 export interface AdminPayoutView {
   payout_id: string;
+  coach_id: string;
   amount_cents: number;
-  currency: string;
-  arrival_date: string;
-  status: string;
+  period_start: string;
+  period_end: string;
+  paid_at: string | null;
 }
 
 export interface AdminPayoutList {
@@ -167,9 +168,8 @@ export interface AdminExpenseView {
   expense_id: string;
   category: string;
   amount_cents: number;
-  note: string | null;
-  incurred_on: string; // YYYY-MM-DD
-  created_at: string;
+  note: string;
+  incurred_on: string;
 }
 
 export interface AdminExpenseList {
@@ -177,7 +177,7 @@ export interface AdminExpenseList {
 }
 
 export interface CreateExpenseRequest {
-  category: string;
+  category: "rent" | "equipment" | "salary" | "marketing" | "other";
   amount_cents: number;
   note?: string;
   incurred_on?: string;
@@ -321,6 +321,12 @@ export interface AdminNotificationsView {
 
 export type UpdateAdminNotificationsRequest = Partial<AdminNotificationsView>;
 
+export interface AdminGatewayView {
+  stripe_connected: boolean;
+  stripe_account_id_masked: string | null;
+  manual_methods: string[];
+}
+
 // ---------------------------------------------------------------------------
 // Directory
 // ---------------------------------------------------------------------------
@@ -332,6 +338,16 @@ export function listAdminUsers(role?: AdminUserRole): Promise<AdminUserList> {
 
 export function listAdminStudents(): Promise<AdminStudentList> {
   return apiFetch<AdminStudentList>("/admin/students", { method: "GET" });
+}
+
+export function updateAdminUserRole(
+  userId: string,
+  role: AdminUserRole
+): Promise<AdminUserView> {
+  return apiFetch<AdminUserView>(`/admin/users/${encodeURIComponent(userId)}/role`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -588,4 +604,8 @@ export function updateAdminNotifications(
     method: "PATCH",
     body: JSON.stringify(payload),
   });
+}
+
+export function getAdminGateway(): Promise<AdminGatewayView> {
+  return apiFetch<AdminGatewayView>("/admin/academy/gateway", { method: "GET" });
 }

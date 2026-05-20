@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { AcademyPanel } from "@/components/admin/settings/academy-panel";
@@ -32,6 +32,14 @@ export default function AdminSettingsPage() {
 
   const paramsString = searchParams.toString();
   const params = useMemo(() => new URLSearchParams(paramsString), [paramsString]);
+
+  useEffect(() => {
+    if (!searchParams.get("panel") || active !== searchParams.get("panel")) {
+      const next = new URLSearchParams(params);
+      next.set("panel", active);
+      window.history.replaceState(null, "", `${pathname}?${next.toString()}`);
+    }
+  }, [active, params, pathname, searchParams]);
 
   function setPanel(panel: SettingsPanelKey) {
     const next = new URLSearchParams(params);

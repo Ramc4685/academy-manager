@@ -52,6 +52,8 @@ from backend.v2.contexts.identity.application.get_academy_fees_use_case import G
 from backend.v2.contexts.identity.application.update_academy_fees_use_case import UpdateAcademyFeesUseCase
 from backend.v2.contexts.identity.application.get_academy_notifications_use_case import GetAcademyNotificationsUseCase
 from backend.v2.contexts.identity.application.update_academy_notifications_use_case import UpdateAcademyNotificationsUseCase
+from backend.v2.contexts.identity.application.get_academy_gateway_use_case import GetAcademyGatewayUseCase
+from backend.v2.contexts.identity.application.change_user_role_use_case import ChangeUserRole
 
 
 @dataclass
@@ -105,6 +107,8 @@ class AdminUseCases:
     update_academy_fees_use_case: UpdateAcademyFeesUseCase
     get_academy_notifications_use_case: GetAcademyNotificationsUseCase
     update_academy_notifications_use_case: UpdateAcademyNotificationsUseCase
+    get_academy_gateway_use_case: GetAcademyGatewayUseCase
+    change_user_role: ChangeUserRole
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:

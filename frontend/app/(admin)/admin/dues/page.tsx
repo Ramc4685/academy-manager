@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { listDuesFollowup, sendDuesReminders } from "@/lib/api/admin";
@@ -23,19 +24,24 @@ export default function AdminDuesPage() {
     mutationFn: sendDuesReminders,
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["admin", "dues-followup"] }),
   });
+  const { mutate: sendReminderBatch, isPending: sendingReminders } = reminderMutation;
 
   const parents = data?.parents ?? [];
   const totalDue = parents.reduce((sum, parent) => sum + parent.total_due_cents, 0);
 
-  useAdminAction(
-    <Button
-      variant="primary"
-      onClick={() => reminderMutation.mutate()}
-      disabled={reminderMutation.isPending || parents.length === 0}
-    >
-      {reminderMutation.isPending ? "Checking..." : "Send reminders"}
-    </Button>
+  const topbarAction = useMemo(
+    () => (
+      <Button
+        variant="primary"
+        onClick={() => sendReminderBatch()}
+        disabled={sendingReminders || parents.length === 0}
+      >
+        {sendingReminders ? "Checking..." : "Send reminders"}
+      </Button>
+    ),
+    [parents.length, sendReminderBatch, sendingReminders]
   );
+  useAdminAction(topbarAction);
 
   return (
     <section data-testid="admin-dues" className="space-y-5">

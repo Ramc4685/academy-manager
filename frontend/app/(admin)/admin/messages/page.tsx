@@ -3,7 +3,7 @@
 /**
  * Admin messages — Rally restyle.
  *
- * Renamed from /admin/comms. Backend BFF path stays at /admin/messages/*.
+ * Backend BFF path stays at /admin/messages/*.
  * Preserves: broadcast composer, recent broadcasts list, DM thread list,
  * thread view, DM composer, new-DM composer.
  */
