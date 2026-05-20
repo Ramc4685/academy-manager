@@ -35,10 +35,13 @@ class AdminStudentView(BaseModel):
     status: str
     active_session_count: int
     last_seen_at: datetime | None = None
+    attendance_rate: float | None = None
+    dues_status: Literal["current", "due", "overdue"] = "current"
 
 
 class AdminStudentList(BaseModel):
     students: list[AdminStudentView]
+    next_cursor: str | None = None
 
 
 # --- Sessions ---

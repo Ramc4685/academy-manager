@@ -412,7 +412,11 @@ from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist 
 from backend.v2.contexts.enrollment.domain.models import Session
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    AdminStudentPage,
     AdminStudentSummary,
+    decode_student_cursor,
+    encode_student_cursor,
+    full_name_key,
 )
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserSummary,
@@ -528,6 +532,7 @@ class _AdminFakeEnrollmentQuery:
 @dataclass
 class FakeStudentWriter:
     students: dict[str, Any] = field(default_factory=dict)
+    admin_status: dict[str, str] = field(default_factory=dict)
 
     async def upsert(self, student):
         self.students[student.student_id] = student
@@ -862,17 +867,60 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             return [u for u in users if role is None or u.role == role]
 
     class _ListAdminStudents:
-        async def execute(self):
-            return [
-                AdminStudentSummary(
-                    student_id=s.student_id,
-                    full_name=s.full_name,
-                    parent_id=s.parent_id,
-                    status="active",
-                    active_session_count=1,
+        async def execute(self, search=None, status=None, limit=50, cursor=None):
+            rows = []
+            search_key = full_name_key(search or "") if search else None
+            for s in students.students.values():
+                row_status = students.admin_status.get(s.student_id, "active")
+                if status and row_status != status:
+                    continue
+                parent_name = "Parent One" if s.parent_id == "p-1" else None
+                parent_email = "parent@example.com" if s.parent_id == "p-1" else None
+                haystack = " ".join(
+                    full_name_key(value)
+                    for value in (s.full_name, parent_name or "", parent_email or "")
                 )
-                for s in students.students.values()
-            ]
+                if search_key and search_key not in haystack:
+                    continue
+                rows.append(
+                    {
+                        "summary": AdminStudentSummary(
+                            student_id=s.student_id,
+                            full_name=s.full_name,
+                            parent_id=s.parent_id,
+                            parent_name=parent_name,
+                            parent_email=parent_email,
+                            status=row_status,
+                            active_session_count=1,
+                            attendance_rate=None,
+                            dues_status="current",
+                        ),
+                        "full_name_key": full_name_key(s.full_name),
+                    }
+                )
+            rows.sort(key=lambda row: (row["full_name_key"], row["summary"].student_id))
+            if cursor:
+                decoded = decode_student_cursor(cursor)
+                rows = [
+                    row
+                    for row in rows
+                    if (row["full_name_key"], row["summary"].student_id)
+                    > (decoded.full_name_key, decoded.student_id)
+                ]
+            page_rows = rows[: limit + 1]
+            has_next = len(page_rows) > limit
+            page_rows = page_rows[:limit]
+            next_cursor = None
+            if has_next and page_rows:
+                last = page_rows[-1]
+                next_cursor = encode_student_cursor(
+                    last["full_name_key"],
+                    last["summary"].student_id,
+                )
+            return AdminStudentPage(
+                students=[row["summary"] for row in page_rows],
+                next_cursor=next_cursor,
+            )
 
     return AdminUseCases(
         list_admin_users=_ListAdminUsers(),  # type: ignore[arg-type]

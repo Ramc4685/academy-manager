@@ -140,6 +140,12 @@ backend:
       - working: true
         agent: "main"
         comment: "Added admin BFF user/student directories, aligned session/enrollment/waitlist DTOs with Next client expectations, and verified local admin can see coaches, parents, students, session counts, and real payment rows through Firebase emulator auth."
+      - working: true
+        agent: "main"
+        comment: "Slice 1 Rich Students: added admin student search/status/limit/cursor contract, rich student fields (attendance_rate, dues_status, active_session_count, last_seen_at, parent name/email), batched Mongo enrichment, and attendance lookup index. Focused backend verification passed: 14 passed."
+      - working: true
+        agent: "main"
+        comment: "Broader backend/v2 suite was attempted after the focused pass and failed outside this slice with the existing Python 3.14 ULID() no-argument TypeError in attendance/billing/event tests; no Rich Students tests failed."
   - task: "coach dashboard metrics BFF"
     implemented: true
     working: true
@@ -321,10 +327,21 @@ frontend:
       - working: true
         agent: "main"
         comment: "Removed the legacy CRA frontend, promoted the Next.js BFF/DDD frontend to the canonical frontend/ path, updated CI/docs/deployment references, and verified only one top-level frontend directory remains."
+  - task: "Rally admin rich students slice"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/admin/students/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Slice 1 implemented: admin students now calls listAdminStudents with search/status/limit/cursor, uses cursor-backed next-page loading, resets pagination through query-key changes when search/status changes, renders attendance_rate and dues_status only from BFF data, and shows Rally search/filter plus loading/error/empty states. Verification: new admin-students spec passed 6/6; combined admin-shell + students smoke passed 48/48 serially on PLAYWRIGHT_PORT=3803 after a parallel run exposed Next dev-server .next cache/manifest corruption; frontend typecheck/build passed."
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 13
+  test_sequence: 14
   run_ui: true
 test_plan:
   current_focus: []
@@ -421,3 +438,5 @@ agent_communication:
       Remaining risks and follow-ons: dashboard attention endpoint, Branding storage backend, Stripe Connect onboarding writes, GDPR account deletion, richer Students filtering/search/pagination, and an overlap audit between legacy /admin/users and Settings Roles.
   - agent: "main"
     message: "Additional real local smoke after user-requested testing: started the worktree backend on 127.0.0.1:8012 with FIREBASE_AUTH_ENABLED=true and the existing Firebase Auth emulator on 127.0.0.1:9099, then started the frontend on localhost:3802 with BFF_API_ORIGIN=http://127.0.0.1:8012. Health checks passed through both backend and frontend proxy. Signed into the Firebase Auth emulator as ramchand4685@gmail.com / Admin@12345 and confirmed real BFF responses for /api/v2/me, /api/v2/admin/academy, /api/v2/admin/academy/gateway, /api/v2/admin/users, /api/v2/admin/finance/expenses, and /api/v2/admin/finance/payouts. Browser smoke through the real login UI mounted /admin, /admin/sessions, /admin/students, /admin/users, /admin/waitlist, /admin/pause-requests, /admin/payments, /admin/dues, /admin/reports, /admin/coach-payslip, /admin/expenses, /admin/payouts, /admin/audit-logs, /admin/messages, and every Settings panel (academy, fees, gateway, notify, roles, branding, data). The smoke caught no API 4xx/5xx responses and no app console errors. Stopped the backend/frontend dev servers after the run."
+  - agent: "main"
+    message: "Rally admin rich students slice: implemented backend search/status/limit/cursor contract, rich BFF fields, batched Mongo enrichment, and a 0070 attendance lookup index; implemented frontend search/status filters, next_cursor pagination, query-key cursor reset, BFF-only attendance_rate/dues_status rendering, and Rally loading/error/empty UI. Verification: backend focused suite passed 14/14; frontend pnpm typecheck passed; frontend pnpm build passed; focused students Playwright passed 6/6; combined admin-shell + students smoke passed 48/48 serially on PLAYWRIGHT_PORT=3803. A parallel browser run failed with Next dev-server .next manifest/cache ENOENT errors after build, so serial smoke is the recorded clean browser gate. Broader backend/v2 suite was attempted by the backend subagent and failed outside this slice on existing Python 3.14 ULID() no-argument errors; no Rich Students tests failed."

@@ -232,11 +232,26 @@ export interface AdminStudentView {
   status: string;
   active_session_count: number;
   last_seen_at: string | null;
+  attendance_rate: number | null;
+  dues_status: "current" | "due" | "overdue";
 }
 
 export interface AdminStudentList {
   students: AdminStudentView[];
+  next_cursor: string | null;
 }
+
+export interface ListAdminStudentsParams {
+  search?: string;
+  status?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+type QueryFunctionContextArg = {
+  queryKey: readonly unknown[];
+  signal?: AbortSignal;
+};
 
 export interface AdminPauseRequestView {
   pause_request_id: string;
@@ -336,8 +351,21 @@ export function listAdminUsers(role?: AdminUserRole): Promise<AdminUserList> {
   return apiFetch<AdminUserList>(`/admin/users${q}`, { method: "GET" });
 }
 
-export function listAdminStudents(): Promise<AdminStudentList> {
-  return apiFetch<AdminStudentList>("/admin/students", { method: "GET" });
+function isQueryFunctionContext(params: ListAdminStudentsParams | QueryFunctionContextArg): params is QueryFunctionContextArg {
+  return "queryKey" in params;
+}
+
+export function listAdminStudents(
+  params: ListAdminStudentsParams | QueryFunctionContextArg = {},
+): Promise<AdminStudentList> {
+  const options = isQueryFunctionContext(params) ? {} : params;
+  const q = new URLSearchParams();
+  if (options.search) q.set("search", options.search);
+  if (options.status) q.set("status", options.status);
+  if (options.limit) q.set("limit", String(options.limit));
+  if (options.cursor) q.set("cursor", options.cursor);
+  const suffix = q.toString() ? `?${q.toString()}` : "";
+  return apiFetch<AdminStudentList>(`/admin/students${suffix}`, { method: "GET" });
 }
 
 export function updateAdminUserRole(
