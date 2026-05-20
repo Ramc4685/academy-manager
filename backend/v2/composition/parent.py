@@ -107,6 +107,7 @@ class ParentComposition:
     handle_webhook_event: HandleWebhookEvent
     list_available_sessions: ListParentAvailableSessions
     list_payments_for_parent: object  # callable
+    list_credits_for_parent: object
     list_children_for_parent: object
     list_enrollments_for_parent: object
     request_enrollment_pause: RequestEnrollmentPause
