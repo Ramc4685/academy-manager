@@ -30,6 +30,7 @@ import {
   deleteWaitlistEntry,
   type AdminEnrollmentView,
   type EnrollmentStatus,
+  type AdminSessionView,
   type AdminStudentView,
   type AdminWaitlistEntry,
   type WaitlistStatus,
@@ -251,6 +252,7 @@ export default function AdminSessionDetailPage() {
       <TransferEnrollmentDialog
         enrollment={transferTarget}
         currentSessionId={sessionId}
+        currentSessionTitle={session?.title ?? ""}
         onClose={() => setTransferTarget(null)}
         onMoved={() => {
           setTransferTarget(null);
@@ -528,23 +530,50 @@ function AddToRosterDialog({
 function TransferEnrollmentDialog({
   enrollment,
   currentSessionId,
+  currentSessionTitle,
   onClose,
   onMoved,
 }: {
   enrollment: AdminEnrollmentView | null;
   currentSessionId: string;
+  currentSessionTitle: string;
   onClose: () => void;
   onMoved: () => void;
 }) {
   const [targetSessionId, setTargetSessionId] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Fetch all upcoming sessions (next 30 days) so the dropdown isn't
+  // limited to today's two slots — moving a student to a different weekly
+  // class only makes sense if the user can actually see those other classes.
   const sessionsQuery = useQuery({
-    queryKey: queryKeys.admin.sessions(),
-    queryFn: () => listAdminSessions(),
+    queryKey: ["admin", "sessions", "upcoming"] as const,
+    queryFn: () => listAdminSessions(undefined, { window: "upcoming" }),
     enabled: enrollment !== null,
   });
-  const sessions =
-    sessionsQuery.data?.sessions.filter((s) => s.session_id !== currentSessionId) ?? [];
+  // Dedupe by title: each weekly class shows up many times across the
+  // window (one per dated instance); show one row per distinct class
+  // with the soonest start_at as its value.
+  const candidateSessions = (() => {
+    const all = sessionsQuery.data?.sessions ?? [];
+    // Exclude the current session AND any other dated instance that
+    // shares the same weekly title — the user can't meaningfully "move"
+    // a student to a future instance of the class they're already in.
+    const otherClasses = all.filter(
+      (s) =>
+        s.session_id !== currentSessionId &&
+        (currentSessionTitle === "" || s.title !== currentSessionTitle),
+    );
+    const byTitle = new Map<string, AdminSessionView>();
+    for (const s of otherClasses) {
+      const prev = byTitle.get(s.title);
+      if (!prev || new Date(s.start_at).getTime() < new Date(prev.start_at).getTime()) {
+        byTitle.set(s.title, s);
+      }
+    }
+    return Array.from(byTitle.values()).sort((a, b) =>
+      a.title.localeCompare(b.title),
+    );
+  })();
   const mutation = useMutation({
     mutationFn: () =>
       transferEnrollment(enrollment!.enrollment_id, { target_session_id: targetSessionId }),
@@ -573,22 +602,12 @@ function TransferEnrollmentDialog({
         }}
       >
         <Field label="Target session" required>
-          <select
-            required
+          <RallySessionPicker
+            sessions={candidateSessions}
             value={targetSessionId}
-            onChange={(event) => setTargetSessionId(event.target.value)}
-            className={inputClass}
-          >
-            <option value="">
-              {sessionsQuery.isLoading ? "Loading sessions…" : "Select session"}
-            </option>
-            {sessions.map((session) => (
-              <option key={session.session_id} value={session.session_id}>
-                {session.title} —{" "}
-                {new Date(session.start_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
-              </option>
-            ))}
-          </select>
+            onChange={setTargetSessionId}
+            loading={sessionsQuery.isLoading}
+          />
         </Field>
         <DialogActions>
           <Button variant="secondary" size="sm" type="button" onClick={onClose}>
@@ -598,13 +617,88 @@ function TransferEnrollmentDialog({
             variant="primary"
             size="sm"
             type="submit"
-            disabled={mutation.isPending || sessions.length === 0}
+            disabled={
+              mutation.isPending || candidateSessions.length === 0 || !targetSessionId
+            }
           >
             {mutation.isPending ? "Moving…" : "Move"}
           </Button>
         </DialogActions>
       </form>
     </RallyDialog>
+  );
+}
+
+// Rally-styled session picker — replaces native <select> whose OS dropdown
+// renders as a giant unstyled overlay on macOS Chrome. Click the button to
+// toggle an absolute-positioned options list constrained to the dialog.
+function RallySessionPicker({
+  sessions,
+  value,
+  onChange,
+  loading,
+}: {
+  sessions: AdminSessionView[];
+  value: string;
+  onChange: (sessionId: string) => void;
+  loading: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = sessions.find((s) => s.session_id === value);
+  const formatTime = (s: AdminSessionView) =>
+    new Date(s.start_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => !loading && setOpen((o) => !o)}
+        disabled={loading}
+        className="w-full flex items-center justify-between gap-2 rounded-md border border-rally-line bg-white px-3 py-2 text-left text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30 disabled:opacity-60"
+      >
+        <span className={selected ? "text-rally-ink" : "text-rally-muted"}>
+          {loading
+            ? "Loading sessions…"
+            : selected
+              ? `${selected.title} — ${formatTime(selected)}`
+              : sessions.length === 0
+                ? "No other upcoming sessions"
+                : "Select session"}
+        </span>
+        <span className="font-mono text-xs text-rally-muted">{open ? "▴" : "▾"}</span>
+      </button>
+      {open && sessions.length > 0 && (
+        <ul
+          role="listbox"
+          className="absolute left-0 right-0 z-20 mt-1 max-h-64 overflow-y-auto rounded-md border border-rally-line bg-white shadow-lg"
+        >
+          {sessions.map((s) => {
+            const isSelected = s.session_id === value;
+            return (
+              <li key={s.session_id} role="option" aria-selected={isSelected}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChange(s.session_id);
+                    setOpen(false);
+                  }}
+                  className="w-full px-3 py-2 text-left text-sm hover:bg-rally-paper"
+                  style={{
+                    background: isSelected ? "var(--rally-cobalt-soft)" : "transparent",
+                    color: isSelected ? "var(--rally-cobalt)" : "var(--rally-ink)",
+                    fontWeight: isSelected ? 600 : 500,
+                  }}
+                >
+                  <span className="block">{s.title}</span>
+                  <span className="block font-mono text-[11px] text-rally-muted">
+                    next class: {new Date(s.start_at).toLocaleDateString()} · {formatTime(s)}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }
 

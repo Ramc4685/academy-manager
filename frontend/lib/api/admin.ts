@@ -301,8 +301,14 @@ export function listAdminStudents(): Promise<AdminStudentList> {
 // Sessions
 // ---------------------------------------------------------------------------
 
-export function listAdminSessions(date?: string): Promise<AdminSessionList> {
-  const q = date ? `?date=${encodeURIComponent(date)}` : "";
+export function listAdminSessions(
+  date?: string,
+  opts?: { window?: "upcoming" },
+): Promise<AdminSessionList> {
+  const params = new URLSearchParams();
+  if (date) params.set("date", date);
+  if (opts?.window) params.set("window", opts.window);
+  const q = params.toString() ? `?${params.toString()}` : "";
   return apiFetch<AdminSessionList>(`/admin/sessions${q}`, { method: "GET" });
 }
 

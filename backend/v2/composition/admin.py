@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 import csv
 import io
 
@@ -167,7 +167,57 @@ def compose_admin(
     # Day-of-week abbreviations used by the legacy seed schema.
     _DOW_MAP = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
 
-    async def list_admin_sessions(on_date: date | None):
+    async def _build_admin_session_rows(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for doc in docs:
+            session_id = str(doc.get("session_id") or doc.get("_id"))
+            enrolled_count = await enrollments_r.collection.count_documents(
+                {
+                    "academy_id": academy_id,
+                    "session_id": session_id,
+                    "status": "active",
+                }
+            )
+            waitlist_count = await waitlist.collection.count_documents(
+                {
+                    "academy_id": academy_id,
+                    "session_id": session_id,
+                    "status": "waiting",
+                }
+            )
+            rows.append(
+                {
+                    "session_id": session_id,
+                    "title": str(doc.get("title") or doc.get("name") or "Session"),
+                    "location": str(doc.get("location") or ""),
+                    "start_at": doc["start_at"],
+                    "end_at": doc["end_at"],
+                    "capacity": int(doc.get("capacity") or doc.get("max_students") or 15),
+                    "status": "scheduled" if str(doc.get("status") or "scheduled") == "active" else str(doc.get("status") or "scheduled"),
+                    "coach_id": str(doc.get("coach_id") or ""),
+                    "enrolled_count": enrolled_count,
+                    "waitlist_count": waitlist_count,
+                }
+            )
+        return rows
+
+    async def list_admin_sessions(on_date: date | None, *, window: str | None = None):
+        # window="upcoming" returns all dated sessions from now through +30d.
+        # Used by the transfer-enrollment dropdown so the user can pick any
+        # upcoming session, not just today's.
+        if window == "upcoming":
+            now = datetime.now(timezone.utc)
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=30)
+            v2_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
+                {"start_at": {"$gte": start, "$lte": end}},
+                sort=[("start_at", 1)],
+            )
+            upcoming_docs = [doc async for doc in v2_cursor]
+            # Legacy synthesis intentionally skipped — only relevant when a
+            # single date is queried. Fresh seeds emit dated v2 instances.
+            return await _build_admin_session_rows(upcoming_docs)
+
         if on_date is None:
             on_date = datetime.now(timezone.utc).date()
         start = datetime.combine(on_date, time.min, tzinfo=timezone.utc)
@@ -212,38 +262,7 @@ def compose_admin(
                 doc["capacity"] = doc.get("max_students", 15)
             all_docs.append(doc)
 
-        rows: list[dict[str, Any]] = []
-        for doc in all_docs:
-            session_id = str(doc.get("session_id") or doc.get("_id"))
-            enrolled_count = await enrollments_r.collection.count_documents(
-                {
-                    "academy_id": academy_id,
-                    "session_id": session_id,
-                    "status": "active",
-                }
-            )
-            waitlist_count = await waitlist.collection.count_documents(
-                {
-                    "academy_id": academy_id,
-                    "session_id": session_id,
-                    "status": "waiting",
-                }
-            )
-            rows.append(
-                {
-                    "session_id": session_id,
-                    "title": str(doc.get("title") or doc.get("name") or "Session"),
-                    "location": str(doc.get("location") or ""),
-                    "start_at": doc["start_at"],
-                    "end_at": doc["end_at"],
-                    "capacity": int(doc.get("capacity") or doc.get("max_students") or 15),
-                    "status": "scheduled" if str(doc.get("status") or "scheduled") == "active" else str(doc.get("status") or "scheduled"),
-                    "coach_id": str(doc.get("coach_id") or ""),
-                    "enrolled_count": enrolled_count,
-                    "waitlist_count": waitlist_count,
-                }
-            )
-        return rows
+        return await _build_admin_session_rows(all_docs)
 
     async def list_admin_enrollments_for_session(session_id: str):
         cursor = enrollments_r._find_many(  # type: ignore[attr-defined]

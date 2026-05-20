@@ -781,7 +781,14 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     record_expense = RecordExpense(expenses=expenses, academy_id="acad")  # type: ignore[arg-type]
     revenue_query = AcademyRevenueQuery(payments=payments)
 
-    async def list_admin_sessions(on_date):
+    async def list_admin_sessions(on_date, *, window=None):
+        if window == "upcoming":
+            today = _now().date()
+            return [
+                s
+                for s in sessions.sessions.values()
+                if s.start_at.date() >= today
+            ]
         if on_date is None:
             on_date = _now().date()
         return [
