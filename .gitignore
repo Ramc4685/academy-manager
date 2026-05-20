@@ -41,6 +41,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 dump.rdb
+firebase-debug.log
+firebase-debug.*.log
+.firebase/
 
 # System files
 .DS_Store
