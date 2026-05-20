@@ -14,6 +14,11 @@ export default function AdminStudentsPage() {
     queryFn: listAdminStudents,
   });
 
+  // Normalize once. Defensive against partial/wrong-shape BFF responses
+  // (e.g. `{}` instead of `{ students: [...] }`) — webkit's production
+  // build crashes on `data.students.length` if students is undefined.
+  const students = data?.students ?? [];
+
   return (
     <section data-testid="admin-students" className="space-y-6">
       {isError ? (
@@ -22,13 +27,13 @@ export default function AdminStudentsPage() {
         </p>
       ) : isLoading ? (
         <Skeleton />
-      ) : (data?.students.length ?? 0) === 0 ? (
+      ) : students.length === 0 ? (
         <p className="text-sm text-rally-subtle" data-testid="admin-students-empty">
           No students registered yet.
         </p>
       ) : (
         <Card p={20}>
-          <StudentsTable students={data!.students} />
+          <StudentsTable students={students} />
         </Card>
       )}
     </section>
