@@ -34,6 +34,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+pythonpath = [".."]
 # NOTE: testpaths intentionally NOT set here. The legacy CI workflow
 # invokes pytest without a path arg and would otherwise pick up v2/tests
 # (which need v2-only deps installed). v2-backend.yml passes

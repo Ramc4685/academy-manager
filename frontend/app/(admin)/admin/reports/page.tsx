@@ -1,9 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 
-import { exportAdminReportCsv } from "@/lib/api/admin";
+import { exportAdminReportCsv, getRevenue } from "@/lib/api/admin";
+import { Card } from "@/components/ds/card";
+import { Button } from "@/components/ds/button";
+import { MiniBars } from "@/components/ds/charts";
+import { BigNum, Overline } from "@/components/ds/typography";
 
 const REPORTS = [
   {
@@ -25,40 +29,74 @@ const REPORTS = [
 
 export default function AdminReportsPage() {
   const [preview, setPreview] = useState<{ title: string; csv: string } | null>(null);
+
+  const revenueQuery = useQuery({
+    queryKey: ["admin", "revenue"],
+    queryFn: getRevenue,
+  });
+
   const exportMutation = useMutation({
     mutationFn: async (report: (typeof REPORTS)[number]) => {
       const csv = await exportAdminReportCsv(report.name);
       return { title: report.title, csv };
     },
-    onSuccess: setPreview,
+    onSuccess: (data) => {
+      setPreview(data);
+    },
   });
+
+  const revenueByMonth = revenueQuery.data?.by_month ?? {};
+  const sortedMonths = Object.keys(revenueByMonth).sort();
+  const last6Months = sortedMonths.slice(-6);
+  const chartValues = last6Months.length > 0 ? last6Months.map(m => revenueByMonth[m]) : [0, 0, 0, 0, 0, 0];
 
   return (
     <section data-testid="admin-reports" className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-semibold">Reports</h1>
-        <p className="mt-1 text-sm text-neutral-500">
-          CSV exports served by the admin BFF with the current Firebase token.
-        </p>
-      </div>
 
-      <div className="grid gap-3 lg:grid-cols-3">
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-3">
+          <Card p={24} className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+            <div>
+              <Overline>Revenue Trend (Last 6 Months)</Overline>
+              <div className="mt-2">
+                <BigNum size={32}>
+                  {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
+                    (chartValues[chartValues.length - 1] ?? 0) / 100
+                  )}
+                </BigNum>
+              </div>
+              <p className="text-sm text-neutral-500 mt-1">Latest month shown</p>
+            </div>
+            {revenueQuery.isLoading ? (
+              <div className="h-20 w-60 animate-pulse rounded-md bg-neutral-100 dark:bg-neutral-800" />
+            ) : (
+              <div className="shrink-0">
+                <MiniBars values={chartValues} w={240} h={80} highlight={chartValues.length - 1} />
+              </div>
+            )}
+          </Card>
+        </div>
+
         {REPORTS.map((report) => (
-          <article
+          <Card
             key={report.name}
-            className="rounded-lg border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
+            p={20}
+            className="flex flex-col"
           >
-            <h2 className="font-semibold">{report.title}</h2>
-            <p className="mt-1 min-h-10 text-sm text-neutral-500">{report.description}</p>
-            <button
-              type="button"
-              onClick={() => exportMutation.mutate(report)}
-              disabled={exportMutation.isPending}
-              className="mt-4 min-h-touch rounded-md border border-blue-300 px-3 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-60 dark:border-blue-700 dark:text-blue-300"
-            >
-              Export CSV
-            </button>
-          </article>
+            <h2 className="font-semibold text-lg">{report.title}</h2>
+            <p className="mt-1 min-h-[3rem] text-sm text-neutral-500 flex-1">{report.description}</p>
+            <div className="mt-4">
+              <Button
+                variant="secondary"
+                onClick={() => exportMutation.mutate(report)}
+                disabled={exportMutation.isPending}
+                full
+              >
+                {exportMutation.isPending && exportMutation.variables?.name === report.name ? "Exporting..." : "Export CSV"}
+              </Button>
+            </div>
+          </Card>
         ))}
       </div>
 
@@ -69,21 +107,20 @@ export default function AdminReportsPage() {
       )}
 
       {preview && (
-        <section className="rounded-lg border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+        <Card p={20}>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-lg font-semibold">{preview.title} preview</h2>
-            <button
-              type="button"
+            <Button
+              variant="primary"
               onClick={() => downloadCsv(preview.title, preview.csv)}
-              className="min-h-touch rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700"
             >
               Download
-            </button>
+            </Button>
           </div>
           <pre className="mt-4 max-h-80 overflow-auto rounded-md bg-neutral-950 p-3 text-xs text-neutral-100">
             {preview.csv}
           </pre>
-        </section>
+        </Card>
       )}
     </section>
   );

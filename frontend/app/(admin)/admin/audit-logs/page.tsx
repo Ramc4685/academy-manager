@@ -35,12 +35,7 @@ export default function AdminAuditLogsPage() {
 
   return (
     <section data-testid="admin-audit-logs" className="space-y-6">
-      <div>
-        <LaneHeader title="Audit Logs" />
-        <p className="mt-1 text-sm text-slate-500">
-          Recent operational events from the v2 admin BFF.
-        </p>
-      </div>
+
 
       {isError ? (
         <Card p={16} accent="#ef4444" className="bg-red-50/50">
@@ -61,10 +56,10 @@ export default function AdminAuditLogsPage() {
           <table className="w-full text-left text-sm whitespace-nowrap">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-800/50">
-                <th className="px-5 py-3 font-medium text-slate-500">Timestamp</th>
-                <th className="px-5 py-3 font-medium text-slate-500">Actor</th>
-                <th className="px-5 py-3 font-medium text-slate-500">Action</th>
-                <th className="px-5 py-3 font-medium text-slate-500">Entity</th>
+                <th className="px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Timestamp</th>
+                <th className="px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Actor</th>
+                <th className="px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Action</th>
+                <th className="px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Entity</th>
               </tr>
             </thead>
             <tbody>
