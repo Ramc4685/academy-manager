@@ -550,6 +550,13 @@ async def _handle_onboarding_checkout_completed(db, stripe, session: dict) -> No
         snapshot = None
         if snapshot_id:
             snapshot = await db.billing_calculation_snapshots.find_one({"snapshot_id": snapshot_id})
+            # Bug fix: snapshot was persisted with enrollment_id=app_id (onboarding application id)
+            # because the real enrollment did not yet exist at checkout time. Backfill now that we
+            # have the real enrollment_id so _amount_for_invoice can match it correctly.
+            await db.billing_calculation_snapshots.update_one(
+                {"snapshot_id": snapshot_id},
+                {"$set": {"enrollment_id": enrollment_id}},
+            )
         amount = (
             float(snapshot["final_amount_cents"]) / 100
             if snapshot and snapshot.get("final_amount_cents") is not None

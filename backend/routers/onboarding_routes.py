@@ -501,13 +501,28 @@ async def create_onboarding_checkout(
             session=session_doc,
             period=now.strftime("%Y-%m"),
         )
+        if amount <= 0:
+            # Proration legitimately yielded $0 (e.g., enrollment on last day of month
+            # with all classes within the free-class cutoff). Stripe rejects $0 line items
+            # so we cannot create a checkout session. Return a 422 explaining the situation
+            # rather than the misleading 400 about monthly_price.
+            # TODO: implement a no-charge direct-enrollment path to allow these enrollments.
+            next_month = (now.replace(day=1) + __import__("datetime").timedelta(days=32)).replace(day=1)
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Prorated first-month charge is $0 (no billable class occurrences "
+                    f"remain in {now.strftime('%B %Y')}). "
+                    f"Please re-enroll on or after {next_month.strftime('%Y-%m-%d')}."
+                ),
+            )
     else:
         try:
             amount = float(session_doc.get("monthly_price") or 0)
         except (TypeError, ValueError):
             amount = 0
-    if amount <= 0:
-        raise HTTPException(status_code=400, detail="Session monthly price must be greater than zero")
+        if amount <= 0:
+            raise HTTPException(status_code=400, detail="Session monthly price must be greater than zero")
 
     frontend_url = _frontend_url()
     success_url = f"{frontend_url}/onboarding/{app_id}/status?checkout=success"

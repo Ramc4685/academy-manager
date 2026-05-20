@@ -27,6 +27,16 @@ from backend.v2.contexts.billing.domain.errors import (
 from backend.v2.contexts.billing.domain.models import Payment
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
+# ---------------------------------------------------------------------------
+# NOTE: This module imports FirstMonthProrationPolicy and schedule_signature
+# only for the monthly-generation path (generate_monthly_payments).  The
+# proration invocations that used to live in create_initial_quote,
+# _amount_for_invoice, and _store_monthly_snapshot have been moved to the
+# QuoteEnrollment use case and its _resolve_monthly_charge helper.
+# MongoPaymentRepository now implements SessionLoader, OccurrenceCatalog, and
+# SnapshotWriter via thin storage-only methods.
+# ---------------------------------------------------------------------------
+
 
 class MongoPaymentRepository(TenantScopedRepository):
     collection_name = "payments"
@@ -280,7 +290,8 @@ class MongoPaymentRepository(TenantScopedRepository):
             student_doc = await self._db["students"].find_one(
                 {"academy_id": academy_id, "student_id": student_id}
             )
-            gross_amount_cents, snapshot_id = await self._amount_for_invoice(
+            gross_amount_cents, snapshot_id = await _resolve_charge_for_enrollment(
+                repo=self,
                 enrollment=enrollment,
                 session_doc=session_doc or {},
                 period=period,
@@ -354,40 +365,51 @@ class MongoPaymentRepository(TenantScopedRepository):
             skipped_paused=skipped_paused,
         )
 
-    async def create_initial_quote(
-        self,
-        *,
-        session_id: str,
-        billing_start_at: datetime,
-        calculated_by: str,
-        parent_id: str | None = None,
-        student_id: str | None = None,
-        enrollment_id: str | None = None,
-        ttl_minutes: int = 15,
-    ) -> BillingCalculationSnapshot:
+    # ------------------------------------------------------------------
+    # SessionLoader port implementation
+    # ------------------------------------------------------------------
+
+    async def get_by_id(self, session_id: str) -> dict | None:
+        """Return raw session doc for the current academy, or None."""
         academy_id = current_academy_id()
-        session_doc = await self._db["sessions"].find_one(
+        doc = await self._db["sessions"].find_one(
             {"academy_id": academy_id, "session_id": session_id}
         )
-        if session_doc is None:
-            session_doc = await self._db["sessions"].find_one(
+        if doc is None:
+            doc = await self._db["sessions"].find_one(
                 {"academy_id": academy_id, "_id": session_id}
             )
-        if session_doc is None:
-            raise PaymentNotFound("session not found", payment_id=session_id)
-        now = self._clock()
-        timezone_name = str(session_doc.get("timezone") or "America/Chicago")
-        period = BillingPeriod.from_label(billing_start_at.strftime("%Y-%m"), timezone_name=timezone_name)
-        occurrences = await self._occurrences_for_session(session_doc, period)
-        snapshot = FirstMonthProrationPolicy().quote(
-            monthly_price_cents=_session_amount_cents(session_doc),
-            discount_cents=0,
-            period=period,
-            occurrences=occurrences,
-            billing_start_at=billing_start_at,
-            calculated_at=now,
-            calculated_by=calculated_by,
-        )
+        return doc
+
+    # ------------------------------------------------------------------
+    # OccurrenceCatalog port implementation
+    # ------------------------------------------------------------------
+
+    async def list_for_session(
+        self,
+        session_doc: dict,
+        period: BillingPeriod,
+    ) -> list[ClassOccurrence]:
+        """Delegate to the occurrence helper (storage only, no policy)."""
+        return await self._occurrences_for_session(session_doc, period)
+
+    # ------------------------------------------------------------------
+    # SnapshotWriter port implementation
+    # ------------------------------------------------------------------
+
+    async def persist_open(
+        self,
+        *,
+        snapshot: BillingCalculationSnapshot,
+        session_id: str,
+        parent_id: str | None,
+        student_id: str | None,
+        enrollment_id: str | None,
+        ttl_minutes: int,
+        now: datetime,
+    ) -> BillingCalculationSnapshot:
+        """Stamp snapshot_id / expires_at, insert as OPEN, return stored copy."""
+        academy_id = current_academy_id()
         snapshot_id = str(ULID())
         expires_at = now + timedelta(minutes=ttl_minutes)
         stored = snapshot.model_copy(
@@ -406,7 +428,8 @@ class MongoPaymentRepository(TenantScopedRepository):
         )
         return stored
 
-    async def consume_quote_snapshot(self, snapshot_id: str) -> BillingCalculationSnapshot | None:
+    async def consume(self, snapshot_id: str) -> BillingCalculationSnapshot | None:
+        """Atomically transition OPEN → CONSUMED; return updated snapshot."""
         academy_id = current_academy_id()
         now = self._clock()
         doc = await self._db["billing_calculation_snapshots"].find_one_and_update(
@@ -416,116 +439,52 @@ class MongoPaymentRepository(TenantScopedRepository):
         )
         return BillingCalculationSnapshot(**doc) if doc else None
 
-    async def _amount_for_invoice(
+    # Keep the legacy name so callers that already use it don't break.
+    async def consume_quote_snapshot(self, snapshot_id: str) -> BillingCalculationSnapshot | None:
+        return await self.consume(snapshot_id)
+
+    async def persist_consumed_first_month(
         self,
         *,
-        enrollment: dict[str, object],
-        session_doc: dict[str, object],
-        period: str,
-        now: datetime,
-    ) -> tuple[int, str | None]:
-        amount_cents = _session_amount_cents(session_doc)
-        billing_start = _coerce_datetime(
-            enrollment.get("billing_start_at")
-            or enrollment.get("enrolled_at")
-            or enrollment.get("created_at")
-        )
-        academy_id = current_academy_id()
-        enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
-        timezone_name = str(session_doc.get("timezone") or "America/Chicago")
-        billing_period = BillingPeriod.from_label(period, timezone_name=timezone_name)
-        occurrences = await self._occurrences_for_session(session_doc, billing_period)
-        if billing_start is None or billing_start.strftime("%Y-%m") != period:
-            snapshot_id = await self._store_monthly_snapshot(
-                enrollment=enrollment,
-                session_doc=session_doc,
-                period=billing_period,
-                occurrences=occurrences,
-                monthly_price_cents=amount_cents,
-                now=now,
-            )
-            return amount_cents, snapshot_id
-        prior_consumed = await self._db["billing_calculation_snapshots"].find_one(
-            {
-                "academy_id": academy_id,
-                "enrollment_id": enrollment_id,
-                "billing_period_label": period,
-                "status": "CONSUMED",
-                "calculation_type": "FIRST_MONTH_PRORATION",
-            }
-        )
-        if prior_consumed is not None:
-            return 0, str(prior_consumed.get("snapshot_id"))
-
-        snapshot = FirstMonthProrationPolicy().quote(
-            monthly_price_cents=amount_cents,
-            discount_cents=0,
-            period=billing_period,
-            occurrences=occurrences,
-            billing_start_at=billing_start,
-            calculated_at=now,
-            calculated_by="SYSTEM",
-        )
-        snapshot_id = str(ULID())
-        consumed = snapshot.model_copy(update={"snapshot_id": snapshot_id, "status": "CONSUMED"})
-        await self._db["billing_calculation_snapshots"].insert_one(
-            {
-                **consumed.model_dump(mode="python"),
-                "academy_id": academy_id,
-                "enrollment_id": enrollment_id,
-                "session_id": str(enrollment.get("session_id") or ""),
-                "student_id": str(enrollment.get("student_id") or ""),
-            }
-        )
-        return consumed.final_amount_cents, snapshot_id
-
-    async def _store_monthly_snapshot(
-        self,
-        *,
-        enrollment: dict[str, object],
-        session_doc: dict[str, object],
-        period: BillingPeriod,
-        occurrences: list[ClassOccurrence],
-        monthly_price_cents: int,
+        snapshot: BillingCalculationSnapshot,
+        enrollment_id: str,
+        session_id: str,
+        student_id: str,
         now: datetime,
     ) -> str:
-        eligible = [
-            occurrence
-            for occurrence in sorted(occurrences, key=lambda o: o.occurrence_id)
-            if FirstMonthProrationPolicy._is_eligible(occurrence, period)
-        ]
-        snapshot_id = str(ULID())
-        included = [occurrence.occurrence_id for occurrence in eligible]
-        snapshot = BillingCalculationSnapshot(
-            snapshot_id=snapshot_id,
-            status="CONSUMED",
-            calculation_type="MONTHLY_TUITION",
-            monthly_price_cents=monthly_price_cents,
-            discount_cents=0,
-            billing_period_start=period.start_at,
-            billing_period_end=period.end_at,
-            billing_period_label=period.label,
-            timezone=period.timezone,
-            total_eligible_classes=len(eligible),
-            billable_remaining_classes=len(eligible),
-            proration_ratio=f"{len(eligible)}/{len(eligible)}" if eligible else "0/0",
-            final_amount_cents=monthly_price_cents,
-            included_occurrence_ids=included,
-            excluded_occurrences={},
-            schedule_signature=schedule_signature(eligible, timezone_name=period.timezone),
-            calculated_at=now,
-            calculated_by="SYSTEM",
-        )
+        """Store a CONSUMED first-month proration snapshot; return snapshot_id."""
+        academy_id = current_academy_id()
         await self._db["billing_calculation_snapshots"].insert_one(
             {
                 **snapshot.model_dump(mode="python"),
-                "academy_id": current_academy_id(),
-                "enrollment_id": str(enrollment.get("enrollment_id") or enrollment.get("_id")),
-                "session_id": str(enrollment.get("session_id") or session_doc.get("session_id") or ""),
-                "student_id": str(enrollment.get("student_id") or ""),
+                "academy_id": academy_id,
+                "enrollment_id": enrollment_id,
+                "session_id": session_id,
+                "student_id": student_id,
             }
         )
-        return snapshot_id
+        return str(snapshot.snapshot_id)
+
+    async def persist_monthly_tuition(
+        self,
+        *,
+        snapshot: BillingCalculationSnapshot,
+        enrollment_id: str,
+        session_id: str,
+        student_id: str,
+    ) -> str:
+        """Store a CONSUMED monthly-tuition snapshot; return snapshot_id."""
+        academy_id = current_academy_id()
+        await self._db["billing_calculation_snapshots"].insert_one(
+            {
+                **snapshot.model_dump(mode="python"),
+                "academy_id": academy_id,
+                "enrollment_id": enrollment_id,
+                "session_id": session_id,
+                "student_id": student_id,
+            }
+        )
+        return str(snapshot.snapshot_id)
 
     async def _occurrences_for_session(
         self,
@@ -714,3 +673,148 @@ def _session_occurrences(
             timezone=timezone_name,
         )
     ]
+
+
+# ---------------------------------------------------------------------------
+# Module-level proration helpers for generate_monthly_payments.
+#
+# These are free functions (NOT repo class methods) that apply
+# FirstMonthProrationPolicy.  The MongoPaymentRepository class itself no
+# longer performs any tuition calculation; it delegates to these functions,
+# which live here purely because generate_monthly_payments is bound to the
+# repo for now.  Future work can extract generate_monthly_payments into a
+# proper application use case and delete these from the infra module.
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_charge_for_enrollment(
+    *,
+    repo: "MongoPaymentRepository",
+    enrollment: dict[str, object],
+    session_doc: dict[str, object],
+    period: str,
+    now: datetime,
+) -> tuple[int, str | None]:
+    """Return (gross_amount_cents, snapshot_id) for a monthly invoice row.
+
+    This function owns all proration decisions; the repo class is a pure
+    storage delegate here.
+    """
+    amount_cents = _session_amount_cents(session_doc)
+    billing_start = _coerce_datetime(
+        enrollment.get("billing_start_at")
+        or enrollment.get("enrolled_at")
+        or enrollment.get("created_at")
+    )
+    enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
+    timezone_name = str(session_doc.get("timezone") or "America/Chicago")
+    billing_period = BillingPeriod.from_label(period, timezone_name=timezone_name)
+    occurrences = await repo._occurrences_for_session(session_doc, billing_period)
+
+    # Not a first-month enrollment → full monthly tuition
+    if billing_start is None or billing_start.strftime("%Y-%m") != period:
+        snapshot = _build_monthly_tuition_snapshot(
+            occurrences=occurrences,
+            billing_period=billing_period,
+            monthly_price_cents=amount_cents,
+            now=now,
+        )
+        snapshot_id = await repo.persist_monthly_tuition(
+            snapshot=snapshot,
+            enrollment_id=enrollment_id,
+            session_id=str(enrollment.get("session_id") or session_doc.get("session_id") or ""),
+            student_id=str(enrollment.get("student_id") or ""),
+        )
+        return amount_cents, snapshot_id
+
+    # Check if already prorated in a prior run
+    academy_id = current_academy_id()
+    prior_consumed = await repo._db["billing_calculation_snapshots"].find_one(
+        {
+            "academy_id": academy_id,
+            "enrollment_id": enrollment_id,
+            "billing_period_label": period,
+            "status": "CONSUMED",
+            "calculation_type": "FIRST_MONTH_PRORATION",
+        }
+    )
+    if prior_consumed is not None:
+        return 0, str(prior_consumed.get("snapshot_id"))
+
+    # First-month proration
+    snapshot = _build_proration_snapshot_for_first_month(
+        occurrences=occurrences,
+        billing_period=billing_period,
+        billing_start=billing_start,
+        amount_cents=amount_cents,
+        now=now,
+        enrollment_id=enrollment_id,
+    )
+    snapshot_id = await repo.persist_consumed_first_month(
+        snapshot=snapshot,
+        enrollment_id=enrollment_id,
+        session_id=str(enrollment.get("session_id") or ""),
+        student_id=str(enrollment.get("student_id") or ""),
+        now=now,
+    )
+    return snapshot.final_amount_cents, snapshot_id
+
+
+def _build_proration_snapshot_for_first_month(
+    *,
+    occurrences: list[ClassOccurrence],
+    billing_period: BillingPeriod,
+    billing_start: datetime,
+    amount_cents: int,
+    now: datetime,
+    enrollment_id: str,
+) -> BillingCalculationSnapshot:
+    """Compute a CONSUMED first-month proration snapshot (no I/O)."""
+    snapshot_id = str(ULID())
+    raw = FirstMonthProrationPolicy().quote(
+        monthly_price_cents=amount_cents,
+        discount_cents=0,
+        period=billing_period,
+        occurrences=occurrences,
+        billing_start_at=billing_start,
+        calculated_at=now,
+        calculated_by="SYSTEM",
+    )
+    return raw.model_copy(update={"snapshot_id": snapshot_id, "status": "CONSUMED"})
+
+
+def _build_monthly_tuition_snapshot(
+    *,
+    occurrences: list[ClassOccurrence],
+    billing_period: BillingPeriod,
+    monthly_price_cents: int,
+    now: datetime,
+) -> BillingCalculationSnapshot:
+    """Build a CONSUMED monthly-tuition snapshot (no proration, full amount)."""
+    eligible = [
+        occ
+        for occ in sorted(occurrences, key=lambda o: o.occurrence_id)
+        if FirstMonthProrationPolicy._is_eligible(occ, billing_period)
+    ]
+    snapshot_id = str(ULID())
+    included = [occ.occurrence_id for occ in eligible]
+    return BillingCalculationSnapshot(
+        snapshot_id=snapshot_id,
+        status="CONSUMED",
+        calculation_type="MONTHLY_TUITION",
+        monthly_price_cents=monthly_price_cents,
+        discount_cents=0,
+        billing_period_start=billing_period.start_at,
+        billing_period_end=billing_period.end_at,
+        billing_period_label=billing_period.label,
+        timezone=billing_period.timezone,
+        total_eligible_classes=len(eligible),
+        billable_remaining_classes=len(eligible),
+        proration_ratio=f"{len(eligible)}/{len(eligible)}" if eligible else "0/0",
+        final_amount_cents=monthly_price_cents,
+        included_occurrence_ids=included,
+        excluded_occurrences={},
+        schedule_signature=schedule_signature(eligible, timezone_name=billing_period.timezone),
+        calculated_at=now,
+        calculated_by="SYSTEM",
+    )

@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment, Subscription
+from backend.v2.contexts.billing.domain.proration import (
+    BillingCalculationSnapshot,
+    BillingPeriod,
+    ClassOccurrence,
+)
 
 
 class PaymentRepository(Protocol):
@@ -94,3 +100,67 @@ class CapacityReservation(Protocol):
 
     async def try_reserve(self, session_id: str) -> bool: ...
     async def release(self, session_id: str) -> None: ...
+
+
+# ---------------------------------------------------------------------------
+# Ports for QuoteEnrollment use case
+# ---------------------------------------------------------------------------
+
+
+class SessionLoader(Protocol):
+    """Fetch a raw session document by its ID."""
+
+    async def get_by_id(self, session_id: str) -> dict | None: ...
+
+
+class OccurrenceCatalog(Protocol):
+    """Enumerate class occurrences for a session within a billing period."""
+
+    async def list_for_session(
+        self, session_doc: dict, period: BillingPeriod
+    ) -> list[ClassOccurrence]: ...
+
+
+class SnapshotWriter(Protocol):
+    """Persist billing calculation snapshots (storage only, no policy)."""
+
+    async def persist_open(
+        self,
+        *,
+        snapshot: BillingCalculationSnapshot,
+        session_id: str,
+        parent_id: str | None,
+        student_id: str | None,
+        enrollment_id: str | None,
+        ttl_minutes: int,
+        now: datetime,
+    ) -> BillingCalculationSnapshot:
+        """Store snapshot as OPEN and return the stored copy with snapshot_id / expires_at."""
+        ...
+
+    async def consume(self, snapshot_id: str) -> BillingCalculationSnapshot | None:
+        """Atomically transition OPEN → CONSUMED and return the updated snapshot."""
+        ...
+
+    async def persist_consumed_first_month(
+        self,
+        *,
+        snapshot: BillingCalculationSnapshot,
+        enrollment_id: str,
+        session_id: str,
+        student_id: str,
+        now: datetime,
+    ) -> str:
+        """Store a CONSUMED first-month proration snapshot; return snapshot_id."""
+        ...
+
+    async def persist_monthly_tuition(
+        self,
+        *,
+        snapshot: BillingCalculationSnapshot,
+        enrollment_id: str,
+        session_id: str,
+        student_id: str,
+    ) -> str:
+        """Store a CONSUMED monthly-tuition snapshot; return snapshot_id."""
+        ...

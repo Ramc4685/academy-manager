@@ -18,6 +18,10 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     MarkPaymentPaid,
     UndoPaymentPaid,
 )
+from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
+    QuoteEnrollment,
+    QuoteEnrollmentCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
     AcademyRevenueQuery,
     MongoExpenseRepository,
@@ -284,12 +288,20 @@ def compose_admin(
     async def list_payments_recent():
         return await payments_repo.list_recent_admin()
 
+    _quote_enrollment_uc = QuoteEnrollment(
+        sessions=payments_repo,
+        snapshots=payments_repo,
+        occurrences=payments_repo,
+    )
+
     async def quote_enrollment(*, session_id: str, student_id: str | None = None, start_date: str | None = None):
-        return await payments_repo.create_initial_quote(
-            session_id=session_id,
-            billing_start_at=_start_date_to_datetime(start_date),
-            calculated_by="admin",
-            student_id=student_id,
+        return await _quote_enrollment_uc.execute(
+            QuoteEnrollmentCommand(
+                session_id=session_id,
+                billing_start_at=_start_date_to_datetime(start_date),
+                calculated_by="admin",
+                student_id=student_id,
+            )
         )
 
     async def list_audit_logs():

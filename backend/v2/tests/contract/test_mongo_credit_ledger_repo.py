@@ -43,6 +43,10 @@ async def test_credit_ledger_fifo_application_is_atomic(db, acad) -> None:
     applications = [doc async for doc in db["credit_applications"].find({})]
     assert len(applications) == 1
     assert applications[0]["amount_cents"] == 1000
+    # New invariant: the credit doc itself records the applied invoice atomically.
+    credit_doc = await db["account_credit_ledger"].find_one({"credit_id": "credit-1"})
+    assert credit_doc is not None
+    assert "pay-1" in credit_doc.get("applied_invoice_ids", [])
 
 
 @pytest.mark.asyncio

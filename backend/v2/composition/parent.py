@@ -13,6 +13,10 @@ from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
     HandleWebhookEvent,
 )
+from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
+    QuoteEnrollment,
+    QuoteEnrollmentCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
 from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     CreateCustomerPortalSession,
@@ -156,6 +160,11 @@ def compose_parent(
         subscriptions=subscriptions_repo,
         outbox=outbox,
         academy_id=academy_id,
+    )
+    quote_enrollment_uc = QuoteEnrollment(
+        sessions=payments_repo,
+        snapshots=payments_repo,
+        occurrences=payments_repo,
     )
 
     # Enrollment
@@ -342,12 +351,14 @@ def compose_parent(
             if student_id not in owned:
                 raise SessionNotFound("student not found", student_id=student_id)
         billing_start = _start_date_to_datetime(start_date)
-        return await payments_repo.create_initial_quote(
-            session_id=session_id,
-            billing_start_at=billing_start,
-            calculated_by=parent_id,
-            parent_id=parent_id,
-            student_id=student_id,
+        return await quote_enrollment_uc.execute(
+            QuoteEnrollmentCommand(
+                session_id=session_id,
+                billing_start_at=billing_start,
+                calculated_by=parent_id,
+                parent_id=parent_id,
+                student_id=student_id,
+            )
         )
 
     async def start_checkout_for_application(
@@ -373,11 +384,13 @@ def compose_parent(
                 "selected session is not available for checkout",
                 session_id=app.selected_session_id,
             )
-        quote = await payments_repo.create_initial_quote(
-            session_id=selected.session_id,
-            billing_start_at=datetime.now(timezone.utc),
-            calculated_by=parent_id,
-            parent_id=parent_id,
+        quote = await quote_enrollment_uc.execute(
+            QuoteEnrollmentCommand(
+                session_id=selected.session_id,
+                billing_start_at=datetime.now(timezone.utc),
+                calculated_by=parent_id,
+                parent_id=parent_id,
+            )
         )
         result = await start_checkout.execute(
             StartCheckoutCommand(

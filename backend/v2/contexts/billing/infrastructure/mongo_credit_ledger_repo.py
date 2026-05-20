@@ -71,10 +71,12 @@ class MongoCreditLedgerRepository(TenantScopedRepository):
     ) -> int:
         academy_id = current_academy_id()
         now = datetime.now(timezone.utc)
-        existing_for_invoice = await self._db["credit_applications"].count_documents(
-            {"academy_id": academy_id, "invoice_id": invoice_id}
+        # Top-level idempotency: if any credit doc already carries this invoice
+        # in its applied_invoice_ids array, we have already processed it.
+        already = await self.collection.find_one(
+            {"academy_id": academy_id, "applied_invoice_ids": invoice_id}
         )
-        if existing_for_invoice:
+        if already is not None:
             return 0
         remaining_due = amount_due_cents
         total_applied = 0
@@ -95,6 +97,26 @@ class MongoCreditLedgerRepository(TenantScopedRepository):
             amount = min(available, remaining_due)
             if amount <= 0:
                 continue
+            # Single atomic op: decrement remaining and record the invoice in one
+            # document write.  The filter guards against double-application and
+            # ensures the balance is sufficient.
+            updated = await self.collection.find_one_and_update(
+                {
+                    "academy_id": academy_id,
+                    "credit_id": credit_id,
+                    "remaining_amount_cents": {"$gte": amount},
+                    "status": "APPROVED",
+                    "applied_invoice_ids": {"$ne": invoice_id},
+                },
+                {
+                    "$inc": {"remaining_amount_cents": -amount},
+                    "$push": {"applied_invoice_ids": invoice_id},
+                    "$set": {"updated_at": now},
+                },
+            )
+            if updated is None:
+                continue
+            # Audit row — best-effort; the credit doc is the source of truth.
             try:
                 await self._db["credit_applications"].insert_one(
                     {
@@ -107,24 +129,7 @@ class MongoCreditLedgerRepository(TenantScopedRepository):
                     }
                 )
             except DuplicateKeyError:
-                continue
-            result = await self.collection.update_one(
-                {
-                    "academy_id": academy_id,
-                    "credit_id": credit_id,
-                    "remaining_amount_cents": {"$gte": amount},
-                    "status": "APPROVED",
-                },
-                {
-                    "$inc": {"remaining_amount_cents": -amount},
-                    "$set": {"updated_at": now},
-                },
-            )
-            if result.modified_count != 1:
-                await self._db["credit_applications"].delete_one(
-                    {"academy_id": academy_id, "credit_id": credit_id, "invoice_id": invoice_id}
-                )
-                continue
+                pass  # idempotent replay — audit already exists, credit doc is authoritative
             applied = CreditLedgerEntry(
                 credit_id=str(ULID()),
                 academy_id=academy_id,
