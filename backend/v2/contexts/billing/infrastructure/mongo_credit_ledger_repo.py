@@ -51,6 +51,20 @@ class MongoCreditLedgerRepository(TenantScopedRepository):
         )
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def find_active_for_enrollment(
+        self, *, enrollment_id: str, type: str
+    ) -> CreditLedgerEntry | None:
+        doc = await self.collection.find_one(
+            {
+                "academy_id": current_academy_id(),
+                "enrollment_id": enrollment_id,
+                "type": type,
+                "status": "APPROVED",
+            },
+            sort=[("created_at", -1), ("credit_id", -1)],
+        )
+        return self._to_domain(doc) if doc else None
+
     async def balance_for_parent(self, parent_id: str) -> int:
         now = datetime.now(timezone.utc)
         total = 0

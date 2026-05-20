@@ -1,49 +1,62 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
-import { getCurrentUser } from "@/lib/api/me";
+import { AcademyPanel } from "@/components/admin/settings/academy-panel";
+import { BrandingPanel } from "@/components/admin/settings/branding-panel";
+import { DataPanel } from "@/components/admin/settings/data-panel";
+import { FeesPanel } from "@/components/admin/settings/fees-panel";
+import { GatewayPanel } from "@/components/admin/settings/gateway-panel";
+import { NotifyPanel } from "@/components/admin/settings/notify-panel";
+import { RolesPanel } from "@/components/admin/settings/roles-panel";
+import {
+  SETTINGS_TABS,
+  SettingsTabs,
+  type SettingsPanelKey,
+} from "@/components/admin/settings/settings-tabs";
 
-export default function AdminSettingsPage() {
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ["me", "settings"],
-    queryFn: getCurrentUser,
-  });
+const validPanels = new Set<SettingsPanelKey>(SETTINGS_TABS.map((tab) => tab.key));
 
-  return (
-    <section data-testid="admin-settings" className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-semibold">Settings</h1>
-        <p className="mt-1 text-sm text-neutral-500">
-          Academy identity and operator safety state for the v2 local app.
-        </p>
-      </div>
-
-      {isError ? (
-        <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-          Could not load settings.
-        </p>
-      ) : isLoading ? (
-        <div className="h-32 animate-pulse rounded-lg bg-neutral-100 dark:bg-neutral-800" />
-      ) : (
-        <div className="grid gap-3 md:grid-cols-2">
-          <Setting label="Academy ID" value={data?.academy_id ?? "-"} />
-          <Setting label="Signed in as" value={data?.email ?? "-"} />
-          <Setting label="Roles" value={(data?.roles ?? []).join(", ") || "-"} />
-          <Setting label="Email sending" value="Blocked in local/dev" />
-          <Setting label="Stripe mode" value="Fake gateway in local/dev" />
-          <Setting label="Auth source" value="Firebase Authentication" />
-        </div>
-      )}
-    </section>
-  );
+function coercePanel(value: string | null): SettingsPanelKey {
+  return value && validPanels.has(value as SettingsPanelKey)
+    ? (value as SettingsPanelKey)
+    : "academy";
 }
 
-function Setting({ label, value }: { label: string; value: string }) {
+export default function AdminSettingsPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const active = coercePanel(searchParams.get("panel"));
+
+  const paramsString = searchParams.toString();
+  const params = useMemo(() => new URLSearchParams(paramsString), [paramsString]);
+
+  useEffect(() => {
+    if (!searchParams.get("panel") || active !== searchParams.get("panel")) {
+      const next = new URLSearchParams(params);
+      next.set("panel", active);
+      window.history.replaceState(null, "", `${pathname}?${next.toString()}`);
+    }
+  }, [active, params, pathname, searchParams]);
+
+  function setPanel(panel: SettingsPanelKey) {
+    const next = new URLSearchParams(params);
+    next.set("panel", panel);
+    router.replace(`${pathname}?${next.toString()}` as never, { scroll: false });
+  }
+
   return (
-    <div className="rounded-lg border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
-      <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">{label}</p>
-      <p className="mt-2 break-words font-medium">{value}</p>
-    </div>
+    <section data-testid="admin-settings" className="space-y-6">
+      <SettingsTabs active={active} onChange={setPanel} />
+      {active === "academy" && <AcademyPanel />}
+      {active === "fees" && <FeesPanel />}
+      {active === "gateway" && <GatewayPanel />}
+      {active === "notify" && <NotifyPanel />}
+      {active === "roles" && <RolesPanel />}
+      {active === "branding" && <BrandingPanel />}
+      {active === "data" && <DataPanel />}
+    </section>
   );
 }

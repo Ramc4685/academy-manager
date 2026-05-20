@@ -22,10 +22,10 @@ export default function MessagesPage() {
             : "Message inbox access is persona-scoped. Admin users can manage communication from the admin workspace."}
         </p>
         <Link
-          href={isAdmin ? "/admin/comms" : "/post-login"}
+          href={isAdmin ? "/admin/messages" : "/post-login"}
           className="mt-4 inline-flex min-h-touch items-center rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700"
         >
-          {isAdmin ? "Open admin comms" : "Go to workspace"}
+          {isAdmin ? "Open admin messages" : "Go to workspace"}
         </Link>
       </div>
     </main>

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends
 
 from backend.v2.interfaces.parent.deps import ParentUseCases, get_parent_use_cases
@@ -176,7 +178,18 @@ async def list_credits(
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> ParentCreditBalanceResponse:
     credits = await use_cases.list_credits_for_parent(claims.user_id)  # type: ignore[operator]
-    balance = sum(c.remaining_amount_cents for c in credits if c.status == "APPROVED")
+    # Mirror balance_for_parent / apply_available_credits semantics: only APPROVED,
+    # non-expired credits with remaining_amount_cents > 0 are spendable. Showing
+    # expired credits in balance_cents would diverge from what we'd actually
+    # apply at invoice time.
+    now = datetime.now(timezone.utc)
+    balance = sum(
+        c.remaining_amount_cents
+        for c in credits
+        if c.status == "APPROVED"
+        and c.remaining_amount_cents > 0
+        and (c.expires_at is None or c.expires_at > now)
+    )
     return ParentCreditBalanceResponse(
         balance_cents=balance,
         credits=[

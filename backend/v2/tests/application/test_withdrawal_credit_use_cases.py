@@ -61,6 +61,16 @@ class FakeCredits:
     async def balance_for_parent(self, parent_id):
         return sum(e.remaining_amount_cents for e in self.entries if e.parent_id == parent_id)
 
+    async def find_active_for_enrollment(self, *, enrollment_id, type):
+        for entry in reversed(self.entries):
+            if (
+                entry.enrollment_id == enrollment_id
+                and entry.type == type
+                and entry.status == "APPROVED"
+            ):
+                return entry
+        return None
+
 
 @dataclass
 class FakeEnrollments:
@@ -200,3 +210,19 @@ async def test_approve_withdrawal_creates_credit_and_cancels_subscription() -> N
     assert stripe.cancelled == [("sub_stripe_1", True)]
     assert subscriptions.saved is not None
     assert subscriptions.saved.status == "cancelled"
+
+    # Idempotency: a second approval must not insert a duplicate credit.
+    result2 = await uc.execute(
+        ApproveWithdrawalCreditCommand(
+            enrollment_id="enroll-1",
+            withdrawal_date=datetime(2026, 5, 21, tzinfo=timezone.utc),
+            actor_id="admin-1",
+            admin_note="moving",
+        )
+    )
+    assert result2.credit_id == result.credit_id
+    assert result2.credit_amount_cents == result.credit_amount_cents
+    # Still exactly one ledger entry.
+    assert len(credits.entries) == 1
+    # Stripe cancel is not re-invoked on the idempotent branch.
+    assert stripe.cancelled == [("sub_stripe_1", True)]

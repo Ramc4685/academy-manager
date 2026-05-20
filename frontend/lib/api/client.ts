@@ -65,7 +65,15 @@ export async function apiFetch<T>(
 
 async function parseResponse<T>(res: Response): Promise<T> {
   const contentType = res.headers.get("content-type") ?? "";
-  const body = contentType.includes("application/json") ? await res.json() : await res.text();
+  // 204 No Content (and any empty-body response) must not be passed to
+  // res.json() — that throws SyntaxError on an empty string. Treat
+  // empty bodies as null, which is what callers expect for mutations
+  // that don't return a payload (pause/resume/cancel/refund, etc.).
+  const isEmpty = res.status === 204 || res.headers.get("content-length") === "0";
+  let body: unknown = null;
+  if (!isEmpty) {
+    body = contentType.includes("application/json") ? await res.json() : await res.text();
+  }
   if (!res.ok) throw makeError(res.status, body);
   return body as T;
 }

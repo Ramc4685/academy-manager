@@ -4,6 +4,9 @@ import { useQuery } from "@tanstack/react-query";
 
 import { listAdminStudents, type AdminStudentView } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
+import { Card } from "@/components/ds/card";
+import { Chip } from "@/components/ds/chip";
+import { Avatar } from "@/components/ds/avatar";
 
 export default function AdminStudentsPage() {
   const { data, isLoading, isError } = useQuery({
@@ -11,59 +14,78 @@ export default function AdminStudentsPage() {
     queryFn: listAdminStudents,
   });
 
-  return (
-    <section data-testid="admin-students">
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold">Students</h1>
-        <p className="mt-1 text-sm text-neutral-500">
-          Registered children, parent links, attendance recency, and active sessions.
-        </p>
-      </div>
+  // Normalize once. Defensive against partial/wrong-shape BFF responses
+  // (e.g. `{}` instead of `{ students: [...] }`) — webkit's production
+  // build crashes on `data.students.length` if students is undefined.
+  const students = data?.students ?? [];
 
+  return (
+    <section data-testid="admin-students" className="space-y-6">
       {isError ? (
         <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
           Could not load students.
         </p>
       ) : isLoading ? (
         <Skeleton />
-      ) : (data?.students.length ?? 0) === 0 ? (
-        <p className="text-sm text-neutral-500">No students registered yet.</p>
+      ) : students.length === 0 ? (
+        <p className="text-sm text-rally-subtle" data-testid="admin-students-empty">
+          No students registered yet.
+        </p>
       ) : (
-        <StudentsTable students={data!.students} />
+        <Card p={20}>
+          <StudentsTable students={students} />
+        </Card>
       )}
     </section>
   );
 }
 
+function mapStatus(s: string): any {
+  if (s === "active") return "enrolled";
+  if (s === "paused") return "paused";
+  if (s === "inactive") return "expired";
+  return "manual";
+}
+
 function StudentsTable({ students }: { students: AdminStudentView[] }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+    <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-neutral-200 text-left text-neutral-500 dark:border-neutral-800">
-            <th className="px-4 py-3 font-medium">Student</th>
-            <th className="px-4 py-3 font-medium">Parent ID</th>
-            <th className="px-4 py-3 font-medium text-right">Active sessions</th>
-            <th className="px-4 py-3 font-medium">Last attendance</th>
-            <th className="px-4 py-3 font-medium">Status</th>
+          <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
+            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Student</th>
+            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Parent</th>
+            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted text-right">Active sessions</th>
+            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted text-right">Attendance rate</th>
+            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Last attendance</th>
+            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Status</th>
           </tr>
         </thead>
         <tbody>
           {students.map((student) => (
-            <tr key={student.student_id} className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
-              <td className="px-4 py-3">
-                <div className="font-medium">{student.full_name}</div>
-                <div className="font-mono text-xs text-neutral-500">{student.student_id}</div>
+            <tr key={student.student_id} data-testid={`admin-students-row-${student.student_id}`} className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
+              <td className="px-2 py-3">
+                <div className="flex items-center gap-3">
+                  <Avatar name={student.full_name} size={32} />
+                  <div>
+                    <div className="font-medium text-rally-base">{student.full_name}</div>
+                    <div className="font-mono text-[10px] text-rally-subtle">{student.student_id}</div>
+                  </div>
+                </div>
               </td>
-              <td className="px-4 py-3 font-mono text-xs text-neutral-500">{student.parent_id || "-"}</td>
-              <td className="px-4 py-3 text-right tabular-nums">{student.active_session_count}</td>
-              <td className="px-4 py-3 text-neutral-600 dark:text-neutral-400">
-                {student.last_seen_at ? new Date(student.last_seen_at).toLocaleDateString() : "-"}
+              <td className="px-2 py-3">
+                <div className="text-rally-base">{student.parent_name || student.parent_email || "—"}</div>
+                {student.parent_email && student.parent_name && (
+                  <div className="font-mono text-[10px] text-rally-subtle">{student.parent_email}</div>
+                )}
               </td>
-              <td className="px-4 py-3">
-                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-                  {student.status}
-                </span>
+              <td className="px-2 py-3 text-right font-mono tabular-nums text-rally-base">{student.active_session_count}</td>
+              <td className="px-2 py-3 text-right font-mono tabular-nums text-rally-subtle">—</td>
+              <td className="px-2 py-3 text-rally-subtle">
+                {student.last_seen_at ? new Date(student.last_seen_at).toLocaleDateString() : "—"}
+              </td>
+              <td className="px-2 py-3">
+                <Chip variant={mapStatus(student.status)} label={student.status.toUpperCase()} />
               </td>
             </tr>
           ))}

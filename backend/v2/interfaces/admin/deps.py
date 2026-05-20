@@ -50,6 +50,14 @@ from backend.v2.shared.comms import CommsService
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     ListAdminUsers,
 )
+from backend.v2.contexts.identity.application.get_academy_use_case import GetAcademyUseCase
+from backend.v2.contexts.identity.application.update_academy_use_case import UpdateAcademyUseCase
+from backend.v2.contexts.identity.application.get_academy_fees_use_case import GetAcademyFeesUseCase
+from backend.v2.contexts.identity.application.update_academy_fees_use_case import UpdateAcademyFeesUseCase
+from backend.v2.contexts.identity.application.get_academy_notifications_use_case import GetAcademyNotificationsUseCase
+from backend.v2.contexts.identity.application.update_academy_notifications_use_case import UpdateAcademyNotificationsUseCase
+from backend.v2.contexts.identity.application.get_academy_gateway_use_case import GetAcademyGatewayUseCase
+from backend.v2.contexts.identity.application.change_user_role_use_case import ChangeUserRole
 
 
 @dataclass
@@ -99,6 +107,15 @@ class AdminUseCases:
     export_report_csv: object  # callable
     # comms
     comms: CommsService
+    # settings
+    get_academy_use_case: GetAcademyUseCase
+    update_academy_use_case: UpdateAcademyUseCase
+    get_academy_fees_use_case: GetAcademyFeesUseCase
+    update_academy_fees_use_case: UpdateAcademyFeesUseCase
+    get_academy_notifications_use_case: GetAcademyNotificationsUseCase
+    update_academy_notifications_use_case: UpdateAcademyNotificationsUseCase
+    get_academy_gateway_use_case: GetAcademyGatewayUseCase
+    change_user_role: ChangeUserRole
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:

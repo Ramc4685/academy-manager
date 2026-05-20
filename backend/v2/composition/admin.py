@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 import csv
 import io
 from zoneinfo import ZoneInfo
+
+from bson import ObjectId as BsonObjectId
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -93,6 +95,15 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     ListAdminUsers,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
+from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
+from backend.v2.contexts.identity.application.get_academy_use_case import GetAcademyUseCase
+from backend.v2.contexts.identity.application.update_academy_use_case import UpdateAcademyUseCase
+from backend.v2.contexts.identity.application.get_academy_fees_use_case import GetAcademyFeesUseCase
+from backend.v2.contexts.identity.application.update_academy_fees_use_case import UpdateAcademyFeesUseCase
+from backend.v2.contexts.identity.application.get_academy_notifications_use_case import GetAcademyNotificationsUseCase
+from backend.v2.contexts.identity.application.update_academy_notifications_use_case import UpdateAcademyNotificationsUseCase
+from backend.v2.contexts.identity.application.get_academy_gateway_use_case import GetAcademyGatewayUseCase
+from backend.v2.contexts.identity.application.change_user_role_use_case import ChangeUserRole
 from backend.v2.interfaces.admin.deps import AdminUseCases
 from backend.v2.shared.comms import CommsService, MongoMessageRepository
 from backend.v2.shared.config import get_settings
@@ -187,44 +198,150 @@ def compose_admin(
     # Comms
     messages_repo = MongoMessageRepository(db)
     comms = CommsService(messages=messages_repo, academy_id=academy_id)
+    # Identity / Settings
+    academy_repo = MongoAcademyRepository(db)
+    get_academy_use_case = GetAcademyUseCase(academy_repo)
+    update_academy_use_case = UpdateAcademyUseCase(academy_repo)
+    get_academy_fees_use_case = GetAcademyFeesUseCase(academy_repo)
+    update_academy_fees_use_case = UpdateAcademyFeesUseCase(academy_repo)
+    get_academy_notifications_use_case = GetAcademyNotificationsUseCase(academy_repo)
+    update_academy_notifications_use_case = UpdateAcademyNotificationsUseCase(academy_repo)
+    get_academy_gateway_use_case = GetAcademyGatewayUseCase(academy_repo)
+    change_user_role = ChangeUserRole(users_r)
+
     list_admin_users = ListAdminUsers(users_r)
     list_admin_students = ListAdminStudents(students_r)
 
     # Closures for the BFF deps that need composed reads.
-    async def list_admin_sessions(on_date: date | None):
-        if on_date is None:
-            on_date = datetime.now(timezone.utc).date()
-        start = datetime.combine(on_date, time.min, tzinfo=timezone.utc)
-        end = datetime.combine(on_date, time.max, tzinfo=timezone.utc)
-        cursor = sessions_r._find_many(  # type: ignore[attr-defined]
-            {"start_at": {"$gte": start, "$lte": end}},
-            sort=[("start_at", 1)],
-        )
+    # Day-of-week abbreviations used by the legacy seed schema.
+    _DOW_MAP = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
+
+    async def _build_admin_session_rows(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
-        async for doc in cursor:
-            session = sessions_r._to_domain(doc)  # type: ignore[attr-defined]
+        for doc in docs:
+            session_id = str(doc.get("session_id") or doc.get("_id"))
             enrolled_count = await enrollments_r.collection.count_documents(
                 {
                     "academy_id": academy_id,
-                    "session_id": session.session_id,
+                    "session_id": session_id,
                     "status": "active",
                 }
             )
             waitlist_count = await waitlist.collection.count_documents(
                 {
                     "academy_id": academy_id,
-                    "session_id": session.session_id,
+                    "session_id": session_id,
                     "status": "waiting",
                 }
             )
             rows.append(
                 {
-                    **session.model_dump(exclude={"academy_id"}),
+                    "session_id": session_id,
+                    "title": str(doc.get("title") or doc.get("name") or "Session"),
+                    "location": str(doc.get("location") or ""),
+                    "start_at": doc["start_at"],
+                    "end_at": doc["end_at"],
+                    "capacity": int(doc.get("capacity") or doc.get("max_students") or 15),
+                    "status": "scheduled" if str(doc.get("status") or "scheduled") == "active" else str(doc.get("status") or "scheduled"),
+                    "coach_id": str(doc.get("coach_id") or ""),
                     "enrolled_count": enrolled_count,
                     "waitlist_count": waitlist_count,
                 }
             )
+
+        # Batch coach-name enrichment (one DB call, no N+1).
+        coach_ids = list({r["coach_id"] for r in rows if r["coach_id"]})
+        coach_map: dict[str, str] = {}
+        if coach_ids:
+            oid_ids = [BsonObjectId(c) for c in coach_ids if BsonObjectId.is_valid(c)]
+            or_filter: list[dict[str, object]] = [
+                {"user_id": {"$in": coach_ids}},
+                {"firebase_uid": {"$in": coach_ids}},
+            ]
+            if oid_ids:
+                or_filter.append({"_id": {"$in": oid_ids}})
+            users_cursor = db["users"].find({"$or": or_filter})
+            async for user_doc in users_cursor:
+                name = str(
+                    user_doc.get("display_name")
+                    or f"{user_doc.get('first_name', '')} {user_doc.get('last_name', '')}".strip()
+                    or ""
+                )
+                for key in (
+                    str(user_doc.get("user_id") or ""),
+                    str(user_doc.get("firebase_uid") or ""),
+                    str(user_doc.get("_id") or ""),
+                ):
+                    if key and key in coach_ids:
+                        coach_map[key] = name
+
+            for row in rows:
+                row["coach_name"] = coach_map.get(row["coach_id"])
+
         return rows
+
+    async def list_admin_sessions(on_date: date | None, *, window: str | None = None):
+        # window="upcoming" returns all dated sessions from now through +30d.
+        # Used by the transfer-enrollment dropdown so the user can pick any
+        # upcoming session, not just today's.
+        if window == "upcoming":
+            now = datetime.now(timezone.utc)
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=30)
+            v2_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
+                {"start_at": {"$gte": start, "$lte": end}},
+                sort=[("start_at", 1)],
+            )
+            upcoming_docs = [doc async for doc in v2_cursor]
+            # Legacy synthesis intentionally skipped — only relevant when a
+            # single date is queried. Fresh seeds emit dated v2 instances.
+            return await _build_admin_session_rows(upcoming_docs)
+
+        if on_date is None:
+            on_date = datetime.now(timezone.utc).date()
+        start = datetime.combine(on_date, time.min, tzinfo=timezone.utc)
+        end = datetime.combine(on_date, time.max, tzinfo=timezone.utc)
+
+        # Query both v2 sessions (start_at field) and legacy recurring templates
+        # (days_of_week field). The two schemas coexist during migration.
+        all_docs: list[dict[str, Any]] = []
+
+        # v2 schema: individual session instances with start_at/end_at
+        v2_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
+            {"start_at": {"$gte": start, "$lte": end}},
+            sort=[("start_at", 1)],
+        )
+        async for doc in v2_cursor:
+            all_docs.append(doc)
+
+        # Legacy schema: recurring templates with days_of_week + start_time/end_time
+        today_dow = on_date.weekday()  # Mon=0 … Sun=6
+        legacy_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
+            {"days_of_week": {"$exists": True}, "start_at": {"$exists": False}},
+        )
+        async for doc in legacy_cursor:
+            dow_strs: list[str] = list(doc.get("days_of_week") or [])
+            dow_ints = [_DOW_MAP[d] for d in dow_strs if d in _DOW_MAP]
+            if today_dow not in dow_ints:
+                continue
+            # Synthetic start_at/end_at for the queried date
+            st_str = str(doc.get("start_time") or "00:00")
+            et_str = str(doc.get("end_time") or "00:00")
+            sh, sm = int(st_str[:2]), int(st_str[3:5])
+            eh, em = int(et_str[:2]), int(et_str[3:5])
+            doc = dict(doc)
+            doc["start_at"] = datetime.combine(on_date, time(sh, sm), tzinfo=timezone.utc)
+            doc["end_at"] = datetime.combine(on_date, time(eh, em), tzinfo=timezone.utc)
+            # Normalise to v2 field names so _build_row works uniformly
+            if "session_id" not in doc:
+                doc["session_id"] = str(doc["_id"])
+            if "title" not in doc:
+                doc["title"] = str(doc.get("name") or "Session")
+            if "capacity" not in doc:
+                doc["capacity"] = doc.get("max_students", 15)
+            all_docs.append(doc)
+
+        return await _build_admin_session_rows(all_docs)
 
     async def list_admin_enrollments_for_session(session_id: str):
         cursor = enrollments_r._find_many(  # type: ignore[attr-defined]
@@ -254,7 +371,9 @@ def compose_admin(
                     "full_name": full_name,
                     "parent_id": s.parent_id if s else "",
                     "status": e.status,
-                    "enrolled_at": doc.get("created_at"),
+                    # Prefer the semantic enrolled_at field (v2/seed); fall back
+                    # to created_at for any legacy docs that only have that.
+                    "enrolled_at": doc.get("enrolled_at") or doc.get("created_at"),
                 }
             )
         return out
@@ -343,24 +462,28 @@ def compose_admin(
             entry["pending_count"] += 1
             entry["total_due_cents"] += int(row["final_amount_cents"])
         if totals:
-            users = db["users"].find(
-                {
-                    "academy_id": academy_id,
-                    "$or": [
-                        {"user_id": {"$in": list(totals)}},
-                        {"firebase_uid": {"$in": list(totals)}},
-                    ],
-                }
-            )
+            parent_id_list = list(totals)
+            oid_ids = [BsonObjectId(p) for p in parent_id_list if BsonObjectId.is_valid(p)]
+            or_filter: list[dict[str, object]] = [
+                {"user_id": {"$in": parent_id_list}},
+                {"firebase_uid": {"$in": parent_id_list}},
+            ]
+            if oid_ids:
+                or_filter.append({"_id": {"$in": oid_ids}})
+            users = db["users"].find({"academy_id": academy_id, "$or": or_filter})
             async for user in users:
-                key = str(user.get("user_id") or user.get("firebase_uid"))
-                if key in totals:
-                    totals[key]["parent_name"] = str(
-                        user.get("display_name")
-                        or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
-                        or ""
-                    )
-                    totals[key]["email"] = user.get("email")
+                for key in (
+                    str(user.get("user_id") or ""),
+                    str(user.get("firebase_uid") or ""),
+                    str(user["_id"]),
+                ):
+                    if key and key in totals:
+                        totals[key]["parent_name"] = str(
+                            user.get("display_name")
+                            or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+                            or ""
+                        )
+                        totals[key]["email"] = user.get("email")
         return sorted(totals.values(), key=lambda row: int(row["total_due_cents"]), reverse=True)
 
     async def send_dues_reminders():
@@ -455,6 +578,14 @@ def compose_admin(
         send_dues_reminders=send_dues_reminders,
         export_report_csv=export_report_csv,
         comms=comms,
+        get_academy_use_case=get_academy_use_case,
+        update_academy_use_case=update_academy_use_case,
+        get_academy_fees_use_case=get_academy_fees_use_case,
+        update_academy_fees_use_case=update_academy_fees_use_case,
+        get_academy_notifications_use_case=get_academy_notifications_use_case,
+        update_academy_notifications_use_case=update_academy_notifications_use_case,
+        get_academy_gateway_use_case=get_academy_gateway_use_case,
+        change_user_role=change_user_role,
     )
 
 

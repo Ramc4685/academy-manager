@@ -6,6 +6,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from bson import ObjectId as BsonObjectId
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 from ulid import ULID
@@ -101,6 +102,15 @@ class MongoPaymentRepository(TenantScopedRepository):
             )
         )
 
+    @staticmethod
+    def _normalize_status(raw: object) -> str:
+        # Legacy onboarding/finance writes status="paid"; v2 uses "succeeded".
+        # Normalize at the boundary so the domain model only sees v2 literals.
+        value = str(raw or "pending")
+        if value == "paid":
+            return "succeeded"
+        return value
+
     @classmethod
     def _to_domain(cls, doc: dict[str, object]) -> Payment:
         created_at = (
@@ -119,7 +129,7 @@ class MongoPaymentRepository(TenantScopedRepository):
             calculation_snapshot_id=doc.get("calculation_snapshot_id"),  # type: ignore[arg-type]
             amount_cents=cls._amount_cents(doc),
             currency=str(doc.get("currency", "usd")),
-            status=doc.get("status", "pending"),  # type: ignore[arg-type]
+            status=cls._normalize_status(doc.get("status")),  # type: ignore[arg-type]
             refunded_cents=cls._refunded_cents(doc),
             created_at=created_at,  # type: ignore[arg-type]
             updated_at=doc.get("updated_at", created_at),  # type: ignore[arg-type]
@@ -150,10 +160,42 @@ class MongoPaymentRepository(TenantScopedRepository):
     async def latest_paid_payment_for_enrollment(
         self, enrollment_id: str
     ) -> Payment | None:
+        # Legacy onboarding writes status="paid"; v2 writes "succeeded". Accept both
+        # so withdrawals work for either origin.
         cursor = self._find_many(
             {
                 "enrollment_id": enrollment_id,
-                "status": {"$in": ["succeeded", "partially_refunded"]},
+                "status": {"$in": ["succeeded", "paid", "partially_refunded"]},
+                "calculation_snapshot_id": {"$exists": True, "$ne": None},
+            },
+            sort=[("paid_at", -1), ("updated_at", -1), ("created_at", -1), ("payment_id", -1)],
+            limit=1,
+        )
+        docs = [doc async for doc in cursor]
+        if docs:
+            return self._to_domain(docs[0])
+        # Fallback: legacy onboarding payments may have been written before
+        # enrollment_id backfill was in place. Look them up via the enrollment's
+        # session_id + parent and a stored calculation_snapshot_id, then pick the
+        # latest. This keeps withdrawals working for older data without forcing
+        # a manual backfill.
+        enrollment_doc = await self._db["enrollments"].find_one(
+            {"$or": [{"enrollment_id": enrollment_id}, _safe_object_lookup(enrollment_id)]}
+        )
+        if enrollment_doc is None:
+            return None
+        session_id = enrollment_doc.get("session_id")
+        parent_id = (
+            enrollment_doc.get("parent_id")
+            or enrollment_doc.get("parent_user_id")
+        )
+        if not session_id or not parent_id:
+            return None
+        cursor = self._find_many(
+            {
+                "$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}],
+                "session_id": session_id,
+                "status": {"$in": ["succeeded", "paid", "partially_refunded"]},
                 "calculation_snapshot_id": {"$exists": True, "$ne": None},
             },
             sort=[("paid_at", -1), ("updated_at", -1), ("created_at", -1), ("payment_id", -1)],
@@ -177,6 +219,13 @@ class MongoPaymentRepository(TenantScopedRepository):
         )
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def list_all(self) -> list[Payment]:
+        cursor = self._find_many(
+            {"is_deleted": {"$ne": True}},
+            sort=[("created_at", -1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def list_recent_admin(self, limit: int = 200) -> list[dict[str, object]]:
         cursor = self._find_many(
             {"is_deleted": {"$ne": True}},
@@ -193,15 +242,17 @@ class MongoPaymentRepository(TenantScopedRepository):
         )
         students: dict[str, dict[str, object]] = {}
         if student_ids:
+            oid_ids = [BsonObjectId(s) for s in student_ids if BsonObjectId.is_valid(s)]
+            or_filter: list[dict[str, object]] = [{"student_id": {"$in": student_ids}}]
+            if oid_ids:
+                or_filter.append({"_id": {"$in": oid_ids}})
             student_cursor = self._db["students"].find(
-                {
-                    "academy_id": current_academy_id(),
-                    "student_id": {"$in": student_ids},
-                }
+                {"academy_id": current_academy_id(), "$or": or_filter}
             )
-            students = {
-                str(doc.get("student_id") or doc.get("_id")): doc async for doc in student_cursor
-            }
+            async for doc in student_cursor:
+                key = str(doc.get("student_id") or doc.get("_id"))
+                students[key] = doc
+                students[str(doc["_id"])] = doc
         return [self._to_admin_row(doc, students.get(str(doc.get("student_id")))) for doc in docs]
 
     @classmethod
@@ -594,6 +645,12 @@ class MongoPaymentRepository(TenantScopedRepository):
 
 def _payment_lookup(payment_id: str) -> dict[str, Any]:
     return {"$or": [{"payment_id": payment_id}, {"_id": payment_id}]}
+
+
+def _safe_object_lookup(value: str) -> dict[str, Any]:
+    if BsonObjectId.is_valid(value):
+        return {"_id": BsonObjectId(value)}
+    return {"_id": value}
 
 
 def _session_amount_cents(doc: dict[str, object]) -> int:

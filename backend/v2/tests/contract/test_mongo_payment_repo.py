@@ -177,3 +177,67 @@ async def test_generate_monthly_applies_approved_account_credit(db, acad) -> Non
     assert payment["amount_cents"] == 6250
     assert payment["calculation_snapshot_id"]
     assert await credits.balance_for_parent("parent-1") == 0
+
+
+@pytest.mark.asyncio
+async def test_latest_paid_payment_for_enrollment_finds_legacy_paid_status(db, acad) -> None:
+    repo = MongoPaymentRepository(db)
+    # Legacy onboarding writes status="paid" (not the v2 "succeeded") and stores
+    # enrollment_id on the row.
+    await db["payments"].insert_one(
+        {
+            "academy_id": acad,
+            "payment_id": "legacy-pay-1",
+            "enrollment_id": "enroll-legacy-1",
+            "parent_id": "parent-legacy-1",
+            "session_id": "sess-legacy-1",
+            "status": "paid",
+            "amount_cents": 4000,
+            "calculation_snapshot_id": "snap-legacy-1",
+            "created_at": datetime(2026, 5, 1, tzinfo=timezone.utc),
+            "updated_at": datetime(2026, 5, 1, tzinfo=timezone.utc),
+        }
+    )
+
+    payment = await repo.latest_paid_payment_for_enrollment("enroll-legacy-1")
+
+    assert payment is not None
+    assert payment.payment_id == "legacy-pay-1"
+    assert payment.calculation_snapshot_id == "snap-legacy-1"
+
+
+@pytest.mark.asyncio
+async def test_latest_paid_payment_for_enrollment_fallback_via_session_when_enrollment_id_missing(
+    db, acad
+) -> None:
+    repo = MongoPaymentRepository(db)
+    # Older onboarding payments may have been written before enrollment_id was
+    # backfilled onto the payment row. They still have parent_id and session_id.
+    await db["enrollments"].insert_one(
+        {
+            "academy_id": acad,
+            "_id": "enroll-orphan-1",
+            "enrollment_id": "enroll-orphan-1",
+            "parent_user_id": "parent-orphan-1",
+            "session_id": "sess-orphan-1",
+            "status": "active",
+        }
+    )
+    await db["payments"].insert_one(
+        {
+            "academy_id": acad,
+            "payment_id": "orphan-pay-1",
+            "parent_user_id": "parent-orphan-1",
+            "session_id": "sess-orphan-1",
+            "status": "paid",
+            "amount_cents": 4000,
+            "calculation_snapshot_id": "snap-orphan-1",
+            "created_at": datetime(2026, 5, 1, tzinfo=timezone.utc),
+            "updated_at": datetime(2026, 5, 1, tzinfo=timezone.utc),
+        }
+    )
+
+    payment = await repo.latest_paid_payment_for_enrollment("enroll-orphan-1")
+
+    assert payment is not None
+    assert payment.payment_id == "orphan-pay-1"

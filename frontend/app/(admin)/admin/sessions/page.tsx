@@ -1,11 +1,13 @@
 "use client";
 
 /**
- * Admin sessions list.
+ * Admin sessions list — Rally restyle.
  *
- * Default view: table. Optional "Calendar view" toggle dynamically imports
- * FullCalendar (@fullcalendar/react + @fullcalendar/daygrid) to keep the
- * initial JS payload small.
+ * Preserves: table/calendar view toggle, date filter, create dialog,
+ * cancel-with-confirm. Calendar still dynamic-imported.
+ *
+ * Backend gap: AdminSessionView has coach_id but no coach_name. Coach
+ * is rendered as an Avatar from coach_id. Phase 6 may add coach_name.
  */
 
 import dynamic from "next/dynamic";
@@ -24,12 +26,16 @@ import {
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 
-// FullCalendar is only loaded when user explicitly switches to Calendar view.
+import { Avatar } from "@/components/ds/avatar";
+import { Button } from "@/components/ds/button";
+import { Card } from "@/components/ds/card";
+import { Chip, type ChipVariant } from "@/components/ds/chip";
+import { Icon } from "@/components/ds/icons";
+import { Overline } from "@/components/ds/typography";
+
 const AdminCalendarView = dynamic(() => import("@/components/admin/AdminCalendarView"), {
   ssr: false,
-  loading: () => (
-    <div className="h-96 animate-pulse rounded-lg bg-neutral-100 dark:bg-neutral-800" />
-  ),
+  loading: () => <div className="h-96 animate-pulse rounded-xl bg-rally-line/40" />,
 });
 
 function todayISO(): string {
@@ -40,6 +46,14 @@ function formatTimeRange(start: string, end: string): string {
   const fmt = (s: string) =>
     new Date(s).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   return `${fmt(start)} – ${fmt(end)}`;
+}
+
+function fillChip(enrolled: number, capacity: number): { variant: ChipVariant; label: string } {
+  if (capacity <= 0) return { variant: "draft", label: "DRAFT" };
+  const pct = enrolled / capacity;
+  if (pct >= 1) return { variant: "full", label: "FULL" };
+  if (pct >= 0.8) return { variant: "closing", label: "CLOSING" };
+  return { variant: "open", label: "OPEN" };
 }
 
 export default function AdminSessionsPage() {
@@ -63,84 +77,49 @@ export default function AdminSessionsPage() {
   const sessions = data?.sessions ?? [];
 
   return (
-    <section data-testid="admin-sessions">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold">Sessions</h1>
+    <section data-testid="admin-sessions" className="space-y-4">
+      {/* Controls strip */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          {/* View toggle */}
-          <div className="flex rounded-md border border-neutral-200 dark:border-neutral-700 overflow-hidden">
-            <button
-              onClick={() => setView("table")}
-              className={`px-3 min-h-touch text-sm font-medium transition-colors ${
-                view === "table"
-                  ? "bg-blue-600 text-white"
-                  : "bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50"
-              }`}
-            >
-              Table
-            </button>
-            <button
-              onClick={() => setView("calendar")}
-              className={`px-3 min-h-touch text-sm font-medium transition-colors border-l border-neutral-200 dark:border-neutral-700 ${
-                view === "calendar"
-                  ? "bg-blue-600 text-white"
-                  : "bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50"
-              }`}
-            >
-              Calendar
-            </button>
-          </div>
-          {/* Create session */}
-          <button
-            onClick={() => setCreateOpen(true)}
-            className="min-h-touch rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            + Create session
-          </button>
+          <ViewToggle view={view} onChange={setView} />
+          {view === "table" && <DateInput value={date} onChange={setDate} />}
         </div>
+        <Button
+          variant="primary"
+          size="sm"
+          icon={Icon.plus(14, "currentColor")}
+          onClick={() => setCreateOpen(true)}
+          data-testid="admin-sessions-create"
+        >
+          Create session
+        </Button>
       </div>
 
-      {/* Date picker (table view only) */}
-      {view === "table" && (
-        <div className="mb-4 flex items-center gap-2">
-          <label htmlFor="session-date" className="text-sm text-neutral-600 dark:text-neutral-400">
-            Date:
-          </label>
-          <input
-            id="session-date"
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm"
-          />
-        </div>
-      )}
-
       {isError && (
-        <div
-          role="alert"
-          className="mb-4 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
-        >
-          <p>Failed to load sessions.</p>
-          <button
-            onClick={() => void refetch()}
-            className="mt-2 min-h-touch rounded-md border px-3"
-          >
-            Retry
-          </button>
-        </div>
+        <Card p={16} style={{ borderColor: "#fecaca", background: "#fef2f2" }}>
+          <div role="alert" className="flex items-center justify-between gap-3">
+            <p className="text-sm text-red-800">Failed to load sessions.</p>
+            <Button variant="secondary" size="sm" onClick={() => void refetch()}>
+              Retry
+            </Button>
+          </div>
+        </Card>
       )}
 
       {view === "calendar" ? (
-        <AdminCalendarView sessions={sessions} />
+        <Card p={16}>
+          <AdminCalendarView sessions={sessions} />
+        </Card>
       ) : isLoading ? (
         <TableSkeleton />
       ) : sessions.length === 0 ? (
-        <p className="text-neutral-500 text-sm" data-testid="sessions-empty">
-          No sessions on {date}.
-        </p>
+        <Card p={32}>
+          <p className="text-center text-sm text-rally-subtle" data-testid="sessions-empty">
+            No sessions on {date}.
+          </p>
+        </Card>
       ) : (
-        <SessionTable
+        <SessionList
           sessions={sessions}
           onDelete={(id) => {
             if (confirm("Cancel this session? This cannot be undone.")) {
@@ -162,11 +141,76 @@ export default function AdminSessionsPage() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
+// Controls
+// ─────────────────────────────────────────────────────────────────────────────
 
-function SessionTable({
+function ViewToggle({
+  view,
+  onChange,
+}: {
+  view: "table" | "calendar";
+  onChange: (v: "table" | "calendar") => void;
+}) {
+  return (
+    <div className="inline-flex rounded-md border border-rally-line bg-white overflow-hidden">
+      <PillButton active={view === "table"} onClick={() => onChange("table")}>
+        Table
+      </PillButton>
+      <PillButton active={view === "calendar"} onClick={() => onChange("calendar")} divider>
+        Calendar
+      </PillButton>
+    </div>
+  );
+}
+
+function PillButton({
+  active,
+  divider,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  divider?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="min-h-touch px-3.5 text-sm font-semibold transition-colors"
+      style={{
+        background: active ? "var(--rally-cobalt)" : "transparent",
+        color: active ? "#fff" : "var(--rally-ink)",
+        borderLeft: divider ? "1px solid var(--rally-line)" : "none",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function DateInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <label className="inline-flex items-center gap-2">
+      <span className="font-mono text-[10px] font-bold tracking-overline uppercase text-rally-muted">
+        Date
+      </span>
+      <input
+        type="date"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded-md border border-rally-line bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30"
+      />
+    </label>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Session list
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SessionList({
   sessions,
   onDelete,
 }: {
@@ -174,55 +218,95 @@ function SessionTable({
   onDelete: (id: string) => void;
 }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800">
-      <table className="w-full text-sm bg-white dark:bg-neutral-900">
-        <thead>
-          <tr className="border-b border-neutral-200 dark:border-neutral-700 text-left text-neutral-500">
-            <th className="px-4 py-3 font-medium">Title</th>
-            <th className="px-4 py-3 font-medium">Location</th>
-            <th className="px-4 py-3 font-medium">Time</th>
-            <th className="px-4 py-3 font-medium text-right">Enrolled</th>
-            <th className="px-4 py-3 font-medium text-right">Waitlist</th>
-            <th className="px-4 py-3 font-medium sr-only">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sessions.map((s) => (
-            <tr
-              key={s.session_id}
-              data-testid={`session-row-${s.session_id}`}
-              className="border-b border-neutral-100 dark:border-neutral-800 last:border-0 hover:bg-neutral-50 dark:hover:bg-neutral-800"
-            >
-              <td className="px-4 py-3">
-                <a
-                  href={`/admin/sessions/${s.session_id}`}
-                  className="font-medium text-blue-600 hover:underline dark:text-blue-400"
-                >
-                  {s.title}
-                </a>
-              </td>
-              <td className="px-4 py-3 text-neutral-600 dark:text-neutral-400">{s.location}</td>
-              <td className="px-4 py-3 tabular-nums text-neutral-600 dark:text-neutral-400">
-                {formatTimeRange(s.start_at, s.end_at)}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums">
-                {s.enrolled_count}/{s.capacity}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums">{s.waitlist_count}</td>
-              <td className="px-4 py-3 text-right">
-                <button
-                  onClick={() => onDelete(s.session_id)}
-                  className="min-h-touch rounded-md border border-red-200 px-2 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400"
-                  aria-label={`Cancel session ${s.title}`}
-                >
-                  Cancel
-                </button>
-              </td>
+    <Card p={0}>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm" data-testid="admin-sessions-table">
+          <thead>
+            <tr className="border-b border-rally-line text-left">
+              <Th>Session</Th>
+              <Th>Location</Th>
+              <Th>Time</Th>
+              <Th>Coach</Th>
+              <Th align="right">Fill</Th>
+              <Th align="right">Waitlist</Th>
+              <Th><span className="sr-only">Actions</span></Th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {sessions.map((s) => {
+              const fill = fillChip(s.enrolled_count, s.capacity);
+              return (
+                <tr
+                  key={s.session_id}
+                  data-testid={`session-row-${s.session_id}`}
+                  className="border-b border-rally-line/60 last:border-0 hover:bg-rally-paper"
+                >
+                  <td className="px-4 py-3">
+                    <a
+                      href={`/admin/sessions/${s.session_id}`}
+                      className="font-display font-semibold text-rally-ink hover:underline"
+                    >
+                      {s.title}
+                    </a>
+                  </td>
+                  <td className="px-4 py-3 text-rally-muted">{s.location}</td>
+                  <td className="px-4 py-3 font-mono tabular-nums text-rally-muted">
+                    {formatTimeRange(s.start_at, s.end_at)}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <Avatar name={s.coach_name || s.coach_id} size={28} />
+                      <span className={s.coach_name ? "font-medium text-rally-ink" : "font-mono text-xs text-rally-muted"}>
+                        {s.coach_name || `${s.coach_id.slice(0, 6)}…`}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <div className="inline-flex items-center gap-2 justify-end">
+                      <span className="font-mono font-semibold tabular-nums text-rally-ink">
+                        {s.enrolled_count}/{s.capacity}
+                      </span>
+                      <Chip variant={fill.variant} label={fill.label} />
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono tabular-nums text-rally-muted">
+                    {s.waitlist_count}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={() => onDelete(s.session_id)}
+                      aria-label={`Cancel session ${s.title}`}
+                    >
+                      Cancel
+                    </Button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+function Th({
+  children,
+  align = "left",
+}: {
+  children: React.ReactNode;
+  align?: "left" | "right";
+}) {
+  return (
+    <th
+      className={`px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted ${
+        align === "right" ? "text-right" : "text-left"
+      }`}
+    >
+      {children}
+    </th>
   );
 }
 
@@ -230,18 +314,15 @@ function TableSkeleton() {
   return (
     <div className="space-y-2">
       {[0, 1, 2].map((i) => (
-        <div
-          key={i}
-          className="h-14 animate-pulse rounded-lg bg-neutral-100 dark:bg-neutral-800"
-        />
+        <div key={i} className="h-14 animate-pulse rounded-xl bg-rally-line/40" />
       ))}
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Create session dialog
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
+// Create session dialog (Rally-styled)
+// ─────────────────────────────────────────────────────────────────────────────
 
 const EMPTY_FORM: CreateSessionRequest = {
   coach_id: "",
@@ -291,18 +372,24 @@ function CreateSessionDialog({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-rally-ink/40" />
         <Dialog.Content
-          className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white dark:bg-neutral-900 p-6 shadow-xl focus:outline-none"
+          className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-xl focus:outline-none"
           aria-describedby="create-session-desc"
         >
-          <Dialog.Title className="text-lg font-semibold mb-1">Create session</Dialog.Title>
-          <Dialog.Description id="create-session-desc" className="text-sm text-neutral-500 mb-4">
+          <Overline>New session</Overline>
+          <Dialog.Title className="font-display text-xl font-semibold tracking-[-0.01em] mt-1">
+            Create session
+          </Dialog.Title>
+          <Dialog.Description id="create-session-desc" className="text-sm text-rally-muted mb-4 mt-1">
             Fill in the details below to schedule a new session.
           </Dialog.Description>
 
           {error && (
-            <p role="alert" className="mb-3 rounded-md bg-red-50 p-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+            <p
+              role="alert"
+              className="mb-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700"
+            >
               {error}
             </p>
           )}
@@ -379,20 +466,18 @@ function CreateSessionDialog({
 
             <div className="flex justify-end gap-2 pt-2">
               <Dialog.Close asChild>
-                <button
-                  type="button"
-                  className="min-h-touch rounded-md border border-neutral-300 px-4 text-sm dark:border-neutral-700"
-                >
+                <Button variant="secondary" size="sm" type="button">
                   Cancel
-                </button>
+                </Button>
               </Dialog.Close>
-              <button
+              <Button
+                variant="primary"
+                size="sm"
                 type="submit"
                 disabled={mutation.isPending}
-                className="min-h-touch rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
               >
                 {mutation.isPending ? "Creating…" : "Create"}
-              </button>
+              </Button>
             </div>
           </form>
         </Dialog.Content>
@@ -428,7 +513,7 @@ function CoachSelect({
 }
 
 const inputClass =
-  "w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
+  "w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30";
 
 function Field({
   label,
@@ -441,9 +526,9 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">
+      <span className="mb-1 block font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
         {label}
-        {required && <span aria-hidden="true" className="ml-0.5 text-red-500">*</span>}
+        {required && <span aria-hidden="true" className="ml-1 text-red-500">*</span>}
       </span>
       {children}
     </label>

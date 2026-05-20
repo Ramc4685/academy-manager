@@ -14,6 +14,8 @@ class AdminStudentSummary(BaseModel):
     student_id: str
     full_name: str
     parent_id: str
+    parent_name: str | None = None
+    parent_email: str | None = None
     status: str
     active_session_count: int = 0
     last_seen_at: datetime | None = None

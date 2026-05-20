@@ -131,6 +131,24 @@ class ApproveWithdrawalCredit:
         enrollment = await self._enrollments.get(cmd.enrollment_id)
         if enrollment is None:
             raise PaymentNotFound("enrollment not found", enrollment_id=cmd.enrollment_id)
+
+        # Idempotency: if a previous approval already created an APPROVED
+        # EARLY_WITHDRAWAL_CREDIT for this enrollment, return it instead of
+        # creating a duplicate. Retries, double-click submissions, or repeated
+        # admin actions therefore do not inflate the parent's credit balance.
+        existing = await self._credits.find_active_for_enrollment(
+            enrollment_id=cmd.enrollment_id, type="EARLY_WITHDRAWAL_CREDIT"
+        )
+        if existing is not None:
+            balance = await self._credits.balance_for_parent(existing.parent_id)
+            return ApproveWithdrawalCreditResult(
+                status="APPROVED",
+                credit_amount_cents=existing.amount_cents,
+                credit_balance_cents=balance,
+                credit_id=existing.credit_id,
+                no_credit_reason=None,
+            )
+
         payment, snapshot = await _paid_payment_and_snapshot(self._payments, cmd.enrollment_id)
         now = self._clock()
         preview = _preview_from_snapshot(

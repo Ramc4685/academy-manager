@@ -12,6 +12,18 @@
   --academy-blue-hover: #1d4ed8;
   --academy-gold: #ffd21f;
   --academy-night: #06121f;
+
+  /* Rally design tokens — referenced by components/ds/* */
+  --rally-ink: #0f172a;
+  --rally-paper: #f8fafc;
+  --rally-line: #e2e8f0;
+  --rally-muted: #64748b;
+  --rally-subtle: #94a3b8;
+  --rally-cobalt: #2563eb;
+  --rally-cobalt-hover: #1d4ed8;
+  --rally-cobalt-soft: #eff6ff;
+  --rally-volt: #facc15;
+  --rally-volt-soft: #fef9c3;
 }
 
 @layer base {
