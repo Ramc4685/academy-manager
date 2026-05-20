@@ -146,6 +146,9 @@ async function stubAdminBff(page: Page) {
       waivers: [],
     })
   );
+  await page.route("**/api/v2/admin/waitlist", (route) =>
+    fulfillJson(route, { total_waitlisted: 0, sessions: [] })
+  );
   await page.route("**/api/v2/admin/dashboard/attention*", (route) =>
     fulfillJson(route, {
       items: [

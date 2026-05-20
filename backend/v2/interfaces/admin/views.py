@@ -123,6 +123,22 @@ class AdminWaitlistList(BaseModel):
     waitlist: list[AdminWaitlistEntry]
 
 
+class AdminGlobalWaitlistSessionView(BaseModel):
+    session_id: str
+    title: str
+    location: str
+    start_at: datetime
+    capacity: int
+    enrolled_count: int = 0
+    waitlist_count: int = 0
+    entries: list[AdminWaitlistEntry]
+
+
+class AdminGlobalWaitlistList(BaseModel):
+    total_waitlisted: int
+    sessions: list[AdminGlobalWaitlistSessionView]
+
+
 class AdminPauseRequestView(BaseModel):
     pause_request_id: str
     enrollment_id: str

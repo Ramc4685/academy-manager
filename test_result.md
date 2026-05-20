@@ -223,6 +223,17 @@ backend:
       - working: true
         agent: "main"
         comment: "Slice 4 settings depth: extended the existing academy BFF profile with real persisted logo_url and brand_color fields. No upload/storage or destructive data controls were added. Focused settings interface tests passed: uv run pytest v2/tests/interface/test_admin_settings.py -q => 7 passed."
+  - task: "Rally admin global waitlist backend slice"
+    implemented: true
+    working: true
+    file: "backend/v2/interfaces/admin/waitlist_routes.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Slice 6 waitlist decision: mockup requires a global grouped waitlist, so added read-only GET /api/v2/admin/waitlist aggregating upcoming sessions plus existing per-session waitlist entries. Enrollment approvals remain deferred pending product confirmation. Focused read-path verification passed: uv run pytest v2/tests/interface/test_admin_waitlist.py -k 'global_waitlist or list_waitlist_returns_entries' -q => 2 passed, 6 deselected. Full waitlist interface file still hits the known unrelated Python 3.14 no-arg ULID() failure in the existing promote write-path test."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -410,10 +421,21 @@ frontend:
       - working: true
         agent: "main"
         comment: "Slice 4 settings depth: replaced the Branding coming-next card with a real URL/color form backed by the existing academy BFF, kept upload/email signature work honestly deferred, and added docs/policy/data-retention.md so Data deletion remains policy-gated. Verification: frontend pnpm typecheck passed; frontend pnpm build passed sequentially; PLAYWRIGHT_PORT=3809 admin-shell spec passed 46/46."
+  - task: "Rally admin global waitlist frontend slice"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/admin/waitlist/page.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Slice 6 waitlist UI now uses real GET /api/v2/admin/waitlist data for grouped session waitlists, KPI counts, student/parent rows, and session links; no fake queue metrics or offer-policy values are rendered. Verification: frontend pnpm typecheck passed; frontend pnpm build passed; PLAYWRIGHT_PORT=3810 admin-shell spec passed 46/46."
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 19
+  test_sequence: 20
   run_ui: true
 test_plan:
   current_focus: []
@@ -421,6 +443,8 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "Rally admin waitlist Slice 6 verified: added read-only global waitlist BFF and switched /admin/waitlist to grouped real BFF data. Backend read-path tests passed 2/2 selected; frontend pnpm typecheck/build passed; PLAYWRIGHT_PORT=3810 admin-shell spec passed 46/46. Full waitlist interface file still has the unrelated Python 3.14 no-arg ULID() failure in the existing promote write-path test. Enrollment approvals were not built because product confirmation is still missing."
   - agent: "main"
     message: "Rally admin Settings Slice 4 verified: academy BFF now includes persisted logo_url and brand_color; Branding panel edits those real fields; docs/policy/data-retention.md created to gate destructive Data controls. Backend focused settings test passed 7/7; frontend pnpm typecheck/build passed; PLAYWRIGHT_PORT=3809 admin-shell spec passed 46/46. Upload/storage, email signatures, Stripe Connect writes, invites, and deletion/anonymization remain deferred."
   - agent: "main"

@@ -81,6 +81,22 @@ export interface AdminWaitlistList {
   waitlist: AdminWaitlistEntry[];
 }
 
+export interface AdminGlobalWaitlistSession {
+  session_id: string;
+  title: string;
+  location: string;
+  start_at: string;
+  capacity: number;
+  enrolled_count: number;
+  waitlist_count: number;
+  entries: AdminWaitlistEntry[];
+}
+
+export interface AdminGlobalWaitlistList {
+  total_waitlisted: number;
+  sessions: AdminGlobalWaitlistSession[];
+}
+
 export interface PromoteWaitlistResponse {
   promoted_waitlist_id: string;
 }
@@ -516,6 +532,10 @@ export function resumeEnrollment(enrollmentId: string): Promise<void> {
 
 export function listSessionWaitlist(sessionId: string): Promise<AdminWaitlistList> {
   return apiFetch<AdminWaitlistList>(`/admin/sessions/${sessionId}/waitlist`, { method: "GET" });
+}
+
+export function listGlobalWaitlist(): Promise<AdminGlobalWaitlistList> {
+  return apiFetch<AdminGlobalWaitlistList>("/admin/waitlist", { method: "GET" });
 }
 
 export function promoteWaitlist(sessionId: string): Promise<PromoteWaitlistResponse> {

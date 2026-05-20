@@ -21,6 +21,7 @@ export const queryKeys = {
     sessionDetail: (sessionId: string) => ["admin", "session", sessionId] as const,
     enrollments: (sessionId: string) => ["admin", "enrollments", sessionId] as const,
     waitlist: (sessionId: string) => ["admin", "waitlist", sessionId] as const,
+    globalWaitlist: () => ["admin", "waitlist", "global"] as const,
     payments: () => ["admin", "payments"] as const,
     payouts: () => ["admin", "finance", "payouts"] as const,
     expenses: () => ["admin", "finance", "expenses"] as const,
