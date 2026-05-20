@@ -18,6 +18,7 @@ class FakeStripeGateway(StripeGateway):
         self.subscription_checkouts: list[dict[str, Any]] = []
         self.portal_sessions: list[dict[str, Any]] = []
         self.refunds: list[dict[str, Any]] = []
+        self.cancelled_subscriptions: list[dict[str, Any]] = []
 
     async def create_checkout_session(
         self,
@@ -104,3 +105,13 @@ class FakeStripeGateway(StripeGateway):
             }
         )
         return refund_id
+
+    async def cancel_subscription(
+        self, stripe_subscription_id: str, *, at_period_end: bool
+    ) -> None:
+        self.cancelled_subscriptions.append(
+            {
+                "stripe_subscription_id": stripe_subscription_id,
+                "at_period_end": at_period_end,
+            }
+        )

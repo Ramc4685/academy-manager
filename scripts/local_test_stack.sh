@@ -1,0 +1,275 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUN_DIR="${ACADEMY_LOCAL_RUN_DIR:-/tmp/academy-manager-local}"
+PID_DIR="${RUN_DIR}/pids"
+LOG_DIR="${RUN_DIR}/logs"
+
+MONGO_HOST="${MONGO_HOST:-127.0.0.1}"
+MONGO_PORT="${MONGO_PORT:-27017}"
+MONGO_URL="${MONGO_URL:-mongodb://${MONGO_HOST}:${MONGO_PORT}}"
+MONGO_DBPATH="${MONGO_DBPATH:-${RUN_DIR}/mongo-data}"
+DB_NAME="${DB_NAME:-academy_manager_local}"
+
+FIREBASE_PROJECT_ID="${FIREBASE_PROJECT_ID:-academy-courtmastr}"
+FIREBASE_AUTH_HOST="${FIREBASE_AUTH_HOST:-127.0.0.1}"
+FIREBASE_AUTH_PORT="${FIREBASE_AUTH_PORT:-9099}"
+FIREBASE_UI_PORT="${FIREBASE_UI_PORT:-4000}"
+FIREBASE_AUTH_EMULATOR_HOST="${FIREBASE_AUTH_EMULATOR_HOST:-${FIREBASE_AUTH_HOST}:${FIREBASE_AUTH_PORT}}"
+
+BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
+BACKEND_PORT="${BACKEND_PORT:-8001}"
+BACKEND_URL="http://${BACKEND_HOST}:${BACKEND_PORT}"
+
+FRONTEND_HOST="${FRONTEND_HOST:-localhost}"
+FRONTEND_PORT="${FRONTEND_PORT:-3001}"
+FRONTEND_URL="http://${FRONTEND_HOST}:${FRONTEND_PORT}"
+
+mkdir -p "${PID_DIR}" "${LOG_DIR}"
+
+usage() {
+  cat <<EOF
+Usage: scripts/local_test_stack.sh <command>
+
+Commands:
+  status       Show local Mongo/Firebase/backend/frontend status.
+  infra        Start local MongoDB and Firebase Auth emulator if missing.
+  app          Start backend and frontend if missing.
+  all          Start infra, start app, then run smoke checks.
+  smoke        Check local health endpoints and expected ports.
+  seed         Run backend/scripts/seed_local.py when present.
+  test         Run backend v2 tests and frontend typecheck.
+  logs         Print log file paths and recent lines.
+  stop         Stop only processes started by this script.
+EOF
+}
+
+log() {
+  printf '\n==> %s\n' "$*"
+}
+
+die() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+port_pids() {
+  lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | paste -sd, - || true
+}
+
+has_listener() {
+  [ -n "$(port_pids "$1")" ]
+}
+
+print_port() {
+  label="$1"
+  port="$2"
+  pids="$(port_pids "${port}")"
+  if [ -n "${pids}" ]; then
+    printf '%-24s RUNNING port=%s pid=%s\n' "${label}" "${port}" "${pids}"
+  else
+    printf '%-24s stopped port=%s\n' "${label}" "${port}"
+  fi
+}
+
+wait_for_port() {
+  label="$1"
+  port="$2"
+  timeout="${3:-30}"
+  started_at="$(date +%s)"
+  while ! has_listener "${port}"; do
+    if [ "$(( $(date +%s) - started_at ))" -ge "${timeout}" ]; then
+      printf 'WARN: %s did not open port %s within %ss\n' "${label}" "${port}" "${timeout}" >&2
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+wait_for_url() {
+  label="$1"
+  url="$2"
+  timeout="${3:-45}"
+  started_at="$(date +%s)"
+  until curl -fsS "${url}" >/dev/null 2>&1; do
+    if [ "$(( $(date +%s) - started_at ))" -ge "${timeout}" ]; then
+      printf 'WARN: %s did not respond at %s within %ss\n' "${label}" "${url}" "${timeout}" >&2
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+write_pid() {
+  printf '%s\n' "$2" > "${PID_DIR}/$1.pid"
+}
+
+read_frontend_env() {
+  key="$1"
+  for file in "${ROOT_DIR}/frontend/.env.local" "${ROOT_DIR}/frontend/.env" "${ROOT_DIR}/frontend/.env.example"; do
+    [ -f "${file}" ] || continue
+    value="$(awk -F= -v key="${key}" '$1 == key {print substr($0, index($0, "=") + 1)}' "${file}" | tail -n 1)"
+    value="${value%\"}"
+    value="${value#\"}"
+    value="${value%\'}"
+    value="${value#\'}"
+    if [ -n "${value}" ]; then
+      printf '%s\n' "${value}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+firebase_api_key() {
+  if [ -n "${NEXT_PUBLIC_FIREBASE_API_KEY:-}" ]; then
+    printf '%s\n' "${NEXT_PUBLIC_FIREBASE_API_KEY}"
+    return 0
+  fi
+  read_frontend_env NEXT_PUBLIC_FIREBASE_API_KEY || read_frontend_env REACT_APP_FIREBASE_API_KEY
+}
+
+start_mongo() {
+  if has_listener "${MONGO_PORT}"; then
+    log "MongoDB already listening on ${MONGO_HOST}:${MONGO_PORT}"
+    return 0
+  fi
+  command -v mongod >/dev/null 2>&1 || die "mongod is not installed or not on PATH"
+  log "Starting MongoDB on ${MONGO_HOST}:${MONGO_PORT}"
+  mkdir -p "${MONGO_DBPATH}"
+  nohup mongod --dbpath "${MONGO_DBPATH}" --bind_ip "${MONGO_HOST}" --port "${MONGO_PORT}" >"${LOG_DIR}/mongo.log" 2>&1 &
+  write_pid mongo "$!"
+  wait_for_port "MongoDB" "${MONGO_PORT}" 30 || { tail -n 80 "${LOG_DIR}/mongo.log" >&2 || true; exit 1; }
+}
+
+start_firebase() {
+  if has_listener "${FIREBASE_AUTH_PORT}"; then
+    log "Firebase Auth emulator already listening on ${FIREBASE_AUTH_HOST}:${FIREBASE_AUTH_PORT}"
+    return 0
+  fi
+  command -v firebase >/dev/null 2>&1 || die "firebase CLI is not installed or not on PATH"
+  firebase_config="${RUN_DIR}/firebase.local.json"
+  cat >"${firebase_config}" <<EOF
+{"emulators":{"auth":{"host":"${FIREBASE_AUTH_HOST}","port":${FIREBASE_AUTH_PORT}},"ui":{"enabled":true,"host":"127.0.0.1","port":${FIREBASE_UI_PORT}},"singleProjectMode":true}}
+EOF
+  log "Starting Firebase Auth emulator for ${FIREBASE_PROJECT_ID}"
+  (cd "${ROOT_DIR}" && nohup firebase emulators:start --config "${firebase_config}" --only auth --project "${FIREBASE_PROJECT_ID}") >"${LOG_DIR}/firebase.log" 2>&1 &
+  write_pid firebase "$!"
+  wait_for_port "Firebase Auth emulator" "${FIREBASE_AUTH_PORT}" 45 || { tail -n 120 "${LOG_DIR}/firebase.log" >&2 || true; exit 1; }
+}
+
+start_backend() {
+  if has_listener "${BACKEND_PORT}"; then
+    log "Backend already listening on ${BACKEND_HOST}:${BACKEND_PORT}"
+    return 0
+  fi
+  [ -x "${ROOT_DIR}/backend/.venv/bin/python" ] || die "backend/.venv is missing"
+  log "Starting backend on ${BACKEND_URL}"
+  (
+    cd "${ROOT_DIR}/backend"
+    # shellcheck disable=SC1091
+    . .venv/bin/activate
+    nohup env APP_ENV=development EMAIL_DELIVERY_MODE=disabled MONGO_URL="${MONGO_URL}" DB_NAME="${DB_NAME}" V2_ENABLED=1 FIREBASE_AUTH_ENABLED=true FIREBASE_PROJECT_ID="${FIREBASE_PROJECT_ID}" FIREBASE_AUTH_EMULATOR_HOST="${FIREBASE_AUTH_EMULATOR_HOST}" FRONTEND_URL="${FRONTEND_URL}" CORS_ORIGINS="${FRONTEND_URL},http://127.0.0.1:${FRONTEND_PORT}" COOKIE_SECURE=false PYTHONPATH="${ROOT_DIR}" uvicorn server:app --host "${BACKEND_HOST}" --port "${BACKEND_PORT}" --reload
+  ) >"${LOG_DIR}/backend.log" 2>&1 &
+  write_pid backend "$!"
+  wait_for_url "Backend health" "${BACKEND_URL}/api/health" 60 || { tail -n 120 "${LOG_DIR}/backend.log" >&2 || true; exit 1; }
+}
+
+start_frontend() {
+  if has_listener "${FRONTEND_PORT}"; then
+    log "Frontend already listening on ${FRONTEND_HOST}:${FRONTEND_PORT}"
+    return 0
+  fi
+  command -v pnpm >/dev/null 2>&1 || die "pnpm is not installed or not on PATH"
+  api_key="$(firebase_api_key || true)"
+  [ -n "${api_key}" ] || die "Missing NEXT_PUBLIC_FIREBASE_API_KEY. Add it to frontend/.env.local or export it."
+  log "Starting frontend on ${FRONTEND_URL}"
+  (
+    cd "${ROOT_DIR}/frontend"
+    nohup env BFF_API_ORIGIN="${BACKEND_URL}" NEXT_PUBLIC_API_BASE=/api/v2 NEXT_PUBLIC_FIREBASE_API_KEY="${api_key}" NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN="${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:-${FIREBASE_PROJECT_ID}.firebaseapp.com}" NEXT_PUBLIC_FIREBASE_PROJECT_ID="${NEXT_PUBLIC_FIREBASE_PROJECT_ID:-${FIREBASE_PROJECT_ID}}" NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET="${NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:-${FIREBASE_PROJECT_ID}.firebasestorage.app}" NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID="${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:-953230788846}" NEXT_PUBLIC_FIREBASE_APP_ID="${NEXT_PUBLIC_FIREBASE_APP_ID:-1:953230788846:web:1f2819c11418ecf5860bff}" NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID="${NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID:-G-Z6GS6WRZY8}" NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST="${NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST:-http://${FIREBASE_AUTH_EMULATOR_HOST}}" PORT="${FRONTEND_PORT}" pnpm dev
+  ) >"${LOG_DIR}/frontend.log" 2>&1 &
+  write_pid frontend "$!"
+  wait_for_url "Frontend BFF proxy" "${FRONTEND_URL}/api/v2/healthz" 90 || { tail -n 120 "${LOG_DIR}/frontend.log" >&2 || true; exit 1; }
+}
+
+status() {
+  print_port "MongoDB" "${MONGO_PORT}"
+  print_port "Firebase Auth" "${FIREBASE_AUTH_PORT}"
+  print_port "Firebase UI" "${FIREBASE_UI_PORT}"
+  print_port "Backend API" "${BACKEND_PORT}"
+  print_port "Frontend" "${FRONTEND_PORT}"
+  printf '\nLogs: %s\n' "${LOG_DIR}"
+}
+
+smoke() {
+  log "Checking local ports"
+  status
+  log "Checking backend health"
+  curl -fsS "${BACKEND_URL}/api/health"; printf '\n'
+  curl -fsS "${BACKEND_URL}/api/v2/healthz"; printf '\n'
+  log "Checking frontend BFF proxy"
+  curl -fsS "${FRONTEND_URL}/api/v2/healthz"; printf '\n'
+}
+
+seed() {
+  [ -f "${ROOT_DIR}/backend/scripts/seed_local.py" ] || die "Missing backend/scripts/seed_local.py"
+  [ -x "${ROOT_DIR}/backend/.venv/bin/python" ] || die "backend/.venv is missing"
+  log "Seeding ${DB_NAME}"
+  (cd "${ROOT_DIR}" && env MONGO_URL="${MONGO_URL}" DB_NAME="${DB_NAME}" FIREBASE_AUTH_ENABLED=true FIREBASE_PROJECT_ID="${FIREBASE_PROJECT_ID}" FIREBASE_AUTH_EMULATOR_HOST="${FIREBASE_AUTH_EMULATOR_HOST}" backend/.venv/bin/python backend/scripts/seed_local.py)
+}
+
+run_tests() {
+  log "Running backend v2 tests"
+  (
+    cd "${ROOT_DIR}/backend"
+    # shellcheck disable=SC1091
+    . .venv/bin/activate
+    python -m pytest v2/tests -q
+  )
+  log "Running frontend typecheck"
+  (cd "${ROOT_DIR}/frontend" && pnpm typecheck)
+}
+
+logs() {
+  printf 'Log directory: %s\n' "${LOG_DIR}"
+  for name in mongo firebase backend frontend; do
+    file="${LOG_DIR}/${name}.log"
+    [ -f "${file}" ] || continue
+    printf '\n--- %s ---\n' "${file}"
+    tail -n 40 "${file}" || true
+  done
+}
+
+stop_started() {
+  log "Stopping processes started by this script"
+  for name in frontend backend firebase mongo; do
+    pid_file="${PID_DIR}/${name}.pid"
+    if [ ! -f "${pid_file}" ]; then
+      printf '%-10s no pid file\n' "${name}"
+      continue
+    fi
+    pid="$(cat "${pid_file}")"
+    if kill -0 "${pid}" >/dev/null 2>&1; then
+      kill "${pid}" >/dev/null 2>&1 || true
+      printf '%-10s stopped pid=%s\n' "${name}" "${pid}"
+    else
+      printf '%-10s pid not running (%s)\n' "${name}" "${pid}"
+    fi
+    rm -f "${pid_file}"
+  done
+}
+
+case "${1:-all}" in
+  status) status ;;
+  infra) start_mongo; start_firebase; status ;;
+  app) start_backend; start_frontend; status ;;
+  all) start_mongo; start_firebase; start_backend; start_frontend; smoke ;;
+  smoke) smoke ;;
+  seed) seed ;;
+  test) run_tests ;;
+  logs) logs ;;
+  stop) stop_started ;;
+  help|-h|--help) usage ;;
+  *) usage >&2; exit 2 ;;
+esac

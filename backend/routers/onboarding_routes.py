@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from auth import get_current_user
 from db import get_db
 from routers.billing_routes import _configure_stripe
+from services.billing_proration import persist_legacy_snapshot, prorated_first_month_quote
 from services.enrollment_service import capacity_snapshot, get_enrollable_session
 
 # ---------------------------------------------------------------------------
@@ -473,12 +474,55 @@ async def create_onboarding_checkout(
             content={"error": "session_full", "detail": "The selected session is currently full"},
         )
 
-    try:
-        amount = float(session_doc.get("monthly_price") or 0)
-    except (TypeError, ValueError):
-        amount = 0
-    if amount <= 0:
-        raise HTTPException(status_code=400, detail="Session monthly price must be greater than zero")
+    now = datetime.now(timezone.utc)
+    quote = prorated_first_month_quote(
+        session=session_doc,
+        enrollment={
+            "_id": app_id,
+            "session_id": session_id,
+            "parent_user_id": app_doc["parent_user_id"],
+            "created_at": now.isoformat(),
+        },
+        period=now.strftime("%Y-%m"),
+        calculated_at=now,
+        calculated_by=app_doc["parent_user_id"],
+    )
+    snapshot_id = None
+    if quote is not None:
+        amount = quote.final_amount_cents / 100
+        snapshot_id = await persist_legacy_snapshot(
+            db,
+            quote=quote,
+            enrollment={
+                "_id": app_id,
+                "session_id": session_id,
+                "parent_user_id": app_doc["parent_user_id"],
+            },
+            session=session_doc,
+            period=now.strftime("%Y-%m"),
+        )
+        if amount <= 0:
+            # Proration legitimately yielded $0 (e.g., enrollment on last day of month
+            # with all classes within the free-class cutoff). Stripe rejects $0 line items
+            # so we cannot create a checkout session. Return a 422 explaining the situation
+            # rather than the misleading 400 about monthly_price.
+            # TODO: implement a no-charge direct-enrollment path to allow these enrollments.
+            next_month = (now.replace(day=1) + __import__("datetime").timedelta(days=32)).replace(day=1)
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Prorated first-month charge is $0 (no billable class occurrences "
+                    f"remain in {now.strftime('%B %Y')}). "
+                    f"Please re-enroll on or after {next_month.strftime('%Y-%m-%d')}."
+                ),
+            )
+    else:
+        try:
+            amount = float(session_doc.get("monthly_price") or 0)
+        except (TypeError, ValueError):
+            amount = 0
+        if amount <= 0:
+            raise HTTPException(status_code=400, detail="Session monthly price must be greater than zero")
 
     frontend_url = _frontend_url()
     success_url = f"{frontend_url}/onboarding/{app_id}/status?checkout=success"
@@ -488,6 +532,7 @@ async def create_onboarding_checkout(
         "onboarding_id": app_id,
         "parent_user_id": app_doc["parent_user_id"],
         "session_id": session_id,
+        "calculation_snapshot_id": snapshot_id or "",
         "kind": "onboarding",
     }
 

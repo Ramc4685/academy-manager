@@ -6,10 +6,12 @@ import { useQuery } from "@tanstack/react-query";
 import {
   listAvailableParentSessions,
   patchOnboarding,
+  quoteEnrollment,
   startCheckout,
   startOnboarding,
-  type ParentAvailableSession,
+  type EnrollmentQuote,
   type OnboardingApplication,
+  type ParentAvailableSession,
 } from "@/lib/api/parent";
 
 /**
@@ -33,6 +35,13 @@ export default function OnboardingStepperPage() {
     queryKey: ["parent", "sessions", "available"],
     queryFn: listAvailableParentSessions,
     staleTime: 60_000,
+  });
+  const selectedSessionId = app?.selected_session_id;
+  const quoteQuery = useQuery({
+    queryKey: ["parent", "enrollment-quote", selectedSessionId],
+    queryFn: () => quoteEnrollment({ session_id: selectedSessionId as string }),
+    enabled: Boolean(selectedSessionId),
+    staleTime: 30_000,
   });
 
   useEffect(() => {
@@ -91,7 +100,6 @@ export default function OnboardingStepperPage() {
     app.selected_session_id
       ? sessions.find((session) => session.session_id === app.selected_session_id)
       : undefined;
-
   return (
     <section data-testid="parent-onboarding">
       <OnboardingStyles />
@@ -145,6 +153,8 @@ export default function OnboardingStepperPage() {
         <ReviewStep
           app={app}
           selectedSession={selectedSession}
+          quote={quoteQuery.data}
+          quoteLoading={quoteQuery.isLoading}
           onCheckout={() => void goToCheckout()}
           onBack={() => setStep("parent")}
           saving={saving}
@@ -354,12 +364,16 @@ function SessionStep({
 function ReviewStep({
   app,
   selectedSession,
+  quote,
+  quoteLoading,
   onCheckout,
   onBack,
   saving,
 }: {
   app: OnboardingApplication;
   selectedSession?: ParentAvailableSession;
+  quote?: EnrollmentQuote;
+  quoteLoading: boolean;
   onCheckout: () => void;
   onBack: () => void;
   saving: boolean;
@@ -373,9 +387,21 @@ function ReviewStep({
         <li>
           Session:{" "}
           {selectedSession
-            ? `${selectedSession.title} · ${formatSessionTime(selectedSession)} · ${formatCents(selectedSession.amount_cents)}`
+            ? `${selectedSession.title} · ${formatSessionTime(selectedSession)}`
             : app.selected_session_id ?? "—"}
         </li>
+        <li>
+          First month:{" "}
+          {quote
+            ? `${formatCents(quote.amount_due_cents)} · billed for ${quote.billable_remaining_classes_this_month} of ${quote.total_eligible_classes_this_month} classes this month`
+            : quoteLoading
+              ? "Calculating..."
+              : selectedSession
+                ? formatCents(selectedSession.amount_cents)
+                : "—"}
+        </li>
+        {quote && <li>Starting next month: {formatCents(quote.next_billing_amount_cents)}</li>}
+        {quote?.quote_expires_at && <li>Quote expires: {formatShortDateTime(quote.quote_expires_at)}</li>}
         <li>Waiver: {app.waiver_accepted ? "Accepted" : "Not accepted"}</li>
       </ul>
       <div className="flex gap-2">
@@ -412,6 +438,15 @@ function formatSessionTime(session: Pick<ParentAvailableSession, "start_at" | "e
   });
 
   return `${date}, ${startTime} - ${endTime}`;
+}
+
+function formatShortDateTime(value: string): string {
+  return new Date(value).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function formatCents(cents: number): string {

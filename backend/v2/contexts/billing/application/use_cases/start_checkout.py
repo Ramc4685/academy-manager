@@ -25,6 +25,7 @@ class StartCheckoutCommand(BaseModel):
     parent_id: str
     session_id: str
     amount_cents: int
+    calculation_snapshot_id: str | None = None
     success_url: str
     cancel_url: str
 
@@ -65,6 +66,7 @@ class StartCheckout:
                     "payment_id": payment_id,
                     "parent_id": cmd.parent_id,
                     "session_id": cmd.session_id,
+                    "calculation_snapshot_id": cmd.calculation_snapshot_id or "",
                 },
             )
         except Exception as exc:  # pragma: no cover - infra-only path
@@ -77,6 +79,7 @@ class StartCheckout:
             parent_id=cmd.parent_id,
             session_id=cmd.session_id,
             stripe_checkout_session_id=checkout_id,
+            calculation_snapshot_id=cmd.calculation_snapshot_id,
             amount_cents=cmd.amount_cents,
             status="pending",
             created_at=now,

@@ -19,6 +19,10 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     UndoPaymentPaid,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
+from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
+    ApproveWithdrawalCredit,
+    PreviewWithdrawalCredit,
+)
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     CancelEnrollment,
     CancelSession,
@@ -83,6 +87,9 @@ class AdminUseCases:
     decline_pause_request: DeclinePauseRequest
     # billing
     issue_refund: IssueRefund
+    quote_enrollment: object  # callable
+    preview_withdrawal_credit: PreviewWithdrawalCredit
+    approve_withdrawal_credit: ApproveWithdrawalCredit
     list_payments_recent: object  # callable
     generate_monthly_payments: GenerateMonthlyPayments
     mark_payment_paid: MarkPaymentPaid

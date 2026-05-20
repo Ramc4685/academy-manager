@@ -20,6 +20,20 @@ class MongoEnrollmentWriter(TenantScopedRepository):
             {"enrollment_id": enrollment_id}, {"$set": {"status": status}}
         )
 
+    async def mark_withdrawn(
+        self, enrollment_id: str, *, withdrawal_date: datetime
+    ) -> None:
+        await self._update_one(
+            {"enrollment_id": enrollment_id},
+            {
+                "$set": {
+                    "status": "withdrawn",
+                    "withdrawal_date": withdrawal_date,
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+
     async def update_session(self, enrollment_id: str, session_id: str) -> None:
         existing = await self._find_one({"enrollment_id": enrollment_id})
         previous_session_id = existing.get("session_id") if existing else None

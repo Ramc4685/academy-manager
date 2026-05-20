@@ -209,6 +209,54 @@ class ApplyPaymentDiscountRequest(BaseModel):
     discount_cents: int
 
 
+class AdminEnrollmentQuoteRequest(BaseModel):
+    student_id: str | None = None
+    session_id: str
+    start_date: str | None = None
+
+
+class AdminEnrollmentQuoteResponse(BaseModel):
+    snapshot_id: str
+    quote_expires_at: datetime | None = None
+    amount_due_cents: int
+    monthly_price_cents: int
+    billing_period: str
+    total_eligible_classes_this_month: int
+    billable_remaining_classes_this_month: int
+    formula: str
+    included_occurrence_ids: list[str]
+    excluded_occurrences: dict[str, str]
+    policy_version: str
+    settings_version: str
+    schedule_signature: str | None = None
+
+
+class WithdrawalCreditPreviewRequest(BaseModel):
+    withdrawal_date: datetime
+
+
+class WithdrawalCreditPreviewResponse(BaseModel):
+    credit_amount_cents: int
+    display_amount: str
+    total_classes: int
+    unused_classes: int
+    formula: str
+    message: str
+    no_credit_reason: str | None = None
+
+
+class WithdrawalCreditApproveRequest(BaseModel):
+    withdrawal_date: datetime
+    admin_note: str = ""
+    cancel_subscription_immediately: bool = False
+
+
+class WithdrawalCreditApproveResponse(BaseModel):
+    status: str
+    credit_amount_cents: int
+    credit_balance_cents: int
+
+
 # --- Finance (# FINANCE) ---
 
 

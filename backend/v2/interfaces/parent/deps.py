@@ -37,6 +37,7 @@ class ParentUseCases:
     get_application_status: GetApplicationStatus
     transition_application: TransitionApplication
     start_checkout: StartCheckout
+    quote_enrollment: object  # callable
     start_checkout_for_application: object  # callable
     start_autopay_for_enrollment: object  # callable
     open_billing_portal: object  # callable
@@ -44,6 +45,7 @@ class ParentUseCases:
     handle_webhook_event: HandleWebhookEvent
     list_available_sessions: ListParentAvailableSessions
     list_payments_for_parent: object  # bound to a callable in composition; opaque to routes
+    list_credits_for_parent: object  # callable
     list_children_for_parent: object  # callable
     list_enrollments_for_parent: object  # callable
     request_enrollment_pause: RequestEnrollmentPause

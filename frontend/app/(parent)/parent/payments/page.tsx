@@ -6,6 +6,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   createParentPauseRequest,
   listParentEnrollments,
+  listParentCredits,
   listParentPayments,
   listParentPauseRequests,
   openBillingPortal,
@@ -31,6 +32,10 @@ export default function ParentPaymentsPage() {
   const pauseRequestsQuery = useQuery({
     queryKey: ["parent", "pause-requests"],
     queryFn: listParentPauseRequests,
+  });
+  const creditsQuery = useQuery({
+    queryKey: ["parent", "credits"],
+    queryFn: listParentCredits,
   });
   const portalMutation = useMutation({
     mutationFn: () => openBillingPortal({ return_url: window.location.href }),
@@ -66,8 +71,18 @@ export default function ParentPaymentsPage() {
   const payments = paymentsQuery.data?.payments ?? [];
   const enrollments = enrollmentsQuery.data?.enrollments ?? [];
   const pauseRequests = pauseRequestsQuery.data?.requests ?? [];
-  const loading = paymentsQuery.isLoading || enrollmentsQuery.isLoading || pauseRequestsQuery.isLoading;
-  const error = paymentsQuery.isError || enrollmentsQuery.isError || pauseRequestsQuery.isError;
+  const creditBalance = creditsQuery.data?.balance_cents ?? 0;
+  const credits = creditsQuery.data?.credits ?? [];
+  const loading =
+    paymentsQuery.isLoading ||
+    enrollmentsQuery.isLoading ||
+    pauseRequestsQuery.isLoading ||
+    creditsQuery.isLoading;
+  const error =
+    paymentsQuery.isError ||
+    enrollmentsQuery.isError ||
+    pauseRequestsQuery.isError ||
+    creditsQuery.isError;
 
   if (loading) return <p>Loading...</p>;
   if (error) return <p className="text-red-600">Could not load payments.</p>;
@@ -90,6 +105,29 @@ export default function ParentPaymentsPage() {
           {portalMutation.isPending ? "Opening..." : "Billing portal"}
         </button>
       </div>
+
+      {creditBalance > 0 && (
+        <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900 dark:bg-emerald-950/30">
+          <h2 className="text-lg font-semibold text-emerald-950 dark:text-emerald-100">
+            Available credit
+          </h2>
+          <p className="mt-1 text-sm text-emerald-800 dark:text-emerald-200">
+            {money(creditBalance)} applies automatically to your next invoice.
+          </p>
+          {credits.length > 0 && (
+            <ul className="mt-3 space-y-1 text-xs text-emerald-800 dark:text-emerald-200">
+              {credits.map((credit) => (
+                <li key={credit.credit_id}>
+                  {credit.reason}: {money(credit.remaining_amount_cents, credit.currency.toUpperCase())}
+                  {credit.expires_at
+                    ? ` · expires ${new Date(credit.expires_at).toLocaleDateString()}`
+                    : ""}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
       <section>
         <h2 className="mb-3 text-lg font-semibold">Autopay</h2>

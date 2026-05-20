@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
     HandleWebhookEvent,
+)
+from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
+    QuoteEnrollment,
+    QuoteEnrollmentCommand,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
 from backend.v2.contexts.billing.application.use_cases.parent_billing import (
@@ -23,6 +28,9 @@ from backend.v2.contexts.billing.application.use_cases.parent_billing import (
 from backend.v2.contexts.billing.application.use_cases.start_checkout import (
     StartCheckout,
     StartCheckoutCommand,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
+    MongoCreditLedgerRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
@@ -95,6 +103,7 @@ class ParentComposition:
     get_application_status: GetApplicationStatus
     transition_application: TransitionApplication
     start_checkout: StartCheckout
+    quote_enrollment: object
     start_checkout_for_application: object
     start_autopay_for_enrollment: object
     open_billing_portal: object
@@ -102,6 +111,7 @@ class ParentComposition:
     handle_webhook_event: HandleWebhookEvent
     list_available_sessions: ListParentAvailableSessions
     list_payments_for_parent: object  # callable
+    list_credits_for_parent: object
     list_children_for_parent: object
     list_enrollments_for_parent: object
     request_enrollment_pause: RequestEnrollmentPause
@@ -120,7 +130,8 @@ def compose_parent(
     academy_id = settings.default_academy_id
 
     # Billing
-    payments_repo = MongoPaymentRepository(db)
+    credits_repo = MongoCreditLedgerRepository(db)
+    payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
     subscriptions_repo = MongoSubscriptionRepository(db)
     dedup = MongoStripeEventDedup(db)
 
@@ -149,6 +160,11 @@ def compose_parent(
         subscriptions=subscriptions_repo,
         outbox=outbox,
         academy_id=academy_id,
+    )
+    quote_enrollment_uc = QuoteEnrollment(
+        sessions=payments_repo,
+        snapshots=payments_repo,
+        occurrences=payments_repo,
     )
 
     # Enrollment
@@ -197,6 +213,9 @@ def compose_parent(
 
     async def list_payments_for_parent(parent_id: str):
         return await payments_repo.list_for_parent(parent_id)
+
+    async def list_credits_for_parent(parent_id: str):
+        return await credits_repo.list_for_parent(parent_id)
 
     async def _parent_students(parent_id: str) -> list[dict[str, Any]]:
         cursor = db["students"].find(
@@ -319,6 +338,29 @@ def compose_parent(
             )
         return rows
 
+    async def quote_enrollment(
+        *,
+        parent_id: str,
+        session_id: str,
+        student_id: str | None = None,
+        start_date: str | None = None,
+    ):
+        if student_id:
+            students = await _parent_students(parent_id)
+            owned = {str(s.get("student_id") or s["_id"]) for s in students}
+            if student_id not in owned:
+                raise SessionNotFound("student not found", student_id=student_id)
+        billing_start = _start_date_to_datetime(start_date)
+        return await quote_enrollment_uc.execute(
+            QuoteEnrollmentCommand(
+                session_id=session_id,
+                billing_start_at=billing_start,
+                calculated_by=parent_id,
+                parent_id=parent_id,
+                student_id=student_id,
+            )
+        )
+
     async def start_checkout_for_application(
         *,
         parent_id: str,
@@ -342,15 +384,26 @@ def compose_parent(
                 "selected session is not available for checkout",
                 session_id=app.selected_session_id,
             )
+        quote = await quote_enrollment_uc.execute(
+            QuoteEnrollmentCommand(
+                session_id=selected.session_id,
+                billing_start_at=datetime.now(timezone.utc),
+                calculated_by=parent_id,
+                parent_id=parent_id,
+            )
+        )
         result = await start_checkout.execute(
             StartCheckoutCommand(
                 parent_id=parent_id,
                 session_id=selected.session_id,
-                amount_cents=selected.amount_cents,
+                amount_cents=quote.final_amount_cents,
+                calculation_snapshot_id=quote.snapshot_id,
                 success_url=success_url,
                 cancel_url=cancel_url,
             )
         )
+        if quote.snapshot_id:
+            await payments_repo.consume_quote_snapshot(quote.snapshot_id)
         await transition.execute(
             app.application_id,
             "CHECKOUT_PENDING",
@@ -429,6 +482,7 @@ def compose_parent(
         get_application_status=get_status,
         transition_application=transition,
         start_checkout=start_checkout,
+        quote_enrollment=quote_enrollment,
         start_checkout_for_application=start_checkout_for_application,
         start_autopay_for_enrollment=start_autopay_for_enrollment,
         open_billing_portal=open_billing_portal,
@@ -436,6 +490,7 @@ def compose_parent(
         handle_webhook_event=handle_webhook,
         list_available_sessions=list_available_sessions,
         list_payments_for_parent=list_payments_for_parent,
+        list_credits_for_parent=list_credits_for_parent,
         list_children_for_parent=list_children_for_parent,
         list_enrollments_for_parent=list_enrollments_for_parent,
         request_enrollment_pause=request_pause,
@@ -457,3 +512,14 @@ def _session_amount_cents(doc: dict[str, object]) -> int:
     if doc.get("monthly_price") is not None:
         return int(round(float(doc["monthly_price"]) * 100))  # type: ignore[arg-type]
     return 2500
+
+
+def _start_date_to_datetime(value: str | None) -> datetime:
+    if not value:
+        return datetime.now(timezone.utc)
+    local = datetime.combine(
+        datetime.fromisoformat(value).date(),
+        time.min,
+        tzinfo=ZoneInfo("America/Chicago"),
+    )
+    return local.astimezone(timezone.utc)

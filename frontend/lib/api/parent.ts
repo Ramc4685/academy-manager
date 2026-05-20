@@ -42,6 +42,22 @@ export interface ParentPayment {
   session_id: string | null;
 }
 
+export interface ParentCredit {
+  credit_id: string;
+  type: string;
+  status: string;
+  amount_cents: number;
+  remaining_amount_cents: number;
+  currency: string;
+  reason: string;
+  expires_at?: string | null;
+}
+
+export interface ParentCreditBalance {
+  balance_cents: number;
+  credits: ParentCredit[];
+}
+
 export interface ParentAvailableSession {
   session_id: string;
   title: string;
@@ -52,6 +68,20 @@ export interface ParentAvailableSession {
   enrolled_count: number;
   available_seats: number;
   amount_cents: number;
+}
+
+export interface EnrollmentQuote {
+  snapshot_id: string;
+  quote_expires_at?: string | null;
+  amount_due_cents: number;
+  monthly_price_cents: number;
+  billing_period: string;
+  total_eligible_classes_this_month: number;
+  billable_remaining_classes_this_month: number;
+  formula: string;
+  message: string;
+  next_billing_amount_cents: number;
+  next_billing_message: string;
 }
 
 export interface ParentChild {
@@ -139,6 +169,17 @@ export function startCheckout(payload: {
   });
 }
 
+export function quoteEnrollment(payload: {
+  student_id?: string | null;
+  session_id: string;
+  start_date?: string | null;
+}): Promise<EnrollmentQuote> {
+  return apiFetch("/parent/enrollments/quote", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function startAutopay(payload: {
   enrollment_id: string;
   success_url: string;
@@ -174,6 +215,10 @@ export function listAvailableParentSessions(): Promise<{ sessions: ParentAvailab
 
 export function listParentPayments(): Promise<{ payments: ParentPayment[] }> {
   return apiFetch("/parent/payments", { method: "GET" });
+}
+
+export function listParentCredits(): Promise<ParentCreditBalance> {
+  return apiFetch("/parent/credits", { method: "GET" });
 }
 
 export function listParentChildren(): Promise<{ children: ParentChild[] }> {

@@ -37,7 +37,7 @@ export interface CreateSessionRequest {
   capacity: number;
 }
 
-export type EnrollmentStatus = "active" | "paused" | "cancelled";
+export type EnrollmentStatus = "active" | "paused" | "cancelled" | "withdrawn";
 
 export interface AdminEnrollmentView {
   enrollment_id: string;
@@ -165,6 +165,38 @@ export interface MarkPaymentPaidRequest {
 
 export interface ApplyPaymentDiscountRequest {
   discount_cents: number;
+}
+
+export interface AdminEnrollmentQuote {
+  snapshot_id: string;
+  quote_expires_at?: string | null;
+  amount_due_cents: number;
+  monthly_price_cents: number;
+  billing_period: string;
+  total_eligible_classes_this_month: number;
+  billable_remaining_classes_this_month: number;
+  formula: string;
+  included_occurrence_ids: string[];
+  excluded_occurrences: Record<string, string>;
+  policy_version: string;
+  settings_version: string;
+  schedule_signature: string | null;
+}
+
+export interface WithdrawalCreditPreviewResponse {
+  credit_amount_cents: number;
+  display_amount: string;
+  total_classes: number;
+  unused_classes: number;
+  formula: string;
+  message: string;
+  no_credit_reason?: string | null;
+}
+
+export interface WithdrawalCreditApproveResponse {
+  status: string;
+  credit_amount_cents: number;
+  credit_balance_cents: number;
 }
 
 export interface AdminPayoutView {
@@ -502,6 +534,41 @@ export function createEnrollment(payload: CreateEnrollmentRequest): Promise<Admi
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export function quoteAdminEnrollment(payload: {
+  session_id: string;
+  student_id?: string | null;
+  start_date?: string | null;
+}): Promise<AdminEnrollmentQuote> {
+  return apiFetch<AdminEnrollmentQuote>("/admin/enrollments/quote", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function previewWithdrawalCredit(
+  enrollmentId: string,
+  payload: { withdrawal_date: string }
+): Promise<WithdrawalCreditPreviewResponse> {
+  return apiFetch<WithdrawalCreditPreviewResponse>(
+    `/admin/enrollments/${enrollmentId}/withdrawal-credit/preview`,
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+}
+
+export function approveWithdrawalCredit(
+  enrollmentId: string,
+  payload: {
+    withdrawal_date: string;
+    admin_note?: string;
+    cancel_subscription_immediately?: boolean;
+  }
+): Promise<WithdrawalCreditApproveResponse> {
+  return apiFetch<WithdrawalCreditApproveResponse>(
+    `/admin/enrollments/${enrollmentId}/withdrawal-credit/approve`,
+    { method: "POST", body: JSON.stringify(payload) }
+  );
 }
 
 export function deleteEnrollment(enrollmentId: string): Promise<void> {

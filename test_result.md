@@ -140,12 +140,6 @@ backend:
       - working: true
         agent: "main"
         comment: "Added admin BFF user/student directories, aligned session/enrollment/waitlist DTOs with Next client expectations, and verified local admin can see coaches, parents, students, session counts, and real payment rows through Firebase emulator auth."
-      - working: true
-        agent: "main"
-        comment: "Slice 1 Rich Students: added admin student search/status/limit/cursor contract, rich student fields (attendance_rate, dues_status, active_session_count, last_seen_at, parent name/email), batched Mongo enrichment, and attendance lookup index. Focused backend verification passed: 14 passed."
-      - working: true
-        agent: "main"
-        comment: "Broader backend/v2 suite was attempted after the focused pass and failed outside this slice with the existing Python 3.14 ULID() no-argument TypeError in attendance/billing/event tests; no Rich Students tests failed."
   - task: "coach dashboard metrics BFF"
     implemented: true
     working: true
@@ -190,50 +184,28 @@ backend:
       - working: true
         agent: "main"
         comment: "Added Enrollment use case and admin BFF endpoint to move a student between sessions by reserving the target seat, updating the enrollment, and releasing the source seat. Interface tests cover the reservation/release behavior."
-  - task: "Rally admin waivers backend slice"
+  - task: "first-month class-count proration quote snapshots"
     implemented: true
     working: true
-    file: "backend/v2/interfaces/admin/waiver_routes.py"
+    file: "backend/v2/contexts/billing/domain/proration.py"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
       - working: true
         agent: "main"
-        comment: "Slice 2 backend implemented: added read-only GET /api/v2/admin/waivers, onboarding use-case/report models, Mongo admin waiver query over waivers/waiver_versions, waiver_acceptances, students, and users, plus interface/application/repo tests. BFF route shapes the neutral use-case report into the Rally admin contract (summary/current_waiver/waivers). Focused verification passed: uv run pytest v2/tests/application/test_admin_waivers.py v2/tests/interface/test_admin_waivers.py v2/tests/contract/test_admin_waivers_mongo_repo.py -q => 6 passed."
-  - task: "Rally admin dashboard attention backend slice"
+        comment: "Added the shared first-month proration policy, persisted quote snapshots, v2 parent/admin quote endpoints, legacy billing bridge usage, invoice-key idempotency for monthly generation, and snapshot traceability on payments. Focused proration/BFF tests passed, full backend v2 suite passed, and frontend build/typecheck passed."
+  - task: "early withdrawal account credits"
     implemented: true
     working: true
-    file: "backend/v2/interfaces/admin/dashboard_routes.py"
+    file: "backend/v2/contexts/billing/application/use_cases/withdrawal_credit.py"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
       - working: true
         agent: "main"
-        comment: "Slice 3 backend implemented: added GET /api/v2/admin/dashboard/attention as a BFF-level aggregator over existing dues follow-up, pending pause requests, waiver status, and session pressure signals. Focused interface verification passed: uv run pytest v2/tests/interface/test_admin_dashboard_attention.py -q => 3 passed."
-  - task: "Rally admin settings branding backend slice"
-    implemented: true
-    working: true
-    file: "backend/v2/interfaces/admin/academy_routes.py"
-    stuck_count: 0
-    priority: "medium"
-    needs_retesting: false
-    status_history:
-      - working: true
-        agent: "main"
-        comment: "Slice 4 settings depth: extended the existing academy BFF profile with real persisted logo_url and brand_color fields. No upload/storage or destructive data controls were added. Focused settings interface tests passed: uv run pytest v2/tests/interface/test_admin_settings.py -q => 7 passed."
-  - task: "Rally admin global waitlist backend slice"
-    implemented: true
-    working: true
-    file: "backend/v2/interfaces/admin/waitlist_routes.py"
-    stuck_count: 0
-    priority: "medium"
-    needs_retesting: false
-    status_history:
-      - working: true
-        agent: "main"
-        comment: "Slice 6 waitlist decision: mockup requires a global grouped waitlist, so added read-only GET /api/v2/admin/waitlist aggregating upcoming sessions plus existing per-session waitlist entries. Enrollment approvals remain deferred pending product confirmation. Focused read-path verification passed: uv run pytest v2/tests/interface/test_admin_waitlist.py -k 'global_waitlist or list_waitlist_returns_entries' -q => 2 passed, 6 deselected. Full waitlist interface file still hits the known unrelated Python 3.14 no-arg ULID() failure in the existing promote write-path test."
+        comment: "Implemented Slice 2 withdrawal credits: net-paid credit policy, account credit ledger, admin preview/approval BFF endpoints, subscription cancellation, parent credit balance endpoint, and automatic FIFO credit application during monthly generation. Full backend v2 suite passed."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -371,71 +343,32 @@ frontend:
       - working: true
         agent: "main"
         comment: "Removed the legacy CRA frontend, promoted the Next.js BFF/DDD frontend to the canonical frontend/ path, updated CI/docs/deployment references, and verified only one top-level frontend directory remains."
-  - task: "Rally admin rich students slice"
+  - task: "parent/admin proration quote display"
     implemented: true
     working: true
-    file: "frontend/app/(admin)/admin/students/page.tsx"
+    file: "frontend/app/(parent)/parent/onboarding/page.tsx"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
       - working: true
         agent: "main"
-        comment: "Slice 1 implemented: admin students now calls listAdminStudents with search/status/limit/cursor, uses cursor-backed next-page loading, resets pagination through query-key changes when search/status changes, renders attendance_rate and dues_status only from BFF data, and shows Rally search/filter plus loading/error/empty states. Verification: new admin-students spec passed 6/6; combined admin-shell + students smoke passed 48/48 serially on PLAYWRIGHT_PORT=3803 after a parallel run exposed Next dev-server .next cache/manifest corruption; frontend typecheck/build passed."
-  - task: "Rally admin waivers frontend slice"
+        comment: "Parent onboarding review and admin roster add dialog now request server-issued quote snapshots and display first-month amount plus billed-for N of M class text. Verified with frontend typecheck and production build."
+  - task: "withdrawal credit admin and parent UI"
     implemented: true
     working: true
-    file: "frontend/app/(admin)/admin/waivers/page.tsx"
-    stuck_count: 0
-    priority: "high"
-    needs_retesting: false
-    status_history:
-      - working: "NA"
-        agent: "main"
-        comment: "Slice 2 frontend implemented without backend edits: added /admin/waivers route, COMMS OPS nav/meta entry, typed listAdminWaivers client, admin waiver query key, BFF-only summary/current-waiver/table rendering, and focused Playwright smoke/empty-state coverage. Verification pending."
-      - working: true
-        agent: "main"
-        comment: "Verified frontend slice: pnpm typecheck passed; PLAYWRIGHT_PORT=3804 admin-waivers spec passed 4/4 across chromium-mobile and webkit-mobile after tightening one ambiguous test selector; admin-shell spec passed 44/44 with /admin/waivers route and drawer nav included; pnpm build passed with /admin/waivers at 5.56 kB and admin first-load 155 kB. Browser plugin render check against a local mock BFF loaded /admin/waivers, saw nav/header/current document/two rows/status chips, and reported no warn/error logs."
-      - working: true
-        agent: "main"
-        comment: "Re-verified after backend/frontend contract alignment in the shared worktree: frontend pnpm typecheck passed; frontend pnpm build passed; PLAYWRIGHT_PORT=3806 admin-waivers spec passed 4/4; PLAYWRIGHT_PORT=3807 admin-shell spec passed 44/44 including /admin/waivers, coach smoke, and parent smoke."
-  - task: "Rally admin dashboard attention frontend slice"
-    implemented: true
-    working: true
-    file: "frontend/app/(admin)/admin/page.tsx"
+    file: "frontend/app/(admin)/admin/sessions/[id]/page.tsx"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
       - working: true
         agent: "main"
-        comment: "Slice 3 frontend implemented: dashboard now calls listAdminAttention and renders a Rally Needs your attention lane with BFF-provided links/counts, plus truthful loading/error/empty states. Verification: frontend pnpm typecheck passed; frontend pnpm build passed after rerunning without concurrent Playwright; PLAYWRIGHT_PORT=3808 admin-shell spec passed 46/46 including the attention assertion and coach/parent smoke routes."
-  - task: "Rally admin settings branding and data-policy slice"
-    implemented: true
-    working: true
-    file: "frontend/components/admin/settings/branding-panel.tsx"
-    stuck_count: 0
-    priority: "medium"
-    needs_retesting: false
-    status_history:
-      - working: true
-        agent: "main"
-        comment: "Slice 4 settings depth: replaced the Branding coming-next card with a real URL/color form backed by the existing academy BFF, kept upload/email signature work honestly deferred, and added docs/policy/data-retention.md so Data deletion remains policy-gated. Verification: frontend pnpm typecheck passed; frontend pnpm build passed sequentially; PLAYWRIGHT_PORT=3809 admin-shell spec passed 46/46."
-  - task: "Rally admin global waitlist frontend slice"
-    implemented: true
-    working: true
-    file: "frontend/app/(admin)/admin/waitlist/page.tsx"
-    stuck_count: 0
-    priority: "medium"
-    needs_retesting: false
-    status_history:
-      - working: true
-        agent: "main"
-        comment: "Slice 6 waitlist UI now uses real GET /api/v2/admin/waitlist data for grouped session waitlists, KPI counts, student/parent rows, and session links; no fake queue metrics or offer-policy values are rendered. Verification: frontend pnpm typecheck passed; frontend pnpm build passed; PLAYWRIGHT_PORT=3810 admin-shell spec passed 46/46."
+        comment: "Added admin roster withdrawal dialog with credit preview/approval and parent payments available-credit display. Verified with frontend typecheck and production build; browser smoke not run."
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 20
+  test_sequence: 15
   run_ui: true
 test_plan:
   current_focus: []
@@ -443,20 +376,6 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 agent_communication:
-  - agent: "main"
-    message: "Rally admin waitlist Slice 6 verified: added read-only global waitlist BFF and switched /admin/waitlist to grouped real BFF data. Backend read-path tests passed 2/2 selected; frontend pnpm typecheck/build passed; PLAYWRIGHT_PORT=3810 admin-shell spec passed 46/46. Full waitlist interface file still has the unrelated Python 3.14 no-arg ULID() failure in the existing promote write-path test. Enrollment approvals were not built because product confirmation is still missing."
-  - agent: "main"
-    message: "Rally admin Settings Slice 4 verified: academy BFF now includes persisted logo_url and brand_color; Branding panel edits those real fields; docs/policy/data-retention.md created to gate destructive Data controls. Backend focused settings test passed 7/7; frontend pnpm typecheck/build passed; PLAYWRIGHT_PORT=3809 admin-shell spec passed 46/46. Upload/storage, email signatures, Stripe Connect writes, invites, and deletion/anonymization remain deferred."
-  - agent: "main"
-    message: "Rally admin dashboard attention Slice 3 verified: backend focused dashboard-attention interface test passed 3/3; frontend pnpm typecheck passed; frontend pnpm build passed when run alone; PLAYWRIGHT_PORT=3808 admin-shell spec passed 46/46 including the new dashboard attention assertion plus coach/parent smoke. A concurrent build+Playwright attempt hit the known Next .next cache race and was discarded; sequential rerun passed."
-  - agent: "main"
-    message: "Rally admin waivers Slice 2 committed verification set: backend focused waiver suite passed 6/6; frontend pnpm typecheck/build passed; focused admin-waivers Playwright passed 4/4 on PLAYWRIGHT_PORT=3806; admin-shell Playwright passed 44/44 on PLAYWRIGHT_PORT=3807, including waivers nav plus coach/parent smoke routes. Full backend suite, full Playwright suite, Lighthouse, and real-data browser smoke were not rerun for this slice."
-  - agent: "main"
-    message: "Rally admin waivers backend slice verified: focused pytest for application/contract/interface waiver tests passed 6/6; admin waiver + admin directory + structural layering subset passed 15/15. Full backend/v2 suite was attempted and failed outside this slice on the existing Python 3.14 ULID() no-argument TypeError across event/billing/attendance tests; no waiver tests failed."
-  - agent: "main"
-    message: "Rally admin waivers frontend slice ready for verification: exercise /admin/waivers with mocked GET /api/v2/admin/waivers, confirm summary counts, current waiver metadata fallback, BFF-returned rows only, empty state, and nav route mounting. No backend files edited."
-  - agent: "main"
-    message: "Rally admin waivers frontend slice verified: frontend pnpm typecheck passed; focused admin-waivers Playwright passed 4/4 on chromium-mobile + webkit-mobile; admin-shell Playwright passed 44/44 on chromium-mobile + webkit-mobile with the waivers route mounted; frontend pnpm build passed; Browser plugin render check on localhost:3804 with a local mock BFF confirmed nav/header/current document/two rows/status chips and no warn/error logs. Backend files currently dirty in the shared worktree belong to another worker and were not edited by this frontend slice."
   - agent: "main"
     message: "Verification: backend/.venv/bin/python -m pytest backend/v2/tests -q => 117 passed; pnpm build => passed; pnpm typecheck => passed; pnpm e2e => 6 passed, 14 skipped; v2 backend booted against academy_manager_local and /api/v2/healthz returned 200."
   - agent: "main"
@@ -530,6 +449,10 @@ agent_communication:
   - agent: "main"
     message: "PR #35 review fix: restored the frontend Docker build target for docker compose with a Next.js Dockerfile/.dockerignore, updated docker-compose.yml to use BFF_API_ORIGIN/NEXT_PUBLIC_* args and map localhost:3000 to the Next server, and made backend/.env optional for clean-checkout compose config. Verification: docker compose config passed, frontend pnpm typecheck/lint/build passed, and git diff --check passed. docker compose build frontend could not run because the local Docker daemon is not running."
   - agent: "main"
+    message: "Monthly proration Slice 1 implementation: added shared billing proration domain policy/snapshots, v2 parent/admin quote endpoints, payment snapshot traceability, monthly invoice-key idempotency, legacy bridge usage, migration indexes, and parent/admin quote displays. Verification: backend focused proration/BFF suite passed (30), backend/v2 suite passed (156), frontend pnpm build passed, frontend pnpm typecheck passed when rerun after build, and git diff --check passed. One parallel typecheck attempt failed because Next build was regenerating .next/types concurrently; rerun succeeded."
+  - agent: "main"
+    message: "Withdrawal credits Slice 2 implementation: added EarlyWithdrawalCreditPolicy, account_credit_ledger repository/indexes, admin withdrawal credit preview/approval, enrollment withdrawal status updates, Stripe subscription cancellation at period end by default, parent credit balance endpoint/UI, and automatic FIFO credit application to generated monthly payments. Verification: focused Slice 2 backend suite passed (14), full backend/v2 suite passed (168), frontend pnpm typecheck passed, frontend pnpm build passed, compileall passed for touched backend packages, and git diff --check passed. Browser smoke was not run."
+  - agent: "main"
     message: "Rally admin Chunk 2 pre-flight: real-data sweep against academy_manager_local Mongo (44 users, 46 students, 4 sessions, 73 payments, 46 enrollments, 8 attendance, 3 expenses, 2 payout_rules, 46 waiver_acceptances). Empty collections: waitlist, coach_payouts, pause_requests, invites — Rally pages for those will render the existing empty states (not a code gap). Sessions/Payments/Students/Expenses DTOs all hydrate correctly through the v2 BFF (BFF translates dollars->cents, name->title, first_name+last_name->full_name). Key gap discovered: no academies collection exists; every doc references academy_id='default-academy' but no backing doc. Patched docs/superpowers/plans/2026-05-19-rally-admin-shell-settings-restyles.md so GetAcademyUseCase upserts safe defaults on first read (display_name=academy_id, timezone=UTC) instead of 404-ing. AcademyRepo gains upsert_defaults using $setOnInsert (idempotent, no migration). Other observed gaps deferred per Chunk 2 contract: AdminSessionView lacks coach_name (Phase 6/D1), AdminStudentView lacks attendance_rate (separate follow-on), invite endpoint stays conditional on B3 decision rule. No code changes this commit; plan-only update so Chunk 2 implementation lands correctly on fresh DBs."
   - agent: "main"
     message: "Rally admin arc — Phase 3 close-out verified on branch feat/rally-admin-foundation. Restyled dashboard (admin/page.tsx), sessions list, sessions detail, payments (promoted real impl out of billing/page.tsx, no reverse redirect), and renamed admin/comms → admin/messages (git mv; backend BFF path /admin/messages/* unchanged). Updated (shared)/messages link target and the screen-meta.ts nav match. New Playwright spec frontend/e2e/specs/admin-shell.spec.ts: 12/12 pass on PLAYWRIGHT_PORT=3801 (collision-free port; port 3001 is held by an unrelated worktree's dev server). Dashboard JSX normalized once near the query-derived values (sessions/payments/revenueByMonth as empty defaults) to prevent the Cannot-read-'length'-of-undefined TypeError that surfaced when the BFF returned partial payloads — this was also the indirect cause of an earlier mobile-drawer flake, which cleared once the runtime crash was gone. Verifications: pnpm typecheck clean, pnpm build clean (admin landing chunk 2.96 kB / 152 kB First Load, well under the 300 KB budget), pnpm exec playwright test e2e/specs/admin-shell.spec.ts 12/12 pass (chromium-mobile + webkit-mobile). Cross-persona regression smoke not yet captured — coach/parent pages were not touched and the Playwright suite doesn't currently include broad coach/parent regression coverage; manual cross-persona check is a follow-on. Skipped checks: full pnpm exec playwright test (this conversation only ran the new admin-shell spec); Lighthouse perf budget (relied on next-build chunk sizes); pytest backend/v2/tests (no backend changes in Phase 3). Carried-forward follow-ons captured in docs/superpowers/plans/2026-05-19-rally-admin-shell-settings-restyles.md: Phase 4-9 (Settings deep dive with 7 panels + 7 new BFF endpoint handlers across 5 paths under /api/v2/admin/, restyle remaining 12 pages, finance split, route cleanup, expanded e2e). Spec at docs/superpowers/specs/2026-05-19-rally-admin-shell-settings-restyles-design.md. Playwright benign-warning ignore-list: /Download the React DevTools/i, /Fast Refresh/i, /HMR/i, /webpack-internal/i."
@@ -547,8 +470,8 @@ agent_communication:
   - agent: "main"
     message: "Additional real local smoke after user-requested testing: started the worktree backend on 127.0.0.1:8012 with FIREBASE_AUTH_ENABLED=true and the existing Firebase Auth emulator on 127.0.0.1:9099, then started the frontend on localhost:3802 with BFF_API_ORIGIN=http://127.0.0.1:8012. Health checks passed through both backend and frontend proxy. Signed into the Firebase Auth emulator as ramchand4685@gmail.com / Admin@12345 and confirmed real BFF responses for /api/v2/me, /api/v2/admin/academy, /api/v2/admin/academy/gateway, /api/v2/admin/users, /api/v2/admin/finance/expenses, and /api/v2/admin/finance/payouts. Browser smoke through the real login UI mounted /admin, /admin/sessions, /admin/students, /admin/users, /admin/waitlist, /admin/pause-requests, /admin/payments, /admin/dues, /admin/reports, /admin/coach-payslip, /admin/expenses, /admin/payouts, /admin/audit-logs, /admin/messages, and every Settings panel (academy, fees, gateway, notify, roles, branding, data). The smoke caught no API 4xx/5xx responses and no app console errors. Stopped the backend/frontend dev servers after the run."
   - agent: "main"
-    message: "Rally admin rich students slice: implemented backend search/status/limit/cursor contract, rich BFF fields, batched Mongo enrichment, and a 0070 attendance lookup index; implemented frontend search/status filters, next_cursor pagination, query-key cursor reset, BFF-only attendance_rate/dues_status rendering, and Rally loading/error/empty UI. Verification: backend focused suite passed 14/14; frontend pnpm typecheck passed; frontend pnpm build passed; focused students Playwright passed 6/6; combined admin-shell + students smoke passed 48/48 serially on PLAYWRIGHT_PORT=3803. A parallel browser run failed with Next dev-server .next manifest/cache ENOENT errors after build, so serial smoke is the recorded clean browser gate. Broader backend/v2 suite was attempted by the backend subagent and failed outside this slice on existing Python 3.14 ULID() no-argument errors; no Rich Students tests failed."
+    message: "PR #40 review fixes: (1) Credit ledger atomicity — apply_available_credits now decrements remaining_amount_cents and pushes invoice_id onto a new applied_invoice_ids array in a single find_one_and_update; credit_applications becomes audit-only. Removes the race where a crash between insert_one and update_one orphaned a dedup record. (2) Snapshot enrollment_id backfill — _handle_onboarding_checkout_completed updates billing_calculation_snapshots.enrollment_id to the real enrollment_id after the enrollment row is created, so _amount_for_invoice can match the snapshot. (3) Zero-proration 422 — the misleading 400 'monthly price must be > 0' is now scoped to the fallback path; when proration legitimately yields $0 a 422 with accurate detail is returned and Stripe is not called. (4) DDD boundary refactor — extracted QuoteEnrollment application use case + SessionLoader/OccurrenceCatalog/SnapshotWriter ports; MongoPaymentRepository class methods no longer instantiate FirstMonthProrationPolicy; admin/parent composition closures call the use case instead of the repo. Verification: backend/v2/tests => 172 passed; targeted backend/tests on onboarding/billing/proration/credit/refund modules => 34 passed (test_onboarding_checkout 18, test_payment_undo_and_refund 15, test_billing_proration_bridge 1). Followups: generate_monthly_payments still sits on MongoPaymentRepository (its calculation now delegates to module-level functions); extracting it into a proper application use case is a future slice."
   - agent: "main"
-    message: "Rally admin remaining transformation worktree feat/rally-admin-product-depth: completed product-depth slices for Rich Students, Waivers, Dashboard Attention, Settings Branding/Data policy, Money review, and Global Waitlist. Commits on top of origin/main: cb35912 rich students directory, 57a4bf1 waiver status page, 69639c9 dashboard attention signals, 7771555 settings branding depth, f88a649 global waitlist view. Slice 5 Money Pages Polish made no code changes because current Dues/Expenses/Payouts/Reports pages already use real BFF-backed Rally UIs; fake metrics/actions were not added. Enrollment approvals were not built because product confirmation is still absent. Final verification performed sequentially: frontend pnpm typecheck passed after avoiding concurrent .next generation; frontend pnpm build passed with /admin First Load 153 kB, /admin/students 155 kB, /admin/waitlist 152 kB, /admin/waivers 155 kB, /admin/settings 159 kB; full frontend Playwright passed with 62 passed and 14 existing skips on PLAYWRIGHT_PORT=3811; focused backend Rally suite passed with 19 passed and 5 deselected; git diff --check passed. Final non-green checks: pnpm size failed because the existing size-limit config still looks for hashed Next chunks (page-*.js) while this build emits page.js, and the admin glob measures the entire admin app at 5.92 MB brotlied against a 300 kB budget rather than first-load route size; pnpm lhci failed on existing home page accessibility score 0.88 vs required 0.90 and PWA audit warnings; full backend uv run pytest v2/tests -q failed with 34 failures caused by existing Python 3.14 ULID() no-argument incompatibility in event/payment/attendance paths, while the Rally-focused backend tests passed. Untracked artifacts deliberately left uncommitted: backend/uv.lock, docs/Badminton Academy Manager/, frontend/.lighthouseci/. Remaining risks: fix size-limit config/budget semantics, fix Lighthouse home accessibility, fix Python 3.14 ULID generation, decide enrollment approvals product need, and plan Stripe Connect/GDPR destructive flows separately."
+    message: "Rally admin product-depth branch merged current origin/main and resolved conflicts with the monthly proration/withdrawal-credit work. Completed slices: Rich Students, Waivers, Dashboard Attention, Settings Branding/Data policy, Money review with no fake additions, and Global Waitlist. Enrollment approvals remain intentionally unbuilt because the roadmap gated them on product confirmation and the only confirmed Slice 6 need was global waitlist. Final blocker fixes included Python 3.14 compatibility for python-ulid 3.x using ulid.new(), landing-page accessibility fixes, and App Router-aware size-limit route chunk config. Verification before merge-back: backend uv run pytest v2/tests -q passed with 189 passed and 7 warnings; frontend pnpm typecheck passed; frontend pnpm build passed; frontend pnpm size passed; frontend pnpm lhci exited 0 with only configured PWA warnings; PLAYWRIGHT_PORT=3812 pnpm exec playwright test --workers=1 passed with 62 passed and 14 existing skips; git diff --check passed. Attempted full legacy+v2 backend pytest after installing missing local legacy test deps, but REACT_APP_BACKEND_URL=http://127.0.0.1:8001 uv run pytest -q still failed because those legacy network tests target a live server with legacy password auth disabled and expect /api/auth/login to return 200 instead of the current 410 Firebase-only response; this is outside the Rally/v2 merge gate."
   - agent: "main"
-    message: "Rally admin final blocker cleanup: fixed Python 3.14 compatibility for python-ulid 3.x by replacing v2 no-arg ULID() generation with ulid.new() in billing/enrollment/coaching/onboarding/comms/events call sites and the affected cross-context test; fixed landing-page Lighthouse accessibility by improving light-page muted/footer contrast and changing role-card headings from h3 to h2; corrected frontend size-limit config to measure emitted hashed App Router route chunks for coach today, parent onboarding, and admin landing instead of the whole admin app. Verification rerun after these fixes: backend uv run pytest v2/tests -q passed with 189 passed and 7 warnings; frontend pnpm typecheck passed; frontend pnpm build passed; frontend pnpm size passed; frontend pnpm lhci exited 0 with only configured PWA warnings; PLAYWRIGHT_PORT=3812 pnpm exec playwright test --workers=1 passed with 62 passed and 14 existing skips; git diff --check passed. Attempted full legacy+v2 backend pytest: after installing missing local legacy direct deps, REACT_APP_BACKEND_URL=http://127.0.0.1:8001 uv run pytest -q still failed because those legacy network tests target a live server where legacy password auth is disabled and expect /api/auth/login to return 200 instead of the current 410 Firebase-only response. This is not a Rally/v2 regression and remains outside the merge gate. Cleanup removed generated untracked backend/uv.lock, frontend/.lighthouseci/, and the copied docs/Badminton Academy Manager mockup folder from the worktree. Enrollment approvals remain intentionally unbuilt because the roadmap gated them on product confirmation; no confirmation was provided beyond the waitlist decision."
+    message: "Post-origin/main merge verification for Rally admin product-depth branch: resolved mongo_payment_repo.py conflict by keeping current proration/credit invoice-key behavior and switching new ID generation to ulid.new(); took the newer origin/main test_result.md log and appended Rally completion evidence. Verification after conflict resolution: backend uv run pytest v2/tests -q passed with 211 passed and 7 warnings; frontend pnpm typecheck passed; frontend pnpm build passed with /admin First Load 153 kB, /admin/students 155 kB, /admin/waitlist 152 kB, /admin/waivers 155 kB, /admin/settings 159 kB; frontend pnpm size passed; frontend pnpm lhci exited 0 with only configured PWA warnings; PLAYWRIGHT_PORT=3813 pnpm exec playwright test --workers=1 passed with 62 passed and 14 existing skips. Full legacy network pytest remains unsuitable as a merge gate because it requires a specifically configured live legacy-password-auth server; the available server returns 410 for /api/auth/login by design."

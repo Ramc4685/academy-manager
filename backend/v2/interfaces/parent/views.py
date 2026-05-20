@@ -93,6 +93,26 @@ class CheckoutStatusResponse(BaseModel):
     parent_id: str
 
 
+class EnrollmentQuoteRequest(BaseModel):
+    student_id: str | None = None
+    session_id: str
+    start_date: str | None = None
+
+
+class EnrollmentQuoteResponse(BaseModel):
+    snapshot_id: str
+    quote_expires_at: datetime | None = None
+    amount_due_cents: int
+    monthly_price_cents: int
+    billing_period: str
+    total_eligible_classes_this_month: int
+    billable_remaining_classes_this_month: int
+    formula: str
+    message: str
+    next_billing_amount_cents: int
+    next_billing_message: str
+
+
 # --- Payments ---
 
 
@@ -108,6 +128,22 @@ class ParentPaymentView(BaseModel):
 
 class ParentPaymentHistoryResponse(BaseModel):
     payments: list[ParentPaymentView]
+
+
+class ParentCreditView(BaseModel):
+    credit_id: str
+    type: str
+    status: str
+    amount_cents: int
+    remaining_amount_cents: int
+    currency: str
+    reason: str
+    expires_at: datetime | None = None
+
+
+class ParentCreditBalanceResponse(BaseModel):
+    balance_cents: int
+    credits: list[ParentCreditView]
 
 
 # --- Children / attendance / progress ---
