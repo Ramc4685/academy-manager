@@ -13,6 +13,7 @@ from .pause_routes import router as pause_router
 from .reports_routes import router as reports_router
 from .sessions_routes import router as sessions_router
 from .waitlist_routes import router as waitlist_router
+from .academy_routes import router as academy_router
 
 router = APIRouter(prefix="/admin")
 router.include_router(audit_router)
@@ -24,3 +25,4 @@ router.include_router(sessions_router)
 router.include_router(waitlist_router)
 router.include_router(billing_router)
 router.include_router(comms_router)
+router.include_router(academy_router)

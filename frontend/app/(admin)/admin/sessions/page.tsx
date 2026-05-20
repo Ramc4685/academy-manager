@@ -255,9 +255,9 @@ function SessionList({
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
-                      <Avatar name={s.coach_id} size={28} />
-                      <span className="font-mono text-xs text-rally-muted">
-                        {s.coach_id.slice(0, 6)}…
+                      <Avatar name={s.coach_name || s.coach_id} size={28} />
+                      <span className={s.coach_name ? "font-medium text-rally-ink" : "font-mono text-xs text-rally-muted"}>
+                        {s.coach_name || `${s.coach_id.slice(0, 6)}…`}
                       </span>
                     </div>
                   </td>

@@ -127,6 +127,7 @@ export default function AdminSessionDetailPage() {
                 {session.location} · {new Date(session.start_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
                 {" – "}
                 {new Date(session.end_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+                {session.coach_name ? ` · Coach ${session.coach_name}` : ""}
               </p>
             </>
           ) : (

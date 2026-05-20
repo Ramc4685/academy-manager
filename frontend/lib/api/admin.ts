@@ -14,6 +14,7 @@ import { apiFetch } from "./client";
 export interface AdminSessionView {
   session_id: string;
   coach_id: string;
+  coach_name: string | null;
   title: string;
   location: string;
   start_at: string; // ISO 8601
@@ -271,6 +272,7 @@ export interface DuesFollowupParentView {
   parent_name: string | null;
   email: string | null;
   pending_count: number;
+  followup_stage?: string;
   total_due_cents: number;
 }
 
@@ -283,6 +285,41 @@ export interface SendDuesRemindersResponse {
   blocked: boolean;
   reason: string | null;
 }
+
+export interface AdminAcademyView {
+  academy_id: string;
+  display_name: string;
+  timezone: string;
+  contact_email: string | null;
+  contact_phone: string | null;
+  hours_text: string | null;
+  address: string | null;
+}
+
+export type UpdateAdminAcademyRequest = Partial<{
+  display_name: string | null;
+  timezone: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+  hours_text: string | null;
+  address: string | null;
+}>;
+
+export interface AdminFeesView {
+  default_monthly_cents: number | null;
+  late_fee_cents: number | null;
+  grace_days: number | null;
+}
+
+export type UpdateAdminFeesRequest = Partial<AdminFeesView>;
+
+export interface AdminNotificationsView {
+  dues_reminders: boolean;
+  attendance_alerts: boolean;
+  daily_digest_to_admin: boolean;
+}
+
+export type UpdateAdminNotificationsRequest = Partial<AdminNotificationsView>;
 
 // ---------------------------------------------------------------------------
 // Directory
@@ -509,5 +546,46 @@ export function sendDuesReminders(): Promise<SendDuesRemindersResponse> {
 export function exportAdminReportCsv(reportName: string): Promise<string> {
   return apiFetch<string>(`/admin/reports/${encodeURIComponent(reportName)}.csv`, {
     method: "GET",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+export function getAdminAcademy(): Promise<AdminAcademyView> {
+  return apiFetch<AdminAcademyView>("/admin/academy", { method: "GET" });
+}
+
+export function updateAdminAcademy(
+  payload: UpdateAdminAcademyRequest
+): Promise<AdminAcademyView> {
+  return apiFetch<AdminAcademyView>("/admin/academy", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getAdminFees(): Promise<AdminFeesView> {
+  return apiFetch<AdminFeesView>("/admin/academy/fees", { method: "GET" });
+}
+
+export function updateAdminFees(payload: UpdateAdminFeesRequest): Promise<AdminFeesView> {
+  return apiFetch<AdminFeesView>("/admin/academy/fees", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getAdminNotifications(): Promise<AdminNotificationsView> {
+  return apiFetch<AdminNotificationsView>("/admin/academy/notifications", { method: "GET" });
+}
+
+export function updateAdminNotifications(
+  payload: UpdateAdminNotificationsRequest
+): Promise<AdminNotificationsView> {
+  return apiFetch<AdminNotificationsView>("/admin/academy/notifications", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
   });
 }
