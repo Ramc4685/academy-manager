@@ -322,6 +322,29 @@ class AdminWaiverList(BaseModel):
     waivers: list[AdminWaiverStudentView] = []
 
 
+AdminAttentionSeverity = Literal["high", "medium", "low"]
+AdminAttentionKind = Literal[
+    "overdue_dues",
+    "pause_requests",
+    "waivers",
+    "session_pressure",
+]
+
+
+class AdminAttentionItemView(BaseModel):
+    attention_id: str
+    kind: AdminAttentionKind
+    title: str
+    detail: str
+    severity: AdminAttentionSeverity
+    href: str
+    count: int = 1
+
+
+class AdminAttentionList(BaseModel):
+    items: list[AdminAttentionItemView]
+
+
 class BroadcastRequest(BaseModel):
     body: str
 

@@ -27,6 +27,7 @@ export const queryKeys = {
     revenue: () => ["admin", "finance", "revenue"] as const,
     messages: () => ["admin", "messages"] as const,
     waivers: () => ["admin", "waivers"] as const,
+    attention: () => ["admin", "dashboard", "attention"] as const,
     academy: () => ["admin", "academy"] as const,
     fees: () => ["admin", "academy", "fees"] as const,
     notifications: () => ["admin", "academy", "notifications"] as const,

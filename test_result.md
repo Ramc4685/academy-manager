@@ -201,6 +201,17 @@ backend:
       - working: true
         agent: "main"
         comment: "Slice 2 backend implemented: added read-only GET /api/v2/admin/waivers, onboarding use-case/report models, Mongo admin waiver query over waivers/waiver_versions, waiver_acceptances, students, and users, plus interface/application/repo tests. BFF route shapes the neutral use-case report into the Rally admin contract (summary/current_waiver/waivers). Focused verification passed: uv run pytest v2/tests/application/test_admin_waivers.py v2/tests/interface/test_admin_waivers.py v2/tests/contract/test_admin_waivers_mongo_repo.py -q => 6 passed."
+  - task: "Rally admin dashboard attention backend slice"
+    implemented: true
+    working: true
+    file: "backend/v2/interfaces/admin/dashboard_routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Slice 3 backend implemented: added GET /api/v2/admin/dashboard/attention as a BFF-level aggregator over existing dues follow-up, pending pause requests, waiver status, and session pressure signals. Focused interface verification passed: uv run pytest v2/tests/interface/test_admin_dashboard_attention.py -q => 3 passed."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -366,10 +377,21 @@ frontend:
       - working: true
         agent: "main"
         comment: "Re-verified after backend/frontend contract alignment in the shared worktree: frontend pnpm typecheck passed; frontend pnpm build passed; PLAYWRIGHT_PORT=3806 admin-waivers spec passed 4/4; PLAYWRIGHT_PORT=3807 admin-shell spec passed 44/44 including /admin/waivers, coach smoke, and parent smoke."
+  - task: "Rally admin dashboard attention frontend slice"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/admin/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Slice 3 frontend implemented: dashboard now calls listAdminAttention and renders a Rally Needs your attention lane with BFF-provided links/counts, plus truthful loading/error/empty states. Verification: frontend pnpm typecheck passed; frontend pnpm build passed after rerunning without concurrent Playwright; PLAYWRIGHT_PORT=3808 admin-shell spec passed 46/46 including the attention assertion and coach/parent smoke routes."
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 17
+  test_sequence: 18
   run_ui: true
 test_plan:
   current_focus: []
@@ -377,6 +399,8 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "Rally admin dashboard attention Slice 3 verified: backend focused dashboard-attention interface test passed 3/3; frontend pnpm typecheck passed; frontend pnpm build passed when run alone; PLAYWRIGHT_PORT=3808 admin-shell spec passed 46/46 including the new dashboard attention assertion plus coach/parent smoke. A concurrent build+Playwright attempt hit the known Next .next cache race and was discarded; sequential rerun passed."
   - agent: "main"
     message: "Rally admin waivers Slice 2 committed verification set: backend focused waiver suite passed 6/6; frontend pnpm typecheck/build passed; focused admin-waivers Playwright passed 4/4 on PLAYWRIGHT_PORT=3806; admin-shell Playwright passed 44/44 on PLAYWRIGHT_PORT=3807, including waivers nav plus coach/parent smoke routes. Full backend suite, full Playwright suite, Lighthouse, and real-data browser smoke were not rerun for this slice."
   - agent: "main"

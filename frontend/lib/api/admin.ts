@@ -242,6 +242,27 @@ export interface AdminWaiverList {
   waivers: AdminWaiverStudentRow[];
 }
 
+export type AdminAttentionSeverity = "high" | "medium" | "low";
+export type AdminAttentionKind =
+  | "overdue_dues"
+  | "pause_requests"
+  | "waivers"
+  | "session_pressure";
+
+export interface AdminAttentionItem {
+  attention_id: string;
+  kind: AdminAttentionKind;
+  title: string;
+  detail: string;
+  severity: AdminAttentionSeverity;
+  href: string;
+  count: number;
+}
+
+export interface AdminAttentionList {
+  items: AdminAttentionItem[];
+}
+
 export interface BroadcastRequest {
   body: string;
 }
@@ -599,6 +620,10 @@ export function sendDm(payload: DmRequest): Promise<AdminMessageView> {
 
 export function listAdminWaivers(): Promise<AdminWaiverList> {
   return apiFetch<AdminWaiverList>("/admin/waivers", { method: "GET" });
+}
+
+export function listAdminAttention(): Promise<AdminAttentionList> {
+  return apiFetch<AdminAttentionList>("/admin/dashboard/attention", { method: "GET" });
 }
 
 // ---------------------------------------------------------------------------

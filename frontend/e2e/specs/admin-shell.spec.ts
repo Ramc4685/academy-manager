@@ -146,6 +146,21 @@ async function stubAdminBff(page: Page) {
       waivers: [],
     })
   );
+  await page.route("**/api/v2/admin/dashboard/attention*", (route) =>
+    fulfillJson(route, {
+      items: [
+        {
+          attention_id: "waiver-status",
+          kind: "waivers",
+          title: "Waivers need review",
+          detail: "2 pending, 1 outdated.",
+          severity: "medium",
+          href: "/admin/waivers",
+          count: 3,
+        },
+      ],
+    })
+  );
   await page.route("**/api/v2/admin/pause-requests*", (route) =>
     fulfillJson(route, { requests: [] })
   );
@@ -229,6 +244,18 @@ test.describe("Rally admin shell", () => {
     await drawer.getByLabel("Close menu").click();
     await expect(drawer).toBeHidden();
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("dashboard renders real attention items from the BFF", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard-attention")).toBeVisible();
+    await expect(page.getByRole("link", { name: /Waivers need review/i })).toHaveAttribute(
+      "href",
+      "/admin/waivers"
+    );
+    expect(errors, `App console errors on dashboard attention: ${errors.join("\n")}`).toEqual([]);
   });
 
   for (const route of ADMIN_ROUTES) {

@@ -3,18 +3,16 @@
 /**
  * Admin dashboard landing — Rally restyle.
  *
- * Real data only: sessions today + monthly revenue + recent payments.
+ * Real data only: sessions today + monthly revenue + recent payments +
+ * dashboard attention BFF signals.
  * Recharts is dynamic-imported to keep the admin landing chunk small.
- *
- * Intentionally no "Needs your attention" section — backend has no
- * attention endpoint yet. See plan Phase 6/follow-on.
  */
 
 import dynamic from "next/dynamic";
 import { useQuery } from "@tanstack/react-query";
 
-import { listAdminSessions, listAdminPayments, getRevenue } from "@/lib/api/admin";
-import type { PaymentStatus } from "@/lib/api/admin";
+import { listAdminSessions, listAdminPayments, getRevenue, listAdminAttention } from "@/lib/api/admin";
+import type { AdminAttentionSeverity, PaymentStatus } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 
 import { Card } from "@/components/ds/card";
@@ -79,6 +77,11 @@ export default function AdminDashboardPage() {
     queryFn: () => getRevenue(),
   });
 
+  const attentionQuery = useQuery({
+    queryKey: queryKeys.admin.attention(),
+    queryFn: () => listAdminAttention(),
+  });
+
   // Normalize once. Treat absent/partial responses as empty rather than
   // sprinkling optional chains throughout the JSX.
   const sessions = sessionsQuery.data?.sessions ?? [];
@@ -119,6 +122,40 @@ export default function AdminDashboardPage() {
           loading={paymentsQuery.isLoading}
         />
       </div>
+
+      <Card p={20}>
+        <LaneHeader index="00" title="Needs your attention" />
+        {attentionQuery.isLoading ? (
+          <TableSkeleton rows={3} />
+        ) : attentionQuery.isError ? (
+          <EmptyState message="Attention signals are unavailable right now." />
+        ) : (attentionQuery.data?.items ?? []).length > 0 ? (
+          <div className="grid gap-3 lg:grid-cols-2" data-testid="admin-dashboard-attention">
+            {(attentionQuery.data?.items ?? []).map((item) => (
+              <a
+                key={item.attention_id}
+                href={item.href}
+                className="group rounded-lg border border-rally-line bg-white p-4 transition hover:border-rally-cobalt hover:bg-rally-paper"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <Chip variant={attentionChip(item.severity)} label={item.severity.toUpperCase()} />
+                    <h3 className="mt-3 font-display text-[17px] font-semibold text-rally-ink">
+                      {item.title}
+                    </h3>
+                    <p className="mt-1 text-sm leading-5 text-rally-muted">{item.detail}</p>
+                  </div>
+                  <span className="font-mono text-[24px] font-bold tabular-nums text-rally-ink">
+                    {item.count}
+                  </span>
+                </div>
+              </a>
+            ))}
+          </div>
+        ) : (
+          <EmptyState message="No attention items right now." />
+        )}
+      </Card>
 
       {/* Revenue chart */}
       <Card p={20}>
@@ -186,6 +223,12 @@ export default function AdminDashboardPage() {
       </Card>
     </section>
   );
+}
+
+function attentionChip(severity: AdminAttentionSeverity): ChipVariant {
+  if (severity === "high") return "failed";
+  if (severity === "medium") return "pending";
+  return "open";
 }
 
 function KpiCard({
