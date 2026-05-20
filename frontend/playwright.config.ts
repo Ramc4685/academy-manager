@@ -9,6 +9,13 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
+  // Fail the run when any test was flaky (failed-then-passed-on-retry).
+  // A flaky test is a code smell, not a clean pass — usually a race in
+  // the page that lets the test win or lose based on timing. Letting CI
+  // succeed silently on flakies hides real bugs (see commit 28d1a2b's
+  // post-merge debrief: the admin/students webkit crash flaked through
+  // PR review then hard-failed on main). Available since Playwright 1.49.
+  failOnFlakyTests: !!process.env.CI,
   workers: process.env.CI ? 2 : undefined,
   reporter: [["list"], ["html", { open: "never" }]],
   use: {

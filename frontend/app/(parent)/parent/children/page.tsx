@@ -10,6 +10,11 @@ export default function ParentChildrenPage() {
     queryFn: listParentChildren,
   });
 
+  // Defensive normalize: webkit's production build crashes on
+  // data.children.length when the BFF returns a partial shape — same
+  // class of bug as the admin students/users fix.
+  const children = data?.children ?? [];
+
   return (
     <section data-testid="parent-children">
       <h1 className="mb-4 text-2xl font-semibold">My children</h1>
@@ -17,11 +22,11 @@ export default function ParentChildrenPage() {
         <p className="text-sm text-red-600">Could not load children.</p>
       ) : isLoading ? (
         <p className="text-sm text-neutral-500">Loading…</p>
-      ) : (data?.children.length ?? 0) === 0 ? (
+      ) : children.length === 0 ? (
         <p className="text-sm text-neutral-500">No children registered yet.</p>
       ) : (
         <div className="grid gap-3">
-          {data!.children.map((child) => (
+          {children.map((child) => (
             <ChildCard key={child.student_id} child={child} />
           ))}
         </div>
