@@ -543,9 +543,18 @@ async def _handle_onboarding_checkout_completed(db, stripe, session: dict) -> No
         enrollment_result = await db.enrollments.insert_one(enrollment_doc)
         enrollment_id = str(enrollment_result.inserted_id)
 
-        # Load session for price
+        # Load session for price; onboarding checkout may have stored a
+        # server-calculated prorated snapshot in Stripe metadata.
         session_doc = await db.sessions.find_one({"_id": ObjectId(session_id)})
-        amount = float((session_doc or {}).get("monthly_price", 0))
+        snapshot_id = metadata.get("calculation_snapshot_id") or ""
+        snapshot = None
+        if snapshot_id:
+            snapshot = await db.billing_calculation_snapshots.find_one({"snapshot_id": snapshot_id})
+        amount = (
+            float(snapshot["final_amount_cents"]) / 100
+            if snapshot and snapshot.get("final_amount_cents") is not None
+            else float((session_doc or {}).get("monthly_price", 0))
+        )
 
         payment_doc = {
             "parent_user_id": parent_user_id,
@@ -556,6 +565,7 @@ async def _handle_onboarding_checkout_completed(db, stripe, session: dict) -> No
             "amount": amount,
             "discount": 0,
             "final_amount": amount,
+            "calculation_snapshot_id": snapshot_id or None,
             "status": "paid",
             "payment_date": now,
             "payment_method": "stripe_onboarding",

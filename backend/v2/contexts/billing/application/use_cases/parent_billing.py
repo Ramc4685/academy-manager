@@ -89,6 +89,7 @@ class StartSubscriptionCheckout:
                 subscription_id=subscription_id,
                 academy_id=self._academy_id,
                 parent_id=cmd.parent_id,
+                enrollment_id=cmd.enrollment_id,
                 session_id=cmd.session_id,
                 stripe_subscription_id=stripe_subscription_id,
                 status="incomplete",

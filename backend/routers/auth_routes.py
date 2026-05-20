@@ -42,6 +42,7 @@ from services.enrollment_service import (
     release_session_seat,
     reserve_session_seat,
 )
+from services.billing_proration import persist_legacy_snapshot, prorated_first_month_quote
 from services.waitlist_service import join_waitlist
 from services.waiver_service import record_waiver_acceptance, waiver_fields
 import jwt as pyjwt
@@ -58,7 +59,31 @@ def _invoice_number(prefix: str = "INV") -> str:
 
 
 async def _create_registration_payment(db, enrollment_id: str, enrollment: dict, session: dict) -> str:
-    amount = float(session.get("monthly_price", 0) or 0)
+    now = datetime.now(timezone.utc)
+    period = _current_period()
+    quote = prorated_first_month_quote(
+        session=session,
+        enrollment={
+            **enrollment,
+            "_id": enrollment_id,
+            "created_at": enrollment.get("created_at") or now.isoformat(),
+        },
+        period=period,
+        calculated_at=now,
+        calculated_by="registration",
+    )
+    snapshot_id = None
+    if quote is not None:
+        amount = quote.final_amount_cents / 100
+        snapshot_id = await persist_legacy_snapshot(
+            db,
+            quote=quote,
+            enrollment={**enrollment, "_id": enrollment_id},
+            session=session,
+            period=period,
+        )
+    else:
+        amount = float(session.get("monthly_price", 0) or 0)
     doc = {
         "parent_user_id": enrollment["parent_user_id"],
         "student_id": enrollment["student_id"],
@@ -68,6 +93,7 @@ async def _create_registration_payment(db, enrollment_id: str, enrollment: dict,
         "amount": amount,
         "discount": 0,
         "final_amount": amount,
+        "calculation_snapshot_id": snapshot_id,
         "status": "pending",
         "payment_date": None,
         "payment_method": None,

@@ -18,9 +18,13 @@ import {
   transferEnrollment,
   deleteAdminSession,
   promoteWaitlist,
+  approveWithdrawalCredit,
+  previewWithdrawalCredit,
+  quoteAdminEnrollment,
   skipWaitlistEntry,
   deleteWaitlistEntry,
   type AdminEnrollmentView,
+  type AdminEnrollmentQuote,
   type AdminStudentView,
   type AdminWaitlistEntry,
   type CreateEnrollmentRequest,
@@ -33,6 +37,7 @@ export default function AdminSessionDetailPage() {
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
   const [transferTarget, setTransferTarget] = useState<AdminEnrollmentView | null>(null);
+  const [withdrawalTarget, setWithdrawalTarget] = useState<AdminEnrollmentView | null>(null);
 
   // Fetch the session from today's list to get metadata.
   // We use sessionDetail key for this specific query.
@@ -169,6 +174,7 @@ export default function AdminSessionDetailPage() {
               )
             }
             onTransfer={(enrollment) => setTransferTarget(enrollment)}
+            onWithdraw={(enrollment) => setWithdrawalTarget(enrollment)}
           />
         )}
       </div>
@@ -240,6 +246,16 @@ export default function AdminSessionDetailPage() {
           });
         }}
       />
+      <WithdrawalCreditDialog
+        enrollment={withdrawalTarget}
+        onClose={() => setWithdrawalTarget(null)}
+        onApproved={() => {
+          setWithdrawalTarget(null);
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.admin.enrollments(sessionId),
+          });
+        }}
+      />
     </section>
   );
 }
@@ -254,12 +270,14 @@ function RosterTable({
   onPause,
   onResume,
   onTransfer,
+  onWithdraw,
 }: {
   enrollments: AdminEnrollmentView[];
   onDelete: (id: string) => void;
   onPause: (id: string) => void;
   onResume: (id: string) => void;
   onTransfer: (enrollment: AdminEnrollmentView) => void;
+  onWithdraw: (enrollment: AdminEnrollmentView) => void;
 }) {
   return (
     <div className="overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800">
@@ -309,6 +327,14 @@ function RosterTable({
                   >
                     Move
                   </button>
+                  {e.status === "active" && (
+                    <button
+                      onClick={() => onWithdraw(e)}
+                      className="min-h-touch rounded-md border border-orange-300 px-2 text-xs text-orange-700 hover:bg-orange-50 dark:border-orange-700 dark:text-orange-300"
+                    >
+                      Withdraw
+                    </button>
+                  )}
                   <button
                     onClick={() => onDelete(e.enrollment_id)}
                     className="min-h-touch rounded-md border border-red-200 px-2 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400"
@@ -331,6 +357,7 @@ function EnrollmentStatusBadge({ status }: { status: string }) {
     active: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
     paused: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
     cancelled: "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300",
+    withdrawn: "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300",
   };
   return (
     <span
@@ -458,6 +485,12 @@ function AddToRosterDialog({
     enabled: open,
   });
   const students = studentsQuery.data?.students ?? [];
+  const quoteQuery = useQuery<AdminEnrollmentQuote>({
+    queryKey: ["admin", "enrollment-quote", sessionId, form.student_id],
+    queryFn: () => quoteAdminEnrollment({ session_id: sessionId, student_id: form.student_id }),
+    enabled: open && Boolean(form.student_id),
+    staleTime: 30_000,
+  });
 
   const mutation = useMutation({
     mutationFn: (payload: CreateEnrollmentRequest) => createEnrollment(payload),
@@ -492,6 +525,16 @@ function AddToRosterDialog({
           {error && (
             <p role="alert" className="mb-3 rounded-md bg-red-50 p-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
               {error}
+            </p>
+          )}
+          {quoteQuery.data && (
+            <p className="mb-3 rounded-md bg-blue-50 p-2 text-sm text-blue-800 dark:bg-blue-950 dark:text-blue-200">
+              First month: {formatCents(quoteQuery.data.amount_due_cents)} · billed for{" "}
+              {quoteQuery.data.billable_remaining_classes_this_month} of{" "}
+              {quoteQuery.data.total_eligible_classes_this_month} classes this month.
+              {quoteQuery.data.quote_expires_at
+                ? ` Quote expires ${formatShortDateTime(quoteQuery.data.quote_expires_at)}.`
+                : ""}
             </p>
           )}
 
@@ -664,6 +707,118 @@ function TransferEnrollmentDialog({
   );
 }
 
+function WithdrawalCreditDialog({
+  enrollment,
+  onClose,
+  onApproved,
+}: {
+  enrollment: AdminEnrollmentView | null;
+  onClose: () => void;
+  onApproved: () => void;
+}) {
+  const [withdrawalDate, setWithdrawalDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [adminNote, setAdminNote] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const previewMutation = useMutation({
+    mutationFn: () =>
+      previewWithdrawalCredit(enrollment!.enrollment_id, {
+        withdrawal_date: `${withdrawalDate}T00:00:00.000Z`,
+      }),
+    onError: (err: Error) => setError(err.message ?? "Could not preview credit."),
+  });
+  const approveMutation = useMutation({
+    mutationFn: () =>
+      approveWithdrawalCredit(enrollment!.enrollment_id, {
+        withdrawal_date: `${withdrawalDate}T00:00:00.000Z`,
+        admin_note: adminNote,
+      }),
+    onSuccess: () => {
+      setAdminNote("");
+      setError(null);
+      onApproved();
+    },
+    onError: (err: Error) => setError(err.message ?? "Could not approve credit."),
+  });
+  const preview = previewMutation.data;
+  return (
+    <Dialog.Root open={enrollment !== null} onOpenChange={(open) => !open && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <Dialog.Content
+          className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-xl focus:outline-none dark:bg-neutral-900"
+          aria-describedby="withdrawal-credit-desc"
+        >
+          <Dialog.Title className="mb-1 text-lg font-semibold">Withdraw enrollment</Dialog.Title>
+          <Dialog.Description id="withdrawal-credit-desc" className="mb-4 text-sm text-neutral-500">
+            {enrollment ? `Preview unused-class credit for ${enrollment.full_name}.` : ""}
+          </Dialog.Description>
+          {error && (
+            <p role="alert" className="mb-3 rounded-md bg-red-50 p-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+              {error}
+            </p>
+          )}
+          <div className="space-y-3">
+            <Field label="Withdrawal date" required>
+              <input
+                type="date"
+                required
+                value={withdrawalDate}
+                onChange={(event) => {
+                  setWithdrawalDate(event.target.value);
+                  previewMutation.reset();
+                }}
+                className={inputClass}
+              />
+            </Field>
+            <button
+              type="button"
+              disabled={!withdrawalDate || previewMutation.isPending}
+              onClick={() => previewMutation.mutate()}
+              className="min-h-touch rounded-md border border-blue-300 px-3 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-60 dark:border-blue-700 dark:text-blue-300"
+            >
+              {previewMutation.isPending ? "Previewing..." : "Preview credit"}
+            </button>
+            {preview && (
+              <div className="rounded-md bg-neutral-50 p-3 text-sm dark:bg-neutral-800">
+                <p className="font-medium">Credit: {preview.display_amount}</p>
+                <p className="mt-1 text-neutral-500">
+                  {preview.unused_classes} of {preview.total_classes} unused classes.
+                </p>
+                <p className="mt-1 text-xs text-neutral-500">{preview.message}</p>
+              </div>
+            )}
+            <Field label="Admin note">
+              <textarea
+                value={adminNote}
+                onChange={(event) => setAdminNote(event.target.value)}
+                rows={3}
+                className={inputClass}
+              />
+            </Field>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="min-h-touch rounded-md border border-neutral-300 px-4 text-sm dark:border-neutral-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!preview || approveMutation.isPending}
+                onClick={() => approveMutation.mutate()}
+                className="min-h-touch rounded-md bg-orange-600 px-4 text-sm font-medium text-white hover:bg-orange-700 disabled:opacity-60"
+              >
+                {approveMutation.isPending ? "Approving..." : "Approve withdrawal"}
+              </button>
+            </div>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
 function StudentSelect({
   students,
   value,
@@ -695,6 +850,19 @@ function StudentSelect({
 
 const inputClass =
   "w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
+
+function formatCents(cents: number): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
+}
+
+function formatShortDateTime(value: string): string {
+  return new Date(value).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
 
 function Field({
   label,

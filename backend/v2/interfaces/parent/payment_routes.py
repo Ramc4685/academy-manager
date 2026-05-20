@@ -9,6 +9,10 @@ from backend.v2.interfaces.parent.views import (
     BillingPortalRequest,
     BillingPortalResponse,
     CheckoutStatusResponse,
+    EnrollmentQuoteRequest,
+    EnrollmentQuoteResponse,
+    ParentCreditBalanceResponse,
+    ParentCreditView,
     ParentPaymentHistoryResponse,
     ParentPaymentView,
     StartAutopayRequest,
@@ -20,6 +24,45 @@ from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
 router = APIRouter(tags=["parent.payments"])
+
+
+def _quote_response(snapshot) -> EnrollmentQuoteResponse:
+    amount = snapshot.final_amount_cents
+    monthly = snapshot.monthly_price_cents
+    total = snapshot.total_eligible_classes
+    remaining = snapshot.billable_remaining_classes
+    return EnrollmentQuoteResponse(
+        snapshot_id=snapshot.snapshot_id or "",
+        quote_expires_at=snapshot.expires_at,
+        amount_due_cents=amount,
+        monthly_price_cents=monthly,
+        billing_period=snapshot.billing_period_label,
+        total_eligible_classes_this_month=total,
+        billable_remaining_classes_this_month=remaining,
+        formula=f"${monthly / 100:.2f} x {remaining} / {total}" if total else "$0.00",
+        message=f"First month is billed for {remaining} of {total} eligible classes this month.",
+        next_billing_amount_cents=monthly,
+        next_billing_message=f"Starting next month, tuition is ${monthly / 100:.2f}/month.",
+    )
+
+
+@router.post(
+    "/enrollments/quote",
+    response_model=EnrollmentQuoteResponse,
+    summary="Create a parent-safe first-month enrollment billing quote",
+)
+async def quote_enrollment(
+    body: EnrollmentQuoteRequest,
+    claims: AuthClaims = Depends(require_persona("parent")),
+    use_cases: ParentUseCases = Depends(get_parent_use_cases),
+) -> EnrollmentQuoteResponse:
+    snapshot = await use_cases.quote_enrollment(  # type: ignore[operator]
+        parent_id=claims.user_id,
+        student_id=body.student_id,
+        session_id=body.session_id,
+        start_date=body.start_date,
+    )
+    return _quote_response(snapshot)
 
 
 @router.post(
@@ -120,4 +163,33 @@ async def list_payments(
             )
             for p in payments
         ]
+    )
+
+
+@router.get(
+    "/credits",
+    response_model=ParentCreditBalanceResponse,
+    summary="Parent's account credit balance",
+)
+async def list_credits(
+    claims: AuthClaims = Depends(require_persona("parent")),
+    use_cases: ParentUseCases = Depends(get_parent_use_cases),
+) -> ParentCreditBalanceResponse:
+    credits = await use_cases.list_credits_for_parent(claims.user_id)  # type: ignore[operator]
+    balance = sum(c.remaining_amount_cents for c in credits if c.status == "APPROVED")
+    return ParentCreditBalanceResponse(
+        balance_cents=balance,
+        credits=[
+            ParentCreditView(
+                credit_id=c.credit_id,
+                type=c.type,
+                status=c.status,
+                amount_cents=c.amount_cents,
+                remaining_amount_cents=c.remaining_amount_cents,
+                currency=c.currency,
+                reason=c.reason,
+                expires_at=c.expires_at,
+            )
+            for c in credits
+        ],
     )

@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
+from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 from ulid import ULID
 
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     GenerateMonthlyPaymentsResult,
+)
+from backend.v2.contexts.billing.domain.proration import (
+    BillingCalculationSnapshot,
+    BillingPeriod,
+    ClassOccurrence,
+    FirstMonthProrationPolicy,
+    schedule_signature,
 )
 from backend.v2.contexts.billing.domain.errors import (
     PaymentNotFound,
@@ -20,6 +30,17 @@ from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
 class MongoPaymentRepository(TenantScopedRepository):
     collection_name = "payments"
+
+    def __init__(
+        self,
+        db: Any,
+        *,
+        clock=lambda: datetime.now(timezone.utc),
+        credit_ledger: Any | None = None,
+    ) -> None:
+        super().__init__(db)
+        self._clock = clock
+        self._credit_ledger = credit_ledger
 
     @staticmethod
     def _payment_id(doc: dict[str, object]) -> str:
@@ -79,11 +100,13 @@ class MongoPaymentRepository(TenantScopedRepository):
             payment_id=cls._payment_id(doc),
             academy_id=str(doc["academy_id"]),
             parent_id=str(doc.get("parent_id") or doc.get("parent_user_id") or ""),
+            enrollment_id=doc.get("enrollment_id"),  # type: ignore[arg-type]
             session_id=doc.get("session_id"),  # type: ignore[arg-type]
             subscription_id=doc.get("subscription_id"),  # type: ignore[arg-type]
             stripe_payment_intent_id=doc.get("stripe_payment_intent_id")
             or doc.get("stripe_payment_intent"),  # type: ignore[arg-type]
             stripe_checkout_session_id=doc.get("stripe_checkout_session_id"),  # type: ignore[arg-type]
+            calculation_snapshot_id=doc.get("calculation_snapshot_id"),  # type: ignore[arg-type]
             amount_cents=cls._amount_cents(doc),
             currency=str(doc.get("currency", "usd")),
             status=doc.get("status", "pending"),  # type: ignore[arg-type]
@@ -113,6 +136,29 @@ class MongoPaymentRepository(TenantScopedRepository):
     async def get_by_checkout_session(self, checkout_session_id: str) -> Payment | None:
         doc = await self._find_one({"stripe_checkout_session_id": checkout_session_id})
         return self._to_domain(doc) if doc else None
+
+    async def latest_paid_payment_for_enrollment(
+        self, enrollment_id: str
+    ) -> Payment | None:
+        cursor = self._find_many(
+            {
+                "enrollment_id": enrollment_id,
+                "status": {"$in": ["succeeded", "partially_refunded"]},
+                "calculation_snapshot_id": {"$exists": True, "$ne": None},
+            },
+            sort=[("paid_at", -1), ("updated_at", -1), ("created_at", -1), ("payment_id", -1)],
+            limit=1,
+        )
+        docs = [doc async for doc in cursor]
+        return self._to_domain(docs[0]) if docs else None
+
+    async def get_snapshot(
+        self, snapshot_id: str
+    ) -> BillingCalculationSnapshot | None:
+        doc = await self._db["billing_calculation_snapshots"].find_one(
+            {"academy_id": current_academy_id(), "snapshot_id": snapshot_id}
+        )
+        return BillingCalculationSnapshot(**doc) if doc else None
 
     async def list_for_parent(self, parent_id: str) -> list[Payment]:
         cursor = self._find_many(
@@ -191,7 +237,7 @@ class MongoPaymentRepository(TenantScopedRepository):
             },
             sort=[("created_at", 1), ("enrollment_id", 1)],
         )
-        now = datetime.now(timezone.utc)
+        now = self._clock()
         created = 0
         skipped_existing = 0
         skipped_no_charge = 0
@@ -234,8 +280,13 @@ class MongoPaymentRepository(TenantScopedRepository):
             student_doc = await self._db["students"].find_one(
                 {"academy_id": academy_id, "student_id": student_id}
             )
-            amount_cents = _session_amount_cents(session_doc or {})
-            if amount_cents <= 0:
+            gross_amount_cents, snapshot_id = await self._amount_for_invoice(
+                enrollment=enrollment,
+                session_doc=session_doc or {},
+                period=period,
+                now=now,
+            )
+            if gross_amount_cents <= 0:
                 skipped_no_charge += 1
                 continue
             parent_id = str(
@@ -249,6 +300,28 @@ class MongoPaymentRepository(TenantScopedRepository):
                 skipped_no_charge += 1
                 continue
             payment_id = str(ULID())
+            invoice_key_id = str(ULID())
+            try:
+                await self._db["billing_invoice_keys"].insert_one(
+                    {
+                        "academy_id": academy_id,
+                        "invoice_key_id": invoice_key_id,
+                        "enrollment_id": enrollment_id,
+                        "period": period,
+                        "created_at": now,
+                    }
+                )
+            except DuplicateKeyError:
+                skipped_existing += 1
+                continue
+            applied_credit_cents = 0
+            if self._credit_ledger is not None:
+                applied_credit_cents = await self._credit_ledger.apply_available_credits(
+                    parent_id=parent_id,
+                    invoice_id=payment_id,
+                    amount_due_cents=gross_amount_cents,
+                )
+            amount_cents = max(gross_amount_cents - applied_credit_cents, 0)
             await self._insert_one(
                 {
                     "payment_id": payment_id,
@@ -257,8 +330,12 @@ class MongoPaymentRepository(TenantScopedRepository):
                     "enrollment_id": enrollment_id,
                     "session_id": session_id,
                     "period": period,
+                    "gross_amount_cents": gross_amount_cents,
+                    "applied_credit_cents": applied_credit_cents,
                     "amount_cents": amount_cents,
                     "discount_cents": 0,
+                    "calculation_snapshot_id": snapshot_id,
+                    "invoice_key_id": invoice_key_id,
                     "currency": "usd",
                     "status": "pending",
                     "refunded_cents": 0,
@@ -276,6 +353,216 @@ class MongoPaymentRepository(TenantScopedRepository):
             skipped_autopay=skipped_autopay,
             skipped_paused=skipped_paused,
         )
+
+    async def create_initial_quote(
+        self,
+        *,
+        session_id: str,
+        billing_start_at: datetime,
+        calculated_by: str,
+        parent_id: str | None = None,
+        student_id: str | None = None,
+        enrollment_id: str | None = None,
+        ttl_minutes: int = 15,
+    ) -> BillingCalculationSnapshot:
+        academy_id = current_academy_id()
+        session_doc = await self._db["sessions"].find_one(
+            {"academy_id": academy_id, "session_id": session_id}
+        )
+        if session_doc is None:
+            session_doc = await self._db["sessions"].find_one(
+                {"academy_id": academy_id, "_id": session_id}
+            )
+        if session_doc is None:
+            raise PaymentNotFound("session not found", payment_id=session_id)
+        now = self._clock()
+        timezone_name = str(session_doc.get("timezone") or "America/Chicago")
+        period = BillingPeriod.from_label(billing_start_at.strftime("%Y-%m"), timezone_name=timezone_name)
+        occurrences = await self._occurrences_for_session(session_doc, period)
+        snapshot = FirstMonthProrationPolicy().quote(
+            monthly_price_cents=_session_amount_cents(session_doc),
+            discount_cents=0,
+            period=period,
+            occurrences=occurrences,
+            billing_start_at=billing_start_at,
+            calculated_at=now,
+            calculated_by=calculated_by,
+        )
+        snapshot_id = str(ULID())
+        expires_at = now + timedelta(minutes=ttl_minutes)
+        stored = snapshot.model_copy(
+            update={"snapshot_id": snapshot_id, "status": "OPEN", "expires_at": expires_at}
+        )
+        await self._db["billing_calculation_snapshots"].insert_one(
+            {
+                **stored.model_dump(mode="python"),
+                "academy_id": academy_id,
+                "session_id": session_id,
+                "student_id": student_id,
+                "parent_id": parent_id,
+                "enrollment_id": enrollment_id,
+                "created_at": now,
+            }
+        )
+        return stored
+
+    async def consume_quote_snapshot(self, snapshot_id: str) -> BillingCalculationSnapshot | None:
+        academy_id = current_academy_id()
+        now = self._clock()
+        doc = await self._db["billing_calculation_snapshots"].find_one_and_update(
+            {"academy_id": academy_id, "snapshot_id": snapshot_id, "status": "OPEN"},
+            {"$set": {"status": "CONSUMED", "consumed_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return BillingCalculationSnapshot(**doc) if doc else None
+
+    async def _amount_for_invoice(
+        self,
+        *,
+        enrollment: dict[str, object],
+        session_doc: dict[str, object],
+        period: str,
+        now: datetime,
+    ) -> tuple[int, str | None]:
+        amount_cents = _session_amount_cents(session_doc)
+        billing_start = _coerce_datetime(
+            enrollment.get("billing_start_at")
+            or enrollment.get("enrolled_at")
+            or enrollment.get("created_at")
+        )
+        academy_id = current_academy_id()
+        enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
+        timezone_name = str(session_doc.get("timezone") or "America/Chicago")
+        billing_period = BillingPeriod.from_label(period, timezone_name=timezone_name)
+        occurrences = await self._occurrences_for_session(session_doc, billing_period)
+        if billing_start is None or billing_start.strftime("%Y-%m") != period:
+            snapshot_id = await self._store_monthly_snapshot(
+                enrollment=enrollment,
+                session_doc=session_doc,
+                period=billing_period,
+                occurrences=occurrences,
+                monthly_price_cents=amount_cents,
+                now=now,
+            )
+            return amount_cents, snapshot_id
+        prior_consumed = await self._db["billing_calculation_snapshots"].find_one(
+            {
+                "academy_id": academy_id,
+                "enrollment_id": enrollment_id,
+                "billing_period_label": period,
+                "status": "CONSUMED",
+                "calculation_type": "FIRST_MONTH_PRORATION",
+            }
+        )
+        if prior_consumed is not None:
+            return 0, str(prior_consumed.get("snapshot_id"))
+
+        snapshot = FirstMonthProrationPolicy().quote(
+            monthly_price_cents=amount_cents,
+            discount_cents=0,
+            period=billing_period,
+            occurrences=occurrences,
+            billing_start_at=billing_start,
+            calculated_at=now,
+            calculated_by="SYSTEM",
+        )
+        snapshot_id = str(ULID())
+        consumed = snapshot.model_copy(update={"snapshot_id": snapshot_id, "status": "CONSUMED"})
+        await self._db["billing_calculation_snapshots"].insert_one(
+            {
+                **consumed.model_dump(mode="python"),
+                "academy_id": academy_id,
+                "enrollment_id": enrollment_id,
+                "session_id": str(enrollment.get("session_id") or ""),
+                "student_id": str(enrollment.get("student_id") or ""),
+            }
+        )
+        return consumed.final_amount_cents, snapshot_id
+
+    async def _store_monthly_snapshot(
+        self,
+        *,
+        enrollment: dict[str, object],
+        session_doc: dict[str, object],
+        period: BillingPeriod,
+        occurrences: list[ClassOccurrence],
+        monthly_price_cents: int,
+        now: datetime,
+    ) -> str:
+        eligible = [
+            occurrence
+            for occurrence in sorted(occurrences, key=lambda o: o.occurrence_id)
+            if FirstMonthProrationPolicy._is_eligible(occurrence, period)
+        ]
+        snapshot_id = str(ULID())
+        included = [occurrence.occurrence_id for occurrence in eligible]
+        snapshot = BillingCalculationSnapshot(
+            snapshot_id=snapshot_id,
+            status="CONSUMED",
+            calculation_type="MONTHLY_TUITION",
+            monthly_price_cents=monthly_price_cents,
+            discount_cents=0,
+            billing_period_start=period.start_at,
+            billing_period_end=period.end_at,
+            billing_period_label=period.label,
+            timezone=period.timezone,
+            total_eligible_classes=len(eligible),
+            billable_remaining_classes=len(eligible),
+            proration_ratio=f"{len(eligible)}/{len(eligible)}" if eligible else "0/0",
+            final_amount_cents=monthly_price_cents,
+            included_occurrence_ids=included,
+            excluded_occurrences={},
+            schedule_signature=schedule_signature(eligible, timezone_name=period.timezone),
+            calculated_at=now,
+            calculated_by="SYSTEM",
+        )
+        await self._db["billing_calculation_snapshots"].insert_one(
+            {
+                **snapshot.model_dump(mode="python"),
+                "academy_id": current_academy_id(),
+                "enrollment_id": str(enrollment.get("enrollment_id") or enrollment.get("_id")),
+                "session_id": str(enrollment.get("session_id") or session_doc.get("session_id") or ""),
+                "student_id": str(enrollment.get("student_id") or ""),
+            }
+        )
+        return snapshot_id
+
+    async def _occurrences_for_session(
+        self,
+        session_doc: dict[str, object],
+        period: BillingPeriod,
+    ) -> list[ClassOccurrence]:
+        base = _session_occurrences(session_doc, period)
+        if not base:
+            return []
+        session_id = str(session_doc.get("session_id") or session_doc.get("_id") or "")
+        override_rows = self._db["session_occurrence_overrides"].find(
+            {
+                "academy_id": current_academy_id(),
+                "session_id": session_id,
+                "occurrence_id": {"$in": [o.occurrence_id for o in base]},
+            }
+        )
+        overrides = {str(row["occurrence_id"]): row async for row in override_rows}
+        out: list[ClassOccurrence] = []
+        for occurrence in base:
+            override = overrides.get(occurrence.occurrence_id)
+            if override is None:
+                out.append(occurrence)
+                continue
+            status = str(override.get("status") or occurrence.status)
+            is_billable = override.get("is_billable")
+            if is_billable is None:
+                is_billable = status in {"scheduled", "completed", "makeup"}
+            out.append(
+                occurrence.model_copy(
+                    update={
+                        "status": status,
+                        "is_billable": bool(is_billable),
+                    }
+                )
+            )
+        return out
 
     async def mark_payment_paid(
         self,
@@ -358,3 +645,72 @@ def _session_amount_cents(doc: dict[str, object]) -> int:
     if doc.get("monthly_price") is not None:
         return int(round(float(doc["monthly_price"]) * 100))  # type: ignore[arg-type]
     return 0
+
+
+def _coerce_datetime(value: object | None) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return None
+
+
+def _session_occurrences(
+    doc: dict[str, object],
+    period: BillingPeriod,
+) -> list[ClassOccurrence]:
+    timezone_name = str(doc.get("timezone") or period.timezone or "America/Chicago")
+    tz = ZoneInfo(timezone_name)
+    session_id = str(doc.get("session_id") or doc.get("_id") or "")
+    if doc.get("start_date") and doc.get("end_date") and doc.get("days_of_week"):
+        start_date = date.fromisoformat(str(doc["start_date"]))
+        end_date = date.fromisoformat(str(doc["end_date"]))
+        days = {str(day)[:3].title() for day in (doc.get("days_of_week") or [])}
+        start_time = time.fromisoformat(str(doc.get("start_time") or "00:00"))
+        end_time = time.fromisoformat(str(doc.get("end_time") or doc.get("start_time") or "00:00"))
+        current = max(start_date, period.start_at.date())
+        period_last_day = date.fromordinal(period.end_at.date().toordinal() - 1)
+        final = min(end_date, period_last_day)
+        rows: list[ClassOccurrence] = []
+        while current <= final:
+            if current.strftime("%a") in days:
+                local_start = datetime.combine(current, start_time, tzinfo=tz)
+                local_end = datetime.combine(current, end_time, tzinfo=tz)
+                rows.append(
+                    ClassOccurrence(
+                        occurrence_id=f"{session_id}:{current.isoformat()}:{start_time.strftime('%H:%M')}",
+                        session_id=session_id,
+                        start_at=local_start.astimezone(timezone.utc),
+                        end_at=local_end.astimezone(timezone.utc),
+                        status="scheduled",
+                        is_billable=True,
+                        timezone=timezone_name,
+                    )
+                )
+            current = date.fromordinal(current.toordinal() + 1)
+        return rows
+
+    start_at = _coerce_datetime(doc.get("start_at"))
+    end_at = _coerce_datetime(doc.get("end_at"))
+    if start_at is None or end_at is None:
+        return []
+    local_start = start_at.astimezone(tz)
+    if not (period.start_at <= local_start < period.end_at):
+        return []
+    return [
+        ClassOccurrence(
+            occurrence_id=f"{session_id}:{local_start.date().isoformat()}:{local_start.strftime('%H:%M')}",
+            session_id=session_id,
+            start_at=start_at,
+            end_at=end_at,
+            status="scheduled" if str(doc.get("status") or "scheduled") == "active" else str(doc.get("status") or "scheduled"),  # type: ignore[arg-type]
+            is_billable=True,
+            timezone=timezone_name,
+        )
+    ]

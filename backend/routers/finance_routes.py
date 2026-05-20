@@ -13,6 +13,7 @@ from models import (
 )
 from auth import get_current_user, require_roles, log_audit
 from db import get_db
+from services.billing_proration import persist_legacy_snapshot, prorated_first_month_quote
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +155,26 @@ async def generate_monthly(body: GenerateMonthlyIn, admin=Depends(require_roles(
         session = await db.sessions.find_one({"_id": ObjectId(session_id)})
         if not session:
             continue
-        price = float(session.get("monthly_price", 0))
+        now = datetime.now(timezone.utc)
+        quote = prorated_first_month_quote(
+            session=session,
+            enrollment=e,
+            period=body.period,
+            calculated_at=now,
+            calculated_by=admin.get("id") or admin.get("email") or "admin",
+        )
+        snapshot_id = None
+        if quote is not None:
+            price = quote.final_amount_cents / 100
+            snapshot_id = await persist_legacy_snapshot(
+                db,
+                quote=quote,
+                enrollment=e,
+                session=session,
+                period=body.period,
+            )
+        else:
+            price = float(session.get("monthly_price", 0))
         doc = {
             "parent_user_id": e["parent_user_id"],
             "student_id": e["student_id"],
@@ -164,6 +184,7 @@ async def generate_monthly(body: GenerateMonthlyIn, admin=Depends(require_roles(
             "amount": price,
             "discount": 0,
             "final_amount": price,
+            "calculation_snapshot_id": snapshot_id,
             "status": "pending",
             "payment_date": None,
             "payment_method": None,

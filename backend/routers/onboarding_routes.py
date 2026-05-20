@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from auth import get_current_user
 from db import get_db
 from routers.billing_routes import _configure_stripe
+from services.billing_proration import persist_legacy_snapshot, prorated_first_month_quote
 from services.enrollment_service import capacity_snapshot, get_enrollable_session
 
 # ---------------------------------------------------------------------------
@@ -473,10 +474,38 @@ async def create_onboarding_checkout(
             content={"error": "session_full", "detail": "The selected session is currently full"},
         )
 
-    try:
-        amount = float(session_doc.get("monthly_price") or 0)
-    except (TypeError, ValueError):
-        amount = 0
+    now = datetime.now(timezone.utc)
+    quote = prorated_first_month_quote(
+        session=session_doc,
+        enrollment={
+            "_id": app_id,
+            "session_id": session_id,
+            "parent_user_id": app_doc["parent_user_id"],
+            "created_at": now.isoformat(),
+        },
+        period=now.strftime("%Y-%m"),
+        calculated_at=now,
+        calculated_by=app_doc["parent_user_id"],
+    )
+    snapshot_id = None
+    if quote is not None:
+        amount = quote.final_amount_cents / 100
+        snapshot_id = await persist_legacy_snapshot(
+            db,
+            quote=quote,
+            enrollment={
+                "_id": app_id,
+                "session_id": session_id,
+                "parent_user_id": app_doc["parent_user_id"],
+            },
+            session=session_doc,
+            period=now.strftime("%Y-%m"),
+        )
+    else:
+        try:
+            amount = float(session_doc.get("monthly_price") or 0)
+        except (TypeError, ValueError):
+            amount = 0
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Session monthly price must be greater than zero")
 
@@ -488,6 +517,7 @@ async def create_onboarding_checkout(
         "onboarding_id": app_id,
         "parent_user_id": app_doc["parent_user_id"],
         "session_id": session_id,
+        "calculation_snapshot_id": snapshot_id or "",
         "kind": "onboarding",
     }
 

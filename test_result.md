@@ -184,6 +184,28 @@ backend:
       - working: true
         agent: "main"
         comment: "Added Enrollment use case and admin BFF endpoint to move a student between sessions by reserving the target seat, updating the enrollment, and releasing the source seat. Interface tests cover the reservation/release behavior."
+  - task: "first-month class-count proration quote snapshots"
+    implemented: true
+    working: true
+    file: "backend/v2/contexts/billing/domain/proration.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added the shared first-month proration policy, persisted quote snapshots, v2 parent/admin quote endpoints, legacy billing bridge usage, invoice-key idempotency for monthly generation, and snapshot traceability on payments. Focused proration/BFF tests passed, full backend v2 suite passed, and frontend build/typecheck passed."
+  - task: "early withdrawal account credits"
+    implemented: true
+    working: true
+    file: "backend/v2/contexts/billing/application/use_cases/withdrawal_credit.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Implemented Slice 2 withdrawal credits: net-paid credit policy, account credit ledger, admin preview/approval BFF endpoints, subscription cancellation, parent credit balance endpoint, and automatic FIFO credit application during monthly generation. Full backend v2 suite passed."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -321,10 +343,32 @@ frontend:
       - working: true
         agent: "main"
         comment: "Removed the legacy CRA frontend, promoted the Next.js BFF/DDD frontend to the canonical frontend/ path, updated CI/docs/deployment references, and verified only one top-level frontend directory remains."
+  - task: "parent/admin proration quote display"
+    implemented: true
+    working: true
+    file: "frontend/app/(parent)/parent/onboarding/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Parent onboarding review and admin roster add dialog now request server-issued quote snapshots and display first-month amount plus billed-for N of M class text. Verified with frontend typecheck and production build."
+  - task: "withdrawal credit admin and parent UI"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/admin/sessions/[id]/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added admin roster withdrawal dialog with credit preview/approval and parent payments available-credit display. Verified with frontend typecheck and production build; browser smoke not run."
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 13
+  test_sequence: 15
   run_ui: true
 test_plan:
   current_focus: []
@@ -404,3 +448,7 @@ agent_communication:
     message: "Canonical frontend path consolidation: removed the old CRA frontend, moved the active Next.js BFF/DDD app into frontend/, replaced stale split-frontend references, and updated docs/AGENTS/deployment/CI notes so there is one frontend deployable. Verification: pnpm install --frozen-lockfile, pnpm typecheck, pnpm lint, pnpm build, PLAYWRIGHT_PORT=3302 pnpm e2e (6 passed/14 planned skips), pnpm size, OpenNext Cloudflare build, frontend wrangler deploy --dry-run, workflow YAML parse, production_smoke.sh syntax check, stale-path reference sweep, one-frontend directory check, and git diff --check all passed."
   - agent: "main"
     message: "PR #35 review fix: restored the frontend Docker build target for docker compose with a Next.js Dockerfile/.dockerignore, updated docker-compose.yml to use BFF_API_ORIGIN/NEXT_PUBLIC_* args and map localhost:3000 to the Next server, and made backend/.env optional for clean-checkout compose config. Verification: docker compose config passed, frontend pnpm typecheck/lint/build passed, and git diff --check passed. docker compose build frontend could not run because the local Docker daemon is not running."
+  - agent: "main"
+    message: "Monthly proration Slice 1 implementation: added shared billing proration domain policy/snapshots, v2 parent/admin quote endpoints, payment snapshot traceability, monthly invoice-key idempotency, legacy bridge usage, migration indexes, and parent/admin quote displays. Verification: backend focused proration/BFF suite passed (30), backend/v2 suite passed (156), frontend pnpm build passed, frontend pnpm typecheck passed when rerun after build, and git diff --check passed. One parallel typecheck attempt failed because Next build was regenerating .next/types concurrently; rerun succeeded."
+  - agent: "main"
+    message: "Withdrawal credits Slice 2 implementation: added EarlyWithdrawalCreditPolicy, account_credit_ledger repository/indexes, admin withdrawal credit preview/approval, enrollment withdrawal status updates, Stripe subscription cancellation at period end by default, parent credit balance endpoint/UI, and automatic FIFO credit application to generated monthly payments. Verification: focused Slice 2 backend suite passed (14), full backend/v2 suite passed (168), frontend pnpm typecheck passed, frontend pnpm build passed, compileall passed for touched backend packages, and git diff --check passed. Browser smoke was not run."

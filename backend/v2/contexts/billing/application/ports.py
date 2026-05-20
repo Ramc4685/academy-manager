@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from backend.v2.contexts.billing.domain.models import Payment, Subscription
+from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment, Subscription
 
 
 class PaymentRepository(Protocol):
@@ -18,6 +18,16 @@ class PaymentRepository(Protocol):
 class SubscriptionRepository(Protocol):
     async def save(self, subscription: Subscription) -> None: ...
     async def get_by_stripe_sub(self, stripe_sub: str) -> Subscription | None: ...
+    async def latest_for_enrollment(self, enrollment_id: str) -> Subscription | None: ...
+
+
+class CreditLedgerRepository(Protocol):
+    async def create(self, entry: CreditLedgerEntry) -> None: ...
+    async def list_for_parent(self, parent_id: str) -> list[CreditLedgerEntry]: ...
+    async def balance_for_parent(self, parent_id: str) -> int: ...
+    async def apply_available_credits(
+        self, *, parent_id: str, invoice_id: str, amount_due_cents: int
+    ) -> int: ...
 
 
 class StripeEventDedup(Protocol):
@@ -70,6 +80,11 @@ class StripeGateway(Protocol):
 
     async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
         """Returns Stripe refund id."""
+
+    async def cancel_subscription(
+        self, stripe_subscription_id: str, *, at_period_end: bool
+    ) -> None:
+        """Cancel a Stripe subscription now or at period end."""
 
 
 class CapacityReservation(Protocol):
