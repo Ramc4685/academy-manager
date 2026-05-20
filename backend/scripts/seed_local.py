@@ -52,6 +52,44 @@ FIREBASE_MODE   = os.environ.get("FIREBASE_AUTH_ENABLED", "").lower() in ("1", "
 FIREBASE_PROJECT = os.environ.get("FIREBASE_PROJECT_ID", "academy-courtmastr")
 FIREBASE_EMULATOR = os.environ.get("FIREBASE_AUTH_EMULATOR_HOST", "127.0.0.1:9099")
 ACADEMY_ID      = "default-academy"
+ACADEMY_NAME    = "BLno Badminton Academy"
+ACADEMY_TZ      = "America/Chicago"
+
+# Day-of-week abbreviation → Python weekday() int.
+DOW_MAP: dict[str, int] = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
+
+
+def expand_template_to_dated_sessions(
+    template: dict,
+    today: date,
+    weeks_back: int = 4,
+    weeks_forward: int = 12,
+) -> list[tuple[datetime, datetime]]:
+    """Expand a weekly recurring template into concrete dated (start_at, end_at) pairs.
+
+    Why: the v2 Session domain model requires start_at/end_at datetimes;
+    weekly templates with days_of_week alone are not v2-compatible. The seed
+    materialises a window of concrete sessions so the admin BFF can read
+    sessions natively (no synthesise-on-query bridge required for fresh seeds).
+    """
+    dow_strs: list[str] = list(template.get("days_of_week") or [])
+    dow_ints = {DOW_MAP[d] for d in dow_strs if d in DOW_MAP}
+    if not dow_ints:
+        return []
+    sh, sm = int(template["start_time"][:2]), int(template["start_time"][3:5])
+    eh, em = int(template["end_time"][:2]), int(template["end_time"][3:5])
+    start = today - timedelta(weeks=weeks_back)
+    end = today + timedelta(weeks=weeks_forward)
+    dated: list[tuple[datetime, datetime]] = []
+    cursor = start
+    while cursor <= end:
+        if cursor.weekday() in dow_ints:
+            dated.append((
+                datetime.combine(cursor, time(sh, sm), tzinfo=timezone.utc),
+                datetime.combine(cursor, time(eh, em), tzinfo=timezone.utc),
+            ))
+        cursor += timedelta(days=1)
+    return dated
 
 
 def hp(p: str) -> str:
@@ -330,13 +368,31 @@ async def main() -> None:
     admin_email = os.environ.get("ADMIN_EMAIL", "ramchand4685@gmail.com").lower()
 
     # ── 1. Drop transactional collections; keep admin user ─────────────────
-    for col in ("sessions", "students", "enrollments", "payments", "expenses",
+    for col in ("academies", "sessions", "students", "enrollments", "payments", "expenses",
                 "attendance", "lesson_plans", "progress_notes", "coach_payouts",
                 "payout_rules", "move_log", "messages", "notifications", "invites",
                 "audit_logs", "waiver_versions", "waiver_acceptances"):
         await db[col].drop()
     await db.users.delete_many({"email": {"$ne": admin_email}})
     print("Cleared collections.")
+
+    # ── 1a. Academy doc (Settings panels read/write this) ─────────────────
+    await db.academies.update_one(
+        {"_id": ACADEMY_ID},
+        {"$set": {
+            "_id": ACADEMY_ID,
+            "display_name": ACADEMY_NAME,
+            "timezone": ACADEMY_TZ,
+            "contact_email": admin_email,
+            "contact_phone": None,
+            "hours_text": "Wed 6:15pm–7:30pm · Thu 6:00pm–9:30pm",
+            "address": None,
+            "created_at": utcnow(),
+            "updated_at": utcnow(),
+        }},
+        upsert=True,
+    )
+    print(f"Academy: {ACADEMY_NAME!r} ({ACADEMY_ID}, tz={ACADEMY_TZ})")
 
     # ── Ensure admin user has v2 fields ────────────────────────────────────
     admin_firebase_uid = ""
@@ -436,25 +492,56 @@ async def main() -> None:
     waiver_version_id = str(waiver_r.inserted_id)
 
     # ── 5. Sessions ─────────────────────────────────────────────────────────
+    # Each weekly template (e.g. "Thursday 6:00 PM Beginner") is materialised
+    # into concrete dated session instances covering the past 4 weeks and the
+    # next 12 weeks. Every doc carries start_at/end_at datetimes so the v2
+    # Session domain model + admin BFF read them natively (the legacy-template
+    # synthesise-on-query bridge in composition/admin.py becomes defensive code
+    # for any non-seed legacy docs still in the DB).
+    #
+    # session_ids[template_name] maps to the FIRST upcoming-or-today instance
+    # of that template, which is what enrollments + payments reference. The
+    # session detail page therefore shows that instance's roster; historical
+    # session instances exist for charts and "Sessions today" filtering.
+    today = datetime.now(timezone.utc).date()
     session_ids: dict[str, str] = {}
+    total_instances = 0
     for s in SESSIONS:
-        session_id = new_id()
-        doc = {k: v for k, v in s.items() if k != "coach_key"}
-        doc.update({
-            "academy_id": ACADEMY_ID,
-            "session_id": session_id,
-            "coach_id":   coach_ids[s["coach_key"]],
-            # v2 aliases — keep legacy fields above for backward compat
-            "title":       s["name"],
-            "capacity":    s["max_students"],
-            "amount_cents": int(s["monthly_price"] * 100),
-            "status":      "scheduled",
-            "is_deleted":  False,
-            "created_at":  utcnow(),
-        })
-        await db.sessions.insert_one(doc)
-        session_ids[s["name"]] = session_id
-    print(f"Sessions: {len(session_ids)}")
+        coach_id = coach_ids[s["coach_key"]]
+        amount_cents = int(s["monthly_price"] * 100)
+        dated = expand_template_to_dated_sessions(s, today)
+        first_upcoming_id: str | None = None
+        for start_at, end_at in dated:
+            session_id = new_id()
+            doc = {
+                "academy_id": ACADEMY_ID,
+                "session_id": session_id,
+                "coach_id": coach_id,
+                "title": s["name"],
+                "location": s["location"],
+                "capacity": s["max_students"],
+                "amount_cents": amount_cents,
+                "start_at": start_at,
+                "end_at": end_at,
+                "status": "scheduled",
+                "is_deleted": False,
+                "created_at": utcnow(),
+                # Cross-instance metadata for analytics / future "series" model.
+                "skill_level": s["skill_level"],
+                "age_group": s["age_group"],
+                "monthly_price": s["monthly_price"],
+            }
+            await db.sessions.insert_one(doc)
+            total_instances += 1
+            if first_upcoming_id is None and start_at.date() >= today:
+                first_upcoming_id = session_id
+        # Fallback: if every instance is in the past (window mis-config),
+        # point enrollments at the most recent one.
+        if first_upcoming_id is None and dated:
+            first_upcoming_id = session_id  # last inserted
+        if first_upcoming_id:
+            session_ids[s["name"]] = first_upcoming_id
+    print(f"Sessions: {len(session_ids)} templates → {total_instances} dated instances")
 
     # ── 6. Parents / Students / Enrollments / Payments ─────────────────────
     parent_id_by_email: dict[str, str] = {}
