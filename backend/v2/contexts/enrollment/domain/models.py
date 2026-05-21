@@ -9,10 +9,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 EnrollmentStatus = Literal["active", "paused", "cancelled", "withdrawn"]
 SessionStatus = Literal["scheduled", "cancelled", "completed"]
+SessionOccurrenceStatus = Literal["scheduled", "cancelled", "completed"]
 
 
 class Session(BaseModel):
@@ -33,6 +34,31 @@ class Session(BaseModel):
     end_at: datetime
     capacity: int = Field(ge=1)
     status: SessionStatus = "scheduled"
+
+
+class SessionOccurrence(BaseModel):
+    """One dated occurrence produced from a recurring session template."""
+
+    model_config = {"frozen": True}
+
+    occurrence_id: str
+    academy_id: str
+    session_id: str
+    start_at: datetime
+    end_at: datetime
+    status: SessionOccurrenceStatus = "scheduled"
+    scheduled_coach_id: str
+    actual_coach_id: str | None = None
+    substitute_coach_id: str | None = None
+    is_billable: bool = True
+    is_payable: bool = True
+    cancellation_reason: str | None = None
+
+    @model_validator(mode="after")
+    def _end_after_start(self) -> SessionOccurrence:
+        if self.end_at <= self.start_at:
+            raise ValueError("session occurrence end_at must be after start_at")
+        return self
 
 
 class Student(BaseModel):

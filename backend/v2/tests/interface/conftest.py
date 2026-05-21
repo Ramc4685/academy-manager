@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.v2.contexts.coaching.application.use_cases.mark_attendance import MarkAttendance
+from backend.v2.contexts.coaching.application.ports import OccurrenceDetails
 from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     CreateLessonPlan,
     CreateProgressNote,
@@ -85,9 +86,15 @@ class FakeAttendanceRepo:
     async def save(self, attendance) -> None:
         self.saved.append(attendance)
 
-    async def find_existing(self, session_id, student_id):
+    async def find_existing(self, occurrence_id, student_id):
         for a in self.saved:
-            if a.session_id == session_id and a.student_id == student_id:
+            if a.occurrence_id == occurrence_id and a.student_id == student_id:
+                return a
+        return None
+
+    async def find_by_attendance_id(self, attendance_id):
+        for a in self.saved:
+            if a.attendance_id == attendance_id:
                 return a
         return None
 
@@ -260,6 +267,20 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             s = await sessions.get(sid)
             return s.start_at.date() if s else None
 
+    class _OL:
+        async def get(self, occurrence_id):
+            session_id = occurrence_id.split(":", 1)[0]
+            s = await sessions.get(session_id)
+            if s is None:
+                return None
+            return OccurrenceDetails(
+                occurrence_id=occurrence_id,
+                session_id=s.session_id,
+                starts_at=s.start_at,
+                status=s.status,
+                scheduled_coach_id=s.coach_id,
+            )
+
     class _EL:
         async def is_active(self, sid, student_id):
             return await enrollments.is_active(sid, student_id)
@@ -280,7 +301,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
         get_roster=GetSessionRoster(enrollments=enrollments, students=students),
         mark_attendance=MarkAttendance(
             attendance_repo=FakeAttendanceRepo(),
-            session_lookup=session_lookup,
+            occurrence_lookup=_OL(),
             enrollment_lookup=_EL(),
             outbox=FakeOutbox(),
             idempotency_store=FakeIdempotencyStore(),

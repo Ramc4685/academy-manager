@@ -53,6 +53,7 @@ async def get_today(
     out = [
         CoachSession(
             session_id=s.session_id,
+            occurrence_id=f"{s.session_id}:{s.start_at.isoformat()}",
             title=s.title,
             location=s.location,
             start_at=s.start_at,

@@ -17,6 +17,7 @@ class MongoAttendanceRepository(TenantScopedRepository):
         return Attendance(
             attendance_id=str(doc["attendance_id"]),
             academy_id=str(doc["academy_id"]),
+            occurrence_id=str(doc["occurrence_id"]),
             session_id=str(doc["session_id"]),
             student_id=str(doc["student_id"]),
             marked_by=str(doc["marked_by"]),
@@ -38,6 +39,7 @@ class MongoAttendanceRepository(TenantScopedRepository):
             await self._insert_one(
                 {
                     "attendance_id": attendance.attendance_id,
+                    "occurrence_id": attendance.occurrence_id,
                     "session_id": attendance.session_id,
                     "student_id": attendance.student_id,
                     "marked_by": attendance.marked_by,
@@ -48,16 +50,17 @@ class MongoAttendanceRepository(TenantScopedRepository):
                 }
             )
         except DuplicateKeyError:
-            existing = await self.find_existing(attendance.session_id, attendance.student_id)
+            existing = await self.find_existing(attendance.occurrence_id, attendance.student_id)
             raise ConflictAttendanceExists(
                 "another mutation raced ahead and recorded attendance",
                 session_id=attendance.session_id,
+                occurrence_id=attendance.occurrence_id,
                 student_id=attendance.student_id,
                 existing_attendance_id=existing.attendance_id if existing else None,
             ) from None
 
-    async def find_existing(self, session_id: str, student_id: str) -> Attendance | None:
-        doc = await self._find_one({"session_id": session_id, "student_id": student_id})
+    async def find_existing(self, occurrence_id: str, student_id: str) -> Attendance | None:
+        doc = await self._find_one({"occurrence_id": occurrence_id, "student_id": student_id})
         return self._to_domain(doc) if doc else None
 
     async def find_by_attendance_id(self, attendance_id: str) -> Attendance | None:
