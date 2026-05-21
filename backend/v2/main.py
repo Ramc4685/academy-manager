@@ -47,6 +47,10 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import (
     MongoUserRepository,
 )
+from backend.v2.shared.tenancy.resolver import (
+    TenantResolutionError,
+    TenantResolver,
+)
 from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.interfaces.me_routes import router as me_router
