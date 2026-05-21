@@ -35,6 +35,24 @@ class WithdrawalEnrollmentRepository(Protocol):
     ) -> None: ...
 
 
+class WithdrawalLifecycleEventSink(Protocol):
+    async def record_withdrawal(
+        self,
+        *,
+        academy_id: str,
+        enrollment_id: str,
+        session_id: str,
+        student_id: str,
+        actor_id: str,
+        reason: str,
+        effective_at: datetime,
+        occurred_at: datetime,
+        billing_policy: str,
+        billing_result: str,
+        credit_id: str | None,
+    ) -> None: ...
+
+
 class PreviewWithdrawalCreditCommand(BaseModel):
     model_config = {"frozen": True}
 
@@ -115,6 +133,7 @@ class ApproveWithdrawalCredit:
         subscriptions: SubscriptionRepository,
         stripe: StripeGateway,
         academy_id: str,
+        enrollment_events: WithdrawalLifecycleEventSink | None = None,
         clock=lambda: datetime.now(timezone.utc),
     ) -> None:
         self._payments = payments
@@ -123,6 +142,7 @@ class ApproveWithdrawalCredit:
         self._subscriptions = subscriptions
         self._stripe = stripe
         self._academy_id = academy_id
+        self._enrollment_events = enrollment_events
         self._clock = clock
 
     async def execute(
@@ -188,6 +208,20 @@ class ApproveWithdrawalCredit:
             enrollment.enrollment_id,
             withdrawal_date=cmd.withdrawal_date,
         )
+        if self._enrollment_events is not None:
+            await self._enrollment_events.record_withdrawal(
+                academy_id=self._academy_id,
+                enrollment_id=enrollment.enrollment_id,
+                session_id=enrollment.session_id,
+                student_id=enrollment.student_id,
+                actor_id=cmd.actor_id,
+                reason=cmd.admin_note or "Early withdrawal",
+                effective_at=cmd.withdrawal_date,
+                occurred_at=now,
+                billing_policy="early_withdrawal_credit",
+                billing_result="APPROVED" if credit_id else "NO_CREDIT",
+                credit_id=credit_id,
+            )
         subscription = await self._subscriptions.latest_for_enrollment(enrollment.enrollment_id)
         if subscription is not None and subscription.stripe_subscription_id:
             at_period_end = not cmd.cancel_subscription_immediately

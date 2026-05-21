@@ -95,11 +95,11 @@ async def list_enrollments(
 )
 async def add_to_roster(
     body: EditRosterAddRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminEnrollmentView:
     enrollment = await use_cases.edit_roster_add.execute(
-        EditRosterAddCommand(**body.model_dump())
+        EditRosterAddCommand(**body.model_dump(), actor_id=claims.user_id)
     )
     return AdminEnrollmentView(
         enrollment_id=enrollment.enrollment_id,
@@ -116,11 +116,15 @@ async def add_to_roster(
 @router.delete("/enrollments/{enrollment_id}", status_code=204, response_model=None)
 async def cancel_enrollment(
     enrollment_id: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
     await use_cases.cancel_enrollment.execute(
-        CancelEnrollmentCommand(enrollment_id=enrollment_id, reason="admin_cancel")
+        CancelEnrollmentCommand(
+            enrollment_id=enrollment_id,
+            reason="admin_cancel",
+            actor_id=claims.user_id,
+        )
     )
 
 
@@ -128,13 +132,14 @@ async def cancel_enrollment(
 async def transfer_enrollment(
     enrollment_id: str,
     body: TransferEnrollmentRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminEnrollmentView:
     enrollment = await use_cases.transfer_enrollment.execute(
         TransferEnrollmentCommand(
             enrollment_id=enrollment_id,
             target_session_id=body.target_session_id,
+            actor_id=claims.user_id,
         )
     )
     return AdminEnrollmentView(
@@ -152,18 +157,18 @@ async def transfer_enrollment(
 @router.post("/enrollments/{enrollment_id}/pause", status_code=204, response_model=None)
 async def pause_enrollment(
     enrollment_id: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
     await use_cases.pause_enrollment.execute(
-        PauseEnrollmentCommand(enrollment_id=enrollment_id)
+        PauseEnrollmentCommand(enrollment_id=enrollment_id, actor_id=claims.user_id)
     )
 
 
 @router.post("/enrollments/{enrollment_id}/resume", status_code=204, response_model=None)
 async def resume_enrollment(
     enrollment_id: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
-    await use_cases.resume_enrollment.execute(enrollment_id)
+    await use_cases.resume_enrollment.execute(enrollment_id, actor_id=claims.user_id)
