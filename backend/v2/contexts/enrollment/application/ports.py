@@ -2,16 +2,36 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Protocol
 
-from backend.v2.contexts.enrollment.domain.models import Enrollment, RosterEntry, Session, Student
+from backend.v2.contexts.enrollment.domain.models import (
+    Enrollment,
+    RosterEntry,
+    Session,
+    SessionOccurrence,
+    Student,
+)
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 
 
 class SessionQuery(Protocol):
     async def for_coach_on_date(self, coach_id: str, on_date: date) -> list[Session]: ...
     async def get(self, session_id: str) -> Session | None: ...
+
+
+class SessionOccurrenceRepository(Protocol):
+    async def get(self, occurrence_id: str) -> SessionOccurrence | None: ...
+
+    async def list_for_session_between(
+        self,
+        *,
+        session_id: str,
+        start_at: datetime,
+        end_at: datetime,
+    ) -> list[SessionOccurrence]: ...
+
+    async def save_many(self, occurrences: list[SessionOccurrence]) -> None: ...
 
 
 class EnrollmentQuery(Protocol):

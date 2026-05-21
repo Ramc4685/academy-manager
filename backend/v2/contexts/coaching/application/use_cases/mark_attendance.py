@@ -1,12 +1,13 @@
 """Mark attendance — Wave 1A core write.
 
 Validates:
-- Session is in the coach's assigned set for the session's date
+- Occurrence exists and belongs to the submitted recurring session.
+- Occurrence is in the coach's assigned set for the occurrence date
   (``SessionNotAssigned``).
 - Session is not cancelled (``SessionCancelled``).
 - Student is currently enrolled (``StudentNotEnrolled``).
 - No prior attendance with a different ``mutation_id`` for the same
-  (session, student) (``ConflictAttendanceExists``).
+  (occurrence, student) (``ConflictAttendanceExists``).
 
 Idempotent on ``mutation_id`` via @idempotent so replays from offline-sync
 return the original result.
@@ -25,7 +26,7 @@ from pydantic import BaseModel, Field
 from backend.v2.contexts.coaching.application.ports import (
     AttendanceRepository,
     EnrollmentLookup,
-    SessionLookup,
+    OccurrenceLookup,
 )
 from backend.v2.contexts.coaching.domain.errors import (
     ConflictAttendanceExists,
@@ -46,6 +47,7 @@ class MarkAttendanceCommand(BaseModel):
     model_config = {"frozen": True}
 
     mutation_id: str  # client ULID
+    occurrence_id: str
     session_id: str
     student_id: str
     status: Literal["present", "absent", "late"]
@@ -57,6 +59,7 @@ class MarkAttendanceResult(BaseModel):
     model_config = {"frozen": True}
 
     attendance_id: str
+    occurrence_id: str
     session_id: str
     student_id: str
     status: Literal["present", "absent", "late"]
@@ -68,7 +71,7 @@ class MarkAttendance:
         self,
         *,
         attendance_repo: AttendanceRepository,
-        session_lookup: SessionLookup,
+        occurrence_lookup: OccurrenceLookup,
         enrollment_lookup: EnrollmentLookup,
         outbox: Outbox,
         idempotency_store: IdempotencyStore,
@@ -76,7 +79,7 @@ class MarkAttendance:
         clock=lambda: datetime.now(timezone.utc),
     ) -> None:
         self._attendance = attendance_repo
-        self._sessions = session_lookup
+        self._occurrences = occurrence_lookup
         self._enrollments = enrollment_lookup
         self._outbox = outbox
         self._idempotency_store = idempotency_store
@@ -88,20 +91,30 @@ class MarkAttendance:
         result_type=MarkAttendanceResult,
     )
     async def execute(self, cmd: MarkAttendanceCommand, coach_id: str) -> MarkAttendanceResult:
-        # 1. Session date + cancellation check.
-        session_date = await self._sessions.session_date(cmd.session_id)
-        if session_date is None:
+        # 1. Occurrence + cancellation check.
+        occurrence = await self._occurrences.get(cmd.occurrence_id)
+        if occurrence is None or occurrence.session_id != cmd.session_id:
             raise SessionNotAssigned(
-                "session not found or not assigned",
+                "session occurrence not found or not assigned",
                 session_id=cmd.session_id,
+                occurrence_id=cmd.occurrence_id,
                 coach_id=coach_id,
             )
-        if await self._sessions.is_cancelled(cmd.session_id):
-            raise SessionCancelled("session was cancelled", session_id=cmd.session_id)
-        if not await self._sessions.is_coach_assigned(coach_id, cmd.session_id, session_date):
-            raise SessionNotAssigned(
-                "session not assigned to this coach for that date",
+        if occurrence.status == "cancelled":
+            raise SessionCancelled(
+                "session occurrence was cancelled",
                 session_id=cmd.session_id,
+                occurrence_id=cmd.occurrence_id,
+            )
+        if coach_id not in {
+            occurrence.scheduled_coach_id,
+            occurrence.actual_coach_id,
+            occurrence.substitute_coach_id,
+        }:
+            raise SessionNotAssigned(
+                "session occurrence not assigned to this coach",
+                session_id=cmd.session_id,
+                occurrence_id=cmd.occurrence_id,
                 coach_id=coach_id,
             )
 
@@ -113,12 +126,13 @@ class MarkAttendance:
                 student_id=cmd.student_id,
             )
 
-        # 3. Conflict check — different mutation_id for same (session, student).
-        existing = await self._attendance.find_existing(cmd.session_id, cmd.student_id)
+        # 3. Conflict check — different mutation_id for same (occurrence, student).
+        existing = await self._attendance.find_existing(cmd.occurrence_id, cmd.student_id)
         if existing and existing.attendance_id != cmd.mutation_id:
             raise ConflictAttendanceExists(
                 "another mutation already recorded attendance",
                 session_id=cmd.session_id,
+                occurrence_id=cmd.occurrence_id,
                 student_id=cmd.student_id,
                 existing_attendance_id=existing.attendance_id,
             )
@@ -129,6 +143,7 @@ class MarkAttendance:
         attendance = Attendance(
             attendance_id=cmd.mutation_id,
             academy_id=self._academy_id,
+            occurrence_id=cmd.occurrence_id,
             session_id=cmd.session_id,
             student_id=cmd.student_id,
             marked_by=coach_id,
@@ -144,6 +159,7 @@ class MarkAttendance:
                 academy_id=self._academy_id,
                 payload=AttendanceMarkedPayload(
                     attendance_id=attendance.attendance_id,
+                    occurrence_id=attendance.occurrence_id,
                     session_id=attendance.session_id,
                     student_id=attendance.student_id,
                     marked_by=attendance.marked_by,
@@ -155,6 +171,7 @@ class MarkAttendance:
 
         return MarkAttendanceResult(
             attendance_id=attendance.attendance_id,
+            occurrence_id=attendance.occurrence_id,
             session_id=attendance.session_id,
             student_id=attendance.student_id,
             status=attendance.status,

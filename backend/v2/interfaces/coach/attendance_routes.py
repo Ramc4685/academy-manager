@@ -36,6 +36,7 @@ async def mark_attendance(
 ) -> MarkAttendanceResponse:
     cmd = MarkAttendanceCommand(
         mutation_id=body.mutation_id,
+        occurrence_id=body.occurrence_id,
         session_id=body.session_id,
         student_id=body.student_id,
         status=body.status,
@@ -45,6 +46,7 @@ async def mark_attendance(
     result = await use_cases.mark_attendance.execute(cmd, coach_id=claims.user_id)
     return MarkAttendanceResponse(
         attendance_id=result.attendance_id,
+        occurrence_id=result.occurrence_id,
         session_id=result.session_id,
         student_id=result.student_id,
         status=result.status,

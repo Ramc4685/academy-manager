@@ -20,6 +20,7 @@ class CoachRosterEntry(BaseModel):
 
 class CoachSession(BaseModel):
     session_id: str
+    occurrence_id: str
     title: str
     location: str
     start_at: datetime
@@ -42,6 +43,7 @@ class CoachDashboardResponse(BaseModel):
 
 class MarkAttendanceRequest(BaseModel):
     mutation_id: str
+    occurrence_id: str
     session_id: str
     student_id: str
     status: Literal["present", "absent", "late"]
@@ -51,6 +53,7 @@ class MarkAttendanceRequest(BaseModel):
 
 class MarkAttendanceResponse(BaseModel):
     attendance_id: str
+    occurrence_id: str
     session_id: str
     student_id: str
     status: Literal["present", "absent", "late"]
