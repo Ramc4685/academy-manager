@@ -16,7 +16,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from ulid import new as new_ulid
+from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.billing.application.ports import (
     PaymentRepository,

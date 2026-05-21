@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from bson import ObjectId as BsonObjectId
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
-from ulid import new as new_ulid
+from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     GenerateMonthlyPaymentsResult,

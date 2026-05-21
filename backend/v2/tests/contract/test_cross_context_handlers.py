@@ -19,7 +19,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
-from ulid import new as new_ulid
+from backend.v2.shared.ids import new_ulid
 
 from backend.v2.composition.event_handlers import (
     HandlerDeps,

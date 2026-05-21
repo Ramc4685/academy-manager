@@ -175,6 +175,10 @@ git diff
 
 Commit only related changes. Do not sweep unrelated dirty work into a commit.
 
+All changes to `main` must go through a pull request. Do not push directly to
+`main`, and do not merge a feature branch locally into `main`; open a PR, wait
+for required checks/review, then merge through GitHub.
+
 Never run without explicit approval:
 
 ```bash

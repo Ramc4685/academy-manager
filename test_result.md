@@ -206,6 +206,23 @@ backend:
       - working: true
         agent: "main"
         comment: "Implemented Slice 2 withdrawal credits: net-paid credit policy, account credit ledger, admin preview/approval BFF endpoints, subscription cancellation, parent credit balance endpoint, and automatic FIFO credit application during monthly generation. Full backend v2 suite passed."
+  - task: "main production CI v2 dependency recovery"
+    implemented: true
+    working: true
+    file: "backend/requirements-v2.txt"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "main"
+        comment: "GitHub Actions run 26194285094 was a direct push to main at cf0b503. Backend v2 tests failed during collection because requirements-v2.txt downgraded python-ulid to 3.0.0 after requirements.txt installed 3.1.0, removing ulid.new."
+      - working: "NA"
+        agent: "main"
+        comment: "Aligned requirements-v2.txt to python-ulid==3.1.0 and pydantic-settings==2.14.1 so v2 install no longer downgrades or conflicts with requirements.txt. Added PR-only main change guidance. Focused local verification pending."
+      - working: true
+        agent: "main"
+        comment: "Added backend.v2.shared.ids.new_ulid() around python-ulid's stable ULID() API and replaced direct ulid.new imports. Local CI-equivalent v2 backend command passed with 212 tests and 74.40% shared coverage; import-linter contracts passed."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -368,7 +385,7 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 15
+  test_sequence: 16
   run_ui: true
 test_plan:
   current_focus: []
@@ -471,6 +488,10 @@ agent_communication:
     message: "Additional real local smoke after user-requested testing: started the worktree backend on 127.0.0.1:8012 with FIREBASE_AUTH_ENABLED=true and the existing Firebase Auth emulator on 127.0.0.1:9099, then started the frontend on localhost:3802 with BFF_API_ORIGIN=http://127.0.0.1:8012. Health checks passed through both backend and frontend proxy. Signed into the Firebase Auth emulator as ramchand4685@gmail.com / Admin@12345 and confirmed real BFF responses for /api/v2/me, /api/v2/admin/academy, /api/v2/admin/academy/gateway, /api/v2/admin/users, /api/v2/admin/finance/expenses, and /api/v2/admin/finance/payouts. Browser smoke through the real login UI mounted /admin, /admin/sessions, /admin/students, /admin/users, /admin/waitlist, /admin/pause-requests, /admin/payments, /admin/dues, /admin/reports, /admin/coach-payslip, /admin/expenses, /admin/payouts, /admin/audit-logs, /admin/messages, and every Settings panel (academy, fees, gateway, notify, roles, branding, data). The smoke caught no API 4xx/5xx responses and no app console errors. Stopped the backend/frontend dev servers after the run."
   - agent: "main"
     message: "PR #40 review fixes: (1) Credit ledger atomicity — apply_available_credits now decrements remaining_amount_cents and pushes invoice_id onto a new applied_invoice_ids array in a single find_one_and_update; credit_applications becomes audit-only. Removes the race where a crash between insert_one and update_one orphaned a dedup record. (2) Snapshot enrollment_id backfill — _handle_onboarding_checkout_completed updates billing_calculation_snapshots.enrollment_id to the real enrollment_id after the enrollment row is created, so _amount_for_invoice can match the snapshot. (3) Zero-proration 422 — the misleading 400 'monthly price must be > 0' is now scoped to the fallback path; when proration legitimately yields $0 a 422 with accurate detail is returned and Stripe is not called. (4) DDD boundary refactor — extracted QuoteEnrollment application use case + SessionLoader/OccurrenceCatalog/SnapshotWriter ports; MongoPaymentRepository class methods no longer instantiate FirstMonthProrationPolicy; admin/parent composition closures call the use case instead of the repo. Verification: backend/v2/tests => 172 passed; targeted backend/tests on onboarding/billing/proration/credit/refund modules => 34 passed (test_onboarding_checkout 18, test_payment_undo_and_refund 15, test_billing_proration_bridge 1). Followups: generate_monthly_payments still sits on MongoPaymentRepository (its calculation now delegates to module-level functions); extracting it into a proper application use case is a future slice."
+  - agent: "main"
+    message: "Main CI recovery investigation: GitHub Actions run 26194285094 was event=push on headBranch=main for cf0b503 (Merge feat/rally-admin-product-depth), with no associated PR returned by GitHub's commit-to-PR API. Backend v2 tests failed during collection because requirements-v2.txt downgraded python-ulid to 3.0.0, where ulid.new is unavailable. Fix branch feat/fix-main-ci-pr-only aligns requirements-v2.txt to python-ulid 3.1.0 and pydantic-settings 2.14.1, and adds PR-only main-change instructions."
+  - agent: "main"
+    message: "Main CI recovery verified locally: sequential CI-style install of backend requirements and requirements-v2 completed; direct ulid.new usage was replaced with backend.v2.shared.ids.new_ulid() using python-ulid's ULID() API. Verification: pytest v2/tests --override-ini=\"testpaths=v2/tests\" --cov=v2/shared --cov-report=term-missing --cov-fail-under=70 passed with 212 passed and 74.40% coverage; PYTHONPATH=.. lint-imports --config pyproject.toml passed all 4 contracts; git diff --check passed. GitHub commit-to-PR API returned 0 PRs for cf0b503."
   - agent: "main"
     message: "Rally admin product-depth branch merged current origin/main and resolved conflicts with the monthly proration/withdrawal-credit work. Completed slices: Rich Students, Waivers, Dashboard Attention, Settings Branding/Data policy, Money review with no fake additions, and Global Waitlist. Enrollment approvals remain intentionally unbuilt because the roadmap gated them on product confirmation and the only confirmed Slice 6 need was global waitlist. Final blocker fixes included Python 3.14 compatibility for python-ulid 3.x using ulid.new(), landing-page accessibility fixes, and App Router-aware size-limit route chunk config. Verification before merge-back: backend uv run pytest v2/tests -q passed with 189 passed and 7 warnings; frontend pnpm typecheck passed; frontend pnpm build passed; frontend pnpm size passed; frontend pnpm lhci exited 0 with only configured PWA warnings; PLAYWRIGHT_PORT=3812 pnpm exec playwright test --workers=1 passed with 62 passed and 14 existing skips; git diff --check passed. Attempted full legacy+v2 backend pytest after installing missing local legacy test deps, but REACT_APP_BACKEND_URL=http://127.0.0.1:8001 uv run pytest -q still failed because those legacy network tests target a live server with legacy password auth disabled and expect /api/auth/login to return 200 instead of the current 410 Firebase-only response; this is outside the Rally/v2 merge gate."
   - agent: "main"

@@ -73,7 +73,7 @@ class _FakeSnapshotWriter:
         ttl_minutes: int,
         now: datetime,
     ) -> BillingCalculationSnapshot:
-        from ulid import new as new_ulid
+        from backend.v2.shared.ids import new_ulid
         from datetime import timedelta
 
         stored = snapshot.model_copy(

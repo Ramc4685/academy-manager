@@ -34,6 +34,10 @@ Write down the current state before editing:
 
 Keep changes small and traceable.
 
+Repository changes must flow through pull requests. If a fix is needed after a
+failed `main` run, create a new branch from `origin/main`, push that branch, and
+open a PR instead of pushing another direct commit to `main`.
+
 For ticketed work:
 
 - Work one ticket or one coherent slice at a time.

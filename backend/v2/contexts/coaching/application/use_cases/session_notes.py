@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Protocol
 
 from pydantic import BaseModel
-from ulid import new as new_ulid
+from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.coaching.domain.errors import SessionNotAssigned, StudentNotEnrolled
 
