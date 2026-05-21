@@ -76,9 +76,7 @@ class MongoUserRepository:
         )
         return self._to_domain(doc) if doc else None
 
-    async def ensure_parent_user(
-        self, *, email: str, display_name: str, firebase_uid: str
-    ) -> User:
+    async def ensure_parent_user(self, *, email: str, display_name: str, firebase_uid: str) -> User:
         existing = await self.collection.find_one(
             {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}
         )

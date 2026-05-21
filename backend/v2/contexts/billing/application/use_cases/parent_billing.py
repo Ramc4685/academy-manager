@@ -63,22 +63,24 @@ class StartSubscriptionCheckout:
     ) -> StartSubscriptionCheckoutResult:
         subscription_id = str(new_ulid())
         try:
-            checkout_id, url, stripe_subscription_id = (
-                await self._stripe.create_subscription_checkout_session(
-                    parent_id=cmd.parent_id,
-                    enrollment_id=cmd.enrollment_id,
-                    session_id=cmd.session_id,
-                    amount_cents=cmd.amount_cents,
-                    success_url=cmd.success_url,
-                    cancel_url=cmd.cancel_url,
-                    metadata={
-                        "academy_id": self._academy_id,
-                        "subscription_id": subscription_id,
-                        "parent_id": cmd.parent_id,
-                        "enrollment_id": cmd.enrollment_id,
-                        "session_id": cmd.session_id,
-                    },
-                )
+            (
+                checkout_id,
+                url,
+                stripe_subscription_id,
+            ) = await self._stripe.create_subscription_checkout_session(
+                parent_id=cmd.parent_id,
+                enrollment_id=cmd.enrollment_id,
+                session_id=cmd.session_id,
+                amount_cents=cmd.amount_cents,
+                success_url=cmd.success_url,
+                cancel_url=cmd.cancel_url,
+                metadata={
+                    "academy_id": self._academy_id,
+                    "subscription_id": subscription_id,
+                    "parent_id": cmd.parent_id,
+                    "enrollment_id": cmd.enrollment_id,
+                    "session_id": cmd.session_id,
+                },
             )
         except Exception as exc:  # pragma: no cover - infra path
             raise CheckoutCreationFailed(str(exc)) from exc

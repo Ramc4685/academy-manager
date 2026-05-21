@@ -87,9 +87,7 @@ class TenancyMiddleware(BaseHTTPMiddleware):
         claims: AuthClaims | None = None
         if token and resolved_academy_id and self._load_claims is not None:
             try:
-                claims = await self._load_claims(
-                    token, resolved_academy_id=resolved_academy_id
-                )
+                claims = await self._load_claims(token, resolved_academy_id=resolved_academy_id)
             except DomainError as exc:
                 # Catch the shared base — concrete subclasses (InvalidToken,
                 # UserNotFound, UserInactive, MembershipNotFound) live in

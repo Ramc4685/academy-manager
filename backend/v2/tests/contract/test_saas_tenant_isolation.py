@@ -69,9 +69,7 @@ async def test_insert_under_academy_a_is_scoped_to_current_tenant(db) -> None:
         {"academy_id": "academy-a", "doc_id": "new-doc"}
     )
     assert (
-        await db["saas_guardrail_docs"].find_one(
-            {"academy_id": "academy-b", "doc_id": "new-doc"}
-        )
+        await db["saas_guardrail_docs"].find_one({"academy_id": "academy-b", "doc_id": "new-doc"})
         is None
     )
 

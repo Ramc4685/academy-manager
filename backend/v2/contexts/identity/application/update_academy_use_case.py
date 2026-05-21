@@ -8,7 +8,9 @@ from .get_academy_use_case import GetAcademyOutput
 
 
 class AcademyWriteRepo(Protocol):
-    async def update_by_id(self, academy_id: str, fields: dict[str, Any]) -> dict[str, Any] | None: ...
+    async def update_by_id(
+        self, academy_id: str, fields: dict[str, Any]
+    ) -> dict[str, Any] | None: ...
     async def upsert_defaults(self, academy_id: str) -> dict[str, Any]: ...
 
 

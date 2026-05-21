@@ -113,9 +113,7 @@ class MongoPaymentRepository(TenantScopedRepository):
 
     @classmethod
     def _to_domain(cls, doc: dict[str, object]) -> Payment:
-        created_at = (
-            doc.get("created_at") or doc.get("invoice_created_at") or datetime.now(UTC)
-        )
+        created_at = doc.get("created_at") or doc.get("invoice_created_at") or datetime.now(UTC)
         return Payment(
             payment_id=cls._payment_id(doc),
             academy_id=str(doc["academy_id"]),
@@ -157,9 +155,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         doc = await self._find_one({"stripe_checkout_session_id": checkout_session_id})
         return self._to_domain(doc) if doc else None
 
-    async def latest_paid_payment_for_enrollment(
-        self, enrollment_id: str
-    ) -> Payment | None:
+    async def latest_paid_payment_for_enrollment(self, enrollment_id: str) -> Payment | None:
         # Legacy onboarding writes status="paid"; v2 writes "succeeded". Accept both
         # so withdrawals work for either origin.
         cursor = self._find_many(
@@ -185,10 +181,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         if enrollment_doc is None:
             return None
         session_id = enrollment_doc.get("session_id")
-        parent_id = (
-            enrollment_doc.get("parent_id")
-            or enrollment_doc.get("parent_user_id")
-        )
+        parent_id = enrollment_doc.get("parent_id") or enrollment_doc.get("parent_user_id")
         if not session_id or not parent_id:
             return None
         cursor = self._find_many(
@@ -204,9 +197,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         docs = [doc async for doc in cursor]
         return self._to_domain(docs[0]) if docs else None
 
-    async def get_snapshot(
-        self, snapshot_id: str
-    ) -> BillingCalculationSnapshot | None:
+    async def get_snapshot(self, snapshot_id: str) -> BillingCalculationSnapshot | None:
         doc = await self._db["billing_calculation_snapshots"].find_one(
             {"academy_id": current_academy_id(), "snapshot_id": snapshot_id}
         )
@@ -234,11 +225,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         )
         docs = [doc async for doc in cursor]
         student_ids = sorted(
-            {
-                str(doc.get("student_id"))
-                for doc in docs
-                if doc.get("student_id") is not None
-            }
+            {str(doc.get("student_id")) for doc in docs if doc.get("student_id") is not None}
         )
         students: dict[str, dict[str, object]] = {}
         if student_ids:
@@ -264,9 +251,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         first = str((student or {}).get("first_name") or "").strip()
         last = str((student or {}).get("last_name") or "").strip()
         full_name = str((student or {}).get("full_name") or f"{first} {last}".strip() or "")
-        created_at = (
-            doc.get("created_at") or doc.get("invoice_created_at") or datetime.now(UTC)
-        )
+        created_at = doc.get("created_at") or doc.get("invoice_created_at") or datetime.now(UTC)
         amount_cents = cls._amount_cents(doc)
         discount_cents = cls._discount_cents(doc)
         return {
@@ -427,9 +412,7 @@ class MongoPaymentRepository(TenantScopedRepository):
             {"academy_id": academy_id, "session_id": session_id}
         )
         if doc is None:
-            doc = await self._db["sessions"].find_one(
-                {"academy_id": academy_id, "_id": session_id}
-            )
+            doc = await self._db["sessions"].find_one({"academy_id": academy_id, "_id": session_id})
         return doc
 
     # ------------------------------------------------------------------
@@ -725,7 +708,9 @@ def _session_occurrences(
             session_id=session_id,
             start_at=start_at,
             end_at=end_at,
-            status="scheduled" if str(doc.get("status") or "scheduled") == "active" else str(doc.get("status") or "scheduled"),  # type: ignore[arg-type]
+            status="scheduled"
+            if str(doc.get("status") or "scheduled") == "active"
+            else str(doc.get("status") or "scheduled"),  # type: ignore[arg-type]
             is_billable=True,
             timezone=timezone_name,
         )

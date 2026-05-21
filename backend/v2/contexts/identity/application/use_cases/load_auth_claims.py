@@ -46,9 +46,7 @@ class LoadAuthClaims:
         self._memberships = memberships
         self._platform_roles = platform_roles
 
-    async def execute(
-        self, id_token: str, *, resolved_academy_id: str
-    ) -> AuthClaims:
+    async def execute(self, id_token: str, *, resolved_academy_id: str) -> AuthClaims:
         """Verify token, resolve identity, validate membership, build claims.
 
         ``resolved_academy_id`` MUST come from ``TenantResolver`` (subdomain,

@@ -59,7 +59,9 @@ class MongoExpenseRepository(TenantScopedRepository):
         )
 
     async def add(self, e: Expense) -> None:
-        await self._insert_one({k: v for k, v in e.model_dump(mode="python").items() if k != "academy_id"})
+        await self._insert_one(
+            {k: v for k, v in e.model_dump(mode="python").items() if k != "academy_id"}
+        )
 
     async def list_recent(self, limit: int = 200) -> list[Expense]:
         cursor = self._find_many({}, sort=[("incurred_on", -1)], limit=limit)

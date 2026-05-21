@@ -71,7 +71,11 @@ class IssueRefund:
         if not payment.stripe_payment_intent_id:
             raise RefundFailed("payment has no Stripe payment intent")
 
-        amount = cmd.amount_cents if cmd.amount_cents is not None else payment.amount_cents - payment.refunded_cents
+        amount = (
+            cmd.amount_cents
+            if cmd.amount_cents is not None
+            else payment.amount_cents - payment.refunded_cents
+        )
         if payment.refunded_cents + amount > payment.amount_cents:
             raise RefundExceedsAmount(
                 "refund exceeds payment amount",

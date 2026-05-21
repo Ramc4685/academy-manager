@@ -8,7 +8,9 @@ from .get_academy_fees_use_case import GetAcademyFeesOutput
 
 
 class AcademyWriteRepo(Protocol):
-    async def update_by_id(self, academy_id: str, fields: dict[str, Any]) -> dict[str, Any] | None: ...
+    async def update_by_id(
+        self, academy_id: str, fields: dict[str, Any]
+    ) -> dict[str, Any] | None: ...
     async def upsert_defaults(self, academy_id: str) -> dict[str, Any]: ...
 
 
@@ -27,7 +29,8 @@ class UpdateAcademyFeesUseCase:
             raise LookupError(f"academy {academy_id} not found")
         fees = doc.get("fees") or doc
         return GetAcademyFeesOutput(
-            default_monthly_cents=fees.get("default_monthly_cents") or fees.get("default_session_price_cents"),
+            default_monthly_cents=fees.get("default_monthly_cents")
+            or fees.get("default_session_price_cents"),
             late_fee_cents=fees.get("late_fee_cents") or fees.get("late_cancellation_fee_cents"),
             grace_days=fees.get("grace_days"),
         )

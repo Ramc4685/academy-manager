@@ -106,7 +106,9 @@ def compose_coach(
                 "status": {"$in": ["present", "late"]},
             }
         )
-        attendance_percentage = round((present_marks / total_marks) * 100, 1) if total_marks else 0.0
+        attendance_percentage = (
+            round((present_marks / total_marks) * 100, 1) if total_marks else 0.0
+        )
         return {
             "active_student_count": len(student_ids),
             "sessions_today": len(today_sessions),

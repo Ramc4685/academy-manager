@@ -81,9 +81,7 @@ def test_admin_students_returns_cursor_for_next_page(admin_client):
     assert [s["student_id"] for s in first_body["students"]] == ["st-1", "st-2"]
     assert first_body["next_cursor"]
 
-    second = admin_client.get(
-        f"/api/v2/admin/students?limit=2&cursor={first_body['next_cursor']}"
-    )
+    second = admin_client.get(f"/api/v2/admin/students?limit=2&cursor={first_body['next_cursor']}")
     assert second.status_code == 200, second.text
     assert [s["student_id"] for s in second.json()["students"]] == ["st-3"]
     assert second.json()["next_cursor"] is None

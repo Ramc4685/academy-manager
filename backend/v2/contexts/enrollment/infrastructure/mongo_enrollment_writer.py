@@ -16,13 +16,9 @@ class MongoEnrollmentWriter(TenantScopedRepository):
         await self._insert_one({k: v for k, v in doc.items() if k != "academy_id"})
 
     async def update_status(self, enrollment_id: str, status: str) -> None:
-        await self._update_one(
-            {"enrollment_id": enrollment_id}, {"$set": {"status": status}}
-        )
+        await self._update_one({"enrollment_id": enrollment_id}, {"$set": {"status": status}})
 
-    async def mark_withdrawn(
-        self, enrollment_id: str, *, withdrawal_date: datetime
-    ) -> None:
+    async def mark_withdrawn(self, enrollment_id: str, *, withdrawal_date: datetime) -> None:
         await self._update_one(
             {"enrollment_id": enrollment_id},
             {

@@ -185,9 +185,7 @@ def compose_parent(
         idempotency_store=idempotency_store,
         academy_id=academy_id,
     )
-    promote = PromoteFromWaitlist(
-        waitlist=waitlist, outbox=outbox, academy_id=academy_id
-    )
+    promote = PromoteFromWaitlist(waitlist=waitlist, outbox=outbox, academy_id=academy_id)
 
     # Onboarding
     apps_repo = MongoApplicationRepository(db)
@@ -218,12 +216,16 @@ def compose_parent(
         return await credits_repo.list_for_parent(parent_id)
 
     async def _parent_students(parent_id: str) -> list[dict[str, Any]]:
-        cursor = db["students"].find(
-            {
-                "academy_id": academy_id,
-                "$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}],
-            }
-        ).sort([("full_name", 1)])
+        cursor = (
+            db["students"]
+            .find(
+                {
+                    "academy_id": academy_id,
+                    "$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}],
+                }
+            )
+            .sort([("full_name", 1)])
+        )
         return [doc async for doc in cursor]
 
     async def list_children_for_parent(parent_id: str) -> list[dict[str, Any]]:
@@ -261,13 +263,17 @@ def compose_parent(
         by_id = {str(s.get("student_id") or s["_id"]): s for s in students}
         if not by_id:
             return []
-        cursor = db["enrollments"].find(
-            {
-                "academy_id": academy_id,
-                "student_id": {"$in": list(by_id)},
-                "status": {"$in": ["active", "paused"]},
-            }
-        ).sort([("created_at", -1), ("enrollment_id", 1)])
+        cursor = (
+            db["enrollments"]
+            .find(
+                {
+                    "academy_id": academy_id,
+                    "student_id": {"$in": list(by_id)},
+                    "status": {"$in": ["active", "paused"]},
+                }
+            )
+            .sort([("created_at", -1), ("enrollment_id", 1)])
+        )
         rows: list[dict[str, Any]] = []
         async for enrollment in cursor:
             student_id = str(enrollment["student_id"])
@@ -293,9 +299,12 @@ def compose_parent(
         by_id = {str(s.get("student_id") or s["_id"]): s for s in students}
         if not by_id:
             return []
-        cursor = db["attendance"].find(
-            {"academy_id": academy_id, "student_id": {"$in": list(by_id)}}
-        ).sort([("marked_at", -1)]).limit(100)
+        cursor = (
+            db["attendance"]
+            .find({"academy_id": academy_id, "student_id": {"$in": list(by_id)}})
+            .sort([("marked_at", -1)])
+            .limit(100)
+        )
         rows: list[dict[str, Any]] = []
         async for attendance in cursor:
             student_id = str(attendance["student_id"])
@@ -320,9 +329,12 @@ def compose_parent(
         by_id = {str(s.get("student_id") or s["_id"]): s for s in students}
         if not by_id:
             return []
-        cursor = db["progress_notes"].find(
-            {"academy_id": academy_id, "student_id": {"$in": list(by_id)}}
-        ).sort([("created_at", -1)]).limit(100)
+        cursor = (
+            db["progress_notes"]
+            .find({"academy_id": academy_id, "student_id": {"$in": list(by_id)}})
+            .sort([("created_at", -1)])
+            .limit(100)
+        )
         rows: list[dict[str, Any]] = []
         async for note in cursor:
             student_id = str(note["student_id"])
@@ -427,7 +439,10 @@ def compose_parent(
         student = await db["students"].find_one(
             {"academy_id": academy_id, "student_id": enrollment.get("student_id")}
         )
-        if not student or str(student.get("parent_id") or student.get("parent_user_id")) != parent_id:
+        if (
+            not student
+            or str(student.get("parent_id") or student.get("parent_user_id")) != parent_id
+        ):
             raise SessionNotFound("enrollment not found", enrollment_id=enrollment_id)
         session = await sessions_query.get(str(enrollment["session_id"]))
         if session is None:

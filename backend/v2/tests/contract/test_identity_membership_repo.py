@@ -121,12 +121,14 @@ async def test_get_membership_returns_none_when_user_not_in_academy(db) -> None:
 
 @pytest.mark.parametrize("status", ["invited", "suspended", "removed"])
 @pytest.mark.asyncio
-async def test_inactive_membership_is_returned_but_reports_not_active(
-    db, status: str
-) -> None:
+async def test_inactive_membership_is_returned_but_reports_not_active(db, status: str) -> None:
     await _insert_membership(
-        db, membership_id="m-inactive", academy_id="acad-a", user_id="u-1",
-        roles=["coach"], status=status,
+        db,
+        membership_id="m-inactive",
+        academy_id="acad-a",
+        user_id="u-1",
+        roles=["coach"],
+        status=status,
     )
     repo = _make_repo(db)
 
@@ -140,12 +142,24 @@ async def test_inactive_membership_is_returned_but_reports_not_active(
 
 @pytest.mark.asyncio
 async def test_active_and_inactive_membership_are_both_returned_by_status(db) -> None:
-    await db["academy_memberships"].insert_many([
-        {"membership_id": "m-a", "academy_id": "acad-1", "user_id": "u-1",
-         "roles": ["admin"], "status": "active"},
-        {"membership_id": "m-b", "academy_id": "acad-2", "user_id": "u-1",
-         "roles": ["coach"], "status": "suspended"},
-    ])
+    await db["academy_memberships"].insert_many(
+        [
+            {
+                "membership_id": "m-a",
+                "academy_id": "acad-1",
+                "user_id": "u-1",
+                "roles": ["admin"],
+                "status": "active",
+            },
+            {
+                "membership_id": "m-b",
+                "academy_id": "acad-2",
+                "user_id": "u-1",
+                "roles": ["coach"],
+                "status": "suspended",
+            },
+        ]
+    )
     repo = _make_repo(db)
 
     memberships = await repo.list_memberships_for_user("u-1")
@@ -162,14 +176,31 @@ async def test_active_and_inactive_membership_are_both_returned_by_status(db) ->
 
 @pytest.mark.asyncio
 async def test_list_memberships_for_user_returns_only_that_users_memberships(db) -> None:
-    await db["academy_memberships"].insert_many([
-        {"membership_id": "m-u1-a", "academy_id": "acad-a", "user_id": "u-1",
-         "roles": ["coach"], "status": "active"},
-        {"membership_id": "m-u1-b", "academy_id": "acad-b", "user_id": "u-1",
-         "roles": ["parent"], "status": "active"},
-        {"membership_id": "m-u2-a", "academy_id": "acad-a", "user_id": "u-2",
-         "roles": ["admin"], "status": "active"},
-    ])
+    await db["academy_memberships"].insert_many(
+        [
+            {
+                "membership_id": "m-u1-a",
+                "academy_id": "acad-a",
+                "user_id": "u-1",
+                "roles": ["coach"],
+                "status": "active",
+            },
+            {
+                "membership_id": "m-u1-b",
+                "academy_id": "acad-b",
+                "user_id": "u-1",
+                "roles": ["parent"],
+                "status": "active",
+            },
+            {
+                "membership_id": "m-u2-a",
+                "academy_id": "acad-a",
+                "user_id": "u-2",
+                "roles": ["admin"],
+                "status": "active",
+            },
+        ]
+    )
     repo = _make_repo(db)
 
     u1_memberships = await repo.list_memberships_for_user("u-1")
@@ -198,12 +229,22 @@ async def test_list_memberships_for_user_returns_empty_for_unknown_user(db) -> N
 
 @pytest.mark.asyncio
 async def test_list_active_platform_roles_returns_only_active_roles(db) -> None:
-    await db["platform_roles"].insert_many([
-        {"platform_role_id": "pr-1", "user_id": "u-1", "role": "platform_admin",
-         "status": "active"},
-        {"platform_role_id": "pr-2", "user_id": "u-1", "role": "platform_support",
-         "status": "revoked"},
-    ])
+    await db["platform_roles"].insert_many(
+        [
+            {
+                "platform_role_id": "pr-1",
+                "user_id": "u-1",
+                "role": "platform_admin",
+                "status": "active",
+            },
+            {
+                "platform_role_id": "pr-2",
+                "user_id": "u-1",
+                "role": "platform_support",
+                "status": "revoked",
+            },
+        ]
+    )
     repo = _make_repo(db)
 
     roles = await repo.list_active_platform_roles("u-1")
@@ -215,12 +256,22 @@ async def test_list_active_platform_roles_returns_only_active_roles(db) -> None:
 
 @pytest.mark.asyncio
 async def test_list_active_platform_roles_does_not_return_other_users_roles(db) -> None:
-    await db["platform_roles"].insert_many([
-        {"platform_role_id": "pr-u1", "user_id": "u-1", "role": "platform_admin",
-         "status": "active"},
-        {"platform_role_id": "pr-u2", "user_id": "u-2", "role": "platform_admin",
-         "status": "active"},
-    ])
+    await db["platform_roles"].insert_many(
+        [
+            {
+                "platform_role_id": "pr-u1",
+                "user_id": "u-1",
+                "role": "platform_admin",
+                "status": "active",
+            },
+            {
+                "platform_role_id": "pr-u2",
+                "user_id": "u-2",
+                "role": "platform_admin",
+                "status": "active",
+            },
+        ]
+    )
     repo = _make_repo(db)
 
     u1_roles = await repo.list_active_platform_roles("u-1")
@@ -258,17 +309,19 @@ async def test_upsert_membership_creates_new_membership(db) -> None:
     assert result.user_id == "u-new"
     assert result.roles == ("admin",)
 
-    stored = await db["academy_memberships"].find_one(
-        {"academy_id": "acad-a", "user_id": "u-new"}
-    )
+    stored = await db["academy_memberships"].find_one({"academy_id": "acad-a", "user_id": "u-new"})
     assert stored is not None
 
 
 @pytest.mark.asyncio
 async def test_upsert_membership_updates_existing_roles(db) -> None:
     await _insert_membership(
-        db, membership_id="m-1", academy_id="acad-a", user_id="u-1",
-        roles=["parent"], status="active",
+        db,
+        membership_id="m-1",
+        academy_id="acad-a",
+        user_id="u-1",
+        roles=["parent"],
+        status="active",
     )
     repo = _make_repo(db)
     updated = AcademyMembership(
@@ -326,9 +379,7 @@ async def test_upsert_platform_role_revokes_existing_grant(db) -> None:
     result = await repo.upsert_platform_role(revoked)
 
     assert not result.is_active()
-    count = await db["platform_roles"].count_documents(
-        {"user_id": "u-1", "role": "platform_admin"}
-    )
+    count = await db["platform_roles"].count_documents({"user_id": "u-1", "role": "platform_admin"})
     assert count == 1  # no duplicate inserted
 
 
@@ -339,23 +390,12 @@ async def test_upsert_platform_role_revokes_existing_grant(db) -> None:
 
 @pytest.mark.asyncio
 async def test_migration_creates_membership_and_platform_role_indexes(db) -> None:
-    migration = importlib.import_module(
-        "backend.v2.migrations.0080_identity_membership_indexes"
-    )
+    migration = importlib.import_module("backend.v2.migrations.0080_identity_membership_indexes")
     await migration.up(db)
 
-    membership_indexes = {
-        idx["name"]
-        async for idx in db["academy_memberships"].list_indexes()
-    }
-    platform_indexes = {
-        idx["name"]
-        async for idx in db["platform_roles"].list_indexes()
-    }
-    user_indexes = {
-        idx["name"]
-        async for idx in db["users"].list_indexes()
-    }
+    membership_indexes = {idx["name"] async for idx in db["academy_memberships"].list_indexes()}
+    platform_indexes = {idx["name"] async for idx in db["platform_roles"].list_indexes()}
+    user_indexes = {idx["name"] async for idx in db["users"].list_indexes()}
 
     assert "membership_academy_user_unique" in membership_indexes
     assert "membership_user_status" in membership_indexes

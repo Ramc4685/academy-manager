@@ -217,7 +217,11 @@ class HandleWebhookEvent:
                     payment_id=payment.payment_id,
                     parent_id=payment.parent_id,
                     session_id=payment.session_id,
-                    reason=str(invoice.get("last_finalization_error", {}).get("message", "invoice payment failed")),
+                    reason=str(
+                        invoice.get("last_finalization_error", {}).get(
+                            "message", "invoice payment failed"
+                        )
+                    ),
                 ),
             )
         )
@@ -290,7 +294,9 @@ class HandleWebhookEvent:
         }
         return mapping.get(stripe_status, "incomplete")
 
-    async def _payment_from_invoice(self, invoice: dict[str, Any], *, status: str) -> Payment | None:
+    async def _payment_from_invoice(
+        self, invoice: dict[str, Any], *, status: str
+    ) -> Payment | None:
         stripe_sub_id = invoice.get("subscription")
         if not stripe_sub_id:
             return None

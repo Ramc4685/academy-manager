@@ -61,7 +61,10 @@ class MongoStripeEventDedup:
             # Previous attempt failed — reclaim so the caller can retry.
             await self._coll.update_one(
                 {"event_id": event_id, "status": "failed"},
-                {"$set": {"status": "processing", "received_at": now}, "$unset": {"failed_at": "", "error": ""}},
+                {
+                    "$set": {"status": "processing", "received_at": now},
+                    "$unset": {"failed_at": "", "error": ""},
+                },
             )
             return True
         if status == "processing":

@@ -155,9 +155,7 @@ class GetApplicationStatus:
         B's onboarding status. Webhook handlers and admin callers pass
         None to skip the check."""
         app = await self._apps.get(application_id)
-        if app is None or (
-            caller_user_id is not None and app.parent_user_id != caller_user_id
-        ):
+        if app is None or (caller_user_id is not None and app.parent_user_id != caller_user_id):
             raise ApplicationNotFound("application missing", application_id=application_id)
         return app
 

@@ -49,17 +49,12 @@ def test_admin_dashboard_attention_aggregates_real_signals(admin_client):
 
     assert r.status_code == 200, r.text
     body = r.json()
-    assert [
-        (item["kind"], item["href"], item["count"])
-        for item in body["items"]
-    ] == [
+    assert [(item["kind"], item["href"], item["count"]) for item in body["items"]] == [
         ("pause_requests", "/admin/pause-requests", 1),
         ("waivers", "/admin/waivers", 3),
     ]
 
 
-def test_admin_dashboard_attention_wrong_persona_404(
-    coach_on_admin_client, parent_on_admin_client
-):
+def test_admin_dashboard_attention_wrong_persona_404(coach_on_admin_client, parent_on_admin_client):
     assert coach_on_admin_client.get("/api/v2/admin/dashboard/attention").status_code == 404
     assert parent_on_admin_client.get("/api/v2/admin/dashboard/attention").status_code == 404

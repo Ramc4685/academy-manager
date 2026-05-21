@@ -216,14 +216,10 @@ class _RecordingLoader:
         self._platform_roles = platform_roles or {}
         self.calls: list[dict[str, str]] = []
 
-    async def __call__(
-        self, id_token: str, *, resolved_academy_id: str
-    ) -> AuthClaims:
+    async def __call__(self, id_token: str, *, resolved_academy_id: str) -> AuthClaims:
         # Pretend the token decodes to user "u-coach" (single test user)
         user_id = id_token  # tests pass the user_id as the token string
-        self.calls.append(
-            {"id_token": id_token, "resolved_academy_id": resolved_academy_id}
-        )
+        self.calls.append({"id_token": id_token, "resolved_academy_id": resolved_academy_id})
         key = (user_id, resolved_academy_id)
         membership = self._memberships.get(key)
         if membership is None:
@@ -321,9 +317,7 @@ def test_middleware_resolves_tenant_then_builds_claims() -> None:
 
     # And the middleware MUST have passed the resolved academy_id into the
     # loader — proving tenant resolution happened before claims construction.
-    assert loader.calls == [
-        {"id_token": "u-coach", "resolved_academy_id": "academy-court"}
-    ]
+    assert loader.calls == [{"id_token": "u-coach", "resolved_academy_id": "academy-court"}]
 
 
 def test_middleware_includes_platform_roles_separately() -> None:
@@ -436,9 +430,7 @@ def test_middleware_uses_internal_header_when_configured() -> None:
             }
         },
     )
-    app = _make_middleware_app(
-        loader=loader, allowed_internal_header="X-Internal-Academy-Id"
-    )
+    app = _make_middleware_app(loader=loader, allowed_internal_header="X-Internal-Academy-Id")
     client = TestClient(app, base_url="http://unknown.internal.example.com")
     r = client.get(
         "/whoami",

@@ -73,7 +73,9 @@ from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
 from backend.v2.shared.ids import new_ulid
 
 
-async def _wire(db) -> tuple[ConfirmEnrollment, PromoteFromWaitlist, IssueRefund, TransitionApplication, MongoOutbox]:
+async def _wire(
+    db,
+) -> tuple[ConfirmEnrollment, PromoteFromWaitlist, IssueRefund, TransitionApplication, MongoOutbox]:
     from backend.v2.migrations import run_pending_migrations
 
     await run_pending_migrations(db)

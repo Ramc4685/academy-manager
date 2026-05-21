@@ -60,11 +60,7 @@ class MongoOutbox:
         )
 
     async def pull_unprocessed(self, limit: int = 100) -> list[dict[str, Any]]:
-        cursor = (
-            self._collection.find({"processed": False})
-            .sort([("created_at", 1)])
-            .limit(limit)
-        )
+        cursor = self._collection.find({"processed": False}).sort([("created_at", 1)]).limit(limit)
         return [doc async for doc in cursor]
 
     async def mark_processed(self, event_id: str) -> None:

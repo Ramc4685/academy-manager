@@ -120,7 +120,14 @@ def _build(repo, outbox=None, dedup=None):
     )
 
 
-def _seed_pending(repo: FakePaymentRepo, *, payment_id: str, checkout_id: str | None = None, pi: str | None = None, status: str = "pending"):
+def _seed_pending(
+    repo: FakePaymentRepo,
+    *,
+    payment_id: str,
+    checkout_id: str | None = None,
+    pi: str | None = None,
+    status: str = "pending",
+):
     now = datetime.now(UTC)
     p = Payment(
         payment_id=payment_id,

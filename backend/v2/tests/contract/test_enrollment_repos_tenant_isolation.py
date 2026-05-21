@@ -38,10 +38,12 @@ def _session_doc(sid: str, coach_id: str, academy_id: str) -> dict:
 
 @pytest.mark.asyncio
 async def test_session_repo_isolates_tenants(db) -> None:
-    await db["sessions"].insert_many([
-        _session_doc("a-s1", "coach-1", "academy-a"),
-        _session_doc("b-s1", "coach-1", "academy-b"),
-    ])
+    await db["sessions"].insert_many(
+        [
+            _session_doc("a-s1", "coach-1", "academy-a"),
+            _session_doc("b-s1", "coach-1", "academy-b"),
+        ]
+    )
     repo = MongoSessionRepository(db)
     with tenant_scope("academy-a"):
         rows = await repo.for_coach_on_date("coach-1", date(2026, 5, 16))

@@ -114,9 +114,7 @@ class RealStripeGateway(StripeGateway):
         return str(result.url)
 
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, object]:
-        return self._stripe.Webhook.construct_event(
-            payload, signature, self._webhook_secret
-        )  # type: ignore[no-any-return]
+        return self._stripe.Webhook.construct_event(payload, signature, self._webhook_secret)  # type: ignore[no-any-return]
 
     async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
         def _create() -> Any:

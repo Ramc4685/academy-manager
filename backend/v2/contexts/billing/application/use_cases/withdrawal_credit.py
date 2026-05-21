@@ -30,9 +30,7 @@ class WithdrawalPaymentRepository(Protocol):
 
 class WithdrawalEnrollmentRepository(Protocol):
     async def get(self, enrollment_id: str): ...
-    async def mark_withdrawn(
-        self, enrollment_id: str, *, withdrawal_date: datetime
-    ) -> None: ...
+    async def mark_withdrawn(self, enrollment_id: str, *, withdrawal_date: datetime) -> None: ...
 
 
 class PreviewWithdrawalCreditCommand(BaseModel):
@@ -88,9 +86,7 @@ class PreviewWithdrawalCredit:
         self._enrollments = enrollments
         self._clock = clock
 
-    async def execute(
-        self, cmd: PreviewWithdrawalCreditCommand
-    ) -> WithdrawalCreditPreviewResult:
+    async def execute(self, cmd: PreviewWithdrawalCreditCommand) -> WithdrawalCreditPreviewResult:
         enrollment = await self._enrollments.get(cmd.enrollment_id)
         if enrollment is None:
             raise PaymentNotFound("enrollment not found", enrollment_id=cmd.enrollment_id)
@@ -125,9 +121,7 @@ class ApproveWithdrawalCredit:
         self._academy_id = academy_id
         self._clock = clock
 
-    async def execute(
-        self, cmd: ApproveWithdrawalCreditCommand
-    ) -> ApproveWithdrawalCreditResult:
+    async def execute(self, cmd: ApproveWithdrawalCreditCommand) -> ApproveWithdrawalCreditResult:
         enrollment = await self._enrollments.get(cmd.enrollment_id)
         if enrollment is None:
             raise PaymentNotFound("enrollment not found", enrollment_id=cmd.enrollment_id)
@@ -196,9 +190,7 @@ class ApproveWithdrawalCredit:
                 at_period_end=at_period_end,
             )
             await self._subscriptions.save(
-                subscription.model_copy(
-                    update={"status": "cancelled", "updated_at": now}
-                )
+                subscription.model_copy(update={"status": "cancelled", "updated_at": now})
             )
 
         balance = await self._credits.balance_for_parent(payment.parent_id)
@@ -252,11 +244,7 @@ def _unused_included_occurrences(
     snapshot: BillingCalculationSnapshot,
     withdrawal_date: datetime,
 ) -> int:
-    withdrawal = (
-        withdrawal_date
-        if withdrawal_date.tzinfo
-        else withdrawal_date.replace(tzinfo=UTC)
-    )
+    withdrawal = withdrawal_date if withdrawal_date.tzinfo else withdrawal_date.replace(tzinfo=UTC)
     tz = ZoneInfo(snapshot.timezone)
     count = 0
     for occurrence_id in snapshot.included_occurrence_ids:

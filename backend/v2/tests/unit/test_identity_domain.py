@@ -188,12 +188,8 @@ def test_two_memberships_for_same_user_can_have_different_roles_per_academy() ->
     """Different academies, different roles — the multi-tenant case ADR-0007
     is built to support."""
 
-    m1 = _membership(
-        membership_id="m-a", academy_id="acad-a", user_id="u-1", roles=("coach",)
-    )
-    m2 = _membership(
-        membership_id="m-b", academy_id="acad-b", user_id="u-1", roles=("admin",)
-    )
+    m1 = _membership(membership_id="m-a", academy_id="acad-a", user_id="u-1", roles=("coach",))
+    m2 = _membership(membership_id="m-b", academy_id="acad-b", user_id="u-1", roles=("admin",))
     assert m1.has_role("coach") and not m1.has_role("admin")
     assert m2.has_role("admin") and not m2.has_role("coach")
 

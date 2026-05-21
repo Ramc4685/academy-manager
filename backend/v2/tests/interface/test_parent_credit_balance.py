@@ -55,7 +55,11 @@ class _ParentUseCases:
     async def list_credits_for_parent(self, parent_id: str):
         if self._credits is not None:
             return self._credits
-        return [_credit(credit_id="credit-1", remaining=2500, expires_at=datetime(2027, 5, 20, tzinfo=UTC))]
+        return [
+            _credit(
+                credit_id="credit-1", remaining=2500, expires_at=datetime(2027, 5, 20, tzinfo=UTC)
+            )
+        ]
 
 
 @contextmanager

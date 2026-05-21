@@ -256,7 +256,9 @@ def compose_admin(
                     "start_at": doc["start_at"],
                     "end_at": doc["end_at"],
                     "capacity": int(doc.get("capacity") or doc.get("max_students") or 15),
-                    "status": "scheduled" if str(doc.get("status") or "scheduled") == "active" else str(doc.get("status") or "scheduled"),
+                    "status": "scheduled"
+                    if str(doc.get("status") or "scheduled") == "active"
+                    else str(doc.get("status") or "scheduled"),
                     "coach_id": str(doc.get("coach_id") or ""),
                     "enrolled_count": enrolled_count,
                     "waitlist_count": waitlist_count,
@@ -427,7 +429,9 @@ def compose_admin(
         occurrences=payments_repo,
     )
 
-    async def quote_enrollment(*, session_id: str, student_id: str | None = None, start_date: str | None = None):
+    async def quote_enrollment(
+        *, session_id: str, student_id: str | None = None, start_date: str | None = None
+    ):
         return await _quote_enrollment_uc.execute(
             QuoteEnrollmentCommand(
                 session_id=session_id,
@@ -438,7 +442,9 @@ def compose_admin(
         )
 
     async def list_audit_logs():
-        cursor = db["audit_logs"].find({"academy_id": academy_id}).sort([("created_at", -1)]).limit(200)
+        cursor = (
+            db["audit_logs"].find({"academy_id": academy_id}).sort([("created_at", -1)]).limit(200)
+        )
         rows: list[dict[str, Any]] = []
         async for doc in cursor:
             rows.append(
@@ -512,7 +518,9 @@ def compose_admin(
         out = io.StringIO()
         writer = csv.writer(out)
         if report_name == "pending-payments":
-            writer.writerow(["payment_id", "parent_id", "student_id", "period", "amount_cents", "status"])
+            writer.writerow(
+                ["payment_id", "parent_id", "student_id", "period", "amount_cents", "status"]
+            )
             for row in await list_payments_recent():
                 if row["status"] == "pending":
                     writer.writerow(
@@ -533,12 +541,21 @@ def compose_admin(
                     continue
                 created_at = row["created_at"]
                 month = created_at.strftime("%Y-%m") if hasattr(created_at, "strftime") else ""
-                by_month[month] = by_month.get(month, 0) + int(row["final_amount_cents"]) - int(row["refunded_cents"])
+                by_month[month] = (
+                    by_month.get(month, 0)
+                    + int(row["final_amount_cents"])
+                    - int(row["refunded_cents"])
+                )
             for month, cents in sorted(by_month.items()):
                 writer.writerow([month, cents])
         elif report_name == "attendance":
             writer.writerow(["attendance_id", "session_id", "student_id", "status", "marked_at"])
-            cursor = db["attendance"].find({"academy_id": academy_id}).sort([("marked_at", -1)]).limit(1000)
+            cursor = (
+                db["attendance"]
+                .find({"academy_id": academy_id})
+                .sort([("marked_at", -1)])
+                .limit(1000)
+            )
             async for row in cursor:
                 writer.writerow(
                     [

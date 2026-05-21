@@ -56,9 +56,9 @@ def test_application_does_not_import_infrastructure() -> None:
         if "/application/" not in str(file):
             continue
         for imp in _imports_for(file):
-            assert "infrastructure" not in imp, (
-                f"{file} (application) imports infrastructure: {imp}"
-            )
+            assert (
+                "infrastructure" not in imp
+            ), f"{file} (application) imports infrastructure: {imp}"
 
 
 def test_no_cross_context_imports() -> None:
@@ -73,6 +73,4 @@ def test_no_cross_context_imports() -> None:
         for imp in _imports_for(file):
             if "backend.v2.contexts." in imp:
                 imported_context = imp.split("backend.v2.contexts.")[1].split(".")[0]
-                assert imported_context == own_context, (
-                    f"{file} imports another context: {imp}"
-                )
+                assert imported_context == own_context, f"{file} imports another context: {imp}"

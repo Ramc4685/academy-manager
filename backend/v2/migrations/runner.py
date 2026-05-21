@@ -22,9 +22,7 @@ REGISTRY_COLLECTION = "v2_migrations"
 
 async def run_pending_migrations(db: AsyncIOMotorDatabase) -> list[str]:
     """Run pending migrations. Returns the list of versions applied."""
-    applied: set[str] = {
-        doc["version"] async for doc in db[REGISTRY_COLLECTION].find({})
-    }
+    applied: set[str] = {doc["version"] async for doc in db[REGISTRY_COLLECTION].find({})}
 
     package_name = __package__ or "backend.v2.migrations"
     package = importlib.import_module(package_name)

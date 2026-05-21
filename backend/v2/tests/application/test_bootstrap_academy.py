@@ -66,7 +66,9 @@ class FakeBootstrapStore:
         self.waivers.setdefault(waiver["academy_id"], dict(waiver))
         return dict(self.waivers[waiver["academy_id"]])
 
-    async def ensure_default_roles(self, academy_id: str, roles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    async def ensure_default_roles(
+        self, academy_id: str, roles: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         self.roles.setdefault(academy_id, [dict(role) for role in roles])
         return [dict(role) for role in self.roles[academy_id]]
 
@@ -176,7 +178,7 @@ async def test_duplicate_domain_with_different_slug_is_a_clear_conflict() -> Non
 
 
 def test_bootstrap_source_does_not_reference_default_academy_id() -> None:
-    source = Path(
-        "v2/contexts/identity/application/use_cases/bootstrap_academy.py"
-    ).read_text(encoding="utf-8")
+    source = Path("v2/contexts/identity/application/use_cases/bootstrap_academy.py").read_text(
+        encoding="utf-8"
+    )
     assert "default_academy_id" not in source

@@ -53,7 +53,9 @@ class MongoMessageRepository(TenantScopedRepository):
         )
 
     async def insert(self, m: Message) -> None:
-        await self._insert_one({k: v for k, v in m.model_dump(mode="python").items() if k != "academy_id"})
+        await self._insert_one(
+            {k: v for k, v in m.model_dump(mode="python").items() if k != "academy_id"}
+        )
 
     async def for_recipient(self, recipient_id: str) -> list[Message]:
         cursor = self._find_many(

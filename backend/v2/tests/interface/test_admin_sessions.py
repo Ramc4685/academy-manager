@@ -89,9 +89,7 @@ def test_add_to_roster_then_list_enrollments(admin_client):
     enrollment_id = r.json()["enrollment_id"]
     # The composition's enrollment_query is a separate fake from the writer
     # (since the production code uses two ports). Wire them: copy the row.
-    admin_client.seed["enrollment_query"].rows = dict(
-        admin_client.seed["enrollments"].rows
-    )
+    admin_client.seed["enrollment_query"].rows = dict(admin_client.seed["enrollments"].rows)
     listing = admin_client.get("/api/v2/admin/sessions/sess-1/enrollments").json()
     assert any(e["enrollment_id"] == enrollment_id for e in listing["enrollments"])
     assert any(e["student_name"] == "Alice" for e in listing["enrollments"])

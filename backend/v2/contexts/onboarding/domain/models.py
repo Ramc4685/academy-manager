@@ -76,7 +76,7 @@ class Waiver(BaseModel):
 
     waiver_id: str
     academy_id: str
-    version: str            # e.g. "2026.1"
+    version: str  # e.g. "2026.1"
     text: str
     content_hash: str
     effective_from: datetime

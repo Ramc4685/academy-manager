@@ -36,6 +36,7 @@ async def test_get_academy_returns_view_when_found():
     assert output.timezone == "America/New_York"
     assert output.contact_email is None
 
+
 @pytest.mark.asyncio
 async def test_get_academy_upserts_with_defaults_when_missing():
     repo = AsyncMock()
@@ -53,6 +54,7 @@ async def test_get_academy_upserts_with_defaults_when_missing():
     assert output.contact_email is None
     repo.upsert_defaults.assert_awaited_once_with("default-academy")
 
+
 @pytest.mark.asyncio
 async def test_update_academy_partial_set():
     repo = AsyncMock()
@@ -63,13 +65,13 @@ async def test_update_academy_partial_set():
         "contact_email": "ops@court7.example",
     }
     use_case = UpdateAcademyUseCase(academy_repo=repo)
-    output = await use_case.execute(
-        "acad-1", {"contact_email": "ops@court7.example"}
-    )
+    output = await use_case.execute("acad-1", {"contact_email": "ops@court7.example"})
     assert output.contact_email == "ops@court7.example"
     repo.update_by_id.assert_awaited_once_with(
-        "acad-1", {"contact_email": "ops@court7.example"},
+        "acad-1",
+        {"contact_email": "ops@court7.example"},
     )
+
 
 @pytest.mark.asyncio
 async def test_update_academy_raises_when_missing():
@@ -79,7 +81,9 @@ async def test_update_academy_raises_when_missing():
     with pytest.raises(LookupError):
         await use_case.execute("missing", {"display_name": "X"})
 
+
 # --- Fees ---
+
 
 @pytest.mark.asyncio
 async def test_get_academy_fees():
@@ -96,6 +100,7 @@ async def test_get_academy_fees():
     assert output.late_fee_cents == 1500
     assert output.grace_days == 3
 
+
 @pytest.mark.asyncio
 async def test_update_academy_fees():
     repo = AsyncMock()
@@ -106,13 +111,13 @@ async def test_update_academy_fees():
         "grace_days": 3,
     }
     use_case = UpdateAcademyFeesUseCase(academy_repo=repo)
-    output = await use_case.execute(
-        "acad-1", {"late_fee_cents": 2000}
-    )
+    output = await use_case.execute("acad-1", {"late_fee_cents": 2000})
     assert output.late_fee_cents == 2000
     repo.update_by_id.assert_awaited_once_with("acad-1", {"fees.late_fee_cents": 2000})
 
+
 # --- Notifications ---
+
 
 @pytest.mark.asyncio
 async def test_get_academy_notifications():
@@ -129,6 +134,7 @@ async def test_get_academy_notifications():
     assert output.attendance_alerts is False
     assert output.daily_digest_to_admin is True
 
+
 @pytest.mark.asyncio
 async def test_update_academy_notifications():
     repo = AsyncMock()
@@ -139,8 +145,6 @@ async def test_update_academy_notifications():
         "daily_digest_to_admin": True,
     }
     use_case = UpdateAcademyNotificationsUseCase(academy_repo=repo)
-    output = await use_case.execute(
-        "acad-1", {"attendance_alerts": True}
-    )
+    output = await use_case.execute("acad-1", {"attendance_alerts": True})
     assert output.attendance_alerts is True
     repo.update_by_id.assert_awaited_once_with("acad-1", {"notifications.attendance_alerts": True})

@@ -24,14 +24,16 @@ class FakeUsers:
         self.ensure_calls: list[dict[str, str]] = []
 
     async def get_by_email(self, email: str) -> User | None:
-        return self.existing if self.existing and self.existing.email.lower() == email.lower() else None
+        return (
+            self.existing
+            if self.existing and self.existing.email.lower() == email.lower()
+            else None
+        )
 
     async def get_by_id(self, user_id: str) -> User | None:
         return None
 
-    async def ensure_parent_user(
-        self, *, email: str, display_name: str, firebase_uid: str
-    ) -> User:
+    async def ensure_parent_user(self, *, email: str, display_name: str, firebase_uid: str) -> User:
         self.ensure_calls.append(
             {
                 "email": email,
@@ -98,9 +100,7 @@ async def test_register_public_parent_does_not_reactivate_disabled_user() -> Non
         academy_id="academy-a",
     )
     use_case = RegisterPublicParent(
-        verifier=FakeVerifier(
-            {"email": "parent@example.com", "uid": "firebase-parent-1"}
-        ),
+        verifier=FakeVerifier({"email": "parent@example.com", "uid": "firebase-parent-1"}),
         users=FakeUsers(existing),
     )
 

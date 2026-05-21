@@ -70,10 +70,16 @@ async def test_credit_ledger_application_is_idempotent_per_invoice(db, acad) -> 
         )
     )
 
-    assert await repo.apply_available_credits(
-        parent_id="parent-1", invoice_id="pay-1", amount_due_cents=1000
-    ) == 1000
-    assert await repo.apply_available_credits(
-        parent_id="parent-1", invoice_id="pay-1", amount_due_cents=1000
-    ) == 0
+    assert (
+        await repo.apply_available_credits(
+            parent_id="parent-1", invoice_id="pay-1", amount_due_cents=1000
+        )
+        == 1000
+    )
+    assert (
+        await repo.apply_available_credits(
+            parent_id="parent-1", invoice_id="pay-1", amount_due_cents=1000
+        )
+        == 0
+    )
     assert await repo.balance_for_parent("parent-1") == 1000

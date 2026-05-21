@@ -179,7 +179,11 @@ def create_app() -> FastAPI:
 
 
 def _build_stripe(settings: Settings) -> StripeGateway:
-    if settings.stripe_use_fake_gateway or not settings.stripe_api_key or not settings.stripe_webhook_secret:
+    if (
+        settings.stripe_use_fake_gateway
+        or not settings.stripe_api_key
+        or not settings.stripe_webhook_secret
+    ):
         return FakeStripeGateway()
     from backend.v2.contexts.billing.infrastructure.stripe_gateway import RealStripeGateway
 

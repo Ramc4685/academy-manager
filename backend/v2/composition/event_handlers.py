@@ -68,7 +68,9 @@ def install_handlers(deps: HandlerDeps) -> None:
 
 def _require_deps() -> HandlerDeps:
     if _deps is None:
-        raise RuntimeError("event handlers not installed — composition root did not call install_handlers()")
+        raise RuntimeError(
+            "event handlers not installed — composition root did not call install_handlers()"
+        )
     return _deps
 
 

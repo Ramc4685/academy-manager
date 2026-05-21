@@ -24,9 +24,7 @@ HandlerFn = Callable[[DomainEvent], Awaitable[None]]
 _REGISTRY: dict[tuple[str, int], list[tuple[str, HandlerFn]]] = {}
 
 
-def handler(
-    *, event: type[DomainEvent], schema_version: int
-) -> Callable[[HandlerFn], HandlerFn]:
+def handler(*, event: type[DomainEvent], schema_version: int) -> Callable[[HandlerFn], HandlerFn]:
     """Register an async function as a handler for ``(event.name, schema_version)``.
 
     Handlers do NOT implement their own idempotency on delivery — the
@@ -82,9 +80,7 @@ class EventDispatcher:
         while not self._stop.is_set():
             try:
                 cursor = (
-                    outbox_collection.find({"processed": False})
-                    .sort([("created_at", 1)])
-                    .limit(50)
+                    outbox_collection.find({"processed": False}).sort([("created_at", 1)]).limit(50)
                 )
                 async for doc in cursor:
                     await self._process_event(doc)
@@ -122,9 +118,7 @@ class EventDispatcher:
         self, doc: dict[str, Any], handler_name: str, fn: HandlerFn
     ) -> bool:
         runs = self._db[self.HANDLER_RUNS]
-        prior = await runs.find_one(
-            {"event_id": doc["event_id"], "handler_name": handler_name}
-        )
+        prior = await runs.find_one({"event_id": doc["event_id"], "handler_name": handler_name})
         if prior and prior.get("status") == "succeeded":
             await self._audit(doc, handler_name, "skipped_idempotent", latency_ms=0)
             return True
@@ -142,7 +136,9 @@ class EventDispatcher:
             except Exception as exc:
                 if attempt + 1 == MAX_ATTEMPTS:
                     await self._mark_run_failed(doc, handler_name, exc)
-                    await self._dead_letter(doc, reason="handler_failed", error=str(exc), handler_name=handler_name)
+                    await self._dead_letter(
+                        doc, reason="handler_failed", error=str(exc), handler_name=handler_name
+                    )
                     await self._audit(
                         doc,
                         handler_name,
@@ -162,9 +158,7 @@ class EventDispatcher:
                 },
                 upsert=True,
             )
-            await self._audit(
-                doc, handler_name, "succeeded", latency_ms=_ms_since(started_at)
-            )
+            await self._audit(doc, handler_name, "succeeded", latency_ms=_ms_since(started_at))
             return True
         return False
 

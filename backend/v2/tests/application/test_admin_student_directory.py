@@ -23,9 +23,7 @@ class FakeStudentDirectory:
         limit: int,
         cursor: str | None,
     ) -> AdminStudentPage:
-        self.calls.append(
-            {"search": search, "status": status, "limit": limit, "cursor": cursor}
-        )
+        self.calls.append({"search": search, "status": status, "limit": limit, "cursor": cursor})
         return AdminStudentPage(
             students=[
                 AdminStudentSummary(
@@ -54,8 +52,6 @@ async def test_list_admin_students_forwards_filters_to_query():
         cursor="opaque",
     )
 
-    assert query.calls == [
-        {"search": "alice", "status": "active", "limit": 25, "cursor": "opaque"}
-    ]
+    assert query.calls == [{"search": "alice", "status": "active", "limit": 25, "cursor": "opaque"}]
     assert page.students[0].attendance_rate == 0.75
     assert page.students[0].dues_status == "due"

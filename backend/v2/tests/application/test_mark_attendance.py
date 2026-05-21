@@ -101,7 +101,9 @@ class FakeOutbox:
         pass
 
 
-def _cmd(mutation_id: str = "mut-1", student_id: str = "st1", status: str = "present") -> MarkAttendanceCommand:
+def _cmd(
+    mutation_id: str = "mut-1", student_id: str = "st1", status: str = "present"
+) -> MarkAttendanceCommand:
     return MarkAttendanceCommand(
         mutation_id=mutation_id,
         session_id="sess-1",

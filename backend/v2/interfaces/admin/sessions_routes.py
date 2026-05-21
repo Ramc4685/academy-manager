@@ -33,16 +33,16 @@ router = APIRouter(tags=["admin.sessions"])
 @router.get("/sessions", response_model=AdminSessionList, summary="List sessions for a date range")
 async def list_sessions(
     on_date: str = Query(default=None, alias="date"),
-    window: str | None = Query(default=None, description="Set to 'upcoming' to return all sessions starting from today through the next 30 days. Overrides 'date' when both are passed."),
+    window: str | None = Query(
+        default=None,
+        description="Set to 'upcoming' to return all sessions starting from today through the next 30 days. Overrides 'date' when both are passed.",
+    ),
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionList:
     parsed = date.fromisoformat(on_date) if on_date else None
     sessions = await use_cases.list_admin_sessions(parsed, window=window)  # type: ignore[operator]
-    rows = [
-        s if isinstance(s, dict) else s.model_dump(exclude={"academy_id"})
-        for s in sessions
-    ]
+    rows = [s if isinstance(s, dict) else s.model_dump(exclude={"academy_id"}) for s in sessions]
     return AdminSessionList(sessions=[AdminSessionView(**s) for s in rows])
 
 
@@ -52,13 +52,16 @@ async def create_session(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionView:
-    session = await use_cases.create_session.execute(
-        CreateSessionCommand(**body.model_dump())
-    )
+    session = await use_cases.create_session.execute(CreateSessionCommand(**body.model_dump()))
     return AdminSessionView(**session.model_dump(exclude={"academy_id"}))
 
 
-@router.delete("/sessions/{session_id}", status_code=204, summary="Cancel session + emit cascades", response_model=None)
+@router.delete(
+    "/sessions/{session_id}",
+    status_code=204,
+    summary="Cancel session + emit cascades",
+    response_model=None,
+)
 async def cancel_session(
     session_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
@@ -98,9 +101,7 @@ async def add_to_roster(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminEnrollmentView:
-    enrollment = await use_cases.edit_roster_add.execute(
-        EditRosterAddCommand(**body.model_dump())
-    )
+    enrollment = await use_cases.edit_roster_add.execute(EditRosterAddCommand(**body.model_dump()))
     return AdminEnrollmentView(
         enrollment_id=enrollment.enrollment_id,
         session_id=enrollment.session_id,
@@ -155,9 +156,7 @@ async def pause_enrollment(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
-    await use_cases.pause_enrollment.execute(
-        PauseEnrollmentCommand(enrollment_id=enrollment_id)
-    )
+    await use_cases.pause_enrollment.execute(PauseEnrollmentCommand(enrollment_id=enrollment_id))
 
 
 @router.post("/enrollments/{enrollment_id}/resume", status_code=204, response_model=None)

@@ -58,9 +58,7 @@ class FakeEnrollmentQuery:
         self._enrollments = enrollments
 
     async def active_for_session(self, session_id: str) -> list[Enrollment]:
-        return [
-            e for e in self._enrollments if e.session_id == session_id and e.status == "active"
-        ]
+        return [e for e in self._enrollments if e.session_id == session_id and e.status == "active"]
 
     async def is_active(self, session_id: str, student_id: str) -> bool:
         return any(
@@ -352,6 +350,7 @@ def anon_client(seed) -> Iterator[TestClient]:
     with TestClient(app) as client:
         yield client
 
+
 # ====================================================================
 # Admin BFF fixtures (Wave 3)
 # ====================================================================
@@ -521,7 +520,9 @@ class _AdminFakeEnrollmentQuery:
     rows: dict[str, Any] = field(default_factory=dict)
 
     async def active_for_session(self, session_id):
-        return [e for e in self.rows.values() if e.session_id == session_id and e.status == "active"]
+        return [
+            e for e in self.rows.values() if e.session_id == session_id and e.status == "active"
+        ]
 
     async def is_active(self, session_id, student_id):
         return any(
@@ -548,7 +549,11 @@ class FakeWaitlistRepo:
 
     async def next_waiting(self, session_id):
         waiting = sorted(
-            (e for e in self.entries.values() if e.session_id == session_id and e.status == "waiting"),
+            (
+                e
+                for e in self.entries.values()
+                if e.session_id == session_id and e.status == "waiting"
+            ),
             key=lambda e: e.joined_at,
         )
         return waiting[0] if waiting else None
@@ -838,18 +843,10 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     async def list_admin_sessions(on_date, *, window=None):
         if window == "upcoming":
             today = _now().date()
-            return [
-                s
-                for s in sessions.sessions.values()
-                if s.start_at.date() >= today
-            ]
+            return [s for s in sessions.sessions.values() if s.start_at.date() >= today]
         if on_date is None:
             on_date = _now().date()
-        return [
-            s
-            for s in sessions.sessions.values()
-            if s.start_at.date() == on_date
-        ]
+        return [s for s in sessions.sessions.values() if s.start_at.date() == on_date]
 
     async def list_admin_enrollments_for_session(session_id):
         active = await enrollments_q.active_for_session(session_id)

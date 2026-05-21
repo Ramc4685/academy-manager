@@ -151,9 +151,7 @@ async def list_payments(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPaymentList:
     rows = await use_cases.list_payments_recent()  # type: ignore[operator]
-    return AdminPaymentList(
-        payments=[_payment_view(p) for p in rows]
-    )
+    return AdminPaymentList(payments=[_payment_view(p) for p in rows])
 
 
 @router.post("/payments/refund", summary="Issue a refund")
