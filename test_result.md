@@ -256,6 +256,17 @@ backend:
       - working: true
         agent: "main"
         comment: "Agent C Wave 3 added an additive billing ledger foundation: LedgerInvoice, InvoiceLine, LedgerPayment, PaymentAllocation, MongoBillingLedgerRepository, and billing ledger indexes. Tests cover invoice creation idempotency, payment allocation retry idempotency, partial payment balance math, overpayment-to-credit creation, and cross-tenant invoice read isolation. Focused billing/raw-guard/migration/structural checks passed locally."
+  - task: "SaaS v2 Wave 3 integrated merge gate"
+    implemented: true
+    working: true
+    file: "backend/v2"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Merged Agent A session occurrences, Agent B enrollment events, and Agent C billing ledger into feat/saas-v2-wave3 from origin/main. Resolved enrollment ports conflict by preserving both occurrence and enrollment-event protocols. Renumbered billing ledger migration from 0090 to 0091 to avoid duplicate migration prefixes. Integration checks passed: Agent A focused suite 30 passed; Agent B focused suite 39 passed; Agent C focused suite 32 passed; full backend v2 suite 330 passed with 8 warnings; git diff --check passed before test_result update."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -461,15 +472,17 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 18
+  test_sequence: 19
   run_ui: true
 test_plan:
   current_focus:
-    - "SaaS v2 Wave 3 Agent B — enrollment lifecycle events"
+    - "SaaS v2 Wave 3 integrated merge gate"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "SaaS v2 Wave 3 integration complete on feat/saas-v2-wave3. Agent A/B/C branches were merged from origin/main baseline. Merge conflicts were limited to enrollment application ports and test_result.md; ports now include both SessionOccurrenceRepository and EnrollmentEventRepository. Billing ledger migration was renumbered to 0091 after Agent B used 0090 for enrollment_events. Verification: Agent A focused suite 30 passed, Agent B focused suite 39 passed, Agent C focused suite 32 passed, full backend v2 suite 330 passed with 8 warnings, git diff --check passed before this status update."
   - agent: "main"
     message: "Agent B Wave 3 enrollment-events implementation: added EnrollmentLifecycleEvent, MongoEnrollmentEventRepository, enrollment_events indexes, and hooks for admin/checkout/waitlist/withdrawal lifecycle transitions without session-occurrence attendance or billing-ledger work. TDD red checks failed on missing event model/repo and missing withdrawal sink before implementation. Verification: focused pytest suite passed 39 tests; git diff --check pending final run."
   - agent: "main"
