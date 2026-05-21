@@ -223,23 +223,6 @@ backend:
       - working: true
         agent: "main"
         comment: "Added backend.v2.shared.ids.new_ulid() around python-ulid's stable ULID() API and replaced direct ulid.new imports. Local CI-equivalent v2 backend command passed with 212 tests and 74.40% shared coverage; import-linter contracts passed."
-  - task: "SaaS v2 tenant isolation and raw Mongo guardrail harness"
-    implemented: true
-    working: true
-    file: "backend/v2/tests/contract/test_saas_tenant_isolation.py"
-    stuck_count: 0
-    priority: "high"
-    needs_retesting: false
-    status_history:
-      - working: "NA"
-        agent: "main"
-        comment: "Agent C added a TenantScopedRepository SaaS isolation harness for missing tenant context, read isolation, update isolation, and delete isolation. Added a static raw Mongo guard test that blocks direct access to tenant-owned collections outside infrastructure/migrations/tests and explicitly documented transitional composition exceptions for backend/v2/composition/admin.py, backend/v2/composition/coach.py, and backend/v2/composition/parent.py. Focused verification pending."
-      - working: true
-        agent: "main"
-        comment: "Focused verification passed: pytest v2/tests/contract/test_saas_tenant_isolation.py -q => 4 passed; pytest v2/tests/test_no_raw_tenant_mongo_access.py -q => 2 passed; git diff --check passed. Raw Mongo exceptions intentionally documented for backend/v2/composition/admin.py, backend/v2/composition/coach.py, and backend/v2/composition/parent.py until Agent A/B replace default-academy composition reads with request-scoped tenant identity/resolution."
-      - working: true
-        agent: "main"
-        comment: "After Agent A identity-domain completion, Agent C integration checks still pass: pytest v2/tests/contract/test_saas_tenant_isolation.py -q => 4 passed; pytest v2/tests/test_no_raw_tenant_mongo_access.py -q => 2 passed; pytest v2/tests/unit/test_identity_domain.py -q => 22 passed, 1 warning; git diff --check passed."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -427,7 +410,7 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 18
+  test_sequence: 16
   run_ui: true
 test_plan:
   current_focus:
