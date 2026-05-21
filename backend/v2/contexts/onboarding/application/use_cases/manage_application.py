@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from pydantic import BaseModel
-from ulid import new as new_ulid
+from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.onboarding.application.ports import (
     ApplicationRepository,

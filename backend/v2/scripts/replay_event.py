@@ -16,7 +16,7 @@ import sys
 from datetime import datetime, timezone
 
 from motor.motor_asyncio import AsyncIOMotorClient
-from ulid import new as new_ulid
+from backend.v2.shared.ids import new_ulid
 
 from backend.v2.shared.config import get_settings
 

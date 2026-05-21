@@ -4,8 +4,8 @@
 # Pinned to versions known to work with v2's clean-architecture skeleton.
 # Legacy app remains pinned to requirements.txt.
 
-pydantic-settings==2.6.0
-python-ulid==3.0.0
+pydantic-settings==2.14.1
+python-ulid==3.1.0
 
 # OpenTelemetry — INSTALLED SEPARATELY in production via requirements-otel.txt
 # (or your vendor's SDK). Excluded from requirements-v2.txt because every
