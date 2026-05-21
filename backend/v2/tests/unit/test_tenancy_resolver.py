@@ -20,7 +20,6 @@ from backend.v2.shared.tenancy.resolver import (
     TenantSource,
 )
 
-
 # ---------------------------------------------------------------------------
 # In-memory fake for AcademyLookupPort
 # ---------------------------------------------------------------------------
@@ -265,5 +264,5 @@ async def test_result_is_frozen() -> None:
     r = _resolver(slugs={"court": "academy-court"})
     result = await r.resolve(host="court.example.com", headers={})
     assert isinstance(result, TenantResolutionResult)
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017
         result.academy_id = "tampered"  # type: ignore[misc]

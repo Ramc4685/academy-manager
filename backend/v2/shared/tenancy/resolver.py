@@ -12,9 +12,8 @@ default_academy_id is NEVER used here.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Protocol
-
 
 # ---------------------------------------------------------------------------
 # Port (Protocol) for academy / domain lookup
@@ -42,7 +41,7 @@ class AcademyLookupPort(Protocol):
 # ---------------------------------------------------------------------------
 
 
-class TenantSource(str, Enum):
+class TenantSource(StrEnum):
     SUBDOMAIN = "subdomain"
     CUSTOM_DOMAIN = "custom_domain"
     INTERNAL_HEADER = "internal_header"

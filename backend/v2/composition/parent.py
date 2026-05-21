@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, time, timezone
+from datetime import UTC, datetime, time
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
@@ -13,10 +13,6 @@ from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
     HandleWebhookEvent,
 )
-from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
-    QuoteEnrollment,
-    QuoteEnrollmentCommand,
-)
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
 from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     CreateCustomerPortalSession,
@@ -24,6 +20,10 @@ from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     GetCheckoutStatus,
     StartSubscriptionCheckout,
     StartSubscriptionCheckoutCommand,
+)
+from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
+    QuoteEnrollment,
+    QuoteEnrollmentCommand,
 )
 from backend.v2.contexts.billing.application.use_cases.start_checkout import (
     StartCheckout,
@@ -44,9 +44,6 @@ from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
 from backend.v2.contexts.enrollment.application.use_cases.confirm_enrollment import (
     ConfirmEnrollment,
 )
-from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
-    PromoteFromWaitlist,
-)
 from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_sessions import (
     ListParentAvailableSessions,
 )
@@ -54,12 +51,18 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
     ListParentPauseRequests,
     RequestEnrollmentPause,
 )
+from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
+    PromoteFromWaitlist,
+)
 from backend.v2.contexts.enrollment.domain.errors import SessionNotFound
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_writer import (
     MongoEnrollmentWriter,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_pause_request_repo import (
+    MongoPauseRequestRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
@@ -72,9 +75,6 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_student_writer import (
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_waitlist_repo import (
     MongoWaitlistRepository,
-)
-from backend.v2.contexts.enrollment.infrastructure.mongo_pause_request_repo import (
-    MongoPauseRequestRepository,
 )
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     GetApplicationStatus,
@@ -333,7 +333,7 @@ def compose_parent(
                     "student_name": str(by_id[student_id].get("full_name") or "Unnamed student"),
                     "coach_id": note.get("coach_id"),
                     "body": str(note.get("body") or note.get("note") or ""),
-                    "created_at": note.get("created_at") or datetime.now(timezone.utc),
+                    "created_at": note.get("created_at") or datetime.now(UTC),
                 }
             )
         return rows
@@ -387,7 +387,7 @@ def compose_parent(
         quote = await quote_enrollment_uc.execute(
             QuoteEnrollmentCommand(
                 session_id=selected.session_id,
-                billing_start_at=datetime.now(timezone.utc),
+                billing_start_at=datetime.now(UTC),
                 calculated_by=parent_id,
                 parent_id=parent_id,
             )
@@ -453,7 +453,7 @@ def compose_parent(
                     "payment_mode": "monthly",
                     "subscription_status": "incomplete",
                     "subscription_id": result.subscription_id,
-                    "updated_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(UTC),
                 }
             },
         )
@@ -510,16 +510,16 @@ def _session_amount_cents(doc: dict[str, object]) -> int:
     if doc.get("monthly_price_cents") is not None:
         return int(doc["monthly_price_cents"])  # type: ignore[arg-type]
     if doc.get("monthly_price") is not None:
-        return int(round(float(doc["monthly_price"]) * 100))  # type: ignore[arg-type]
+        return round(float(doc["monthly_price"]) * 100)  # type: ignore[arg-type]
     return 2500
 
 
 def _start_date_to_datetime(value: str | None) -> datetime:
     if not value:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
     local = datetime.combine(
         datetime.fromisoformat(value).date(),
         time.min,
         tzinfo=ZoneInfo("America/Chicago"),
     )
-    return local.astimezone(timezone.utc)
+    return local.astimezone(UTC)

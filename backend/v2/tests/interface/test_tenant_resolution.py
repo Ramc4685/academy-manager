@@ -13,18 +13,17 @@ Wiring note for future middleware integration:
 
 from __future__ import annotations
 
-import pytest
+from typing import ClassVar
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 from backend.v2.shared.tenancy.resolver import (
-    AcademyLookupPort,
     TenantResolutionError,
     TenantResolver,
     TenantSource,
 )
-
 
 # ---------------------------------------------------------------------------
 # In-memory lookup used by all interface tests
@@ -32,11 +31,11 @@ from backend.v2.shared.tenancy.resolver import (
 
 
 class _FakeLookup:
-    SLUGS = {
+    SLUGS: ClassVar[dict[str, str]] = {
         "courtmastr": "academy-court",
         "tennis": "academy-tennis",
     }
-    DOMAINS = {
+    DOMAINS: ClassVar[dict[str, str]] = {
         "badminton-club.com": "academy-badminton",
     }
 
@@ -297,7 +296,7 @@ def _make_middleware_app(
 
 
 # Late import so the symbol is available when _make_middleware_app runs.
-from fastapi import Depends  # noqa: E402
+from fastapi import Depends
 
 
 def test_middleware_resolves_tenant_then_builds_claims() -> None:

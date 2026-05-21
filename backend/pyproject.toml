@@ -11,10 +11,14 @@ extend-exclude = ["scripts/", "tests/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP", "B", "ASYNC", "RUF"]
-ignore = ["E501"]  # line length handled by formatter
+ignore = [
+    "E501",   # line length handled by formatter
+    "B008",   # FastAPI Depends() in default arguments is the standard pattern
+]
 
 [tool.ruff.lint.per-file-ignores]
 "v2/migrations/*.py" = ["F401"]
+"v2/tests/**/*.py" = ["E402"]  # conftest sections intentionally place imports mid-file
 
 [tool.mypy]
 python_version = "3.12"

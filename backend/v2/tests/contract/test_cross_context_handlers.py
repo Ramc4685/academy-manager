@@ -16,10 +16,9 @@ handler body) without the loop-cleanup flakiness mongomock-motor adds.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-from backend.v2.shared.ids import new_ulid
 
 from backend.v2.composition.event_handlers import (
     HandlerDeps,
@@ -32,7 +31,6 @@ from backend.v2.contexts.billing.domain.events import (
     PaymentSucceeded,
     PaymentSucceededPayload,
 )
-from backend.v2.contexts.billing.domain.models import Payment
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
 )
@@ -49,7 +47,6 @@ from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentCancelled,
     EnrollmentCancelledPayload,
 )
-from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
 )
@@ -73,6 +70,7 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import
 )
 from backend.v2.shared.events import MongoOutbox
 from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
+from backend.v2.shared.ids import new_ulid
 
 
 async def _wire(db) -> tuple[ConfirmEnrollment, PromoteFromWaitlist, IssueRefund, TransitionApplication, MongoOutbox]:
@@ -138,8 +136,8 @@ async def test_on_payment_succeeded_handler_creates_enrollment(db, acad) -> None
             "coach_id": "coach-1",
             "title": "Junior A",
             "location": "Court 1",
-            "start_at": datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc),
-            "end_at": datetime(2026, 6, 1, 10, 30, tzinfo=timezone.utc),
+            "start_at": datetime(2026, 6, 1, 9, 0, tzinfo=UTC),
+            "end_at": datetime(2026, 6, 1, 10, 30, tzinfo=UTC),
             "capacity": 2,
             "reserved_seats": 0,
             "status": "scheduled",
@@ -156,7 +154,7 @@ async def test_on_payment_succeeded_handler_creates_enrollment(db, acad) -> None
             session_id=session_id,
             amount_cents=15000,
             currency="usd",
-            succeeded_at=datetime.now(timezone.utc),
+            succeeded_at=datetime.now(UTC),
         ),
     )
     await on_payment_succeeded(event)
@@ -192,8 +190,8 @@ async def test_on_payment_succeeded_at_capacity_emits_capacity_exceeded(db, acad
             "coach_id": "coach-1",
             "title": "Junior A",
             "location": "Court 1",
-            "start_at": datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc),
-            "end_at": datetime(2026, 6, 1, 10, 30, tzinfo=timezone.utc),
+            "start_at": datetime(2026, 6, 1, 9, 0, tzinfo=UTC),
+            "end_at": datetime(2026, 6, 1, 10, 30, tzinfo=UTC),
             "capacity": 1,
             "reserved_seats": 1,  # at capacity
             "status": "scheduled",
@@ -209,14 +207,14 @@ async def test_on_payment_succeeded_at_capacity_emits_capacity_exceeded(db, acad
             session_id=session_id,
             amount_cents=15000,
             currency="usd",
-            succeeded_at=datetime.now(timezone.utc),
+            succeeded_at=datetime.now(UTC),
         ),
     )
     # The handler propagates the CapacityExceeded exception per its
     # implementation (it logs and re-raises so the dispatcher can retry/
     # dead-letter); the event is still appended to the outbox before
     # the exception fires.
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017
         await on_payment_succeeded(event)
 
     events = [doc async for doc in db["outbox_events"].find({})]
@@ -240,7 +238,7 @@ async def test_on_enrollment_cancelled_promotes_oldest_waitlist_entry(db, acad) 
             "session_id": session_id,
             "student_id": "st-older",
             "parent_id": "p-older",
-            "joined_at": datetime(2026, 5, 16, 8, 0, tzinfo=timezone.utc),
+            "joined_at": datetime(2026, 5, 16, 8, 0, tzinfo=UTC),
             "status": "waiting",
         }
     )
@@ -253,7 +251,7 @@ async def test_on_enrollment_cancelled_promotes_oldest_waitlist_entry(db, acad) 
             "session_id": session_id,
             "student_id": "st-newer",
             "parent_id": "p-newer",
-            "joined_at": datetime(2026, 5, 16, 9, 0, tzinfo=timezone.utc),
+            "joined_at": datetime(2026, 5, 16, 9, 0, tzinfo=UTC),
             "status": "waiting",
         }
     )

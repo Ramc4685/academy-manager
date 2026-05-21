@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, Query
 
@@ -28,7 +28,7 @@ router = APIRouter(tags=["coach"])
 
 def _parse_date(value: str | None) -> date:
     if value is None:
-        return datetime.now(timezone.utc).date()
+        return datetime.now(UTC).date()
     return date.fromisoformat(value)
 
 
@@ -66,6 +66,6 @@ async def get_today(
                 for r in roster
             ],
         )
-        for s, roster in zip(sessions, rosters)
+        for s, roster in zip(sessions, rosters, strict=False)
     ]
     return CoachTodayResponse(date=target_date.isoformat(), sessions=out)

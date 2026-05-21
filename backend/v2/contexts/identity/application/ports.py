@@ -64,7 +64,7 @@ class TokenVerifier(Protocol):
     async def verify(self, id_token: str) -> dict[str, object]: ...
 
 
-class MembershipRepository(Protocol):
+class MembershipLookup(Protocol):
     """Read port for `academy_memberships`.
 
     SaaS `LoadAuthClaims` uses this to verify the authenticated user has an

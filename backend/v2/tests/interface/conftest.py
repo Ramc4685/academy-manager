@@ -7,11 +7,11 @@ dependency override.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
-from typing import Iterator, Literal
+from collections.abc import Iterator
+from datetime import UTC, date, datetime
+from unittest.mock import AsyncMock
 
 import pytest
-from unittest.mock import AsyncMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -28,12 +28,11 @@ from backend.v2.contexts.enrollment.application.use_cases.get_session_roster imp
 from backend.v2.contexts.enrollment.application.use_cases.list_coach_sessions_for_date import (
     ListCoachSessionsForDate,
 )
-from backend.v2.contexts.enrollment.domain.models import Enrollment, RosterEntry, Session, Student
+from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, Student
 from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
-
 
 # --- in-memory fakes ---
 
@@ -145,7 +144,7 @@ class FakeIdempotencyStore:
 
 
 def _now() -> datetime:
-    return datetime(2026, 5, 16, 9, 0, tzinfo=timezone.utc)
+    return datetime(2026, 5, 16, 9, 0, tzinfo=UTC)
 
 
 @pytest.fixture()
@@ -157,8 +156,8 @@ def seed():
             coach_id="coach-1",
             title="Junior A",
             location="Court 1",
-            start_at=datetime(2026, 5, 16, 9, 0, tzinfo=timezone.utc),
-            end_at=datetime(2026, 5, 16, 10, 30, tzinfo=timezone.utc),
+            start_at=datetime(2026, 5, 16, 9, 0, tzinfo=UTC),
+            end_at=datetime(2026, 5, 16, 10, 30, tzinfo=UTC),
             capacity=8,
             status="scheduled",
         ),
@@ -168,8 +167,8 @@ def seed():
             coach_id="coach-1",
             title="Adult B",
             location="Court 2",
-            start_at=datetime(2026, 5, 16, 18, 0, tzinfo=timezone.utc),
-            end_at=datetime(2026, 5, 16, 19, 30, tzinfo=timezone.utc),
+            start_at=datetime(2026, 5, 16, 18, 0, tzinfo=UTC),
+            end_at=datetime(2026, 5, 16, 19, 30, tzinfo=UTC),
             capacity=10,
             status="scheduled",
         ),
@@ -179,8 +178,8 @@ def seed():
             coach_id="coach-2",
             title="Not mine",
             location="Court 3",
-            start_at=datetime(2026, 5, 16, 12, 0, tzinfo=timezone.utc),
-            end_at=datetime(2026, 5, 16, 13, 0, tzinfo=timezone.utc),
+            start_at=datetime(2026, 5, 16, 12, 0, tzinfo=UTC),
+            end_at=datetime(2026, 5, 16, 13, 0, tzinfo=UTC),
             capacity=4,
             status="scheduled",
         ),
@@ -359,25 +358,22 @@ def anon_client(seed) -> Iterator[TestClient]:
 
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
-from typing import Any, Iterator
+from typing import Any
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
-from backend.v2.contexts.billing.application.use_cases.finance import (
-    AcademyRevenueQuery,
-    Expense,
-    Payout,
-    RecordExpense,
-)
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscount,
     GenerateMonthlyPayments,
     GenerateMonthlyPaymentsResult,
     MarkPaymentPaid,
     UndoPaymentPaid,
+)
+from backend.v2.contexts.billing.application.use_cases.finance import (
+    AcademyRevenueQuery,
+    Expense,
+    Payout,
+    RecordExpense,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
@@ -392,6 +388,13 @@ from backend.v2.contexts.billing.domain.models import Payment
 from backend.v2.contexts.billing.domain.proration import BillingCalculationSnapshot
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
+)
+from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    AdminStudentPage,
+    AdminStudentSummary,
+    decode_student_cursor,
+    encode_student_cursor,
+    full_name_key,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     CancelEnrollment,
@@ -414,15 +417,7 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
-from backend.v2.contexts.enrollment.domain.models import Session
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
-from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
-    AdminStudentPage,
-    AdminStudentSummary,
-    decode_student_cursor,
-    encode_student_cursor,
-    full_name_key,
-)
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserSummary,
 )
@@ -432,10 +427,7 @@ from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.router import router as admin_router
-from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.comms import CommsService, Message
-from backend.v2.shared.http import register_exception_handlers
-
 
 # --- in-memory port fakes ---
 
@@ -751,7 +743,7 @@ class FakeAdminWaivers:
 
 
 def _now() -> datetime:
-    return datetime(2026, 5, 16, 9, 0, tzinfo=timezone.utc)
+    return datetime(2026, 5, 16, 9, 0, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -763,8 +755,8 @@ def admin_seed():
         coach_id="coach-1",
         title="Junior A",
         location="Court 1",
-        start_at=datetime(2026, 5, 16, 9, 0, tzinfo=timezone.utc),
-        end_at=datetime(2026, 5, 16, 10, 30, tzinfo=timezone.utc),
+        start_at=datetime(2026, 5, 16, 9, 0, tzinfo=UTC),
+        end_at=datetime(2026, 5, 16, 10, 30, tzinfo=UTC),
         capacity=8,
         status="scheduled",
     )
@@ -887,8 +879,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         return BillingCalculationSnapshot(
             snapshot_id="snap-1",
             monthly_price_cents=10_000,
-            billing_period_start=datetime(2026, 5, 1, tzinfo=timezone.utc),
-            billing_period_end=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            billing_period_start=datetime(2026, 5, 1, tzinfo=UTC),
+            billing_period_end=datetime(2026, 6, 1, tzinfo=UTC),
             billing_period_label="2026-05",
             timezone="America/Chicago",
             total_eligible_classes=8,
@@ -897,7 +889,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             final_amount_cents=3_750,
             included_occurrence_ids=["class-6", "class-7", "class-8"],
             excluded_occurrences={"class-1": "ELAPSED_BEFORE_ENROLLMENT"},
-            calculated_at=datetime(2026, 5, 16, tzinfo=timezone.utc),
+            calculated_at=datetime(2026, 5, 16, tzinfo=UTC),
             calculated_by="admin",
         )
 
@@ -1066,7 +1058,7 @@ def _make_admin_app(claims: AuthClaims, use_cases: AdminUseCases) -> FastAPI:
 
 
 @pytest.fixture
-def admin_client(admin_seed) -> Iterator[TestClient]:
+def admin_client(admin_seed) -> Iterator[TestClient]:  # noqa: F811
     uc = _build_admin_use_cases(admin_seed)
     app = _make_admin_app(_claims("admin"), uc)
     with TestClient(app) as client:

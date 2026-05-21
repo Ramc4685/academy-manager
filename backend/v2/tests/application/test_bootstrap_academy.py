@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -90,7 +90,7 @@ def _command(**overrides: object) -> BootstrapAcademyCommand:
 
 def _use_case(store: FakeBootstrapStore) -> BootstrapAcademy:
     counters: dict[str, int] = {}
-    now = datetime(2026, 5, 21, tzinfo=timezone.utc)
+    now = datetime(2026, 5, 21, tzinfo=UTC)
 
     def _id(prefix: str) -> str:
         counters[prefix] = counters.get(prefix, 0) + 1
@@ -171,7 +171,7 @@ async def test_duplicate_domain_with_different_slug_is_a_clear_conflict() -> Non
     use_case = _use_case(store)
     await use_case.execute(_command())
 
-    with pytest.raises(BootstrapDomainConflict, match="north.example.com"):
+    with pytest.raises(BootstrapDomainConflict, match=r"north\.example\.com"):
         await use_case.execute(_command(slug="other-slug"))
 
 

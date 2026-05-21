@@ -19,7 +19,7 @@ SaaS contract:
 from __future__ import annotations
 
 from backend.v2.contexts.identity.application.ports import (
-    MembershipRepository,
+    MembershipLookup,
     PlatformRoleRepository,
     TokenVerifier,
     UserRepository,
@@ -38,7 +38,7 @@ class LoadAuthClaims:
         self,
         verifier: TokenVerifier,
         users: UserRepository,
-        memberships: MembershipRepository,
+        memberships: MembershipLookup,
         platform_roles: PlatformRoleRepository,
     ) -> None:
         self._verifier = verifier
