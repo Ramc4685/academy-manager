@@ -153,3 +153,4 @@ credentials.json
 .credentials
 .playwright-mcp
 rally-admin.png
+.mypy_cache
