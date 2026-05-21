@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     PauseRequest,
@@ -14,7 +14,7 @@ from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
 
 
 def _dt(value: str) -> datetime:
-    return datetime.fromisoformat(value).replace(tzinfo=timezone.utc)
+    return datetime.fromisoformat(value).replace(tzinfo=UTC)
 
 
 def test_admin_dashboard_attention_empty_state(admin_client):

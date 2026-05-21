@@ -6,7 +6,7 @@ admin double-clicking the refund button doesn't double-refund).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
@@ -52,7 +52,7 @@ class IssueRefund:
         stripe: StripeGateway,
         outbox: Outbox,
         idempotency_store: IdempotencyStore,
-        clock=lambda: datetime.now(timezone.utc),
+        clock=lambda: datetime.now(UTC),
     ) -> None:
         self._payments = payment_repo
         self._stripe = stripe

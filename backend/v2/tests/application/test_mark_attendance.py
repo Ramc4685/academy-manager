@@ -5,7 +5,7 @@ Covers all four rejection paths + idempotency + outbox emission.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 import pytest
@@ -22,7 +22,7 @@ from backend.v2.contexts.coaching.domain.errors import (
 )
 from backend.v2.contexts.coaching.domain.models import Attendance
 
-FIXED_NOW = datetime(2026, 5, 16, 9, 30, tzinfo=timezone.utc)
+FIXED_NOW = datetime(2026, 5, 16, 9, 30, tzinfo=UTC)
 FIXED_DATE = date(2026, 5, 16)
 
 
@@ -91,7 +91,7 @@ class FakeOutbox:
     def __init__(self) -> None:
         self.appended: list[Any] = []
 
-    async def append(self, event, *, session=None) -> None:  # noqa: ANN001
+    async def append(self, event, *, session=None) -> None:
         self.appended.append(event)
 
     async def pull_unprocessed(self, limit: int = 100):

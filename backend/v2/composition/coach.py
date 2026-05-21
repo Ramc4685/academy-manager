@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -79,7 +78,7 @@ def compose_coach(
     assigned_sessions = CoachAssignedSessionLookup(sessions_repo)
 
     async def get_dashboard_metrics(coach_id: str) -> dict[str, int | float]:
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(UTC).date()
         today_sessions = await sessions_repo.for_coach_on_date(coach_id, today)
         session_cursor = sessions_repo._find_many(  # type: ignore[attr-defined]
             {"coach_id": coach_id, "status": "scheduled"}

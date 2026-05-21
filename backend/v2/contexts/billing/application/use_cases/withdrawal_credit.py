@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
-from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.billing.application.ports import (
     CreditLedgerRepository,
@@ -21,6 +20,7 @@ from backend.v2.contexts.billing.domain.credits import (
 from backend.v2.contexts.billing.domain.errors import PaymentNotFound
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment
 from backend.v2.contexts.billing.domain.proration import BillingCalculationSnapshot
+from backend.v2.shared.ids import new_ulid
 
 
 class WithdrawalPaymentRepository(Protocol):
@@ -82,7 +82,7 @@ class PreviewWithdrawalCredit:
         *,
         payments: WithdrawalPaymentRepository,
         enrollments: WithdrawalEnrollmentRepository,
-        clock=lambda: datetime.now(timezone.utc),
+        clock=lambda: datetime.now(UTC),
     ) -> None:
         self._payments = payments
         self._enrollments = enrollments
@@ -115,7 +115,7 @@ class ApproveWithdrawalCredit:
         subscriptions: SubscriptionRepository,
         stripe: StripeGateway,
         academy_id: str,
-        clock=lambda: datetime.now(timezone.utc),
+        clock=lambda: datetime.now(UTC),
     ) -> None:
         self._payments = payments
         self._credits = credits
@@ -255,13 +255,13 @@ def _unused_included_occurrences(
     withdrawal = (
         withdrawal_date
         if withdrawal_date.tzinfo
-        else withdrawal_date.replace(tzinfo=timezone.utc)
+        else withdrawal_date.replace(tzinfo=UTC)
     )
     tz = ZoneInfo(snapshot.timezone)
     count = 0
     for occurrence_id in snapshot.included_occurrence_ids:
         local_start = _local_start_from_occurrence_id(occurrence_id, tz)
-        if local_start is not None and local_start.astimezone(timezone.utc) > withdrawal:
+        if local_start is not None and local_start.astimezone(UTC) > withdrawal:
             count += 1
     return count
 

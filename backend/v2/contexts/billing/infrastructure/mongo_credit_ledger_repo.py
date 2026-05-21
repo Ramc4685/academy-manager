@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
 
 from pymongo.errors import DuplicateKeyError
-from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
+from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
 
@@ -66,7 +65,7 @@ class MongoCreditLedgerRepository(TenantScopedRepository):
         return self._to_domain(doc) if doc else None
 
     async def balance_for_parent(self, parent_id: str) -> int:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         total = 0
         cursor = self._find_many(
             {
@@ -84,7 +83,7 @@ class MongoCreditLedgerRepository(TenantScopedRepository):
         self, *, parent_id: str, invoice_id: str, amount_due_cents: int
     ) -> int:
         academy_id = current_academy_id()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Top-level idempotency: if any credit doc already carries this invoice
         # in its applied_invoice_ids array, we have already processed it.
         already = await self.collection.find_one(

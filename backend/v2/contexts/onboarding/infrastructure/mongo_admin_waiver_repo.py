@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from bson import ObjectId as BsonObjectId
@@ -97,7 +97,7 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
         return sorted(
             waivers,
             key=lambda waiver: waiver.effective_from
-            or datetime.min.replace(tzinfo=timezone.utc),
+            or datetime.min.replace(tzinfo=UTC),
             reverse=True,
         )
 
@@ -201,7 +201,7 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
         ]
         docs.sort(
             key=lambda doc: self._as_datetime(doc.get("accepted_at"))
-            or datetime.min.replace(tzinfo=timezone.utc),
+            or datetime.min.replace(tzinfo=UTC),
             reverse=True,
         )
         for doc in docs:
@@ -272,11 +272,11 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
     @staticmethod
     def _as_datetime(value: object) -> datetime | None:
         if isinstance(value, datetime):
-            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+            return value if value.tzinfo else value.replace(tzinfo=UTC)
         if isinstance(value, str):
             try:
                 parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-                return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
             except ValueError:
                 return None
         return None

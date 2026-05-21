@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
-from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.billing.application.ports import (
     PaymentRepository,
@@ -14,6 +13,7 @@ from backend.v2.contexts.billing.application.ports import (
 )
 from backend.v2.contexts.billing.domain.errors import CheckoutCreationFailed, PaymentNotFound
 from backend.v2.contexts.billing.domain.models import Subscription
+from backend.v2.shared.ids import new_ulid
 
 
 class StartSubscriptionCheckoutCommand(BaseModel):
@@ -51,7 +51,7 @@ class StartSubscriptionCheckout:
         subscriptions: SubscriptionRepository,
         stripe: StripeGateway,
         academy_id: str,
-        clock=lambda: datetime.now(timezone.utc),
+        clock=lambda: datetime.now(UTC),
     ) -> None:
         self._subscriptions = subscriptions
         self._stripe = stripe

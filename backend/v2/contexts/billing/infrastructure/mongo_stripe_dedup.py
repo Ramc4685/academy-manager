@@ -16,7 +16,7 @@ NOT tenant-scoped — Stripe events are globally unique by Stripe event id.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
@@ -34,7 +34,7 @@ class MongoStripeEventDedup:
         self._coll = db[self.COLLECTION]
 
     async def claim(self, event_id: str, event_type: str) -> bool:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         try:
             await self._coll.insert_one(
                 {
@@ -71,7 +71,7 @@ class MongoStripeEventDedup:
                 # Mongo (and mongomock) may return tz-naive datetimes;
                 # treat them as UTC for the staleness comparison.
                 if received_at.tzinfo is None:
-                    received_at = received_at.replace(tzinfo=timezone.utc)
+                    received_at = received_at.replace(tzinfo=UTC)
                 if (now - received_at) > STALE_PROCESSING_AFTER:
                     result = await self._coll.update_one(
                         {"event_id": event_id, "status": "processing"},
@@ -86,7 +86,7 @@ class MongoStripeEventDedup:
     async def mark_processed(self, event_id: str) -> None:
         await self._coll.update_one(
             {"event_id": event_id},
-            {"$set": {"status": "processed", "processed_at": datetime.now(timezone.utc)}},
+            {"$set": {"status": "processed", "processed_at": datetime.now(UTC)}},
         )
 
     async def mark_failed(self, event_id: str, error: str) -> None:
@@ -95,7 +95,7 @@ class MongoStripeEventDedup:
             {
                 "$set": {
                     "status": "failed",
-                    "failed_at": datetime.now(timezone.utc),
+                    "failed_at": datetime.now(UTC),
                     "error": error,
                 }
             },

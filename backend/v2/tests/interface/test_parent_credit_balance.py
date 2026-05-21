@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
-from typing import Iterator
+from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -43,8 +43,8 @@ def _credit(
         currency="usd",
         reason="Early withdrawal",
         expires_at=expires_at,
-        created_at=datetime(2026, 5, 20, tzinfo=timezone.utc),
-        updated_at=datetime(2026, 5, 20, tzinfo=timezone.utc),
+        created_at=datetime(2026, 5, 20, tzinfo=UTC),
+        updated_at=datetime(2026, 5, 20, tzinfo=UTC),
     )
 
 
@@ -55,7 +55,7 @@ class _ParentUseCases:
     async def list_credits_for_parent(self, parent_id: str):
         if self._credits is not None:
             return self._credits
-        return [_credit(credit_id="credit-1", remaining=2500, expires_at=datetime(2027, 5, 20, tzinfo=timezone.utc))]
+        return [_credit(credit_id="credit-1", remaining=2500, expires_at=datetime(2027, 5, 20, tzinfo=UTC))]
 
 
 @contextmanager
@@ -91,7 +91,7 @@ def test_wrong_persona_cannot_read_parent_credits() -> None:
 
 
 def test_balance_excludes_expired_credits() -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     use_cases = _ParentUseCases(
         credits=[
             _credit(credit_id="active", remaining=2500, expires_at=now + timedelta(days=10)),

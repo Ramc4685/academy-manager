@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from motor.motor_asyncio import AsyncIOMotorClientSession, AsyncIOMotorDatabase
@@ -54,7 +54,7 @@ class MongoOutbox:
                 "occurred_at": event.occurred_at,
                 "payload": event.model_dump(mode="json"),
                 "processed": False,
-                "created_at": datetime.now(timezone.utc),
+                "created_at": datetime.now(UTC),
             },
             session=session,
         )
@@ -70,5 +70,5 @@ class MongoOutbox:
     async def mark_processed(self, event_id: str) -> None:
         await self._collection.update_one(
             {"event_id": event_id},
-            {"$set": {"processed": True, "processed_at": datetime.now(timezone.utc)}},
+            {"$set": {"processed": True, "processed_at": datetime.now(UTC)}},
         )

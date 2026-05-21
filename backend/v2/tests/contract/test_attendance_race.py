@@ -9,6 +9,8 @@ Run after migration 0020 applies the unique index.
 
 from __future__ import annotations
 
+from datetime import UTC
+
 import pytest
 
 from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
@@ -28,7 +30,7 @@ async def test_unique_index_rejects_duplicate_session_student(db) -> None:
     with tenant_scope("test-academy"):
         repo = MongoAttendanceRepository(db)
         # First device: write succeeds.
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from backend.v2.contexts.coaching.domain.models import Attendance
 
@@ -38,7 +40,7 @@ async def test_unique_index_rejects_duplicate_session_student(db) -> None:
             session_id="sess",
             student_id="st1",
             marked_by="coach",
-            marked_at=datetime.now(timezone.utc),
+            marked_at=datetime.now(UTC),
             status="present",
         )
         await repo.save(first)

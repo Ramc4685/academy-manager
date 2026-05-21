@@ -10,25 +10,20 @@ promotion on cancellation, comms notifications, etc.) react.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
-from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentQuery,
     EnrollmentWriter,
-    SessionQuery,
     SessionWriter,
     StudentWriter,
     WaitlistRepository,
 )
 from backend.v2.contexts.enrollment.domain.errors import (
     EnrollmentNotFound,
-    SessionNotFound,
-    StudentNotEnrolled,
-    WaitlistEmpty,
 )
 from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentCancelled,
@@ -37,7 +32,7 @@ from backend.v2.contexts.enrollment.domain.events import (
 from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, Student
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.shared.events import Outbox
-
+from backend.v2.shared.ids import new_ulid
 
 # -- Session writes ------------------------------------------------------
 
@@ -309,7 +304,7 @@ class JoinWaitlist:
             session_id=cmd.session_id,
             student_id=cmd.student_id,
             parent_id=cmd.parent_id,
-            joined_at=datetime.now(timezone.utc),
+            joined_at=datetime.now(UTC),
             status="waiting",
         )
         await self._waitlist.add(entry)

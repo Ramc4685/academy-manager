@@ -17,11 +17,10 @@ import importlib
 
 import pytest
 
+from backend.v2.contexts.identity.domain.models import AcademyMembership, PlatformRole
 from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
     MongoMembershipRepository,
 )
-from backend.v2.contexts.identity.domain.models import AcademyMembership, PlatformRole
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

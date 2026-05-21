@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, Query
 
@@ -109,7 +109,7 @@ async def add_to_roster(
         full_name=body.full_name,
         parent_id=body.parent_id,
         status=enrollment.status,
-        enrolled_at=datetime.now(timezone.utc),
+        enrolled_at=datetime.now(UTC),
     )
 
 
@@ -145,7 +145,7 @@ async def transfer_enrollment(
         full_name="",
         parent_id="",
         status=enrollment.status,
-        enrolled_at=datetime.now(timezone.utc),
+        enrolled_at=datetime.now(UTC),
     )
 
 

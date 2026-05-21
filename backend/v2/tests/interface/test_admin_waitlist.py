@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 
@@ -20,8 +20,8 @@ def _add(seed, waitlist_id: str, joined_at: datetime, status: str = "waiting"):
 
 
 def test_list_waitlist_returns_entries(admin_client):
-    _add(admin_client.seed, "w1", datetime(2026, 5, 16, 8, 0, tzinfo=timezone.utc))
-    _add(admin_client.seed, "w2", datetime(2026, 5, 16, 9, 0, tzinfo=timezone.utc))
+    _add(admin_client.seed, "w1", datetime(2026, 5, 16, 8, 0, tzinfo=UTC))
+    _add(admin_client.seed, "w2", datetime(2026, 5, 16, 9, 0, tzinfo=UTC))
     r = admin_client.get("/api/v2/admin/sessions/sess-1/waitlist")
     assert r.status_code == 200, r.text
     body = r.json()
@@ -30,8 +30,8 @@ def test_list_waitlist_returns_entries(admin_client):
 
 
 def test_list_global_waitlist_groups_waiting_entries(admin_client):
-    _add(admin_client.seed, "w1", datetime(2026, 5, 16, 8, 0, tzinfo=timezone.utc))
-    _add(admin_client.seed, "w2", datetime(2026, 5, 16, 9, 0, tzinfo=timezone.utc))
+    _add(admin_client.seed, "w1", datetime(2026, 5, 16, 8, 0, tzinfo=UTC))
+    _add(admin_client.seed, "w2", datetime(2026, 5, 16, 9, 0, tzinfo=UTC))
 
     r = admin_client.get("/api/v2/admin/waitlist")
 
@@ -51,8 +51,8 @@ def test_list_waitlist_wrong_persona_404(coach_on_admin_client):
 
 
 def test_promote_picks_oldest_fifo(admin_client):
-    older = datetime(2026, 5, 16, 8, 0, tzinfo=timezone.utc)
-    newer = datetime(2026, 5, 16, 9, 0, tzinfo=timezone.utc)
+    older = datetime(2026, 5, 16, 8, 0, tzinfo=UTC)
+    newer = datetime(2026, 5, 16, 9, 0, tzinfo=UTC)
     _add(admin_client.seed, "older", older)
     _add(admin_client.seed, "newer", newer)
     r = admin_client.post("/api/v2/admin/sessions/sess-1/waitlist/promote")
@@ -68,14 +68,14 @@ def test_promote_empty_waitlist_returns_null(admin_client):
 
 
 def test_skip_marks_status(admin_client):
-    _add(admin_client.seed, "w1", datetime(2026, 5, 16, 8, 0, tzinfo=timezone.utc))
+    _add(admin_client.seed, "w1", datetime(2026, 5, 16, 8, 0, tzinfo=UTC))
     r = admin_client.post("/api/v2/admin/waitlist/w1/skip")
     assert r.status_code == 204
     assert admin_client.seed["waitlist"].entries["w1"].status == "skipped"
 
 
 def test_remove_marks_status(admin_client):
-    _add(admin_client.seed, "w1", datetime(2026, 5, 16, 8, 0, tzinfo=timezone.utc))
+    _add(admin_client.seed, "w1", datetime(2026, 5, 16, 8, 0, tzinfo=UTC))
     r = admin_client.delete("/api/v2/admin/waitlist/w1")
     assert r.status_code == 204
     assert admin_client.seed["waitlist"].entries["w1"].status == "removed"

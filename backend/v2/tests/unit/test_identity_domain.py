@@ -10,7 +10,7 @@ platform role tuples.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -22,7 +22,6 @@ from backend.v2.contexts.identity.domain.models import (
     normalize_email,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-
 
 # ---------------------------------------------------------------------------
 # User (legacy single-tenant compatibility)
@@ -158,7 +157,7 @@ def test_membership_dedupes_roles() -> None:
 
 
 def test_membership_optional_invitation_audit_fields() -> None:
-    now = datetime(2026, 5, 21, tzinfo=timezone.utc)
+    now = datetime(2026, 5, 21, tzinfo=UTC)
     membership = _membership(
         status="invited",
         invited_by="u-admin",

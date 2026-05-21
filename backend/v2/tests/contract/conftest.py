@@ -8,11 +8,9 @@ those are covered by the migration smoke test.
 
 from __future__ import annotations
 
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import pytest_asyncio
-
-from backend.v2.shared.tenancy.context import tenant_scope
 
 
 @pytest_asyncio.fixture

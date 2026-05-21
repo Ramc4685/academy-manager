@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 from .get_academy_notifications_use_case import GetAcademyNotificationsOutput
 
 
 class AcademyWriteRepo(Protocol):
-    async def update_by_id(self, academy_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]: ...
+    async def update_by_id(self, academy_id: str, fields: dict[str, Any]) -> dict[str, Any] | None: ...
     async def upsert_defaults(self, academy_id: str) -> dict[str, Any]: ...
 
 

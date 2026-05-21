@@ -10,7 +10,8 @@ See ADR-0006.
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorClientSession, AsyncIOMotorCollection
 

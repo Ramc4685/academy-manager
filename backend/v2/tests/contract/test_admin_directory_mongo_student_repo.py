@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -22,7 +22,7 @@ def _decode_cursor(cursor: str) -> dict[str, str]:
 
 
 async def _seed_directory(db, academy_id: str) -> None:
-    now = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 5, 20, 12, 0, tzinfo=UTC)
     await db["students"].insert_many(
         [
             {
@@ -179,7 +179,7 @@ async def test_list_admin_students_returns_rich_default_page_without_per_student
     assert alice.parent_email == "parent1@example.com"
     assert alice.active_session_count == 1
     assert alice.attendance_rate == pytest.approx(2 / 3)
-    assert alice.last_seen_at == datetime(2026, 5, 19, 12, 0, tzinfo=timezone.utc)
+    assert alice.last_seen_at == datetime(2026, 5, 19, 12, 0, tzinfo=UTC)
     assert alice.dues_status == "current"
     assert bob.attendance_rate is None
     assert bob.last_seen_at is None

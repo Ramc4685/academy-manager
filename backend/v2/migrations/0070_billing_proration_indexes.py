@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 version = "0070_billing_proration_indexes"
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from bson import ObjectId as BsonObjectId
 
@@ -227,7 +227,7 @@ class MongoStudentRepository(TenantScopedRepository):
     ) -> dict[str, dict[str, object]]:
         if not student_ids:
             return {}
-        since = datetime.now(timezone.utc) - timedelta(days=90)
+        since = datetime.now(UTC) - timedelta(days=90)
         cursor = self._db["attendance"].aggregate(
             [
                 {
@@ -274,7 +274,7 @@ class MongoStudentRepository(TenantScopedRepository):
     ) -> dict[str, str]:
         if not student_ids:
             return {}
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff = now - timedelta(days=30)
         statuses = {student_id: "current" for student_id in student_ids}
         cursor = self._db["payments"].find(
@@ -310,5 +310,5 @@ class MongoStudentRepository(TenantScopedRepository):
     @staticmethod
     def _as_utc(value: datetime) -> datetime:
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)

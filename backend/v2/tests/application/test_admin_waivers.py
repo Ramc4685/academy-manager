@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -24,7 +24,7 @@ class FakeWaiverQuery:
 
 
 def _dt(value: str) -> datetime:
-    return datetime.fromisoformat(value).replace(tzinfo=timezone.utc)
+    return datetime.fromisoformat(value).replace(tzinfo=UTC)
 
 
 @pytest.mark.asyncio

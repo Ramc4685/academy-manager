@@ -10,13 +10,13 @@ For now: simple CRUD aggregations.
 # FINANCE
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
-from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.billing.application.ports import PaymentRepository
+from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository
 
 
@@ -113,7 +113,7 @@ class RecordExpense:
             category=cmd.category,
             amount_cents=cmd.amount_cents,
             note=cmd.note,
-            incurred_on=cmd.incurred_on or datetime.now(timezone.utc),
+            incurred_on=cmd.incurred_on or datetime.now(UTC),
         )
         await self._expenses.add(e)
         return e

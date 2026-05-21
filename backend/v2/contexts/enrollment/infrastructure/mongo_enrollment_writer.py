@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from backend.v2.contexts.enrollment.domain.models import Enrollment
 from backend.v2.shared.tenancy import TenantScopedRepository
@@ -29,7 +29,7 @@ class MongoEnrollmentWriter(TenantScopedRepository):
                 "$set": {
                     "status": "withdrawn",
                     "withdrawal_date": withdrawal_date,
-                    "updated_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(UTC),
                 }
             },
         )
@@ -45,7 +45,7 @@ class MongoEnrollmentWriter(TenantScopedRepository):
                     "move_history": {
                         "from_session_id": previous_session_id,
                         "to_session_id": session_id,
-                        "moved_at": datetime.now(timezone.utc),
+                        "moved_at": datetime.now(UTC),
                     }
                 },
             },

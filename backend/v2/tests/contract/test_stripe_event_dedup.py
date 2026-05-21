@@ -6,7 +6,7 @@ permanently de-duped instead of retried.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -64,7 +64,7 @@ async def test_stale_processing_row_is_reclaimable(db) -> None:
     dedup = MongoStripeEventDedup(db)
     # Write a stale processing row by hand (simulating a crashed previous
     # attempt that never reached mark_processed/mark_failed).
-    stale_received = datetime.now(timezone.utc) - STALE_PROCESSING_AFTER - timedelta(seconds=1)
+    stale_received = datetime.now(UTC) - STALE_PROCESSING_AFTER - timedelta(seconds=1)
     await db["stripe_webhook_events"].insert_one(
         {
             "event_id": "evt_5",

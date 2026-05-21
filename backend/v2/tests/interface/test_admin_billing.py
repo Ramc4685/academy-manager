@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from backend.v2.contexts.billing.application.use_cases.finance import Expense, Payout
+from backend.v2.contexts.billing.application.use_cases.finance import Payout
 from backend.v2.contexts.billing.domain.models import Payment
 
 
@@ -15,7 +15,7 @@ def _seed_payment(
     status: str = "succeeded",
     stripe: bool = True,
 ):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     seed["payments"].rows[payment_id] = Payment(
         payment_id=payment_id,
         academy_id="acad",
@@ -134,8 +134,8 @@ def test_list_payouts_returns_seeded(admin_client):
         academy_id="acad",
         coach_id="coach-1",
         amount_cents=80000,
-        period_start=datetime(2026, 4, 1, tzinfo=timezone.utc),
-        period_end=datetime(2026, 4, 30, tzinfo=timezone.utc),
+        period_start=datetime(2026, 4, 1, tzinfo=UTC),
+        period_end=datetime(2026, 4, 30, tzinfo=UTC),
     )
     r = admin_client.get("/api/v2/admin/finance/payouts")
     assert r.status_code == 200

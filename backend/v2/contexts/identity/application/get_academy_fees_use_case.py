@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 
 class AcademyRepo(Protocol):
-    async def find_by_id(self, academy_id: str) -> Optional[dict[str, Any]]: ...
+    async def find_by_id(self, academy_id: str) -> dict[str, Any] | None: ...
     async def upsert_defaults(self, academy_id: str) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
 class GetAcademyFeesOutput:
-    default_monthly_cents: Optional[int] = None
-    late_fee_cents: Optional[int] = None
-    grace_days: Optional[int] = None
+    default_monthly_cents: int | None = None
+    late_fee_cents: int | None = None
+    grace_days: int | None = None
 
 
 class GetAcademyFeesUseCase:

@@ -8,17 +8,17 @@ That makes this repository intentionally unscoped for reads; the resulting
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import re
+from datetime import UTC, datetime
 from typing import Any
 
 from bson import ObjectId
 from pymongo import ReturnDocument
 
-from backend.v2.contexts.identity.domain.models import Role, User
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserSummary,
 )
+from backend.v2.contexts.identity.domain.models import Role, User
 
 
 class MongoUserRepository:
@@ -82,7 +82,7 @@ class MongoUserRepository:
         existing = await self.collection.find_one(
             {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}
         )
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if existing:
             roles = set(self._to_domain(existing).roles)
             roles.add("parent")
@@ -156,7 +156,7 @@ class MongoUserRepository:
         ids: list[object] = [user_id]
         if ObjectId.is_valid(user_id):
             ids.append(ObjectId(user_id))
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         doc = await self.collection.find_one_and_update(
             {
                 "academy_id": academy_id,

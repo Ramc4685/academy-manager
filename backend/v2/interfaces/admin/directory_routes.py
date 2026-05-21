@@ -6,6 +6,9 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    decode_student_cursor,
+)
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
     AdminStudentList,
@@ -13,9 +16,6 @@ from backend.v2.interfaces.admin.views import (
     AdminUserList,
     AdminUserView,
     UpdateAdminUserRoleRequest,
-)
-from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
-    decode_student_cursor,
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona

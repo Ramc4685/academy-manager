@@ -8,7 +8,7 @@ rather than extending TenantScopedRepository.  The query ALWAYS includes
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pymongo import ReturnDocument
@@ -100,7 +100,7 @@ class MongoMembershipRepository:
         self, membership: AcademyMembership
     ) -> AcademyMembership:
         """Create or update a membership. Idempotent on (academy_id, user_id)."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mid = membership.membership_id or new_ulid()
         set_fields: dict[str, object] = {
             "membership_id": mid,
@@ -144,7 +144,7 @@ class MongoMembershipRepository:
 
     async def upsert_platform_role(self, platform_role: PlatformRole) -> PlatformRole:
         """Create or update a platform role grant. Idempotent on (user_id, role)."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         prid = platform_role.platform_role_id or new_ulid()
 
         doc = await self._platform_roles.find_one_and_update(

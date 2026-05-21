@@ -13,10 +13,8 @@ each case in isolation.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
-
-from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.billing.application.ports import (
     PaymentRepository,
@@ -39,6 +37,7 @@ from backend.v2.contexts.billing.domain.events import (
 )
 from backend.v2.contexts.billing.domain.models import Payment
 from backend.v2.shared.events import Outbox
+from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import tenant_scope
 
 log = logging.getLogger(__name__)
@@ -54,7 +53,7 @@ class HandleWebhookEvent:
         subscriptions: SubscriptionRepository,
         outbox: Outbox,
         academy_id: str,
-        clock=lambda: datetime.now(timezone.utc),
+        clock=lambda: datetime.now(UTC),
     ) -> None:
         self._stripe = stripe
         self._dedup = dedup

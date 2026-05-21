@@ -10,7 +10,6 @@ import ast
 from dataclasses import dataclass
 from pathlib import Path
 
-
 V2_ROOT = Path(__file__).resolve().parents[1]
 
 TENANT_OWNED_COLLECTIONS = {

@@ -6,7 +6,7 @@ nothing when documents exist only under another.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -29,8 +29,8 @@ def _session_doc(sid: str, coach_id: str, academy_id: str) -> dict:
         "coach_id": coach_id,
         "title": "X",
         "location": "Court 1",
-        "start_at": datetime(2026, 5, 16, 9, 0, tzinfo=timezone.utc),
-        "end_at": datetime(2026, 5, 16, 10, 30, tzinfo=timezone.utc),
+        "start_at": datetime(2026, 5, 16, 9, 0, tzinfo=UTC),
+        "end_at": datetime(2026, 5, 16, 10, 30, tzinfo=UTC),
         "capacity": 8,
         "status": "scheduled",
     }

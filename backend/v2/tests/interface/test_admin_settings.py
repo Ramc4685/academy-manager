@@ -5,13 +5,13 @@ from __future__ import annotations
 from backend.v2.contexts.identity.application.get_academy_fees_use_case import (
     GetAcademyFeesOutput,
 )
+from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
+    GetAcademyGatewayOutput,
+)
 from backend.v2.contexts.identity.application.get_academy_notifications_use_case import (
     GetAcademyNotificationsOutput,
 )
 from backend.v2.contexts.identity.application.get_academy_use_case import GetAcademyOutput
-from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
-    GetAcademyGatewayOutput,
-)
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserSummary,
 )

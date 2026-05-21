@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-from datetime import date, datetime, time, timedelta, timezone
 import csv
 import io
+from datetime import UTC, date, datetime, time, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from bson import ObjectId as BsonObjectId
-
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from backend.v2.contexts.billing.application.ports import StripeGateway
@@ -20,10 +18,6 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     MarkPaymentPaid,
     UndoPaymentPaid,
 )
-from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
-    QuoteEnrollment,
-    QuoteEnrollmentCommand,
-)
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
     AcademyRevenueQuery,
     MongoExpenseRepository,
@@ -31,6 +25,10 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
     RecordExpense,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
+from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
+    QuoteEnrollment,
+    QuoteEnrollmentCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
     ApproveWithdrawalCredit,
     PreviewWithdrawalCredit,
@@ -43,6 +41,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
 )
 from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
     MongoSubscriptionRepository,
+)
+from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    ListAdminStudents,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     CancelEnrollment,
@@ -61,9 +62,6 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
     DeclinePauseRequest,
     ListAdminPauseRequests,
 )
-from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
-    ListAdminStudents,
-)
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
@@ -72,6 +70,9 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import 
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_writer import (
     MongoEnrollmentWriter,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_pause_request_repo import (
+    MongoPauseRequestRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
@@ -88,22 +89,27 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_student_writer import (
 from backend.v2.contexts.enrollment.infrastructure.mongo_waitlist_repo import (
     MongoWaitlistRepository,
 )
-from backend.v2.contexts.enrollment.infrastructure.mongo_pause_request_repo import (
-    MongoPauseRequestRepository,
+from backend.v2.contexts.identity.application.change_user_role_use_case import ChangeUserRole
+from backend.v2.contexts.identity.application.get_academy_fees_use_case import GetAcademyFeesUseCase
+from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
+    GetAcademyGatewayUseCase,
 )
+from backend.v2.contexts.identity.application.get_academy_notifications_use_case import (
+    GetAcademyNotificationsUseCase,
+)
+from backend.v2.contexts.identity.application.get_academy_use_case import GetAcademyUseCase
+from backend.v2.contexts.identity.application.update_academy_fees_use_case import (
+    UpdateAcademyFeesUseCase,
+)
+from backend.v2.contexts.identity.application.update_academy_notifications_use_case import (
+    UpdateAcademyNotificationsUseCase,
+)
+from backend.v2.contexts.identity.application.update_academy_use_case import UpdateAcademyUseCase
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     ListAdminUsers,
 )
-from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
-from backend.v2.contexts.identity.application.get_academy_use_case import GetAcademyUseCase
-from backend.v2.contexts.identity.application.update_academy_use_case import UpdateAcademyUseCase
-from backend.v2.contexts.identity.application.get_academy_fees_use_case import GetAcademyFeesUseCase
-from backend.v2.contexts.identity.application.update_academy_fees_use_case import UpdateAcademyFeesUseCase
-from backend.v2.contexts.identity.application.get_academy_notifications_use_case import GetAcademyNotificationsUseCase
-from backend.v2.contexts.identity.application.update_academy_notifications_use_case import UpdateAcademyNotificationsUseCase
-from backend.v2.contexts.identity.application.get_academy_gateway_use_case import GetAcademyGatewayUseCase
-from backend.v2.contexts.identity.application.change_user_role_use_case import ChangeUserRole
+from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
     ListAdminWaivers,
 )
@@ -293,7 +299,7 @@ def compose_admin(
         # Used by the transfer-enrollment dropdown so the user can pick any
         # upcoming session, not just today's.
         if window == "upcoming":
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             end = start + timedelta(days=30)
             v2_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
@@ -306,9 +312,9 @@ def compose_admin(
             return await _build_admin_session_rows(upcoming_docs)
 
         if on_date is None:
-            on_date = datetime.now(timezone.utc).date()
-        start = datetime.combine(on_date, time.min, tzinfo=timezone.utc)
-        end = datetime.combine(on_date, time.max, tzinfo=timezone.utc)
+            on_date = datetime.now(UTC).date()
+        start = datetime.combine(on_date, time.min, tzinfo=UTC)
+        end = datetime.combine(on_date, time.max, tzinfo=UTC)
 
         # Query both v2 sessions (start_at field) and legacy recurring templates
         # (days_of_week field). The two schemas coexist during migration.
@@ -338,8 +344,8 @@ def compose_admin(
             sh, sm = int(st_str[:2]), int(st_str[3:5])
             eh, em = int(et_str[:2]), int(et_str[3:5])
             doc = dict(doc)
-            doc["start_at"] = datetime.combine(on_date, time(sh, sm), tzinfo=timezone.utc)
-            doc["end_at"] = datetime.combine(on_date, time(eh, em), tzinfo=timezone.utc)
+            doc["start_at"] = datetime.combine(on_date, time(sh, sm), tzinfo=UTC)
+            doc["end_at"] = datetime.combine(on_date, time(eh, em), tzinfo=UTC)
             # Normalise to v2 field names so _build_row works uniformly
             if "session_id" not in doc:
                 doc["session_id"] = str(doc["_id"])
@@ -442,7 +448,7 @@ def compose_admin(
                     "action": str(doc.get("action") or doc.get("event") or "unknown"),
                     "entity_type": doc.get("entity_type") or doc.get("resource_type"),
                     "entity_id": doc.get("entity_id") or doc.get("resource_id"),
-                    "created_at": doc.get("created_at") or datetime.now(timezone.utc),
+                    "created_at": doc.get("created_at") or datetime.now(UTC),
                 }
             )
         return rows
@@ -600,10 +606,10 @@ def compose_admin(
 
 def _start_date_to_datetime(value: str | None) -> datetime:
     if not value:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
     local = datetime.combine(
         datetime.fromisoformat(value).date(),
         time.min,
         tzinfo=ZoneInfo("America/Chicago"),
     )
-    return local.astimezone(timezone.utc)
+    return local.astimezone(UTC)

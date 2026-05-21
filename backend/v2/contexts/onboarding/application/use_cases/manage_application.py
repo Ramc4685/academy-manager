@@ -7,11 +7,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel
-from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.onboarding.application.ports import (
     ApplicationRepository,
@@ -28,7 +27,7 @@ from backend.v2.contexts.onboarding.domain.models import (
     ParentProfile,
     WaiverAcceptance,
 )
-
+from backend.v2.shared.ids import new_ulid
 
 _EDITABLE = {"DRAFT"}
 APPLICATION_TTL_DAYS = 7
@@ -46,7 +45,7 @@ class StartApplication:
         *,
         apps: ApplicationRepository,
         academy_id: str,
-        clock=lambda: datetime.now(timezone.utc),
+        clock=lambda: datetime.now(UTC),
     ) -> None:
         self._apps = apps
         self._academy_id = academy_id
@@ -93,7 +92,7 @@ class PatchApplication:
         *,
         apps: ApplicationRepository,
         waivers: WaiverRepository,
-        clock=lambda: datetime.now(timezone.utc),
+        clock=lambda: datetime.now(UTC),
     ) -> None:
         self._apps = apps
         self._waivers = waivers
@@ -181,7 +180,7 @@ class TransitionApplication:
     target returns the existing app unchanged.
     """
 
-    def __init__(self, apps: ApplicationRepository, clock=lambda: datetime.now(timezone.utc)) -> None:
+    def __init__(self, apps: ApplicationRepository, clock=lambda: datetime.now(UTC)) -> None:
         self._apps = apps
         self._now = clock
 

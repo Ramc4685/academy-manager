@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from backend.v2.contexts.billing.domain.credits import EarlyWithdrawalCreditPolicy
 
@@ -11,7 +11,7 @@ def test_withdrawal_credit_uses_net_paid_and_original_class_count() -> None:
         refunded_tuition_cents=2000,
         unused_eligible_classes=3,
         paid_period_eligible_classes=8,
-        calculated_at=datetime(2026, 5, 20, tzinfo=timezone.utc),
+        calculated_at=datetime(2026, 5, 20, tzinfo=UTC),
         calculated_by="admin-1",
     )
 
@@ -26,7 +26,7 @@ def test_withdrawal_credit_zero_guard_when_paid_period_has_no_classes() -> None:
         refunded_tuition_cents=0,
         unused_eligible_classes=3,
         paid_period_eligible_classes=0,
-        calculated_at=datetime(2026, 5, 20, tzinfo=timezone.utc),
+        calculated_at=datetime(2026, 5, 20, tzinfo=UTC),
         calculated_by="admin-1",
     )
 

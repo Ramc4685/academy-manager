@@ -20,7 +20,7 @@ Coverage:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -121,7 +121,7 @@ def _build(repo, outbox=None, dedup=None):
 
 
 def _seed_pending(repo: FakePaymentRepo, *, payment_id: str, checkout_id: str | None = None, pi: str | None = None, status: str = "pending"):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     p = Payment(
         payment_id=payment_id,
         academy_id="test-academy",

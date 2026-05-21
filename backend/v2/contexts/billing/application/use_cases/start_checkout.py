@@ -6,10 +6,9 @@ Checkout Session. Returns the redirect URL the client navigates to.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pydantic import BaseModel
-from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.billing.application.ports import (
     PaymentRepository,
@@ -17,6 +16,7 @@ from backend.v2.contexts.billing.application.ports import (
 )
 from backend.v2.contexts.billing.domain.errors import CheckoutCreationFailed
 from backend.v2.contexts.billing.domain.models import Payment
+from backend.v2.shared.ids import new_ulid
 
 
 class StartCheckoutCommand(BaseModel):
@@ -45,7 +45,7 @@ class StartCheckout:
         payment_repo: PaymentRepository,
         stripe: StripeGateway,
         academy_id: str,
-        clock=lambda: datetime.now(timezone.utc),
+        clock=lambda: datetime.now(UTC),
     ) -> None:
         self._payments = payment_repo
         self._stripe = stripe

@@ -1,23 +1,25 @@
-import pytest
 from unittest.mock import AsyncMock
-from backend.v2.contexts.identity.application.get_academy_use_case import (
-    GetAcademyUseCase,
-)
-from backend.v2.contexts.identity.application.update_academy_use_case import (
-    UpdateAcademyUseCase,
-)
+
+import pytest
 from backend.v2.contexts.identity.application.get_academy_fees_use_case import (
     GetAcademyFeesUseCase,
-)
-from backend.v2.contexts.identity.application.update_academy_fees_use_case import (
-    UpdateAcademyFeesUseCase,
 )
 from backend.v2.contexts.identity.application.get_academy_notifications_use_case import (
     GetAcademyNotificationsUseCase,
 )
+from backend.v2.contexts.identity.application.get_academy_use_case import (
+    GetAcademyUseCase,
+)
+from backend.v2.contexts.identity.application.update_academy_fees_use_case import (
+    UpdateAcademyFeesUseCase,
+)
 from backend.v2.contexts.identity.application.update_academy_notifications_use_case import (
     UpdateAcademyNotificationsUseCase,
 )
+from backend.v2.contexts.identity.application.update_academy_use_case import (
+    UpdateAcademyUseCase,
+)
+
 
 @pytest.mark.asyncio
 async def test_get_academy_returns_view_when_found():
