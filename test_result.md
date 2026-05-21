@@ -429,18 +429,38 @@ frontend:
           git diff --check → clean.
           Pending (Wave 2): membership repo (Agent A), resolver wired into TenancyMiddleware
           (Agent B), bootstrap use case (Agent C).
+  - task: "SaaS v2 Wave 3 Agent B — enrollment lifecycle events"
+    implemented: true
+    working: true
+    file: "backend/v2/contexts/enrollment/infrastructure/mongo_enrollment_event_repo.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Added tenant-scoped enrollment_events lifecycle history. Existing v2 enrollment
+          transitions now record created, moved, paused, resumed, cancelled, waitlisted,
+          promoted, and withdrawn events where those workflows already exist. Added
+          enrollment event domain model, repository protocol, Mongo repository, indexes,
+          composition wiring, focused application/contract tests, and raw-Mongo guard
+          coverage for enrollment_events. Verification: focused Wave 3 suite passed
+          (39 tests) and structural layering passed.
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 17
+  test_sequence: 18
   run_ui: true
 test_plan:
   current_focus:
-    - "SaaS v2 Wave 2 Agent C — tenant bootstrap and guardrails"
+    - "SaaS v2 Wave 3 Agent B — enrollment lifecycle events"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "Agent B Wave 3 enrollment-events implementation: added EnrollmentLifecycleEvent, MongoEnrollmentEventRepository, enrollment_events indexes, and hooks for admin/checkout/waitlist/withdrawal lifecycle transitions without session-occurrence attendance or billing-ledger work. TDD red checks failed on missing event model/repo and missing withdrawal sink before implementation. Verification: focused pytest suite passed 39 tests; git diff --check pending final run."
   - agent: "main"
     message: "Agent C Wave 2 bootstrap implementation: added protocol-driven BootstrapAcademy use case and /api/v2/platform/academies/bootstrap route. The route requires platform_admin claims and reads app.state.bootstrap_academy; concrete Mongo wiring remains expected after Agent A membership repository integration. Verification run with the existing main repo backend venv because this worktree has no backend/.venv: application bootstrap, platform bootstrap, tenant isolation, raw Mongo guard, SaaS routing tests, and git diff --check all passed."
   - agent: "main"

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Protocol
 
+from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
 from backend.v2.contexts.enrollment.domain.models import (
     Enrollment,
     RosterEntry,
@@ -85,3 +86,11 @@ class WaitlistRepository(Protocol):
     async def next_waiting(self, session_id: str) -> WaitlistEntry | None: ...
 
     async def update_status(self, waitlist_id: str, status: str) -> None: ...
+
+
+class EnrollmentEventRepository(Protocol):
+    async def record(self, event: EnrollmentLifecycleEvent) -> None: ...
+
+    async def list_for_enrollment(
+        self, enrollment_id: str
+    ) -> list[EnrollmentLifecycleEvent]: ...
