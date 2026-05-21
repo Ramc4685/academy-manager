@@ -532,3 +532,32 @@ agent_communication:
     message: "Post-origin/main merge verification for Rally admin product-depth branch: resolved mongo_payment_repo.py conflict by keeping current proration/credit invoice-key behavior and switching new ID generation to ulid.new(); took the newer origin/main test_result.md log and appended Rally completion evidence. Verification after conflict resolution: backend uv run pytest v2/tests -q passed with 211 passed and 7 warnings; frontend pnpm typecheck passed; frontend pnpm build passed with /admin First Load 153 kB, /admin/students 155 kB, /admin/waitlist 152 kB, /admin/waivers 155 kB, /admin/settings 159 kB; frontend pnpm size passed; frontend pnpm lhci exited 0 with only configured PWA warnings; PLAYWRIGHT_PORT=3813 pnpm exec playwright test --workers=1 passed with 62 passed and 14 existing skips. Full legacy network pytest remains unsuitable as a merge gate because it requires a specifically configured live legacy-password-auth server; the available server returns 410 for /api/auth/login by design."
   - agent: "main"
     message: "User-requested local functionality smoke on 2026-05-21: fixed backend/scripts/seed_local.py to use backend.v2.shared.ids.new_ulid with repo-root import path so local seeding works with python-ulid 3.1.0; ran scripts/local_test_stack.sh seed successfully against academy_manager_local and Firebase Auth emulator. Detached local services are running on MongoDB 27017, Firebase Auth 9099/UI 4000, backend 8001, frontend 3001. scripts/local_test_stack.sh smoke passed. Clean Playwright browser sweep logged in through the real Firebase emulator UI as admin ramchand4685@gmail.com/Admin@12345, coach gowtham@blno.academy/Coach@12345, and parent manojedward.btech@gmail.com/Parent@12345, then loaded admin, coach, and parent route matrices with no non-benign console/page/API failures."
+  - agent: "main"
+    message: |
+      Wave 2 Agent A complete (2026-05-21, branch feat/saas-wave2-membership-repo, commit 98d674b).
+
+      Files changed:
+      - backend/v2/contexts/identity/infrastructure/mongo_membership_repo.py (NEW)
+        MongoMembershipRepository: get_membership(academy_id, user_id),
+        list_memberships_for_user, upsert_membership, list_active_platform_roles,
+        upsert_platform_role. Explicit academy_id — NOT TenantScopedRepository.
+      - backend/v2/migrations/0080_identity_membership_indexes.py (NEW)
+        ADR-0007 indexes: users firebase_uid+normalized_email sparse unique;
+        academy_memberships academy+user unique, user+status, academy+roles+status;
+        platform_roles user+role unique.
+      - backend/v2/tests/contract/test_identity_membership_repo.py (NEW)
+        17 contract tests: lookup, cross-tenant isolation, inactive distinguishability,
+        list scoping, active-only platform roles, upsert idempotency, migration index smoke.
+      - backend/v2/contexts/identity/infrastructure/mongo_user_repo.py (MOD)
+        _to_domain maps firebase_uid + normalized_email; added get_by_firebase_uid().
+      - backend/v2/contexts/identity/application/ports.py (MOD)
+        MembershipRepository Protocol added; UserRepository gains get_by_firebase_uid.
+
+      Tests: contract membership 17/17; merge-gate suite 53/53; full v2 suite 286/286.
+      git diff --check: clean.
+
+      Notes for Agent B (feat/saas-wave2-tenant-middleware):
+      - Wire MongoMembershipRepository into load_auth_claims + TenancyMiddleware via
+        MembershipRepository protocol (ports.py).
+      - get_membership(academy_id, user_id) returns any status — check .is_active().
+      - MongoMembershipRepository(db) — no extra constructor args.
