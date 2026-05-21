@@ -2,16 +2,34 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Protocol
+
+from pydantic import BaseModel
 
 from backend.v2.contexts.coaching.domain.models import Attendance
 
 
 class AttendanceRepository(Protocol):
     async def save(self, attendance: Attendance) -> None: ...
-    async def find_existing(self, session_id: str, student_id: str) -> Attendance | None: ...
+    async def find_existing(self, occurrence_id: str, student_id: str) -> Attendance | None: ...
     async def find_by_attendance_id(self, attendance_id: str) -> Attendance | None: ...
+
+
+class OccurrenceDetails(BaseModel):
+    model_config = {"frozen": True}
+
+    occurrence_id: str
+    session_id: str
+    starts_at: datetime
+    status: str
+    scheduled_coach_id: str
+    actual_coach_id: str | None = None
+    substitute_coach_id: str | None = None
+
+
+class OccurrenceLookup(Protocol):
+    async def get(self, occurrence_id: str) -> OccurrenceDetails | None: ...
 
 
 class SessionLookup(Protocol):

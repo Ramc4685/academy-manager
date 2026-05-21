@@ -9,8 +9,14 @@ about both.
 from __future__ import annotations
 
 from datetime import date
+from typing import Any
 
-from backend.v2.contexts.coaching.application.ports import EnrollmentLookup, SessionLookup
+from backend.v2.contexts.coaching.application.ports import (
+    EnrollmentLookup,
+    OccurrenceDetails,
+    OccurrenceLookup,
+    SessionLookup,
+)
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentQuery,
     SessionQuery,
@@ -44,3 +50,24 @@ class EnrollmentLookupAdapter(EnrollmentLookup):
 
     async def is_active(self, session_id: str, student_id: str) -> bool:
         return await self._enrollments.is_active(session_id, student_id)
+
+
+class EnrollmentOccurrenceLookup(OccurrenceLookup):
+    """Maps Enrollment-owned occurrences into Coaching's occurrence port."""
+
+    def __init__(self, occurrences: Any) -> None:
+        self._occurrences = occurrences
+
+    async def get(self, occurrence_id: str) -> OccurrenceDetails | None:
+        occurrence = await self._occurrences.get(occurrence_id)
+        if occurrence is None:
+            return None
+        return OccurrenceDetails(
+            occurrence_id=occurrence.occurrence_id,
+            session_id=occurrence.session_id,
+            starts_at=occurrence.start_at,
+            status=occurrence.status,
+            scheduled_coach_id=occurrence.scheduled_coach_id,
+            actual_coach_id=occurrence.actual_coach_id,
+            substitute_coach_id=occurrence.substitute_coach_id,
+        )

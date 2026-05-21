@@ -234,6 +234,17 @@ backend:
       - working: true
         agent: "main"
         comment: "Agent C Wave 2 implemented protocol-driven tenant bootstrap plus platform route. Bootstrap creates academy, global owner user, admin owner membership, academy settings, billing policy, waiver template, roles, and feature flags without legacy writes or default_academy_id usage. Focused requested tests passed: application bootstrap 5, platform bootstrap 5, tenant isolation 5, raw Mongo guard 3, SaaS routing 5. git diff --check passed."
+  - task: "SaaS Wave 3 session occurrences and occurrence attendance"
+    implemented: true
+    working: true
+    file: "backend/v2/contexts/enrollment/infrastructure/mongo_occurrence_repo.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Agent A Wave 3 added durable session_occurrences domain/repository/use case, occurrence-keyed attendance persistence and BFF DTOs, coach today occurrence IDs, and migration 0081 for session_occurrences plus attendance occurrence uniqueness. Focused occurrence/attendance/coach-today interface rerun passed 31/31; broader occurrence/migration/guard suite passed 34/34 before cleanup; full backend v2 suite passed 320/320 under Python 3.12 .venv312."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -596,3 +607,10 @@ agent_communication:
       Files changed: backend/v2/contexts/identity/application/ports.py, backend/v2/contexts/identity/application/use_cases/load_auth_claims.py, backend/v2/contexts/identity/domain/errors.py, backend/v2/shared/auth/middleware.py, backend/v2/main.py, backend/v2/tests/application/test_load_auth_claims.py, backend/v2/tests/interface/test_tenant_resolution.py.
 
       Coordination notes for Agent A / Agent C: the MembershipRepository / PlatformRoleRepository protocols defined here are the contract Agent A's Mongo repos must satisfy — MembershipRepository.get_for_user_in_academy(user_id, academy_id) -> AcademyMembership | None and PlatformRoleRepository.list_active_for_user(user_id) -> list[PlatformRole]. When Agent A merges, replace _LegacyUserMembershipAdapter and _NullPlatformRoleRepository in backend/v2/main.py with the Mongo implementations. _AcademyLookupAdapter currently queries `academies.slug` / `academies.custom_domain` — Agent C's bootstrap should populate those fields for any new tenant. Skipped checks: no live browser smoke this turn (middleware contract is exercised by interface tests); SaaS-mode end-to-end against a live Mongo with real subdomains was not run, since the Mongo membership infrastructure is not in place yet.
+  - agent: "main"
+    message: |
+      SaaS v2 Wave 3 — Agent A (session_occurrences + occurrence attendance) on branch feat/saas-wave3-session-occurrences.
+
+      Implemented durable enrollment-owned session occurrences with `SessionOccurrence`, `GenerateSessionOccurrences`, `MongoSessionOccurrenceRepository`, and migration 0081 indexes. Coaching attendance now requires `occurrence_id`, persists it with the attendance row, emits it in `Coaching.AttendanceMarked`, and uses `(academy_id, occurrence_id, student_id)` uniqueness so recurring weekly classes can record attendance for the same student each week. The coach today and attendance BFF DTOs plus interface fakes were updated to pass occurrence IDs.
+
+      Verification: focused occurrence/attendance/coach-today interface rerun passed 31/31; broader occurrence/migration/guard suite passed 34/34 before cleanup; full backend v2 suite passed 320/320 under Python 3.12 `.venv312`; focused ruff import/unused checks passed; `git diff --check` passed.
