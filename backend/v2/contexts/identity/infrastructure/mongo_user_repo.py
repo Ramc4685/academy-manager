@@ -44,9 +44,14 @@ class MongoUserRepository:
         status = doc.get("status")
         is_active = bool(doc.get("is_active", status != "inactive" and status != "disabled"))
 
+        raw_fuid = doc.get("firebase_uid") or doc.get("auth_uid")
+        raw_nemail = doc.get("normalized_email")
+
         return User(
             user_id=str(doc.get("user_id") or doc.get("auth_uid") or doc["_id"]),
+            firebase_uid=str(raw_fuid) if raw_fuid else None,
             email=str(doc["email"]),
+            normalized_email=str(raw_nemail) if raw_nemail else None,
             display_name=str(doc.get("display_name") or doc.get("name") or doc["email"]),
             roles=normalized_roles,
             is_active=is_active,
@@ -56,6 +61,12 @@ class MongoUserRepository:
     async def get_by_email(self, email: str) -> User | None:
         doc = await self.collection.find_one(
             {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}
+        )
+        return self._to_domain(doc) if doc else None
+
+    async def get_by_firebase_uid(self, firebase_uid: str) -> User | None:
+        doc = await self.collection.find_one(
+            {"$or": [{"firebase_uid": firebase_uid}, {"auth_uid": firebase_uid}]}
         )
         return self._to_domain(doc) if doc else None
 

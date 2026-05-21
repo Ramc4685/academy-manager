@@ -4,18 +4,19 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from backend.v2.contexts.identity.domain.models import User
+from backend.v2.contexts.identity.domain.models import (
+    AcademyMembership,
+    PlatformRole,
+    User,
+)
 
 
 class UserRepository(Protocol):
-    """Read/write port for User aggregates.
-
-    The Mongo implementation in `infrastructure/mongo_user_repo.py` extends
-    `TenantScopedRepository` so it automatically filters by `academy_id`.
-    """
+    """Read/write port for User aggregates."""
 
     async def get_by_email(self, email: str) -> User | None: ...
     async def get_by_id(self, user_id: str) -> User | None: ...
+    async def get_by_firebase_uid(self, firebase_uid: str) -> User | None: ...
 
 
 class PublicParentRegistrationRepository(UserRepository, Protocol):
@@ -24,6 +25,33 @@ class PublicParentRegistrationRepository(UserRepository, Protocol):
     async def ensure_parent_user(
         self, *, email: str, display_name: str, firebase_uid: str
     ) -> User: ...
+
+
+class MembershipRepository(Protocol):
+    """Read/write port for academy_memberships and platform_roles.
+
+    Intentionally NOT tenant-scoped: membership lookup happens before
+    tenant context is established during auth bootstrap. Every method
+    takes an explicit `academy_id` so cross-tenant leakage is impossible.
+    """
+
+    async def get_membership(
+        self, academy_id: str, user_id: str
+    ) -> AcademyMembership | None: ...
+
+    async def list_memberships_for_user(
+        self, user_id: str
+    ) -> list[AcademyMembership]: ...
+
+    async def upsert_membership(
+        self, membership: AcademyMembership
+    ) -> AcademyMembership: ...
+
+    async def list_active_platform_roles(self, user_id: str) -> list[PlatformRole]: ...
+
+    async def upsert_platform_role(
+        self, platform_role: PlatformRole
+    ) -> PlatformRole: ...
 
 
 class TokenVerifier(Protocol):
