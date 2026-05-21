@@ -234,6 +234,17 @@ backend:
       - working: true
         agent: "main"
         comment: "Agent C Wave 2 implemented protocol-driven tenant bootstrap plus platform route. Bootstrap creates academy, global owner user, admin owner membership, academy settings, billing policy, waiver template, roles, and feature flags without legacy writes or default_academy_id usage. Focused requested tests passed: application bootstrap 5, platform bootstrap 5, tenant isolation 5, raw Mongo guard 3, SaaS routing 5. git diff --check passed."
+  - task: "SaaS v2 Wave 3 billing ledger and idempotency"
+    implemented: true
+    working: true
+    file: "backend/v2/contexts/billing/infrastructure/mongo_billing_ledger_repo.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Agent C Wave 3 added an additive billing ledger foundation: LedgerInvoice, InvoiceLine, LedgerPayment, PaymentAllocation, MongoBillingLedgerRepository, and billing ledger indexes. Tests cover invoice creation idempotency, payment allocation retry idempotency, partial payment balance math, overpayment-to-credit creation, and cross-tenant invoice read isolation. Focused billing/raw-guard/migration/structural checks passed locally."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
