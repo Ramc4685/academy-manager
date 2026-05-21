@@ -80,3 +80,75 @@ class Waiver(BaseModel):
     text: str
     content_hash: str
     effective_from: datetime
+
+
+# ---------------------------------------------------------------------------
+# Wave 4 — per-student waiver model
+#
+# ADR-0007 / SaaS architecture assessment §8: admins need to be able to answer
+# "what exact waiver did this student sign?" That requires:
+#
+#   * an immutable ``WaiverTemplate`` (one row per published version), and
+#   * a ``WaiverSignature`` row per (template, student), pointing to the
+#     stored PDF/image via ``artifact_id``.
+#
+# The legacy ``Waiver`` aggregate above is kept for backward-compat with the
+# v2 onboarding application use case. New code should target the per-student
+# model.
+# ---------------------------------------------------------------------------
+
+
+WaiverTemplateStatus = Literal["draft", "active", "superseded", "retired"]
+
+
+class WaiverTemplate(BaseModel):
+    """Immutable, published version of a waiver's body + metadata.
+
+    A template is identified by ``waiver_template_id``. Once a template is in
+    state ``active`` and any signature references it, callers MUST NOT mutate
+    its ``content_hash`` or ``body``. To change wording, publish a new
+    template and mark the previous one ``superseded``.
+    """
+
+    model_config = {"frozen": True}
+
+    waiver_template_id: str
+    academy_id: str
+    name: str
+    version: str            # e.g. "2026.1"
+    content_hash: str
+    body: str
+    effective_from: datetime
+    expires_at: datetime | None = None
+    status: WaiverTemplateStatus = "active"
+
+
+class WaiverSignature(BaseModel):
+    """Per-student signature.
+
+    Notes:
+        * ``waiver_template_id`` pins the signature to an immutable template
+          version. Hash drift between the signature and the template surfaces
+          a data-integrity problem.
+        * ``content_hash`` is captured at sign-time to detect template
+          tampering or accidental backfill writes.
+        * ``artifact_id`` is the storage pointer to the rendered signed
+          document (PDF/image). The artifact store is separate from this
+          aggregate.
+    """
+
+    model_config = {"frozen": True}
+
+    waiver_signature_id: str
+    academy_id: str
+    waiver_template_id: str
+    student_id: str
+    parent_user_id: str
+    signed_at: datetime
+    signer_name: str
+    signer_email: EmailStr
+    content_hash: str
+    ip_address: str | None = None
+    user_agent: str | None = None
+    artifact_id: str | None = None
+    expires_at: datetime | None = None
