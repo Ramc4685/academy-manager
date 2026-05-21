@@ -16,6 +16,9 @@ from backend.v2.shared.tenancy.context import TenantContextUnset
 class ProbeTenantRepository(TenantScopedRepository):
     collection_name = "saas_guardrail_docs"
 
+    async def add(self, doc: dict[str, object]):
+        return await self._insert_one(doc)
+
     async def get(self, doc_id: str) -> dict[str, object] | None:
         return await self._find_one({"doc_id": doc_id})
 
@@ -53,6 +56,24 @@ async def test_read_under_academy_a_does_not_see_academy_b_docs(db) -> None:
     with tenant_scope("academy-a"):
         assert await repo.get("visible-to-a") is not None
         assert await repo.get("visible-to-b") is None
+
+
+@pytest.mark.asyncio
+async def test_insert_under_academy_a_is_scoped_to_current_tenant(db) -> None:
+    repo = ProbeTenantRepository(db)
+
+    with tenant_scope("academy-a"):
+        await repo.add({"doc_id": "new-doc", "status": "active"})
+
+    assert await db["saas_guardrail_docs"].find_one(
+        {"academy_id": "academy-a", "doc_id": "new-doc"}
+    )
+    assert (
+        await db["saas_guardrail_docs"].find_one(
+            {"academy_id": "academy-b", "doc_id": "new-doc"}
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio

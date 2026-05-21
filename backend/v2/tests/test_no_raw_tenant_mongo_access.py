@@ -15,12 +15,18 @@ V2_ROOT = Path(__file__).resolve().parents[1]
 
 TENANT_OWNED_COLLECTIONS = {
     "account_credit_ledger",
+    "academies",
+    "academy_domains",
+    "academy_feature_flags",
     "academy_memberships",
+    "academy_roles",
+    "academy_settings",
     "announcements",
     "attendance",
     "audit_logs",
     "billing_calculation_snapshots",
     "billing_invoice_keys",
+    "billing_policies",
     "enrollments",
     "expenses",
     "lesson_plans",
@@ -106,6 +112,20 @@ def test_composition_exceptions_are_explicit_and_documented() -> None:
     for rel_path, rationale in APPROVED_COMPOSITION_EXCEPTIONS.items():
         assert (V2_ROOT / rel_path).exists(), f"Missing approved exception path: {rel_path}"
         assert "Transitional" in rationale
+
+
+def test_raw_mongo_guard_reports_tenant_owned_direct_access(tmp_path) -> None:
+    path = tmp_path / "bad_repo.py"
+    path.write_text(
+        "async def bad(db):\n"
+        "    return await db['students'].find_one({'student_id': 's1'})\n",
+        encoding="utf-8",
+    )
+
+    accesses = _raw_mongo_accesses(path, Path("bad_repo.py"))
+
+    assert len(accesses) == 1
+    assert accesses[0].detail == "raw access to `students` via `find_one`"
 
 
 def _is_approved_path(rel_path: Path) -> bool:
