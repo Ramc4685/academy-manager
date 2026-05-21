@@ -43,6 +43,7 @@ from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.interfaces.me_routes import router as me_router
 from backend.v2.interfaces.parent.router import router as parent_router
+from backend.v2.interfaces.platform.bootstrap_routes import router as platform_bootstrap_router
 from backend.v2.interfaces.registration_routes import router as registration_router
 from backend.v2.migrations import run_pending_migrations
 from backend.v2.shared.auth.middleware import TenancyMiddleware
@@ -128,6 +129,7 @@ def create_app() -> FastAPI:
     # Persona route packages.
     app.include_router(me_router, prefix="/api/v2")
     app.include_router(registration_router, prefix="/api/v2")
+    app.include_router(platform_bootstrap_router, prefix="/api/v2")
     app.include_router(coach_router, prefix="/api/v2")
     app.include_router(parent_router, prefix="/api/v2")
     app.include_router(admin_router, prefix="/api/v2")

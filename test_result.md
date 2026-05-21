@@ -223,6 +223,17 @@ backend:
       - working: true
         agent: "main"
         comment: "Added backend.v2.shared.ids.new_ulid() around python-ulid's stable ULID() API and replaced direct ulid.new imports. Local CI-equivalent v2 backend command passed with 212 tests and 74.40% shared coverage; import-linter contracts passed."
+  - task: "SaaS v2 tenant bootstrap and expanded guardrails"
+    implemented: true
+    working: true
+    file: "backend/v2/contexts/identity/application/use_cases/bootstrap_academy.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Agent C Wave 2 implemented protocol-driven tenant bootstrap plus platform route. Bootstrap creates academy, global owner user, admin owner membership, academy settings, billing policy, waiver template, roles, and feature flags without legacy writes or default_academy_id usage. Focused requested tests passed: application bootstrap 5, platform bootstrap 5, tenant isolation 5, raw Mongo guard 3, SaaS routing 5. git diff --check passed."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -410,15 +421,17 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 16
+  test_sequence: 17
   run_ui: true
 test_plan:
   current_focus:
-    - "SaaS v2 Phase 1 Wave 2 — membership repo, middleware wiring, bootstrap"
+    - "SaaS v2 Wave 2 Agent C — tenant bootstrap and guardrails"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "Agent C Wave 2 bootstrap implementation: added protocol-driven BootstrapAcademy use case and /api/v2/platform/academies/bootstrap route. The route requires platform_admin claims and reads app.state.bootstrap_academy; concrete Mongo wiring remains expected after Agent A membership repository integration. Verification run with the existing main repo backend venv because this worktree has no backend/.venv: application bootstrap, platform bootstrap, tenant isolation, raw Mongo guard, SaaS routing tests, and git diff --check all passed."
   - agent: "main"
     message: "SaaS v2 Phase 0/1 merge-gate verified (2026-05-21): parallel A/B/C agents complete. Agent A landed AuthClaims(membership_id, platform_roles), AcademyMembership, PlatformRole, updated identity domain. Agent B landed TenantResolver with AcademyLookupPort protocol, TenantResolutionResult, 15 unit tests, 7 interface tests. Agent C landed TenantScopedRepository isolation contract, raw Mongo static guard, SaaS legacy route guard. Full merge-gate pytest (test_identity_domain + test_load_auth_claims + test_tenancy_resolver + test_tenant_resolution + test_saas_tenant_isolation) => 53 passed. git diff --check => clean. Wave 2 work (membership repo, middleware wiring, bootstrap) is next."
   - agent: "main"
