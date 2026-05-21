@@ -223,6 +223,23 @@ backend:
       - working: true
         agent: "main"
         comment: "Added backend.v2.shared.ids.new_ulid() around python-ulid's stable ULID() API and replaced direct ulid.new imports. Local CI-equivalent v2 backend command passed with 212 tests and 74.40% shared coverage; import-linter contracts passed."
+  - task: "SaaS v2 tenant isolation and raw Mongo guardrail harness"
+    implemented: true
+    working: true
+    file: "backend/v2/tests/contract/test_saas_tenant_isolation.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Agent C added a TenantScopedRepository SaaS isolation harness for missing tenant context, read isolation, update isolation, and delete isolation. Added a static raw Mongo guard test that blocks direct access to tenant-owned collections outside infrastructure/migrations/tests and explicitly documented transitional composition exceptions for backend/v2/composition/admin.py, backend/v2/composition/coach.py, and backend/v2/composition/parent.py. Focused verification pending."
+      - working: true
+        agent: "main"
+        comment: "Focused verification passed: pytest v2/tests/contract/test_saas_tenant_isolation.py -q => 4 passed; pytest v2/tests/test_no_raw_tenant_mongo_access.py -q => 2 passed; git diff --check passed. Raw Mongo exceptions intentionally documented for backend/v2/composition/admin.py, backend/v2/composition/coach.py, and backend/v2/composition/parent.py until Agent A/B replace default-academy composition reads with request-scoped tenant identity/resolution."
+      - working: true
+        agent: "main"
+        comment: "After Agent A identity-domain completion, Agent C integration checks still pass: pytest v2/tests/contract/test_saas_tenant_isolation.py -q => 4 passed; pytest v2/tests/test_no_raw_tenant_mongo_access.py -q => 2 passed; pytest v2/tests/unit/test_identity_domain.py -q => 22 passed, 1 warning; git diff --check passed."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -382,17 +399,51 @@ frontend:
       - working: true
         agent: "main"
         comment: "Added admin roster withdrawal dialog with credit preview/approval and parent payments available-credit display. Verified with frontend typecheck and production build; browser smoke not run."
+  - task: "SaaS v2 Phase 0/1 foundation — ADR-0007, identity models, tenant resolver, guardrails"
+    implemented: true
+    working: true
+    file: "backend/v2/shared/tenancy/resolver.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Parallel Agent A/B/C wave complete.
+          Agent A: Updated AuthClaims with membership_id + platform_roles; added AcademyMembership
+          and PlatformRole domain models; updated User to global identity (legacy fields kept optional).
+          Agent B: Created TenantResolver in shared/tenancy/resolver.py with AcademyLookupPort
+          protocol, TenantResolutionResult, TenantResolutionError. Resolution order: subdomain →
+          custom domain → approved internal header. 15 unit tests + 7 interface tests all pass.
+          Agent C: Added TenantScopedRepository isolation contract tests (4 tests),
+          raw Mongo static guard (2 tests), and SaaS legacy route enforcement tests (5 tests via
+          SaasLegacyRouteGuard middleware).
+          Merge-gate suite (53 tests): test_identity_domain + test_load_auth_claims +
+          test_tenancy_resolver + test_tenant_resolution + test_saas_tenant_isolation → 53 passed.
+          git diff --check → clean.
+          Pending (Wave 2): membership repo (Agent A), resolver wired into TenancyMiddleware
+          (Agent B), bootstrap use case (Agent C).
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 16
+  test_sequence: 18
   run_ui: true
 test_plan:
-  current_focus: []
+  current_focus:
+    - "SaaS v2 Phase 1 Wave 2 — membership repo, middleware wiring, bootstrap"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "SaaS v2 Phase 0/1 merge-gate verified (2026-05-21): parallel A/B/C agents complete. Agent A landed AuthClaims(membership_id, platform_roles), AcademyMembership, PlatformRole, updated identity domain. Agent B landed TenantResolver with AcademyLookupPort protocol, TenantResolutionResult, 15 unit tests, 7 interface tests. Agent C landed TenantScopedRepository isolation contract, raw Mongo static guard, SaaS legacy route guard. Full merge-gate pytest (test_identity_domain + test_load_auth_claims + test_tenancy_resolver + test_tenant_resolution + test_saas_tenant_isolation) => 53 passed. git diff --check => clean. Wave 2 work (membership repo, middleware wiring, bootstrap) is next."
+  - agent: "main"
+    message: "Agent C SaaS v2 guardrail harness added before verification: backend/v2/tests/contract/test_saas_tenant_isolation.py covers TenantScopedRepository missing-scope, read, update, and delete isolation. backend/v2/tests/test_no_raw_tenant_mongo_access.py statically rejects raw Mongo access to tenant-owned collections except approved infrastructure/migration/test paths and explicit transitional composition exceptions. Focused pytest commands and git diff --check are next."
+  - agent: "main"
+    message: "Agent C SaaS v2 guardrail harness verified: tenant isolation contract test passed with 4 tests; raw Mongo static guard passed with 2 tests; git diff --check passed. Approved raw Mongo composition exceptions found and documented: backend/v2/composition/admin.py, backend/v2/composition/coach.py, backend/v2/composition/parent.py. Expected remaining Phase 1 dependency: identity/membership and tenant-resolution behavior from Agent A/B is not implemented by this harness, so invalid membership and role-per-academy route behavior remain pending outside Agent C ownership."
+  - agent: "main"
+    message: "Agent A completion integration check: reran Agent C guardrails after identity-domain/AuthClaims updates. Tenant isolation contract passed (4), raw Mongo static guard passed (2), identity domain unit suite passed (22, one Starlette multipart deprecation warning), and git diff --check passed. Raw Mongo approved exceptions remain backend/v2/composition/admin.py, backend/v2/composition/coach.py, and backend/v2/composition/parent.py."
   - agent: "main"
     message: "Verification: backend/.venv/bin/python -m pytest backend/v2/tests -q => 117 passed; pnpm build => passed; pnpm typecheck => passed; pnpm e2e => 6 passed, 14 skipped; v2 backend booted against academy_manager_local and /api/v2/healthz returned 200."
   - agent: "main"
@@ -496,3 +547,5 @@ agent_communication:
     message: "Rally admin product-depth branch merged current origin/main and resolved conflicts with the monthly proration/withdrawal-credit work. Completed slices: Rich Students, Waivers, Dashboard Attention, Settings Branding/Data policy, Money review with no fake additions, and Global Waitlist. Enrollment approvals remain intentionally unbuilt because the roadmap gated them on product confirmation and the only confirmed Slice 6 need was global waitlist. Final blocker fixes included Python 3.14 compatibility for python-ulid 3.x using ulid.new(), landing-page accessibility fixes, and App Router-aware size-limit route chunk config. Verification before merge-back: backend uv run pytest v2/tests -q passed with 189 passed and 7 warnings; frontend pnpm typecheck passed; frontend pnpm build passed; frontend pnpm size passed; frontend pnpm lhci exited 0 with only configured PWA warnings; PLAYWRIGHT_PORT=3812 pnpm exec playwright test --workers=1 passed with 62 passed and 14 existing skips; git diff --check passed. Attempted full legacy+v2 backend pytest after installing missing local legacy test deps, but REACT_APP_BACKEND_URL=http://127.0.0.1:8001 uv run pytest -q still failed because those legacy network tests target a live server with legacy password auth disabled and expect /api/auth/login to return 200 instead of the current 410 Firebase-only response; this is outside the Rally/v2 merge gate."
   - agent: "main"
     message: "Post-origin/main merge verification for Rally admin product-depth branch: resolved mongo_payment_repo.py conflict by keeping current proration/credit invoice-key behavior and switching new ID generation to ulid.new(); took the newer origin/main test_result.md log and appended Rally completion evidence. Verification after conflict resolution: backend uv run pytest v2/tests -q passed with 211 passed and 7 warnings; frontend pnpm typecheck passed; frontend pnpm build passed with /admin First Load 153 kB, /admin/students 155 kB, /admin/waitlist 152 kB, /admin/waivers 155 kB, /admin/settings 159 kB; frontend pnpm size passed; frontend pnpm lhci exited 0 with only configured PWA warnings; PLAYWRIGHT_PORT=3813 pnpm exec playwright test --workers=1 passed with 62 passed and 14 existing skips. Full legacy network pytest remains unsuitable as a merge gate because it requires a specifically configured live legacy-password-auth server; the available server returns 410 for /api/auth/login by design."
+  - agent: "main"
+    message: "User-requested local functionality smoke on 2026-05-21: fixed backend/scripts/seed_local.py to use backend.v2.shared.ids.new_ulid with repo-root import path so local seeding works with python-ulid 3.1.0; ran scripts/local_test_stack.sh seed successfully against academy_manager_local and Firebase Auth emulator. Detached local services are running on MongoDB 27017, Firebase Auth 9099/UI 4000, backend 8001, frontend 3001. scripts/local_test_stack.sh smoke passed. Clean Playwright browser sweep logged in through the real Firebase emulator UI as admin ramchand4685@gmail.com/Admin@12345, coach gowtham@blno.academy/Coach@12345, and parent manojedward.btech@gmail.com/Parent@12345, then loaded admin, coach, and parent route matrices with no non-benign console/page/API failures."

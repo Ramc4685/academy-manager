@@ -45,3 +45,44 @@ def test_v2_env_names_win_over_legacy_names(monkeypatch) -> None:
     assert settings.mongo_db == "v2_db"
     assert settings.stripe_api_key == "sk_test_v2"
     assert settings.stripe_webhook_secret == "whsec_v2"
+
+
+def test_saas_mode_defaults_to_false(monkeypatch) -> None:
+    monkeypatch.delenv("V2_SAAS_MODE", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.saas_mode is False
+
+
+def test_saas_mode_enabled_via_env(monkeypatch) -> None:
+    monkeypatch.setenv("V2_SAAS_MODE", "true")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.saas_mode is True
+
+
+def test_saas_mode_false_non_saas_config(monkeypatch) -> None:
+    monkeypatch.setenv("V2_SAAS_MODE", "false")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.saas_mode is False
+    assert settings.default_academy_id != ""
+
+
+def test_allowed_internal_tenant_header_defaults_to_none(monkeypatch) -> None:
+    monkeypatch.delenv("V2_ALLOWED_INTERNAL_TENANT_HEADER", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.allowed_internal_tenant_header is None
+
+
+def test_allowed_internal_tenant_header_set_via_env(monkeypatch) -> None:
+    monkeypatch.setenv("V2_ALLOWED_INTERNAL_TENANT_HEADER", "X-Internal-Academy-Id")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.allowed_internal_tenant_header == "X-Internal-Academy-Id"

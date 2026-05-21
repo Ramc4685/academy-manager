@@ -61,6 +61,11 @@ async def health():
 
 app.include_router(api_router)
 
+# SaaS mode: block legacy routes before routing executes.
+if os.environ.get("V2_SAAS_MODE", "").lower() in {"1", "true"}:
+    from v2.shared.http.saas_guard import SaasLegacyRouteGuard
+    app.add_middleware(SaasLegacyRouteGuard)
+
 _v2_app = None
 _v2_lifespan_cm: Any | None = None
 
