@@ -73,6 +73,8 @@ class CreditLedgerEntry(BaseModel):
     remaining_amount_cents: int = Field(ge=0)
     currency: str = Field(default="usd", min_length=3, max_length=3)
     reason: str
+    source_type: str | None = None
+    source_id: str | None = None
     calculation_snapshot_id: str | None = None
     approved_by: str | None = None
     approved_at: datetime | None = None

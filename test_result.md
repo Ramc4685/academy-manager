@@ -245,6 +245,17 @@ backend:
       - working: true
         agent: "main"
         comment: "Agent A Wave 3 added durable session_occurrences domain/repository/use case, occurrence-keyed attendance persistence and BFF DTOs, coach today occurrence IDs, and migration 0081 for session_occurrences plus attendance occurrence uniqueness. Focused occurrence/attendance/coach-today interface rerun passed 31/31; broader occurrence/migration/guard suite passed 34/34 before cleanup; full backend v2 suite passed 320/320 under Python 3.12 .venv312."
+  - task: "SaaS v2 Wave 3 billing ledger and idempotency"
+    implemented: true
+    working: true
+    file: "backend/v2/contexts/billing/infrastructure/mongo_billing_ledger_repo.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Agent C Wave 3 added an additive billing ledger foundation: LedgerInvoice, InvoiceLine, LedgerPayment, PaymentAllocation, MongoBillingLedgerRepository, and billing ledger indexes. Tests cover invoice creation idempotency, payment allocation retry idempotency, partial payment balance math, overpayment-to-credit creation, and cross-tenant invoice read isolation. Focused billing/raw-guard/migration/structural checks passed locally."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
