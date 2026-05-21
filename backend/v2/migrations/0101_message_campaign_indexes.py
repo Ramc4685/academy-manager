@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-version = "0090_message_campaign_indexes"
+version = "0101_message_campaign_indexes"
 
 
 async def up(db: AsyncIOMotorDatabase) -> None:

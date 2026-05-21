@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-version = "0090_waiver_template_signature_indexes"
+version = "0100_waiver_template_signature_indexes"
 
 
 async def up(db: AsyncIOMotorDatabase) -> None:
