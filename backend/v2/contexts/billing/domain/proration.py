@@ -30,7 +30,7 @@ class BillingPeriod(BaseModel):
 
     @classmethod
     def from_label(cls, label: str, *, timezone_name: str) -> BillingPeriod:
-        year, month = [int(part) for part in label.split("-")]
+        year, month = (int(part) for part in label.split("-"))
         tz = ZoneInfo(timezone_name)
         start = datetime(year, month, 1, 0, 0, tzinfo=tz)
         if month == 12:

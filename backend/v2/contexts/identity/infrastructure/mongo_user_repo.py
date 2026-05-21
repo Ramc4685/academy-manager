@@ -34,7 +34,7 @@ class MongoUserRepository:
         roles = doc.get("roles")
         if isinstance(roles, str):
             normalized_roles: tuple[Role, ...] = (roles,)  # type: ignore[assignment]
-        elif isinstance(roles, (list, tuple)):
+        elif isinstance(roles, list | tuple):
             normalized_roles = tuple(roles)  # type: ignore[assignment]
         elif isinstance(legacy_role, str):
             normalized_roles = (legacy_role,)  # type: ignore[assignment]
