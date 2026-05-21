@@ -223,6 +223,17 @@ backend:
       - working: true
         agent: "main"
         comment: "Added backend.v2.shared.ids.new_ulid() around python-ulid's stable ULID() API and replaced direct ulid.new imports. Local CI-equivalent v2 backend command passed with 212 tests and 74.40% shared coverage; import-linter contracts passed."
+  - task: "SaaS v2 tenant bootstrap and expanded guardrails"
+    implemented: true
+    working: true
+    file: "backend/v2/contexts/identity/application/use_cases/bootstrap_academy.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Agent C Wave 2 implemented protocol-driven tenant bootstrap plus platform route. Bootstrap creates academy, global owner user, admin owner membership, academy settings, billing policy, waiver template, roles, and feature flags without legacy writes or default_academy_id usage. Focused requested tests passed: application bootstrap 5, platform bootstrap 5, tenant isolation 5, raw Mongo guard 3, SaaS routing 5. git diff --check passed."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -410,15 +421,17 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 16
+  test_sequence: 17
   run_ui: true
 test_plan:
   current_focus:
-    - "SaaS v2 Phase 1 Wave 2 — membership repo, middleware wiring, bootstrap"
+    - "SaaS v2 Wave 2 Agent C — tenant bootstrap and guardrails"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "Agent C Wave 2 bootstrap implementation: added protocol-driven BootstrapAcademy use case and /api/v2/platform/academies/bootstrap route. The route requires platform_admin claims and reads app.state.bootstrap_academy; concrete Mongo wiring remains expected after Agent A membership repository integration. Verification run with the existing main repo backend venv because this worktree has no backend/.venv: application bootstrap, platform bootstrap, tenant isolation, raw Mongo guard, SaaS routing tests, and git diff --check all passed."
   - agent: "main"
     message: "SaaS v2 Phase 0/1 merge-gate verified (2026-05-21): parallel A/B/C agents complete. Agent A landed AuthClaims(membership_id, platform_roles), AcademyMembership, PlatformRole, updated identity domain. Agent B landed TenantResolver with AcademyLookupPort protocol, TenantResolutionResult, 15 unit tests, 7 interface tests. Agent C landed TenantScopedRepository isolation contract, raw Mongo static guard, SaaS legacy route guard. Full merge-gate pytest (test_identity_domain + test_load_auth_claims + test_tenancy_resolver + test_tenant_resolution + test_saas_tenant_isolation) => 53 passed. git diff --check => clean. Wave 2 work (membership repo, middleware wiring, bootstrap) is next."
   - agent: "main"
@@ -532,3 +545,54 @@ agent_communication:
     message: "Post-origin/main merge verification for Rally admin product-depth branch: resolved mongo_payment_repo.py conflict by keeping current proration/credit invoice-key behavior and switching new ID generation to ulid.new(); took the newer origin/main test_result.md log and appended Rally completion evidence. Verification after conflict resolution: backend uv run pytest v2/tests -q passed with 211 passed and 7 warnings; frontend pnpm typecheck passed; frontend pnpm build passed with /admin First Load 153 kB, /admin/students 155 kB, /admin/waitlist 152 kB, /admin/waivers 155 kB, /admin/settings 159 kB; frontend pnpm size passed; frontend pnpm lhci exited 0 with only configured PWA warnings; PLAYWRIGHT_PORT=3813 pnpm exec playwright test --workers=1 passed with 62 passed and 14 existing skips. Full legacy network pytest remains unsuitable as a merge gate because it requires a specifically configured live legacy-password-auth server; the available server returns 410 for /api/auth/login by design."
   - agent: "main"
     message: "User-requested local functionality smoke on 2026-05-21: fixed backend/scripts/seed_local.py to use backend.v2.shared.ids.new_ulid with repo-root import path so local seeding works with python-ulid 3.1.0; ran scripts/local_test_stack.sh seed successfully against academy_manager_local and Firebase Auth emulator. Detached local services are running on MongoDB 27017, Firebase Auth 9099/UI 4000, backend 8001, frontend 3001. scripts/local_test_stack.sh smoke passed. Clean Playwright browser sweep logged in through the real Firebase emulator UI as admin ramchand4685@gmail.com/Admin@12345, coach gowtham@blno.academy/Coach@12345, and parent manojedward.btech@gmail.com/Parent@12345, then loaded admin, coach, and parent route matrices with no non-benign console/page/API failures."
+  - agent: "main"
+    message: |
+      Wave 2 Agent A complete (2026-05-21, branch feat/saas-wave2-membership-repo, commit 98d674b).
+
+      Files changed:
+      - backend/v2/contexts/identity/infrastructure/mongo_membership_repo.py (NEW)
+        MongoMembershipRepository: get_membership(academy_id, user_id),
+        list_memberships_for_user, upsert_membership, list_active_platform_roles,
+        upsert_platform_role. Explicit academy_id — NOT TenantScopedRepository.
+      - backend/v2/migrations/0080_identity_membership_indexes.py (NEW)
+        ADR-0007 indexes: users firebase_uid+normalized_email sparse unique;
+        academy_memberships academy+user unique, user+status, academy+roles+status;
+        platform_roles user+role unique.
+      - backend/v2/tests/contract/test_identity_membership_repo.py (NEW)
+        17 contract tests: lookup, cross-tenant isolation, inactive distinguishability,
+        list scoping, active-only platform roles, upsert idempotency, migration index smoke.
+      - backend/v2/contexts/identity/infrastructure/mongo_user_repo.py (MOD)
+        _to_domain maps firebase_uid + normalized_email; added get_by_firebase_uid().
+      - backend/v2/contexts/identity/application/ports.py (MOD)
+        MembershipRepository Protocol added; UserRepository gains get_by_firebase_uid.
+
+      Tests: contract membership 17/17; merge-gate suite 53/53; full v2 suite 286/286.
+      git diff --check: clean.
+
+      Notes for Agent B (feat/saas-wave2-tenant-middleware):
+      - Wire MongoMembershipRepository into load_auth_claims + TenancyMiddleware via
+        MembershipRepository protocol (ports.py).
+      - get_membership(academy_id, user_id) returns any status — check .is_active().
+      - MongoMembershipRepository(db) — no extra constructor args.
+  - agent: "main"
+    message: |
+      SaaS v2 Wave 2 — Agent B (tenant resolver + middleware wiring) on branch feat/saas-wave2-tenant-middleware.
+
+      Implementation per ADR-0007 / Wave 2 plan:
+      * Added MembershipRepository and PlatformRoleRepository application ports in backend/v2/contexts/identity/application/ports.py.
+      * Added Identity.MembershipNotFound (403) domain error in backend/v2/contexts/identity/domain/errors.py.
+      * Refactored LoadAuthClaims to require resolved_academy_id as a keyword arg, validate an active academy_memberships row for the resolved tenant, and load active platform_roles separately from academy roles. Never falls back to user.academy_id or default_academy_id in SaaS paths.
+      * Wired TenancyMiddleware to accept a resolve_tenant async callable. Middleware now resolves tenant from the request BEFORE calling load_auth_claims, threads resolved_academy_id into the use case, attaches AuthClaims (incl. membership_id) to request.state, and sets/resets the tenant ContextVar around the request.
+      * Unauthenticated public routes still pass through (TenancyMiddleware does not 401 — protected routes do via Depends(get_auth_claims)).
+      * backend/v2/main.py composition: builds the TenantResolver from Settings only when saas_mode=True (subdomain → custom domain → approved internal header via _AcademyLookupAdapter over MongoAcademyRepository). In non-SaaS mode the middleware returns settings.default_academy_id, preserving legacy single-tenant behavior. Until Agent A's Mongo membership_repo lands, _LegacyUserMembershipAdapter synthesizes an active membership from the legacy User.academy_id/roles fields; _NullPlatformRoleRepository returns no platform grants. Both adapters are temporary and SaaS deployments must swap them for the real Mongo repos before turning saas_mode=True in production.
+
+      Tests run from backend with .venv/bin/python:
+      * pytest v2/tests/application/test_load_auth_claims.py -q => 12 passed (new SaaS contract: happy path, no-membership rejects, inactive membership rejects, cross-academy membership rejects, platform role separation, revoked platform role excluded, default_academy_id never substituted).
+      * pytest v2/tests/interface/test_tenant_resolution.py -q => 15 passed (8 resolver-direct + 8 new middleware integration: resolver-before-claims ordering, membership_id on request.state.auth_claims, ContextVar set+reset, missing membership 401, unresolved tenant skips loader entirely, public routes still pass, internal-header path).
+      * pytest v2/tests/unit/test_tenancy_resolver.py -q => 15 passed (unchanged baseline).
+      * Full pytest v2/tests -q => 284 passed, 8 warnings; no regressions across coach/parent/admin BFFs or contract tests.
+      * git diff --check clean.
+
+      Files changed: backend/v2/contexts/identity/application/ports.py, backend/v2/contexts/identity/application/use_cases/load_auth_claims.py, backend/v2/contexts/identity/domain/errors.py, backend/v2/shared/auth/middleware.py, backend/v2/main.py, backend/v2/tests/application/test_load_auth_claims.py, backend/v2/tests/interface/test_tenant_resolution.py.
+
+      Coordination notes for Agent A / Agent C: the MembershipRepository / PlatformRoleRepository protocols defined here are the contract Agent A's Mongo repos must satisfy — MembershipRepository.get_for_user_in_academy(user_id, academy_id) -> AcademyMembership | None and PlatformRoleRepository.list_active_for_user(user_id) -> list[PlatformRole]. When Agent A merges, replace _LegacyUserMembershipAdapter and _NullPlatformRoleRepository in backend/v2/main.py with the Mongo implementations. _AcademyLookupAdapter currently queries `academies.slug` / `academies.custom_domain` — Agent C's bootstrap should populate those fields for any new tenant. Skipped checks: no live browser smoke this turn (middleware contract is exercised by interface tests); SaaS-mode end-to-end against a live Mongo with real subdomains was not run, since the Mongo membership infrastructure is not in place yet.
