@@ -57,6 +57,18 @@ Migration direction:
 - Frontend uses the canonical Next.js app under `frontend/`.
 - Do not big-bang rewrite.
 
+SaaS direction:
+
+- SaaS mode is v2-only.
+- Legacy `/api/*` routes are not part of SaaS mode and must not be patched for SaaS readiness.
+- New SaaS workflows must use `backend/v2/` BFF + DDD boundaries.
+- Do not use `default_academy_id` in SaaS request paths.
+- Tenant identity must be membership-based: global `users`, `academy_memberships`, and platform roles.
+- Tenant resolution must be explicit: subdomain, custom domain, or approved internal header; never infer tenant from user alone.
+- Every tenant-owned read/write must use request-scoped tenant context and tenant isolation tests.
+- There is no production SaaS data to migrate; build clean v2 SaaS bootstrap instead of legacy backfill.
+- See `docs/requirements/2026-05-21-saas-data-model-architecture-assessment.md` and `docs/plans/2026-05-21-saas-v2-parallel-execution-plan.md`.
+
 ---
 
 ## Golden Rules

@@ -34,7 +34,25 @@ class Settings(BaseSettings):
         default="default-academy",
         description=(
             "Single-tenant academy ID per ADR-0006. Auth claims will carry this "
-            "value today; multi-tenancy is a config flip later."
+            "value today; multi-tenancy is a config flip later. "
+            "In SaaS mode (saas_mode=True) this value is ignored for tenant resolution."
+        ),
+    )
+
+    saas_mode: bool = Field(
+        default=False,
+        description=(
+            "SaaS multi-tenant mode per ADR-0007. When True, legacy /api/* routes are "
+            "forbidden and default_academy_id is not a valid tenant source."
+        ),
+    )
+
+    allowed_internal_tenant_header: str | None = Field(
+        default=None,
+        description=(
+            "Header name accepted as an internal tenant source. Only honoured when "
+            "saas_mode=True and the value is non-None. Used for internal jobs and "
+            "platform admin tooling only."
         ),
     )
 

@@ -32,14 +32,15 @@ from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+REPO_ROOT = ROOT.parent
+sys.path.insert(0, str(REPO_ROOT))
 
 from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 
 import bcrypt
 from motor.motor_asyncio import AsyncIOMotorClient
-from ulid import new as new_ulid
+from backend.v2.shared.ids import new_ulid
 
 
 # ---------------------------------------------------------------------------

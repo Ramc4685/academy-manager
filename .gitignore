@@ -151,3 +151,5 @@ credentials.json
 *.pem
 *.key
 .credentials
+.playwright-mcp
+rally-admin.png
