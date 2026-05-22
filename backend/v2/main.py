@@ -47,6 +47,8 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import (
     MongoUserRepository,
 )
+from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import BootstrapAcademy
+from backend.v2.contexts.identity.infrastructure.mongo_bootstrap_store import MongoTenantBootstrapStore
 from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.interfaces.me_routes import router as me_router
@@ -141,6 +143,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Admin BFF wiring (Wave 3).
     app.state.admin = compose_admin(db, outbox, idempotency_store, stripe_gw)
+
+    app.state.bootstrap_academy = BootstrapAcademy(
+        store=MongoTenantBootstrapStore(db),
+    )
 
     try:
         yield
