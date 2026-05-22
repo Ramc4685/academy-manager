@@ -57,9 +57,14 @@ export default function AdminExpensesPage() {
           No expenses recorded.
         </p>
       ) : (
-        <Card p={20}>
-          <ExpensesTable expenses={expenses} />
-        </Card>
+        <div className="space-y-3">
+          <Card p={20}>
+            <ExpensesTable expenses={expenses} />
+          </Card>
+          <p className="text-sm text-rally-subtle">
+            Expense edit and delete workflows are not available yet; they remain a Wave 10 operational gap.
+          </p>
+        </div>
       )}
       <AddExpenseDialog
         open={open}

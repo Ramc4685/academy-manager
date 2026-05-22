@@ -59,7 +59,9 @@ export default function AdminCoachPayslipPage() {
                   <Avatar name={row.coach.display_name || row.coach.email || "Coach"} />
                   <div className="truncate">
                     <div className="font-semibold leading-tight truncate">{row.coach.display_name || row.coach.email}</div>
-                    <div className="font-mono text-xs text-neutral-500 truncate">{row.coach.user_id}</div>
+                    <div className="text-xs text-neutral-500 truncate">
+                      {row.coach.email} · {row.sessions} assigned session{row.sessions === 1 ? "" : "s"}
+                    </div>
                   </div>
                 </div>
                 <div className="shrink-0 pl-2">
