@@ -232,6 +232,26 @@ async function stubParentBff(page: Page) {
 }
 
 test.describe("Rally admin shell", () => {
+  test("admin shell uses academy display name without demo branding or internal IDs", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+    await expect(page.getByTestId("tenant-switcher-single")).toContainText("Academy E2E", {
+      timeout: 10_000,
+    });
+    await page.getByTestId("admin-open-drawer").click();
+    const drawer = page.getByTestId("admin-mobile-drawer");
+    await expect(drawer.getByText("Academy E2E")).toBeVisible();
+    await expect(drawer.getByText("admin@example.com")).toBeVisible();
+    await expect(drawer.getByText("Admin", { exact: true })).toBeVisible();
+    await expect(page.getByText("Rally Academy")).toHaveCount(0);
+    await expect(page.getByText("COURT 7")).toHaveCount(0);
+    await expect(page.getByText("academy-e2e")).toHaveCount(0);
+    await expect(page.getByText("user-admin-e2e")).toHaveCount(0);
+    expect(errors, `App console errors on shell branding: ${errors.join("\n")}`).toEqual([]);
+  });
+
   test("mobile drawer opens, contains all nav groups, and closes", async ({ page }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);

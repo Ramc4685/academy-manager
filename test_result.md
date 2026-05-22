@@ -376,6 +376,20 @@ backend:
         agent: "main"
         comment: "Agent B Wave 6 added a new Platform billing slice separate from parent tuition Billing. The model covers platform plans, plan limits, tenant subscriptions, billing/trial/cancellation status, and tenant Stripe customer/subscription IDs. Application tests cover trial creation, Stripe subscription activation, period-end cancellation scheduling, plan-limit checks, and absence of parent/student/enrollment/session tuition fields. Verification: focused platform billing pytest passed 4/4; targeted ruff passed; git diff --check passed."
 frontend:
+  - task: "Wave 9 admin shell branding cleanup"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/layout.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Agent D Wave 9 removed hardcoded Rally Academy and ADMIN · COURT 7 from the admin shell, wired the shell and topbar academy chip to the existing /api/v2/admin/academy display_name via getAdminAcademy(), kept neutral Academy fallback for loading/error, preserved visible admin email and role, and added focused admin-shell e2e assertions that no demo branding, academy_id, or user_id appears in the shell. Verification pending."
+      - working: true
+        agent: "main"
+        comment: "Verification passed: frontend pnpm install restored node_modules for this worktree; pnpm build passed; pnpm typecheck passed when rerun by itself after an initial concurrent .next/types race with build; git diff --check passed; focused Playwright smoke passed on isolated e2e port with admin shell display_name, email, role, no Rally Academy, no COURT 7, and no visible academy_id/user_id. Local stack was running, but exact BLNO manual login was skipped because port 3000 belongs to a Docker listener outside this worktree, the active script-managed frontend is on 3001, the Playwright MCP browser profile was locked, and the Firebase emulator did not contain ramchand4685@gmail.com for password login."
   - task: "frontend local BFF proxy"
     implemented: true
     working: true
@@ -580,15 +594,19 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 21
+  test_sequence: 22
   run_ui: true
 test_plan:
   current_focus:
-    - "SaaS v2 Wave 7 production readiness scaffolding"
+    - "Wave 9 admin shell branding cleanup"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "Wave 9 Agent D admin shell branding cleanup verification complete. Frontend-only changes passed pnpm build, pnpm typecheck, git diff --check, and a focused Playwright admin-shell smoke with stubbed BFF data. The shell now uses /api/v2/admin/academy display_name with Academy fallback, keeps admin email/role visible, and does not display Rally Academy, COURT 7, academy_id, or user_id in normal shell UI. Exact BLNO manual login was not completed because the running local ports are shared/outside this worktree and the Firebase emulator lacked the expected admin login user."
+  - agent: "main"
+    message: "Wave 9 Agent D admin shell branding cleanup is implemented in the frontend only. Retest that the admin shell uses /api/v2/admin/academy display_name with Academy fallback, shows the logged-in admin email and role, and does not show Rally Academy, COURT 7, academy_id, user_id, Firebase UID, Mongo ID, or other internal IDs in the shell. Planned checks: frontend typecheck, frontend build, focused admin-shell e2e/manual browser if local stack is available, and git diff --check."
   - agent: "main"
     message: "Wave 7 production readiness scaffolding added docs/requirements/2026-05-22-saas-production-readiness.md, scripts/smoke/saas_readiness_smoke.sh, and DEPLOYMENT.md SaaS readiness notes. Retest focused backend SaaS routing/tenant/isolation/static-guard tests, run scripts/smoke/saas_readiness_smoke.sh --static-only, run frontend typecheck/build if dependencies are available, and keep Wave 6 blockers visible. Do not deploy and do not use real secrets."
   - agent: "main"

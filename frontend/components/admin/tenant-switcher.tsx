@@ -15,14 +15,21 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
+import { getAdminAcademy } from "@/lib/api/admin";
 import { useTenant } from "@/lib/tenant/tenant-context";
 import type { AcademyMembershipSummary } from "@/lib/api/v2/memberships";
+import { queryKeys } from "@/lib/query/keys";
 
 export function TenantSwitcher() {
-  const { status, memberships, activeMembership, activeAcademyId, switchAcademy } = useTenant();
+  const { status, memberships, activeAcademyId, switchAcademy } = useTenant();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const academyQuery = useQuery({
+    queryKey: queryKeys.admin.academy(),
+    queryFn: getAdminAcademy,
+  });
 
   // Close on outside click + Escape.
   useEffect(() => {
@@ -58,7 +65,7 @@ export function TenantSwitcher() {
         data-testid="tenant-switcher-loading"
         aria-live="polite"
       >
-        ACADEMY · …
+        Academy
       </div>
     );
   }
@@ -70,22 +77,22 @@ export function TenantSwitcher() {
         data-testid="tenant-switcher-empty"
         role="status"
       >
-        ACADEMY · NONE
+        Academy
       </div>
     );
   }
 
-  const label = activeMembership?.academy_name ?? "Active academy";
+  const label = displayAcademyName(academyQuery.data?.display_name);
   const single = memberships.length === 1;
 
   if (single) {
     return (
       <div
-        className="font-mono text-[10px] font-bold tracking-overline rounded-md border border-rally-line bg-white px-2.5 py-1 text-rally-ink truncate max-w-[180px]"
+        className="text-[12px] font-semibold rounded-md border border-rally-line bg-white px-2.5 py-1 text-rally-ink truncate max-w-[220px]"
         data-testid="tenant-switcher-single"
         title={label}
       >
-        ACADEMY · {label.toUpperCase()}
+        {label}
       </div>
     );
   }
@@ -99,9 +106,9 @@ export function TenantSwitcher() {
         aria-expanded={open}
         aria-label="Switch academy"
         onClick={() => setOpen((v) => !v)}
-        className="font-mono text-[10px] font-bold tracking-overline rounded-md border border-rally-line bg-white px-2.5 py-1 text-rally-ink hover:bg-neutral-50 focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 inline-flex items-center gap-1.5 max-w-[200px]"
+        className="text-[12px] font-semibold rounded-md border border-rally-line bg-white px-2.5 py-1 text-rally-ink hover:bg-neutral-50 focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 inline-flex items-center gap-1.5 max-w-[220px]"
       >
-        <span className="truncate">ACADEMY · {label.toUpperCase()}</span>
+        <span className="truncate">{label}</span>
         <Chevron open={open} />
       </button>
       {open && (
@@ -145,6 +152,11 @@ export function TenantSwitcher() {
       )}
     </div>
   );
+}
+
+function displayAcademyName(name: string | null | undefined): string {
+  const trimmed = name?.trim();
+  return trimmed || "Academy";
 }
 
 function renderRoles(m: AcademyMembershipSummary): string {
