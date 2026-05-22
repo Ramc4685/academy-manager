@@ -28,6 +28,8 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
+const firebaseAuthEmulatorHost = process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST ?? "";
+
 let _app: FirebaseApp | null = null;
 let _auth: Auth | null = null;
 let _emulatorConnected = false;
@@ -41,9 +43,8 @@ function app(): FirebaseApp {
 export function auth(): Auth {
   if (_auth) return _auth;
   _auth = getAuth(app());
-  const emulatorHost = process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST;
-  if (emulatorHost && !_emulatorConnected) {
-    connectAuthEmulator(_auth, emulatorHost, { disableWarnings: true });
+  if (firebaseAuthEmulatorHost && !_emulatorConnected) {
+    connectAuthEmulator(_auth, firebaseAuthEmulatorHost, { disableWarnings: true });
     _emulatorConnected = true;
   }
   return _auth;
