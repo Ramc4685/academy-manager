@@ -36,7 +36,7 @@ class MongoWaiverSignatureRepository(TenantScopedRepository):
         signed_at = cls._as_datetime(doc.get("signed_at"))
         if signed_at is None:
             raise ValueError(
-                f"waiver_signatures row {doc.get('waiver_signature_id')!r} " "is missing signed_at"
+                f"waiver_signatures row {doc.get('waiver_signature_id')!r} is missing signed_at"
             )
         return WaiverSignature(
             waiver_signature_id=str(doc["waiver_signature_id"]),

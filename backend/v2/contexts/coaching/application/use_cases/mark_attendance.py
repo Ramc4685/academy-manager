@@ -93,7 +93,11 @@ class MarkAttendance:
     async def execute(self, cmd: MarkAttendanceCommand, coach_id: str) -> MarkAttendanceResult:
         # 1. Occurrence + cancellation check.
         occurrence = await self._occurrences.get(cmd.occurrence_id)
-        if occurrence is None or occurrence.session_id != cmd.session_id:
+        session_id_matches = occurrence is not None and (
+            occurrence.session_id == cmd.session_id
+            or occurrence.template_session_id == cmd.session_id
+        )
+        if not session_id_matches:
             raise SessionNotAssigned(
                 "session occurrence not found or not assigned",
                 session_id=cmd.session_id,
@@ -119,7 +123,12 @@ class MarkAttendance:
             )
 
         # 2. Student enrollment check.
-        if not await self._enrollments.is_active(cmd.session_id, cmd.student_id):
+        enrolled = await self._enrollments.is_active(cmd.session_id, cmd.student_id)
+        if not enrolled and occurrence.template_session_id:
+            enrolled = await self._enrollments.is_active(
+                occurrence.template_session_id, cmd.student_id
+            )
+        if not enrolled:
             raise StudentNotEnrolled(
                 "student not actively enrolled in session",
                 session_id=cmd.session_id,

@@ -240,13 +240,47 @@ class MongoPaymentRepository(TenantScopedRepository):
                 key = str(doc.get("student_id") or doc.get("_id"))
                 students[key] = doc
                 students[str(doc["_id"])] = doc
-        return [self._to_admin_row(doc, students.get(str(doc.get("student_id")))) for doc in docs]
+        parent_ids = sorted(
+            {
+                str(doc.get("parent_id") or doc.get("parent_user_id") or "")
+                for doc in docs
+                if doc.get("parent_id") or doc.get("parent_user_id")
+            }
+            - {""}
+        )
+        parents: dict[str, dict[str, object]] = {}
+        if parent_ids:
+            parent_cursor = self._db["users"].find(
+                {
+                    "academy_id": current_academy_id(),
+                    "$or": [
+                        {"user_id": {"$in": parent_ids}},
+                        {"firebase_uid": {"$in": parent_ids}},
+                    ],
+                }
+            )
+            async for pdoc in parent_cursor:
+                for key in (
+                    str(pdoc.get("user_id") or ""),
+                    str(pdoc.get("firebase_uid") or ""),
+                ):
+                    if key and key in parent_ids:
+                        parents[key] = pdoc
+        return [
+            self._to_admin_row(
+                doc,
+                students.get(str(doc.get("student_id"))),
+                parents.get(str(doc.get("parent_id") or doc.get("parent_user_id") or "")),
+            )
+            for doc in docs
+        ]
 
     @classmethod
     def _to_admin_row(
         cls,
         doc: dict[str, object],
         student: dict[str, object] | None,
+        parent_user: dict[str, object] | None = None,
     ) -> dict[str, object]:
         first = str((student or {}).get("first_name") or "").strip()
         last = str((student or {}).get("last_name") or "").strip()
@@ -254,9 +288,14 @@ class MongoPaymentRepository(TenantScopedRepository):
         created_at = doc.get("created_at") or doc.get("invoice_created_at") or datetime.now(UTC)
         amount_cents = cls._amount_cents(doc)
         discount_cents = cls._discount_cents(doc)
+        parent_name = (
+            str((parent_user or {}).get("display_name") or (parent_user or {}).get("name") or "")
+            or None
+        )
         return {
             "payment_id": cls._payment_id(doc),
             "parent_id": str(doc.get("parent_id") or doc.get("parent_user_id") or ""),
+            "parent_name": parent_name,
             "student_id": doc.get("student_id"),
             "student_name": full_name or None,
             "enrollment_id": doc.get("enrollment_id"),

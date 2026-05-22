@@ -99,6 +99,7 @@ class AdminUseCases:
     preview_withdrawal_credit: PreviewWithdrawalCredit
     approve_withdrawal_credit: ApproveWithdrawalCredit
     list_payments_recent: object  # callable
+    list_billing_invoices: object  # async (limit: int = 100) -> list[dict]
     generate_monthly_payments: GenerateMonthlyPayments
     mark_payment_paid: MarkPaymentPaid
     apply_payment_discount: ApplyPaymentDiscount
@@ -116,6 +117,8 @@ class AdminUseCases:
     list_dues_followup: object  # callable
     send_dues_reminders: object  # callable
     export_report_csv: object  # callable
+    get_reports_kpis: object  # async () -> dict[str, int | float]
+    list_enrollment_events: object  # async (enrollment_id: str) -> list[dict]
     # comms
     comms: CommsService
     # waivers

@@ -116,7 +116,7 @@ def test_composition_exceptions_are_explicit_and_documented() -> None:
 def test_raw_mongo_guard_reports_tenant_owned_direct_access(tmp_path) -> None:
     path = tmp_path / "bad_repo.py"
     path.write_text(
-        "async def bad(db):\n" "    return await db['students'].find_one({'student_id': 's1'})\n",
+        "async def bad(db):\n    return await db['students'].find_one({'student_id': 's1'})\n",
         encoding="utf-8",
     )
 

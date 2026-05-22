@@ -27,6 +27,7 @@ from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
 )
+from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import BootstrapAcademy
 from backend.v2.contexts.identity.application.use_cases.load_auth_claims import (
     LoadAuthClaims,
 )
@@ -43,6 +44,12 @@ from backend.v2.contexts.identity.infrastructure.firebase_token_verifier import 
 )
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
+)
+from backend.v2.contexts.identity.infrastructure.mongo_bootstrap_store import (
+    MongoTenantBootstrapStore,
+)
+from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
+    MongoMembershipRepository,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import (
     MongoUserRepository,
@@ -103,13 +110,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     users_repo = MongoUserRepository(db, default_academy_id=settings.default_academy_id)
     verifier = FirebaseTokenVerifier()
 
-    # The Mongo `academy_memberships` + `platform_roles` repositories are
-    # owned by Agent A (Wave 2). Until they merge, fall back to in-process
-    # adapters that synthesize a single-tenant membership from legacy
-    # ``users.academy_id`` / ``users.roles``. SaaS deployments will replace
-    # these via the composition root once the real repositories land.
+    # `academy_memberships` still falls back to the in-process legacy adapter
+    # that synthesises a single-tenant membership from users.academy_id /
+    # users.roles. `platform_roles` is wired to the real Mongo collection.
     membership_repo = _LegacyUserMembershipAdapter(users_repo, settings.default_academy_id)
-    platform_role_repo = _NullPlatformRoleRepository()
+    platform_role_repo = _MongoPlatformRoleAdapter(MongoMembershipRepository(db))
 
     load_claims = LoadAuthClaims(
         verifier=verifier,
@@ -150,6 +155,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Admin BFF wiring (Wave 3).
     app.state.admin = compose_admin(db, outbox, idempotency_store, stripe_gw)
+
+    app.state.bootstrap_academy = BootstrapAcademy(
+        store=MongoTenantBootstrapStore(db),
+    )
 
     try:
         yield
@@ -322,6 +331,19 @@ class _NullPlatformRoleRepository:
 
     async def list_active_for_user(self, user_id: str) -> list[PlatformRole]:
         return []
+
+
+class _MongoPlatformRoleAdapter:
+    """Adapts MongoMembershipRepository to the PlatformRoleRepository port.
+
+    The port uses list_active_for_user(); the repo uses list_active_platform_roles().
+    """
+
+    def __init__(self, repo: MongoMembershipRepository) -> None:
+        self._repo = repo
+
+    async def list_active_for_user(self, user_id: str) -> list[PlatformRole]:
+        return await self._repo.list_active_platform_roles(user_id)
 
 
 class _AcademyLookupAdapter:
