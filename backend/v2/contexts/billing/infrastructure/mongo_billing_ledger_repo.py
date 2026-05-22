@@ -204,10 +204,14 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             sort=[("created_at", -1)],
             limit=limit,
         ):
-            lines_cursor = self._db["invoice_lines"].find(
-                {"academy_id": academy_id, "invoice_id": inv_doc.get("invoice_id")}
-            )
-            lines = [doc async for doc in lines_cursor]
+            inv_id = inv_doc.get("invoice_id")
+            if inv_id is None:
+                lines = []
+            else:
+                lines_cursor = self._db["invoice_lines"].find(
+                    {"academy_id": academy_id, "invoice_id": inv_id}
+                )
+                lines = [doc async for doc in lines_cursor]
             invoices.append({"invoice": inv_doc, "lines": lines})
         return invoices
 

@@ -30,6 +30,8 @@ def test_me_returns_mongo_backed_auth_claims() -> None:
         "email": "admin@example.com",
         "academy_id": "academy-a",
         "roles": ["admin"],
+        "membership_id": None,
+        "platform_roles": [],
     }
 
 

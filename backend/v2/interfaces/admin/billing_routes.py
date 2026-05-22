@@ -67,13 +67,15 @@ async def list_billing_invoices(
             )
             for line in item["lines"]
         ]
+        total = int(inv.get("total_cents", 0))
+        balance = int(inv.get("balance_due_cents", 0))
         invoices.append(InvoiceDto(
             invoice_number=str(inv.get("invoice_id", "")),
             period=str(inv.get("period", "")),
             lines=lines,
-            total_cents=int(inv.get("total_cents", 0)),
-            paid_cents=int(inv.get("total_cents", 0)) - int(inv.get("balance_due_cents", 0)),
-            balance_cents=int(inv.get("balance_due_cents", 0)),
+            total_cents=total,
+            paid_cents=max(0, total - balance),
+            balance_cents=balance,
             status=str(inv.get("status", "open")),
         ))
     return InvoicesResponse(invoices=invoices)
