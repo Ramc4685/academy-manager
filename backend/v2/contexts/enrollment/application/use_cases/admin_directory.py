@@ -6,7 +6,7 @@ import base64
 import json
 import re
 import unicodedata
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
@@ -34,6 +34,29 @@ class AdminStudentSummary(BaseModel):
     last_seen_at: datetime | None = None
     attendance_rate: float | None = None
     dues_status: DuesStatus = "current"
+
+
+class AdminStudentDetail(AdminStudentSummary):
+    model_config = {"frozen": True}
+
+    date_of_birth: date | None = None
+    level: str | None = None
+    notes: str | None = None
+    parent_phone: str | None = None
+    parent_details: str | None = None
+
+
+class UpdateAdminStudentCommand(BaseModel):
+    model_config = {"frozen": True}
+
+    full_name: str | None = Field(default=None, min_length=1, max_length=120)
+    date_of_birth: date | None = None
+    level: str | None = Field(default=None, max_length=80)
+    status: str | None = Field(default=None, max_length=32)
+    parent_id: str | None = Field(default=None, min_length=1, max_length=120)
+    notes: str | None = Field(default=None, max_length=2000)
+    actor_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1, max_length=500)
 
 
 class AdminStudentPage(BaseModel):
@@ -77,6 +100,18 @@ class AdminStudentDirectoryQuery(Protocol):
     ) -> AdminStudentPage: ...
 
 
+class AdminStudentDetailQuery(Protocol):
+    async def get_admin_student(self, student_id: str) -> AdminStudentDetail | None: ...
+
+
+class AdminStudentWriter(Protocol):
+    async def update_admin_student(
+        self,
+        student_id: str,
+        command: UpdateAdminStudentCommand,
+    ) -> AdminStudentDetail | None: ...
+
+
 class ListAdminStudents:
     def __init__(self, students: AdminStudentDirectoryQuery) -> None:
         self._students = students
@@ -95,3 +130,33 @@ class ListAdminStudents:
             limit=limit,
             cursor=cursor,
         )
+
+
+class GetAdminStudent:
+    def __init__(self, students: AdminStudentDetailQuery) -> None:
+        self._students = students
+
+    async def execute(self, student_id: str) -> AdminStudentDetail:
+        from backend.v2.contexts.enrollment.domain.errors import StudentNotFound
+
+        student = await self._students.get_admin_student(student_id)
+        if student is None:
+            raise StudentNotFound("student not found")
+        return student
+
+
+class UpdateAdminStudent:
+    def __init__(self, students: AdminStudentWriter) -> None:
+        self._students = students
+
+    async def execute(
+        self,
+        student_id: str,
+        command: UpdateAdminStudentCommand,
+    ) -> AdminStudentDetail:
+        from backend.v2.contexts.enrollment.domain.errors import StudentNotFound
+
+        updated = await self._students.update_admin_student(student_id, command)
+        if updated is None:
+            raise StudentNotFound("student not found")
+        return updated

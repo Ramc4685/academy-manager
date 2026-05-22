@@ -24,7 +24,9 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
     PreviewWithdrawalCredit,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    GetAdminStudent,
     ListAdminStudents,
+    UpdateAdminStudent,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     CancelEnrollment,
@@ -63,7 +65,9 @@ from backend.v2.contexts.identity.application.update_academy_notifications_use_c
 )
 from backend.v2.contexts.identity.application.update_academy_use_case import UpdateAcademyUseCase
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+    GetAdminUser,
     ListAdminUsers,
+    UpdateAdminUser,
 )
 from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
     ListAdminWaivers,
@@ -132,6 +136,10 @@ class AdminUseCases:
     update_academy_notifications_use_case: UpdateAcademyNotificationsUseCase
     get_academy_gateway_use_case: GetAcademyGatewayUseCase
     change_user_role: ChangeUserRole
+    get_admin_user: GetAdminUser | None = None
+    update_admin_user: UpdateAdminUser | None = None
+    get_admin_student: GetAdminStudent | None = None
+    update_admin_student: UpdateAdminStudent | None = None
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:

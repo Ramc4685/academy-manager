@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 from bson import ObjectId as BsonObjectId
+from pymongo import ReturnDocument
 
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    AdminStudentDetail,
     AdminStudentPage,
     AdminStudentSummary,
+    UpdateAdminStudentCommand,
     decode_student_cursor,
     encode_student_cursor,
     full_name_key,
@@ -39,6 +43,13 @@ class MongoStudentRepository(TenantScopedRepository):
     def _summary_id(doc: dict[str, object]) -> str:
         return str(doc.get("student_id") or doc.get("_id"))
 
+    @staticmethod
+    def _id_filter(student_id: str) -> dict[str, object]:
+        or_filter: list[dict[str, object]] = [{"student_id": student_id}]
+        if BsonObjectId.is_valid(student_id):
+            or_filter.append({"_id": BsonObjectId(student_id)})
+        return {"$or": or_filter}
+
     @classmethod
     def _to_admin_summary(
         cls,
@@ -66,6 +77,118 @@ class MongoStudentRepository(TenantScopedRepository):
             attendance_rate=attendance_rate,
             dues_status=dues_status,  # type: ignore[arg-type]
         )
+
+    @classmethod
+    def _to_admin_detail(
+        cls,
+        doc: dict[str, object],
+        *,
+        active_session_count: int,
+        last_seen_at: object | None,
+        attendance_rate: float | None,
+        dues_status: str,
+        parent_name: str | None = None,
+        parent_email: str | None = None,
+        parent_phone: str | None = None,
+    ) -> AdminStudentDetail:
+        summary = cls._to_admin_summary(
+            doc,
+            active_session_count=active_session_count,
+            last_seen_at=last_seen_at,
+            attendance_rate=attendance_rate,
+            dues_status=dues_status,
+            parent_name=parent_name,
+            parent_email=parent_email,
+        )
+        raw_dob = doc.get("date_of_birth") or doc.get("dob")
+        dob: date | None = None
+        if isinstance(raw_dob, datetime):
+            dob = raw_dob.date()
+        elif isinstance(raw_dob, date):
+            dob = raw_dob
+        elif isinstance(raw_dob, str) and raw_dob:
+            dob = date.fromisoformat(raw_dob[:10])
+        return AdminStudentDetail(
+            **summary.model_dump(),
+            date_of_birth=dob,
+            level=str(doc.get("level")) if doc.get("level") is not None else None,
+            notes=str(doc.get("notes")) if doc.get("notes") is not None else None,
+            parent_phone=parent_phone,
+            parent_details=None,
+        )
+
+    async def get_admin_student(self, student_id: str) -> AdminStudentDetail | None:
+        academy_id = current_academy_id()
+        doc = await self._find_one(self._id_filter(student_id))
+        if doc is None:
+            return None
+        resolved_id = self._summary_id(doc)
+        parent_info = await self._parent_info(
+            academy_id, str(doc.get("parent_id") or doc.get("parent_user_id") or "")
+        )
+        active_counts = await self._active_session_counts(academy_id, [resolved_id])
+        attendance = await self._attendance_summaries(academy_id, [resolved_id])
+        dues = await self._dues_statuses(academy_id, [resolved_id])
+        att = attendance.get(resolved_id, {})
+        return self._to_admin_detail(
+            doc,
+            active_session_count=active_counts.get(resolved_id, 0),
+            last_seen_at=att.get("last_seen_at"),
+            attendance_rate=att.get("attendance_rate"),  # type: ignore[arg-type]
+            dues_status=dues.get(resolved_id, "current"),
+            parent_name=parent_info.get("name"),
+            parent_email=parent_info.get("email"),
+            parent_phone=parent_info.get("phone"),
+        )
+
+    async def update_admin_student(
+        self,
+        student_id: str,
+        command: UpdateAdminStudentCommand,
+    ) -> AdminStudentDetail | None:
+        academy_id = current_academy_id()
+        before = await self._find_one(self._id_filter(student_id))
+        if before is None:
+            return None
+
+        set_doc: dict[str, object] = {"updated_at": datetime.now(UTC)}
+        if command.full_name is not None:
+            set_doc["full_name"] = " ".join(command.full_name.split())
+        if command.date_of_birth is not None:
+            set_doc["date_of_birth"] = command.date_of_birth.isoformat()
+        if command.level is not None:
+            set_doc["level"] = command.level.strip() or None
+        if command.status is not None:
+            set_doc["status"] = command.status
+        if command.parent_id is not None:
+            set_doc["parent_id"] = command.parent_id
+        if command.notes is not None:
+            set_doc["notes"] = command.notes
+
+        changed = [
+            key
+            for key, value in set_doc.items()
+            if key != "updated_at" and before.get(key) != value
+        ]
+        updated = await self.collection.find_one_and_update(
+            self._scoped(self._id_filter(student_id)),
+            {"$set": set_doc},
+            return_document=ReturnDocument.AFTER,
+        )
+        if updated is None:
+            return None
+        if changed:
+            await self._write_audit(
+                academy_id=academy_id,
+                actor_id=command.actor_id,
+                action="student.edited",
+                entity_id=self._summary_id(updated),
+                reason=command.reason,
+                changed_keys=changed,
+                before=before,
+                after=updated,
+            )
+        return await self.get_admin_student(self._summary_id(updated))
 
     async def list_admin_students(
         self,
@@ -117,7 +240,11 @@ class MongoStudentRepository(TenantScopedRepository):
                     str(user["_id"]),
                 ):
                     if key:
-                        users_by_id[key] = {"name": display, "email": email}
+                        users_by_id[key] = {
+                            "name": display,
+                            "email": email,
+                            "phone": user.get("phone"),
+                        }
 
         rows: list[dict[str, object]] = []
         search_key = full_name_key(search or "") if search else None
@@ -199,6 +326,62 @@ class MongoStudentRepository(TenantScopedRepository):
                 str(last["student_id"]),
             )
         return AdminStudentPage(students=students, next_cursor=next_cursor)
+
+    async def _parent_info(self, academy_id: str, parent_id: str) -> dict[str, str | None]:
+        if not parent_id:
+            return {}
+        or_filter: list[dict[str, object]] = [
+            {"user_id": parent_id},
+            {"firebase_uid": parent_id},
+        ]
+        if BsonObjectId.is_valid(parent_id):
+            or_filter.append({"_id": BsonObjectId(parent_id)})
+        user = await self._db["users"].find_one({"academy_id": academy_id, "$or": or_filter})
+        if user is None:
+            return {}
+        return {
+            "name": str(
+                user.get("display_name")
+                or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+                or ""
+            )
+            or None,
+            "email": str(user.get("email")) if user.get("email") is not None else None,
+            "phone": str(user.get("phone")) if user.get("phone") is not None else None,
+        }
+
+    async def _write_audit(
+        self,
+        *,
+        academy_id: str,
+        actor_id: str,
+        action: str,
+        entity_id: str,
+        reason: str,
+        changed_keys: list[str],
+        before: dict[str, Any],
+        after: dict[str, Any],
+    ) -> None:
+        from backend.v2.shared.ids import new_ulid
+
+        def pick(doc: dict[str, Any]) -> dict[str, Any]:
+            return {key: doc.get(key) for key in changed_keys}
+
+        await self._db["audit_logs"].insert_one(
+            {
+                "audit_id": str(new_ulid()),
+                "academy_id": academy_id,
+                "actor_id": actor_id,
+                "action": action,
+                "entity_type": "student",
+                "entity_id": entity_id,
+                "reason": reason,
+                "changed_keys": changed_keys,
+                "before": pick(before),
+                "after": pick(after),
+                "created_at": datetime.now(UTC),
+            }
+        )
 
     @staticmethod
     def _full_name(doc: dict[str, object]) -> str:
