@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from mongomock_motor import AsyncMongoMockClient
 
 from backend.v2.contexts.platform.billing.application.use_cases.manage_platform_billing import (
     ActivateTenantSubscription,
@@ -18,6 +19,10 @@ from backend.v2.contexts.platform.billing.domain.models import (
     PlanLimits,
     PlatformPlan,
     TenantSubscription,
+)
+from backend.v2.contexts.platform.billing.infrastructure.mongo_repositories import (
+    MongoPlatformPlanRepository,
+    MongoTenantSubscriptionRepository,
 )
 
 
@@ -209,3 +214,39 @@ async def test_check_plan_limits_reports_exceeded_tenant_usage() -> None:
         "staff_members exceeds plan limit 12",
     ]
     assert result.limits.max_locations == 2
+
+
+@pytest.mark.asyncio
+async def test_mongo_repositories_persist_platform_plans_and_tenant_subscriptions() -> None:
+    client = AsyncMongoMockClient()
+    db = client["academy_manager_test"]
+    plans = MongoPlatformPlanRepository(db)
+    subscriptions = MongoTenantSubscriptionRepository(db)
+
+    plan = _plan()
+    subscription = TenantSubscription(
+        subscription_id="platform-sub-1",
+        academy_id="academy-1",
+        plan_id=plan.plan_id,
+        billing_status="active",
+        trial_status="converted",
+        cancellation_status="none",
+        stripe_customer_id="cus_platform_123",
+        stripe_subscription_id="sub_platform_123",
+        current_period_start=_clock(),
+        current_period_end=_clock() + timedelta(days=30),
+        created_at=_clock(),
+        updated_at=_clock(),
+    )
+
+    await plans.save(plan)
+    await subscriptions.save(subscription)
+
+    stored_plan = await plans.get(plan.plan_id)
+    listed_plans = await plans.list()
+    stored_subscription = await subscriptions.get_for_academy("academy-1")
+
+    assert stored_plan == plan
+    assert listed_plans == [plan]
+    assert stored_subscription == subscription
+    assert await db["subscriptions"].count_documents({}) == 0
