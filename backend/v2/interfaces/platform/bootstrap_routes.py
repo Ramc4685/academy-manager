@@ -15,10 +15,6 @@ from backend.v2.contexts.platform.application.use_cases.tenant_lifecycle import 
     TenantLifecycleService,
     UpdateTenantPlanCommand,
 )
-from backend.v2.contexts.platform.domain.models import Tenant, TenantHealth, TenantLimits
-from backend.v2.contexts.platform.infrastructure.mongo_tenant_lifecycle_repo import (
-    MongoTenantLifecycleRepository,
-)
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 
 router = APIRouter(prefix="/platform", tags=["platform"])
@@ -44,12 +40,18 @@ class BootstrapAcademyResponse(BaseModel):
     default_records: tuple[str, ...]
 
 
+class TenantLimitsPayload(BaseModel):
+    max_students: int | None = Field(default=None, ge=0)
+    max_coaches: int | None = Field(default=None, ge=0)
+    max_locations: int | None = Field(default=None, ge=0)
+
+
 class CreateTenantRequest(BaseModel):
     display_name: str = Field(min_length=1)
     slug: str = Field(min_length=1)
     primary_domain: str = Field(min_length=1)
     plan_code: str = Field(min_length=1)
-    limits: TenantLimits = Field(default_factory=TenantLimits)
+    limits: TenantLimitsPayload = Field(default_factory=TenantLimitsPayload)
 
 
 class TenantLifecycleResponse(BaseModel):
@@ -61,7 +63,7 @@ class TenantLifecycleResponse(BaseModel):
     servable: bool
     reason: str | None = None
     plan_code: str
-    limits: TenantLimits
+    limits: TenantLimitsPayload
     status_reason: str | None = None
     updated_by: str
 
@@ -72,7 +74,7 @@ class TenantHealthResponse(BaseModel):
     servable: bool
     reason: str | None = None
     plan_code: str
-    limits: TenantLimits
+    limits: TenantLimitsPayload
 
 
 class LifecycleReasonRequest(BaseModel):
@@ -81,7 +83,7 @@ class LifecycleReasonRequest(BaseModel):
 
 class UpdateTenantPlanRequest(BaseModel):
     plan_code: str = Field(min_length=1)
-    limits: TenantLimits = Field(default_factory=TenantLimits)
+    limits: TenantLimitsPayload = Field(default_factory=TenantLimitsPayload)
 
 
 async def require_platform_admin(
@@ -111,17 +113,10 @@ def get_tenant_lifecycle(request: Request) -> TenantLifecycleService:
     use_case = getattr(request.app.state, "tenant_lifecycle", None)
     if use_case is not None:
         return use_case  # type: ignore[no-any-return]
-
-    db = getattr(request.app.state, "db", None)
-    if db is None:
-        raise HTTPException(status_code=503, detail="Tenant lifecycle is not configured")
-
-    use_case = TenantLifecycleService(tenants=MongoTenantLifecycleRepository(db))
-    request.app.state.tenant_lifecycle = use_case
-    return use_case
+    raise HTTPException(status_code=503, detail="Tenant lifecycle is not configured")
 
 
-def _tenant_response(tenant: Tenant) -> TenantLifecycleResponse:
+def _tenant_response(tenant) -> TenantLifecycleResponse:
     health = tenant.health()
     return TenantLifecycleResponse(
         academy_id=tenant.academy_id,
@@ -132,7 +127,7 @@ def _tenant_response(tenant: Tenant) -> TenantLifecycleResponse:
         servable=health.servable,
         reason=health.reason,
         plan_code=tenant.plan_code,
-        limits=tenant.limits,
+        limits=TenantLimitsPayload(**tenant.limits.model_dump()),
         status_reason=tenant.status_reason,
         updated_by=tenant.updated_by,
     )
@@ -180,8 +175,10 @@ async def get_tenant_health(
     _: AuthClaims = Depends(require_platform_operator),
     use_case: TenantLifecycleService = Depends(get_tenant_lifecycle),
 ) -> TenantHealthResponse:
-    health: TenantHealth = await use_case.get_tenant_health(academy_id)
-    return TenantHealthResponse(**health.model_dump())
+    health = await use_case.get_tenant_health(academy_id)
+    body = health.model_dump()
+    body["limits"] = TenantLimitsPayload(**body["limits"])
+    return TenantHealthResponse(**body)
 
 
 @router.post("/tenants/{academy_id}/activate", response_model=TenantLifecycleResponse)
