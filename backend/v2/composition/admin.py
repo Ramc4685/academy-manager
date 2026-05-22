@@ -151,10 +151,10 @@ def _make_reports_kpis(db: AsyncIOMotorDatabase[Any]) -> object:
 
         # attendance_rate_30d
         pipeline_att = [
-            {"$match": {"academy_id": academy_id, "created_at": {"$gte": cutoff_30d},
-                        "status": {"$in": ["present", "absent"]}}},
+            {"$match": {"academy_id": academy_id, "marked_at": {"$gte": cutoff_30d},
+                        "status": {"$in": ["present", "absent", "late"]}}},
             {"$group": {"_id": None,
-                        "present": {"$sum": {"$cond": [{"$eq": ["$status", "present"]}, 1, 0]}},
+                        "present": {"$sum": {"$cond": [{"$in": ["$status", ["present", "late"]]}, 1, 0]}},
                         "total": {"$sum": 1}}},
         ]
         res2 = await db.attendance.aggregate(pipeline_att).to_list(length=1)
@@ -165,7 +165,7 @@ def _make_reports_kpis(db: AsyncIOMotorDatabase[Any]) -> object:
 
         # dues_collected_mtd
         pipeline_dues = [
-            {"$match": {"academy_id": academy_id, "status": "succeeded",
+            {"$match": {"academy_id": academy_id, "status": {"$in": ["succeeded", "paid"]},
                         "period": period_str}},
             {"$group": {"_id": None, "total": {"$sum": "$amount_cents"}}},
         ]
@@ -178,8 +178,9 @@ def _make_reports_kpis(db: AsyncIOMotorDatabase[Any]) -> object:
         )
         active_ids = {doc["student_id"] async for doc in active_student_ids_cursor}
         signed_cursor = db.waiver_acceptances.find(
-            {"academy_id": academy_id, "status": "signed",
-             "student_id": {"$in": list(active_ids)}},
+            {"academy_id": academy_id,
+             "student_id": {"$in": list(active_ids)},
+             "is_deleted": {"$ne": True}},
             {"student_id": 1},
         )
         signed_ids = {doc["student_id"] async for doc in signed_cursor}
