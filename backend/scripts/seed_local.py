@@ -382,6 +382,8 @@ async def main() -> None:
         {"_id": ACADEMY_ID},
         {"$set": {
             "_id": ACADEMY_ID,
+            "slug": ACADEMY_ID,
+            "academy_id": ACADEMY_ID,
             "display_name": ACADEMY_NAME,
             "timezone": ACADEMY_TZ,
             "contact_email": admin_email,
