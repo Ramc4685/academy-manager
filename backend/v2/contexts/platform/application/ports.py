@@ -1,0 +1,17 @@
+"""Platform application ports."""
+
+from __future__ import annotations
+
+from typing import Protocol
+
+from backend.v2.contexts.platform.domain.models import Tenant
+
+
+class TenantLifecycleRepository(Protocol):
+    """Persistence port for platform-owned tenant lifecycle state."""
+
+    async def get_by_id(self, academy_id: str) -> Tenant | None: ...
+    async def get_by_slug(self, slug: str) -> Tenant | None: ...
+    async def get_by_domain(self, domain: str) -> Tenant | None: ...
+    async def create(self, tenant: Tenant) -> Tenant: ...
+    async def save(self, tenant: Tenant) -> Tenant: ...

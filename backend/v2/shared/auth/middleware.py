@@ -27,7 +27,7 @@ from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from backend.v2.shared.auth.claims import AuthClaims
@@ -54,6 +54,14 @@ mapped to a known tenant. Implementations should swallow
 back to a default tenant.
 """
 
+CheckTenantServableCallable = Callable[[str], Awaitable[tuple[bool, str | None]]]
+"""``async (academy_id: str) -> (servable, reason)``.
+
+Called after tenant resolution and before request handlers for tenant-scoped
+routes. This keeps suspended/cancelled tenants from serving business traffic
+while allowing platform routes to inspect and repair tenant state.
+"""
+
 
 class TenancyMiddleware(BaseHTTPMiddleware):
     """Resolve tenant, verify token, set request.state.auth_claims + tenant ContextVar."""
@@ -64,6 +72,7 @@ class TenancyMiddleware(BaseHTTPMiddleware):
         *,
         load_auth_claims: LoadAuthClaimsCallable | None = None,
         resolve_tenant: ResolveTenantCallable | None = None,
+        check_tenant_servable: CheckTenantServableCallable | None = None,
     ) -> None:
         super().__init__(app)
         # Both ports are optional — main.py wires the real callables at
@@ -71,6 +80,7 @@ class TenancyMiddleware(BaseHTTPMiddleware):
         # pass-through and protected routes 401 via their dependency.
         self._load_claims = load_auth_claims
         self._resolve_tenant = resolve_tenant
+        self._check_tenant_servable = check_tenant_servable
 
     async def dispatch(self, request: Request, call_next: Any) -> Response:
         # --- 1. Resolve tenant from the request (never from the user) -----
@@ -81,6 +91,31 @@ class TenancyMiddleware(BaseHTTPMiddleware):
             except Exception as exc:  # defensive: never let resolver kill the app
                 log.info("tenant_resolve_failed: %s", exc)
                 resolved_academy_id = None
+
+        if (
+            resolved_academy_id
+            and self._check_tenant_servable is not None
+            and not request.url.path.startswith("/api/v2/platform/")
+        ):
+            try:
+                servable, reason = await self._check_tenant_servable(resolved_academy_id)
+            except Exception as exc:
+                log.info("tenant_status_check_failed: %s", exc)
+                servable, reason = False, "tenant_status_unavailable"
+            if not servable:
+                return JSONResponse(
+                    status_code=423,
+                    content={
+                        "error": {
+                            "code": "Platform.TenantNotServable",
+                            "message": "Tenant is not currently servable.",
+                            "details": {
+                                "academy_id": resolved_academy_id,
+                                "reason": reason,
+                            },
+                        }
+                    },
+                )
 
         # --- 2. Verify token + load claims only when tenant is known -----
         token = self._extract_bearer(request)

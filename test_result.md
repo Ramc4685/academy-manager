@@ -104,6 +104,20 @@
 
 user_problem_statement: "Merged BFF/DDD code; verify and fix local v2/BFF startup."
 backend:
+  - task: "SaaS v2 Wave 6 platform tenant lifecycle"
+    implemented: true
+    working: true
+    file: "backend/v2/contexts/platform/application/use_cases/tenant_lifecycle.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Agent A Wave 6 added the platform bounded context tenant lifecycle state machine, Mongo-compatible repository, and platform routes for create, activate, suspend, cancel, reactivate, update plan/limits, and status/health. Focused verification pending."
+      - working: true
+        agent: "main"
+        comment: "Focused verification passed: pytest v2/tests/application/test_tenant_lifecycle.py -q (7 passed), pytest v2/tests/interface/test_platform_tenants.py -q (5 passed), and git diff --check passed."
   - task: "v2 backend local boot and migrations"
     implemented: true
     working: true
@@ -333,6 +347,17 @@ backend:
       - working: true
         agent: "main"
         comment: "Removed sparse=True from the unique partial provider_message_id index and added a regression test that rejects Mongo index specs combining sparse and partialFilterExpression. Verification: the new test failed red before the fix, then backend/v2/tests/contract/test_migrations_legacy_compat.py passed 5/5, full backend v2 passed 410/410 with 7 existing mongomock UTC warnings, ruff check v2 passed, and ruff format --check v2 passed."
+  - task: "SaaS v2 Wave 6 platform billing model"
+    implemented: true
+    working: true
+    file: "backend/v2/contexts/platform/billing/application/use_cases/manage_platform_billing.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Agent B Wave 6 added a new Platform billing slice separate from parent tuition Billing. The model covers platform plans, plan limits, tenant subscriptions, billing/trial/cancellation status, and tenant Stripe customer/subscription IDs. Application tests cover trial creation, Stripe subscription activation, period-end cancellation scheduling, plan-limit checks, and absence of parent/student/enrollment/session tuition fields. Verification: focused platform billing pytest passed 4/4; targeted ruff passed; git diff --check passed."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -538,15 +563,19 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 20
+  test_sequence: 21
   run_ui: true
 test_plan:
   current_focus:
-    - "production backend deploy migration 0101 fix"
+    - "SaaS v2 Wave 6 platform billing model"
   stuck_tasks: []
-  test_all: true
+  test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "SaaS v2 Wave 6 Agent B platform billing implementation: added a new backend/v2/contexts/platform/billing package for SaaS plan and tenant subscription state, intentionally separate from parent tuition billing under backend/v2/contexts/billing. The application layer supports starting tenant trials, activating Stripe-backed academy subscriptions, scheduling or immediate cancellation state, and checking tenant usage against plan limits. Focused pytest is green; rerun backend/v2/tests/application/test_platform_billing.py and git diff --check for handoff."
+  - agent: "main"
+    message: "SaaS v2 Wave 6 orchestrator verification for Agent B: source .venv/bin/activate pytest attempt failed because the local worktree venv was missing ulid/fastapi, then uv run --no-project --with-requirements requirements.txt --with-requirements requirements-v2.txt pytest v2/tests/application/test_platform_billing.py -q passed with 4 passed. git diff --check passed."
   - agent: "main"
     message: "Production deploy failure investigated from GitHub Actions run 26292507207 and Fly logs. Root cause: migration 0101 attempted to create message_deliveries_provider_message_id_unique with both sparse=true and partialFilterExpression, which MongoDB rejects. Branch feat/fix-backend-deploy-migration-0101 removes sparse=True from that partial unique index and adds a regression test in test_migrations_legacy_compat.py. Verification so far: red test reproduced the invalid spec; focused migration compat suite passed 5/5; full backend v2 suite passed 410/410; ruff check/format passed. Rerun production workflow after merging this hotfix."
   - agent: "main"
@@ -763,3 +792,17 @@ agent_communication:
       Verification: backend focused pytest v2/tests/application/test_tenant_governance.py -q passed with 7 passed and 1 existing Starlette multipart warning. git diff --check passed.
   - agent: "main"
     message: "SaaS v2 Wave 6 orchestrator verification for Agent C: source .venv/bin/activate && pytest v2/tests/application/test_tenant_governance.py -q passed with 7 passed and 1 existing Starlette multipart warning. git diff --check passed. No live support impersonation session/token behavior was implemented."
+  - agent: "main"
+    message: |
+      SaaS v2 Wave 6 — Agent A platform tenant lifecycle implementation in worktree academy-manager-agent-a-wave6.
+
+      Added a Platform bounded context for tenant lifecycle state, plan limits, status health, and Mongo-compatible persistence over the academies collection. Added platform routes under /api/v2/platform/tenants for create, activate, suspend, cancel, reactivate, plan/limits update, status, and health. Mutations require platform_admin; status/health allow platform_admin or platform_support. Academy roles cannot access platform lifecycle routes.
+
+      Focused verification passed: pytest v2/tests/application/test_tenant_lifecycle.py -q (7 passed), pytest v2/tests/interface/test_platform_tenants.py -q (5 passed), and git diff --check passed. Full backend/v2 suite was not run in this Wave 6 Agent A worktree.
+  - agent: "main"
+    message: |
+      SaaS v2 Wave 6 — Orchestrator follow-up for Agent A.
+
+      Added the missing tenant status serving gate from the Wave 6 acceptance criteria. TenancyMiddleware now accepts a tenant servability checker, blocks non-platform tenant-scoped requests with Platform.TenantNotServable (423) when the platform tenant is not active, and skips that gate for /api/v2/platform/* so platform_admin/platform_support can inspect or repair tenant state. backend/v2/main.py wires TenantLifecycleService over MongoTenantLifecycleRepository into app.state and exposes the checker only when SaaS mode is active; non-SaaS mode remains pass-through.
+
+      Verification: source .venv/bin/activate pytest attempt failed because this local worktree venv was missing ulid; reran with project requirements via uv run --no-project --with-requirements requirements.txt --with-requirements requirements-v2.txt pytest v2/tests/application/test_tenant_lifecycle.py v2/tests/interface/test_platform_tenants.py v2/tests/interface/test_tenant_resolution.py -q and got 29 passed. Ruff check/format passed on the changed v2 files. PYTHONPATH=/Users/ramc/Documents/Code/academy-manager-agent-a-wave6 lint-imports --config pyproject.toml passed all 4 contracts after moving persistence construction out of the platform route layer. git diff --check passed.
