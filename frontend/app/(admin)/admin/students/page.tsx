@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { RefreshCw, Search } from "lucide-react";
 
@@ -219,13 +220,17 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
               className="border-b border-neutral-100 transition last:border-0 hover:bg-neutral-50 dark:border-neutral-800"
             >
               <td className="px-5 py-4">
-                <div className="flex items-center gap-3">
+                <Link
+                  href={`/admin/students/${student.student_id}`}
+                  className="flex items-center gap-3 group focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
+                  data-testid={`admin-students-link-${student.student_id}`}
+                >
                   <Avatar name={student.full_name} size={34} />
                   <div>
-                    <div className="font-semibold text-rally-base">{student.full_name}</div>
+                    <div className="font-semibold text-rally-base group-hover:underline">{student.full_name}</div>
                     <div className="font-mono text-[10px] text-rally-subtle">{student.student_id}</div>
                   </div>
-                </div>
+                </Link>
               </td>
               <td className="px-3 py-4">
                 <div className="text-rally-base">{student.parent_name || student.parent_email || student.parent_id}</div>
