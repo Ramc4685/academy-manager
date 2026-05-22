@@ -3,9 +3,11 @@ set -euo pipefail
 
 API_URL="${API_URL:-http://127.0.0.1:8001}"
 FRONTEND_URL="${FRONTEND_URL:-http://localhost:3001}"
+TENANT_FRONTEND_URL="${TENANT_FRONTEND_URL:-}"
 TENANT_HOST="${TENANT_HOST:-tenant-smoke.localhost}"
 INTERNAL_TENANT_HEADER_NAME="${INTERNAL_TENANT_HEADER_NAME:-}"
 INTERNAL_TENANT_HEADER_VALUE="${INTERNAL_TENANT_HEADER_VALUE:-}"
+UNAPPROVED_INTERNAL_TENANT_HEADER_NAME="${UNAPPROVED_INTERNAL_TENANT_HEADER_NAME:-x-internal-tenant-id}"
 AUTH_TOKEN="${AUTH_TOKEN:-}"
 STATIC_ONLY=0
 
@@ -87,6 +89,20 @@ if [[ "${unknown_code}" != "401" && "${unknown_code}" != "403" ]]; then
   exit 1
 fi
 
+if [[ -n "${AUTH_TOKEN}" ]]; then
+  echo "Checking unknown tenant host rejects authenticated requests too..."
+  unknown_auth_code="$(
+    status_code \
+      -H "Host: ${TENANT_HOST}" \
+      -H "Authorization: Bearer ${AUTH_TOKEN}" \
+      "${API_URL}/api/v2/me"
+  )"
+  if [[ "${unknown_auth_code}" != "401" && "${unknown_auth_code}" != "403" ]]; then
+    echo "Expected authenticated unknown-tenant /api/v2/me to return 401 or 403, got ${unknown_auth_code}" >&2
+    exit 1
+  fi
+fi
+
 if [[ -n "${INTERNAL_TENANT_HEADER_NAME}" && -n "${INTERNAL_TENANT_HEADER_VALUE}" ]]; then
   echo "Checking approved internal tenant header path..."
   header_args=(-H "${INTERNAL_TENANT_HEADER_NAME}: ${INTERNAL_TENANT_HEADER_VALUE}")
@@ -105,6 +121,19 @@ if [[ -n "${INTERNAL_TENANT_HEADER_NAME}" && -n "${INTERNAL_TENANT_HEADER_VALUE}
   fi
 else
   echo "Skipping internal tenant header check; set INTERNAL_TENANT_HEADER_NAME and INTERNAL_TENANT_HEADER_VALUE to enable it."
+  if [[ -n "${AUTH_TOKEN}" ]]; then
+    echo "Checking internal tenant header is not accepted when smoke config omits it..."
+    unapproved_code="$(
+      status_code \
+        -H "${UNAPPROVED_INTERNAL_TENANT_HEADER_NAME}: smoke-unapproved" \
+        -H "Authorization: Bearer ${AUTH_TOKEN}" \
+        "${API_URL}/api/v2/me"
+    )"
+    if [[ "${unapproved_code}" == "200" ]]; then
+      echo "Internal tenant header returned 200 even though this smoke did not configure an approved header." >&2
+      exit 1
+    fi
+  fi
 fi
 
 echo "Checking frontend v2 proxy if frontend is reachable..."
@@ -116,6 +145,26 @@ if [[ "${frontend_code}" == "200" ]]; then
   fi
 else
   echo "Frontend proxy check skipped or unavailable at ${FRONTEND_URL} (status ${frontend_code})."
+fi
+
+if [[ -n "${TENANT_FRONTEND_URL}" && -n "${AUTH_TOKEN}" ]]; then
+  echo "Checking tenant frontend login page and authenticated v2 proxy..."
+  login_code="$(status_code "${TENANT_FRONTEND_URL}/login" || true)"
+  if [[ "${login_code}" == "200" || "${login_code}" == "307" || "${login_code}" == "308" ]]; then
+    tenant_proxy_code="$(
+      status_code \
+        -H "Authorization: Bearer ${AUTH_TOKEN}" \
+        "${TENANT_FRONTEND_URL}/api/v2/me" || true
+    )"
+    if [[ "${tenant_proxy_code}" != "200" ]]; then
+      echo "Expected tenant frontend proxy /api/v2/me to preserve Authorization and tenant host, got ${tenant_proxy_code}" >&2
+      exit 1
+    fi
+  else
+    echo "Tenant frontend login/proxy check skipped or unavailable at ${TENANT_FRONTEND_URL} (status ${login_code})."
+  fi
+else
+  echo "Skipping tenant frontend authenticated proxy check; set TENANT_FRONTEND_URL and AUTH_TOKEN to enable it."
 fi
 
 echo "SaaS readiness smoke checks passed"
