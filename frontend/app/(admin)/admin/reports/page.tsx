@@ -2,13 +2,8 @@
 
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
 
 import { exportAdminReportCsv, getRevenue } from "@/lib/api/admin";
-import {
-  listReportSnapshots,
-  type ReportSnapshotCard,
-} from "@/lib/api/v2/reports";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 import { MiniBars } from "@/components/ds/charts";
@@ -18,17 +13,17 @@ const REPORTS = [
   {
     name: "pending-payments",
     title: "Pending payments",
-    description: "Manual invoices still waiting for payment.",
+    description: "Invoices still waiting for payment.",
   },
   {
     name: "revenue",
     title: "Revenue",
-    description: "Collected revenue by month from the billing context.",
+    description: "Monthly collected revenue.",
   },
   {
     name: "attendance",
     title: "Attendance",
-    description: "Recent attendance marks from the coaching context.",
+    description: "Recent attendance marks.",
   },
 ] as const;
 
@@ -53,36 +48,51 @@ export default function AdminReportsPage() {
   const revenueByMonth = revenueQuery.data?.by_month ?? {};
   const sortedMonths = Object.keys(revenueByMonth).sort();
   const last6Months = sortedMonths.slice(-6);
-  const chartValues = last6Months.length > 0 ? last6Months.map(m => revenueByMonth[m]) : [0, 0, 0, 0, 0, 0];
+  const chartValues = last6Months.map((month) => revenueByMonth[month]);
+  const latestMonth = last6Months.at(-1);
+  const latestRevenue = latestMonth ? revenueByMonth[latestMonth] : null;
+  const sixMonthRevenue = chartValues.reduce((total, value) => total + value, 0);
 
   return (
     <section data-testid="admin-reports" className="space-y-5">
-      <SnapshotsBlock />
-
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-3">
-          <Card p={24} className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+      <div className="space-y-3">
+        <Overline>Dashboard</Overline>
+        <Card p={24} className="flex flex-col gap-6">
+          <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <Overline>Revenue Trend (Last 6 Months)</Overline>
+              <Overline>Revenue trend</Overline>
               <div className="mt-2">
                 <BigNum size={32}>
-                  {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
-                    (chartValues[chartValues.length - 1] ?? 0) / 100
-                  )}
+                  {latestRevenue == null ? "No data" : formatCurrency(latestRevenue)}
                 </BigNum>
               </div>
-              <p className="text-sm text-neutral-500 mt-1">Latest month shown</p>
+              <p className="text-sm text-neutral-500 mt-1">
+                {latestMonth ? `${formatMonth(latestMonth)} collected revenue` : "No monthly revenue rows returned yet."}
+              </p>
             </div>
             {revenueQuery.isLoading ? (
               <div className="h-20 w-60 animate-pulse rounded-md bg-neutral-100 dark:bg-neutral-800" />
-            ) : (
-              <div className="shrink-0">
+            ) : chartValues.length > 0 ? (
+              <div className="shrink-0" aria-label="Revenue by month">
                 <MiniBars values={chartValues} w={240} h={80} highlight={chartValues.length - 1} />
               </div>
+            ) : (
+              <div className="rounded-md border border-dashed border-rally-line px-4 py-5 text-sm text-rally-subtle">
+                Revenue will appear here after collected payment rows are available.
+              </div>
             )}
-          </Card>
-        </div>
+          </div>
+          <dl className="grid gap-3 border-t border-neutral-100 pt-4 sm:grid-cols-3">
+            <DashboardTerm label="Months shown" value={String(last6Months.length)} />
+            <DashboardTerm label="Six-month total" value={formatCurrency(sixMonthRevenue)} />
+            <DashboardTerm label="Latest month" value={latestMonth ? formatMonth(latestMonth) : "Not available"} />
+          </dl>
+        </Card>
+      </div>
 
+      <div className="space-y-3">
+        <Overline>Exports</Overline>
+        <div className="grid gap-4 lg:grid-cols-3">
         {REPORTS.map((report) => (
           <Card
             key={report.name}
@@ -103,6 +113,7 @@ export default function AdminReportsPage() {
             </div>
           </Card>
         ))}
+        </div>
       </div>
 
       {exportMutation.isError && (
@@ -131,6 +142,27 @@ export default function AdminReportsPage() {
   );
 }
 
+function DashboardTerm({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <Overline>{label}</Overline>
+      <dd className="mt-1 text-sm font-semibold text-rally-ink">{value}</dd>
+    </div>
+  );
+}
+
+function formatCurrency(cents: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
+}
+
+function formatMonth(value: string) {
+  const [year, month] = value.split("-").map(Number);
+  if (!year || !month) return value;
+  return new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric" }).format(
+    new Date(year, month - 1, 1),
+  );
+}
+
 function downloadCsv(title: string, csv: string) {
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -139,73 +171,4 @@ function downloadCsv(title: string, csv: string) {
   anchor.download = `${title.toLowerCase().replace(/\s+/g, "-")}.csv`;
   anchor.click();
   URL.revokeObjectURL(url);
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Snapshot cards (Wave 5 — placeholders pending Agent A read models).
-// ────────────────────────────────────────────────────────────────────────────
-
-function SnapshotsBlock() {
-  const snapshotsQuery = useQuery({
-    queryKey: ["admin", "reports", "snapshots"],
-    queryFn: listReportSnapshots,
-  });
-
-  const cards = snapshotsQuery.data ?? [];
-
-  return (
-    <div className="space-y-3" data-testid="admin-reports-snapshots">
-      <div
-        role="status"
-        className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
-      >
-        <AlertTriangle className="size-4 mt-0.5 shrink-0" aria-hidden="true" />
-        <div>
-          <strong className="font-semibold">Snapshots are placeholder.</strong>{" "}
-          Pre-computed reporting read models are in flight (Wave 5 Agent A).
-          These cards will populate as the read-model endpoints land.
-        </div>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {snapshotsQuery.isPending
-          ? Array.from({ length: 4 }, (_, i) => (
-              <div key={i} className="h-32 animate-pulse rounded-xl bg-neutral-100" />
-            ))
-          : cards.map((card) => <SnapshotCard key={card.key} card={card} />)}
-      </div>
-    </div>
-  );
-}
-
-function SnapshotCard({ card }: { card: ReportSnapshotCard }) {
-  return (
-    <Card p={20} className="flex flex-col" data-testid={`admin-reports-snapshot-${card.key}`}>
-      <Overline>{card.label}</Overline>
-      <div className="mt-2 flex items-baseline gap-2">
-        <BigNum size={28}>{card.value}</BigNum>
-        {card.delta && (
-          <span
-            className={`inline-flex items-center gap-0.5 font-mono text-[11px] font-bold ${
-              card.trend === "up"
-                ? "text-emerald-700"
-                : card.trend === "down"
-                  ? "text-red-700"
-                  : "text-rally-muted"
-            }`}
-            aria-label={`Change vs prior period: ${card.delta}`}
-          >
-            <TrendIcon trend={card.trend ?? "flat"} />
-            {card.delta}
-          </span>
-        )}
-      </div>
-      <p className="mt-2 text-[12px] text-rally-muted">{card.description}</p>
-    </Card>
-  );
-}
-
-function TrendIcon({ trend }: { trend: "up" | "down" | "flat" }) {
-  if (trend === "up") return <ArrowUpRight className="size-3" aria-hidden="true" />;
-  if (trend === "down") return <ArrowDownRight className="size-3" aria-hidden="true" />;
-  return <Minus className="size-3" aria-hidden="true" />;
 }
