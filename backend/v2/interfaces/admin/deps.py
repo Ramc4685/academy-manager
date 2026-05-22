@@ -116,6 +116,7 @@ class AdminUseCases:
     list_dues_followup: object  # callable
     send_dues_reminders: object  # callable
     export_report_csv: object  # callable
+    get_reports_kpis: object  # async () -> dict[str, int | float]
     # comms
     comms: CommsService
     # waivers

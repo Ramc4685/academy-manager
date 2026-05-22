@@ -128,6 +128,73 @@ from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.ids import new_ulid
 
 
+def _make_reports_kpis(db: AsyncIOMotorDatabase[Any]) -> object:
+    """Returns an async callable that computes KPIs on-demand from live collections."""
+    from datetime import UTC, datetime, timedelta
+
+    from backend.v2.shared.tenancy import current_academy_id
+
+    async def get_reports_kpis() -> dict[str, int | float]:
+        academy_id = current_academy_id()
+        now = datetime.now(UTC)
+        period_str = now.strftime("%Y-%m")
+        cutoff_30d = now - timedelta(days=30)
+
+        # active_students: distinct students with active enrollment
+        pipeline_students = [
+            {"$match": {"academy_id": academy_id, "status": "active"}},
+            {"$group": {"_id": "$student_id"}},
+            {"$count": "n"},
+        ]
+        res = await db.enrollments.aggregate(pipeline_students).to_list(length=1)
+        active_students: int = res[0]["n"] if res else 0
+
+        # attendance_rate_30d
+        pipeline_att = [
+            {"$match": {"academy_id": academy_id, "created_at": {"$gte": cutoff_30d},
+                        "status": {"$in": ["present", "absent"]}}},
+            {"$group": {"_id": None,
+                        "present": {"$sum": {"$cond": [{"$eq": ["$status", "present"]}, 1, 0]}},
+                        "total": {"$sum": 1}}},
+        ]
+        res2 = await db.attendance.aggregate(pipeline_att).to_list(length=1)
+        if res2 and res2[0]["total"] > 0:
+            attendance_rate_30d = round(res2[0]["present"] / res2[0]["total"], 4)
+        else:
+            attendance_rate_30d = 0.0
+
+        # dues_collected_mtd
+        pipeline_dues = [
+            {"$match": {"academy_id": academy_id, "status": "succeeded",
+                        "period": period_str}},
+            {"$group": {"_id": None, "total": {"$sum": "$amount_cents"}}},
+        ]
+        res3 = await db.payments.aggregate(pipeline_dues).to_list(length=1)
+        dues_collected_mtd_cents: int = res3[0]["total"] if res3 else 0
+
+        # pending_waivers
+        active_student_ids_cursor = db.enrollments.find(
+            {"academy_id": academy_id, "status": "active"}, {"student_id": 1}
+        )
+        active_ids = {doc["student_id"] async for doc in active_student_ids_cursor}
+        signed_cursor = db.waiver_acceptances.find(
+            {"academy_id": academy_id, "status": "signed",
+             "student_id": {"$in": list(active_ids)}},
+            {"student_id": 1},
+        )
+        signed_ids = {doc["student_id"] async for doc in signed_cursor}
+        pending_waivers = len(active_ids - signed_ids)
+
+        return {
+            "active_students": active_students,
+            "attendance_rate_30d": attendance_rate_30d,
+            "dues_collected_mtd_cents": dues_collected_mtd_cents,
+            "pending_waivers": pending_waivers,
+        }
+
+    return get_reports_kpis
+
+
 def compose_admin(
     db: AsyncIOMotorDatabase[Any],
     outbox: Outbox,
@@ -636,6 +703,7 @@ def compose_admin(
         list_dues_followup=list_dues_followup,
         send_dues_reminders=send_dues_reminders,
         export_report_csv=export_report_csv,
+        get_reports_kpis=_make_reports_kpis(db),
         comms=comms,
         list_admin_waivers=list_admin_waivers,
         get_academy_use_case=get_academy_use_case,

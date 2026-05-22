@@ -475,3 +475,10 @@ class AdminGatewayView(BaseModel):
 
 class UpdateAdminUserRoleRequest(BaseModel):
     role: Literal["admin", "coach", "parent"]
+
+
+class ReportsKpiResponse(BaseModel):
+    active_students: int = 0
+    attendance_rate_30d: float = 0.0
+    dues_collected_mtd_cents: int = 0
+    pending_waivers: int = 0
