@@ -59,7 +59,6 @@ async def up(db: AsyncIOMotorDatabase) -> None:
     await deliveries.create_index(
         "provider_message_id",
         unique=True,
-        sparse=True,
         partialFilterExpression={"provider_message_id": {"$type": "string"}},
         name="message_deliveries_provider_message_id_unique",
     )

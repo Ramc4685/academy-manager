@@ -316,6 +316,23 @@ backend:
       - working: true
         agent: "main"
         comment: "Verified PR #46 after final main refresh: conflict-marker scan had no real merge markers, compileall v2 passed, ruff check v2 passed, ruff format --check v2 passed, import-linter contracts passed, full backend v2 suite passed 374/374 with 7 existing mongomock UTC warnings, and git diff --check passed."
+  - task: "production backend deploy migration 0101 fix"
+    implemented: true
+    working: true
+    file: "backend/v2/migrations/0101_message_campaign_indexes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "user"
+        comment: "GitHub Actions production run 26292507207 failed in Deploy Backend. Fly deploy log showed the app built and pushed, but no process listened on 0.0.0.0:8001, and production smoke returned 502 from https://api.academy.courtmastr.com."
+      - working: false
+        agent: "main"
+        comment: "Fly logs identified the startup crash while applying migration 0101_message_campaign_indexes: MongoDB rejected message_deliveries_provider_message_id_unique because the index spec mixed sparse=true with partialFilterExpression."
+      - working: true
+        agent: "main"
+        comment: "Removed sparse=True from the unique partial provider_message_id index and added a regression test that rejects Mongo index specs combining sparse and partialFilterExpression. Verification: the new test failed red before the fix, then backend/v2/tests/contract/test_migrations_legacy_compat.py passed 5/5, full backend v2 passed 410/410 with 7 existing mongomock UTC warnings, ruff check v2 passed, and ruff format --check v2 passed."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -521,16 +538,17 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 19
+  test_sequence: 20
   run_ui: true
 test_plan:
   current_focus:
-    - "PR #46 Wave 4 merge-conflict recovery"
-    - "PR #55 grpcio-status dependency resolution"
+    - "production backend deploy migration 0101 fix"
   stuck_tasks: []
-  test_all: false
+  test_all: true
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "Production deploy failure investigated from GitHub Actions run 26292507207 and Fly logs. Root cause: migration 0101 attempted to create message_deliveries_provider_message_id_unique with both sparse=true and partialFilterExpression, which MongoDB rejects. Branch feat/fix-backend-deploy-migration-0101 removes sparse=True from that partial unique index and adds a regression test in test_migrations_legacy_compat.py. Verification so far: red test reproduced the invalid spec; focused migration compat suite passed 5/5; full backend v2 suite passed 410/410; ruff check/format passed. Rerun production workflow after merging this hotfix."
   - agent: "main"
     message: "PR #46 merge-conflict recovery verified: origin/main was merged into feat/saas-v2-wave4, conflict files were resolved, Ruff formatting/import issues from Wave 4 files were fixed, and full backend v2 tests passed 374/374. GitHub Actions should be rerun after pushing the merge commit."
   - agent: "main"

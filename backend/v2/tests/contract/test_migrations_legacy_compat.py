@@ -12,6 +12,25 @@ import importlib
 import pytest
 
 
+class _MongoIndexOptionRejectingCollection:
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, dict[str, object]]] = []
+
+    async def create_index(self, keys, **kwargs):
+        self.calls.append((keys, kwargs))
+        if kwargs.get("sparse") and "partialFilterExpression" in kwargs:
+            raise AssertionError("MongoDB rejects sparse with partialFilterExpression")
+        return kwargs.get("name", "idx")
+
+
+class _MongoIndexOptionRejectingDb:
+    def __init__(self) -> None:
+        self.collections: dict[str, _MongoIndexOptionRejectingCollection] = {}
+
+    def __getitem__(self, name: str) -> _MongoIndexOptionRejectingCollection:
+        return self.collections.setdefault(name, _MongoIndexOptionRejectingCollection())
+
+
 @pytest.mark.asyncio
 async def test_enrollment_migration_tolerates_legacy_rows_without_v2_ids(db) -> None:
     await db["sessions"].insert_many(
@@ -90,3 +109,20 @@ async def test_billing_migration_accepts_existing_stripe_event_id_index(db) -> N
 
     indexes = await db["stripe_webhook_events"].index_information()
     assert any(info["key"] == [("event_id", 1)] for info in indexes.values())
+
+
+@pytest.mark.asyncio
+async def test_message_campaign_migration_uses_valid_mongo_index_options() -> None:
+    migration = importlib.import_module("backend.v2.migrations.0101_message_campaign_indexes")
+    fake_db = _MongoIndexOptionRejectingDb()
+
+    await migration.up(fake_db)  # type: ignore[arg-type]
+
+    deliveries = fake_db.collections["message_deliveries"]
+    provider_index = next(
+        kwargs
+        for _keys, kwargs in deliveries.calls
+        if kwargs.get("name") == "message_deliveries_provider_message_id_unique"
+    )
+    assert provider_index["partialFilterExpression"] == {"provider_message_id": {"$type": "string"}}
+    assert "sparse" not in provider_index
