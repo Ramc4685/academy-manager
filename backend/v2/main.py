@@ -274,7 +274,7 @@ def _build_request_tenant_resolver(app: FastAPI):
 
     async def _resolve(request):
         if saas_mode and resolver is not None:
-            host = request.headers.get("host", "")
+            host = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
             headers = dict(request.headers)
             try:
                 result = await resolver.resolve(host=host, headers=headers)
