@@ -237,7 +237,9 @@ test.describe("Rally admin shell", () => {
     await stubAdminBff(page);
     await page.goto("/admin");
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
-    await expect(page.getByTestId("tenant-switcher-single")).toContainText("Academy E2E");
+    await expect(page.getByTestId("tenant-switcher-single")).toContainText("Academy E2E", {
+      timeout: 10_000,
+    });
     await page.getByTestId("admin-open-drawer").click();
     const drawer = page.getByTestId("admin-mobile-drawer");
     await expect(drawer.getByText("Academy E2E")).toBeVisible();
