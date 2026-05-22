@@ -55,6 +55,9 @@ from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist 
     PromoteFromWaitlist,
 )
 from backend.v2.contexts.enrollment.domain.errors import SessionNotFound
+from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_event_repo import (
+    MongoEnrollmentEventRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
 )
@@ -172,6 +175,7 @@ def compose_parent(
     sessions_writer = MongoSessionWriter(db)
     enrollments_writer = MongoEnrollmentWriter(db)
     enrollments_query = MongoEnrollmentRepository(db)
+    enrollment_events = MongoEnrollmentEventRepository(db)
     students_writer = MongoStudentWriter(db)
     waitlist = MongoWaitlistRepository(db)
     pause_requests = MongoPauseRequestRepository(db)
@@ -183,9 +187,15 @@ def compose_parent(
         students=students_writer,
         outbox=outbox,
         idempotency_store=idempotency_store,
+        enrollment_events=enrollment_events,
         academy_id=academy_id,
     )
-    promote = PromoteFromWaitlist(waitlist=waitlist, outbox=outbox, academy_id=academy_id)
+    promote = PromoteFromWaitlist(
+        waitlist=waitlist,
+        outbox=outbox,
+        enrollment_events=enrollment_events,
+        academy_id=academy_id,
+    )
 
     # Onboarding
     apps_repo = MongoApplicationRepository(db)

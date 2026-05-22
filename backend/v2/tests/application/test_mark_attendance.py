@@ -5,7 +5,7 @@ Covers all four rejection paths + idempotency + outbox emission.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -23,7 +23,6 @@ from backend.v2.contexts.coaching.domain.errors import (
 from backend.v2.contexts.coaching.domain.models import Attendance
 
 FIXED_NOW = datetime(2026, 5, 16, 9, 30, tzinfo=UTC)
-FIXED_DATE = date(2026, 5, 16)
 
 
 class InMemoryIdempotency:
@@ -44,9 +43,9 @@ class FakeAttendanceRepo:
     async def save(self, attendance: Attendance) -> None:
         self.saved.append(attendance)
 
-    async def find_existing(self, session_id: str, student_id: str) -> Attendance | None:
+    async def find_existing(self, occurrence_id: str, student_id: str) -> Attendance | None:
         for a in self.saved:
-            if a.session_id == session_id and a.student_id == student_id:
+            if a.occurrence_id == occurrence_id and a.student_id == student_id:
                 return a
         return None
 
@@ -57,26 +56,34 @@ class FakeAttendanceRepo:
         return None
 
 
-class FakeSessionLookup:
+class FakeOccurrenceLookup:
     def __init__(
         self,
         *,
         assigned: bool = True,
         cancelled: bool = False,
-        session_date: date | None = FIXED_DATE,
+        found: bool = True,
+        session_id: str = "sess-1",
     ) -> None:
         self.assigned = assigned
         self.cancelled = cancelled
-        self.session_date_val = session_date
+        self.found = found
+        self.session_id = session_id
 
-    async def is_coach_assigned(self, coach_id: str, session_id: str, on_date: date) -> bool:
-        return self.assigned
+    async def get(self, occurrence_id: str):
+        if not self.found:
+            return None
+        from backend.v2.contexts.coaching.application.ports import OccurrenceDetails
 
-    async def is_cancelled(self, session_id: str) -> bool:
-        return self.cancelled
-
-    async def session_date(self, session_id: str) -> date | None:
-        return self.session_date_val
+        return OccurrenceDetails(
+            occurrence_id=occurrence_id,
+            session_id=self.session_id,
+            starts_at=FIXED_NOW,
+            status="cancelled" if self.cancelled else "scheduled",
+            scheduled_coach_id="coach-1" if self.assigned else "other-coach",
+            actual_coach_id=None,
+            substitute_coach_id=None,
+        )
 
 
 class FakeEnrollmentLookup:
@@ -106,6 +113,7 @@ def _cmd(
 ) -> MarkAttendanceCommand:
     return MarkAttendanceCommand(
         mutation_id=mutation_id,
+        occurrence_id="occ-2026-05-16",
         session_id="sess-1",
         student_id=student_id,
         status=status,  # type: ignore[arg-type]
@@ -114,13 +122,13 @@ def _cmd(
 
 def _build(**overrides) -> MarkAttendance:
     repo = overrides.pop("attendance_repo", FakeAttendanceRepo())
-    sessions = overrides.pop("session_lookup", FakeSessionLookup())
+    occurrences = overrides.pop("occurrence_lookup", FakeOccurrenceLookup())
     enrollments = overrides.pop("enrollment_lookup", FakeEnrollmentLookup())
     outbox = overrides.pop("outbox", FakeOutbox())
     idem = overrides.pop("idempotency_store", InMemoryIdempotency())
     return MarkAttendance(
         attendance_repo=repo,
-        session_lookup=sessions,
+        occurrence_lookup=occurrences,
         enrollment_lookup=enrollments,
         outbox=outbox,
         idempotency_store=idem,
@@ -136,12 +144,14 @@ async def test_happy_path_persists_and_emits_event() -> None:
     uc = _build(attendance_repo=repo, outbox=outbox)
     result = await uc.execute(_cmd(), coach_id="coach-1")
     assert result.attendance_id == "mut-1"
+    assert result.occurrence_id == "occ-2026-05-16"
     assert result.status == "present"
     assert len(repo.saved) == 1
     assert len(outbox.appended) == 1
     event = outbox.appended[0]
     assert event.name == "Coaching.AttendanceMarked"
     assert event.payload.attendance_id == "mut-1"
+    assert event.payload.occurrence_id == "occ-2026-05-16"
 
 
 @pytest.mark.asyncio
@@ -158,21 +168,21 @@ async def test_idempotent_replay_returns_same_result_one_save() -> None:
 
 @pytest.mark.asyncio
 async def test_session_not_found_raises_not_assigned() -> None:
-    uc = _build(session_lookup=FakeSessionLookup(session_date=None))
+    uc = _build(occurrence_lookup=FakeOccurrenceLookup(found=False))
     with pytest.raises(SessionNotAssigned):
         await uc.execute(_cmd(), coach_id="coach-1")
 
 
 @pytest.mark.asyncio
 async def test_cancelled_session_rejected() -> None:
-    uc = _build(session_lookup=FakeSessionLookup(cancelled=True))
+    uc = _build(occurrence_lookup=FakeOccurrenceLookup(cancelled=True))
     with pytest.raises(SessionCancelled):
         await uc.execute(_cmd(), coach_id="coach-1")
 
 
 @pytest.mark.asyncio
 async def test_unassigned_coach_rejected() -> None:
-    uc = _build(session_lookup=FakeSessionLookup(assigned=False))
+    uc = _build(occurrence_lookup=FakeOccurrenceLookup(assigned=False))
     with pytest.raises(SessionNotAssigned):
         await uc.execute(_cmd(), coach_id="coach-1")
 
@@ -192,3 +202,17 @@ async def test_conflict_when_different_mutation_id_exists() -> None:
     # Different mutation hits same (session, student) — must conflict.
     with pytest.raises(ConflictAttendanceExists):
         await uc.execute(_cmd(mutation_id="mut-2"), coach_id="coach-1")
+
+
+@pytest.mark.asyncio
+async def test_same_student_can_be_marked_again_for_different_occurrence() -> None:
+    repo = FakeAttendanceRepo()
+    uc = _build(attendance_repo=repo)
+
+    await uc.execute(_cmd(mutation_id="mut-1"), coach_id="coach-1")
+    await uc.execute(
+        _cmd(mutation_id="mut-2").model_copy(update={"occurrence_id": "occ-2026-05-23"}),
+        coach_id="coach-1",
+    )
+
+    assert [row.occurrence_id for row in repo.saved] == ["occ-2026-05-16", "occ-2026-05-23"]

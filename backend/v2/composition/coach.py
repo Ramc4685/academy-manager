@@ -30,6 +30,9 @@ from backend.v2.contexts.enrollment.application.use_cases.list_coach_sessions_fo
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
 )
+from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import (
+    MongoSessionOccurrenceRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
 )
@@ -40,7 +43,10 @@ from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
 
-from .coaching_lookups import EnrollmentLookupAdapter, EnrollmentSessionLookup
+from .coaching_lookups import (
+    EnrollmentLookupAdapter,
+    EnrollmentOccurrenceLookup,
+)
 
 
 @dataclass
@@ -74,6 +80,7 @@ def compose_coach(
     enrollments_repo = MongoEnrollmentRepository(db)
     students_repo = MongoStudentRepository(db)
     attendance_repo = MongoAttendanceRepository(db)
+    occurrences_repo = MongoSessionOccurrenceRepository(db)
     notes_repo = MongoCoachingNotesRepository(db)
     assigned_sessions = CoachAssignedSessionLookup(sessions_repo)
 
@@ -122,7 +129,7 @@ def compose_coach(
         get_roster=GetSessionRoster(enrollments=enrollments_repo, students=students_repo),
         mark_attendance=MarkAttendance(
             attendance_repo=attendance_repo,
-            session_lookup=EnrollmentSessionLookup(sessions_repo),
+            occurrence_lookup=EnrollmentOccurrenceLookup(occurrences_repo),
             enrollment_lookup=EnrollmentLookupAdapter(enrollments_repo),
             outbox=outbox,
             idempotency_store=idempotency_store,

@@ -14,6 +14,7 @@ class AttendanceMarkedPayload(BaseModel):
     model_config = {"frozen": True}
 
     attendance_id: str
+    occurrence_id: str
     session_id: str
     student_id: str
     marked_by: str

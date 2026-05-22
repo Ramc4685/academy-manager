@@ -26,6 +26,7 @@ TENANT_OWNED_COLLECTIONS = {
     "billing_calculation_snapshots",
     "billing_invoice_keys",
     "billing_policies",
+    "enrollment_events",
     "enrollments",
     "expenses",
     "lesson_plans",

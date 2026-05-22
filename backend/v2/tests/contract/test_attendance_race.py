@@ -1,7 +1,7 @@
 """Wave 1B contract test — server-side double-mark race.
 
-Two devices, same coach, same (session, student), distinct mutation_ids.
-The unique index `(academy_id, session_id, student_id)` must let the first
+Two devices, same coach, same (occurrence, student), distinct mutation_ids.
+The unique index `(academy_id, occurrence_id, student_id)` must let the first
 write succeed and reject the second.
 
 Run after migration 0020 applies the unique index.
@@ -20,7 +20,7 @@ from backend.v2.shared.tenancy.context import tenant_scope
 
 
 @pytest.mark.asyncio
-async def test_unique_index_rejects_duplicate_session_student(db) -> None:
+async def test_unique_index_rejects_duplicate_occurrence_student(db) -> None:
     # mongomock-motor honors unique indexes; apply the migration via the
     # idempotent runner so we don't duplicate the index definition here.
     from backend.v2.migrations import run_pending_migrations
@@ -37,6 +37,7 @@ async def test_unique_index_rejects_duplicate_session_student(db) -> None:
         first = Attendance(
             attendance_id="mut-A",
             academy_id="test-academy",
+            occurrence_id="occ-1",
             session_id="sess",
             student_id="st1",
             marked_by="coach",

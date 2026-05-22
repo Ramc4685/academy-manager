@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pydantic import BaseModel
 
 from backend.v2.contexts.enrollment.application.ports import (
+    EnrollmentEventRepository,
     EnrollmentQuery,
     EnrollmentWriter,
     SessionWriter,
@@ -28,6 +29,7 @@ from backend.v2.contexts.enrollment.domain.events import (
     CapacityExceededPayload,
     EnrollmentConfirmed,
     EnrollmentConfirmedPayload,
+    EnrollmentLifecycleEvent,
 )
 from backend.v2.contexts.enrollment.domain.models import Enrollment, Student
 from backend.v2.shared.events import Outbox
@@ -63,6 +65,7 @@ class ConfirmEnrollment:
         outbox: Outbox,
         idempotency_store: IdempotencyStore,
         academy_id: str,
+        enrollment_events: EnrollmentEventRepository | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._sessions = sessions
@@ -72,6 +75,7 @@ class ConfirmEnrollment:
         self._outbox = outbox
         self._idempotency_store = idempotency_store
         self._academy_id = academy_id
+        self._enrollment_events = enrollment_events
         self._now = clock
 
     @idempotent(
@@ -112,6 +116,23 @@ class ConfirmEnrollment:
             status="active",
         )
         await self._enrollments.create(enrollment)
+        now = self._now()
+        if self._enrollment_events is not None:
+            await self._enrollment_events.record(
+                EnrollmentLifecycleEvent(
+                    event_id=str(new_ulid()),
+                    academy_id=self._academy_id,
+                    event_type="created",
+                    enrollment_id=enrollment.enrollment_id,
+                    session_id=cmd.session_id,
+                    student_id=student_id,
+                    actor_id=cmd.parent_id,
+                    reason="checkout_confirmed",
+                    effective_at=now,
+                    occurred_at=now,
+                    billing_result=cmd.payment_id,
+                )
+            )
 
         await self._outbox.append(
             EnrollmentConfirmed(

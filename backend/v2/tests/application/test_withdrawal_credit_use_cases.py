@@ -13,6 +13,7 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
 )
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment, Subscription
 from backend.v2.contexts.billing.domain.proration import BillingCalculationSnapshot
+from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
 from backend.v2.contexts.enrollment.domain.models import Enrollment
 
 
@@ -104,6 +105,44 @@ class FakeStripe:
         self.cancelled.append((stripe_subscription_id, at_period_end))
 
 
+@dataclass
+class FakeEnrollmentEvents:
+    rows: list[EnrollmentLifecycleEvent] = field(default_factory=list)
+
+    async def record_withdrawal(
+        self,
+        *,
+        academy_id,
+        enrollment_id,
+        session_id,
+        student_id,
+        actor_id,
+        reason,
+        effective_at,
+        occurred_at,
+        billing_policy,
+        billing_result,
+        credit_id,
+    ):
+        self.rows.append(
+            EnrollmentLifecycleEvent(
+                event_id="event-1",
+                academy_id=academy_id,
+                event_type="withdrawn",
+                enrollment_id=enrollment_id,
+                session_id=session_id,
+                student_id=student_id,
+                actor_id=actor_id,
+                reason=reason,
+                effective_at=effective_at,
+                occurred_at=occurred_at,
+                billing_policy=billing_policy,
+                billing_result=billing_result,
+                credit_id=credit_id,
+            )
+        )
+
+
 @pytest.mark.asyncio
 async def test_preview_withdrawal_credit_uses_net_paid_and_original_snapshot() -> None:
     payment = Payment(
@@ -183,12 +222,14 @@ async def test_approve_withdrawal_creates_credit_and_cancels_subscription() -> N
         )
     )
     stripe = FakeStripe()
+    events = FakeEnrollmentEvents()
     uc = ApproveWithdrawalCredit(
         payments=FakePayments(payment=payment, snapshot=_snapshot()),
         credits=credits,
         enrollments=enrollments,
         subscriptions=subscriptions,
         stripe=stripe,
+        enrollment_events=events,
         academy_id="acad",
         clock=lambda: datetime(2026, 5, 20, tzinfo=UTC),
     )
@@ -210,6 +251,14 @@ async def test_approve_withdrawal_creates_credit_and_cancels_subscription() -> N
     assert stripe.cancelled == [("sub_stripe_1", True)]
     assert subscriptions.saved is not None
     assert subscriptions.saved.status == "cancelled"
+    assert len(events.rows) == 1
+    assert events.rows[0].event_type == "withdrawn"
+    assert events.rows[0].enrollment_id == "enroll-1"
+    assert events.rows[0].student_id == "student-1"
+    assert events.rows[0].actor_id == "admin-1"
+    assert events.rows[0].reason == "moving"
+    assert events.rows[0].effective_at == datetime(2026, 5, 21, tzinfo=UTC)
+    assert events.rows[0].credit_id == result.credit_id
 
     # Idempotency: a second approval must not insert a duplicate credit.
     result2 = await uc.execute(
@@ -224,5 +273,6 @@ async def test_approve_withdrawal_creates_credit_and_cancels_subscription() -> N
     assert result2.credit_amount_cents == result.credit_amount_cents
     # Still exactly one ledger entry.
     assert len(credits.entries) == 1
+    assert len(events.rows) == 1
     # Stripe cancel is not re-invoked on the idempotent branch.
     assert stripe.cancelled == [("sub_stripe_1", True)]

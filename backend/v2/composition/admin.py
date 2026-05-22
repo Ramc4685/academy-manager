@@ -65,6 +65,10 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
+from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_event_repo import (
+    MongoEnrollmentEventRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
 )
@@ -121,6 +125,7 @@ from backend.v2.shared.comms import CommsService, MongoMessageRepository
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
+from backend.v2.shared.ids import new_ulid
 
 
 def compose_admin(
@@ -138,6 +143,7 @@ def compose_admin(
     sessions_r = MongoSessionRepository(db)
     enrollments_w = MongoEnrollmentWriter(db)
     enrollments_r = MongoEnrollmentRepository(db)
+    enrollment_events = MongoEnrollmentEventRepository(db)
     students_w = MongoStudentWriter(db)
     students_r = MongoStudentRepository(db)
     waitlist = MongoWaitlistRepository(db)
@@ -155,19 +161,40 @@ def compose_admin(
         sessions=sessions_w,
         enrollments=enrollments_w,
         students=students_w,
+        enrollment_events=enrollment_events,
         academy_id=academy_id,
     )
     cancel_enrollment = CancelEnrollment(
         enrollments=enrollments_w,
         sessions=sessions_w,
         outbox=outbox,
+        enrollment_events=enrollment_events,
         academy_id=academy_id,
     )
-    transfer_enrollment = TransferEnrollment(enrollments=enrollments_w, sessions=sessions_w)
-    pause_enrollment = PauseEnrollment(enrollments=enrollments_w)
-    resume_enrollment = ResumeEnrollment(enrollments=enrollments_w)
-    join_waitlist = JoinWaitlist(waitlist=waitlist, academy_id=academy_id)
-    promote = PromoteFromWaitlist(waitlist=waitlist, outbox=outbox, academy_id=academy_id)
+    transfer_enrollment = TransferEnrollment(
+        enrollments=enrollments_w,
+        sessions=sessions_w,
+        enrollment_events=enrollment_events,
+    )
+    pause_enrollment = PauseEnrollment(
+        enrollments=enrollments_w,
+        enrollment_events=enrollment_events,
+    )
+    resume_enrollment = ResumeEnrollment(
+        enrollments=enrollments_w,
+        enrollment_events=enrollment_events,
+    )
+    join_waitlist = JoinWaitlist(
+        waitlist=waitlist,
+        enrollment_events=enrollment_events,
+        academy_id=academy_id,
+    )
+    promote = PromoteFromWaitlist(
+        waitlist=waitlist,
+        outbox=outbox,
+        enrollment_events=enrollment_events,
+        academy_id=academy_id,
+    )
     skip = SkipFromWaitlist(waitlist=waitlist)
     remove = RemoveFromWaitlist(waitlist=waitlist)
     list_admin_pause_requests = ListAdminPauseRequests(pause_requests=pause_requests)
@@ -198,6 +225,7 @@ def compose_admin(
         enrollments=enrollments_w,
         subscriptions=subscriptions_repo,
         stripe=stripe,
+        enrollment_events=_EnrollmentLifecycleEventSink(enrollment_events),
         academy_id=academy_id,
     )
 
@@ -619,6 +647,44 @@ def compose_admin(
         get_academy_gateway_use_case=get_academy_gateway_use_case,
         change_user_role=change_user_role,
     )
+
+
+class _EnrollmentLifecycleEventSink:
+    def __init__(self, enrollment_events: MongoEnrollmentEventRepository) -> None:
+        self._enrollment_events = enrollment_events
+
+    async def record_withdrawal(
+        self,
+        *,
+        academy_id: str,
+        enrollment_id: str,
+        session_id: str,
+        student_id: str,
+        actor_id: str,
+        reason: str,
+        effective_at: datetime,
+        occurred_at: datetime,
+        billing_policy: str,
+        billing_result: str,
+        credit_id: str | None,
+    ) -> None:
+        await self._enrollment_events.record(
+            EnrollmentLifecycleEvent(
+                event_id=str(new_ulid()),
+                academy_id=academy_id,
+                event_type="withdrawn",
+                enrollment_id=enrollment_id,
+                session_id=session_id,
+                student_id=student_id,
+                actor_id=actor_id,
+                reason=reason,
+                effective_at=effective_at,
+                occurred_at=occurred_at,
+                billing_policy=billing_policy,
+                billing_result=billing_result,
+                credit_id=credit_id,
+            )
+        )
 
 
 def _start_date_to_datetime(value: str | None) -> datetime:

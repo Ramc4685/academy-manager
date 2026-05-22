@@ -2,11 +2,46 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.v2.shared.events.base import DomainEvent
+
+EnrollmentLifecycleEventType = Literal[
+    "created",
+    "moved",
+    "paused",
+    "resumed",
+    "cancelled",
+    "withdrawn",
+    "waitlisted",
+    "promoted",
+]
+
+
+class EnrollmentLifecycleEvent(BaseModel):
+    model_config = {"frozen": True}
+
+    event_id: str
+    academy_id: str
+    event_type: EnrollmentLifecycleEventType
+    enrollment_id: str | None = None
+    waitlist_id: str | None = None
+    session_id: str | None = None
+    from_session_id: str | None = None
+    to_session_id: str | None = None
+    student_id: str
+    actor_id: str | None = None
+    reason: str | None = None
+    effective_at: datetime
+    occurred_at: datetime
+    billing_policy: str | None = None
+    billing_result: str | None = None
+    credit_id: str | None = None
+    refund_id: str | None = None
+    metadata: dict[str, str] = Field(default_factory=dict)
 
 
 class EnrollmentConfirmedPayload(BaseModel):

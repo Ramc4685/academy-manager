@@ -14,12 +14,13 @@ AttendanceStatus = Literal["present", "absent", "late"]
 
 
 class Attendance(BaseModel):
-    """One mark for one student in one session."""
+    """One mark for one student in one dated session occurrence."""
 
     model_config = {"frozen": True}
 
     attendance_id: str  # = mutation_id from the client (ULID)
     academy_id: str
+    occurrence_id: str
     session_id: str
     student_id: str
     marked_by: str  # coach user_id
