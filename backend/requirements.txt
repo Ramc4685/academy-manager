@@ -87,7 +87,7 @@ pydantic_core==2.46.4
 pydantic-settings==2.14.1
 pyflakes==3.4.0
 Pygments==2.20.0
-PyJWT==2.12.1
+PyJWT==2.13.0
 pymongo==4.6.3
 pyparsing==3.3.2
 mongomock-motor==0.0.36
