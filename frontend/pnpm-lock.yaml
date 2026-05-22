@@ -48,8 +48,8 @@ importers:
         specifier: 9.5.11
         version: 9.5.11(browserslist@4.28.2)(typescript@5.6.3)
       tailwind-merge:
-        specifier: 2.5.4
-        version: 2.5.4
+        specifier: 3.6.0
+        version: 3.6.0
       ulid:
         specifier: 2.3.0
         version: 2.3.0
@@ -225,6 +225,7 @@ packages:
   '@aws-sdk/core@3.974.13':
     resolution: {integrity: sha512-+Y5/4tHki0uYgyx8eun146DegRVQBpdKGK5RbV0FTKJPpaKTchvqVxrrRFK6Wk0JksO4iAZKw3eqxGEIwtO98w==}
     engines: {node: '>=20.0.0'}
+    deprecated: Deprecated due to an error deserialization bug in JSON 1.0 protocol services, see https://github.com/aws/aws-sdk-js-v3/pull/8031. Newer version available.
 
   '@aws-sdk/crc64-nvme@3.972.9':
     resolution: {integrity: sha512-P+QGozmXn2mZZI7sDgk+aUm+RTI61MPSFB+Ir2vjEjEbEsE4e7hYtzrDvAUxZy9ko81h53e11+F/GYlvwDkaOQ==}
@@ -4663,8 +4664,8 @@ packages:
     resolution: {integrity: sha512-yEFYrVhod+hdNyx7g5Bnkkb0G6si8HJurOoOEgC8B/O0uXLHlaey/65KRv6cuWBNhBgHKAROVpc7QyYqE5gFng==}
     engines: {node: '>=20'}
 
-  tailwind-merge@2.5.4:
-    resolution: {integrity: sha512-0q8cfZHMu9nuYP/b5Shb7Y7Sh1B7Nnl5GqNr1U+n2p6+mybvRtayrQ+0042Z5byvTA8ihjlP8Odo8/VnHbZu4Q==}
+  tailwind-merge@3.6.0:
+    resolution: {integrity: sha512-uxL7qAVQriqRQPAyK3pj66VqskWqoZ37PW94jwOTwNfq/z9oyu1V+eqrZqtR2+fCiXdYOZe/Modt8GtvqNzu+w==}
 
   tailwindcss@3.4.14:
     resolution: {integrity: sha512-IcSvOcTRcUtQQ7ILQL5quRDg7Xs93PdJEk1ZLbhhvJc7uj/OAhYOnruEiwnGgBvUtaUAJ8/mhSw1o8L2jCiENA==}
@@ -10487,7 +10488,7 @@ snapshots:
 
   tagged-tag@1.0.0: {}
 
-  tailwind-merge@2.5.4: {}
+  tailwind-merge@3.6.0: {}
 
   tailwindcss@3.4.14:
     dependencies:
