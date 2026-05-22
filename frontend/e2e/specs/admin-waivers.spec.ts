@@ -145,7 +145,7 @@ test.describe("admin waivers", () => {
 
     await page.goto("/admin/waivers");
     await expect(page.getByTestId("admin-waivers-empty")).toContainText("No waiver rows returned.");
-    await expect(page.getByText("Current waiver metadata is not available from the BFF yet.")).toBeVisible();
+    await expect(page.getByText("Current waiver details are not available yet.")).toBeVisible();
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });
 });
