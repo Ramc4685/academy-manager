@@ -56,9 +56,9 @@ def test_application_does_not_import_infrastructure() -> None:
         if "/application/" not in str(file):
             continue
         for imp in _imports_for(file):
-            assert "infrastructure" not in imp, (
-                f"{file} (application) imports infrastructure: {imp}"
-            )
+            assert (
+                "infrastructure" not in imp
+            ), f"{file} (application) imports infrastructure: {imp}"
 
 
 def test_no_cross_context_imports() -> None:
