@@ -199,9 +199,7 @@ class TenantGovernanceService:
         )
         return StudentDataDeletionRequest(**created)
 
-    async def grant_support_access(
-        self, command: GrantSupportAccessCommand
-    ) -> SupportAccessGrant:
+    async def grant_support_access(self, command: GrantSupportAccessCommand) -> SupportAccessGrant:
         self._require_platform_support(command.actor)
         now = self._clock()
         grant = SupportAccessGrant(

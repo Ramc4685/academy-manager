@@ -15,13 +15,13 @@ from backend.v2.contexts.platform.governance.application.use_cases import (
     RequestTenantExportCommand,
     TenantGovernanceService,
 )
+from backend.v2.contexts.platform.governance.domain.errors import GovernancePermissionDenied
 from backend.v2.contexts.platform.governance.domain.models import (
     GovernanceActor,
     PIIHandlingPolicy,
     RetentionPolicy,
     SoftDeletePolicy,
 )
-from backend.v2.contexts.platform.governance.domain.errors import GovernancePermissionDenied
 
 
 class FakeGovernanceStore:
