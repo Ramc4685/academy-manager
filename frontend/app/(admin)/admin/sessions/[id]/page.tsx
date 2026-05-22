@@ -138,11 +138,12 @@ export default function AdminSessionDetailPage() {
             </>
           ) : (
             <h1 className="font-display text-2xl font-semibold text-rally-ink">
-              Session {sessionId.slice(0, 8)}…
+              Session unavailable
             </h1>
           )}
         </div>
         <div className="flex gap-2">
+          {/* TODO(wave9): Add a real edit action when the admin session update endpoint ships. */}
           <Button
             variant="primary"
             size="sm"
@@ -529,24 +530,24 @@ function AddToRosterDialog({
                 className={inputClass}
               />
             </Field>
-            <Field label="Student ID" required>
+            <Field label="Student reference" required>
               <input
                 type="text"
                 required
                 value={form.student_id}
                 onChange={(e) => setForm((f) => ({ ...f, student_id: e.target.value }))}
                 className={inputClass}
-                placeholder={studentsQuery.isLoading ? "Loading students…" : "Student Mongo ID"}
+                placeholder={studentsQuery.isLoading ? "Loading students…" : "Student reference"}
               />
             </Field>
-            <Field label="Parent ID" required>
+            <Field label="Parent reference" required>
               <input
                 type="text"
                 required
                 value={form.parent_id}
                 onChange={(e) => setForm((f) => ({ ...f, parent_id: e.target.value }))}
                 className={inputClass}
-                placeholder="Parent Mongo ID"
+                placeholder="Parent reference"
               />
             </Field>
           </>

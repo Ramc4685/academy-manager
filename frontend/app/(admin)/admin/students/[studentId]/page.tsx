@@ -9,15 +9,14 @@
  * `lib/api/v2/students.ts`), so the form surfaces backend errors rather
  * than silently faking success.
  *
- * No raw internal ids are rendered in normal UI — the `student_id` is
- * tucked behind a copy-on-click affordance per the Wave 5 design rules.
+ * No raw internal ids are rendered in normal UI.
  */
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Copy, RefreshCw } from "lucide-react";
+import { ArrowLeft, RefreshCw } from "lucide-react";
 
 import {
   getAdminStudent,
@@ -174,7 +173,6 @@ function Header({ student }: { student: AdminStudentDetail }) {
             </h2>
             <div className="mt-1 flex items-center gap-2">
               <StatusChip status={student.status} />
-              <CopyIdButton id={student.student_id} label="Student ref" />
             </div>
           </div>
         </div>
@@ -199,34 +197,6 @@ function Header({ student }: { student: AdminStudentDetail }) {
 function StatusChip({ status }: { status: string }) {
   const variant = status === "active" ? "enrolled" : status === "paused" ? "paused" : "expired";
   return <Chip variant={variant} label={status.toUpperCase()} />;
-}
-
-function CopyIdButton({ id, label }: { id: string; label: string }) {
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const t = window.setTimeout(() => setCopied(false), 1500);
-    return () => window.clearTimeout(t);
-  }, [copied]);
-
-  return (
-    <button
-      type="button"
-      aria-label={`Copy ${label}`}
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(id);
-          setCopied(true);
-        } catch {
-          // ignore — clipboard may be unavailable in some browsers
-        }
-      }}
-      className="inline-flex items-center gap-1 font-mono text-[10px] font-bold tracking-overline rounded-md border border-rally-line bg-white px-2 py-0.5 text-rally-muted hover:bg-neutral-50 focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
-    >
-      <Copy className="size-3" aria-hidden="true" />
-      <span>{copied ? "COPIED" : label.toUpperCase()}</span>
-    </button>
-  );
 }
 
 function DetailList({
