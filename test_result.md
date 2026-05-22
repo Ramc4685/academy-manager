@@ -223,6 +223,23 @@ backend:
       - working: true
         agent: "main"
         comment: "Added backend.v2.shared.ids.new_ulid() around python-ulid's stable ULID() API and replaced direct ulid.new imports. Local CI-equivalent v2 backend command passed with 212 tests and 74.40% shared coverage; import-linter contracts passed."
+  - task: "PR #55 grpcio-status dependency resolution"
+    implemented: true
+    working: true
+    file: "backend/requirements.txt"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "main"
+        comment: "GitHub Actions run 26266341878 failed Backend and Backend Lint during pip install because grpcio-status==1.80.0 requires protobuf>=6.31.1 while google-generativeai==0.8.6 pins google-ai-generativelanguage==0.6.15, which requires protobuf<6."
+      - working: "NA"
+        agent: "main"
+        comment: "Removed unused legacy google-generativeai/google-ai-generativelanguage pins and bumped protobuf to 6.33.2 so the grpcio-status 1.80.0 Dependabot PR can resolve dependencies. Local verification pending."
+      - working: true
+        agent: "main"
+        comment: "Verified backend requirements now resolve: pip dry-run passed, Python 3.14 throwaway venv install passed, Python 3.12 throwaway venv install passed, imports for google.genai/google.api_core/grpc_status/google.protobuf passed, compileall for backend server.py and v2 passed, and git diff --check passed."
   - task: "SaaS v2 tenant bootstrap and expanded guardrails"
     implemented: true
     working: true
@@ -476,11 +493,15 @@ metadata:
   run_ui: true
 test_plan:
   current_focus:
-    - "SaaS v2 Wave 3 integrated merge gate"
+    - "PR #55 grpcio-status dependency resolution"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "PR #55 dependency fix verified locally: backend/requirements.txt resolves with grpcio-status==1.80.0 by removing unused legacy google-generativeai pins and moving protobuf to 6.33.2. GitHub Actions should be rerun after pushing the branch."
+  - agent: "main"
+    message: "PR #55 fix in progress: Backend CI failed before tests at pip dependency resolution. The branch now keeps grpcio-status==1.80.0, removes unused legacy google-generativeai/google-ai-generativelanguage pins, and bumps protobuf to 6.33.2. Retest dependency install plus backend checks."
   - agent: "main"
     message: "SaaS v2 Wave 3 integration complete on feat/saas-v2-wave3. Agent A/B/C branches were merged from origin/main baseline. Merge conflicts were limited to enrollment application ports and test_result.md; ports now include both SessionOccurrenceRepository and EnrollmentEventRepository. Billing ledger migration was renumbered to 0091 after Agent B used 0090 for enrollment_events. Verification: Agent A focused suite 30 passed, Agent B focused suite 39 passed, Agent C focused suite 32 passed, full backend v2 suite 330 passed with 8 warnings, git diff --check passed before this status update."
   - agent: "main"
