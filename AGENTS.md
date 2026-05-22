@@ -208,11 +208,14 @@ Run these locally before every push. CI will fail the same way if you skip them.
 Backend (from `backend/` with `.venv` active):
 
 ```bash
+source .venv/bin/activate   # REQUIRED — CI uses ruff 0.6.9; system ruff differs
 ruff check v2
 ruff format --check v2
 mypy --config-file pyproject.toml v2
 pytest v2/tests --override-ini="testpaths=v2/tests" -q
 ```
+
+Always activate the venv before running ruff. The system ruff version will produce different formatting and cause CI failures even when local shows "already formatted".
 
 Frontend (from `frontend/`):
 
