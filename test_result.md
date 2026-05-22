@@ -236,10 +236,13 @@ backend:
         comment: "GitHub Actions run 26266341878 failed Backend and Backend Lint during pip install because grpcio-status==1.80.0 requires protobuf>=6.31.1 while google-generativeai==0.8.6 pins google-ai-generativelanguage==0.6.15, which requires protobuf<6."
       - working: "NA"
         agent: "main"
-        comment: "Removed unused legacy google-generativeai/google-ai-generativelanguage pins and bumped protobuf to 6.33.2 so the grpcio-status 1.80.0 Dependabot PR can resolve dependencies. Local verification pending."
+        comment: "Removed unused legacy google-generativeai/google-ai-generativelanguage pins and bumped protobuf to 6.33.5 so the grpcio-status 1.80.0 Dependabot PR can resolve dependencies without the protobuf 6.33.2 audit finding. Local verification pending."
       - working: true
         agent: "main"
-        comment: "Verified backend requirements now resolve: pip dry-run passed, Python 3.14 throwaway venv install passed, Python 3.12 throwaway venv install passed, imports for google.genai/google.api_core/grpc_status/google.protobuf passed, compileall for backend server.py and v2 passed, and git diff --check passed."
+        comment: "Verified backend requirements now resolve after initial dependency fix: pip dry-run passed, Python 3.14 throwaway venv install passed, Python 3.12 throwaway venv install passed, imports for google.genai/google.api_core/grpc_status/google.protobuf passed, compileall for backend server.py and v2 passed, and git diff --check passed. GitHub Actions then failed pip-audit on protobuf 6.33.2; retesting protobuf 6.33.5."
+      - working: true
+        agent: "main"
+        comment: "Retested with protobuf 6.33.5: full requirements dry-run passed, Python 3.12 venv install/upgrade passed, pip-audit reported no known vulnerabilities, firebase/google/grpc/protobuf imports passed, CI-equivalent compileall passed, import-linter contracts passed, legacy backend tests passed with 114 tests, and v2 backend tests passed with 330 tests and 79.66% shared coverage."
   - task: "SaaS v2 tenant bootstrap and expanded guardrails"
     implemented: true
     working: true
@@ -499,9 +502,11 @@ test_plan:
   test_priority: "high_first"
 agent_communication:
   - agent: "main"
-    message: "PR #55 dependency fix verified locally: backend/requirements.txt resolves with grpcio-status==1.80.0 by removing unused legacy google-generativeai pins and moving protobuf to 6.33.2. GitHub Actions should be rerun after pushing the branch."
+    message: "PR #55 dependency fix verified locally, then GitHub Actions found CVE-2026-0994 in protobuf 6.33.2 during pip-audit. The branch now pins protobuf 6.33.5 for the fixed protobuf 6 line; rerun resolver/import/audit checks before pushing."
   - agent: "main"
-    message: "PR #55 fix in progress: Backend CI failed before tests at pip dependency resolution. The branch now keeps grpcio-status==1.80.0, removes unused legacy google-generativeai/google-ai-generativelanguage pins, and bumps protobuf to 6.33.2. Retest dependency install plus backend checks."
+    message: "PR #55 protobuf 6.33.5 retest complete: requirements dry-run passed, Python 3.12 install/upgrade passed, pip-audit found no known vulnerabilities, imports/compileall/import-linter passed, legacy backend tests passed with 114 tests, and v2 backend tests passed with 330 tests at 79.66% shared coverage. Local mypy was not used as a blocker because it reports broad pre-existing v2 typing errors outside CI, while GitHub Backend Lint is already green on this PR."
+  - agent: "main"
+    message: "PR #55 fix in progress: Backend CI failed before tests at pip dependency resolution. The branch now keeps grpcio-status==1.80.0, removes unused legacy google-generativeai/google-ai-generativelanguage pins, and bumps protobuf to 6.33.5. Retest dependency install, pip-audit, and backend checks."
   - agent: "main"
     message: "SaaS v2 Wave 3 integration complete on feat/saas-v2-wave3. Agent A/B/C branches were merged from origin/main baseline. Merge conflicts were limited to enrollment application ports and test_result.md; ports now include both SessionOccurrenceRepository and EnrollmentEventRepository. Billing ledger migration was renumbered to 0091 after Agent B used 0090 for enrollment_events. Verification: Agent A focused suite 30 passed, Agent B focused suite 39 passed, Agent C focused suite 32 passed, full backend v2 suite 330 passed with 8 warnings, git diff --check passed before this status update."
   - agent: "main"
