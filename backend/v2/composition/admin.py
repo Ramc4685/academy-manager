@@ -33,6 +33,9 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
     ApproveWithdrawalCredit,
     PreviewWithdrawalCredit,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
+    MongoBillingLedgerRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
     MongoCreditLedgerRepository,
 )
@@ -295,6 +298,7 @@ def compose_admin(
     decline_pause_request = DeclinePauseRequest(pause_requests=pause_requests)
 
     # Billing
+    billing_ledger_repo = MongoBillingLedgerRepository(db)
     credits_repo = MongoCreditLedgerRepository(db)
     payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
     subscriptions_repo = MongoSubscriptionRepository(db)
@@ -714,6 +718,7 @@ def compose_admin(
         preview_withdrawal_credit=preview_withdrawal_credit,
         approve_withdrawal_credit=approve_withdrawal_credit,
         list_payments_recent=list_payments_recent,
+        list_billing_invoices=billing_ledger_repo.list_invoices_for_academy,
         generate_monthly_payments=generate_monthly_payments,
         mark_payment_paid=mark_payment_paid,
         apply_payment_discount=apply_payment_discount,

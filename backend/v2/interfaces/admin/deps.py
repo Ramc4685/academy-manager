@@ -99,6 +99,7 @@ class AdminUseCases:
     preview_withdrawal_credit: PreviewWithdrawalCredit
     approve_withdrawal_credit: ApproveWithdrawalCredit
     list_payments_recent: object  # callable
+    list_billing_invoices: object  # async (limit: int = 100) -> list[dict]
     generate_monthly_payments: GenerateMonthlyPayments
     mark_payment_paid: MarkPaymentPaid
     apply_payment_discount: ApplyPaymentDiscount

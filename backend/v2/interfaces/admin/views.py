@@ -257,6 +257,28 @@ class WithdrawalCreditApproveResponse(BaseModel):
     credit_balance_cents: int
 
 
+# --- Invoices ---
+
+
+class InvoiceLineDto(BaseModel):
+    description: str
+    amount_cents: int
+
+
+class InvoiceDto(BaseModel):
+    invoice_number: str = ""
+    period: str
+    lines: list[InvoiceLineDto] = []
+    total_cents: int = 0
+    paid_cents: int = 0
+    balance_cents: int = 0
+    status: str = "open"
+
+
+class InvoicesResponse(BaseModel):
+    invoices: list[InvoiceDto]
+
+
 # --- Finance (# FINANCE) ---
 
 
