@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
@@ -13,6 +14,7 @@ from backend.v2.contexts.platform.billing.application.ports import (
 )
 from backend.v2.contexts.platform.billing.domain.models import (
     PlanLimits,
+    PlanStatus,
     PlatformPlan,
     TenantSubscription,
 )
@@ -33,6 +35,17 @@ class PlatformPlanInactive(DomainError):
 class TenantSubscriptionNotFound(DomainError):
     code = "PlatformBilling.SubscriptionNotFound"
     status_code = 404
+
+
+class UpsertPlatformPlanCommand(BaseModel):
+    plan_id: str = Field(min_length=1)
+    code: str = Field(min_length=1)
+    display_name: str = Field(min_length=1)
+    monthly_price_cents: int = Field(ge=0)
+    currency: str = Field(default="usd", min_length=3, max_length=3)
+    limits: PlanLimits
+    status: PlanStatus = "active"
+    stripe_price_id: str | None = None
 
 
 class StartTenantTrialCommand(BaseModel):
@@ -70,6 +83,43 @@ class PlanLimitReport(BaseModel):
     usage: PlatformUsage
     allowed: bool
     violations: list[str]
+
+
+class ListPlatformPlans:
+    def __init__(self, *, plans: PlatformPlanRepository) -> None:
+        self._plans = plans
+
+    async def execute(self) -> list[PlatformPlan]:
+        return await self._plans.list()
+
+
+class UpsertPlatformPlan:
+    def __init__(
+        self,
+        *,
+        plans: PlatformPlanRepository,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._plans = plans
+        self._clock = clock or (lambda: datetime.now(UTC))
+
+    async def execute(self, command: UpsertPlatformPlanCommand) -> PlatformPlan:
+        now = self._clock()
+        existing = await self._plans.get(command.plan_id)
+        plan = PlatformPlan(
+            plan_id=command.plan_id,
+            code=command.code,
+            display_name=command.display_name,
+            monthly_price_cents=command.monthly_price_cents,
+            currency=command.currency.lower(),
+            limits=command.limits,
+            status=command.status,
+            stripe_price_id=command.stripe_price_id,
+            created_at=existing.created_at if existing else now,
+            updated_at=now,
+        )
+        await self._plans.save(plan)
+        return plan
 
 
 class StartTenantTrial:
@@ -213,6 +263,28 @@ class CheckPlanLimits:
             allowed=not violations,
             violations=violations,
         )
+
+
+class GetTenantSubscription:
+    def __init__(self, *, subscriptions: TenantSubscriptionRepository) -> None:
+        self._subscriptions = subscriptions
+
+    async def execute(self, academy_id: str) -> TenantSubscription:
+        subscription = await self._subscriptions.get_for_academy(academy_id)
+        if subscription is None:
+            raise TenantSubscriptionNotFound(f"no platform subscription for academy {academy_id}")
+        return subscription
+
+
+@dataclass(frozen=True)
+class PlatformBillingUseCases:
+    list_plans: ListPlatformPlans
+    upsert_plan: UpsertPlatformPlan
+    get_subscription: GetTenantSubscription
+    start_trial: StartTenantTrial
+    activate_subscription: ActivateTenantSubscription
+    schedule_cancellation: ScheduleTenantCancellation
+    check_limits: CheckPlanLimits
 
 
 async def _require_active_plan(plans: PlatformPlanRepository, plan_id: str) -> PlatformPlan:

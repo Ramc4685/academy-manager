@@ -59,6 +59,9 @@ from backend.v2.contexts.identity.infrastructure.mongo_user_repo import (
 from backend.v2.contexts.platform.application.use_cases.tenant_lifecycle import (
     TenantLifecycleService,
 )
+from backend.v2.contexts.platform.billing.infrastructure.composition import (
+    build_platform_billing_use_cases,
+)
 from backend.v2.contexts.platform.infrastructure.mongo_tenant_lifecycle_repo import (
     MongoTenantLifecycleRepository,
 )
@@ -66,7 +69,7 @@ from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.interfaces.me_routes import router as me_router
 from backend.v2.interfaces.parent.router import router as parent_router
-from backend.v2.interfaces.platform.bootstrap_routes import router as platform_bootstrap_router
+from backend.v2.interfaces.platform.router import router as platform_router
 from backend.v2.interfaces.registration_routes import router as registration_router
 from backend.v2.migrations import run_pending_migrations
 from backend.v2.shared.auth.middleware import TenancyMiddleware
@@ -160,6 +163,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.tenant_lifecycle = TenantLifecycleService(
         tenants=MongoTenantLifecycleRepository(db),
     )
+    app.state.platform_billing = build_platform_billing_use_cases(db)
 
     # Coach BFF wiring — exposed as app.state.coach for routes via deps.py.
     app.state.coach = compose_coach(db, outbox, idempotency_store)
@@ -204,7 +208,7 @@ def create_app() -> FastAPI:
     # Persona route packages.
     app.include_router(me_router, prefix="/api/v2")
     app.include_router(registration_router, prefix="/api/v2")
-    app.include_router(platform_bootstrap_router, prefix="/api/v2")
+    app.include_router(platform_router, prefix="/api/v2")
     app.include_router(coach_router, prefix="/api/v2")
     app.include_router(parent_router, prefix="/api/v2")
     app.include_router(admin_router, prefix="/api/v2")
