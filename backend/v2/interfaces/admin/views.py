@@ -194,10 +194,10 @@ class GenerateMonthlyPaymentsRequest(BaseModel):
 
     @model_validator(mode="after")
     def _coerce_period(self) -> "GenerateMonthlyPaymentsRequest":
-        if not self.period:
-            if not self.month:
+        if self.period is None:
+            if self.month is None:
                 raise ValueError("'period' (or deprecated alias 'month') is required")
-            object.__setattr__(self, "period", self.month)
+            self.period = self.month
         return self
 
 

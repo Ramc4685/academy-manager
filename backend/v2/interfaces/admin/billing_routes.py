@@ -210,7 +210,7 @@ async def generate_monthly_payments(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> GenerateMonthlyPaymentsResponse:
     result = await use_cases.generate_monthly_payments.execute(
-        GenerateMonthlyPaymentsCommand(period=body.period)
+        GenerateMonthlyPaymentsCommand(period=body.period or "")
     )
     return GenerateMonthlyPaymentsResponse(**result.model_dump())
 

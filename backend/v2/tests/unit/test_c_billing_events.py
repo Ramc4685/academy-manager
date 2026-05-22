@@ -1,7 +1,13 @@
 from __future__ import annotations
 
-from backend.v2.interfaces.admin.views import EnrollmentEventDto, EnrollmentEventsResponse
-from backend.v2.interfaces.admin.views import GenerateMonthlyPaymentsRequest
+import pytest
+from pydantic import ValidationError
+
+from backend.v2.interfaces.admin.views import (
+    EnrollmentEventDto,
+    EnrollmentEventsResponse,
+    GenerateMonthlyPaymentsRequest,
+)
 
 
 def test_enrollment_event_dto_event_type_field():
@@ -32,6 +38,15 @@ def test_generate_monthly_period_canonical():
 
 
 def test_generate_monthly_raises_without_either():
-    import pytest
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         GenerateMonthlyPaymentsRequest.model_validate({})
+
+
+def test_generate_monthly_period_wins_over_month():
+    req = GenerateMonthlyPaymentsRequest.model_validate({"period": "2026-04", "month": "2026-05"})
+    assert req.period == "2026-04"
+
+
+def test_generate_monthly_empty_string_period_requires_month():
+    req = GenerateMonthlyPaymentsRequest.model_validate({"period": "", "month": "2026-05"})
+    assert req.period == ""
