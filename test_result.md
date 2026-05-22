@@ -293,6 +293,29 @@ backend:
       - working: true
         agent: "main"
         comment: "Merged Agent A session occurrences, Agent B enrollment events, and Agent C billing ledger into feat/saas-v2-wave3 from origin/main. Resolved enrollment ports conflict by preserving both occurrence and enrollment-event protocols. Renumbered billing ledger migration from 0090 to 0091 to avoid duplicate migration prefixes. Integration checks passed: Agent A focused suite 30 passed; Agent B focused suite 39 passed; Agent C focused suite 32 passed; full backend v2 suite 330 passed with 8 warnings; git diff --check passed before test_result update."
+  - task: "PR #46 Wave 4 merge-conflict recovery"
+    implemented: true
+    working: true
+    file: "backend/v2"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "main"
+        comment: "GitHub reported PR #46 as DIRTY against main. Local merge reproduced conflicts in v2 composition wiring, Wave 3 enrollment/billing files, tests, and test_result.md."
+      - working: "NA"
+        agent: "main"
+        comment: "Merged origin/main into feat/saas-v2-wave4 and resolved conflicts by keeping current main Wave 3 implementations while preserving Wave 4 composition additions. Verification pending."
+      - working: true
+        agent: "main"
+        comment: "Conflict recovery verified after Ruff fixes: compileall on conflicted modules passed; focused merge-adjacent pytest passed 24/24; ruff check v2 passed; ruff format --check v2 passed; full backend v2 suite passed 374/374 with 7 existing mongomock UTC warnings; git diff --check passed."
+      - working: "NA"
+        agent: "main"
+        comment: "After merging PRs #47-#60 to main, refreshed PR #46 against origin/main. The only new conflict was test_result.md; code merged cleanly. Verification pending before marking the draft ready."
+      - working: true
+        agent: "main"
+        comment: "Verified PR #46 after final main refresh: conflict-marker scan had no real merge markers, compileall v2 passed, ruff check v2 passed, ruff format --check v2 passed, import-linter contracts passed, full backend v2 suite passed 374/374 with 7 existing mongomock UTC warnings, and git diff --check passed."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -502,11 +525,20 @@ metadata:
   run_ui: true
 test_plan:
   current_focus:
+    - "PR #46 Wave 4 merge-conflict recovery"
     - "PR #55 grpcio-status dependency resolution"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "PR #46 merge-conflict recovery verified: origin/main was merged into feat/saas-v2-wave4, conflict files were resolved, Ruff formatting/import issues from Wave 4 files were fixed, and full backend v2 tests passed 374/374. GitHub Actions should be rerun after pushing the merge commit."
+  - agent: "main"
+    message: "PR #46 merge-conflict recovery in progress: origin/main was merged into feat/saas-v2-wave4. Conflicts were resolved by taking current main Wave 3 enrollment/billing implementations and manually preserving Wave 4 composition wiring. Retest focused v2 merge-adjacent suites plus structural checks."
+  - agent: "main"
+    message: "PR #46 refresh in progress after merging PRs #47-#60 to main. The only conflict was test_result.md; keeping both the Wave 4 handoff entries and the PR #55 dependency-resolution history. Retest v2 backend and formatting before marking ready."
+  - agent: "main"
+    message: "PR #46 final refresh verified: compileall, ruff check, ruff format check, import-linter, full backend v2 tests, and git diff --check passed after merging final main. Ready to push, mark PR ready, and merge after GitHub checks."
   - agent: "main"
     message: "PR #55 dependency fix verified locally, then GitHub Actions found CVE-2026-0994 in protobuf 6.33.2 during pip-audit. The branch now pins protobuf 6.33.5 for the fixed protobuf 6 line; rerun resolver/import/audit checks before pushing."
   - agent: "main"
