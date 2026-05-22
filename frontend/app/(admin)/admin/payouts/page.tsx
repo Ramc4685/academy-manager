@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
 import { listPayouts, type AdminPayoutView } from "@/lib/api/admin";
@@ -65,13 +66,17 @@ function PayoutsTable({ payouts }: { payouts: AdminPayoutView[] }) {
               className="border-b border-rally-line last:border-0"
             >
               <td className="px-2 py-3">
-                <div className="flex items-center gap-3">
+                <Link
+                  href={`/admin/payouts/${payout.payout_id}`}
+                  className="flex items-center gap-3 group focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
+                  data-testid={`admin-payouts-link-${payout.payout_id}`}
+                >
                   <Avatar name={payout.coach_id} size={32} />
                   <div>
-                    <div className="font-mono text-xs text-rally-ink">{payout.coach_id}</div>
+                    <div className="font-mono text-xs text-rally-ink group-hover:underline">{payout.coach_id}</div>
                     <div className="font-mono text-[10px] text-rally-muted">{payout.payout_id}</div>
                   </div>
-                </div>
+                </Link>
               </td>
               <td className="px-2 py-3 text-right font-mono font-medium tabular-nums">
                 {money(payout.amount_cents)}

@@ -12,6 +12,32 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/api/v2";
 
 const inflight = new Map<string, Promise<Response>>();
 
+/**
+ * Browser-side active-academy cache.
+ *
+ * In production the tenant is resolved on the backend from
+ * subdomain/custom-domain (ADR-0007). For local development, admin
+ * impersonation, and the academy switcher we attach the user's
+ * selected academy id as `X-Academy-Id`. The header is accepted only
+ * when the request originates from an approved internal source — the
+ * resolver still falls back to subdomain otherwise.
+ */
+const ACTIVE_ACADEMY_KEY = "am.activeAcademy";
+
+export function setActiveAcademyId(academyId: string | null): void {
+  if (typeof window === "undefined") return;
+  if (academyId) {
+    window.localStorage.setItem(ACTIVE_ACADEMY_KEY, academyId);
+  } else {
+    window.localStorage.removeItem(ACTIVE_ACADEMY_KEY);
+  }
+}
+
+export function getActiveAcademyId(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(ACTIVE_ACADEMY_KEY);
+}
+
 export interface ApiError extends Error {
   status: number;
   code?: string;
@@ -42,6 +68,10 @@ export async function apiFetch<T>(
   headers.set("Accept", "application/json");
   if (init.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
+  }
+  if (!headers.has("X-Academy-Id")) {
+    const activeAcademy = getActiveAcademyId();
+    if (activeAcademy) headers.set("X-Academy-Id", activeAcademy);
   }
 
   // Dedup identical in-flight GETs (or anything else if explicitly requested).

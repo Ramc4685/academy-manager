@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { usePersonaAuth } from "@/lib/auth/use-persona-auth";
 import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
+import { TenantProvider } from "@/lib/tenant/tenant-context";
 
 import { Avatar } from "@/components/ds/avatar";
 import { Icon } from "@/components/ds/icons";
@@ -21,6 +23,7 @@ import {
   AdminActionSlotOutlet,
   AdminActionSlotProvider,
 } from "@/components/admin/admin-action-slot";
+import { TenantSwitcher } from "@/components/admin/tenant-switcher";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? "/admin";
@@ -49,7 +52,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const adminName = auth.user?.email ?? "Admin";
 
   return (
-    <AdminActionSlotProvider>
+    <TenantProvider>
+      <TenantChangeInvalidator />
+      <AdminActionSlotProvider>
       <div className="min-h-screen flex bg-rally-paper">
         {/* Sidebar — desktop only */}
         <DesktopSidebar pathname={pathname} adminName={adminName} />
@@ -77,8 +82,27 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <main className="flex-1 p-4 md:p-6 overflow-y-auto">{children}</main>
         </div>
       </div>
-    </AdminActionSlotProvider>
+      </AdminActionSlotProvider>
+    </TenantProvider>
   );
+}
+
+/**
+ * Listens for `am:tenant-changed` events dispatched by the tenant
+ * switcher and invalidates the entire React Query cache. Without this,
+ * pages would render stale data from the previous academy until the
+ * user navigated.
+ */
+function TenantChangeInvalidator() {
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const handler = () => {
+      void queryClient.invalidateQueries();
+    };
+    window.addEventListener("am:tenant-changed", handler);
+    return () => window.removeEventListener("am:tenant-changed", handler);
+  }, [queryClient]);
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -328,6 +352,7 @@ function RallyTopbar({
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <TenantSwitcher />
           <AdminActionSlotOutlet />
           {!online && (
             <span

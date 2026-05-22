@@ -18,6 +18,7 @@ export const queryKeys = {
     users: (role?: string) => ["admin", "users", role ?? "all"] as const,
     students: (params?: { search?: string; status?: string; limit?: number }) =>
       ["admin", "students", params?.search ?? "", params?.status ?? "all", params?.limit ?? "default"] as const,
+    studentDetail: (studentId: string) => ["admin", "student", studentId] as const,
     sessionDetail: (sessionId: string) => ["admin", "session", sessionId] as const,
     enrollments: (sessionId: string) => ["admin", "enrollments", sessionId] as const,
     waitlist: (sessionId: string) => ["admin", "waitlist", sessionId] as const,
