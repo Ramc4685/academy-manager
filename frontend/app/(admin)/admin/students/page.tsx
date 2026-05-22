@@ -106,24 +106,24 @@ function SummaryCards({ students }: { students: AdminStudentView[] }) {
   return (
     <div className="grid gap-4 md:grid-cols-4">
       <Card p={20} accent="#2563eb">
-        <Overline>Loaded students</Overline>
+        <Overline>Students</Overline>
         <BigNum size={32}>{students.length}</BigNum>
         <p className="mt-1 text-[11px] text-rally-subtle">Current result set</p>
       </Card>
       <Card p={20} accent="#10b981">
-        <Overline>Active loaded</Overline>
+        <Overline>Active</Overline>
         <BigNum size={32}>{active}</BigNum>
-        <p className="mt-1 text-[11px] text-rally-subtle">From BFF status</p>
+        <p className="mt-1 text-[11px] text-rally-subtle">Currently enrolled</p>
       </Card>
       <Card p={20} accent="#94a3b8">
-        <Overline>Paused loaded</Overline>
+        <Overline>Paused</Overline>
         <BigNum size={32}>{paused}</BigNum>
-        <p className="mt-1 text-[11px] text-rally-subtle">From BFF status</p>
+        <p className="mt-1 text-[11px] text-rally-subtle">Temporarily paused</p>
       </Card>
       <Card p={20} accent="#ef4444">
         <Overline>Payment risk</Overline>
         <BigNum size={32}>{paymentRisk}</BigNum>
-        <p className="mt-1 text-[11px] text-rally-subtle">Due or overdue loaded</p>
+        <p className="mt-1 text-[11px] text-rally-subtle">Due or overdue</p>
       </Card>
     </div>
   );
@@ -228,14 +228,13 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
                   <Avatar name={student.full_name} size={34} />
                   <div>
                     <div className="font-semibold text-rally-base group-hover:underline">{student.full_name}</div>
-                    <div className="font-mono text-[10px] text-rally-subtle">{student.student_id}</div>
                   </div>
                 </Link>
               </td>
               <td className="px-3 py-4">
-                <div className="text-rally-base">{student.parent_name || student.parent_email || student.parent_id}</div>
-                <div className="font-mono text-[10px] text-rally-subtle">
-                  {student.parent_email ?? student.parent_id}
+                <div className="text-rally-base">{student.parent_name || student.parent_email || "Parent on file"}</div>
+                <div className="text-xs text-rally-subtle">
+                  {student.parent_email ?? "No email on file"}
                 </div>
               </td>
               <td className="px-3 py-4 text-right font-mono tabular-nums text-rally-base">
@@ -301,7 +300,7 @@ function StudentsFooter({
   return (
     <div className="flex flex-col gap-3 border-t border-neutral-200 bg-neutral-50 px-5 py-4 text-rally-muted dark:border-neutral-800 sm:flex-row sm:items-center sm:justify-between">
       <span className="font-mono text-[11px] font-bold uppercase tracking-overline">
-        Showing {loadedCount} loaded students
+        Showing {loadedCount} students
       </span>
       <Button
         variant="secondary"

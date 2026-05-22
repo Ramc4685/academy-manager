@@ -591,6 +591,20 @@ frontend:
           composition wiring, focused application/contract tests, and raw-Mongo guard
           coverage for enrollment_events. Verification: focused Wave 3 suite passed
           (39 tests) and structural layering passed.
+  - task: "Wave 9 admin roster technical leakage cleanup"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/admin/students/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Agent E Wave 9 removed normal-table technical leakage from admin Students, Sessions, and Coaches & Parents pages. Students copy now says Students/Active/Paused, BFF/loaded copy was removed, student and parent internal ID fallbacks were hidden from normal rows, Users no longer shows Mongo ID and now shows phone when returned, Sessions no longer falls back to coach/session ID fragments in visible UI, and add/create fallback placeholders no longer say Mongo ID. Session edit is still a backend/API gap; no fake edit button was added."
+      - working: true
+        agent: "main"
+        comment: "Verification passed: frontend pnpm typecheck, frontend pnpm build, git diff --check, and a Playwright browser render check against the Wave 9 worktree dev server on localhost:3011 using E2E auth bypass and realistic admin route stubs. The browser check visited /admin/students, /admin/sessions, /admin/users, and /admin/sessions/session-raw-1 and found no visible BFF, loaded-students, Mongo ID, Firebase UID, stu_*, 24-char Mongo ID, or ULID-like raw IDs in body text. Real local-stack API browser auth was attempted but skipped because local Mongo has no admin document and running seed_local.py would destructively reset transactional collections."
 metadata:
   created_by: "main_agent"
   version: "1.0"
@@ -599,6 +613,7 @@ metadata:
 test_plan:
   current_focus:
     - "Wave 9 admin shell branding cleanup"
+    - "Wave 9 admin roster technical leakage cleanup"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -609,6 +624,10 @@ agent_communication:
     message: "Wave 9 Agent D admin shell branding cleanup is implemented in the frontend only. Retest that the admin shell uses /api/v2/admin/academy display_name with Academy fallback, shows the logged-in admin email and role, and does not show Rally Academy, COURT 7, academy_id, user_id, Firebase UID, Mongo ID, or other internal IDs in the shell. Planned checks: frontend typecheck, frontend build, focused admin-shell e2e/manual browser if local stack is available, and git diff --check."
   - agent: "main"
     message: "Wave 7 production readiness scaffolding added docs/requirements/2026-05-22-saas-production-readiness.md, scripts/smoke/saas_readiness_smoke.sh, and DEPLOYMENT.md SaaS readiness notes. Retest focused backend SaaS routing/tenant/isolation/static-guard tests, run scripts/smoke/saas_readiness_smoke.sh --static-only, run frontend typecheck/build if dependencies are available, and keep Wave 6 blockers visible. Do not deploy and do not use real secrets."
+  - agent: "main"
+    message: "Agent E Wave 9 implementation ready for verification: check /admin/students, /admin/sessions, /admin/sessions/{id}, and /admin/users for no visible BFF/loaded-students/Mongo/raw internal ID copy in normal tables. Run frontend pnpm typecheck, pnpm build, browser check if the local stack is available, and git diff --check. Known backend gap: no admin session update endpoint/edit route exists, so no edit session button was added."
+  - agent: "main"
+    message: "Agent E Wave 9 verification complete. frontend pnpm typecheck and pnpm build passed after installing node_modules. git diff --check passed. Browser render check passed on the Wave 9 worktree dev server with E2E auth bypass and realistic admin stubs for /admin/students, /admin/sessions, /admin/users, and /admin/sessions/session-raw-1; no forbidden technical leakage appeared in body text. Real local API browser auth was not completed because academy_manager_local has no admin user and seed_local.py is destructive."
   - agent: "main"
     message: "Wave 7 verification complete for scaffolding only: static smoke passed, focused backend SaaS guard tests passed with 30 tests, frontend typecheck/build passed after pnpm install restored node_modules, and git diff --check passed. Full HTTP smoke and production deploy were not run. Wave 6 blockers remain: real membership/platform-role auth wiring, bootstrap composition, platform billing persistence/routes, governance/support persistence/routes, platform audit, and Fly health check move to /api/v2/healthz before enabling V2_SAAS_MODE."
   - agent: "main"
