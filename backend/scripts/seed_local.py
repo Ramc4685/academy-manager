@@ -566,6 +566,63 @@ async def main() -> None:
             session_ids[s["name"]] = first_upcoming_id
     print(f"Sessions: {len(session_ids)} templates → {total_instances} dated instances")
 
+    # ── Past sessions: mark completed + seed occurrences for payout ──────────
+    today_dt = datetime.now(timezone.utc)
+    past_sessions = await db.sessions.find(
+        {"academy_id": ACADEMY_ID, "start_at": {"$lt": today_dt}}
+    ).to_list(length=None)
+
+    occurrence_count = 0
+    for sess in past_sessions:
+        sid = str(sess.get("session_id") or sess["_id"])
+        coach_id = str(sess.get("coach_id", ""))
+        await db.sessions.update_one(
+            {"_id": sess["_id"]},
+            {"$set": {"status": "completed", "is_payable": True}},
+        )
+        await db.session_occurrences.update_one(
+            {"occurrence_id": sid, "academy_id": ACADEMY_ID},
+            {"$setOnInsert": {
+                "occurrence_id": sid,
+                "academy_id": ACADEMY_ID,
+                "session_id": sid,
+                "template_session_id": sid,
+                "start_at": sess.get("start_at"),
+                "end_at": sess.get("end_at", sess.get("start_at")),
+                "status": "completed",
+                "scheduled_coach_id": coach_id,
+                "is_billable": True,
+                "is_payable": True,
+            }},
+            upsert=True,
+        )
+        occurrence_count += 1
+    print(f"  Past occurrences completed+seeded: {occurrence_count}")
+
+    # ── Coach rates (per-session billing) ────────────────────────────────────
+    effective_from_dt = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    rates_seeded = 0
+    for cname, coach_uid in coach_ids.items():
+        if not coach_uid:
+            continue
+        await db.coach_rates.update_one(
+            {"academy_id": ACADEMY_ID, "coach_id": coach_uid, "status": "active"},
+            {"$setOnInsert": {
+                "rate_id": new_id(),
+                "academy_id": ACADEMY_ID,
+                "coach_id": coach_uid,
+                "billing_unit": "per_session",
+                "amount_minor": 2500,
+                "currency": "usd",
+                "effective_from": effective_from_dt,
+                "effective_until": None,
+                "status": "active",
+            }},
+            upsert=True,
+        )
+        rates_seeded += 1
+    print(f"  Coach rates seeded: {rates_seeded}")
+
     # ── 6. Parents / Students / Enrollments / Payments ─────────────────────
     parent_id_by_email: dict[str, str] = {}
     student_id_by_name: dict[str, str] = {}
