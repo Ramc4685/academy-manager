@@ -104,6 +104,20 @@
 
 user_problem_statement: "Merged BFF/DDD code; verify and fix local v2/BFF startup."
 backend:
+  - task: "SaaS v2 Wave 6 platform tenant lifecycle"
+    implemented: true
+    working: true
+    file: "backend/v2/contexts/platform/application/use_cases/tenant_lifecycle.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Agent A Wave 6 added the platform bounded context tenant lifecycle state machine, Mongo-compatible repository, and platform routes for create, activate, suspend, cancel, reactivate, update plan/limits, and status/health. Focused verification pending."
+      - working: true
+        agent: "main"
+        comment: "Focused verification passed: pytest v2/tests/application/test_tenant_lifecycle.py -q (7 passed), pytest v2/tests/interface/test_platform_tenants.py -q (5 passed), and git diff --check passed."
   - task: "v2 backend local boot and migrations"
     implemented: true
     working: true
@@ -754,3 +768,17 @@ agent_communication:
       PR #44 merge-conflict recovery on branch feat/saas-v2-wave2: merged origin/main and resolved conflicts between the branch's CI/backend dependency and pause-request work and main's Wave 3 enrollment occurrence/lifecycle-event work. Kept both MongoPauseRequestRepository and MongoEnrollmentEventRepository wiring, preserved UTC-based formatting, threaded lifecycle actor IDs through admin roster/pause routes, kept occurrence_id attendance tests, and preserved both PR #44 CI-recovery and Wave 3 test_result notes.
 
       Verification: ruff check v2 passed; ruff format --check v2 passed; git diff --check passed; compileall over the directly conflicted v2 files passed; focused merge-adjacent suite passed 35/35; full backend v2 suite passed 330/330 with 7 mongomock utcnow deprecation warnings.
+  - agent: "main"
+    message: |
+      SaaS v2 Wave 6 — Agent A platform tenant lifecycle implementation in worktree academy-manager-agent-a-wave6.
+
+      Added a Platform bounded context for tenant lifecycle state, plan limits, status health, and Mongo-compatible persistence over the academies collection. Added platform routes under /api/v2/platform/tenants for create, activate, suspend, cancel, reactivate, plan/limits update, status, and health. Mutations require platform_admin; status/health allow platform_admin or platform_support. Academy roles cannot access platform lifecycle routes.
+
+      Focused verification passed: pytest v2/tests/application/test_tenant_lifecycle.py -q (7 passed), pytest v2/tests/interface/test_platform_tenants.py -q (5 passed), and git diff --check passed. Full backend/v2 suite was not run in this Wave 6 Agent A worktree.
+  - agent: "main"
+    message: |
+      SaaS v2 Wave 6 — Orchestrator follow-up for Agent A.
+
+      Added the missing tenant status serving gate from the Wave 6 acceptance criteria. TenancyMiddleware now accepts a tenant servability checker, blocks non-platform tenant-scoped requests with Platform.TenantNotServable (423) when the platform tenant is not active, and skips that gate for /api/v2/platform/* so platform_admin/platform_support can inspect or repair tenant state. backend/v2/main.py wires TenantLifecycleService over MongoTenantLifecycleRepository into app.state and exposes the checker only when SaaS mode is active; non-SaaS mode remains pass-through.
+
+      Verification: source .venv/bin/activate pytest attempt failed because this local worktree venv was missing ulid; reran with project requirements via uv run --no-project --with-requirements requirements.txt --with-requirements requirements-v2.txt pytest v2/tests/application/test_tenant_lifecycle.py v2/tests/interface/test_platform_tenants.py v2/tests/interface/test_tenant_resolution.py -q and got 29 passed. git diff --check passed.

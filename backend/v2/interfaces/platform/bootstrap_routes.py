@@ -10,9 +10,18 @@ from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import
     BootstrapAcademyCommand,
     BootstrapAcademyResult,
 )
+from backend.v2.contexts.platform.application.use_cases.tenant_lifecycle import (
+    CreateTenantCommand,
+    TenantLifecycleService,
+    UpdateTenantPlanCommand,
+)
+from backend.v2.contexts.platform.domain.models import Tenant, TenantHealth, TenantLimits
+from backend.v2.contexts.platform.infrastructure.mongo_tenant_lifecycle_repo import (
+    MongoTenantLifecycleRepository,
+)
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 
-router = APIRouter(prefix="/platform", tags=["platform.bootstrap"])
+router = APIRouter(prefix="/platform", tags=["platform"])
 
 
 class BootstrapAcademyRequest(BaseModel):
@@ -35,10 +44,58 @@ class BootstrapAcademyResponse(BaseModel):
     default_records: tuple[str, ...]
 
 
+class CreateTenantRequest(BaseModel):
+    display_name: str = Field(min_length=1)
+    slug: str = Field(min_length=1)
+    primary_domain: str = Field(min_length=1)
+    plan_code: str = Field(min_length=1)
+    limits: TenantLimits = Field(default_factory=TenantLimits)
+
+
+class TenantLifecycleResponse(BaseModel):
+    academy_id: str
+    display_name: str
+    slug: str
+    primary_domain: str
+    status: str
+    servable: bool
+    reason: str | None = None
+    plan_code: str
+    limits: TenantLimits
+    status_reason: str | None = None
+    updated_by: str
+
+
+class TenantHealthResponse(BaseModel):
+    academy_id: str
+    status: str
+    servable: bool
+    reason: str | None = None
+    plan_code: str
+    limits: TenantLimits
+
+
+class LifecycleReasonRequest(BaseModel):
+    reason: str = Field(default="", max_length=500)
+
+
+class UpdateTenantPlanRequest(BaseModel):
+    plan_code: str = Field(min_length=1)
+    limits: TenantLimits = Field(default_factory=TenantLimits)
+
+
 async def require_platform_admin(
     claims: AuthClaims = Depends(get_auth_claims),
 ) -> AuthClaims:
     if not claims.is_platform_admin():
+        raise HTTPException(status_code=404, detail="Not found")
+    return claims
+
+
+async def require_platform_operator(
+    claims: AuthClaims = Depends(get_auth_claims),
+) -> AuthClaims:
+    if not (claims.is_platform_admin() or claims.has_platform_role("platform_support")):
         raise HTTPException(status_code=404, detail="Not found")
     return claims
 
@@ -48,6 +105,37 @@ def get_bootstrap_academy(request: Request) -> BootstrapAcademy:
     if use_case is None:
         raise HTTPException(status_code=503, detail="Tenant bootstrap is not configured")
     return use_case  # type: ignore[no-any-return]
+
+
+def get_tenant_lifecycle(request: Request) -> TenantLifecycleService:
+    use_case = getattr(request.app.state, "tenant_lifecycle", None)
+    if use_case is not None:
+        return use_case  # type: ignore[no-any-return]
+
+    db = getattr(request.app.state, "db", None)
+    if db is None:
+        raise HTTPException(status_code=503, detail="Tenant lifecycle is not configured")
+
+    use_case = TenantLifecycleService(tenants=MongoTenantLifecycleRepository(db))
+    request.app.state.tenant_lifecycle = use_case
+    return use_case
+
+
+def _tenant_response(tenant: Tenant) -> TenantLifecycleResponse:
+    health = tenant.health()
+    return TenantLifecycleResponse(
+        academy_id=tenant.academy_id,
+        display_name=tenant.display_name,
+        slug=tenant.slug,
+        primary_domain=tenant.primary_domain,
+        status=tenant.status,
+        servable=health.servable,
+        reason=health.reason,
+        plan_code=tenant.plan_code,
+        limits=tenant.limits,
+        status_reason=tenant.status_reason,
+        updated_by=tenant.updated_by,
+    )
 
 
 @router.post("/academies/bootstrap", response_model=BootstrapAcademyResponse)
@@ -60,3 +148,109 @@ async def bootstrap_academy(
         BootstrapAcademyCommand(**payload.model_dump())
     )
     return BootstrapAcademyResponse(**result.model_dump())
+
+
+@router.post("/tenants", response_model=TenantLifecycleResponse)
+async def create_tenant(
+    payload: CreateTenantRequest,
+    claims: AuthClaims = Depends(require_platform_admin),
+    use_case: TenantLifecycleService = Depends(get_tenant_lifecycle),
+) -> TenantLifecycleResponse:
+    tenant = await use_case.create_tenant(
+        CreateTenantCommand(
+            **payload.model_dump(),
+            actor_user_id=claims.user_id,
+        )
+    )
+    return _tenant_response(tenant)
+
+
+@router.get("/tenants/{academy_id}/status", response_model=TenantLifecycleResponse)
+async def get_tenant_status(
+    academy_id: str,
+    _: AuthClaims = Depends(require_platform_operator),
+    use_case: TenantLifecycleService = Depends(get_tenant_lifecycle),
+) -> TenantLifecycleResponse:
+    return _tenant_response(await use_case.get_tenant(academy_id))
+
+
+@router.get("/tenants/{academy_id}/health", response_model=TenantHealthResponse)
+async def get_tenant_health(
+    academy_id: str,
+    _: AuthClaims = Depends(require_platform_operator),
+    use_case: TenantLifecycleService = Depends(get_tenant_lifecycle),
+) -> TenantHealthResponse:
+    health: TenantHealth = await use_case.get_tenant_health(academy_id)
+    return TenantHealthResponse(**health.model_dump())
+
+
+@router.post("/tenants/{academy_id}/activate", response_model=TenantLifecycleResponse)
+async def activate_tenant(
+    academy_id: str,
+    claims: AuthClaims = Depends(require_platform_admin),
+    use_case: TenantLifecycleService = Depends(get_tenant_lifecycle),
+) -> TenantLifecycleResponse:
+    return _tenant_response(
+        await use_case.activate_tenant(academy_id, actor_user_id=claims.user_id)
+    )
+
+
+@router.post("/tenants/{academy_id}/suspend", response_model=TenantLifecycleResponse)
+async def suspend_tenant(
+    academy_id: str,
+    payload: LifecycleReasonRequest,
+    claims: AuthClaims = Depends(require_platform_admin),
+    use_case: TenantLifecycleService = Depends(get_tenant_lifecycle),
+) -> TenantLifecycleResponse:
+    return _tenant_response(
+        await use_case.suspend_tenant(
+            academy_id,
+            actor_user_id=claims.user_id,
+            reason=payload.reason,
+        )
+    )
+
+
+@router.post("/tenants/{academy_id}/cancel", response_model=TenantLifecycleResponse)
+async def cancel_tenant(
+    academy_id: str,
+    payload: LifecycleReasonRequest,
+    claims: AuthClaims = Depends(require_platform_admin),
+    use_case: TenantLifecycleService = Depends(get_tenant_lifecycle),
+) -> TenantLifecycleResponse:
+    return _tenant_response(
+        await use_case.cancel_tenant(
+            academy_id,
+            actor_user_id=claims.user_id,
+            reason=payload.reason,
+        )
+    )
+
+
+@router.post("/tenants/{academy_id}/reactivate", response_model=TenantLifecycleResponse)
+async def reactivate_tenant(
+    academy_id: str,
+    claims: AuthClaims = Depends(require_platform_admin),
+    use_case: TenantLifecycleService = Depends(get_tenant_lifecycle),
+) -> TenantLifecycleResponse:
+    return _tenant_response(
+        await use_case.reactivate_tenant(academy_id, actor_user_id=claims.user_id)
+    )
+
+
+@router.patch("/tenants/{academy_id}/plan", response_model=TenantLifecycleResponse)
+async def update_tenant_plan(
+    academy_id: str,
+    payload: UpdateTenantPlanRequest,
+    claims: AuthClaims = Depends(require_platform_admin),
+    use_case: TenantLifecycleService = Depends(get_tenant_lifecycle),
+) -> TenantLifecycleResponse:
+    return _tenant_response(
+        await use_case.update_plan_limits(
+            academy_id,
+            UpdateTenantPlanCommand(
+                **payload.model_dump(),
+                actor_user_id=claims.user_id,
+            ),
+        )
+    )
