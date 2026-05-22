@@ -436,6 +436,26 @@ async def main() -> None:
         if not admin_firebase_uid:
             await db.users.update_one({"_id": r.inserted_id}, {"$set": {"user_id": str(r.inserted_id), "firebase_uid": str(r.inserted_id)}})
 
+    # ── 1b. Grant platform_admin to admin user ─────────────────────────────
+    admin_doc_fresh = await db.users.find_one({"email": admin_email})
+    if admin_doc_fresh:
+        admin_uid_final = str(
+            admin_doc_fresh.get("user_id")
+            or admin_doc_fresh.get("firebase_uid")
+            or admin_doc_fresh["_id"]
+        )
+        await db.platform_roles.update_one(
+            {"user_id": admin_uid_final, "role": "platform_admin"},
+            {"$set": {
+                "user_id": admin_uid_final,
+                "role": "platform_admin",
+                "status": "active",
+                "granted_at": utcnow(),
+            }},
+            upsert=True,
+        )
+        print(f"  Platform admin: {admin_email} -> platform_roles.platform_admin")
+
     # ── 2. Coaches ──────────────────────────────────────────────────────────
     coach_info = {
         "Gowtham": {"email": "gowtham@blno.academy", "display_name": "Gowtham"},
@@ -773,7 +793,7 @@ async def main() -> None:
 
     print("\n✓ Seed complete.")
     print(f"\nLogin credentials:")
-    print(f"  Admin:  {admin_email} / {ADMIN_PASSWORD}")
+    print(f"  Admin (platform_admin):  {admin_email} / {ADMIN_PASSWORD}")
     if FIREBASE_MODE:
         print(f"  Coach:  gowtham@blno.academy | kishore@blno.academy  /  {COACH_PASSWORD}")
         print(f"  Parent: <any parent email>  /  {PARENT_PASSWORD}")

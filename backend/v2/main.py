@@ -46,6 +46,9 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
 )
 from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import BootstrapAcademy
 from backend.v2.contexts.identity.infrastructure.mongo_bootstrap_store import MongoTenantBootstrapStore
+from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
+    MongoMembershipRepository,
+)
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import (
     MongoUserRepository,
 )
@@ -105,7 +108,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ``users.academy_id`` / ``users.roles``. SaaS deployments will replace
     # these via the composition root once the real repositories land.
     membership_repo = _LegacyUserMembershipAdapter(users_repo, settings.default_academy_id)
-    platform_role_repo = _NullPlatformRoleRepository()
+    membership_db_repo = MongoMembershipRepository(db)
+    platform_role_repo = _MongoPlatformRoleAdapter(membership_db_repo)
 
     load_claims = LoadAuthClaims(
         verifier=verifier,
@@ -302,6 +306,19 @@ class _NullPlatformRoleRepository:
 
     async def list_active_for_user(self, user_id: str) -> list[PlatformRole]:
         return []
+
+
+class _MongoPlatformRoleAdapter:
+    """Adapts MongoMembershipRepository to the PlatformRoleRepository port.
+
+    The port uses list_active_for_user(); the repo uses list_active_platform_roles().
+    """
+
+    def __init__(self, repo: MongoMembershipRepository) -> None:
+        self._repo = repo
+
+    async def list_active_for_user(self, user_id: str) -> list:
+        return await self._repo.list_active_platform_roles(user_id)
 
 
 class _AcademyLookupAdapter:
