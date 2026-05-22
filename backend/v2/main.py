@@ -112,12 +112,22 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     users_repo = MongoUserRepository(db, default_academy_id=settings.default_academy_id)
     verifier = FirebaseTokenVerifier()
 
+    # In SaaS mode, both academy_memberships and platform_roles come from the
+    # real MongoMembershipRepository (which owns both collections). The
+    # PlatformRoleRepository port wants list_active_for_user(); the repo
+    # exposes list_active_platform_roles(), so we go through the same
+    # _MongoPlatformRoleAdapter that the non-SaaS branch uses.
+    #
+    # In non-SaaS mode, memberships still fall back to the in-process legacy
+    # adapter (which synthesises a single-tenant membership from
+    # users.academy_id / users.roles); platform_roles use the real Mongo
+    # collection because they are tenant-independent.
     if settings.saas_mode:
         membership_repo = MongoMembershipRepository(db)
-        platform_role_repo = membership_repo
+        platform_role_repo = _MongoPlatformRoleAdapter(membership_repo)
     else:
         membership_repo = _LegacyUserMembershipAdapter(users_repo, settings.default_academy_id)
-        platform_role_repo = _NullPlatformRoleRepository()
+        platform_role_repo = _MongoPlatformRoleAdapter(MongoMembershipRepository(db))
 
     load_claims = LoadAuthClaims(
         verifier=verifier,
@@ -161,6 +171,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Admin BFF wiring (Wave 3).
     app.state.admin = compose_admin(db, outbox, idempotency_store, stripe_gw)
+
+    app.state.bootstrap_academy = BootstrapAcademy(
+        store=MongoTenantBootstrapStore(db),
+    )
 
     try:
         yield
@@ -333,6 +347,19 @@ class _NullPlatformRoleRepository:
 
     async def list_active_for_user(self, user_id: str) -> list[PlatformRole]:
         return []
+
+
+class _MongoPlatformRoleAdapter:
+    """Adapts MongoMembershipRepository to the PlatformRoleRepository port.
+
+    The port uses list_active_for_user(); the repo uses list_active_platform_roles().
+    """
+
+    def __init__(self, repo: MongoMembershipRepository) -> None:
+        self._repo = repo
+
+    async def list_active_for_user(self, user_id: str) -> list[PlatformRole]:
+        return await self._repo.list_active_platform_roles(user_id)
 
 
 class _AcademyLookupAdapter:

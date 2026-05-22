@@ -34,6 +34,9 @@ from backend.v2.interfaces.admin.views import (
     ApplyPaymentDiscountRequest,
     GenerateMonthlyPaymentsRequest,
     GenerateMonthlyPaymentsResponse,
+    InvoiceDto,
+    InvoiceLineDto,
+    InvoicesResponse,
     IssueRefundRequest,
     MarkPaymentPaidRequest,
     RecordExpenseRequest,
@@ -46,6 +49,38 @@ from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
 router = APIRouter(tags=["admin.billing"])
+
+
+@router.get("/billing/invoices", response_model=InvoicesResponse)
+async def list_billing_invoices(
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> InvoicesResponse:
+    raw = await use_cases.list_billing_invoices()
+    invoices = []
+    for item in raw:
+        inv = item["invoice"]
+        lines = [
+            InvoiceLineDto(
+                description=str(line.get("description", "")),
+                amount_cents=int(line.get("amount_cents", 0)),
+            )
+            for line in item["lines"]
+        ]
+        total = int(inv.get("total_cents", 0))
+        balance = int(inv.get("balance_due_cents", 0))
+        invoices.append(
+            InvoiceDto(
+                invoice_number=str(inv.get("invoice_id", "")),
+                period=str(inv.get("period", "")),
+                lines=lines,
+                total_cents=total,
+                paid_cents=max(0, total - balance),
+                balance_cents=balance,
+                status=str(inv.get("status", "open")),
+            )
+        )
+    return InvoicesResponse(invoices=invoices)
 
 
 def _admin_quote_response(snapshot) -> AdminEnrollmentQuoteResponse:
@@ -177,7 +212,7 @@ async def generate_monthly_payments(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> GenerateMonthlyPaymentsResponse:
     result = await use_cases.generate_monthly_payments.execute(
-        GenerateMonthlyPaymentsCommand(period=body.period)
+        GenerateMonthlyPaymentsCommand(period=body.period or "")
     )
     return GenerateMonthlyPaymentsResponse(**result.model_dump())
 

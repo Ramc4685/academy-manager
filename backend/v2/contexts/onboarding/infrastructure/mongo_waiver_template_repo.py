@@ -35,8 +35,7 @@ class MongoWaiverTemplateRepository(TenantScopedRepository):
         effective_from = cls._as_datetime(doc.get("effective_from"))
         if effective_from is None:
             raise ValueError(
-                f"waiver_templates row {doc.get('waiver_template_id')!r} "
-                "is missing effective_from"
+                f"waiver_templates row {doc.get('waiver_template_id')!r} is missing effective_from"
             )
         return WaiverTemplate(
             waiver_template_id=str(doc["waiver_template_id"]),

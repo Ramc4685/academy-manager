@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 # --- Directory ---
 
@@ -160,6 +160,7 @@ class AdminPauseRequestList(BaseModel):
 class AdminPaymentView(BaseModel):
     payment_id: str
     parent_id: str
+    parent_name: str | None = None
     student_id: str | None = None
     student_name: str | None = None
     enrollment_id: str | None = None
@@ -188,7 +189,16 @@ class IssueRefundRequest(BaseModel):
 
 
 class GenerateMonthlyPaymentsRequest(BaseModel):
-    period: str
+    period: str | None = None
+    month: str | None = Field(default=None, description="Deprecated alias for 'period'")
+
+    @model_validator(mode="after")
+    def _coerce_period(self) -> GenerateMonthlyPaymentsRequest:
+        if self.period is None:
+            if self.month is None:
+                raise ValueError("'period' (or deprecated alias 'month') is required")
+            self.period = self.month
+        return self
 
 
 class GenerateMonthlyPaymentsResponse(BaseModel):
@@ -254,6 +264,28 @@ class WithdrawalCreditApproveResponse(BaseModel):
     status: str
     credit_amount_cents: int
     credit_balance_cents: int
+
+
+# --- Invoices ---
+
+
+class InvoiceLineDto(BaseModel):
+    description: str
+    amount_cents: int
+
+
+class InvoiceDto(BaseModel):
+    invoice_number: str = ""
+    period: str
+    lines: list[InvoiceLineDto] = []
+    total_cents: int = 0
+    paid_cents: int = 0
+    balance_cents: int = 0
+    status: str = "open"
+
+
+class InvoicesResponse(BaseModel):
+    invoices: list[InvoiceDto]
 
 
 # --- Finance (# FINANCE) ---
@@ -475,3 +507,28 @@ class AdminGatewayView(BaseModel):
 
 class UpdateAdminUserRoleRequest(BaseModel):
     role: Literal["admin", "coach", "parent"]
+
+
+class ReportsKpiResponse(BaseModel):
+    active_students: int = 0
+    attendance_rate_30d: float = 0.0
+    dues_collected_mtd_cents: int = 0
+    pending_waivers: int = 0
+
+
+# --- Enrollment Events ---
+
+
+class EnrollmentEventDto(BaseModel):
+    event_id: str
+    event_type: str
+    effective_date: str
+    actor_id: str
+    reason: str | None = None
+    billing_result: str | None = None
+    credit_id: str | None = None
+
+
+class EnrollmentEventsResponse(BaseModel):
+    enrollment_id: str
+    events: list[EnrollmentEventDto]

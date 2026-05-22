@@ -20,7 +20,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 
 from backend.v2.contexts.communications.domain.errors import InvalidAudienceError
@@ -145,7 +145,7 @@ def audience_descriptor(audience: Audience) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-class CampaignStatus(str, Enum):
+class CampaignStatus(StrEnum):
     DRAFT = "draft"
     SENDING = "sending"
     SENT = "sent"
@@ -209,7 +209,7 @@ class Campaign:
 # ---------------------------------------------------------------------------
 
 
-class DeliveryStatus(str, Enum):
+class DeliveryStatus(StrEnum):
     QUEUED = "queued"
     SENT = "sent"
     FAILED = "failed"

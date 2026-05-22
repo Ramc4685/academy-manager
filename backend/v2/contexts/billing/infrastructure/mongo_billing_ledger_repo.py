@@ -196,6 +196,25 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             raise ValueError("allocation insert failed")
         return await self._existing_allocation_result(stored_allocation)
 
+    async def list_invoices_for_academy(self, limit: int = 100) -> list[dict[str, object]]:
+        academy_id = current_academy_id()
+        invoices = []
+        async for inv_doc in self.collection.find(
+            {"academy_id": academy_id},
+            sort=[("created_at", -1)],
+            limit=limit,
+        ):
+            inv_id = inv_doc.get("invoice_id")
+            if inv_id is None:
+                lines = []
+            else:
+                lines_cursor = self._db["invoice_lines"].find(
+                    {"academy_id": academy_id, "invoice_id": inv_id}
+                )
+                lines = [doc async for doc in lines_cursor]
+            invoices.append({"invoice": inv_doc, "lines": lines})
+        return invoices
+
     async def _existing_allocation_result(
         self, allocation_doc: dict[str, object]
     ) -> LedgerAllocationResult:
