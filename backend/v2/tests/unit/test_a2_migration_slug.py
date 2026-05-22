@@ -1,13 +1,12 @@
 from __future__ import annotations
+
+import importlib
+
 import mongomock_motor
 
 
 async def _run_migration(db):
-    import importlib.util, pathlib
-    path = pathlib.Path(__file__).parents[2] / "migrations" / "0105_academy_slug.py"
-    spec = importlib.util.spec_from_file_location("migration_0105", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = importlib.import_module("backend.v2.migrations.0105_academy_slug")
     await mod.up(db)
 
 
@@ -30,3 +29,4 @@ async def test_slug_not_overwritten_if_already_set():
     await _run_migration(db)
     doc = await db.academies.find_one({"_id": "acad1"})
     assert doc["slug"] == "custom-slug"
+    assert doc["academy_id"] == "acad1"

@@ -170,7 +170,7 @@ start_backend() {
     cd "${ROOT_DIR}/backend"
     # shellcheck disable=SC1091
     . .venv/bin/activate
-    nohup env APP_ENV=development EMAIL_DELIVERY_MODE=disabled MONGO_URL="${MONGO_URL}" DB_NAME="${DB_NAME}" V2_ENABLED=1 FIREBASE_AUTH_ENABLED=true FIREBASE_PROJECT_ID="${FIREBASE_PROJECT_ID}" FIREBASE_AUTH_EMULATOR_HOST="${FIREBASE_AUTH_EMULATOR_HOST}" FRONTEND_URL="${FRONTEND_URL}" CORS_ORIGINS="${FRONTEND_URL},http://127.0.0.1:${FRONTEND_PORT}" COOKIE_SECURE=false ALLOWED_INTERNAL_TENANT_HEADER=x-academy-id PYTHONPATH="${ROOT_DIR}" uvicorn server:app --host "${BACKEND_HOST}" --port "${BACKEND_PORT}" --reload
+    nohup env APP_ENV=development EMAIL_DELIVERY_MODE=disabled MONGO_URL="${MONGO_URL}" DB_NAME="${DB_NAME}" V2_ENABLED=1 FIREBASE_AUTH_ENABLED=true FIREBASE_PROJECT_ID="${FIREBASE_PROJECT_ID}" FIREBASE_AUTH_EMULATOR_HOST="${FIREBASE_AUTH_EMULATOR_HOST}" FRONTEND_URL="${FRONTEND_URL}" CORS_ORIGINS="${FRONTEND_URL},http://127.0.0.1:${FRONTEND_PORT}" COOKIE_SECURE=false V2_ALLOWED_INTERNAL_TENANT_HEADER=x-academy-id PYTHONPATH="${ROOT_DIR}" uvicorn server:app --host "${BACKEND_HOST}" --port "${BACKEND_PORT}" --reload
   ) >"${LOG_DIR}/backend.log" 2>&1 &
   write_pid backend "$!"
   wait_for_url "Backend health" "${BACKEND_URL}/api/health" 60 || { tail -n 120 "${LOG_DIR}/backend.log" >&2 || true; exit 1; }
