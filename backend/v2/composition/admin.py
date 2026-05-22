@@ -203,18 +203,18 @@ def _make_list_enrollment_events(db: Any) -> object:
         academy_id = current_academy_id()
         cursor = db.enrollment_events.find(
             {"enrollment_id": enrollment_id, "academy_id": academy_id},
-            sort=[("created_at", 1)],
+            sort=[("occurred_at", 1)],
         )
         results = []
         async for doc in cursor:
             results.append({
                 "event_id": str(doc.get("event_id") or doc.get("_id", "")),
                 "event_type": str(doc.get("event_type", "")),
-                "effective_date": str(doc.get("effective_date", "") or doc.get("effective_at", ""))[:10],
+                "effective_date": str(doc.get("effective_at", ""))[:10],
                 "actor_id": str(doc.get("actor_id", "")),
                 "reason": doc.get("reason"),
                 "billing_result": doc.get("billing_result"),
-                "credit_reference": doc.get("credit_reference"),
+                "credit_id": doc.get("credit_id"),
             })
         return results
 

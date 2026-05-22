@@ -495,7 +495,7 @@ class EnrollmentEventDto(BaseModel):
     actor_id: str
     reason: str | None = None
     billing_result: str | None = None
-    credit_reference: str | None = None
+    credit_id: str | None = None
 
 
 class EnrollmentEventsResponse(BaseModel):

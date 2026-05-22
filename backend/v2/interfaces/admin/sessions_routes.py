@@ -135,7 +135,7 @@ async def get_enrollment_events(
                 actor_id=str(e.get("actor_id", "")),
                 reason=e.get("reason"),
                 billing_result=e.get("billing_result"),
-                credit_reference=e.get("credit_reference"),
+                credit_id=e.get("credit_id"),
             )
             for e in events
         ],

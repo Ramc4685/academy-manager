@@ -1,22 +1,6 @@
 from __future__ import annotations
 
-import pytest
-from pydantic import BaseModel
-
-
-class EnrollmentEventDto(BaseModel):
-    event_id: str
-    event_type: str
-    effective_date: str
-    actor_id: str
-    reason: str | None = None
-    billing_result: str | None = None
-    credit_reference: str | None = None
-
-
-class EnrollmentEventsResponse(BaseModel):
-    enrollment_id: str
-    events: list[EnrollmentEventDto]
+from backend.v2.interfaces.admin.views import EnrollmentEventDto, EnrollmentEventsResponse
 
 
 def test_enrollment_event_dto_event_type_field():
