@@ -23,9 +23,7 @@ async def test_slug_backfilled_from_id():
 async def test_slug_not_overwritten_if_already_set():
     client = mongomock_motor.AsyncMongoMockClient()
     db = client["test"]
-    await db.academies.insert_one({
-        "_id": "acad1", "slug": "custom-slug", "academy_id": "acad1"
-    })
+    await db.academies.insert_one({"_id": "acad1", "slug": "custom-slug", "academy_id": "acad1"})
     await _run_migration(db)
     doc = await db.academies.find_one({"_id": "acad1"})
     assert doc["slug"] == "custom-slug"

@@ -27,6 +27,7 @@ from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
 )
+from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import BootstrapAcademy
 from backend.v2.contexts.identity.application.use_cases.load_auth_claims import (
     LoadAuthClaims,
 )
@@ -44,8 +45,9 @@ from backend.v2.contexts.identity.infrastructure.firebase_token_verifier import 
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
 )
-from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import BootstrapAcademy
-from backend.v2.contexts.identity.infrastructure.mongo_bootstrap_store import MongoTenantBootstrapStore
+from backend.v2.contexts.identity.infrastructure.mongo_bootstrap_store import (
+    MongoTenantBootstrapStore,
+)
 from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
     MongoMembershipRepository,
 )

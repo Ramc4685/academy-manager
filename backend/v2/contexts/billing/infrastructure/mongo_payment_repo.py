@@ -241,18 +241,23 @@ class MongoPaymentRepository(TenantScopedRepository):
                 students[key] = doc
                 students[str(doc["_id"])] = doc
         parent_ids = sorted(
-            {str(doc.get("parent_id") or doc.get("parent_user_id") or "")
-             for doc in docs
-             if doc.get("parent_id") or doc.get("parent_user_id")}
+            {
+                str(doc.get("parent_id") or doc.get("parent_user_id") or "")
+                for doc in docs
+                if doc.get("parent_id") or doc.get("parent_user_id")
+            }
             - {""}
         )
         parents: dict[str, dict[str, object]] = {}
         if parent_ids:
             parent_cursor = self._db["users"].find(
-                {"academy_id": current_academy_id(), "$or": [
-                    {"user_id": {"$in": parent_ids}},
-                    {"firebase_uid": {"$in": parent_ids}},
-                ]}
+                {
+                    "academy_id": current_academy_id(),
+                    "$or": [
+                        {"user_id": {"$in": parent_ids}},
+                        {"firebase_uid": {"$in": parent_ids}},
+                    ],
+                }
             )
             async for pdoc in parent_cursor:
                 for key in (
@@ -284,11 +289,8 @@ class MongoPaymentRepository(TenantScopedRepository):
         amount_cents = cls._amount_cents(doc)
         discount_cents = cls._discount_cents(doc)
         parent_name = (
-            str(
-                (parent_user or {}).get("display_name")
-                or (parent_user or {}).get("name")
-                or ""
-            ) or None
+            str((parent_user or {}).get("display_name") or (parent_user or {}).get("name") or "")
+            or None
         )
         return {
             "payment_id": cls._payment_id(doc),

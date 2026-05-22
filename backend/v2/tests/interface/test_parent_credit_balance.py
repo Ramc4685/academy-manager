@@ -71,7 +71,7 @@ def _make_client(
     register_exception_handlers(app)
     app.include_router(parent_router, prefix="/api/v2")
     app.dependency_overrides[get_auth_claims] = lambda: _claims(role)
-    app.dependency_overrides[get_parent_use_cases] = lambda: (use_cases or _ParentUseCases())
+    app.dependency_overrides[get_parent_use_cases] = lambda: use_cases or _ParentUseCases()
     with TestClient(app) as client:
         yield client
 

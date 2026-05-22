@@ -201,6 +201,31 @@ git clean -fd
 
 ---
 
+## Pre-Push CI Checks
+
+Run these locally before every push. CI will fail the same way if you skip them.
+
+Backend (from `backend/` with `.venv` active):
+
+```bash
+ruff check v2
+ruff format --check v2
+mypy --config-file pyproject.toml v2
+pytest v2/tests --override-ini="testpaths=v2/tests" -q
+```
+
+Frontend (from `frontend/`):
+
+```bash
+pnpm typecheck
+pnpm lint
+pnpm build
+```
+
+If any command fails locally, fix it before pushing. Do not push to unblock CI — that just shifts the problem.
+
+---
+
 ## Feedback Loop
 
 Use `docs/agent/feedback-loop.md`.

@@ -14,7 +14,7 @@ def test_occurrence_details_has_template_session_id():
     od = OccurrenceDetails(
         occurrence_id="occ-jun4",
         session_id="sess-jun4",
-        starts_at=datetime.datetime(2026, 6, 4, 18, 0, tzinfo=datetime.timezone.utc),
+        starts_at=datetime.datetime(2026, 6, 4, 18, 0, tzinfo=datetime.UTC),
         status="scheduled",
         scheduled_coach_id="coach1",
         template_session_id="sess-may28",
@@ -26,7 +26,7 @@ def test_occurrence_details_template_session_id_optional():
     od = OccurrenceDetails(
         occurrence_id="occ1",
         session_id="sess1",
-        starts_at=datetime.datetime(2026, 6, 4, 18, 0, tzinfo=datetime.timezone.utc),
+        starts_at=datetime.datetime(2026, 6, 4, 18, 0, tzinfo=datetime.UTC),
         status="scheduled",
         scheduled_coach_id="coach1",
     )
@@ -37,7 +37,7 @@ def test_occurrence_details_template_session_id_optional():
 # Behavioral tests for the mark_attendance template_session_id fallback
 # ---------------------------------------------------------------------------
 
-_NOW = datetime.datetime(2026, 6, 4, 18, 0, tzinfo=datetime.timezone.utc)
+_NOW = datetime.datetime(2026, 6, 4, 18, 0, tzinfo=datetime.UTC)
 
 
 class _FakeAttendanceRepo:
@@ -150,7 +150,7 @@ async def test_enrollment_missing_raises_not_enrolled():
     )
     try:
         await uc.execute(cmd, coach_id="coach1")
-        assert False, "Expected StudentNotEnrolled"
+        raise AssertionError("Expected StudentNotEnrolled")
     except StudentNotEnrolled:
         pass
 
@@ -170,6 +170,6 @@ async def test_null_template_session_id_still_raises_not_enrolled():
     )
     try:
         await uc.execute(cmd, coach_id="coach1")
-        assert False, "Expected StudentNotEnrolled"
+        raise AssertionError("Expected StudentNotEnrolled")
     except StudentNotEnrolled:
         pass

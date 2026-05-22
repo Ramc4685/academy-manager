@@ -194,8 +194,9 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
             )
         ]
         docs.sort(
-            key=lambda doc: self._as_datetime(doc.get("accepted_at"))
-            or datetime.min.replace(tzinfo=UTC),
+            key=lambda doc: (
+                self._as_datetime(doc.get("accepted_at")) or datetime.min.replace(tzinfo=UTC)
+            ),
             reverse=True,
         )
         for doc in docs:

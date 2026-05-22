@@ -317,7 +317,7 @@ class TestCampaignDomain:
 class TestRecipientResolution:
     @pytest.mark.asyncio
     async def test_academy_parent_audience_resolves_all_parents(self) -> None:
-        use_case, resolver, sender, campaigns, deliveries = _build_use_case()
+        use_case, resolver, _sender, _campaigns, deliveries = _build_use_case()
         resolver.by_academy = [_recipient("p-1"), _recipient("p-2"), _recipient("p-3")]
 
         result = await use_case.execute(
@@ -339,7 +339,7 @@ class TestRecipientResolution:
 
     @pytest.mark.asyncio
     async def test_session_audience_resolves_session_parents(self) -> None:
-        use_case, resolver, sender, campaigns, deliveries = _build_use_case()
+        use_case, resolver, _sender, _campaigns, deliveries = _build_use_case()
         resolver.by_session = {
             "sess-1": [_recipient("p-1"), _recipient("p-2")],
             "sess-2": [_recipient("p-9")],
@@ -360,7 +360,7 @@ class TestRecipientResolution:
 
     @pytest.mark.asyncio
     async def test_coach_audience_without_session_resolves_all_coaches(self) -> None:
-        use_case, resolver, sender, campaigns, deliveries = _build_use_case()
+        use_case, resolver, _sender, _campaigns, deliveries = _build_use_case()
         resolver.all_coaches = [_recipient("c-1"), _recipient("c-2")]
 
         result = await use_case.execute(
@@ -378,7 +378,7 @@ class TestRecipientResolution:
 
     @pytest.mark.asyncio
     async def test_coach_audience_with_session_resolves_only_session_coaches(self) -> None:
-        use_case, resolver, sender, campaigns, deliveries = _build_use_case()
+        use_case, resolver, _sender, _campaigns, deliveries = _build_use_case()
         resolver.by_coach_session = {"sess-1": [_recipient("c-1")]}
         resolver.all_coaches = [_recipient("c-1"), _recipient("c-2")]
 
@@ -399,7 +399,7 @@ class TestRecipientResolution:
     async def test_selected_recipients_audience_resolves_specific_users(self) -> None:
         # Direct messages must arrive at pre-resolved user IDs. Admins reach
         # this audience via a name/email search UI, never by typing raw IDs.
-        use_case, resolver, sender, campaigns, deliveries = _build_use_case()
+        use_case, resolver, _sender, _campaigns, deliveries = _build_use_case()
         resolver.selected = {
             "u-7": _recipient("u-7", "seven@example.test"),
             "u-9": _recipient("u-9", "nine@example.test"),
@@ -423,7 +423,7 @@ class TestRecipientResolution:
 
     @pytest.mark.asyncio
     async def test_payment_risk_audience_resolves_risk_families(self) -> None:
-        use_case, resolver, sender, campaigns, deliveries = _build_use_case()
+        use_case, resolver, _sender, _campaigns, _deliveries = _build_use_case()
         resolver.payment_risk = [_recipient("p-late-1"), _recipient("p-late-2")]
 
         result = await use_case.execute(
@@ -463,7 +463,7 @@ class TestDeliveryRecording:
     @pytest.mark.asyncio
     async def test_partial_failure_records_each_recipient_status(self) -> None:
         sender = StubEmailSendPort(fail_for_emails={"p-2@example.test"})
-        use_case, resolver, _, campaigns, deliveries = _build_use_case(sender=sender)
+        use_case, resolver, _, _campaigns, deliveries = _build_use_case(sender=sender)
         resolver.by_academy = [
             _recipient("p-1", "p-1@example.test"),
             _recipient("p-2", "p-2@example.test"),
@@ -493,7 +493,7 @@ class TestDeliveryRecording:
 
     @pytest.mark.asyncio
     async def test_campaign_status_advances_to_sent_after_send(self) -> None:
-        use_case, resolver, _, campaigns, deliveries = _build_use_case()
+        use_case, resolver, _, campaigns, _deliveries = _build_use_case()
         resolver.by_academy = [_recipient("p-1")]
 
         result = await use_case.execute(

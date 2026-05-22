@@ -31,8 +31,13 @@ async def test_create_and_find_academy(db):
 
 async def test_ensure_owner_user_is_idempotent(db):
     store = MongoTenantBootstrapStore(db)
-    user = {"user_id": "u1", "email": "a@b.com", "normalized_email": "a@b.com",
-            "display_name": "A", "global_status": "active"}
+    user = {
+        "user_id": "u1",
+        "email": "a@b.com",
+        "normalized_email": "a@b.com",
+        "display_name": "A",
+        "global_status": "active",
+    }
     r1 = await store.ensure_owner_user(user)
     r2 = await store.ensure_owner_user(user)
     assert r1["user_id"] == r2["user_id"]
@@ -42,8 +47,13 @@ async def test_ensure_owner_user_is_idempotent(db):
 
 async def test_ensure_owner_membership_is_idempotent(db):
     store = MongoTenantBootstrapStore(db)
-    m = {"membership_id": "m1", "academy_id": "a1", "user_id": "u1",
-         "roles": ["admin"], "status": "active"}
+    m = {
+        "membership_id": "m1",
+        "academy_id": "a1",
+        "user_id": "u1",
+        "roles": ["admin"],
+        "status": "active",
+    }
     await store.ensure_owner_membership(m)
     await store.ensure_owner_membership(m)
     count = await db.academy_memberships.count_documents({"academy_id": "a1", "user_id": "u1"})

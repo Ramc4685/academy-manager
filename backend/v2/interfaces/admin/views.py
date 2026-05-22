@@ -193,7 +193,7 @@ class GenerateMonthlyPaymentsRequest(BaseModel):
     month: str | None = Field(default=None, description="Deprecated alias for 'period'")
 
     @model_validator(mode="after")
-    def _coerce_period(self) -> "GenerateMonthlyPaymentsRequest":
+    def _coerce_period(self) -> GenerateMonthlyPaymentsRequest:
         if self.period is None:
             if self.month is None:
                 raise ValueError("'period' (or deprecated alias 'month') is required")

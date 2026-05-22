@@ -1044,7 +1044,14 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         list_dues_followup=list_dues_followup,
         send_dues_reminders=send_dues_reminders,
         export_report_csv=export_report_csv,
-        get_reports_kpis=AsyncMock(return_value={"active_students": 0, "attendance_rate_30d": 0.0, "dues_collected_mtd_cents": 0, "pending_waivers": 0}),
+        get_reports_kpis=AsyncMock(
+            return_value={
+                "active_students": 0,
+                "attendance_rate_30d": 0.0,
+                "dues_collected_mtd_cents": 0,
+                "pending_waivers": 0,
+            }
+        ),
         list_enrollment_events=AsyncMock(return_value=[]),
         list_billing_invoices=AsyncMock(return_value=[]),
         comms=comms,
