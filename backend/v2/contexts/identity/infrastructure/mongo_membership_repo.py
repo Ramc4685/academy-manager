@@ -85,6 +85,12 @@ class MongoMembershipRepository:
         doc = await self._memberships.find_one({"academy_id": academy_id, "user_id": user_id})
         return self._to_membership(doc) if doc else None
 
+    async def get_for_user_in_academy(
+        self, *, user_id: str, academy_id: str
+    ) -> AcademyMembership | None:
+        """Auth-port alias for `(academy_id, user_id)` membership lookup."""
+        return await self.get_membership(academy_id, user_id)
+
     async def list_memberships_for_user(self, user_id: str) -> list[AcademyMembership]:
         """Return all membership rows across all academies for a user."""
         cursor = self._memberships.find({"user_id": user_id})
@@ -133,6 +139,10 @@ class MongoMembershipRepository:
         """Return only active platform role grants for a user."""
         cursor = self._platform_roles.find({"user_id": user_id, "status": "active"})
         return [self._to_platform_role(doc) async for doc in cursor]
+
+    async def list_active_for_user(self, user_id: str) -> list[PlatformRole]:
+        """Auth-port alias for active platform role lookup."""
+        return await self.list_active_platform_roles(user_id)
 
     async def upsert_platform_role(self, platform_role: PlatformRole) -> PlatformRole:
         """Create or update a platform role grant. Idempotent on (user_id, role)."""

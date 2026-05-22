@@ -104,6 +104,23 @@
 
 user_problem_statement: "Merged BFF/DDD code; verify and fix local v2/BFF startup."
 backend:
+  - task: "SaaS v2 Wave 7 production readiness scaffolding"
+    implemented: true
+    working: true
+    file: "docs/requirements/2026-05-22-saas-production-readiness.md"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added Wave 7 production readiness launch gates and non-destructive SaaS smoke scaffolding. Delivery intentionally marks Wave 6 dependencies as blockers: auth still uses temporary legacy/null adapters in backend/v2/main.py, tenant bootstrap route is mounted but not composed, platform billing lacks persistence/routes, governance/support access lacks persistence/routes, and Fly health checks still target /api/health. Production deploy was not performed and no secrets were used."
+      - working: true
+        agent: "main"
+        comment: "Focused verification passed: bash -n scripts/smoke/saas_readiness_smoke.sh, scripts/smoke/saas_readiness_smoke.sh --static-only, uv-run focused backend SaaS routing/tenant/isolation/raw-Mongo guard suite (30 passed), frontend pnpm typecheck, frontend pnpm build, and git diff --check. Full HTTP SaaS smoke was skipped because no SaaS-mode backend/frontend stack is running in this worktree."
+      - working: true
+        agent: "main"
+        comment: "Follow-up fix wired MongoMembershipRepository into SaaS-mode auth, added auth-port aliases for membership/platform-role lookups, composed BootstrapAcademy with MongoTenantBootstrapStore, and moved Fly health checks to /api/v2/healthz. Verification passed: focused backend suite 75 tests, full backend v2 suite 441 tests, Ruff check/format, static SaaS smoke, frontend typecheck/build, and git diff --check."
   - task: "SaaS v2 Wave 6 platform tenant lifecycle"
     implemented: true
     working: true
@@ -567,11 +584,17 @@ metadata:
   run_ui: true
 test_plan:
   current_focus:
-    - "SaaS v2 Wave 6 platform billing model"
+    - "SaaS v2 Wave 7 production readiness scaffolding"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "Wave 7 production readiness scaffolding added docs/requirements/2026-05-22-saas-production-readiness.md, scripts/smoke/saas_readiness_smoke.sh, and DEPLOYMENT.md SaaS readiness notes. Retest focused backend SaaS routing/tenant/isolation/static-guard tests, run scripts/smoke/saas_readiness_smoke.sh --static-only, run frontend typecheck/build if dependencies are available, and keep Wave 6 blockers visible. Do not deploy and do not use real secrets."
+  - agent: "main"
+    message: "Wave 7 verification complete for scaffolding only: static smoke passed, focused backend SaaS guard tests passed with 30 tests, frontend typecheck/build passed after pnpm install restored node_modules, and git diff --check passed. Full HTTP smoke and production deploy were not run. Wave 6 blockers remain: real membership/platform-role auth wiring, bootstrap composition, platform billing persistence/routes, governance/support persistence/routes, platform audit, and Fly health check move to /api/v2/healthz before enabling V2_SAAS_MODE."
+  - agent: "main"
+    message: "Wave 7 blocker follow-up: fixed the actionable blockers by wiring real Mongo membership/platform-role auth in SaaS mode, adding Mongo tenant bootstrap persistence/composition, and moving Fly health checks to /api/v2/healthz. Verification passed: new red/green tests plus broader SaaS/auth/bootstrap guard suite (75 tests), full backend v2 suite (441 passed, 7 warnings), Ruff check/format, static SaaS smoke, frontend typecheck/build, and git diff --check. Remaining launch blockers are platform billing persistence/routes, governance/support persistence/routes/export worker, platform audit, prod-like SaaS HTTP smoke, and deploy/operator signoff."
   - agent: "main"
     message: "SaaS v2 Wave 6 Agent B platform billing implementation: added a new backend/v2/contexts/platform/billing package for SaaS plan and tenant subscription state, intentionally separate from parent tuition billing under backend/v2/contexts/billing. The application layer supports starting tenant trials, activating Stripe-backed academy subscriptions, scheduling or immediate cancellation state, and checking tenant usage against plan limits. Focused pytest is green; rerun backend/v2/tests/application/test_platform_billing.py and git diff --check for handoff."
   - agent: "main"

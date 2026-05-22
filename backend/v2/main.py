@@ -27,6 +27,9 @@ from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
 )
+from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import (
+    BootstrapAcademy,
+)
 from backend.v2.contexts.identity.application.use_cases.load_auth_claims import (
     LoadAuthClaims,
 )
@@ -43,6 +46,12 @@ from backend.v2.contexts.identity.infrastructure.firebase_token_verifier import 
 )
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
+)
+from backend.v2.contexts.identity.infrastructure.mongo_bootstrap_store import (
+    MongoTenantBootstrapStore,
+)
+from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
+    MongoMembershipRepository,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import (
     MongoUserRepository,
@@ -103,13 +112,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     users_repo = MongoUserRepository(db, default_academy_id=settings.default_academy_id)
     verifier = FirebaseTokenVerifier()
 
-    # The Mongo `academy_memberships` + `platform_roles` repositories are
-    # owned by Agent A (Wave 2). Until they merge, fall back to in-process
-    # adapters that synthesize a single-tenant membership from legacy
-    # ``users.academy_id`` / ``users.roles``. SaaS deployments will replace
-    # these via the composition root once the real repositories land.
-    membership_repo = _LegacyUserMembershipAdapter(users_repo, settings.default_academy_id)
-    platform_role_repo = _NullPlatformRoleRepository()
+    if settings.saas_mode:
+        membership_repo = MongoMembershipRepository(db)
+        platform_role_repo = membership_repo
+    else:
+        membership_repo = _LegacyUserMembershipAdapter(users_repo, settings.default_academy_id)
+        platform_role_repo = _NullPlatformRoleRepository()
 
     load_claims = LoadAuthClaims(
         verifier=verifier,
@@ -121,6 +129,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.register_public_parent = RegisterPublicParent(
         verifier=verifier,
         users=users_repo,
+    )
+    app.state.bootstrap_academy = BootstrapAcademy(
+        store=MongoTenantBootstrapStore(db),
     )
 
     # Tenant resolver — wired only in SaaS mode. In non-SaaS mode the
