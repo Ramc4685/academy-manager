@@ -262,6 +262,7 @@ def _make_middleware_app(
     *,
     loader: _RecordingLoader,
     allowed_internal_header: str | None = None,
+    status_checker=None,
 ) -> FastAPI:
     """Build a tiny app with TenancyMiddleware + one auth-required route."""
     app = FastAPI()
@@ -270,6 +271,7 @@ def _make_middleware_app(
         TenancyMiddleware,
         load_auth_claims=loader,
         resolve_tenant=_make_resolver_callable(allowed_internal_header),
+        check_tenant_servable=status_checker,
     )
 
     @app.get("/whoami")
@@ -286,6 +288,10 @@ def _make_middleware_app(
 
     @app.get("/public")
     async def public() -> dict:
+        return {"ok": True, "tenant_context": _tenant_var.get()}
+
+    @app.get("/api/v2/platform/public")
+    async def platform_public() -> dict:
         return {"ok": True, "tenant_context": _tenant_var.get()}
 
     return app
@@ -442,3 +448,43 @@ def test_middleware_uses_internal_header_when_configured() -> None:
     assert r.status_code == 200
     assert r.json()["academy_id"] == "academy-internal-job"
     assert loader.calls[-1]["resolved_academy_id"] == "academy-internal-job"
+
+
+def test_middleware_blocks_inactive_tenant_before_auth_loader() -> None:
+    loader = _RecordingLoader(
+        memberships={
+            ("u-coach", "academy-court"): {
+                "membership_id": "m-coach-court",
+                "roles": ("coach",),
+            }
+        },
+    )
+
+    async def _inactive_status(_: str) -> tuple[bool, str | None]:
+        return False, "tenant_status_suspended"
+
+    app = _make_middleware_app(loader=loader, status_checker=_inactive_status)
+    client = TestClient(app, base_url="http://courtmastr.app.example.com")
+    r = client.get("/whoami", headers={"Authorization": "Bearer u-coach"})
+
+    assert r.status_code == 423
+    assert r.json()["error"]["code"] == "Platform.TenantNotServable"
+    assert r.json()["error"]["details"] == {
+        "academy_id": "academy-court",
+        "reason": "tenant_status_suspended",
+    }
+    assert loader.calls == []
+
+
+def test_middleware_allows_platform_routes_to_inspect_inactive_tenant() -> None:
+    loader = _RecordingLoader(memberships={})
+
+    async def _inactive_status(_: str) -> tuple[bool, str | None]:
+        return False, "tenant_status_suspended"
+
+    app = _make_middleware_app(loader=loader, status_checker=_inactive_status)
+    client = TestClient(app, base_url="http://courtmastr.app.example.com")
+    r = client.get("/api/v2/platform/public")
+
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "tenant_context": None}
