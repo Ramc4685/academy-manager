@@ -47,6 +47,12 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import (
     MongoUserRepository,
 )
+from backend.v2.contexts.platform.application.use_cases.tenant_lifecycle import (
+    TenantLifecycleService,
+)
+from backend.v2.contexts.platform.infrastructure.mongo_tenant_lifecycle_repo import (
+    MongoTenantLifecycleRepository,
+)
 from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.interfaces.me_routes import router as me_router
@@ -130,6 +136,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.saas_mode = settings.saas_mode
     app.state.default_academy_id = settings.default_academy_id
+    app.state.tenant_lifecycle = TenantLifecycleService(
+        tenants=MongoTenantLifecycleRepository(db),
+    )
 
     # Coach BFF wiring — exposed as app.state.coach for routes via deps.py.
     app.state.coach = compose_coach(db, outbox, idempotency_store)
@@ -213,6 +222,8 @@ class _LazyTenancyMiddleware(TenancyMiddleware):
                 self._load_claims = use_case.execute  # type: ignore[assignment]
         if self._resolve_tenant is None:
             self._resolve_tenant = _build_request_tenant_resolver(request.app)
+        if self._check_tenant_servable is None:
+            self._check_tenant_servable = _build_tenant_servability_checker(request.app)
         return await super().dispatch(request, call_next)
 
 
@@ -244,6 +255,21 @@ def _build_request_tenant_resolver(app: FastAPI):
         return default_academy_id
 
     return _resolve
+
+
+def _build_tenant_servability_checker(app: FastAPI):
+    """Build the tenant status gate used before tenant-scoped route handlers."""
+
+    saas_mode = getattr(app.state, "saas_mode", False)
+    lifecycle = getattr(app.state, "tenant_lifecycle", None)
+
+    async def _check(academy_id: str) -> tuple[bool, str | None]:
+        if not saas_mode or lifecycle is None:
+            return True, None
+        health = await lifecycle.get_tenant_health(academy_id)
+        return health.servable, health.reason
+
+    return _check
 
 
 # ---------------------------------------------------------------------------
