@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 # --- Directory ---
 
@@ -189,7 +189,16 @@ class IssueRefundRequest(BaseModel):
 
 
 class GenerateMonthlyPaymentsRequest(BaseModel):
-    period: str
+    period: str | None = None
+    month: str | None = Field(default=None, description="Deprecated alias for 'period'")
+
+    @model_validator(mode="after")
+    def _coerce_period(self) -> "GenerateMonthlyPaymentsRequest":
+        if not self.period:
+            if not self.month:
+                raise ValueError("'period' (or deprecated alias 'month') is required")
+            object.__setattr__(self, "period", self.month)
+        return self
 
 
 class GenerateMonthlyPaymentsResponse(BaseModel):
