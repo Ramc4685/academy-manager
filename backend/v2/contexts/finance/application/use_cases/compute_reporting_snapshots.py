@@ -17,9 +17,9 @@ They take ``period_start`` and ``period_end`` explicitly and store
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Callable
 
 from backend.v2.contexts.finance.application.ports import (
     AcademyRevenueSnapshotRepository,

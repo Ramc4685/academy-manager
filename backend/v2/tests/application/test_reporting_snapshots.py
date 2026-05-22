@@ -172,9 +172,7 @@ async def test_revenue_snapshot_is_built_from_billing_totals() -> None:
 
 @pytest.mark.asyncio
 async def test_revenue_snapshot_is_idempotent_on_natural_key() -> None:
-    billing = FakeBillingReader(
-        _Totals(gross=100, refunded=0, outstanding=0, currency="USD")
-    )
+    billing = FakeBillingReader(_Totals(gross=100, refunded=0, outstanding=0, currency="USD"))
     repo = FakeSnapshotRepo()
     uc = ComputeAcademyRevenueSnapshot(
         billing=billing,
@@ -196,9 +194,7 @@ async def test_revenue_snapshot_is_idempotent_on_natural_key() -> None:
 @pytest.mark.asyncio
 async def test_revenue_snapshot_rejects_inverted_window() -> None:
     uc = ComputeAcademyRevenueSnapshot(
-        billing=FakeBillingReader(
-            _Totals(gross=0, refunded=0, outstanding=0, currency="USD")
-        ),
+        billing=FakeBillingReader(_Totals(gross=0, refunded=0, outstanding=0, currency="USD")),
         repository=FakeSnapshotRepo(),
     )
     with pytest.raises(ValueError, match="period_end must be after"):

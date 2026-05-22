@@ -48,9 +48,7 @@ class MongoAcademyRevenueSnapshotRepository(TenantScopedRepository):
             computed_at=doc["computed_at"],
         )
 
-    async def find(
-        self, *, academy_id: str, period: str
-    ) -> AcademyRevenueSnapshot | None:
+    async def find(self, *, academy_id: str, period: str) -> AcademyRevenueSnapshot | None:
         # academy_id arg is informational — tenancy is enforced by base
         # class. Keeping it in the signature to match the port.
         del academy_id
@@ -102,9 +100,7 @@ class MongoSessionAttendanceSnapshotRepository(TenantScopedRepository):
         doc = await self._find_one({"session_id": session_id, "period": period})
         return self._from_doc(doc) if doc else None
 
-    async def upsert(
-        self, snapshot: SessionAttendanceSnapshot
-    ) -> SessionAttendanceSnapshot:
+    async def upsert(self, snapshot: SessionAttendanceSnapshot) -> SessionAttendanceSnapshot:
         await self._update_one(
             {"session_id": snapshot.session_id, "period": snapshot.period},
             {"$set": self._to_doc(snapshot)},

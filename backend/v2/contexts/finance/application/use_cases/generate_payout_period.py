@@ -15,8 +15,8 @@ Idempotency:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Callable
 
 from backend.v2.contexts.finance.application.ports import (
     PayoutCalculator,

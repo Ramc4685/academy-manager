@@ -33,7 +33,6 @@ from backend.v2.contexts.finance.domain.reporting_snapshots import (
     SessionAttendanceSnapshot,
 )
 
-
 # ---------------------------------------------------------------------------
 # Storage ports
 # ---------------------------------------------------------------------------
@@ -74,9 +73,7 @@ class PayoutPeriodRepository(Protocol):
 
 
 class AcademyRevenueSnapshotRepository(Protocol):
-    async def find(
-        self, *, academy_id: str, period: str
-    ) -> AcademyRevenueSnapshot | None: ...
+    async def find(self, *, academy_id: str, period: str) -> AcademyRevenueSnapshot | None: ...
 
     async def upsert(self, snapshot: AcademyRevenueSnapshot) -> AcademyRevenueSnapshot: ...
 
@@ -86,9 +83,7 @@ class SessionAttendanceSnapshotRepository(Protocol):
         self, *, academy_id: str, session_id: str, period: str
     ) -> SessionAttendanceSnapshot | None: ...
 
-    async def upsert(
-        self, snapshot: SessionAttendanceSnapshot
-    ) -> SessionAttendanceSnapshot: ...
+    async def upsert(self, snapshot: SessionAttendanceSnapshot) -> SessionAttendanceSnapshot: ...
 
 
 class CoachPayoutSnapshotRepository(Protocol):

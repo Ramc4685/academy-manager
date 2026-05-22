@@ -245,9 +245,7 @@ async def test_revenue_snapshot_upsert_is_idempotent(db, acad) -> None:
     assert fetched is not None
     assert fetched.gross_minor == 200
 
-    count = await db["academy_revenue_snapshots"].count_documents(
-        {"academy_id": "test-academy"}
-    )
+    count = await db["academy_revenue_snapshots"].count_documents({"academy_id": "test-academy"})
     assert count == 1
 
 
@@ -268,9 +266,7 @@ async def test_revenue_snapshot_does_not_leak_across_tenants(db, acad) -> None:
     token = _tenant_var.set("other-academy")
     try:
         other_repo = MongoAcademyRevenueSnapshotRepository(db)
-        assert (
-            await other_repo.find(academy_id="other-academy", period="2026-05") is None
-        )
+        assert await other_repo.find(academy_id="other-academy", period="2026-05") is None
     finally:
         _tenant_var.reset(token)
 
@@ -330,9 +326,7 @@ async def test_coach_payout_snapshot_preserves_decimal_hours(db, acad) -> None:
 
 @pytest.mark.asyncio
 async def test_payout_period_migration_creates_natural_key_index(db) -> None:
-    module = importlib.import_module(
-        "backend.v2.migrations.0103_payout_period_indexes"
-    )
+    module = importlib.import_module("backend.v2.migrations.0103_payout_period_indexes")
     await module.up(db)
     indexes = await db["payout_periods"].index_information()
     assert "payout_periods_natural_key" in indexes
@@ -341,9 +335,7 @@ async def test_payout_period_migration_creates_natural_key_index(db) -> None:
 
 @pytest.mark.asyncio
 async def test_reporting_snapshot_migration_creates_unique_indexes(db) -> None:
-    module = importlib.import_module(
-        "backend.v2.migrations.0104_reporting_snapshot_indexes"
-    )
+    module = importlib.import_module("backend.v2.migrations.0104_reporting_snapshot_indexes")
     await module.up(db)
     rev_indexes = await db["academy_revenue_snapshots"].index_information()
     assert "academy_revenue_snapshots_natural_key" in rev_indexes
