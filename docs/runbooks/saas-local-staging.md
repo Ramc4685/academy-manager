@@ -16,6 +16,8 @@ that section near the bottom.
   approved internal tenant header.
 - Frontend builds with `NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST` set, talks
   to the backend via the BFF proxy.
+- Tenant-host frontend proxy calls preserve the browser `Authorization`
+  header and tenant host through `/api/v2/me` when a seeded token is provided.
 - No `default_academy_id` is used on SaaS request paths (enforced by the
   static smoke checks).
 - No frontend SaaS code path calls legacy `/api/*` (enforced by the static
@@ -102,6 +104,7 @@ Checking legacy route is gone in SaaS mode...
 Checking unknown tenant host does not get anonymous tenant access...
 Checking approved internal tenant header path...
 Checking frontend v2 proxy if frontend is reachable...
+Checking tenant frontend login page and authenticated v2 proxy...
 SaaS readiness smoke checks passed
 ```
 
@@ -127,8 +130,32 @@ to 127.0.0.1 automatically. If your platform does not, add to `/etc/hosts`:
 ```
 
 You can then visit `http://acme.localhost:3000` in a browser, log in as
-`admin@acme.localhost` (password from `.local/saas-staging-credentials.json`),
-and exercise the SaaS frontend against the emulator.
+`admin@acme-saas-staging.dev` (password from
+`.local/saas-staging-credentials.json`), and exercise the SaaS frontend
+against the emulator.
+
+For the BLNO local staging tenant used in Wave 8 checks, seed with explicit
+tenant fields and rerun the same non-destructive smoke:
+
+```bash
+scripts/dev/saas_staging.sh seed \
+  --slug blno \
+  --domain blno.localhost \
+  --display-name "BLNO Badminton Academy" \
+  --owner-email admin@blno-badminton.dev \
+  --owner-name "BLNO Admin"
+
+scripts/dev/saas_staging.sh smoke \
+  --slug blno \
+  --domain blno.localhost \
+  --display-name "BLNO Badminton Academy" \
+  --owner-email admin@blno-badminton.dev \
+  --owner-name "BLNO Admin"
+```
+
+Then open `http://blno.localhost:3000/login`, sign in with
+`admin@blno-badminton.dev` and the generated emulator password, and confirm
+the admin pages load through `/api/v2/*` without 401/500 responses.
 
 ## Troubleshooting
 

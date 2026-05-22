@@ -8,6 +8,7 @@
 #   scripts/dev/saas_staging.sh seed       # seed tenant + emulator user, print smoke exports
 #   scripts/dev/saas_staging.sh token      # mint a fresh ID token (re-runs seed)
 #   scripts/dev/saas_staging.sh smoke      # run scripts/smoke/saas_readiness_smoke.sh against the stack
+#   scripts/dev/saas_staging.sh smoke --slug blno --domain blno.localhost ...
 #   scripts/dev/saas_staging.sh logs <svc> # tail logs for backend|frontend|mongo|firebase-emulator
 #   scripts/dev/saas_staging.sh ps         # show container status
 #   scripts/dev/saas_staging.sh down       # stop containers, keep volumes
@@ -27,7 +28,7 @@ COMPOSE=(docker compose -p "${PROJECT_NAME}" "${COMPOSE_FILES[@]}")
 
 LOCAL_DIR="${REPO_ROOT}/.local"
 ENV_FILE="${LOCAL_DIR}/saas-staging.env"
-VENV_PYTHON="${REPO_ROOT}/backend/.venv/bin/python"
+VENV_PYTHON="${VENV_PYTHON:-${REPO_ROOT}/backend/.venv/bin/python}"
 SMOKE_SCRIPT="${REPO_ROOT}/scripts/smoke/saas_readiness_smoke.sh"
 SEED_SCRIPT="${REPO_ROOT}/scripts/dev/seed_saas_staging.py"
 
@@ -106,11 +107,12 @@ cmd_smoke() {
 
   log "Generating fresh smoke env from seed..."
   local seed_json
-  seed_json="$("${VENV_PYTHON}" "${SEED_SCRIPT}" --json)"
+  seed_json="$("${VENV_PYTHON}" "${SEED_SCRIPT}" --json "$@")"
 
-  local api_url frontend_url tenant_host hdr_name hdr_val id_token
+  local api_url frontend_url tenant_frontend_url tenant_host hdr_name hdr_val id_token
   api_url="$(printf '%s' "${seed_json}"      | "${VENV_PYTHON}" -c 'import json,sys;print(json.load(sys.stdin)["api_url"])')"
   frontend_url="$(printf '%s' "${seed_json}" | "${VENV_PYTHON}" -c 'import json,sys;print(json.load(sys.stdin)["frontend_url"])')"
+  tenant_frontend_url="$(printf '%s' "${seed_json}" | "${VENV_PYTHON}" -c 'import json,sys;print(json.load(sys.stdin)["tenant_frontend_url"])')"
   tenant_host="$(printf '%s' "${seed_json}"  | "${VENV_PYTHON}" -c 'import json,sys;print(json.load(sys.stdin)["unknown_host_for_smoke"])')"
   hdr_name="$(printf '%s' "${seed_json}"     | "${VENV_PYTHON}" -c 'import json,sys;print(json.load(sys.stdin)["internal_tenant_header_name"])')"
   hdr_val="$(printf '%s' "${seed_json}"      | "${VENV_PYTHON}" -c 'import json,sys;print(json.load(sys.stdin)["academy_id"])')"
@@ -119,6 +121,7 @@ cmd_smoke() {
   log "Running SaaS readiness smoke against ${api_url}..."
   API_URL="${api_url}" \
   FRONTEND_URL="${frontend_url}" \
+  TENANT_FRONTEND_URL="${tenant_frontend_url}" \
   TENANT_HOST="${tenant_host}" \
   INTERNAL_TENANT_HEADER_NAME="${hdr_name}" \
   INTERNAL_TENANT_HEADER_VALUE="${hdr_val}" \
