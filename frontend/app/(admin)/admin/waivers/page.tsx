@@ -11,6 +11,7 @@ import {
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { Avatar, BigNum, Card, Chip, LaneHeader, Overline } from "@/components/ds";
+import { Button } from "@/components/ds/button";
 
 export default function AdminWaiversPage() {
   const waiversQuery = useQuery({
@@ -125,7 +126,9 @@ function CurrentWaiverCard({
   if (!waiver) {
     return (
       <Card p={20}>
-        <p className="text-sm text-rally-subtle">Current waiver metadata is not available from the BFF yet.</p>
+        <p className="text-sm text-rally-subtle">
+          Current waiver details are not available yet.
+        </p>
       </Card>
     );
   }
@@ -151,7 +154,7 @@ function CurrentWaiverCard({
             </span>
           </div>
           <div className="min-w-0 flex-1">
-            <Overline>Active document</Overline>
+            <Overline>Current template</Overline>
             <h2 className="mt-1 font-display text-[22px] font-semibold tracking-[-0.02em] text-rally-ink">
               {waiver.title}
             </h2>
@@ -168,7 +171,7 @@ function CurrentWaiverCard({
       </Card>
 
       <Card p={20}>
-        <Overline>Version status</Overline>
+        <Overline>Template status</Overline>
         <div className="mt-4 space-y-3 text-sm">
           <div className="flex items-center justify-between gap-3">
             <span className="text-rally-muted">Current version</span>
@@ -186,6 +189,15 @@ function CurrentWaiverCard({
               {summary.expiring_30d}
             </span>
           </div>
+        </div>
+        <div className="mt-5 border-t border-neutral-100 pt-4">
+          <Button type="button" variant="secondary" size="sm" disabled full>
+            Template preview unavailable
+          </Button>
+          <p className="mt-2 text-[12px] leading-5 text-rally-subtle">
+            The admin API reports template metadata only. Template text and signed waiver
+            artifacts need backend support before they can be opened or exported here.
+          </p>
         </div>
       </Card>
     </div>
@@ -228,7 +240,7 @@ function WaiversTable({ waivers }: { waivers: AdminWaiverStudentRow[] }) {
                   <div>
                     <div className="font-semibold text-rally-base">{waiver.student_name}</div>
                     <div className="text-[12px] text-rally-subtle">
-                      {waiver.parent_name || waiver.parent_email || waiver.parent_id}
+                      {waiver.parent_name || waiver.parent_email || "Parent not linked"}
                     </div>
                   </div>
                 </div>

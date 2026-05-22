@@ -3,9 +3,10 @@
 /**
  * Admin messages — Rally restyle.
  *
- * Backend BFF path stays at /admin/messages/*.
+ * Admin messages.
+ *
  * Preserves: broadcast composer, recent broadcasts list, DM thread list,
- * thread view, DM composer, new-DM composer.
+ * thread view, DM composer.
  */
 
 import { useState } from "react";
@@ -111,12 +112,12 @@ export default function AdminMessagesPage() {
                         }}
                       >
                         <div className="flex items-center gap-2">
-                          <Avatar name={m.recipient_id ?? "?"} size={26} />
+                          <Avatar name="Direct conversation" size={26} />
                           <div className="flex-1 min-w-0">
-                            <div className="font-mono text-xs font-semibold truncate">
-                              {m.recipient_id?.slice(0, 12)}…
+                            <div className="text-sm font-semibold truncate">
+                              Direct conversation
                             </div>
-                            <div className="font-mono text-[10px] text-rally-subtle">
+                            <div className="text-[12px] text-rally-subtle">
                               {new Date(m.sent_at).toLocaleDateString()}
                             </div>
                           </div>
@@ -151,12 +152,7 @@ export default function AdminMessagesPage() {
               )}
 
               {!dmRecipientId && (
-                <NewDmComposer
-                  onSent={(recipientId) => {
-                    setDmRecipientId(recipientId);
-                    invalidate();
-                  }}
-                />
+                <NewConversationUnavailable />
               )}
             </>
           )}
@@ -202,12 +198,15 @@ function BroadcastComposer({ onSent }: { onSent: () => void }) {
         required
         value={body}
         onChange={(e) => setBody(e.target.value)}
-        placeholder="Write a message to all parents and students…"
+        placeholder="Write an academy-wide announcement…"
         rows={3}
         className="w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30 resize-none"
         aria-label="Broadcast message body"
       />
       <div className="flex justify-end">
+        <p className="mr-auto self-center text-[12px] text-rally-subtle">
+          Sends to the current academy broadcast audience.
+        </p>
         <Button
           type="submit"
           variant="primary"
@@ -273,69 +272,26 @@ function DmComposer({
   );
 }
 
-function NewDmComposer({ onSent }: { onSent: (recipientId: string) => void }) {
-  const [recipientId, setRecipientId] = useState("");
-  const [body, setBody] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  const mutation = useMutation({
-    mutationFn: () => sendDm({ recipient_id: recipientId, body }),
-    onSuccess: () => {
-      setBody("");
-      setError(null);
-      onSent(recipientId);
-    },
-    onError: (err: Error) => {
-      setError(err.message ?? "Failed to send DM.");
-    },
-  });
-
+function NewConversationUnavailable() {
   return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!recipientId.trim() || !body.trim()) return;
-        mutation.mutate();
-      }}
-      className="space-y-2 border-t border-rally-line/60 pt-4"
-    >
+    <div className="space-y-3 border-t border-rally-line/60 pt-4">
       <p className="font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
         New conversation
       </p>
-      {error && (
-        <p role="alert" className="rounded-md bg-red-50 p-2 text-sm text-red-700">
-          {error}
+      <div className="rounded-md border border-dashed border-rally-line bg-rally-paper px-3 py-4">
+        <p className="text-sm font-medium text-rally-ink">Recipient picker unavailable</p>
+        <p className="mt-1 text-[12px] leading-5 text-rally-subtle">
+          Starting a direct conversation requires a user-facing recipient picker. The
+          current admin API only accepts internal recipient references, so new direct
+          messages are disabled here until search or contact endpoints are available.
         </p>
-      )}
-      <input
-        type="text"
-        required
-        value={recipientId}
-        onChange={(e) => setRecipientId(e.target.value)}
-        placeholder="Recipient user ID"
-        className="w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30"
-        aria-label="Recipient user ID"
-      />
-      <textarea
-        required
-        value={body}
-        onChange={(e) => setBody(e.target.value)}
-        placeholder="Message…"
-        rows={2}
-        className="w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30 resize-none"
-        aria-label="DM message"
-      />
-      <div className="flex justify-end">
-        <Button
-          type="submit"
-          variant="primary"
-          size="sm"
-          disabled={mutation.isPending || !recipientId.trim() || !body.trim()}
-        >
-          {mutation.isPending ? "Sending…" : "Send"}
-        </Button>
+        <div className="mt-3">
+          <Button type="button" variant="secondary" size="sm" disabled>
+            Choose recipient
+          </Button>
+        </div>
       </div>
-    </form>
+    </div>
   );
 }
 
