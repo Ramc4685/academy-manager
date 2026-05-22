@@ -169,3 +169,58 @@ async def test_load_admin_waiver_data_returns_truthful_empty_when_no_students(db
     assert data.active_waiver is None
     assert data.students == []
     assert data.acceptances_by_student == {}
+
+
+@pytest.mark.asyncio
+async def test_template_detail_is_tenant_isolated(db, acad) -> None:
+    await db["waiver_templates"].insert_one(
+        {
+            "academy_id": "other-academy",
+            "waiver_template_id": "wt-other",
+            "name": "Other academy waiver",
+            "version": "2026.1",
+            "content_hash": "hash-other",
+            "body": "Other academy text",
+            "effective_from": NOW,
+            "status": "active",
+        }
+    )
+    repo = MongoAdminWaiverRepository(db)
+
+    detail = await repo.get_template_detail("wt-other")
+
+    assert detail is None
+
+
+@pytest.mark.asyncio
+async def test_signature_detail_is_tenant_isolated(db, acad) -> None:
+    await db["waiver_templates"].insert_one(
+        {
+            "academy_id": "other-academy",
+            "waiver_template_id": "wt-other",
+            "name": "Other academy waiver",
+            "version": "2026.1",
+            "content_hash": "hash-other",
+            "body": "Other academy text",
+            "effective_from": NOW,
+            "status": "active",
+        }
+    )
+    await db["waiver_signatures"].insert_one(
+        {
+            "academy_id": "other-academy",
+            "waiver_signature_id": "ws-other",
+            "waiver_template_id": "wt-other",
+            "student_id": "st-other",
+            "parent_user_id": "p-other",
+            "signed_at": NOW,
+            "signer_name": "Other Parent",
+            "signer_email": "other@example.com",
+            "content_hash": "hash-other",
+        }
+    )
+    repo = MongoAdminWaiverRepository(db)
+
+    detail = await repo.get_signature_detail("ws-other")
+
+    assert detail is None

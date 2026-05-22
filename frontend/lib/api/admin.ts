@@ -235,13 +235,26 @@ export interface AdminRevenueResponse {
   by_month: Record<string, number>; // "YYYY-MM": cents
 }
 
+export interface AdminReportsKpiResponse {
+  active_students: number;
+  attendance_rate_30d: number;
+  dues_collected_mtd_cents: number;
+  pending_waivers: number;
+}
+
 export interface AdminMessageView {
   message_id: string;
+  kind: "dm" | "announcement" | string;
   sender_id: string;
   recipient_id: string | null; // null for broadcast
   body: string;
+  created_at?: string;
   sent_at: string;
   is_broadcast: boolean;
+  scope_type?: string | null;
+  scope_label?: string | null;
+  recipient_count?: number | null;
+  delivery_status?: string | null;
 }
 
 export interface AdminMessageList {
@@ -260,6 +273,7 @@ export interface AdminWaiverSummary {
 }
 
 export interface AdminCurrentWaiverView {
+  waiver_id: string;
   title: string;
   version: string;
   description?: string | null;
@@ -272,22 +286,55 @@ export interface AdminCurrentWaiverView {
 
 export interface AdminWaiverStudentRow {
   waiver_id: string;
+  signature_id?: string | null;
   student_id: string;
   student_name: string;
   parent_id: string;
   parent_name: string | null;
   parent_email: string | null;
   status: AdminWaiverStatus;
+  template_id?: string | null;
   version: string | null;
   signed_at: string | null;
   method: string | null;
   expires_at: string | null;
+  artifact_status?: string | null;
+  share_status?: string | null;
 }
 
 export interface AdminWaiverList {
   summary: AdminWaiverSummary;
   current_waiver?: AdminCurrentWaiverView | null;
   waivers: AdminWaiverStudentRow[];
+}
+
+export interface AdminWaiverTemplateDetail {
+  waiver_id: string;
+  title: string;
+  version: string;
+  body: string | null;
+  content_hash: string | null;
+  effective_at: string | null;
+  artifact_status: string;
+  share_status: string;
+  gap_note: string;
+}
+
+export interface AdminWaiverSignatureDetail {
+  signature_id: string;
+  student_name: string;
+  parent_name: string | null;
+  parent_email: string | null;
+  signed_at: string;
+  signer_name: string | null;
+  signer_email: string | null;
+  waiver_title: string | null;
+  waiver_version: string | null;
+  template_reference: string | null;
+  content_hash: string | null;
+  artifact_status: string;
+  share_status: string;
+  gap_note: string;
 }
 
 export type AdminAttentionSeverity = "high" | "medium" | "low";
@@ -313,6 +360,8 @@ export interface AdminAttentionList {
 
 export interface BroadcastRequest {
   body: string;
+  scope_type?: string;
+  scope_label?: string | null;
 }
 
 export interface DmRequest {
@@ -688,6 +737,10 @@ export function getRevenue(): Promise<AdminRevenueResponse> {
   return apiFetch<AdminRevenueResponse>("/admin/finance/revenue", { method: "GET" });
 }
 
+export function getAdminReportKpis(): Promise<AdminReportsKpiResponse> {
+  return apiFetch<AdminReportsKpiResponse>("/admin/reports/kpis", { method: "GET" });
+}
+
 // ---------------------------------------------------------------------------
 // Messages / Comms
 // ---------------------------------------------------------------------------
@@ -712,6 +765,19 @@ export function sendDm(payload: DmRequest): Promise<AdminMessageView> {
 
 export function listAdminWaivers(): Promise<AdminWaiverList> {
   return apiFetch<AdminWaiverList>("/admin/waivers", { method: "GET" });
+}
+
+export function getAdminWaiverTemplate(waiverId: string): Promise<AdminWaiverTemplateDetail> {
+  return apiFetch<AdminWaiverTemplateDetail>(`/admin/waivers/${encodeURIComponent(waiverId)}`, {
+    method: "GET",
+  });
+}
+
+export function getAdminWaiverSignature(signatureId: string): Promise<AdminWaiverSignatureDetail> {
+  return apiFetch<AdminWaiverSignatureDetail>(
+    `/admin/waivers/signatures/${encodeURIComponent(signatureId)}`,
+    { method: "GET" },
+  );
 }
 
 export function listAdminAttention(): Promise<AdminAttentionList> {

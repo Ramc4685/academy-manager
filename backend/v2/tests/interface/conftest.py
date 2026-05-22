@@ -443,7 +443,9 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
 )
 from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
     AdminWaiverReport,
+    AdminWaiverSignatureDetail,
     AdminWaiverSummary,
+    AdminWaiverTemplateDetail,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.router import router as admin_router
@@ -763,6 +765,39 @@ class FakeAdminWaivers:
 
     async def execute(self) -> AdminWaiverReport:
         return self.report
+
+    async def template_detail(self, waiver_id: str) -> AdminWaiverTemplateDetail | None:
+        if self.report.active_waiver and self.report.active_waiver.waiver_id == waiver_id:
+            return AdminWaiverTemplateDetail(
+                waiver_id=self.report.active_waiver.waiver_id,
+                title=self.report.active_waiver.title
+                or f"Waiver {self.report.active_waiver.version}",
+                version=self.report.active_waiver.version,
+                body=self.report.active_waiver.body,
+                content_hash=self.report.active_waiver.content_hash,
+                effective_from=self.report.active_waiver.effective_from,
+            )
+        return None
+
+    async def signature_detail(self, signature_id: str) -> AdminWaiverSignatureDetail | None:
+        for row in self.report.rows:
+            if row.signature_id == signature_id and row.signed_at is not None:
+                return AdminWaiverSignatureDetail(
+                    signature_id=signature_id,
+                    student_id=row.student_id,
+                    student_name=row.student_name,
+                    parent_id=row.parent_id,
+                    parent_name=row.parent_name,
+                    parent_email=row.parent_email,
+                    signed_at=row.signed_at,
+                    waiver_template_id=row.waiver_template_id,
+                    waiver_title="Annual waiver",
+                    waiver_version=row.waiver_version,
+                    content_hash=row.content_hash,
+                    artifact_status=row.artifact_status,
+                    share_status=row.share_status,
+                )
+        return None
 
 
 # --- seed data ---

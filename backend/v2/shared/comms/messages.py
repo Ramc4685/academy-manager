@@ -33,6 +33,10 @@ class Message(BaseModel):
     body: str
     created_at: datetime
     read_by: list[str] = Field(default_factory=list)
+    scope_type: str | None = None
+    scope_label: str | None = None
+    recipient_count: int | None = None
+    delivery_status: str | None = None
 
 
 class MongoMessageRepository(TenantScopedRepository):
@@ -50,6 +54,12 @@ class MongoMessageRepository(TenantScopedRepository):
             body=str(doc.get("body", "")),
             created_at=doc["created_at"],  # type: ignore[arg-type]
             read_by=list(doc.get("read_by", [])),
+            scope_type=(str(doc["scope_type"]) if doc.get("scope_type") else None),
+            scope_label=(str(doc["scope_label"]) if doc.get("scope_label") else None),
+            recipient_count=(
+                int(doc["recipient_count"]) if doc.get("recipient_count") is not None else None
+            ),
+            delivery_status=(str(doc["delivery_status"]) if doc.get("delivery_status") else None),
         )
 
     async def insert(self, m: Message) -> None:
@@ -98,7 +108,14 @@ class CommsService:
         await self.messages.insert(m)
         return m
 
-    async def send_broadcast(self, *, sender_id: str, body: str) -> Message:
+    async def send_broadcast(
+        self,
+        *,
+        sender_id: str,
+        body: str,
+        scope_type: str = "academy",
+        scope_label: str | None = None,
+    ) -> Message:
         m = Message(
             message_id=str(new_ulid()),
             academy_id=self.academy_id,
@@ -108,6 +125,10 @@ class CommsService:
             recipient_id=None,
             body=body,
             created_at=datetime.now(UTC),
+            scope_type=scope_type,
+            scope_label=scope_label or "Whole academy announcement",
+            recipient_count=None,
+            delivery_status="recorded",
         )
         await self.messages.insert(m)
         return m
