@@ -333,6 +333,17 @@ backend:
       - working: true
         agent: "main"
         comment: "Removed sparse=True from the unique partial provider_message_id index and added a regression test that rejects Mongo index specs combining sparse and partialFilterExpression. Verification: the new test failed red before the fix, then backend/v2/tests/contract/test_migrations_legacy_compat.py passed 5/5, full backend v2 passed 410/410 with 7 existing mongomock UTC warnings, ruff check v2 passed, and ruff format --check v2 passed."
+  - task: "SaaS v2 Wave 6 platform billing model"
+    implemented: true
+    working: true
+    file: "backend/v2/contexts/platform/billing/application/use_cases/manage_platform_billing.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Agent B Wave 6 added a new Platform billing slice separate from parent tuition Billing. The model covers platform plans, plan limits, tenant subscriptions, billing/trial/cancellation status, and tenant Stripe customer/subscription IDs. Application tests cover trial creation, Stripe subscription activation, period-end cancellation scheduling, plan-limit checks, and absence of parent/student/enrollment/session tuition fields. Verification: focused platform billing pytest passed 4/4; targeted ruff passed; git diff --check passed."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -538,15 +549,19 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 20
+  test_sequence: 21
   run_ui: true
 test_plan:
   current_focus:
-    - "production backend deploy migration 0101 fix"
+    - "SaaS v2 Wave 6 platform billing model"
   stuck_tasks: []
-  test_all: true
+  test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "SaaS v2 Wave 6 Agent B platform billing implementation: added a new backend/v2/contexts/platform/billing package for SaaS plan and tenant subscription state, intentionally separate from parent tuition billing under backend/v2/contexts/billing. The application layer supports starting tenant trials, activating Stripe-backed academy subscriptions, scheduling or immediate cancellation state, and checking tenant usage against plan limits. Focused pytest is green; rerun backend/v2/tests/application/test_platform_billing.py and git diff --check for handoff."
+  - agent: "main"
+    message: "SaaS v2 Wave 6 orchestrator verification for Agent B: source .venv/bin/activate pytest attempt failed because the local worktree venv was missing ulid/fastapi, then uv run --no-project --with-requirements requirements.txt --with-requirements requirements-v2.txt pytest v2/tests/application/test_platform_billing.py -q passed with 4 passed. git diff --check passed."
   - agent: "main"
     message: "Production deploy failure investigated from GitHub Actions run 26292507207 and Fly logs. Root cause: migration 0101 attempted to create message_deliveries_provider_message_id_unique with both sparse=true and partialFilterExpression, which MongoDB rejects. Branch feat/fix-backend-deploy-migration-0101 removes sparse=True from that partial unique index and adds a regression test in test_migrations_legacy_compat.py. Verification so far: red test reproduced the invalid spec; focused migration compat suite passed 5/5; full backend v2 suite passed 410/410; ruff check/format passed. Rerun production workflow after merging this hotfix."
   - agent: "main"

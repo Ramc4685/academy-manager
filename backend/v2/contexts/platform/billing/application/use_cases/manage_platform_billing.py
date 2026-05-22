@@ -1,0 +1,280 @@
+"""Application use cases for SaaS platform billing."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from datetime import UTC, datetime
+
+from pydantic import BaseModel, Field
+
+from backend.v2.contexts.platform.billing.application.ports import (
+    PlatformPlanRepository,
+    TenantSubscriptionRepository,
+)
+from backend.v2.contexts.platform.billing.domain.models import (
+    PlanLimits,
+    PlatformPlan,
+    TenantSubscription,
+)
+from backend.v2.shared.http.errors import DomainError
+from backend.v2.shared.ids import new_ulid
+
+
+class PlatformPlanNotFound(DomainError):
+    code = "PlatformBilling.PlanNotFound"
+    status_code = 404
+
+
+class PlatformPlanInactive(DomainError):
+    code = "PlatformBilling.PlanInactive"
+    status_code = 409
+
+
+class TenantSubscriptionNotFound(DomainError):
+    code = "PlatformBilling.SubscriptionNotFound"
+    status_code = 404
+
+
+class StartTenantTrialCommand(BaseModel):
+    academy_id: str = Field(min_length=1)
+    plan_id: str = Field(min_length=1)
+    trial_ends_at: datetime
+
+
+class ActivateTenantSubscriptionCommand(BaseModel):
+    academy_id: str = Field(min_length=1)
+    plan_id: str = Field(min_length=1)
+    stripe_customer_id: str = Field(min_length=1)
+    stripe_subscription_id: str = Field(min_length=1)
+    current_period_start: datetime
+    current_period_end: datetime
+
+
+class ScheduleTenantCancellationCommand(BaseModel):
+    academy_id: str = Field(min_length=1)
+    cancel_at_period_end: bool = True
+
+
+class PlatformUsage(BaseModel):
+    active_students: int = Field(ge=0)
+    locations: int = Field(ge=0)
+    staff_members: int = Field(ge=0)
+
+
+class PlanLimitReport(BaseModel):
+    model_config = {"frozen": True}
+
+    academy_id: str
+    plan_id: str
+    limits: PlanLimits
+    usage: PlatformUsage
+    allowed: bool
+    violations: list[str]
+
+
+class StartTenantTrial:
+    def __init__(
+        self,
+        *,
+        plans: PlatformPlanRepository,
+        subscriptions: TenantSubscriptionRepository,
+        id_factory: Callable[[], str] | None = None,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._plans = plans
+        self._subscriptions = subscriptions
+        self._id_factory = id_factory or (lambda: f"platform_sub_{new_ulid()}")
+        self._clock = clock or (lambda: datetime.now(UTC))
+
+    async def execute(self, command: StartTenantTrialCommand) -> TenantSubscription:
+        plan = await _require_active_plan(self._plans, command.plan_id)
+        now = self._clock()
+        if command.trial_ends_at <= now:
+            raise ValueError("trial_ends_at must be in the future")
+
+        existing = await self._subscriptions.get_for_academy(command.academy_id)
+        subscription_id = existing.subscription_id if existing else self._id_factory()
+        created_at = existing.created_at if existing else now
+        subscription = TenantSubscription(
+            subscription_id=subscription_id,
+            academy_id=command.academy_id,
+            plan_id=plan.plan_id,
+            billing_status="trialing",
+            trial_status="active",
+            cancellation_status="none",
+            trial_started_at=now,
+            trial_ends_at=command.trial_ends_at,
+            cancel_at_period_end=False,
+            cancelled_at=None,
+            created_at=created_at,
+            updated_at=now,
+        )
+        await self._subscriptions.save(subscription)
+        return subscription
+
+
+class ActivateTenantSubscription:
+    def __init__(
+        self,
+        *,
+        plans: PlatformPlanRepository,
+        subscriptions: TenantSubscriptionRepository,
+        id_factory: Callable[[], str] | None = None,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._plans = plans
+        self._subscriptions = subscriptions
+        self._id_factory = id_factory or (lambda: f"platform_sub_{new_ulid()}")
+        self._clock = clock or (lambda: datetime.now(UTC))
+
+    async def execute(
+        self, command: ActivateTenantSubscriptionCommand
+    ) -> TenantSubscription:
+        plan = await _require_active_plan(self._plans, command.plan_id)
+        now = self._clock()
+        existing = await self._subscriptions.get_for_academy(command.academy_id)
+        subscription = _active_subscription(
+            existing=existing,
+            subscription_id=self._id_factory(),
+            academy_id=command.academy_id,
+            plan=plan,
+            stripe_customer_id=command.stripe_customer_id,
+            stripe_subscription_id=command.stripe_subscription_id,
+            current_period_start=command.current_period_start,
+            current_period_end=command.current_period_end,
+            now=now,
+        )
+        await self._subscriptions.save(subscription)
+        return subscription
+
+
+class ScheduleTenantCancellation:
+    def __init__(
+        self,
+        *,
+        plans: PlatformPlanRepository,
+        subscriptions: TenantSubscriptionRepository,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._plans = plans
+        self._subscriptions = subscriptions
+        self._clock = clock or (lambda: datetime.now(UTC))
+
+    async def execute(
+        self, command: ScheduleTenantCancellationCommand
+    ) -> TenantSubscription:
+        existing = await self._subscriptions.get_for_academy(command.academy_id)
+        if existing is None:
+            raise TenantSubscriptionNotFound(
+                f"no platform subscription for academy {command.academy_id}"
+            )
+        await _require_active_plan(self._plans, existing.plan_id)
+
+        now = self._clock()
+        if command.cancel_at_period_end:
+            updated = existing.model_copy(
+                update={
+                    "cancellation_status": "scheduled",
+                    "cancel_at_period_end": True,
+                    "updated_at": now,
+                }
+            )
+        else:
+            updated = existing.model_copy(
+                update={
+                    "billing_status": "cancelled",
+                    "cancellation_status": "cancelled",
+                    "cancel_at_period_end": False,
+                    "cancelled_at": now,
+                    "updated_at": now,
+                }
+            )
+        await self._subscriptions.save(updated)
+        return updated
+
+
+class CheckPlanLimits:
+    def __init__(
+        self,
+        *,
+        plans: PlatformPlanRepository,
+        subscriptions: TenantSubscriptionRepository,
+    ) -> None:
+        self._plans = plans
+        self._subscriptions = subscriptions
+
+    async def execute(self, *, academy_id: str, usage: PlatformUsage) -> PlanLimitReport:
+        subscription = await self._subscriptions.get_for_academy(academy_id)
+        if subscription is None:
+            raise TenantSubscriptionNotFound(
+                f"no platform subscription for academy {academy_id}"
+            )
+        plan = await _require_active_plan(self._plans, subscription.plan_id)
+        violations = _limit_violations(plan.limits, usage)
+        return PlanLimitReport(
+            academy_id=academy_id,
+            plan_id=plan.plan_id,
+            limits=plan.limits,
+            usage=usage,
+            allowed=not violations,
+            violations=violations,
+        )
+
+
+async def _require_active_plan(
+    plans: PlatformPlanRepository, plan_id: str
+) -> PlatformPlan:
+    plan = await plans.get(plan_id)
+    if plan is None:
+        raise PlatformPlanNotFound(f"platform plan not found: {plan_id}")
+    if not plan.is_active:
+        raise PlatformPlanInactive(f"platform plan is not active: {plan_id}")
+    return plan
+
+
+def _active_subscription(
+    *,
+    existing: TenantSubscription | None,
+    subscription_id: str,
+    academy_id: str,
+    plan: PlatformPlan,
+    stripe_customer_id: str,
+    stripe_subscription_id: str,
+    current_period_start: datetime,
+    current_period_end: datetime,
+    now: datetime,
+) -> TenantSubscription:
+    created_at = existing.created_at if existing else now
+    resolved_subscription_id = existing.subscription_id if existing else subscription_id
+    trial_status = "converted" if existing and existing.trial_status == "active" else "none"
+    return TenantSubscription(
+        subscription_id=resolved_subscription_id,
+        academy_id=academy_id,
+        plan_id=plan.plan_id,
+        billing_status="active",
+        trial_status=trial_status,
+        cancellation_status="none",
+        stripe_customer_id=stripe_customer_id,
+        stripe_subscription_id=stripe_subscription_id,
+        current_period_start=current_period_start,
+        current_period_end=current_period_end,
+        trial_started_at=existing.trial_started_at if existing else None,
+        trial_ends_at=existing.trial_ends_at if existing else None,
+        cancel_at_period_end=False,
+        cancelled_at=None,
+        created_at=created_at,
+        updated_at=now,
+    )
+
+
+def _limit_violations(limits: PlanLimits, usage: PlatformUsage) -> list[str]:
+    checks = (
+        ("active_students", usage.active_students, limits.max_active_students),
+        ("locations", usage.locations, limits.max_locations),
+        ("staff_members", usage.staff_members, limits.max_staff_members),
+    )
+    return [
+        f"{name} exceeds plan limit {limit}"
+        for name, value, limit in checks
+        if limit is not None and value > limit
+    ]
