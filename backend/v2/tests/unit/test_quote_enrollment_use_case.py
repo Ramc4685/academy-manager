@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -18,12 +18,11 @@ from backend.v2.contexts.billing.domain.proration import (
     ClassOccurrence,
 )
 
-
 # ---------------------------------------------------------------------------
 # In-memory port fakes
 # ---------------------------------------------------------------------------
 
-_NOW = datetime(2026, 5, 18, 22, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 5, 18, 22, 0, tzinfo=UTC)
 
 _SESSION_DOC: dict[str, Any] = {
     "session_id": "sess-1",
@@ -73,8 +72,9 @@ class _FakeSnapshotWriter:
         ttl_minutes: int,
         now: datetime,
     ) -> BillingCalculationSnapshot:
-        from backend.v2.shared.ids import new_ulid
         from datetime import timedelta
+
+        from backend.v2.shared.ids import new_ulid
 
         stored = snapshot.model_copy(
             update={
@@ -102,8 +102,8 @@ def _make_occurrences(days: list[int]) -> list[ClassOccurrence]:
         ClassOccurrence(
             occurrence_id=f"sess-1:2026-05-{day:02d}:18:00",
             session_id="sess-1",
-            start_at=datetime(2026, 5, day, 23, 0, tzinfo=timezone.utc),
-            end_at=datetime(2026, 5, day, 23, 59, tzinfo=timezone.utc),
+            start_at=datetime(2026, 5, day, 23, 0, tzinfo=UTC),
+            end_at=datetime(2026, 5, day, 23, 59, tzinfo=UTC),
             status="scheduled",
             is_billable=True,
             timezone="America/Chicago",
@@ -137,7 +137,7 @@ async def test_quote_enrollment_returns_open_snapshot() -> None:
     result = await uc.execute(
         QuoteEnrollmentCommand(
             session_id="sess-1",
-            billing_start_at=datetime(2026, 5, 18, 15, 0, tzinfo=timezone.utc),
+            billing_start_at=datetime(2026, 5, 18, 15, 0, tzinfo=UTC),
             calculated_by="parent-1",
             parent_id="parent-1",
         )
@@ -169,7 +169,7 @@ async def test_quote_enrollment_raises_if_session_not_found() -> None:
         await uc.execute(
             QuoteEnrollmentCommand(
                 session_id="nonexistent",
-                billing_start_at=datetime(2026, 5, 18, 15, 0, tzinfo=timezone.utc),
+                billing_start_at=datetime(2026, 5, 18, 15, 0, tzinfo=UTC),
                 calculated_by="admin",
             )
         )
@@ -192,7 +192,7 @@ async def test_quote_enrollment_uses_session_timezone() -> None:
     result = await uc.execute(
         QuoteEnrollmentCommand(
             session_id="sess-1",
-            billing_start_at=datetime(2026, 5, 18, 15, 0, tzinfo=timezone.utc),
+            billing_start_at=datetime(2026, 5, 18, 15, 0, tzinfo=UTC),
             calculated_by="admin",
         )
     )
@@ -215,7 +215,7 @@ async def test_quote_enrollment_zero_classes_yields_zero_amount() -> None:
     result = await uc.execute(
         QuoteEnrollmentCommand(
             session_id="sess-1",
-            billing_start_at=datetime(2026, 5, 31, 15, 0, tzinfo=timezone.utc),
+            billing_start_at=datetime(2026, 5, 31, 15, 0, tzinfo=UTC),
             calculated_by="admin",
         )
     )

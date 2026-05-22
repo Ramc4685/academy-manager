@@ -61,14 +61,17 @@ async def test_attendance_migration_tolerates_legacy_rows_without_v2_ids(db) -> 
     migration = importlib.import_module("backend.v2.migrations.0020_coaching_attendance_indexes")
     await migration.up(db)
 
-    assert await db["attendance"].count_documents(
-        {"attendance_id": {"$exists": True, "$eq": None}}
-    ) == 0
+    assert (
+        await db["attendance"].count_documents({"attendance_id": {"$exists": True, "$eq": None}})
+        == 0
+    )
 
 
 @pytest.mark.asyncio
 async def test_admin_student_directory_migration_declares_attendance_lookup_index(db) -> None:
-    migration = importlib.import_module("backend.v2.migrations.0070_admin_student_directory_indexes")
+    migration = importlib.import_module(
+        "backend.v2.migrations.0070_admin_student_directory_indexes"
+    )
     await migration.up(db)
 
     indexes = await db["attendance"].index_information()

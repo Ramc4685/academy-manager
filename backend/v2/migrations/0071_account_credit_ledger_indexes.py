@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 version = "0071_account_credit_ledger_indexes"
 
 

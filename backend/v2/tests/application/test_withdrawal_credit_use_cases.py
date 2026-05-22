@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -21,8 +21,8 @@ def _snapshot() -> BillingCalculationSnapshot:
     return BillingCalculationSnapshot(
         snapshot_id="snap-1",
         monthly_price_cents=10_000,
-        billing_period_start=datetime(2026, 5, 1, tzinfo=timezone.utc),
-        billing_period_end=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        billing_period_start=datetime(2026, 5, 1, tzinfo=UTC),
+        billing_period_end=datetime(2026, 6, 1, tzinfo=UTC),
         billing_period_label="2026-05",
         timezone="America/Chicago",
         total_eligible_classes=8,
@@ -35,7 +35,7 @@ def _snapshot() -> BillingCalculationSnapshot:
             "sess-1:2026-05-26:18:00",
         ],
         excluded_occurrences={},
-        calculated_at=datetime(2026, 5, 16, tzinfo=timezone.utc),
+        calculated_at=datetime(2026, 5, 16, tzinfo=UTC),
         calculated_by="parent-1",
     )
 
@@ -154,8 +154,8 @@ async def test_preview_withdrawal_credit_uses_net_paid_and_original_snapshot() -
         amount_cents=4000,
         refunded_cents=2000,
         status="partially_refunded",
-        created_at=datetime(2026, 5, 16, tzinfo=timezone.utc),
-        updated_at=datetime(2026, 5, 16, tzinfo=timezone.utc),
+        created_at=datetime(2026, 5, 16, tzinfo=UTC),
+        updated_at=datetime(2026, 5, 16, tzinfo=UTC),
     )
     uc = PreviewWithdrawalCredit(
         payments=FakePayments(payment=payment, snapshot=_snapshot()),
@@ -168,13 +168,13 @@ async def test_preview_withdrawal_credit_uses_net_paid_and_original_snapshot() -
                 status="active",
             )
         ),
-        clock=lambda: datetime(2026, 5, 20, tzinfo=timezone.utc),
+        clock=lambda: datetime(2026, 5, 20, tzinfo=UTC),
     )
 
     result = await uc.execute(
         PreviewWithdrawalCreditCommand(
             enrollment_id="enroll-1",
-            withdrawal_date=datetime(2026, 5, 21, tzinfo=timezone.utc),
+            withdrawal_date=datetime(2026, 5, 21, tzinfo=UTC),
             actor_id="admin-1",
         )
     )
@@ -195,8 +195,8 @@ async def test_approve_withdrawal_creates_credit_and_cancels_subscription() -> N
         amount_cents=4000,
         refunded_cents=0,
         status="succeeded",
-        created_at=datetime(2026, 5, 16, tzinfo=timezone.utc),
-        updated_at=datetime(2026, 5, 16, tzinfo=timezone.utc),
+        created_at=datetime(2026, 5, 16, tzinfo=UTC),
+        updated_at=datetime(2026, 5, 16, tzinfo=UTC),
     )
     credits = FakeCredits()
     enrollments = FakeEnrollments(
@@ -217,8 +217,8 @@ async def test_approve_withdrawal_creates_credit_and_cancels_subscription() -> N
             session_id="sess-1",
             stripe_subscription_id="sub_stripe_1",
             status="active",
-            created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
-            updated_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 5, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 5, 1, tzinfo=UTC),
         )
     )
     stripe = FakeStripe()
@@ -231,13 +231,13 @@ async def test_approve_withdrawal_creates_credit_and_cancels_subscription() -> N
         stripe=stripe,
         enrollment_events=events,
         academy_id="acad",
-        clock=lambda: datetime(2026, 5, 20, tzinfo=timezone.utc),
+        clock=lambda: datetime(2026, 5, 20, tzinfo=UTC),
     )
 
     result = await uc.execute(
         ApproveWithdrawalCreditCommand(
             enrollment_id="enroll-1",
-            withdrawal_date=datetime(2026, 5, 21, tzinfo=timezone.utc),
+            withdrawal_date=datetime(2026, 5, 21, tzinfo=UTC),
             actor_id="admin-1",
             admin_note="moving",
         )
@@ -257,14 +257,14 @@ async def test_approve_withdrawal_creates_credit_and_cancels_subscription() -> N
     assert events.rows[0].student_id == "student-1"
     assert events.rows[0].actor_id == "admin-1"
     assert events.rows[0].reason == "moving"
-    assert events.rows[0].effective_at == datetime(2026, 5, 21, tzinfo=timezone.utc)
+    assert events.rows[0].effective_at == datetime(2026, 5, 21, tzinfo=UTC)
     assert events.rows[0].credit_id == result.credit_id
 
     # Idempotency: a second approval must not insert a duplicate credit.
     result2 = await uc.execute(
         ApproveWithdrawalCreditCommand(
             enrollment_id="enroll-1",
-            withdrawal_date=datetime(2026, 5, 21, tzinfo=timezone.utc),
+            withdrawal_date=datetime(2026, 5, 21, tzinfo=UTC),
             actor_id="admin-1",
             admin_note="moving",
         )

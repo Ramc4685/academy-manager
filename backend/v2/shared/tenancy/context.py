@@ -9,9 +9,9 @@ See ADR-0006.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Iterator
 
 
 class TenantContextUnset(RuntimeError):

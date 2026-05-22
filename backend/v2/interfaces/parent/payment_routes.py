@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 
@@ -182,7 +182,7 @@ async def list_credits(
     # non-expired credits with remaining_amount_cents > 0 are spendable. Showing
     # expired credits in balance_cents would diverge from what we'd actually
     # apply at invoice time.
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     balance = sum(
         c.remaining_amount_cents
         for c in credits

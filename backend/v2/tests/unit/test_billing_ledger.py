@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
@@ -11,7 +11,7 @@ from backend.v2.contexts.billing.domain.ledger import (
 
 
 def test_partial_payment_reduces_invoice_balance_without_credit() -> None:
-    now = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
     invoice = LedgerInvoice(
         invoice_id="inv-1",
         academy_id="academy-1",
@@ -73,7 +73,7 @@ def test_partial_payment_reduces_invoice_balance_without_credit() -> None:
 
 
 def test_overpayment_allocates_invoice_balance_and_returns_credit() -> None:
-    now = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
     invoice = LedgerInvoice(
         invoice_id="inv-2",
         academy_id="academy-1",

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Protocol
 
 from pydantic import BaseModel
-from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.coaching.domain.errors import SessionNotAssigned, StudentNotEnrolled
+from backend.v2.shared.ids import new_ulid
 
 
 class LessonPlan(BaseModel):
@@ -83,7 +83,7 @@ class CreateLessonPlan:
             coach_id=cmd.coach_id,
             title=cmd.title,
             body=cmd.body,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         await self._notes.add_lesson_plan(plan)
         return plan
@@ -128,7 +128,7 @@ class CreateProgressNote:
             student_id=cmd.student_id,
             coach_id=cmd.coach_id,
             body=cmd.body,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         await self._notes.add_progress_note(note)
         return note

@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from motor.motor_asyncio import AsyncIOMotorClient
-from backend.v2.shared.ids import new_ulid
 
 from backend.v2.shared.config import get_settings
+from backend.v2.shared.ids import new_ulid
 
 
 async def _replay(event_id: str) -> None:
@@ -37,7 +37,7 @@ async def _replay(event_id: str) -> None:
             "event_id": new_event_id,
             "processed": False,
             "replayed_from": event_id,
-            "created_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
         }
         new_doc.pop("processed_at", None)
         await db["outbox_events"].insert_one(new_doc)
@@ -46,7 +46,7 @@ async def _replay(event_id: str) -> None:
             {
                 "$set": {
                     "replayed": True,
-                    "replayed_at": datetime.now(timezone.utc),
+                    "replayed_at": datetime.now(UTC),
                     "replayed_as": new_event_id,
                 }
             },

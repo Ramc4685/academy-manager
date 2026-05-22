@@ -35,23 +35,15 @@ class MembershipRepository(Protocol):
     takes an explicit `academy_id` so cross-tenant leakage is impossible.
     """
 
-    async def get_membership(
-        self, academy_id: str, user_id: str
-    ) -> AcademyMembership | None: ...
+    async def get_membership(self, academy_id: str, user_id: str) -> AcademyMembership | None: ...
 
-    async def list_memberships_for_user(
-        self, user_id: str
-    ) -> list[AcademyMembership]: ...
+    async def list_memberships_for_user(self, user_id: str) -> list[AcademyMembership]: ...
 
-    async def upsert_membership(
-        self, membership: AcademyMembership
-    ) -> AcademyMembership: ...
+    async def upsert_membership(self, membership: AcademyMembership) -> AcademyMembership: ...
 
     async def list_active_platform_roles(self, user_id: str) -> list[PlatformRole]: ...
 
-    async def upsert_platform_role(
-        self, platform_role: PlatformRole
-    ) -> PlatformRole: ...
+    async def upsert_platform_role(self, platform_role: PlatformRole) -> PlatformRole: ...
 
 
 class TokenVerifier(Protocol):
@@ -64,7 +56,7 @@ class TokenVerifier(Protocol):
     async def verify(self, id_token: str) -> dict[str, object]: ...
 
 
-class MembershipRepository(Protocol):
+class MembershipLookup(Protocol):
     """Read port for `academy_memberships`.
 
     SaaS `LoadAuthClaims` uses this to verify the authenticated user has an

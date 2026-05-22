@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 
 from backend.v2.shared.events.base import DomainEvent
 
-
 EnrollmentLifecycleEventType = Literal[
     "created",
     "moved",

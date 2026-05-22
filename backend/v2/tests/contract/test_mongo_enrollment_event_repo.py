@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -39,8 +39,8 @@ def _event(
 @pytest.mark.asyncio
 async def test_records_and_lists_enrollment_timeline_in_order(db) -> None:
     repo = MongoEnrollmentEventRepository(db)
-    first = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
-    second = datetime(2026, 5, 21, 13, 0, tzinfo=timezone.utc)
+    first = datetime(2026, 5, 21, 12, 0, tzinfo=UTC)
+    second = datetime(2026, 5, 21, 13, 0, tzinfo=UTC)
 
     with tenant_scope("academy-a"):
         await repo.record(_event("evt-2", academy_id="academy-a", occurred_at=second))
@@ -55,7 +55,7 @@ async def test_records_and_lists_enrollment_timeline_in_order(db) -> None:
 @pytest.mark.asyncio
 async def test_enrollment_event_repo_isolates_tenants(db) -> None:
     repo = MongoEnrollmentEventRepository(db)
-    at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+    at = datetime(2026, 5, 21, 12, 0, tzinfo=UTC)
 
     with tenant_scope("academy-a"):
         await repo.record(_event("evt-a", academy_id="academy-a", occurred_at=at))

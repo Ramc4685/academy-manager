@@ -43,17 +43,13 @@ def test_mark_attendance_conflict_for_different_mutation(coach_client):
 
 
 def test_mark_attendance_session_not_assigned(coach_client):
-    r = coach_client.post(
-        "/api/v2/coach/attendance", json=_payload(session_id="s-other-coach")
-    )
+    r = coach_client.post("/api/v2/coach/attendance", json=_payload(session_id="s-other-coach"))
     assert r.status_code == 409
     assert r.json()["error"]["code"] == "Coaching.SessionNotAssigned"
 
 
 def test_mark_attendance_unknown_student(coach_client):
-    r = coach_client.post(
-        "/api/v2/coach/attendance", json=_payload(student_id="ghost")
-    )
+    r = coach_client.post("/api/v2/coach/attendance", json=_payload(student_id="ghost"))
     assert r.status_code == 409
     assert r.json()["error"]["code"] == "Coaching.StudentNotEnrolled"
 
@@ -74,7 +70,5 @@ def test_mark_attendance_unauthenticated(anon_client):
 
 
 def test_mark_attendance_invalid_status_rejected(coach_client):
-    r = coach_client.post(
-        "/api/v2/coach/attendance", json=_payload(status="excellent")
-    )
+    r = coach_client.post("/api/v2/coach/attendance", json=_payload(status="excellent"))
     assert r.status_code == 422  # FastAPI/Pydantic body validation

@@ -5,13 +5,13 @@ from __future__ import annotations
 from backend.v2.contexts.identity.application.get_academy_fees_use_case import (
     GetAcademyFeesOutput,
 )
+from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
+    GetAcademyGatewayOutput,
+)
 from backend.v2.contexts.identity.application.get_academy_notifications_use_case import (
     GetAcademyNotificationsOutput,
 )
 from backend.v2.contexts.identity.application.get_academy_use_case import GetAcademyOutput
-from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
-    GetAcademyGatewayOutput,
-)
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserSummary,
 )
@@ -70,14 +70,12 @@ def test_get_and_patch_fees_contract(admin_client):
         late_fee_cents=1500,
         grace_days=5,
     )
-    admin_client.use_cases.update_academy_fees_use_case.execute.return_value = (
-        GetAcademyFeesOutput(default_monthly_cents=12000, late_fee_cents=2000, grace_days=5)
+    admin_client.use_cases.update_academy_fees_use_case.execute.return_value = GetAcademyFeesOutput(
+        default_monthly_cents=12000, late_fee_cents=2000, grace_days=5
     )
 
     get_response = admin_client.get("/api/v2/admin/academy/fees")
-    patch_response = admin_client.patch(
-        "/api/v2/admin/academy/fees", json={"late_fee_cents": 2000}
-    )
+    patch_response = admin_client.patch("/api/v2/admin/academy/fees", json={"late_fee_cents": 2000})
 
     assert get_response.status_code == 200, get_response.text
     assert get_response.json() == {
@@ -153,9 +151,7 @@ def test_patch_user_role_contract(admin_client):
         status="active",
     )
 
-    response = admin_client.patch(
-        "/api/v2/admin/users/coach-1/role", json={"role": "admin"}
-    )
+    response = admin_client.patch("/api/v2/admin/users/coach-1/role", json={"role": "admin"})
 
     assert response.status_code == 200, response.text
     assert response.json()["role"] == "admin"

@@ -10,7 +10,6 @@ import ast
 from dataclasses import dataclass
 from pathlib import Path
 
-
 V2_ROOT = Path(__file__).resolve().parents[1]
 
 TENANT_OWNED_COLLECTIONS = {
@@ -104,8 +103,7 @@ def test_no_unapproved_raw_mongo_access_to_tenant_owned_collections() -> None:
     assert not violations, (
         "Raw Mongo access to tenant-owned collections must go through "
         "TenantScopedRepository-backed infrastructure or an explicitly listed "
-        "composition exception.\n"
-        + "\n".join(access.format() for access in violations)
+        "composition exception.\n" + "\n".join(access.format() for access in violations)
     )
 
 
@@ -118,8 +116,7 @@ def test_composition_exceptions_are_explicit_and_documented() -> None:
 def test_raw_mongo_guard_reports_tenant_owned_direct_access(tmp_path) -> None:
     path = tmp_path / "bad_repo.py"
     path.write_text(
-        "async def bad(db):\n"
-        "    return await db['students'].find_one({'student_id': 's1'})\n",
+        "async def bad(db):\n" "    return await db['students'].find_one({'student_id': 's1'})\n",
         encoding="utf-8",
     )
 

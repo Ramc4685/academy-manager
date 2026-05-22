@@ -7,8 +7,8 @@ they delegate here instead.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from backend.v2.contexts.billing.application.ports import (
     OccurrenceCatalog,
@@ -43,7 +43,7 @@ class QuoteEnrollment:
         sessions: SessionLoader,
         snapshots: SnapshotWriter,
         occurrences: OccurrenceCatalog,
-        clock=lambda: datetime.now(timezone.utc),
+        clock=lambda: datetime.now(UTC),
     ) -> None:
         self._sessions = sessions
         self._snapshots = snapshots
@@ -91,5 +91,5 @@ def _session_amount_cents(doc: dict) -> int:
     if doc.get("monthly_price_cents") is not None:
         return int(doc["monthly_price_cents"])
     if doc.get("monthly_price") is not None:
-        return int(round(float(doc["monthly_price"]) * 100))
+        return round(float(doc["monthly_price"]) * 100)
     return 0

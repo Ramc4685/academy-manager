@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, Query
 
@@ -28,7 +28,7 @@ router = APIRouter(tags=["coach"])
 
 def _parse_date(value: str | None) -> date:
     if value is None:
-        return datetime.now(timezone.utc).date()
+        return datetime.now(UTC).date()
     return date.fromisoformat(value)
 
 
@@ -38,7 +38,9 @@ def _parse_date(value: str | None) -> date:
     summary="Coach's sessions for a date (with roster)",
 )
 async def get_today(
-    on_date: str | None = Query(default=None, alias="date", description="YYYY-MM-DD; default = today UTC"),
+    on_date: str | None = Query(
+        default=None, alias="date", description="YYYY-MM-DD; default = today UTC"
+    ),
     claims: AuthClaims = Depends(require_persona("coach")),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> CoachTodayResponse:
@@ -46,9 +48,7 @@ async def get_today(
     sessions = await use_cases.list_today.execute(claims.user_id, target_date)
 
     # Fan-out roster fetches concurrently.
-    rosters = await asyncio.gather(
-        *[use_cases.get_roster.execute(s.session_id) for s in sessions]
-    )
+    rosters = await asyncio.gather(*[use_cases.get_roster.execute(s.session_id) for s in sessions])
 
     out = [
         CoachSession(
@@ -67,6 +67,6 @@ async def get_today(
                 for r in roster
             ],
         )
-        for s, roster in zip(sessions, rosters)
+        for s, roster in zip(sessions, rosters, strict=False)
     ]
     return CoachTodayResponse(date=target_date.isoformat(), sessions=out)

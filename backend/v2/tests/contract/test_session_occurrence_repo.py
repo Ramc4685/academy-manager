@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -19,8 +19,8 @@ def _occurrence(occurrence_id: str, academy_id: str, session_id: str) -> Session
         occurrence_id=occurrence_id,
         academy_id=academy_id,
         session_id=session_id,
-        start_at=datetime(2026, 6, 1, 18, 0, tzinfo=timezone.utc),
-        end_at=datetime(2026, 6, 1, 19, 0, tzinfo=timezone.utc),
+        start_at=datetime(2026, 6, 1, 18, 0, tzinfo=UTC),
+        end_at=datetime(2026, 6, 1, 19, 0, tzinfo=UTC),
         status="scheduled",
         scheduled_coach_id="coach-1",
     )
@@ -39,8 +39,8 @@ async def test_occurrence_repo_isolates_tenants(db) -> None:
         await repo.save_many([_occurrence("occ-b", "academy-b", "sess-1")])
         rows = await repo.list_for_session_between(
             session_id="sess-1",
-            start_at=datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc),
-            end_at=datetime(2026, 6, 1, 23, 59, tzinfo=timezone.utc),
+            start_at=datetime(2026, 6, 1, 0, 0, tzinfo=UTC),
+            end_at=datetime(2026, 6, 1, 23, 59, tzinfo=UTC),
         )
 
     assert [row.occurrence_id for row in rows] == ["occ-b"]
@@ -59,8 +59,8 @@ async def test_occurrence_repo_deduplicates_same_session_start(db) -> None:
 
         rows = await repo.list_for_session_between(
             session_id="sess-1",
-            start_at=datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc),
-            end_at=datetime(2026, 6, 1, 23, 59, tzinfo=timezone.utc),
+            start_at=datetime(2026, 6, 1, 0, 0, tzinfo=UTC),
+            end_at=datetime(2026, 6, 1, 23, 59, tzinfo=UTC),
         )
 
     assert [row.occurrence_id for row in rows] == ["occ-a"]

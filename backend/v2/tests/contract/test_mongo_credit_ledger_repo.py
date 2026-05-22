@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -13,7 +13,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import 
 @pytest.mark.asyncio
 async def test_credit_ledger_fifo_application_is_atomic(db, acad) -> None:
     repo = MongoCreditLedgerRepository(db)
-    now = datetime(2026, 5, 20, tzinfo=timezone.utc)
+    now = datetime(2026, 5, 20, tzinfo=UTC)
     await repo.create(
         CreditLedgerEntry(
             credit_id="credit-1",
@@ -28,7 +28,7 @@ async def test_credit_ledger_fifo_application_is_atomic(db, acad) -> None:
             currency="usd",
             reason="withdrawal",
             calculation_snapshot_id="snap-1",
-            expires_at=datetime(2027, 5, 31, tzinfo=timezone.utc),
+            expires_at=datetime(2027, 5, 31, tzinfo=UTC),
             created_at=now,
             updated_at=now,
         )
@@ -52,7 +52,7 @@ async def test_credit_ledger_fifo_application_is_atomic(db, acad) -> None:
 @pytest.mark.asyncio
 async def test_credit_ledger_application_is_idempotent_per_invoice(db, acad) -> None:
     repo = MongoCreditLedgerRepository(db)
-    now = datetime(2026, 5, 20, tzinfo=timezone.utc)
+    now = datetime(2026, 5, 20, tzinfo=UTC)
     await repo.create(
         CreditLedgerEntry(
             credit_id="credit-1",
@@ -64,16 +64,22 @@ async def test_credit_ledger_application_is_idempotent_per_invoice(db, acad) -> 
             remaining_amount_cents=2000,
             currency="usd",
             reason="manual",
-            expires_at=datetime(2027, 5, 31, tzinfo=timezone.utc),
+            expires_at=datetime(2027, 5, 31, tzinfo=UTC),
             created_at=now,
             updated_at=now,
         )
     )
 
-    assert await repo.apply_available_credits(
-        parent_id="parent-1", invoice_id="pay-1", amount_due_cents=1000
-    ) == 1000
-    assert await repo.apply_available_credits(
-        parent_id="parent-1", invoice_id="pay-1", amount_due_cents=1000
-    ) == 0
+    assert (
+        await repo.apply_available_credits(
+            parent_id="parent-1", invoice_id="pay-1", amount_due_cents=1000
+        )
+        == 1000
+    )
+    assert (
+        await repo.apply_available_credits(
+            parent_id="parent-1", invoice_id="pay-1", amount_due_cents=1000
+        )
+        == 0
+    )
     assert await repo.balance_for_parent("parent-1") == 1000

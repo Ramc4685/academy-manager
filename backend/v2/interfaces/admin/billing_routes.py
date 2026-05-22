@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
-    RecordExpenseCommand,
-)
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscountCommand,
     GenerateMonthlyPaymentsCommand,
     MarkPaymentPaidCommand,
     UndoPaymentPaidCommand,
+)
+from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
+    RecordExpenseCommand,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import (
     IssueRefundCommand,
@@ -22,10 +22,10 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
-    AdminExpenseList,
-    AdminExpenseView,
     AdminEnrollmentQuoteRequest,
     AdminEnrollmentQuoteResponse,
+    AdminExpenseList,
+    AdminExpenseView,
     AdminPaymentList,
     AdminPaymentView,
     AdminPayoutList,
@@ -151,9 +151,7 @@ async def list_payments(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPaymentList:
     rows = await use_cases.list_payments_recent()  # type: ignore[operator]
-    return AdminPaymentList(
-        payments=[_payment_view(p) for p in rows]
-    )
+    return AdminPaymentList(payments=[_payment_view(p) for p in rows])
 
 
 @router.post("/payments/refund", summary="Issue a refund")
@@ -302,18 +300,18 @@ async def revenue(
 def _payment_view(row: object) -> AdminPaymentView:
     if isinstance(row, dict):
         return AdminPaymentView(**row)
-    amount_cents = getattr(row, "amount_cents")
+    amount_cents = row.amount_cents
     return AdminPaymentView(
-        payment_id=getattr(row, "payment_id"),
-        parent_id=getattr(row, "parent_id"),
-        session_id=getattr(row, "session_id"),
+        payment_id=row.payment_id,
+        parent_id=row.parent_id,
+        session_id=row.session_id,
         amount_cents=amount_cents,
         discount_cents=0,
         final_amount_cents=amount_cents,
-        currency=getattr(row, "currency"),
-        status=getattr(row, "status"),
-        refunded_cents=getattr(row, "refunded_cents"),
-        created_at=getattr(row, "created_at"),
+        currency=row.currency,
+        status=row.status,
+        refunded_cents=row.refunded_cents,
+        created_at=row.created_at,
     )
 
 

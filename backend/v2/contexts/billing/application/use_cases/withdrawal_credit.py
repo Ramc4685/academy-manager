@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
-from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.billing.application.ports import (
     CreditLedgerRepository,
@@ -21,6 +20,7 @@ from backend.v2.contexts.billing.domain.credits import (
 from backend.v2.contexts.billing.domain.errors import PaymentNotFound
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment
 from backend.v2.contexts.billing.domain.proration import BillingCalculationSnapshot
+from backend.v2.shared.ids import new_ulid
 
 
 class WithdrawalPaymentRepository(Protocol):
@@ -30,9 +30,7 @@ class WithdrawalPaymentRepository(Protocol):
 
 class WithdrawalEnrollmentRepository(Protocol):
     async def get(self, enrollment_id: str): ...
-    async def mark_withdrawn(
-        self, enrollment_id: str, *, withdrawal_date: datetime
-    ) -> None: ...
+    async def mark_withdrawn(self, enrollment_id: str, *, withdrawal_date: datetime) -> None: ...
 
 
 class WithdrawalLifecycleEventSink(Protocol):
@@ -100,15 +98,13 @@ class PreviewWithdrawalCredit:
         *,
         payments: WithdrawalPaymentRepository,
         enrollments: WithdrawalEnrollmentRepository,
-        clock=lambda: datetime.now(timezone.utc),
+        clock=lambda: datetime.now(UTC),
     ) -> None:
         self._payments = payments
         self._enrollments = enrollments
         self._clock = clock
 
-    async def execute(
-        self, cmd: PreviewWithdrawalCreditCommand
-    ) -> WithdrawalCreditPreviewResult:
+    async def execute(self, cmd: PreviewWithdrawalCreditCommand) -> WithdrawalCreditPreviewResult:
         enrollment = await self._enrollments.get(cmd.enrollment_id)
         if enrollment is None:
             raise PaymentNotFound("enrollment not found", enrollment_id=cmd.enrollment_id)
@@ -134,7 +130,7 @@ class ApproveWithdrawalCredit:
         stripe: StripeGateway,
         academy_id: str,
         enrollment_events: WithdrawalLifecycleEventSink | None = None,
-        clock=lambda: datetime.now(timezone.utc),
+        clock=lambda: datetime.now(UTC),
     ) -> None:
         self._payments = payments
         self._credits = credits
@@ -145,9 +141,7 @@ class ApproveWithdrawalCredit:
         self._enrollment_events = enrollment_events
         self._clock = clock
 
-    async def execute(
-        self, cmd: ApproveWithdrawalCreditCommand
-    ) -> ApproveWithdrawalCreditResult:
+    async def execute(self, cmd: ApproveWithdrawalCreditCommand) -> ApproveWithdrawalCreditResult:
         enrollment = await self._enrollments.get(cmd.enrollment_id)
         if enrollment is None:
             raise PaymentNotFound("enrollment not found", enrollment_id=cmd.enrollment_id)
@@ -230,9 +224,7 @@ class ApproveWithdrawalCredit:
                 at_period_end=at_period_end,
             )
             await self._subscriptions.save(
-                subscription.model_copy(
-                    update={"status": "cancelled", "updated_at": now}
-                )
+                subscription.model_copy(update={"status": "cancelled", "updated_at": now})
             )
 
         balance = await self._credits.balance_for_parent(payment.parent_id)
@@ -286,16 +278,12 @@ def _unused_included_occurrences(
     snapshot: BillingCalculationSnapshot,
     withdrawal_date: datetime,
 ) -> int:
-    withdrawal = (
-        withdrawal_date
-        if withdrawal_date.tzinfo
-        else withdrawal_date.replace(tzinfo=timezone.utc)
-    )
+    withdrawal = withdrawal_date if withdrawal_date.tzinfo else withdrawal_date.replace(tzinfo=UTC)
     tz = ZoneInfo(snapshot.timezone)
     count = 0
     for occurrence_id in snapshot.included_occurrence_ids:
         local_start = _local_start_from_occurrence_id(occurrence_id, tz)
-        if local_start is not None and local_start.astimezone(timezone.utc) > withdrawal:
+        if local_start is not None and local_start.astimezone(UTC) > withdrawal:
             count += 1
     return count
 

@@ -8,7 +8,7 @@ rather than extending TenantScopedRepository.  The query ALWAYS includes
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pymongo import ReturnDocument
@@ -75,32 +75,24 @@ class MongoMembershipRepository:
     # Membership operations
     # ------------------------------------------------------------------
 
-    async def get_membership(
-        self, academy_id: str, user_id: str
-    ) -> AcademyMembership | None:
+    async def get_membership(self, academy_id: str, user_id: str) -> AcademyMembership | None:
         """Return the membership row for (academy_id, user_id), any status.
 
         The caller is responsible for checking `.is_active()` — this method
         returns invited/suspended/removed memberships so the auth layer can
         produce a specific rejection reason rather than a generic 403.
         """
-        doc = await self._memberships.find_one(
-            {"academy_id": academy_id, "user_id": user_id}
-        )
+        doc = await self._memberships.find_one({"academy_id": academy_id, "user_id": user_id})
         return self._to_membership(doc) if doc else None
 
-    async def list_memberships_for_user(
-        self, user_id: str
-    ) -> list[AcademyMembership]:
+    async def list_memberships_for_user(self, user_id: str) -> list[AcademyMembership]:
         """Return all membership rows across all academies for a user."""
         cursor = self._memberships.find({"user_id": user_id})
         return [self._to_membership(doc) async for doc in cursor]
 
-    async def upsert_membership(
-        self, membership: AcademyMembership
-    ) -> AcademyMembership:
+    async def upsert_membership(self, membership: AcademyMembership) -> AcademyMembership:
         """Create or update a membership. Idempotent on (academy_id, user_id)."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mid = membership.membership_id or new_ulid()
         set_fields: dict[str, object] = {
             "membership_id": mid,
@@ -144,7 +136,7 @@ class MongoMembershipRepository:
 
     async def upsert_platform_role(self, platform_role: PlatformRole) -> PlatformRole:
         """Create or update a platform role grant. Idempotent on (user_id, role)."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         prid = platform_role.platform_role_id or new_ulid()
 
         doc = await self._platform_roles.find_one_and_update(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -22,8 +22,8 @@ def _session() -> Session:
         coach_id="c1",
         title="Junior A",
         location="Court 1",
-        start_at=datetime(2026, 5, 16, 9, 0, tzinfo=timezone.utc),
-        end_at=datetime(2026, 5, 16, 10, 30, tzinfo=timezone.utc),
+        start_at=datetime(2026, 5, 16, 9, 0, tzinfo=UTC),
+        end_at=datetime(2026, 5, 16, 10, 30, tzinfo=UTC),
         capacity=8,
     )
 

@@ -134,9 +134,7 @@ class ListAdminWaivers:
                     ),
                     content_hash=acceptance.content_hash if acceptance else None,
                     signed_at=acceptance.accepted_at if acceptance else None,
-                    signed_by_user_id=(
-                        acceptance.accepted_by_user_id if acceptance else None
-                    ),
+                    signed_by_user_id=(acceptance.accepted_by_user_id if acceptance else None),
                 )
             )
 

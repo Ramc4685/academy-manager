@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
-
-from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
@@ -16,13 +14,14 @@ from backend.v2.contexts.billing.domain.ledger import (
     allocate_payment_to_invoice,
 )
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
+from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
 
 class MongoBillingLedgerRepository(TenantScopedRepository):
     collection_name = "invoices"
 
-    def __init__(self, db: Any, *, clock=lambda: datetime.now(timezone.utc)) -> None:
+    def __init__(self, db: Any, *, clock=lambda: datetime.now(UTC)) -> None:
         super().__init__(db)
         self._clock = clock
 

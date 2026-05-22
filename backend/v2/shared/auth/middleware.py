@@ -22,7 +22,8 @@ resolution fails, no claims are attached; protected routes will 401.
 from __future__ import annotations
 
 import logging
-from typing import Any, Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -44,7 +45,7 @@ The middleware always passes ``resolved_academy_id`` as a keyword to make
 the SaaS contract explicit at the call site.
 """
 
-ResolveTenantCallable = Callable[[Request], Awaitable[Optional[str]]]
+ResolveTenantCallable = Callable[[Request], Awaitable[str | None]]
 """``async (request: Request) -> academy_id | None``.
 
 Returns the resolved ``academy_id`` or ``None`` when the request cannot be
@@ -86,9 +87,7 @@ class TenancyMiddleware(BaseHTTPMiddleware):
         claims: AuthClaims | None = None
         if token and resolved_academy_id and self._load_claims is not None:
             try:
-                claims = await self._load_claims(
-                    token, resolved_academy_id=resolved_academy_id
-                )
+                claims = await self._load_claims(token, resolved_academy_id=resolved_academy_id)
             except DomainError as exc:
                 # Catch the shared base — concrete subclasses (InvalidToken,
                 # UserNotFound, UserInactive, MembershipNotFound) live in

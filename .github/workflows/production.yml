@@ -32,10 +32,41 @@ env:
   NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID: ${{ vars.REACT_APP_FIREBASE_MEASUREMENT_ID }}
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      ci: ${{ steps.filter.outputs.ci }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Filter changed paths
+        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+            frontend:
+              - 'frontend/**'
+            ci:
+              - '.github/**'
+
   backend:
     name: Backend
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: [changes]
+    if: >
+      needs.changes.outputs.backend == 'true' ||
+      needs.changes.outputs.ci == 'true' ||
+      github.event_name == 'workflow_dispatch'
     services:
       mongo:
         image: mongo:7
@@ -79,6 +110,10 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-v2.txt
 
+      - name: Dependency vulnerability scan
+        working-directory: backend
+        run: pip-audit -r requirements.txt -r requirements-v2.txt
+
       - name: Compile backend
         working-directory: backend
         run: python -m compileall .
@@ -96,9 +131,14 @@ jobs:
         run: pytest v2/tests --override-ini="testpaths=v2/tests" --cov=v2/shared --cov-report=term-missing --cov-fail-under=70
 
   backend-advisory:
-    name: Backend Advisory
+    name: Backend Lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: [changes]
+    if: >
+      needs.changes.outputs.backend == 'true' ||
+      needs.changes.outputs.ci == 'true' ||
+      github.event_name == 'workflow_dispatch'
     env:
       PYTHONPATH: ${{ github.workspace }}
     steps:
@@ -123,12 +163,10 @@ jobs:
 
       - name: Ruff lint v2
         working-directory: backend
-        continue-on-error: true
         run: ruff check v2
 
       - name: Ruff format check v2
         working-directory: backend
-        continue-on-error: true
         run: ruff format --check v2
 
       - name: Mypy v2
@@ -140,6 +178,11 @@ jobs:
     name: Frontend
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    needs: [changes]
+    if: >
+      needs.changes.outputs.frontend == 'true' ||
+      needs.changes.outputs.ci == 'true' ||
+      github.event_name == 'workflow_dispatch'
     defaults:
       run:
         working-directory: frontend
@@ -161,6 +204,9 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Dependency vulnerability scan
+        run: pnpm audit --audit-level=high
 
       - name: Typecheck
         run: pnpm typecheck
@@ -228,8 +274,15 @@ jobs:
     name: Production Approval
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [backend, frontend]
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [backend, frontend, backend-advisory, changes]
+    if: >
+      always() &&
+      needs.backend.result != 'failure' &&
+      needs.frontend.result != 'failure' &&
+      needs.backend-advisory.result != 'failure' &&
+      (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true') &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request'
     environment: production
     steps:
       - name: Confirm production deployment
@@ -239,8 +292,12 @@ jobs:
     name: Deploy Backend
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: production-approval
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [production-approval, changes]
+    if: >
+      needs.production-approval.result == 'success' &&
+      needs.changes.outputs.backend == 'true' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request'
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -258,8 +315,12 @@ jobs:
     name: Deploy Frontend
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: deploy-backend
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [production-approval, changes]
+    if: >
+      needs.production-approval.result == 'success' &&
+      needs.changes.outputs.frontend == 'true' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request'
     defaults:
       run:
         working-directory: frontend
@@ -341,8 +402,12 @@ jobs:
     name: Production Smoke
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: deploy-frontend
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [deploy-backend, deploy-frontend]
+    if: >
+      always() &&
+      (needs.deploy-backend.result == 'success' || needs.deploy-frontend.result == 'success') &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request'
     steps:
       - name: Check out repository
         uses: actions/checkout@v5

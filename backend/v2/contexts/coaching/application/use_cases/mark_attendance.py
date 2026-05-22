@@ -18,7 +18,7 @@ as the attendance row. No cross-context writes.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -76,7 +76,7 @@ class MarkAttendance:
         outbox: Outbox,
         idempotency_store: IdempotencyStore,
         academy_id: str,
-        clock=lambda: datetime.now(timezone.utc),
+        clock=lambda: datetime.now(UTC),
     ) -> None:
         self._attendance = attendance_repo
         self._occurrences = occurrence_lookup

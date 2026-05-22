@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -61,9 +61,7 @@ class FakeEnrollments:
 
     async def update_status(self, enrollment_id: str, status: str) -> None:
         self.statuses.append((enrollment_id, status))
-        self.rows[enrollment_id] = self.rows[enrollment_id].model_copy(
-            update={"status": status}
-        )
+        self.rows[enrollment_id] = self.rows[enrollment_id].model_copy(update={"status": status})
 
     async def update_session(self, enrollment_id: str, session_id: str) -> None:
         self.moves.append((enrollment_id, session_id))
@@ -88,9 +86,7 @@ class FakeWaitlist:
         return sorted(waiting, key=lambda entry: entry.joined_at)[0] if waiting else None
 
     async def update_status(self, waitlist_id: str, status: str) -> None:
-        self.entries[waitlist_id] = self.entries[waitlist_id].model_copy(
-            update={"status": status}
-        )
+        self.entries[waitlist_id] = self.entries[waitlist_id].model_copy(update={"status": status})
 
 
 @dataclass
@@ -120,7 +116,7 @@ def _enrollment(status: str = "active") -> Enrollment:
 
 
 def _clock() -> datetime:
-    return datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+    return datetime(2026, 5, 21, 12, 0, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
@@ -212,9 +208,7 @@ async def test_transfer_pause_resume_and_cancel_record_events_only_on_real_trans
             actor_id="admin-1",
         )
     )
-    await cancel.execute(
-        CancelEnrollmentCommand(enrollment_id="enr-1", actor_id="admin-1")
-    )
+    await cancel.execute(CancelEnrollmentCommand(enrollment_id="enr-1", actor_id="admin-1"))
 
     assert moved.session_id == "sess-2"
     assert [event.event_type for event in events.rows] == [

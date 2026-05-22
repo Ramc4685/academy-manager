@@ -6,8 +6,8 @@ direct os.environ reads outside this module.
 
 from __future__ import annotations
 
-from functools import lru_cache
 import os
+from functools import lru_cache
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     stripe_use_fake_gateway: bool = Field(default=True)
 
     @model_validator(mode="after")
-    def apply_legacy_deploy_fallbacks(self) -> "Settings":
+    def apply_legacy_deploy_fallbacks(self) -> Settings:
         """Reuse existing production deploy env names when V2_* is absent.
 
         The legacy Fly app already owns MONGO_URL, DB_NAME, STRIPE_API_KEY,

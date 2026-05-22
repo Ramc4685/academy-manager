@@ -10,26 +10,22 @@ promotion on cancellation, comms notifications, etc.) react.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
-from typing import Callable, Literal
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
-from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.enrollment.application.ports import (
-    EnrollmentQuery,
     EnrollmentEventRepository,
+    EnrollmentQuery,
     EnrollmentWriter,
-    SessionQuery,
     SessionWriter,
     StudentWriter,
     WaitlistRepository,
 )
 from backend.v2.contexts.enrollment.domain.errors import (
     EnrollmentNotFound,
-    SessionNotFound,
-    StudentNotEnrolled,
-    WaitlistEmpty,
 )
 from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentCancelled,
@@ -39,7 +35,7 @@ from backend.v2.contexts.enrollment.domain.events import (
 from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, Student
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.shared.events import Outbox
-
+from backend.v2.shared.ids import new_ulid
 
 Clock = Callable[[], datetime]
 
@@ -190,7 +186,7 @@ class EditRosterAdd:
         students: StudentWriter,
         academy_id: str,
         enrollment_events: EnrollmentEventRepository | None = None,
-        clock: Clock = lambda: datetime.now(timezone.utc),
+        clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._sessions = sessions
         self._enrollments = enrollments
@@ -253,7 +249,7 @@ class CancelEnrollment:
         outbox: Outbox,
         academy_id: str,
         enrollment_events: EnrollmentEventRepository | None = None,
-        clock: Clock = lambda: datetime.now(timezone.utc),
+        clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
         self._sessions = sessions
@@ -318,7 +314,7 @@ class TransferEnrollment:
         enrollments: EnrollmentWriter,
         sessions: SessionWriter,
         enrollment_events: EnrollmentEventRepository | None = None,
-        clock: Clock = lambda: datetime.now(timezone.utc),
+        clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
         self._sessions = sessions
@@ -373,7 +369,7 @@ class PauseEnrollment:
         self,
         enrollments: EnrollmentWriter,
         enrollment_events: EnrollmentEventRepository | None = None,
-        clock: Clock = lambda: datetime.now(timezone.utc),
+        clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
         self._enrollment_events = enrollment_events
@@ -406,7 +402,7 @@ class ResumeEnrollment:
         self,
         enrollments: EnrollmentWriter,
         enrollment_events: EnrollmentEventRepository | None = None,
-        clock: Clock = lambda: datetime.now(timezone.utc),
+        clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
         self._enrollment_events = enrollment_events
@@ -459,7 +455,7 @@ class JoinWaitlist:
         waitlist: WaitlistRepository,
         academy_id: str,
         enrollment_events: EnrollmentEventRepository | None = None,
-        clock: Clock = lambda: datetime.now(timezone.utc),
+        clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._waitlist = waitlist
         self._academy_id = academy_id

@@ -14,8 +14,8 @@ Mounted from legacy ``backend/server.py`` under ``/api/v2/*`` as well.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 from fastapi import FastAPI
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -47,10 +47,6 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import (
     MongoUserRepository,
 )
-from backend.v2.shared.tenancy.resolver import (
-    TenantResolutionError,
-    TenantResolver,
-)
 from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.interfaces.me_routes import router as me_router
@@ -64,6 +60,10 @@ from backend.v2.shared.events import EventDispatcher, MongoOutbox
 from backend.v2.shared.http import register_exception_handlers
 from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
 from backend.v2.shared.observability import configure_logging, configure_tracing
+from backend.v2.shared.tenancy.resolver import (
+    TenantResolutionError,
+    TenantResolver,
+)
 
 log = logging.getLogger(__name__)
 
@@ -179,7 +179,11 @@ def create_app() -> FastAPI:
 
 
 def _build_stripe(settings: Settings) -> StripeGateway:
-    if settings.stripe_use_fake_gateway or not settings.stripe_api_key or not settings.stripe_webhook_secret:
+    if (
+        settings.stripe_use_fake_gateway
+        or not settings.stripe_api_key
+        or not settings.stripe_webhook_secret
+    ):
         return FakeStripeGateway()
     from backend.v2.contexts.billing.infrastructure.stripe_gateway import RealStripeGateway
 

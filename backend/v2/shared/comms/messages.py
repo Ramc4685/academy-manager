@@ -10,12 +10,12 @@ Stored in `messages` and `announcements` collections.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-from backend.v2.shared.ids import new_ulid
 
+from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository
 
 MessageKind = Literal["dm", "announcement"]
@@ -53,7 +53,9 @@ class MongoMessageRepository(TenantScopedRepository):
         )
 
     async def insert(self, m: Message) -> None:
-        await self._insert_one({k: v for k, v in m.model_dump(mode="python").items() if k != "academy_id"})
+        await self._insert_one(
+            {k: v for k, v in m.model_dump(mode="python").items() if k != "academy_id"}
+        )
 
     async def for_recipient(self, recipient_id: str) -> list[Message]:
         cursor = self._find_many(
@@ -91,7 +93,7 @@ class CommsService:
             sender_persona=sender_persona,
             recipient_id=recipient_id,
             body=body,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         await self.messages.insert(m)
         return m
@@ -105,7 +107,7 @@ class CommsService:
             sender_persona="admin",
             recipient_id=None,
             body=body,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         await self.messages.insert(m)
         return m

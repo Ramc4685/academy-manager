@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, Query
 
@@ -33,16 +33,16 @@ router = APIRouter(tags=["admin.sessions"])
 @router.get("/sessions", response_model=AdminSessionList, summary="List sessions for a date range")
 async def list_sessions(
     on_date: str = Query(default=None, alias="date"),
-    window: str | None = Query(default=None, description="Set to 'upcoming' to return all sessions starting from today through the next 30 days. Overrides 'date' when both are passed."),
+    window: str | None = Query(
+        default=None,
+        description="Set to 'upcoming' to return all sessions starting from today through the next 30 days. Overrides 'date' when both are passed.",
+    ),
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionList:
     parsed = date.fromisoformat(on_date) if on_date else None
     sessions = await use_cases.list_admin_sessions(parsed, window=window)  # type: ignore[operator]
-    rows = [
-        s if isinstance(s, dict) else s.model_dump(exclude={"academy_id"})
-        for s in sessions
-    ]
+    rows = [s if isinstance(s, dict) else s.model_dump(exclude={"academy_id"}) for s in sessions]
     return AdminSessionList(sessions=[AdminSessionView(**s) for s in rows])
 
 
@@ -52,13 +52,16 @@ async def create_session(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionView:
-    session = await use_cases.create_session.execute(
-        CreateSessionCommand(**body.model_dump())
-    )
+    session = await use_cases.create_session.execute(CreateSessionCommand(**body.model_dump()))
     return AdminSessionView(**session.model_dump(exclude={"academy_id"}))
 
 
-@router.delete("/sessions/{session_id}", status_code=204, summary="Cancel session + emit cascades", response_model=None)
+@router.delete(
+    "/sessions/{session_id}",
+    status_code=204,
+    summary="Cancel session + emit cascades",
+    response_model=None,
+)
 async def cancel_session(
     session_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
@@ -109,7 +112,7 @@ async def add_to_roster(
         full_name=body.full_name,
         parent_id=body.parent_id,
         status=enrollment.status,
-        enrolled_at=datetime.now(timezone.utc),
+        enrolled_at=datetime.now(UTC),
     )
 
 
@@ -150,7 +153,7 @@ async def transfer_enrollment(
         full_name="",
         parent_id="",
         status=enrollment.status,
-        enrolled_at=datetime.now(timezone.utc),
+        enrolled_at=datetime.now(UTC),
     )
 
 

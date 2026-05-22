@@ -45,9 +45,7 @@ async def list_attendance(
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> ParentAttendanceResponse:
     rows = await use_cases.list_attendance_for_parent(claims.user_id)  # type: ignore[operator]
-    return ParentAttendanceResponse(
-        records=[ParentAttendanceRecordView(**row) for row in rows]
-    )
+    return ParentAttendanceResponse(records=[ParentAttendanceRecordView(**row) for row in rows])
 
 
 @router.get("/progress", response_model=ParentProgressResponse)

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +27,7 @@ def _normalize(value: Any) -> Any:
 
 
 def _utc(dt_str: str) -> datetime:
-    return datetime.fromisoformat(dt_str.replace("Z", "+00:00")).astimezone(timezone.utc)
+    return datetime.fromisoformat(dt_str.replace("Z", "+00:00")).astimezone(UTC)
 
 
 def test_coach_today_matches_baseline(coach_client):

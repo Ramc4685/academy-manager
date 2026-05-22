@@ -8,7 +8,7 @@ which use real Stripe fixture JSON).
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -109,7 +109,7 @@ def _build(repo, outbox=None, dedup=None, subscriptions=None):
 
 
 def _seed_pending_payment(repo: FakePaymentRepo) -> Payment:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     p = Payment(
         payment_id="pay-1",
         academy_id="acad",
@@ -204,7 +204,7 @@ async def test_payment_failed_marks_failed_and_emits() -> None:
 async def test_invoice_paid_creates_subscription_payment_and_emits() -> None:
     repo = FakePaymentRepo()
     subs = FakeSubscriptionRepo()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     subs.seed(
         Subscription(
             subscription_id="sub-1",
@@ -246,7 +246,7 @@ async def test_invoice_paid_creates_subscription_payment_and_emits() -> None:
 async def test_invoice_payment_failed_creates_failed_subscription_payment() -> None:
     repo = FakePaymentRepo()
     subs = FakeSubscriptionRepo()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     subs.seed(
         Subscription(
             subscription_id="sub-2",

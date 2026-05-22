@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Iterator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
@@ -32,7 +32,7 @@ def _claims(role: str = "parent") -> AuthClaims:
 
 class _ListAvailableSessions:
     async def execute(self) -> list[ParentAvailableSession]:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         return [
             ParentAvailableSession(
                 session_id="sess-available",

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from bson import ObjectId as BsonObjectId
@@ -29,9 +29,7 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
 
         students = await self._student_docs(academy_id)
         parent_map = await self._parents_by_id(academy_id, students)
-        acceptances = await self._latest_acceptance_by_student(
-            academy_id, students, version_info
-        )
+        acceptances = await self._latest_acceptance_by_student(academy_id, students, version_info)
 
         student_rows: list[AdminWaiverStudent] = []
         for doc in students:
@@ -81,9 +79,7 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
             AdminWaiverDocument(
                 waiver_id=str(doc.get("waiver_id") or doc.get("_id")),
                 version=str(doc.get("version") or ""),
-                content_hash=str(
-                    doc.get("content_hash") or doc.get("waiver_text_hash") or ""
-                )
+                content_hash=str(doc.get("content_hash") or doc.get("waiver_text_hash") or "")
                 or None,
                 effective_from=self._as_datetime(
                     doc.get("effective_from")
@@ -96,8 +92,7 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
         ]
         return sorted(
             waivers,
-            key=lambda waiver: waiver.effective_from
-            or datetime.min.replace(tzinfo=timezone.utc),
+            key=lambda waiver: waiver.effective_from or datetime.min.replace(tzinfo=UTC),
             reverse=True,
         )
 
@@ -136,9 +131,7 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
         if not parent_ids:
             return {}
         oid_ids = [
-            BsonObjectId(parent_id)
-            for parent_id in parent_ids
-            if BsonObjectId.is_valid(parent_id)
+            BsonObjectId(parent_id) for parent_id in parent_ids if BsonObjectId.is_valid(parent_id)
         ]
         or_filter: list[dict[str, object]] = [
             {"user_id": {"$in": parent_ids}},
@@ -149,11 +142,14 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
         out: dict[str, dict[str, str | None]] = {}
         cursor = self._db["users"].find({"academy_id": academy_id, "$or": or_filter})
         async for user in cursor:
-            name = str(
-                user.get("display_name")
-                or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
-                or ""
-            ) or None
+            name = (
+                str(
+                    user.get("display_name")
+                    or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+                    or ""
+                )
+                or None
+            )
             email = str(user.get("email") or "") or None
             for key in (
                 str(user.get("user_id") or ""),
@@ -169,9 +165,7 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
         waiver_docs: list[AdminWaiverDocument],
     ) -> dict[str, tuple[str | None, str | None]]:
         return {
-            doc.waiver_id: (doc.version, doc.content_hash)
-            for doc in waiver_docs
-            if doc.waiver_id
+            doc.waiver_id: (doc.version, doc.content_hash) for doc in waiver_docs if doc.waiver_id
         }
 
     async def _latest_acceptance_by_student(
@@ -201,7 +195,7 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
         ]
         docs.sort(
             key=lambda doc: self._as_datetime(doc.get("accepted_at"))
-            or datetime.min.replace(tzinfo=timezone.utc),
+            or datetime.min.replace(tzinfo=UTC),
             reverse=True,
         )
         for doc in docs:
@@ -217,14 +211,10 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
                 student_id=student_id,
                 parent_id=str(doc.get("parent_id") or doc.get("parent_user_id") or ""),
                 accepted_by_user_id=(
-                    str(doc.get("waiver_accepted_by"))
-                    if doc.get("waiver_accepted_by")
-                    else None
+                    str(doc.get("waiver_accepted_by")) if doc.get("waiver_accepted_by") else None
                 ),
                 waiver_version=str(doc.get("waiver_version") or "") or None,
-                content_hash=str(
-                    doc.get("waiver_text_hash") or doc.get("content_hash") or ""
-                )
+                content_hash=str(doc.get("waiver_text_hash") or doc.get("content_hash") or "")
                 or None,
                 accepted_at=self._as_datetime(
                     doc.get("waiver_accepted_at") or doc.get("waiver_date")
@@ -243,19 +233,12 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
             student_id=str(doc.get("student_id") or ""),
             parent_id=str(doc.get("parent_id") or doc.get("parent_user_id") or ""),
             accepted_by_user_id=(
-                str(doc.get("accepted_by_user_id"))
-                if doc.get("accepted_by_user_id")
-                else None
+                str(doc.get("accepted_by_user_id")) if doc.get("accepted_by_user_id") else None
             ),
-            waiver_version=str(
-                doc.get("waiver_version") or doc.get("version") or version or ""
-            )
+            waiver_version=str(doc.get("waiver_version") or doc.get("version") or version or "")
             or None,
             content_hash=str(
-                doc.get("content_hash")
-                or doc.get("waiver_text_hash")
-                or content_hash
-                or ""
+                doc.get("content_hash") or doc.get("waiver_text_hash") or content_hash or ""
             )
             or None,
             accepted_at=self._as_datetime(doc.get("accepted_at")),
@@ -272,11 +255,11 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
     @staticmethod
     def _as_datetime(value: object) -> datetime | None:
         if isinstance(value, datetime):
-            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+            return value if value.tzinfo else value.replace(tzinfo=UTC)
         if isinstance(value, str):
             try:
                 parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-                return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
             except ValueError:
                 return None
         return None

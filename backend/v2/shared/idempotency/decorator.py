@@ -14,9 +14,10 @@ Usage:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from functools import wraps
-from typing import Any, Awaitable, Callable, Protocol, TypeVar
+from typing import Any, Protocol, TypeVar
 
 from pydantic import BaseModel
 
@@ -86,7 +87,7 @@ def idempotent(
                 key,
                 {
                     "value": _serialize(result),
-                    "stored_at": datetime.now(timezone.utc).isoformat(),
+                    "stored_at": datetime.now(UTC).isoformat(),
                 },
             )
             return result

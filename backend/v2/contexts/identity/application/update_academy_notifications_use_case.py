@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 from .get_academy_notifications_use_case import GetAcademyNotificationsOutput
 
 
 class AcademyWriteRepo(Protocol):
-    async def update_by_id(self, academy_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]: ...
+    async def update_by_id(
+        self, academy_id: str, fields: dict[str, Any]
+    ) -> dict[str, Any] | None: ...
     async def upsert_defaults(self, academy_id: str) -> dict[str, Any]: ...
 
 
@@ -16,7 +18,9 @@ class UpdateAcademyNotificationsUseCase:
     def __init__(self, academy_repo: AcademyWriteRepo) -> None:
         self._repo = academy_repo
 
-    async def execute(self, academy_id: str, fields: dict[str, Any]) -> GetAcademyNotificationsOutput:
+    async def execute(
+        self, academy_id: str, fields: dict[str, Any]
+    ) -> GetAcademyNotificationsOutput:
         # Nest under "notifications" subdocument.
         patch = {f"notifications.{k}": v for k, v in fields.items() if v is not None}
         if not patch:

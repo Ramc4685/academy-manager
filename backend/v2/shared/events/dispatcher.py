@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import traceback
-from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -23,9 +24,7 @@ HandlerFn = Callable[[DomainEvent], Awaitable[None]]
 _REGISTRY: dict[tuple[str, int], list[tuple[str, HandlerFn]]] = {}
 
 
-def handler(
-    *, event: type[DomainEvent], schema_version: int
-) -> Callable[[HandlerFn], HandlerFn]:
+def handler(*, event: type[DomainEvent], schema_version: int) -> Callable[[HandlerFn], HandlerFn]:
     """Register an async function as a handler for ``(event.name, schema_version)``.
 
     Handlers do NOT implement their own idempotency on delivery — the
@@ -81,9 +80,7 @@ class EventDispatcher:
         while not self._stop.is_set():
             try:
                 cursor = (
-                    outbox_collection.find({"processed": False})
-                    .sort([("created_at", 1)])
-                    .limit(50)
+                    outbox_collection.find({"processed": False}).sort([("created_at", 1)]).limit(50)
                 )
                 async for doc in cursor:
                     await self._process_event(doc)
@@ -91,7 +88,7 @@ class EventDispatcher:
                 log.exception("Dispatcher loop iteration failed")
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=self._poll_interval)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
     async def _process_event(self, doc: dict[str, Any]) -> None:
@@ -102,7 +99,7 @@ class EventDispatcher:
             await self._dead_letter(doc, reason="unregistered_schema_version", error=None)
             await self._db["outbox_events"].update_one(
                 {"event_id": doc["event_id"]},
-                {"$set": {"processed": True, "processed_at": datetime.now(timezone.utc)}},
+                {"$set": {"processed": True, "processed_at": datetime.now(UTC)}},
             )
             return
 
@@ -114,16 +111,14 @@ class EventDispatcher:
         if all_succeeded:
             await self._db["outbox_events"].update_one(
                 {"event_id": doc["event_id"]},
-                {"$set": {"processed": True, "processed_at": datetime.now(timezone.utc)}},
+                {"$set": {"processed": True, "processed_at": datetime.now(UTC)}},
             )
 
     async def _run_handler_with_retries(
         self, doc: dict[str, Any], handler_name: str, fn: HandlerFn
     ) -> bool:
         runs = self._db[self.HANDLER_RUNS]
-        prior = await runs.find_one(
-            {"event_id": doc["event_id"], "handler_name": handler_name}
-        )
+        prior = await runs.find_one({"event_id": doc["event_id"], "handler_name": handler_name})
         if prior and prior.get("status") == "succeeded":
             await self._audit(doc, handler_name, "skipped_idempotent", latency_ms=0)
             return True
@@ -135,13 +130,15 @@ class EventDispatcher:
             delay = RETRY_DELAYS_SECONDS[attempt]
             if delay > 0:
                 await asyncio.sleep(delay)
-            started_at = datetime.now(timezone.utc)
+            started_at = datetime.now(UTC)
             try:
                 await fn(event)
             except Exception as exc:
                 if attempt + 1 == MAX_ATTEMPTS:
                     await self._mark_run_failed(doc, handler_name, exc)
-                    await self._dead_letter(doc, reason="handler_failed", error=str(exc), handler_name=handler_name)
+                    await self._dead_letter(
+                        doc, reason="handler_failed", error=str(exc), handler_name=handler_name
+                    )
                     await self._audit(
                         doc,
                         handler_name,
@@ -156,14 +153,12 @@ class EventDispatcher:
                 {
                     "$set": {
                         "status": "succeeded",
-                        "completed_at": datetime.now(timezone.utc),
+                        "completed_at": datetime.now(UTC),
                     }
                 },
                 upsert=True,
             )
-            await self._audit(
-                doc, handler_name, "succeeded", latency_ms=_ms_since(started_at)
-            )
+            await self._audit(doc, handler_name, "succeeded", latency_ms=_ms_since(started_at))
             return True
         return False
 
@@ -175,7 +170,7 @@ class EventDispatcher:
             {
                 "$set": {
                     "status": "failed",
-                    "completed_at": datetime.now(timezone.utc),
+                    "completed_at": datetime.now(UTC),
                     "error": str(exc),
                     "trace": traceback.format_exc(),
                 }
@@ -198,7 +193,7 @@ class EventDispatcher:
                 "reason": reason,
                 "handler_name": handler_name,
                 "error": error,
-                "created_at": datetime.now(timezone.utc),
+                "created_at": datetime.now(UTC),
             }
         )
 
@@ -221,10 +216,10 @@ class EventDispatcher:
                 "latency_ms": latency_ms,
                 "error": error,
                 "academy_id": doc.get("academy_id"),
-                "completed_at": datetime.now(timezone.utc),
+                "completed_at": datetime.now(UTC),
             }
         )
 
 
 def _ms_since(start: datetime) -> int:
-    return int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
+    return int((datetime.now(UTC) - start).total_seconds() * 1000)

@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
-from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.enrollment.domain.errors import EnrollmentNotFound
-
+from backend.v2.shared.ids import new_ulid
 
 PauseRequestStatus = Literal["pending", "approved", "declined"]
 
@@ -70,7 +69,7 @@ class RequestEnrollmentPause:
             parent_id=cmd.parent_id,
             period=cmd.period,
             reason=cmd.reason,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         await self._pause_requests.add(request)
         return request

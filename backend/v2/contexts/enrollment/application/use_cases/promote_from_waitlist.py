@@ -8,8 +8,8 @@ notification handlers.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
 
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentEventRepository,
@@ -20,9 +20,8 @@ from backend.v2.contexts.enrollment.domain.events import (
     WaitlistPromoted,
     WaitlistPromotedPayload,
 )
-from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.events import Outbox
-
+from backend.v2.shared.ids import new_ulid
 
 Clock = Callable[[], datetime]
 
@@ -35,7 +34,7 @@ class PromoteFromWaitlist:
         outbox: Outbox,
         academy_id: str,
         enrollment_events: EnrollmentEventRepository | None = None,
-        clock: Clock = lambda: datetime.now(timezone.utc),
+        clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._waitlist = waitlist
         self._outbox = outbox

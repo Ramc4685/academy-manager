@@ -6,10 +6,11 @@ DomainEvent with a typed payload and a `Literal` `name` + `schema_version`.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
+
 from backend.v2.shared.ids import new_ulid
 
 
@@ -18,7 +19,7 @@ def _new_event_id() -> str:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class DomainEvent(BaseModel):
