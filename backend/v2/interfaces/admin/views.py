@@ -483,3 +483,21 @@ class ReportsKpiResponse(BaseModel):
     attendance_rate_30d: float = 0.0
     dues_collected_mtd_cents: int = 0
     pending_waivers: int = 0
+
+
+# --- Enrollment Events ---
+
+
+class EnrollmentEventDto(BaseModel):
+    event_id: str
+    event_type: str
+    effective_date: str
+    actor_id: str
+    reason: str | None = None
+    billing_result: str | None = None
+    credit_reference: str | None = None
+
+
+class EnrollmentEventsResponse(BaseModel):
+    enrollment_id: str
+    events: list[EnrollmentEventDto]

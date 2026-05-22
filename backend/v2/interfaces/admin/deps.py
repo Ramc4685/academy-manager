@@ -117,6 +117,7 @@ class AdminUseCases:
     send_dues_reminders: object  # callable
     export_report_csv: object  # callable
     get_reports_kpis: object  # async () -> dict[str, int | float]
+    list_enrollment_events: object  # async (enrollment_id: str) -> list[dict]
     # comms
     comms: CommsService
     # waivers

@@ -196,6 +196,31 @@ def _make_reports_kpis(db: AsyncIOMotorDatabase[Any]) -> object:
     return get_reports_kpis
 
 
+def _make_list_enrollment_events(db: Any) -> object:
+    from backend.v2.shared.tenancy import current_academy_id
+
+    async def list_enrollment_events(enrollment_id: str) -> list[dict]:
+        academy_id = current_academy_id()
+        cursor = db.enrollment_events.find(
+            {"enrollment_id": enrollment_id, "academy_id": academy_id},
+            sort=[("created_at", 1)],
+        )
+        results = []
+        async for doc in cursor:
+            results.append({
+                "event_id": str(doc.get("event_id") or doc.get("_id", "")),
+                "event_type": str(doc.get("event_type", "")),
+                "effective_date": str(doc.get("effective_date", "") or doc.get("effective_at", ""))[:10],
+                "actor_id": str(doc.get("actor_id", "")),
+                "reason": doc.get("reason"),
+                "billing_result": doc.get("billing_result"),
+                "credit_reference": doc.get("credit_reference"),
+            })
+        return results
+
+    return list_enrollment_events
+
+
 def compose_admin(
     db: AsyncIOMotorDatabase[Any],
     outbox: Outbox,
@@ -705,6 +730,7 @@ def compose_admin(
         send_dues_reminders=send_dues_reminders,
         export_report_csv=export_report_csv,
         get_reports_kpis=_make_reports_kpis(db),
+        list_enrollment_events=_make_list_enrollment_events(db),
         comms=comms,
         list_admin_waivers=list_admin_waivers,
         get_academy_use_case=get_academy_use_case,

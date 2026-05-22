@@ -22,6 +22,8 @@ from backend.v2.interfaces.admin.views import (
     AdminSessionView,
     CreateSessionRequest,
     EditRosterAddRequest,
+    EnrollmentEventDto,
+    EnrollmentEventsResponse,
     TransferEnrollmentRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
@@ -113,6 +115,30 @@ async def add_to_roster(
         parent_id=body.parent_id,
         status=enrollment.status,
         enrolled_at=datetime.now(UTC),
+    )
+
+
+@router.get("/enrollments/{enrollment_id}/events", response_model=EnrollmentEventsResponse)
+async def get_enrollment_events(
+    enrollment_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> EnrollmentEventsResponse:
+    events = await use_cases.list_enrollment_events(enrollment_id)
+    return EnrollmentEventsResponse(
+        enrollment_id=enrollment_id,
+        events=[
+            EnrollmentEventDto(
+                event_id=str(e.get("event_id", "")),
+                event_type=str(e.get("event_type", "")),
+                effective_date=str(e.get("effective_date", ""))[:10],
+                actor_id=str(e.get("actor_id", "")),
+                reason=e.get("reason"),
+                billing_result=e.get("billing_result"),
+                credit_reference=e.get("credit_reference"),
+            )
+            for e in events
+        ],
     )
 
 
