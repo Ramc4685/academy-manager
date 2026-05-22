@@ -13,7 +13,6 @@
  * with a real `apiFetch` once the route exists; the call sites and the
  * `TenantContext` already deal with the multi-academy shape.
  */
-import { apiFetch } from "../client";
 import { getCurrentUser } from "../me";
 
 export type MembershipRole = "admin" | "coach" | "parent";
@@ -40,22 +39,11 @@ export interface MyMembershipsResponse {
  * by reading `/me` so the switcher renders meaningfully today.
  */
 export async function listMyMemberships(): Promise<MyMembershipsResponse> {
-  try {
-    const real = await apiFetch<MyMembershipsResponse>("/me/memberships", {
-      method: "GET",
-    });
-    if (real && Array.isArray(real.memberships) && real.memberships.length > 0) {
-      return real;
-    }
-  } catch (err) {
-    // Endpoint may not exist yet; fall back to the single-academy stub
-    // derived from `/me`. Log only in dev to make the fallback obvious.
-    if (process.env.NODE_ENV === "development") {
-      // eslint-disable-next-line no-console
-      console.debug("[memberships] /me/memberships unavailable, using fallback", err);
-    }
-  }
-
+  // TODO(wave5-A): once `/me/memberships` ships, switch to:
+  //   return apiFetch<MyMembershipsResponse>("/me/memberships");
+  // Until then we deliberately avoid issuing the speculative request so
+  // pages don't log a 404 in the browser console (which breaks
+  // zero-console-error e2e assertions).
   const me = await getCurrentUser();
   return {
     memberships: [

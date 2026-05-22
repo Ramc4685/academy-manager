@@ -21,7 +21,6 @@ import {
 } from "../fixtures/tenant-isolation";
 import {
   ACADEMY_A,
-  ACADEMY_B,
   COACH_USER_B,
   fulfillJson,
   stubMe,
