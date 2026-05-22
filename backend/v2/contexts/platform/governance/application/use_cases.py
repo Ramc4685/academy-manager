@@ -9,10 +9,14 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
-from backend.v2.contexts.platform.governance.domain.errors import GovernancePermissionDenied
+from backend.v2.contexts.platform.governance.domain.errors import (
+    GovernancePermissionDenied,
+    GovernanceRequestNotFound,
+)
 from backend.v2.contexts.platform.governance.domain.models import (
     GovernanceActor,
     GovernanceAuditLog,
+    GovernanceRequestStatus,
     PIIHandlingPolicy,
     RetentionPolicy,
     SoftDeletePolicy,
@@ -28,14 +32,37 @@ class TenantGovernanceStore(Protocol):
     """Storage port for governance records and audit rows."""
 
     async def create_tenant_export_request(self, request: dict[str, Any]) -> dict[str, Any]: ...
+    async def get_tenant_export_request(self, request_id: str) -> dict[str, Any] | None: ...
+    async def list_tenant_export_requests(
+        self, academy_id: str | None = None
+    ) -> list[dict[str, Any]]: ...
+    async def update_tenant_export_request(
+        self, request_id: str, updates: dict[str, Any]
+    ) -> dict[str, Any]: ...
     async def create_tenant_deletion_request(self, request: dict[str, Any]) -> dict[str, Any]: ...
+    async def list_tenant_deletion_requests(
+        self, academy_id: str | None = None
+    ) -> list[dict[str, Any]]: ...
     async def create_student_data_deletion_request(
         self, request: dict[str, Any]
     ) -> dict[str, Any]: ...
+    async def list_student_data_deletion_requests(
+        self, academy_id: str | None = None
+    ) -> list[dict[str, Any]]: ...
     async def create_support_access_grant(self, grant: dict[str, Any]) -> dict[str, Any]: ...
+    async def list_support_access_grants(
+        self, academy_id: str | None = None
+    ) -> list[dict[str, Any]]: ...
+    async def revoke_support_access_grant(
+        self, grant_id: str, updates: dict[str, Any]
+    ) -> dict[str, Any] | None: ...
     async def create_support_impersonation_request(
         self, request: dict[str, Any]
     ) -> dict[str, Any]: ...
+    async def list_support_impersonation_requests(
+        self, academy_id: str | None = None
+    ) -> list[dict[str, Any]]: ...
+    async def get_request_status(self, request_id: str) -> dict[str, Any] | None: ...
     async def append_audit_log(self, audit: dict[str, Any]) -> dict[str, Any]: ...
 
 
@@ -96,6 +123,21 @@ class RequestSupportImpersonationCommand(BaseModel):
         return stripped
 
 
+class RevokeSupportAccessCommand(BaseModel):
+    academy_id: str = Field(min_length=1)
+    actor: GovernanceActor
+    support_access_grant_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+    @field_validator("reason")
+    @classmethod
+    def _strip_reason(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("reason is required")
+        return stripped
+
+
 class TenantGovernanceService:
     """Coordinates SaaS governance requests and required audit rows."""
 
@@ -140,6 +182,14 @@ class TenantGovernanceService:
         )
         return TenantExportRequest(**created)
 
+    async def list_tenant_export_requests(
+        self, *, academy_id: str | None = None
+    ) -> list[TenantExportRequest]:
+        return [
+            TenantExportRequest(**item)
+            for item in await self._store.list_tenant_export_requests(academy_id)
+        ]
+
     async def request_tenant_deletion(
         self, command: RequestTenantDeletionCommand
     ) -> TenantDeletionRequest:
@@ -170,6 +220,14 @@ class TenantGovernanceService:
         )
         return TenantDeletionRequest(**created)
 
+    async def list_tenant_deletion_requests(
+        self, *, academy_id: str | None = None
+    ) -> list[TenantDeletionRequest]:
+        return [
+            TenantDeletionRequest(**item)
+            for item in await self._store.list_tenant_deletion_requests(academy_id)
+        ]
+
     async def request_student_data_deletion(
         self, command: RequestStudentDataDeletionCommand
     ) -> StudentDataDeletionRequest:
@@ -199,6 +257,14 @@ class TenantGovernanceService:
         )
         return StudentDataDeletionRequest(**created)
 
+    async def list_student_data_deletion_requests(
+        self, *, academy_id: str | None = None
+    ) -> list[StudentDataDeletionRequest]:
+        return [
+            StudentDataDeletionRequest(**item)
+            for item in await self._store.list_student_data_deletion_requests(academy_id)
+        ]
+
     async def grant_support_access(self, command: GrantSupportAccessCommand) -> SupportAccessGrant:
         self._require_platform_support(command.actor)
         now = self._clock()
@@ -207,7 +273,7 @@ class TenantGovernanceService:
             academy_id=command.academy_id,
             support_user_id=command.support_user_id,
             granted_by_user_id=command.actor.actor_user_id,
-            granted_by_platform_role=command.actor.platform_role,  # type: ignore[arg-type]
+            granted_by_platform_role=command.actor.platform_role,
             purpose=command.purpose,
             created_at=now,
             expires_at=now + timedelta(hours=command.expires_in_hours),
@@ -225,6 +291,44 @@ class TenantGovernanceService:
         )
         return SupportAccessGrant(**created)
 
+    async def list_support_access_grants(
+        self, *, academy_id: str | None = None
+    ) -> list[SupportAccessGrant]:
+        return [
+            SupportAccessGrant(**item)
+            for item in await self._store.list_support_access_grants(academy_id)
+        ]
+
+    async def revoke_support_access(
+        self, command: RevokeSupportAccessCommand
+    ) -> SupportAccessGrant:
+        self._require_platform_support(command.actor)
+        now = self._clock()
+        revoked = await self._store.revoke_support_access_grant(
+            command.support_access_grant_id,
+            {
+                "status": "revoked",
+                "revoked_at": now,
+                "revoked_by_user_id": command.actor.actor_user_id,
+                "revoke_reason": command.reason,
+            },
+        )
+        if revoked is None:
+            raise GovernanceRequestNotFound(
+                f"support access grant not found: {command.support_access_grant_id}"
+            )
+        await self._append_audit(
+            actor=command.actor,
+            academy_id=command.academy_id,
+            action="support_access.revoked",
+            entity_type="support_access_grant",
+            entity_id=command.support_access_grant_id,
+            before_snapshot=None,
+            after_snapshot=revoked,
+            created_at=now,
+        )
+        return SupportAccessGrant(**revoked)
+
     async def request_support_impersonation(
         self, command: RequestSupportImpersonationCommand
     ) -> SupportImpersonationRequest:
@@ -235,7 +339,7 @@ class TenantGovernanceService:
             academy_id=command.academy_id,
             target_user_id=command.target_user_id,
             requested_by_user_id=command.actor.actor_user_id,
-            requested_by_platform_role=command.actor.platform_role,  # type: ignore[arg-type]
+            requested_by_platform_role=command.actor.platform_role,
             purpose=command.purpose,
             created_at=now,
         )
@@ -251,6 +355,20 @@ class TenantGovernanceService:
             created_at=now,
         )
         return SupportImpersonationRequest(**created)
+
+    async def list_support_impersonation_requests(
+        self, *, academy_id: str | None = None
+    ) -> list[SupportImpersonationRequest]:
+        return [
+            SupportImpersonationRequest(**item)
+            for item in await self._store.list_support_impersonation_requests(academy_id)
+        ]
+
+    async def get_request_status(self, request_id: str) -> GovernanceRequestStatus:
+        status = await self._store.get_request_status(request_id)
+        if status is None:
+            raise GovernanceRequestNotFound(f"governance request not found: {request_id}")
+        return GovernanceRequestStatus(**status)
 
     async def _append_audit(
         self,
