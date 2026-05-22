@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import mongomock_motor
 import pytest
+
 from backend.v2.contexts.identity.infrastructure.mongo_bootstrap_store import (
     MongoTenantBootstrapStore,
 )

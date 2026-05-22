@@ -23,8 +23,14 @@ class MongoTenantBootstrapStore:
         return await self._db.academies.find_one({"primary_domain": domain})
 
     async def create_academy(self, academy: dict[str, Any]) -> dict[str, Any]:
-        await self._db.academies.insert_one(dict(academy))
-        return academy
+        # Use find_one_and_update to be race-safe against the slug unique index.
+        doc = await self._db.academies.find_one_and_update(
+            {"slug": academy["slug"]},
+            {"$setOnInsert": academy},
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+        return doc
 
     async def ensure_owner_user(self, user: dict[str, Any]) -> dict[str, Any]:
         doc = await self._db.users.find_one_and_update(
@@ -77,7 +83,7 @@ class MongoTenantBootstrapStore:
         result = []
         for role in roles:
             doc = await self._db.roles.find_one_and_update(
-                {"academy_id": academy_id, "name": role.get("name", role.get("role"))},
+                {"academy_id": academy_id, "role": role["role"]},
                 {"$setOnInsert": role},
                 upsert=True,
                 return_document=ReturnDocument.AFTER,
