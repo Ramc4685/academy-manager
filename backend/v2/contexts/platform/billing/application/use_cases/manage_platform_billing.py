@@ -127,9 +127,7 @@ class ActivateTenantSubscription:
         self._id_factory = id_factory or (lambda: f"platform_sub_{new_ulid()}")
         self._clock = clock or (lambda: datetime.now(UTC))
 
-    async def execute(
-        self, command: ActivateTenantSubscriptionCommand
-    ) -> TenantSubscription:
+    async def execute(self, command: ActivateTenantSubscriptionCommand) -> TenantSubscription:
         plan = await _require_active_plan(self._plans, command.plan_id)
         now = self._clock()
         existing = await self._subscriptions.get_for_academy(command.academy_id)
@@ -160,9 +158,7 @@ class ScheduleTenantCancellation:
         self._subscriptions = subscriptions
         self._clock = clock or (lambda: datetime.now(UTC))
 
-    async def execute(
-        self, command: ScheduleTenantCancellationCommand
-    ) -> TenantSubscription:
+    async def execute(self, command: ScheduleTenantCancellationCommand) -> TenantSubscription:
         existing = await self._subscriptions.get_for_academy(command.academy_id)
         if existing is None:
             raise TenantSubscriptionNotFound(
@@ -206,9 +202,7 @@ class CheckPlanLimits:
     async def execute(self, *, academy_id: str, usage: PlatformUsage) -> PlanLimitReport:
         subscription = await self._subscriptions.get_for_academy(academy_id)
         if subscription is None:
-            raise TenantSubscriptionNotFound(
-                f"no platform subscription for academy {academy_id}"
-            )
+            raise TenantSubscriptionNotFound(f"no platform subscription for academy {academy_id}")
         plan = await _require_active_plan(self._plans, subscription.plan_id)
         violations = _limit_violations(plan.limits, usage)
         return PlanLimitReport(
@@ -221,9 +215,7 @@ class CheckPlanLimits:
         )
 
 
-async def _require_active_plan(
-    plans: PlatformPlanRepository, plan_id: str
-) -> PlatformPlan:
+async def _require_active_plan(plans: PlatformPlanRepository, plan_id: str) -> PlatformPlan:
     plan = await plans.get(plan_id)
     if plan is None:
         raise PlatformPlanNotFound(f"platform plan not found: {plan_id}")
