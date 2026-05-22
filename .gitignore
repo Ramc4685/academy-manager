@@ -1,5 +1,9 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
+# Local dev-only generated credentials (SaaS staging emulator passwords,
+# JWT secrets, etc). Never commit.
+.local/
+
 # IDE and editors
 .idea/
 .vscode/

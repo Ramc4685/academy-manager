@@ -76,6 +76,17 @@ async def test_get_membership_returns_active_membership(db) -> None:
     assert result.is_active()
 
 
+@pytest.mark.asyncio
+async def test_repo_satisfies_auth_membership_lookup_port(db) -> None:
+    await _insert_membership(db, membership_id="m-auth", academy_id="acad-a", user_id="u-auth")
+    repo = _make_repo(db)
+
+    result = await repo.get_for_user_in_academy(user_id="u-auth", academy_id="acad-a")
+
+    assert result is not None
+    assert result.membership_id == "m-auth"
+
+
 # ---------------------------------------------------------------------------
 # Membership lookup — cross-tenant isolation
 # ---------------------------------------------------------------------------
@@ -252,6 +263,18 @@ async def test_list_active_platform_roles_returns_only_active_roles(db) -> None:
     assert len(roles) == 1
     assert roles[0].role == "platform_admin"
     assert roles[0].is_active()
+
+
+@pytest.mark.asyncio
+async def test_repo_satisfies_auth_platform_role_port(db) -> None:
+    await _insert_platform_role(
+        db, platform_role_id="pr-auth", user_id="u-auth", role="platform_support"
+    )
+    repo = _make_repo(db)
+
+    roles = await repo.list_active_for_user("u-auth")
+
+    assert [role.role for role in roles] == ["platform_support"]
 
 
 @pytest.mark.asyncio

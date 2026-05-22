@@ -1,0 +1,68 @@
+# Cloudflare Tunnel overlay for SaaS staging — Phase B.
+#
+# Layers on top of docker-compose.yml + docker-compose.saas.yml to expose
+# the backend and frontend over public HTTPS via Cloudflare's free quick
+# tunnels (no Cloudflare account or DNS configuration required).
+#
+# Apply with:
+#
+#   docker compose -p saas-staging \
+#     -f docker-compose.yml \
+#     -f docker-compose.saas.yml \
+#     -f docker-compose.tunnel.yml \
+#     up -d
+#
+# Or via the wrapper: scripts/dev/saas_tunnel.sh up
+#
+# After startup, the tunnel public URLs appear in each cloudflared
+# container's logs (look for `https://*.trycloudflare.com`). The wrapper
+# script extracts them automatically.
+#
+# Quick tunnels are EPHEMERAL — they change on each container start. That
+# is fine for smoke runs but means you should not pin webhooks at them.
+
+services:
+  cloudflared-backend:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command:
+      - tunnel
+      - --no-autoupdate
+      - --loglevel
+      - info
+      - --metrics
+      - 0.0.0.0:2000
+      - --url
+      - http://backend:8001
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      # Local metrics endpoint — used by saas_tunnel.sh to discover the
+      # public URL via /quicktunnel.
+      - "127.0.0.1:2000:2000"
+
+  cloudflared-frontend:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command:
+      - tunnel
+      - --no-autoupdate
+      - --loglevel
+      - info
+      - --metrics
+      - 0.0.0.0:2000
+      - --url
+      - http://frontend:3001
+    depends_on:
+      frontend:
+        condition: service_started
+    ports:
+      - "127.0.0.1:2001:2000"
+
+  # The backend's `CORS_ORIGINS` is set by docker-compose.saas.yml to
+  # localhost entries only. When tunnels are up, the wrapper script will
+  # restart the backend with `CORS_ORIGINS` extended to include the tunnel
+  # URL so the SaaS smoke's tenant-host check sees a real Allow-Origin.
+  # We do not edit CORS here statically because we cannot know the tunnel
+  # URL until cloudflared has reported it.

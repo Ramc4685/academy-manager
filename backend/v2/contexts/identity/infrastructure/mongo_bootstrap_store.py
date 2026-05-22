@@ -24,9 +24,17 @@ class MongoTenantBootstrapStore:
 
     async def create_academy(self, academy: dict[str, Any]) -> dict[str, Any]:
         # Use find_one_and_update to be race-safe against the slug unique index.
+        # `_AcademyLookupAdapter.find_by_domain` (in main.py) queries
+        # `custom_domain`, so we mirror `primary_domain` into `custom_domain`
+        # at bootstrap time until the dedicated `academy_domains` collection
+        # lands. Without this, tenant resolution by custom domain breaks.
+        to_insert = {
+            **academy,
+            "custom_domain": academy["primary_domain"],
+        }
         doc = await self._db.academies.find_one_and_update(
             {"slug": academy["slug"]},
-            {"$setOnInsert": academy},
+            {"$setOnInsert": to_insert},
             upsert=True,
             return_document=ReturnDocument.AFTER,
         )
@@ -80,9 +88,11 @@ class MongoTenantBootstrapStore:
     async def ensure_default_roles(
         self, academy_id: str, roles: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
+        # Tenant-owned collection name is `academy_roles` (see
+        # tests/test_no_raw_tenant_mongo_access.py canonical list).
         result = []
         for role in roles:
-            doc = await self._db.roles.find_one_and_update(
+            doc = await self._db.academy_roles.find_one_and_update(
                 {"academy_id": academy_id, "role": role["role"]},
                 {"$setOnInsert": role},
                 upsert=True,
@@ -92,7 +102,8 @@ class MongoTenantBootstrapStore:
         return result
 
     async def ensure_feature_flags(self, flags: dict[str, Any]) -> dict[str, Any]:
-        doc = await self._db.feature_flags.find_one_and_update(
+        # Tenant-owned collection name is `academy_feature_flags`.
+        doc = await self._db.academy_feature_flags.find_one_and_update(
             {"academy_id": flags["academy_id"]},
             {"$setOnInsert": flags},
             upsert=True,

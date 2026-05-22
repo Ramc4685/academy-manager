@@ -70,6 +70,44 @@ flyctl secrets set \
   -a courtmastr-academy-api
 ```
 
+## SaaS v2 Production Readiness
+
+SaaS mode is v2-only and remains gated until the Wave 6 platform outputs are
+merged and verified. Do not enable SaaS mode in production until
+`docs/requirements/2026-05-22-saas-production-readiness.md` has no
+`BLOCKED BY WAVE 6` or unresolved `TODO` launch gates.
+
+Required SaaS env additions:
+
+```bash
+V2_ENABLED=1
+V2_SAAS_MODE=true
+# Only when an approved internal caller exists:
+V2_ALLOWED_INTERNAL_TENANT_HEADER=X-Internal-Academy-Id
+```
+
+Before enabling `V2_SAAS_MODE=true`:
+
+1. Wire platform billing, governance/export/support access,
+   and platform audit persistence/routes.
+2. Confirm tenant domain/subdomain records exist for the beta tenant.
+3. Run:
+
+```bash
+scripts/smoke/saas_readiness_smoke.sh --static-only
+```
+
+Then run the full smoke against a prod-like SaaS environment:
+
+```bash
+API_URL=https://api.academy.example.com \
+FRONTEND_URL=https://academy.example.com \
+scripts/smoke/saas_readiness_smoke.sh
+```
+
+This smoke is non-destructive. It must not be pointed at production with real
+auth tokens unless an operator explicitly approves that test.
+
 ## Auth Migration Notes
 
 With `FIREBASE_AUTH_ENABLED=true`:

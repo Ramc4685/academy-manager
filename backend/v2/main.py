@@ -27,7 +27,9 @@ from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
 )
-from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import BootstrapAcademy
+from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import (
+    BootstrapAcademy,
+)
 from backend.v2.contexts.identity.application.use_cases.load_auth_claims import (
     LoadAuthClaims,
 )
@@ -110,11 +112,22 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     users_repo = MongoUserRepository(db, default_academy_id=settings.default_academy_id)
     verifier = FirebaseTokenVerifier()
 
-    # `academy_memberships` still falls back to the in-process legacy adapter
-    # that synthesises a single-tenant membership from users.academy_id /
-    # users.roles. `platform_roles` is wired to the real Mongo collection.
-    membership_repo = _LegacyUserMembershipAdapter(users_repo, settings.default_academy_id)
-    platform_role_repo = _MongoPlatformRoleAdapter(MongoMembershipRepository(db))
+    # In SaaS mode, both academy_memberships and platform_roles come from the
+    # real MongoMembershipRepository (which owns both collections). The
+    # PlatformRoleRepository port wants list_active_for_user(); the repo
+    # exposes list_active_platform_roles(), so we go through the same
+    # _MongoPlatformRoleAdapter that the non-SaaS branch uses.
+    #
+    # In non-SaaS mode, memberships still fall back to the in-process legacy
+    # adapter (which synthesises a single-tenant membership from
+    # users.academy_id / users.roles); platform_roles use the real Mongo
+    # collection because they are tenant-independent.
+    if settings.saas_mode:
+        membership_repo = MongoMembershipRepository(db)
+        platform_role_repo = _MongoPlatformRoleAdapter(membership_repo)
+    else:
+        membership_repo = _LegacyUserMembershipAdapter(users_repo, settings.default_academy_id)
+        platform_role_repo = _MongoPlatformRoleAdapter(MongoMembershipRepository(db))
 
     load_claims = LoadAuthClaims(
         verifier=verifier,
@@ -126,6 +139,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.register_public_parent = RegisterPublicParent(
         verifier=verifier,
         users=users_repo,
+    )
+    app.state.bootstrap_academy = BootstrapAcademy(
+        store=MongoTenantBootstrapStore(db),
     )
 
     # Tenant resolver — wired only in SaaS mode. In non-SaaS mode the
