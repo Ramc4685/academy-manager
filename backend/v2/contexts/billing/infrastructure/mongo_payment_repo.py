@@ -249,7 +249,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         parents: dict[str, dict[str, object]] = {}
         if parent_ids:
             parent_cursor = self._db["users"].find(
-                {"$or": [
+                {"academy_id": current_academy_id(), "$or": [
                     {"user_id": {"$in": parent_ids}},
                     {"firebase_uid": {"$in": parent_ids}},
                 ]}
