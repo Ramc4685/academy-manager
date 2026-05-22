@@ -53,6 +53,7 @@ class SessionOccurrence(BaseModel):
     is_billable: bool = True
     is_payable: bool = True
     cancellation_reason: str | None = None
+    template_session_id: str | None = None
 
     @model_validator(mode="after")
     def _end_after_start(self) -> SessionOccurrence:

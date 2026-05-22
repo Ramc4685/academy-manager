@@ -26,6 +26,7 @@ class OccurrenceDetails(BaseModel):
     scheduled_coach_id: str
     actual_coach_id: str | None = None
     substitute_coach_id: str | None = None
+    template_session_id: str | None = None
 
 
 class OccurrenceLookup(Protocol):

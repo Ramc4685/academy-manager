@@ -28,6 +28,7 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
             is_billable=bool(doc.get("is_billable", True)),
             is_payable=bool(doc.get("is_payable", True)),
             cancellation_reason=_optional_str(doc.get("cancellation_reason")),
+            template_session_id=_optional_str(doc.get("template_session_id")),
         )
 
     async def get(self, occurrence_id: str) -> SessionOccurrence | None:
@@ -71,6 +72,7 @@ def _to_doc(occurrence: SessionOccurrence) -> dict[str, Any]:
         "is_billable": occurrence.is_billable,
         "is_payable": occurrence.is_payable,
         "cancellation_reason": occurrence.cancellation_reason,
+        "template_session_id": occurrence.template_session_id,
     }
 
 
