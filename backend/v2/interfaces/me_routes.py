@@ -1,3 +1,9 @@
+"""Current-user BFF endpoint.
+
+This keeps post-login routing tied to the same Firebase -> Mongo
+authorization path as every persona BFF route.
+"""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends

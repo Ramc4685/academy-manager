@@ -1,5 +1,5 @@
 from __future__ import annotations
-import pytest
+
 from backend.v2.interfaces.me_routes import MeResponse
 from backend.v2.shared.auth.claims import AuthClaims
 
