@@ -160,6 +160,7 @@ class AdminPauseRequestList(BaseModel):
 class AdminPaymentView(BaseModel):
     payment_id: str
     parent_id: str
+    parent_name: str | None = None
     student_id: str | None = None
     student_name: str | None = None
     enrollment_id: str | None = None
