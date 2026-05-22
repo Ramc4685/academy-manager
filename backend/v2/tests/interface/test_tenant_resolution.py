@@ -192,6 +192,7 @@ def test_user_only_headers_do_not_resolve_tenant() -> None:
 
 
 from backend.v2.contexts.identity.domain.errors import MembershipNotFound
+from backend.v2.main import _build_request_tenant_resolver
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.auth.middleware import TenancyMiddleware
 from backend.v2.shared.http import register_exception_handlers
@@ -448,6 +449,41 @@ def test_middleware_uses_internal_header_when_configured() -> None:
     assert r.status_code == 200
     assert r.json()["academy_id"] == "academy-internal-job"
     assert loader.calls[-1]["resolved_academy_id"] == "academy-internal-job"
+
+
+def test_main_resolver_prefers_forwarded_host_for_frontend_proxy() -> None:
+    class _RecordingTenantResolver:
+        def __init__(self) -> None:
+            self.hosts: list[str] = []
+
+        async def resolve(self, *, host: str, headers: dict[str, str]):
+            self.hosts.append(host)
+
+            class _Result:
+                academy_id = "academy-court"
+
+            return _Result()
+
+    tenant_resolver = _RecordingTenantResolver()
+    app = FastAPI()
+    app.state.saas_mode = True
+    app.state.default_academy_id = None
+    app.state.tenant_resolver = tenant_resolver
+    resolve_tenant = _build_request_tenant_resolver(app)
+
+    @app.get("/resolve")
+    async def resolve(request: Request) -> dict[str, str | None]:
+        return {"academy_id": await resolve_tenant(request)}
+
+    client = TestClient(app, base_url="http://backend:8001")
+    response = client.get(
+        "/resolve",
+        headers={"X-Forwarded-Host": "courtmastr.app.example.com"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"academy_id": "academy-court"}
+    assert tenant_resolver.hosts == ["courtmastr.app.example.com"]
 
 
 def test_middleware_blocks_inactive_tenant_before_auth_loader() -> None:
