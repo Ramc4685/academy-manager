@@ -372,7 +372,7 @@ async def main() -> None:
     for col in ("academies", "sessions", "students", "enrollments", "payments", "expenses",
                 "attendance", "lesson_plans", "progress_notes", "coach_payouts",
                 "payout_rules", "move_log", "messages", "notifications", "invites",
-                "audit_logs", "waiver_versions", "waiver_acceptances"):
+                "audit_logs", "waiver_versions", "waiver_acceptances", "platform_roles"):
         await db[col].drop()
     await db.users.delete_many({"email": {"$ne": admin_email}})
     print("Cleared collections.")

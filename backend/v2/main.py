@@ -102,14 +102,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     users_repo = MongoUserRepository(db, default_academy_id=settings.default_academy_id)
     verifier = FirebaseTokenVerifier()
 
-    # The Mongo `academy_memberships` + `platform_roles` repositories are
-    # owned by Agent A (Wave 2). Until they merge, fall back to in-process
-    # adapters that synthesize a single-tenant membership from legacy
-    # ``users.academy_id`` / ``users.roles``. SaaS deployments will replace
-    # these via the composition root once the real repositories land.
+    # `academy_memberships` still falls back to the in-process legacy adapter
+    # that synthesises a single-tenant membership from users.academy_id /
+    # users.roles. `platform_roles` is wired to the real Mongo collection.
     membership_repo = _LegacyUserMembershipAdapter(users_repo, settings.default_academy_id)
-    membership_db_repo = MongoMembershipRepository(db)
-    platform_role_repo = _MongoPlatformRoleAdapter(membership_db_repo)
+    platform_role_repo = _MongoPlatformRoleAdapter(MongoMembershipRepository(db))
 
     load_claims = LoadAuthClaims(
         verifier=verifier,
@@ -317,7 +314,7 @@ class _MongoPlatformRoleAdapter:
     def __init__(self, repo: MongoMembershipRepository) -> None:
         self._repo = repo
 
-    async def list_active_for_user(self, user_id: str) -> list:
+    async def list_active_for_user(self, user_id: str) -> list[PlatformRole]:
         return await self._repo.list_active_platform_roles(user_id)
 
 
