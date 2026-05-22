@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 import pytest
 
 from backend.v2.contexts.billing.application.use_cases.start_checkout import (

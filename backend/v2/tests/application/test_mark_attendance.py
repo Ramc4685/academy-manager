@@ -5,7 +5,7 @@ Covers all four rejection paths + idempotency + outbox emission.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -22,7 +22,7 @@ from backend.v2.contexts.coaching.domain.errors import (
 )
 from backend.v2.contexts.coaching.domain.models import Attendance
 
-FIXED_NOW = datetime(2026, 5, 16, 9, 30, tzinfo=timezone.utc)
+FIXED_NOW = datetime(2026, 5, 16, 9, 30, tzinfo=UTC)
 
 
 class InMemoryIdempotency:
@@ -108,7 +108,9 @@ class FakeOutbox:
         pass
 
 
-def _cmd(mutation_id: str = "mut-1", student_id: str = "st1", status: str = "present") -> MarkAttendanceCommand:
+def _cmd(
+    mutation_id: str = "mut-1", student_id: str = "st1", status: str = "present"
+) -> MarkAttendanceCommand:
     return MarkAttendanceCommand(
         mutation_id=mutation_id,
         occurrence_id="occ-2026-05-16",

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -23,7 +23,7 @@ def _attendance(attendance_id: str, occurrence_id: str) -> Attendance:
         session_id="sess-recurring",
         student_id="st1",
         marked_by="coach-1",
-        marked_at=datetime.now(timezone.utc),
+        marked_at=datetime.now(UTC),
         status="present",
     )
 

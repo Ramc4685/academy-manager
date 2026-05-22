@@ -51,6 +51,4 @@ async def up(db: AsyncIOMotorDatabase) -> None:
     )
 
     audit = db["audit_logs"]
-    await audit.create_index(
-        [("academy_id", 1), ("created_at", -1)], name="academy_audit_timeline"
-    )
+    await audit.create_index([("academy_id", 1), ("created_at", -1)], name="academy_audit_timeline")

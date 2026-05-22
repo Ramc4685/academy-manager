@@ -11,9 +11,9 @@ stub send port is wired.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Callable
+from datetime import UTC, datetime
 
 from backend.v2.contexts.communications.application.ports import (
     AudienceResolver,
@@ -54,7 +54,7 @@ class SendCampaignResult:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @dataclass
@@ -109,9 +109,7 @@ class SendCampaign:
                 )
                 sent_count += 1
             else:
-                deliveries.append(
-                    base.mark_failed(reason=outcome.failed_reason or "unknown")
-                )
+                deliveries.append(base.mark_failed(reason=outcome.failed_reason or "unknown"))
                 failed_count += 1
         await self.deliveries.save_many(deliveries)
 

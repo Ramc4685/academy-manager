@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+from datetime import UTC, date, datetime, time
 from typing import Any
 
 from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_sessions import (
@@ -13,8 +13,8 @@ from backend.v2.shared.tenancy import TenantScopedRepository
 
 
 def _day_bounds_utc(on_date: date) -> tuple[datetime, datetime]:
-    start = datetime.combine(on_date, time.min, tzinfo=timezone.utc)
-    end = datetime.combine(on_date, time.max, tzinfo=timezone.utc)
+    start = datetime.combine(on_date, time.min, tzinfo=UTC)
+    end = datetime.combine(on_date, time.max, tzinfo=UTC)
     return start, end
 
 
@@ -53,7 +53,7 @@ class MongoSessionRepository(TenantScopedRepository):
         return self._to_domain(doc) if doc else None
 
     async def available_for_parent_catalog(self) -> list[ParentAvailableSession]:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cursor = self._find_many(
             {
                 "status": {"$nin": ["cancelled", "completed"]},
@@ -98,5 +98,5 @@ def _amount_cents(doc: dict[str, object], default_amount_cents: int) -> int:
     if doc.get("monthly_price_cents") is not None:
         return int(doc["monthly_price_cents"])  # type: ignore[arg-type]
     if doc.get("monthly_price") is not None:
-        return int(round(float(doc["monthly_price"]) * 100))  # type: ignore[arg-type]
+        return round(float(doc["monthly_price"]) * 100)  # type: ignore[arg-type]
     return default_amount_cents

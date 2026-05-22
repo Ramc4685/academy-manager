@@ -56,9 +56,7 @@ class PayableOccurrenceQuery(Protocol):
 
 
 class CoachRateRepository(Protocol):
-    async def find_for_coach_at(
-        self, coach_id: str, at_time: datetime
-    ) -> CoachRate | None: ...
+    async def find_for_coach_at(self, coach_id: str, at_time: datetime) -> CoachRate | None: ...
 
 
 def _paying_coach(occ: PayableOccurrence) -> tuple[str, PayoutBasis]:
@@ -107,9 +105,7 @@ class ComputeCoachPayout:
         if period_end <= period_start:
             raise ValueError("period_end must be after period_start")
 
-        occs = await self._occurrences.list_in_period(
-            academy_id, period_start, period_end
-        )
+        occs = await self._occurrences.list_in_period(academy_id, period_start, period_end)
 
         lines: list[PayoutLine] = []
         unpaid: list[str] = []

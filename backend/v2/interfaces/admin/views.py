@@ -10,7 +10,6 @@ from typing import Literal
 
 from pydantic import BaseModel, EmailStr
 
-
 # --- Directory ---
 
 

@@ -11,7 +11,7 @@ mongomock-motor, including:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -28,7 +28,7 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_template_repo im
 
 
 def _dt(value: str) -> datetime:
-    return datetime.fromisoformat(value).replace(tzinfo=timezone.utc)
+    return datetime.fromisoformat(value).replace(tzinfo=UTC)
 
 
 def _template(
@@ -80,9 +80,7 @@ def _signature(
 
 
 @pytest.mark.asyncio
-async def test_waiver_template_repo_round_trips_and_scopes_by_tenant(
-    db, acad
-) -> None:
+async def test_waiver_template_repo_round_trips_and_scopes_by_tenant(db, acad) -> None:
     # seed: one template in our tenant, one in another tenant.
     await db["waiver_templates"].insert_many(
         [
@@ -119,9 +117,7 @@ async def test_waiver_template_repo_round_trips_and_scopes_by_tenant(
 
 
 @pytest.mark.asyncio
-async def test_waiver_signature_repo_upsert_and_latest_for_student(
-    db, acad
-) -> None:
+async def test_waiver_signature_repo_upsert_and_latest_for_student(db, acad) -> None:
     repo = MongoWaiverSignatureRepository(db)
 
     # First save inserts.

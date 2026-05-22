@@ -10,14 +10,13 @@ enrollment instead of double-confirming.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pydantic import BaseModel
-from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.enrollment.application.ports import (
-    EnrollmentQuery,
     EnrollmentEventRepository,
+    EnrollmentQuery,
     EnrollmentWriter,
     SessionWriter,
     StudentWriter,
@@ -25,6 +24,8 @@ from backend.v2.contexts.enrollment.application.ports import (
 from backend.v2.contexts.enrollment.domain.errors import CapacityExceeded
 from backend.v2.contexts.enrollment.domain.events import (
     CapacityExceeded as CapacityExceededEvent,
+)
+from backend.v2.contexts.enrollment.domain.events import (
     CapacityExceededPayload,
     EnrollmentConfirmed,
     EnrollmentConfirmedPayload,
@@ -33,6 +34,7 @@ from backend.v2.contexts.enrollment.domain.events import (
 from backend.v2.contexts.enrollment.domain.models import Enrollment, Student
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore, idempotent
+from backend.v2.shared.ids import new_ulid
 
 
 class ConfirmEnrollmentCommand(BaseModel):
@@ -64,7 +66,7 @@ class ConfirmEnrollment:
         idempotency_store: IdempotencyStore,
         academy_id: str,
         enrollment_events: EnrollmentEventRepository | None = None,
-        clock=lambda: datetime.now(timezone.utc),
+        clock=lambda: datetime.now(UTC),
     ) -> None:
         self._sessions = sessions
         self._enrollments = enrollments

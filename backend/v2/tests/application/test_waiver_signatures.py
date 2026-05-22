@@ -13,7 +13,7 @@ These tests use in-memory fakes; the Mongo contract is exercised in
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -28,7 +28,7 @@ from backend.v2.contexts.onboarding.domain.models import (
 
 
 def _dt(value: str) -> datetime:
-    return datetime.fromisoformat(value).replace(tzinfo=timezone.utc)
+    return datetime.fromisoformat(value).replace(tzinfo=UTC)
 
 
 class FakeTemplateRepo:

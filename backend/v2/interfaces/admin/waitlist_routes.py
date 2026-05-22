@@ -95,9 +95,7 @@ async def promote_next(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, str | None]:
-    promoted_id = await use_cases.promote_from_waitlist.execute(
-        session_id, actor_id=claims.user_id
-    )
+    promoted_id = await use_cases.promote_from_waitlist.execute(session_id, actor_id=claims.user_id)
     return {"promoted_waitlist_id": promoted_id}
 
 

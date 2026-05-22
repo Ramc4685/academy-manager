@@ -37,7 +37,7 @@ slice — coach rate storage lands when the admin UI for rates lands.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -54,7 +54,7 @@ from backend.v2.contexts.coaching.domain.payout import (
 
 
 def _dt(value: str) -> datetime:
-    return datetime.fromisoformat(value).replace(tzinfo=timezone.utc)
+    return datetime.fromisoformat(value).replace(tzinfo=UTC)
 
 
 def _occurrence(
@@ -95,8 +95,7 @@ class FakeOccurrenceQuery:
         return [
             o
             for o in self._items
-            if o.academy_id == academy_id
-            and period_start <= o.start_at < period_end
+            if o.academy_id == academy_id and period_start <= o.start_at < period_end
         ]
 
 
@@ -104,9 +103,7 @@ class FakeRateRepo:
     def __init__(self, rates: list[CoachRate]) -> None:
         self._rates = list(rates)
 
-    async def find_for_coach_at(
-        self, coach_id: str, at_time: datetime
-    ) -> CoachRate | None:
+    async def find_for_coach_at(self, coach_id: str, at_time: datetime) -> CoachRate | None:
         candidates = [
             r
             for r in self._rates
@@ -320,12 +317,15 @@ async def test_only_completed_occurrences_pay() -> None:
         status="active",
     )
     occs = [
-        _occurrence("occ-1", start="2026-05-10T18:00:00", end="2026-05-10T19:00:00",
-                    status="completed"),
-        _occurrence("occ-2", start="2026-05-11T18:00:00", end="2026-05-11T19:00:00",
-                    status="scheduled"),
-        _occurrence("occ-3", start="2026-05-12T18:00:00", end="2026-05-12T19:00:00",
-                    status="cancelled"),
+        _occurrence(
+            "occ-1", start="2026-05-10T18:00:00", end="2026-05-10T19:00:00", status="completed"
+        ),
+        _occurrence(
+            "occ-2", start="2026-05-11T18:00:00", end="2026-05-11T19:00:00", status="scheduled"
+        ),
+        _occurrence(
+            "occ-3", start="2026-05-12T18:00:00", end="2026-05-12T19:00:00", status="cancelled"
+        ),
     ]
     use_case = ComputeCoachPayout(
         occurrences=FakeOccurrenceQuery(occs),

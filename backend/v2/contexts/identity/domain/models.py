@@ -79,7 +79,7 @@ class User(BaseModel):
     academy_id: str | None = None
 
     @model_validator(mode="after")
-    def _fill_normalized_email(self) -> "User":
+    def _fill_normalized_email(self) -> User:
         if self.normalized_email is None:
             object.__setattr__(self, "normalized_email", normalize_email(str(self.email)))
         return self

@@ -10,13 +10,13 @@ For now: simple CRUD aggregations.
 # FINANCE
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
-from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.billing.application.ports import PaymentRepository
+from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository
 
 
@@ -59,7 +59,9 @@ class MongoExpenseRepository(TenantScopedRepository):
         )
 
     async def add(self, e: Expense) -> None:
-        await self._insert_one({k: v for k, v in e.model_dump(mode="python").items() if k != "academy_id"})
+        await self._insert_one(
+            {k: v for k, v in e.model_dump(mode="python").items() if k != "academy_id"}
+        )
 
     async def list_recent(self, limit: int = 200) -> list[Expense]:
         cursor = self._find_many({}, sort=[("incurred_on", -1)], limit=limit)
@@ -113,7 +115,7 @@ class RecordExpense:
             category=cmd.category,
             amount_cents=cmd.amount_cents,
             note=cmd.note,
-            incurred_on=cmd.incurred_on or datetime.now(timezone.utc),
+            incurred_on=cmd.incurred_on or datetime.now(UTC),
         )
         await self._expenses.add(e)
         return e

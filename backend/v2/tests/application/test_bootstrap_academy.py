@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -66,7 +66,9 @@ class FakeBootstrapStore:
         self.waivers.setdefault(waiver["academy_id"], dict(waiver))
         return dict(self.waivers[waiver["academy_id"]])
 
-    async def ensure_default_roles(self, academy_id: str, roles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    async def ensure_default_roles(
+        self, academy_id: str, roles: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         self.roles.setdefault(academy_id, [dict(role) for role in roles])
         return [dict(role) for role in self.roles[academy_id]]
 
@@ -90,7 +92,7 @@ def _command(**overrides: object) -> BootstrapAcademyCommand:
 
 def _use_case(store: FakeBootstrapStore) -> BootstrapAcademy:
     counters: dict[str, int] = {}
-    now = datetime(2026, 5, 21, tzinfo=timezone.utc)
+    now = datetime(2026, 5, 21, tzinfo=UTC)
 
     def _id(prefix: str) -> str:
         counters[prefix] = counters.get(prefix, 0) + 1
@@ -171,12 +173,12 @@ async def test_duplicate_domain_with_different_slug_is_a_clear_conflict() -> Non
     use_case = _use_case(store)
     await use_case.execute(_command())
 
-    with pytest.raises(BootstrapDomainConflict, match="north.example.com"):
+    with pytest.raises(BootstrapDomainConflict, match=r"north\.example\.com"):
         await use_case.execute(_command(slug="other-slug"))
 
 
 def test_bootstrap_source_does_not_reference_default_academy_id() -> None:
-    source = Path(
-        "v2/contexts/identity/application/use_cases/bootstrap_academy.py"
-    ).read_text(encoding="utf-8")
+    source = Path("v2/contexts/identity/application/use_cases/bootstrap_academy.py").read_text(
+        encoding="utf-8"
+    )
     assert "default_academy_id" not in source

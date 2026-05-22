@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
+
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
@@ -9,13 +10,13 @@ class MongoAcademyRepository:
     def __init__(self, db: AsyncIOMotorDatabase[Any]) -> None:
         self.collection = db["academies"]
 
-    async def find_by_id(self, academy_id: str) -> Optional[dict[str, Any]]:
+    async def find_by_id(self, academy_id: str) -> dict[str, Any] | None:
         doc = await self.collection.find_one({"academy_id": academy_id})
         if not doc:
             return None
         return doc
 
-    async def update_by_id(self, academy_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+    async def update_by_id(self, academy_id: str, fields: dict[str, Any]) -> dict[str, Any] | None:
         doc = await self.collection.find_one_and_update(
             {"academy_id": academy_id},
             {"$set": fields},

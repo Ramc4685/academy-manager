@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -10,8 +10,7 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_admin_waiver_repo impor
     MongoAdminWaiverRepository,
 )
 
-
-NOW = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 5, 20, 12, 0, tzinfo=UTC)
 
 
 async def _seed_waivers(db, academy_id: str) -> None:

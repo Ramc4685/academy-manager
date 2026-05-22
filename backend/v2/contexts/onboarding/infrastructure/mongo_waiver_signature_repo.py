@@ -7,7 +7,7 @@ Signatures are tenant-scoped and per student. Each row pins to an immutable
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from backend.v2.contexts.onboarding.domain.models import WaiverSignature
@@ -22,13 +22,11 @@ class MongoWaiverSignatureRepository(TenantScopedRepository):
     @staticmethod
     def _as_datetime(value: object) -> datetime | None:
         if isinstance(value, datetime):
-            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+            return value if value.tzinfo else value.replace(tzinfo=UTC)
         if isinstance(value, str):
             try:
                 parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-                return (
-                    parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-                )
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
             except ValueError:
                 return None
         return None
@@ -38,8 +36,7 @@ class MongoWaiverSignatureRepository(TenantScopedRepository):
         signed_at = cls._as_datetime(doc.get("signed_at"))
         if signed_at is None:
             raise ValueError(
-                f"waiver_signatures row {doc.get('waiver_signature_id')!r} "
-                "is missing signed_at"
+                f"waiver_signatures row {doc.get('waiver_signature_id')!r} " "is missing signed_at"
             )
         return WaiverSignature(
             waiver_signature_id=str(doc["waiver_signature_id"]),
@@ -89,9 +86,7 @@ class MongoWaiverSignatureRepository(TenantScopedRepository):
         doc = await self._find_one({"waiver_signature_id": waiver_signature_id})
         return self._to_domain(doc) if doc else None
 
-    async def latest_for_student(
-        self, student_id: str
-    ) -> WaiverSignature | None:
+    async def latest_for_student(self, student_id: str) -> WaiverSignature | None:
         cursor = self._find_many(
             {"student_id": student_id},
             sort=[("signed_at", -1)],
@@ -101,9 +96,7 @@ class MongoWaiverSignatureRepository(TenantScopedRepository):
             return self._to_domain(doc)
         return None
 
-    async def list_for_student(
-        self, student_id: str
-    ) -> list[WaiverSignature]:
+    async def list_for_student(self, student_id: str) -> list[WaiverSignature]:
         cursor = self._find_many(
             {"student_id": student_id},
             sort=[("signed_at", -1)],

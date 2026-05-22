@@ -1,7 +1,7 @@
 """Tests proving legacy routes return 410 in SaaS mode and v2 routes pass through."""
+
 from __future__ import annotations
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 

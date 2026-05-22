@@ -33,6 +33,8 @@ from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist 
 )
 from backend.v2.contexts.enrollment.domain.events import (
     CapacityExceeded as CapacityExceededEvent,
+)
+from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentCancelled,
 )
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
@@ -66,7 +68,9 @@ def install_handlers(deps: HandlerDeps) -> None:
 
 def _require_deps() -> HandlerDeps:
     if _deps is None:
-        raise RuntimeError("event handlers not installed — composition root did not call install_handlers()")
+        raise RuntimeError(
+            "event handlers not installed — composition root did not call install_handlers()"
+        )
     return _deps
 
 

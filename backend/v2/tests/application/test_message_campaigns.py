@@ -17,7 +17,7 @@ Stream L):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -51,7 +51,6 @@ from backend.v2.contexts.communications.domain.models import (
     parse_audience,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fake adapters
 # ---------------------------------------------------------------------------
@@ -69,23 +68,17 @@ class FakeAudienceResolver(AudienceResolver):
     selected: dict[str, ResolvedRecipient] = field(default_factory=dict)
     calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
-    async def resolve_academy_audience(
-        self, audience: AcademyAudience
-    ) -> list[ResolvedRecipient]:
+    async def resolve_academy_audience(self, audience: AcademyAudience) -> list[ResolvedRecipient]:
         self.calls.append(("academy", {"role": audience.role}))
         if audience.role == "coach":
             return list(self.all_coaches)
         return list(self.by_academy)
 
-    async def resolve_session_audience(
-        self, audience: SessionAudience
-    ) -> list[ResolvedRecipient]:
+    async def resolve_session_audience(self, audience: SessionAudience) -> list[ResolvedRecipient]:
         self.calls.append(("session", {"session_id": audience.session_id}))
         return list(self.by_session.get(audience.session_id, []))
 
-    async def resolve_coach_audience(
-        self, audience: CoachAudience
-    ) -> list[ResolvedRecipient]:
+    async def resolve_coach_audience(self, audience: CoachAudience) -> list[ResolvedRecipient]:
         self.calls.append(("coach", {"session_id": audience.session_id}))
         if audience.session_id is None:
             return list(self.all_coaches)
@@ -100,9 +93,7 @@ class FakeAudienceResolver(AudienceResolver):
     async def resolve_payment_risk_audience(
         self, audience: PaymentRiskAudience
     ) -> list[ResolvedRecipient]:
-        self.calls.append(
-            ("payment_risk", {"min_days_overdue": audience.min_days_overdue})
-        )
+        self.calls.append(("payment_risk", {"min_days_overdue": audience.min_days_overdue}))
         return list(self.payment_risk)
 
 
@@ -187,7 +178,13 @@ def _build_use_case(
     *,
     resolver: FakeAudienceResolver | None = None,
     sender: StubEmailSendPort | None = None,
-) -> tuple[SendCampaign, FakeAudienceResolver, StubEmailSendPort, InMemoryCampaignRepository, InMemoryDeliveryRepository]:
+) -> tuple[
+    SendCampaign,
+    FakeAudienceResolver,
+    StubEmailSendPort,
+    InMemoryCampaignRepository,
+    InMemoryDeliveryRepository,
+]:
     resolver = resolver or FakeAudienceResolver()
     sender = sender or StubEmailSendPort()
     campaigns = InMemoryCampaignRepository()
@@ -197,7 +194,7 @@ def _build_use_case(
         deliveries=deliveries,
         resolver=resolver,
         sender=sender,
-        now=lambda: datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc),
+        now=lambda: datetime(2026, 5, 21, 12, 0, tzinfo=UTC),
         new_id=_counter_ids(),
     )
     return use_case, resolver, sender, campaigns, deliveries
@@ -238,9 +235,7 @@ class TestAudienceParsing:
         assert a2.session_id == "sess-2"
 
     def test_parse_selected_audience_requires_user_ids(self) -> None:
-        a = parse_audience(
-            {"type": "selected", "user_ids": ["u-1", "u-2"]}
-        )
+        a = parse_audience({"type": "selected", "user_ids": ["u-1", "u-2"]})
         assert isinstance(a, SelectedRecipientsAudience)
         assert a.user_ids == ("u-1", "u-2")
 
@@ -281,7 +276,7 @@ class TestCampaignDomain:
             audience=AcademyAudience(role="parent"),
             subject="Welcome",
             body="Body",
-            created_at=datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc),
+            created_at=datetime(2026, 5, 21, 12, 0, tzinfo=UTC),
         )
         assert campaign.status == CampaignStatus.DRAFT
         assert campaign.sent_at is None
@@ -302,7 +297,7 @@ class TestCampaignDomain:
 
         sent = d.mark_sent(
             provider_message_id="prov-1",
-            sent_at=datetime(2026, 5, 21, 12, 30, tzinfo=timezone.utc),
+            sent_at=datetime(2026, 5, 21, 12, 30, tzinfo=UTC),
         )
         assert sent.status == DeliveryStatus.SENT
         assert sent.provider_message_id == "prov-1"
@@ -514,7 +509,7 @@ class TestDeliveryRecording:
         stored = await campaigns.get(result.campaign_id)
         assert stored is not None
         assert stored.status == CampaignStatus.SENT
-        assert stored.sent_at == datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+        assert stored.sent_at == datetime(2026, 5, 21, 12, 0, tzinfo=UTC)
 
     @pytest.mark.asyncio
     async def test_every_delivery_carries_academy_id(self) -> None:

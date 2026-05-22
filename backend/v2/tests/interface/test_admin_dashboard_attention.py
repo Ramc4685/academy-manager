@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     PauseRequest,
@@ -14,7 +14,7 @@ from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
 
 
 def _dt(value: str) -> datetime:
-    return datetime.fromisoformat(value).replace(tzinfo=timezone.utc)
+    return datetime.fromisoformat(value).replace(tzinfo=UTC)
 
 
 def test_admin_dashboard_attention_empty_state(admin_client):
@@ -49,17 +49,12 @@ def test_admin_dashboard_attention_aggregates_real_signals(admin_client):
 
     assert r.status_code == 200, r.text
     body = r.json()
-    assert [
-        (item["kind"], item["href"], item["count"])
-        for item in body["items"]
-    ] == [
+    assert [(item["kind"], item["href"], item["count"]) for item in body["items"]] == [
         ("pause_requests", "/admin/pause-requests", 1),
         ("waivers", "/admin/waivers", 3),
     ]
 
 
-def test_admin_dashboard_attention_wrong_persona_404(
-    coach_on_admin_client, parent_on_admin_client
-):
+def test_admin_dashboard_attention_wrong_persona_404(coach_on_admin_client, parent_on_admin_client):
     assert coach_on_admin_client.get("/api/v2/admin/dashboard/attention").status_code == 404
     assert parent_on_admin_client.get("/api/v2/admin/dashboard/attention").status_code == 404

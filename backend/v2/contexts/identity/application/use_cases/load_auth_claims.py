@@ -19,7 +19,7 @@ SaaS contract:
 from __future__ import annotations
 
 from backend.v2.contexts.identity.application.ports import (
-    MembershipRepository,
+    MembershipLookup,
     PlatformRoleRepository,
     TokenVerifier,
     UserRepository,
@@ -38,7 +38,7 @@ class LoadAuthClaims:
         self,
         verifier: TokenVerifier,
         users: UserRepository,
-        memberships: MembershipRepository,
+        memberships: MembershipLookup,
         platform_roles: PlatformRoleRepository,
     ) -> None:
         self._verifier = verifier
@@ -46,9 +46,7 @@ class LoadAuthClaims:
         self._memberships = memberships
         self._platform_roles = platform_roles
 
-    async def execute(
-        self, id_token: str, *, resolved_academy_id: str
-    ) -> AuthClaims:
+    async def execute(self, id_token: str, *, resolved_academy_id: str) -> AuthClaims:
         """Verify token, resolve identity, validate membership, build claims.
 
         ``resolved_academy_id`` MUST come from ``TenantResolver`` (subdomain,

@@ -80,9 +80,7 @@ class CoachRate(BaseModel):
     @model_validator(mode="after")
     def _window_is_sane(self) -> CoachRate:
         if self.effective_until is not None and self.effective_until <= self.effective_from:
-            raise ValueError(
-                "CoachRate.effective_until must be > effective_from"
-            )
+            raise ValueError("CoachRate.effective_until must be > effective_from")
         return self
 
 

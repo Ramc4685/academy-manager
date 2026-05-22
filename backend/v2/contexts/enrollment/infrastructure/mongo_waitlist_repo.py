@@ -36,6 +36,4 @@ class MongoWaitlistRepository(TenantScopedRepository):
         return None
 
     async def update_status(self, waitlist_id: str, status: str) -> None:
-        await self._update_one(
-            {"waitlist_id": waitlist_id}, {"$set": {"status": status}}
-        )
+        await self._update_one({"waitlist_id": waitlist_id}, {"$set": {"status": status}})

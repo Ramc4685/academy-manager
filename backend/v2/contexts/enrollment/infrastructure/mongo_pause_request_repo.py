@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     PauseRequest,
@@ -55,7 +55,7 @@ class MongoPauseRequestRepository(TenantScopedRepository):
         request = await self.get(pause_request_id)
         if request is None:
             raise EnrollmentNotFound("pause request missing", pause_request_id=pause_request_id)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         await self._update_one(
             {"pause_request_id": pause_request_id},
             {"$set": {"status": "approved", "decided_at": now, "decided_by": admin_id}},
@@ -75,7 +75,7 @@ class MongoPauseRequestRepository(TenantScopedRepository):
         request = await self.get(pause_request_id)
         if request is None:
             raise EnrollmentNotFound("pause request missing", pause_request_id=pause_request_id)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         await self._update_one(
             {"pause_request_id": pause_request_id},
             {"$set": {"status": "declined", "decided_at": now, "decided_by": admin_id}},

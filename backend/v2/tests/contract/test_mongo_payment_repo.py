@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -16,7 +16,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import MongoP
 @pytest.mark.asyncio
 async def test_list_for_parent_maps_domain_payments(db, acad) -> None:
     repo = MongoPaymentRepository(db)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await repo.save(
         Payment(
             payment_id="pay-parent-1",
@@ -40,7 +40,7 @@ async def test_list_for_parent_maps_domain_payments(db, acad) -> None:
 async def test_generate_monthly_prorates_first_period_and_stores_snapshot(db, acad) -> None:
     repo = MongoPaymentRepository(
         db,
-        clock=lambda: datetime(2026, 5, 18, 22, 0, tzinfo=timezone.utc),
+        clock=lambda: datetime(2026, 5, 18, 22, 0, tzinfo=UTC),
     )
     await db["sessions"].insert_one(
         {
@@ -77,8 +77,8 @@ async def test_generate_monthly_prorates_first_period_and_stores_snapshot(db, ac
             "parent_id": "parent-1",
             "status": "active",
             "billing_type": "standard",
-            "billing_start_at": datetime(2026, 5, 18, 15, 0, tzinfo=timezone.utc),
-            "created_at": datetime(2026, 5, 18, 15, 0, tzinfo=timezone.utc),
+            "billing_start_at": datetime(2026, 5, 18, 15, 0, tzinfo=UTC),
+            "created_at": datetime(2026, 5, 18, 15, 0, tzinfo=UTC),
         }
     )
 
@@ -105,10 +105,10 @@ async def test_generate_monthly_applies_approved_account_credit(db, acad) -> Non
     credits = MongoCreditLedgerRepository(db)
     repo = MongoPaymentRepository(
         db,
-        clock=lambda: datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc),
+        clock=lambda: datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
         credit_ledger=credits,
     )
-    now = datetime(2026, 5, 20, tzinfo=timezone.utc)
+    now = datetime(2026, 5, 20, tzinfo=UTC)
     await credits.create(
         CreditLedgerEntry(
             credit_id="credit-1",
@@ -162,8 +162,8 @@ async def test_generate_monthly_applies_approved_account_credit(db, acad) -> Non
             "parent_id": "parent-1",
             "status": "active",
             "billing_type": "standard",
-            "billing_start_at": datetime(2026, 5, 1, tzinfo=timezone.utc),
-            "created_at": datetime(2026, 5, 1, tzinfo=timezone.utc),
+            "billing_start_at": datetime(2026, 5, 1, tzinfo=UTC),
+            "created_at": datetime(2026, 5, 1, tzinfo=UTC),
         }
     )
 
@@ -194,8 +194,8 @@ async def test_latest_paid_payment_for_enrollment_finds_legacy_paid_status(db, a
             "status": "paid",
             "amount_cents": 4000,
             "calculation_snapshot_id": "snap-legacy-1",
-            "created_at": datetime(2026, 5, 1, tzinfo=timezone.utc),
-            "updated_at": datetime(2026, 5, 1, tzinfo=timezone.utc),
+            "created_at": datetime(2026, 5, 1, tzinfo=UTC),
+            "updated_at": datetime(2026, 5, 1, tzinfo=UTC),
         }
     )
 
@@ -232,8 +232,8 @@ async def test_latest_paid_payment_for_enrollment_fallback_via_session_when_enro
             "status": "paid",
             "amount_cents": 4000,
             "calculation_snapshot_id": "snap-orphan-1",
-            "created_at": datetime(2026, 5, 1, tzinfo=timezone.utc),
-            "updated_at": datetime(2026, 5, 1, tzinfo=timezone.utc),
+            "created_at": datetime(2026, 5, 1, tzinfo=UTC),
+            "updated_at": datetime(2026, 5, 1, tzinfo=UTC),
         }
     )
 

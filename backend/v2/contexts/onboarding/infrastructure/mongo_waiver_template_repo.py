@@ -8,7 +8,7 @@ this Wave 4 prep slice.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from backend.v2.contexts.onboarding.domain.models import WaiverTemplate
@@ -21,13 +21,11 @@ class MongoWaiverTemplateRepository(TenantScopedRepository):
     @staticmethod
     def _as_datetime(value: object) -> datetime | None:
         if isinstance(value, datetime):
-            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+            return value if value.tzinfo else value.replace(tzinfo=UTC)
         if isinstance(value, str):
             try:
                 parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-                return (
-                    parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-                )
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
             except ValueError:
                 return None
         return None

@@ -267,6 +267,23 @@ backend:
       - working: true
         agent: "main"
         comment: "Merged Agent A session occurrences, Agent B enrollment events, and Agent C billing ledger into feat/saas-v2-wave3 from origin/main. Resolved enrollment ports conflict by preserving both occurrence and enrollment-event protocols. Renumbered billing ledger migration from 0090 to 0091 to avoid duplicate migration prefixes. Integration checks passed: Agent A focused suite 30 passed; Agent B focused suite 39 passed; Agent C focused suite 32 passed; full backend v2 suite 330 passed with 8 warnings; git diff --check passed before test_result update."
+  - task: "PR #46 Wave 4 merge-conflict recovery"
+    implemented: true
+    working: true
+    file: "backend/v2"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "main"
+        comment: "GitHub reported PR #46 as DIRTY against main. Local merge reproduced conflicts in v2 composition wiring, Wave 3 enrollment/billing files, tests, and test_result.md."
+      - working: "NA"
+        agent: "main"
+        comment: "Merged origin/main into feat/saas-v2-wave4 and resolved conflicts by keeping current main Wave 3 implementations while preserving Wave 4 composition additions. Verification pending."
+      - working: true
+        agent: "main"
+        comment: "Conflict recovery verified after Ruff fixes: compileall on conflicted modules passed; focused merge-adjacent pytest passed 24/24; ruff check v2 passed; ruff format --check v2 passed; full backend v2 suite passed 374/374 with 7 existing mongomock UTC warnings; git diff --check passed."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -476,11 +493,15 @@ metadata:
   run_ui: true
 test_plan:
   current_focus:
-    - "SaaS v2 Wave 3 integrated merge gate"
+    - "PR #46 Wave 4 merge-conflict recovery"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "PR #46 merge-conflict recovery verified: origin/main was merged into feat/saas-v2-wave4, conflict files were resolved, Ruff formatting/import issues from Wave 4 files were fixed, and full backend v2 tests passed 374/374. GitHub Actions should be rerun after pushing the merge commit."
+  - agent: "main"
+    message: "PR #46 merge-conflict recovery in progress: origin/main was merged into feat/saas-v2-wave4. Conflicts were resolved by taking current main Wave 3 enrollment/billing implementations and manually preserving Wave 4 composition wiring. Retest focused v2 merge-adjacent suites plus structural checks."
   - agent: "main"
     message: "SaaS v2 Wave 3 integration complete on feat/saas-v2-wave3. Agent A/B/C branches were merged from origin/main baseline. Merge conflicts were limited to enrollment application ports and test_result.md; ports now include both SessionOccurrenceRepository and EnrollmentEventRepository. Billing ledger migration was renumbered to 0091 after Agent B used 0090 for enrollment_events. Verification: Agent A focused suite 30 passed, Agent B focused suite 39 passed, Agent C focused suite 32 passed, full backend v2 suite 330 passed with 8 warnings, git diff --check passed before this status update."
   - agent: "main"
@@ -653,8 +674,18 @@ agent_communication:
       Coordination notes for Agent A / Agent C: the MembershipRepository / PlatformRoleRepository protocols defined here are the contract Agent A's Mongo repos must satisfy — MembershipRepository.get_for_user_in_academy(user_id, academy_id) -> AcademyMembership | None and PlatformRoleRepository.list_active_for_user(user_id) -> list[PlatformRole]. When Agent A merges, replace _LegacyUserMembershipAdapter and _NullPlatformRoleRepository in backend/v2/main.py with the Mongo implementations. _AcademyLookupAdapter currently queries `academies.slug` / `academies.custom_domain` — Agent C's bootstrap should populate those fields for any new tenant. Skipped checks: no live browser smoke this turn (middleware contract is exercised by interface tests); SaaS-mode end-to-end against a live Mongo with real subdomains was not run, since the Mongo membership infrastructure is not in place yet.
   - agent: "main"
     message: |
+      PR #44 CI recovery for GitHub Actions run 26255135436: Backend Lint failed because ruff format --check v2 found 63 unformatted v2 files; Backend failed because pip-audit found vulnerable pins in starlette, idna, litellm, and pymongo. Fixed by applying Ruff formatting across backend/v2, upgrading FastAPI/Starlette to compatible audited pins, bumping idna and pymongo, and removing unused litellm from backend requirements after confirming no backend imports reference it.
+
+      Verification: source backend/.venv/bin/activate && python -m pip install -r requirements.txt -r requirements-v2.txt passed; pip-audit -r requirements.txt -r requirements-v2.txt passed with no known vulnerabilities; ruff check v2 && ruff format --check v2 passed; python -m compileall . passed; PYTHONPATH=/Users/ramc/Documents/Code/academy-manager lint-imports --config pyproject.toml passed all 4 contracts; pytest v2/tests --override-ini="testpaths=v2/tests" --cov=v2/shared --cov-report=term-missing --cov-fail-under=70 passed with 313 passed, 7 warnings, 79.66% coverage. Needs retesting in GitHub Actions after pushing the branch.
+  - agent: "main"
+    message: |
       SaaS v2 Wave 3 — Agent A (session_occurrences + occurrence attendance) on branch feat/saas-wave3-session-occurrences.
 
       Implemented durable enrollment-owned session occurrences with `SessionOccurrence`, `GenerateSessionOccurrences`, `MongoSessionOccurrenceRepository`, and migration 0081 indexes. Coaching attendance now requires `occurrence_id`, persists it with the attendance row, emits it in `Coaching.AttendanceMarked`, and uses `(academy_id, occurrence_id, student_id)` uniqueness so recurring weekly classes can record attendance for the same student each week. The coach today and attendance BFF DTOs plus interface fakes were updated to pass occurrence IDs.
 
       Verification: focused occurrence/attendance/coach-today interface rerun passed 31/31; broader occurrence/migration/guard suite passed 34/34 before cleanup; full backend v2 suite passed 320/320 under Python 3.12 `.venv312`; focused ruff import/unused checks passed; `git diff --check` passed.
+  - agent: "main"
+    message: |
+      PR #44 merge-conflict recovery on branch feat/saas-v2-wave2: merged origin/main and resolved conflicts between the branch's CI/backend dependency and pause-request work and main's Wave 3 enrollment occurrence/lifecycle-event work. Kept both MongoPauseRequestRepository and MongoEnrollmentEventRepository wiring, preserved UTC-based formatting, threaded lifecycle actor IDs through admin roster/pause routes, kept occurrence_id attendance tests, and preserved both PR #44 CI-recovery and Wave 3 test_result notes.
+
+      Verification: ruff check v2 passed; ruff format --check v2 passed; git diff --check passed; compileall over the directly conflicted v2 files passed; focused merge-adjacent suite passed 35/35; full backend v2 suite passed 330/330 with 7 mongomock utcnow deprecation warnings.

@@ -7,8 +7,8 @@ from typing import Protocol
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserSummary,
 )
-from backend.v2.contexts.identity.domain.models import Role
 from backend.v2.contexts.identity.domain.errors import UserNotFound
+from backend.v2.contexts.identity.domain.models import Role
 
 
 class AdminRoleWriter(Protocol):

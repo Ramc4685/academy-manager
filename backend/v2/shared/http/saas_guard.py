@@ -1,4 +1,5 @@
 """Middleware that blocks legacy /api/* routes when SaaS mode is active."""
+
 from __future__ import annotations
 
 from starlette.middleware.base import BaseHTTPMiddleware

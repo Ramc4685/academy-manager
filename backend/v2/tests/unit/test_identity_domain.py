@@ -10,7 +10,7 @@ platform role tuples.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -22,7 +22,6 @@ from backend.v2.contexts.identity.domain.models import (
     normalize_email,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-
 
 # ---------------------------------------------------------------------------
 # User (legacy single-tenant compatibility)
@@ -158,7 +157,7 @@ def test_membership_dedupes_roles() -> None:
 
 
 def test_membership_optional_invitation_audit_fields() -> None:
-    now = datetime(2026, 5, 21, tzinfo=timezone.utc)
+    now = datetime(2026, 5, 21, tzinfo=UTC)
     membership = _membership(
         status="invited",
         invited_by="u-admin",
@@ -189,12 +188,8 @@ def test_two_memberships_for_same_user_can_have_different_roles_per_academy() ->
     """Different academies, different roles — the multi-tenant case ADR-0007
     is built to support."""
 
-    m1 = _membership(
-        membership_id="m-a", academy_id="acad-a", user_id="u-1", roles=("coach",)
-    )
-    m2 = _membership(
-        membership_id="m-b", academy_id="acad-b", user_id="u-1", roles=("admin",)
-    )
+    m1 = _membership(membership_id="m-a", academy_id="acad-a", user_id="u-1", roles=("coach",))
+    m2 = _membership(membership_id="m-b", academy_id="acad-b", user_id="u-1", roles=("admin",))
     assert m1.has_role("coach") and not m1.has_role("admin")
     assert m2.has_role("admin") and not m2.has_role("coach")
 

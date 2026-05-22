@@ -17,13 +17,13 @@ Persistence shape (target collections; migrations 0090/0091):
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal, Mapping, Union
+from typing import Any, Literal
 
 from backend.v2.contexts.communications.domain.errors import InvalidAudienceError
-
 
 # ---------------------------------------------------------------------------
 # Audience discriminated union
@@ -70,9 +70,7 @@ class SelectedRecipientsAudience:
 
     def __post_init__(self) -> None:
         if not self.user_ids:
-            raise InvalidAudienceError(
-                "selected audience requires at least one user_id"
-            )
+            raise InvalidAudienceError("selected audience requires at least one user_id")
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,13 +82,13 @@ class PaymentRiskAudience:
     type: Literal["payment_risk"] = field(default="payment_risk", init=False)
 
 
-Audience = Union[
-    AcademyAudience,
-    SessionAudience,
-    CoachAudience,
-    SelectedRecipientsAudience,
-    PaymentRiskAudience,
-]
+Audience = (
+    AcademyAudience
+    | SessionAudience
+    | CoachAudience
+    | SelectedRecipientsAudience
+    | PaymentRiskAudience
+)
 
 
 def parse_audience(raw: Mapping[str, Any]) -> Audience:
@@ -115,10 +113,8 @@ def parse_audience(raw: Mapping[str, Any]) -> Audience:
         return CoachAudience(session_id=str(session_id) if session_id else None)
     if audience_type == "selected":
         user_ids = raw.get("user_ids") or []
-        if not isinstance(user_ids, (list, tuple)) or not user_ids:
-            raise InvalidAudienceError(
-                "selected audience requires non-empty user_ids list"
-            )
+        if not isinstance(user_ids, list | tuple) or not user_ids:
+            raise InvalidAudienceError("selected audience requires non-empty user_ids list")
         return SelectedRecipientsAudience(user_ids=tuple(str(u) for u in user_ids))
     if audience_type == "payment_risk":
         min_days = int(raw.get("min_days_overdue", 1))
@@ -184,7 +180,7 @@ class Campaign:
         body: str,
         created_at: datetime,
         channel: Channel = "email",
-    ) -> "Campaign":
+    ) -> Campaign:
         return cls(
             campaign_id=campaign_id,
             academy_id=academy_id,
@@ -198,13 +194,13 @@ class Campaign:
             sent_at=None,
         )
 
-    def mark_sending(self) -> "Campaign":
+    def mark_sending(self) -> Campaign:
         return replace(self, status=CampaignStatus.SENDING)
 
-    def mark_sent(self, *, sent_at: datetime) -> "Campaign":
+    def mark_sent(self, *, sent_at: datetime) -> Campaign:
         return replace(self, status=CampaignStatus.SENT, sent_at=sent_at)
 
-    def mark_failed(self) -> "Campaign":
+    def mark_failed(self) -> Campaign:
         return replace(self, status=CampaignStatus.FAILED)
 
 
@@ -240,8 +236,8 @@ class Delivery:
         delivery_id: str,
         academy_id: str,
         campaign_id: str,
-        recipient: "ResolvedRecipientLike",
-    ) -> "Delivery":
+        recipient: ResolvedRecipientLike,
+    ) -> Delivery:
         return cls(
             delivery_id=delivery_id,
             academy_id=academy_id,
@@ -255,9 +251,7 @@ class Delivery:
             failed_reason=None,
         )
 
-    def mark_sent(
-        self, *, provider_message_id: str | None, sent_at: datetime
-    ) -> "Delivery":
+    def mark_sent(self, *, provider_message_id: str | None, sent_at: datetime) -> Delivery:
         return replace(
             self,
             status=DeliveryStatus.SENT,
@@ -266,7 +260,7 @@ class Delivery:
             failed_reason=None,
         )
 
-    def mark_failed(self, *, reason: str) -> "Delivery":
+    def mark_failed(self, *, reason: str) -> Delivery:
         return replace(
             self,
             status=DeliveryStatus.FAILED,

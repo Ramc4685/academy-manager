@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from bson import ObjectId as BsonObjectId
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
-from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     GenerateMonthlyPaymentsResult,
 )
+from backend.v2.contexts.billing.domain.errors import (
+    PaymentNotFound,
+    PaymentOperationNotAllowed,
+)
+from backend.v2.contexts.billing.domain.models import Payment
 from backend.v2.contexts.billing.domain.proration import (
     BillingCalculationSnapshot,
     BillingPeriod,
@@ -21,11 +25,7 @@ from backend.v2.contexts.billing.domain.proration import (
     FirstMonthProrationPolicy,
     schedule_signature,
 )
-from backend.v2.contexts.billing.domain.errors import (
-    PaymentNotFound,
-    PaymentOperationNotAllowed,
-)
-from backend.v2.contexts.billing.domain.models import Payment
+from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
 # ---------------------------------------------------------------------------
@@ -46,7 +46,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         self,
         db: Any,
         *,
-        clock=lambda: datetime.now(timezone.utc),
+        clock=lambda: datetime.now(UTC),
         credit_ledger: Any | None = None,
     ) -> None:
         super().__init__(db)
@@ -61,7 +61,7 @@ class MongoPaymentRepository(TenantScopedRepository):
     def _money_to_cents(value: object | None) -> int:
         if value is None:
             return 0
-        return int(round(float(value) * 100))
+        return round(float(value) * 100)
 
     @classmethod
     def _amount_cents(cls, doc: dict[str, object]) -> int:
@@ -86,7 +86,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         if doc.get("refunded_cents") is not None:
             return int(doc["refunded_cents"])  # type: ignore[arg-type]
         if doc.get("refunded_amount") is not None:
-            return int(round(float(doc["refunded_amount"]) * 100))  # type: ignore[arg-type]
+            return round(float(doc["refunded_amount"]) * 100)  # type: ignore[arg-type]
         return 0
 
     @staticmethod
@@ -113,9 +113,7 @@ class MongoPaymentRepository(TenantScopedRepository):
 
     @classmethod
     def _to_domain(cls, doc: dict[str, object]) -> Payment:
-        created_at = (
-            doc.get("created_at") or doc.get("invoice_created_at") or datetime.now(timezone.utc)
-        )
+        created_at = doc.get("created_at") or doc.get("invoice_created_at") or datetime.now(UTC)
         return Payment(
             payment_id=cls._payment_id(doc),
             academy_id=str(doc["academy_id"]),
@@ -157,9 +155,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         doc = await self._find_one({"stripe_checkout_session_id": checkout_session_id})
         return self._to_domain(doc) if doc else None
 
-    async def latest_paid_payment_for_enrollment(
-        self, enrollment_id: str
-    ) -> Payment | None:
+    async def latest_paid_payment_for_enrollment(self, enrollment_id: str) -> Payment | None:
         # Legacy onboarding writes status="paid"; v2 writes "succeeded". Accept both
         # so withdrawals work for either origin.
         cursor = self._find_many(
@@ -185,10 +181,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         if enrollment_doc is None:
             return None
         session_id = enrollment_doc.get("session_id")
-        parent_id = (
-            enrollment_doc.get("parent_id")
-            or enrollment_doc.get("parent_user_id")
-        )
+        parent_id = enrollment_doc.get("parent_id") or enrollment_doc.get("parent_user_id")
         if not session_id or not parent_id:
             return None
         cursor = self._find_many(
@@ -204,9 +197,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         docs = [doc async for doc in cursor]
         return self._to_domain(docs[0]) if docs else None
 
-    async def get_snapshot(
-        self, snapshot_id: str
-    ) -> BillingCalculationSnapshot | None:
+    async def get_snapshot(self, snapshot_id: str) -> BillingCalculationSnapshot | None:
         doc = await self._db["billing_calculation_snapshots"].find_one(
             {"academy_id": current_academy_id(), "snapshot_id": snapshot_id}
         )
@@ -234,11 +225,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         )
         docs = [doc async for doc in cursor]
         student_ids = sorted(
-            {
-                str(doc.get("student_id"))
-                for doc in docs
-                if doc.get("student_id") is not None
-            }
+            {str(doc.get("student_id")) for doc in docs if doc.get("student_id") is not None}
         )
         students: dict[str, dict[str, object]] = {}
         if student_ids:
@@ -264,9 +251,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         first = str((student or {}).get("first_name") or "").strip()
         last = str((student or {}).get("last_name") or "").strip()
         full_name = str((student or {}).get("full_name") or f"{first} {last}".strip() or "")
-        created_at = (
-            doc.get("created_at") or doc.get("invoice_created_at") or datetime.now(timezone.utc)
-        )
+        created_at = doc.get("created_at") or doc.get("invoice_created_at") or datetime.now(UTC)
         amount_cents = cls._amount_cents(doc)
         discount_cents = cls._discount_cents(doc)
         return {
@@ -427,9 +412,7 @@ class MongoPaymentRepository(TenantScopedRepository):
             {"academy_id": academy_id, "session_id": session_id}
         )
         if doc is None:
-            doc = await self._db["sessions"].find_one(
-                {"academy_id": academy_id, "_id": session_id}
-            )
+            doc = await self._db["sessions"].find_one({"academy_id": academy_id, "_id": session_id})
         return doc
 
     # ------------------------------------------------------------------
@@ -584,7 +567,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         doc = await self._get_admin_payment_doc(payment_id)
         if str(doc.get("status") or "pending") not in {"pending", "failed"}:
             raise PaymentOperationNotAllowed("only pending payments can be marked paid")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         await self._update_one(
             _payment_lookup(payment_id),
             {
@@ -611,7 +594,7 @@ class MongoPaymentRepository(TenantScopedRepository):
                 "$set": {
                     "discount_cents": discount_cents,
                     "discount": discount_cents / 100,
-                    "updated_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(UTC),
                 }
             },
         )
@@ -625,7 +608,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         await self._update_one(
             _payment_lookup(payment_id),
             {
-                "$set": {"status": "pending", "updated_at": datetime.now(timezone.utc)},
+                "$set": {"status": "pending", "updated_at": datetime.now(UTC)},
                 "$unset": {
                     "paid_at": "",
                     "payment_date": "",
@@ -659,7 +642,7 @@ def _session_amount_cents(doc: dict[str, object]) -> int:
     if doc.get("monthly_price_cents") is not None:
         return int(doc["monthly_price_cents"])  # type: ignore[arg-type]
     if doc.get("monthly_price") is not None:
-        return int(round(float(doc["monthly_price"]) * 100))  # type: ignore[arg-type]
+        return round(float(doc["monthly_price"]) * 100)  # type: ignore[arg-type]
     return 0
 
 
@@ -667,13 +650,13 @@ def _coerce_datetime(value: object | None) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     if isinstance(value, str):
         try:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError:
             return None
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
     return None
 
 
@@ -702,8 +685,8 @@ def _session_occurrences(
                     ClassOccurrence(
                         occurrence_id=f"{session_id}:{current.isoformat()}:{start_time.strftime('%H:%M')}",
                         session_id=session_id,
-                        start_at=local_start.astimezone(timezone.utc),
-                        end_at=local_end.astimezone(timezone.utc),
+                        start_at=local_start.astimezone(UTC),
+                        end_at=local_end.astimezone(UTC),
                         status="scheduled",
                         is_billable=True,
                         timezone=timezone_name,
@@ -725,7 +708,9 @@ def _session_occurrences(
             session_id=session_id,
             start_at=start_at,
             end_at=end_at,
-            status="scheduled" if str(doc.get("status") or "scheduled") == "active" else str(doc.get("status") or "scheduled"),  # type: ignore[arg-type]
+            status="scheduled"
+            if str(doc.get("status") or "scheduled") == "active"
+            else str(doc.get("status") or "scheduled"),  # type: ignore[arg-type]
             is_billable=True,
             timezone=timezone_name,
         )
@@ -746,7 +731,7 @@ def _session_occurrences(
 
 async def _resolve_charge_for_enrollment(
     *,
-    repo: "MongoPaymentRepository",
+    repo: MongoPaymentRepository,
     enrollment: dict[str, object],
     session_doc: dict[str, object],
     period: str,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterator
+from collections.abc import Iterator
 
 import pytest
 from fastapi import FastAPI
@@ -15,7 +15,6 @@ from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import
 from backend.v2.interfaces.platform.bootstrap_routes import router as platform_bootstrap_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
-
 from backend.v2.tests.application.test_bootstrap_academy import FakeBootstrapStore
 
 

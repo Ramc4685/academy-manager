@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-
 version = "0102_coach_rate_indexes"
 
 

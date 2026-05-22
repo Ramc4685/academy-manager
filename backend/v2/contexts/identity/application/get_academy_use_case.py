@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 
 class AcademyRepo(Protocol):
-    async def find_by_id(self, academy_id: str) -> Optional[dict[str, Any]]: ...
+    async def find_by_id(self, academy_id: str) -> dict[str, Any] | None: ...
     async def upsert_defaults(self, academy_id: str) -> dict[str, Any]: ...
 
 
@@ -16,12 +16,12 @@ class GetAcademyOutput:
     academy_id: str
     display_name: str
     timezone: str
-    contact_email: Optional[str] = None
-    contact_phone: Optional[str] = None
-    hours_text: Optional[str] = None
-    address: Optional[str] = None
-    logo_url: Optional[str] = None
-    brand_color: Optional[str] = None
+    contact_email: str | None = None
+    contact_phone: str | None = None
+    hours_text: str | None = None
+    address: str | None = None
+    logo_url: str | None = None
+    brand_color: str | None = None
 
 
 class GetAcademyUseCase:

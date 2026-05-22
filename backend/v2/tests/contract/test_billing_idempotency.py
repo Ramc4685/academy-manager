@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -18,7 +18,7 @@ from backend.v2.shared.tenancy import tenant_scope
 @pytest.mark.asyncio
 async def test_invoice_creation_is_idempotent_per_tenant(db, acad) -> None:
     repo = MongoBillingLedgerRepository(db)
-    now = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
     invoice = LedgerInvoice(
         invoice_id="inv-idempotent",
         academy_id=acad,
@@ -71,7 +71,7 @@ async def test_invoice_creation_is_idempotent_per_tenant(db, acad) -> None:
 @pytest.mark.asyncio
 async def test_allocation_overpayment_credit_is_idempotent(db, acad) -> None:
     repo = MongoBillingLedgerRepository(db)
-    now = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
     await repo.create_invoice(
         LedgerInvoice(
             invoice_id="inv-overpay",
@@ -142,7 +142,7 @@ async def test_allocation_overpayment_credit_is_idempotent(db, acad) -> None:
 @pytest.mark.asyncio
 async def test_billing_ledger_reads_are_tenant_isolated(db, acad) -> None:
     repo = MongoBillingLedgerRepository(db)
-    now = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
     await repo.create_invoice(
         LedgerInvoice(
             invoice_id="inv-tenant",

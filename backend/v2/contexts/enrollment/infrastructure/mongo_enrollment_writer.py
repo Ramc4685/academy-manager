@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from backend.v2.contexts.enrollment.domain.models import Enrollment
 from backend.v2.shared.tenancy import TenantScopedRepository
@@ -16,20 +16,16 @@ class MongoEnrollmentWriter(TenantScopedRepository):
         await self._insert_one({k: v for k, v in doc.items() if k != "academy_id"})
 
     async def update_status(self, enrollment_id: str, status: str) -> None:
-        await self._update_one(
-            {"enrollment_id": enrollment_id}, {"$set": {"status": status}}
-        )
+        await self._update_one({"enrollment_id": enrollment_id}, {"$set": {"status": status}})
 
-    async def mark_withdrawn(
-        self, enrollment_id: str, *, withdrawal_date: datetime
-    ) -> None:
+    async def mark_withdrawn(self, enrollment_id: str, *, withdrawal_date: datetime) -> None:
         await self._update_one(
             {"enrollment_id": enrollment_id},
             {
                 "$set": {
                     "status": "withdrawn",
                     "withdrawal_date": withdrawal_date,
-                    "updated_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(UTC),
                 }
             },
         )
@@ -45,7 +41,7 @@ class MongoEnrollmentWriter(TenantScopedRepository):
                     "move_history": {
                         "from_session_id": previous_session_id,
                         "to_session_id": session_id,
-                        "moved_at": datetime.now(timezone.utc),
+                        "moved_at": datetime.now(UTC),
                     }
                 },
             },

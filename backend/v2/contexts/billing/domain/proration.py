@@ -7,15 +7,14 @@ tuition.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
 import hashlib
 import json
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
-
 
 ClassStatus = Literal["scheduled", "completed", "canceled", "makeup", "holiday"]
 SnapshotStatus = Literal["OPEN", "CONSUMED", "EXPIRED", "SUPERSEDED"]
@@ -30,8 +29,8 @@ class BillingPeriod(BaseModel):
     timezone: str
 
     @classmethod
-    def from_label(cls, label: str, *, timezone_name: str) -> "BillingPeriod":
-        year, month = [int(part) for part in label.split("-")]
+    def from_label(cls, label: str, *, timezone_name: str) -> BillingPeriod:
+        year, month = (int(part) for part in label.split("-"))
         tz = ZoneInfo(timezone_name)
         start = datetime(year, month, 1, 0, 0, tzinfo=tz)
         if month == 12:

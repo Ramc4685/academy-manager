@@ -4,7 +4,7 @@ comment on PR #18."""
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -41,7 +41,7 @@ class FakeWaiverRepo:
 
 
 def _app(parent_user_id: str = "alice") -> Application:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Application(
         application_id="app-1",
         academy_id="acad",

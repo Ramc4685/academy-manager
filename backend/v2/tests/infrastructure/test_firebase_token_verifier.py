@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import pytest
-
 import backend.v2.contexts.identity.infrastructure.firebase_token_verifier as verifier_module
+import pytest
 from backend.v2.contexts.identity.infrastructure.firebase_token_verifier import (
     FirebaseTokenVerifier,
 )

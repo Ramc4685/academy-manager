@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -46,8 +46,8 @@ def _session() -> Session:
         coach_id="coach-1",
         title="Junior A",
         location="Court 1",
-        start_at=datetime(2026, 6, 1, 18, 0, tzinfo=timezone.utc),
-        end_at=datetime(2026, 6, 1, 19, 0, tzinfo=timezone.utc),
+        start_at=datetime(2026, 6, 1, 18, 0, tzinfo=UTC),
+        end_at=datetime(2026, 6, 1, 19, 0, tzinfo=UTC),
         capacity=8,
     )
 
@@ -60,8 +60,8 @@ async def test_generates_weekly_occurrences_from_recurring_session() -> None:
     result = await use_case.execute(
         session=_session(),
         cmd=GenerateSessionOccurrencesCommand(
-            range_start=datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc),
-            range_end=datetime(2026, 6, 22, 23, 59, tzinfo=timezone.utc),
+            range_start=datetime(2026, 6, 1, 0, 0, tzinfo=UTC),
+            range_end=datetime(2026, 6, 22, 23, 59, tzinfo=UTC),
         ),
     )
 
@@ -77,8 +77,8 @@ async def test_generation_is_idempotent_for_existing_occurrences() -> None:
     repo = FakeOccurrenceRepo()
     use_case = GenerateSessionOccurrences(repo)
     cmd = GenerateSessionOccurrencesCommand(
-        range_start=datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc),
-        range_end=datetime(2026, 6, 15, 23, 59, tzinfo=timezone.utc),
+        range_start=datetime(2026, 6, 1, 0, 0, tzinfo=UTC),
+        range_end=datetime(2026, 6, 15, 23, 59, tzinfo=UTC),
     )
 
     first = await use_case.execute(session=_session(), cmd=cmd)

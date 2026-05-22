@@ -32,9 +32,7 @@ class SignedWaiverNotFound(Exception):
 
 
 class WaiverSignatureRepository(Protocol):
-    async def latest_for_student(
-        self, student_id: str
-    ) -> WaiverSignature | None: ...
+    async def latest_for_student(self, student_id: str) -> WaiverSignature | None: ...
 
 
 class WaiverTemplateRepository(Protocol):
@@ -68,9 +66,7 @@ class GetExactSignedWaiver:
     async def execute(self, student_id: str) -> ExactSignedWaiver:
         signature = await self._signatures.latest_for_student(student_id)
         if signature is None:
-            raise SignedWaiverNotFound(
-                f"No waiver signature on file for student {student_id!r}"
-            )
+            raise SignedWaiverNotFound(f"No waiver signature on file for student {student_id!r}")
         template = await self._templates.get(signature.waiver_template_id)
         if template is None:
             raise SignedWaiverNotFound(
@@ -82,7 +78,6 @@ class GetExactSignedWaiver:
             template=template,
             artifact_id=signature.artifact_id,
             signature_matches_template=(
-                bool(signature.content_hash)
-                and signature.content_hash == template.content_hash
+                bool(signature.content_hash) and signature.content_hash == template.content_hash
             ),
         )

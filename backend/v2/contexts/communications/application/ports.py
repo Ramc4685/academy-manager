@@ -57,9 +57,7 @@ class AudienceResolver(Protocol):
         self, audience: SessionAudience
     ) -> list[ResolvedRecipient]: ...
 
-    async def resolve_coach_audience(
-        self, audience: CoachAudience
-    ) -> list[ResolvedRecipient]: ...
+    async def resolve_coach_audience(self, audience: CoachAudience) -> list[ResolvedRecipient]: ...
 
     async def resolve_selected_audience(
         self, audience: SelectedRecipientsAudience

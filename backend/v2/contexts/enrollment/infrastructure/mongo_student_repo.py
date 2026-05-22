@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from bson import ObjectId as BsonObjectId
 
@@ -76,16 +76,21 @@ class MongoStudentRepository(TenantScopedRepository):
         cursor: str | None,
     ) -> AdminStudentPage:
         academy_id = current_academy_id()
-        docs = [doc async for doc in self._find_many(
-            {}, sort=[("full_name", 1), ("last_name", 1), ("first_name", 1)]
-        )]
+        docs = [
+            doc
+            async for doc in self._find_many(
+                {}, sort=[("full_name", 1), ("last_name", 1), ("first_name", 1)]
+            )
+        ]
 
         # Collect all parent_ids to batch-lookup users
-        parent_ids = list({
-            str(doc.get("parent_id") or doc.get("parent_user_id") or "")
-            for doc in docs
-            if doc.get("parent_id") or doc.get("parent_user_id")
-        })
+        parent_ids = list(
+            {
+                str(doc.get("parent_id") or doc.get("parent_user_id") or "")
+                for doc in docs
+                if doc.get("parent_id") or doc.get("parent_user_id")
+            }
+        )
         users_by_id: dict[str, dict[str, object]] = {}
         if parent_ids:
             oid_ids = [BsonObjectId(p) for p in parent_ids if BsonObjectId.is_valid(p)]
@@ -97,11 +102,14 @@ class MongoStudentRepository(TenantScopedRepository):
                 or_filter.append({"_id": {"$in": oid_ids}})
             user_cursor = self._db["users"].find({"academy_id": academy_id, "$or": or_filter})
             async for user in user_cursor:
-                display = str(
-                    user.get("display_name")
-                    or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
-                    or ""
-                ) or None
+                display = (
+                    str(
+                        user.get("display_name")
+                        or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+                        or ""
+                    )
+                    or None
+                )
                 email = user.get("email")
                 for key in (
                     str(user.get("user_id") or ""),
@@ -227,7 +235,7 @@ class MongoStudentRepository(TenantScopedRepository):
     ) -> dict[str, dict[str, object]]:
         if not student_ids:
             return {}
-        since = datetime.now(timezone.utc) - timedelta(days=90)
+        since = datetime.now(UTC) - timedelta(days=90)
         cursor = self._db["attendance"].aggregate(
             [
                 {
@@ -274,7 +282,7 @@ class MongoStudentRepository(TenantScopedRepository):
     ) -> dict[str, str]:
         if not student_ids:
             return {}
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff = now - timedelta(days=30)
         statuses = {student_id: "current" for student_id in student_ids}
         cursor = self._db["payments"].find(
@@ -305,10 +313,12 @@ class MongoStudentRepository(TenantScopedRepository):
         if isinstance(due_at, datetime):
             return MongoStudentRepository._as_utc(due_at) < now
         created_at = doc.get("created_at") or doc.get("invoice_created_at")
-        return isinstance(created_at, datetime) and MongoStudentRepository._as_utc(created_at) < cutoff
+        return (
+            isinstance(created_at, datetime) and MongoStudentRepository._as_utc(created_at) < cutoff
+        )
 
     @staticmethod
     def _as_utc(value: datetime) -> datetime:
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)

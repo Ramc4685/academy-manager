@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from backend.v2.shared.ids import new_ulid
 
 from backend.v2.contexts.billing.application.ports import StripeGateway
+from backend.v2.shared.ids import new_ulid
 
 
 class FakeStripeGateway(StripeGateway):

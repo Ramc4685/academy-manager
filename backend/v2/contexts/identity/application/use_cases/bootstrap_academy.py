@@ -8,9 +8,9 @@ duplicating that implementation here.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from datetime import datetime, timezone
 import hashlib
+from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -18,7 +18,6 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from backend.v2.contexts.identity.domain.models import Role, normalize_email
 from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.ids import new_ulid
-
 
 OWNER_ACADEMY_ROLE: Role = "admin"
 DEFAULT_RECORDS = (
@@ -122,7 +121,7 @@ class BootstrapAcademy:
     ) -> None:
         self._store = store
         self._id_factory = id_factory or (lambda prefix: f"{prefix}{new_ulid()}")
-        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     async def execute(self, command: BootstrapAcademyCommand) -> BootstrapAcademyResult:
         slug_match = await self._store.find_academy_by_slug(command.slug)

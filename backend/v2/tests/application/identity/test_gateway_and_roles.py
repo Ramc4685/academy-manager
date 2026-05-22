@@ -1,7 +1,6 @@
 from unittest.mock import AsyncMock
 
 import pytest
-
 from backend.v2.contexts.identity.application.change_user_role_use_case import (
     ChangeUserRole,
 )
