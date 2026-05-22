@@ -102,8 +102,22 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Merged BFF/DDD code; verify and fix local v2/BFF startup."
+user_problem_statement: "Wave 12 Agent F: documentation/test scaffolding only for SaaS launch-candidate local smoke, Playwright route matrix, BLNO seed path notes, and launch-gate docs. Final smoke and launch signoff wait until Wave 10 and Wave 11 branches are merged."
 backend:
+  - task: "Wave 12 SaaS launch smoke and gate scaffolding"
+    implemented: true
+    working: "NA"
+    file: "scripts/smoke/saas_readiness_smoke.sh"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Tightened SaaS readiness smoke to reject authenticated /api/v2/me without tenant host/header, reject frontend proxy auth-only tenant inference, and explicitly check tenant frontend proxy preserves Authorization plus tenant host for /api/v2/me. Added Wave 12 launch gate checklist and local staging runbook notes. Final HTTP smoke remains blocked until Wave 10/11 branches are merged and a local SaaS stack is available."
+      - working: true
+        agent: "main"
+        comment: "Verification passed for scaffolding: bash -n scripts/smoke/saas_readiness_smoke.sh scripts/dev/saas_staging.sh, scripts/smoke/saas_readiness_smoke.sh --static-only, and git diff --check. Full local SaaS stack up/smoke and BLNO seed were skipped because this linked worktree has no backend/.venv/bin/python and the local SaaS ports are already occupied by an existing Docker listener."
   - task: "SaaS v2 Wave 7 production readiness scaffolding"
     implemented: true
     working: true
@@ -376,6 +390,20 @@ backend:
         agent: "main"
         comment: "Agent B Wave 6 added a new Platform billing slice separate from parent tuition Billing. The model covers platform plans, plan limits, tenant subscriptions, billing/trial/cancellation status, and tenant Stripe customer/subscription IDs. Application tests cover trial creation, Stripe subscription activation, period-end cancellation scheduling, plan-limit checks, and absence of parent/student/enrollment/session tuition fields. Verification: focused platform billing pytest passed 4/4; targeted ruff passed; git diff --check passed."
 frontend:
+  - task: "Wave 12 SaaS Playwright route matrix scaffold"
+    implemented: true
+    working: "NA"
+    file: "frontend/e2e/specs/saas-launch-route-matrix.spec.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added network-stubbed launch route matrix scaffold covering admin dashboard, sessions, students, users, waitlist, pause requests, payments, dues, expenses, payouts, reports, messages, waivers, settings, audit logs, coach today, and parent payments. The guard asserts v2-only traffic and no legacy /api/* calls. Needs Playwright run and final real-stack smoke after Wave 10/11 merge."
+      - working: true
+        agent: "main"
+        comment: "Frontend verification passed after pnpm install restored node_modules: pnpm typecheck, pnpm build, and NEXT_PUBLIC_E2E_AUTH_BYPASS=1 PLAYWRIGHT_PORT=3109 pnpm exec playwright test e2e/specs/saas-launch-route-matrix.spec.ts --project=chromium-mobile --workers=1 --trace=off --output=/tmp/academy-wave12-pw-results (17 passed). An earlier route-matrix attempt without explicit NEXT_PUBLIC_E2E_AUTH_BYPASS redirected to /login and later hit Playwright artifact ENOSPC; the documented command now includes the bypass env and temp output path."
   - task: "Wave 9 admin shell branding cleanup"
     implemented: true
     working: true
@@ -622,17 +650,23 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 22
+  test_sequence: 23
   run_ui: true
 test_plan:
   current_focus:
     - "Wave 9 admin shell branding cleanup"
     - "Wave 9 admin roster technical leakage cleanup"
     - "Wave 9 admin operations cleanup"
+    - "Wave 12 SaaS launch smoke and gate scaffolding"
+    - "Wave 12 SaaS Playwright route matrix scaffold"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "Wave 12 Agent F scaffolding pass: tightened SaaS smoke coverage for tenant-host-required and frontend proxy auth/tenant preservation, added docs/qa/saas-launch-gate-checklist.md, updated SaaS local staging runbook with clean startup/BLNO idempotent seed notes, and added frontend/e2e/specs/saas-launch-route-matrix.spec.ts for the requested admin/coach/parent route matrix. Retest static smoke, launch route matrix Playwright, backend v2 tests, frontend typecheck/build, and git diff --check. Do not perform final launch signoff until Wave 10 and Wave 11 branches are merged."
+  - agent: "main"
+    message: "Wave 12 Agent F verification update: static SaaS smoke, frontend typecheck/build, focused Chromium route matrix (17 passed), and git diff --check passed. Full saas_staging up/smoke, BLNO seed, seed_blno_demo_data.py, and backend v2 pytest were skipped because backend/.venv/bin/python is absent in this worktree; seed_blno_demo_data.py is also absent. Final launch gates still wait for Wave 10 and Wave 11 merge."
   - agent: "main"
     message: "Wave 9 Agent D admin shell branding cleanup verification complete. Frontend-only changes passed pnpm build, pnpm typecheck, git diff --check, and a focused Playwright admin-shell smoke with stubbed BFF data. The shell now uses /api/v2/admin/academy display_name with Academy fallback, keeps admin email/role visible, and does not display Rally Academy, COURT 7, academy_id, or user_id in normal shell UI. Exact BLNO manual login was not completed because the running local ports are shared/outside this worktree and the Firebase emulator lacked the expected admin login user."
   - agent: "main"

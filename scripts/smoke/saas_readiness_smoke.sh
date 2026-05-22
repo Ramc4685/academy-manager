@@ -101,6 +101,17 @@ if [[ -n "${AUTH_TOKEN}" ]]; then
     echo "Expected authenticated unknown-tenant /api/v2/me to return 401 or 403, got ${unknown_auth_code}" >&2
     exit 1
   fi
+
+  echo "Checking authenticated /api/v2/me still requires explicit tenant resolution..."
+  no_tenant_code="$(
+    status_code \
+      -H "Authorization: Bearer ${AUTH_TOKEN}" \
+      "${API_URL}/api/v2/me"
+  )"
+  if [[ "${no_tenant_code}" == "200" ]]; then
+    echo "Expected authenticated /api/v2/me without tenant host/header to be rejected, got 200" >&2
+    exit 1
+  fi
 fi
 
 if [[ -n "${INTERNAL_TENANT_HEADER_NAME}" && -n "${INTERNAL_TENANT_HEADER_VALUE}" ]]; then
@@ -147,10 +158,24 @@ else
   echo "Frontend proxy check skipped or unavailable at ${FRONTEND_URL} (status ${frontend_code})."
 fi
 
+if [[ -n "${AUTH_TOKEN}" ]]; then
+  echo "Checking frontend proxy does not infer tenant from auth alone..."
+  frontend_no_tenant_code="$(
+    status_code \
+      -H "Authorization: Bearer ${AUTH_TOKEN}" \
+      "${FRONTEND_URL}/api/v2/me" || true
+  )"
+  if [[ "${frontend_no_tenant_code}" == "200" ]]; then
+    echo "Expected frontend proxy /api/v2/me without tenant host to be rejected, got 200" >&2
+    exit 1
+  fi
+fi
+
 if [[ -n "${TENANT_FRONTEND_URL}" && -n "${AUTH_TOKEN}" ]]; then
   echo "Checking tenant frontend login page and authenticated v2 proxy..."
   login_code="$(status_code "${TENANT_FRONTEND_URL}/login" || true)"
   if [[ "${login_code}" == "200" || "${login_code}" == "307" || "${login_code}" == "308" ]]; then
+    echo "Checking tenant frontend proxy preserves Authorization and tenant host for /api/v2/me..."
     tenant_proxy_code="$(
       status_code \
         -H "Authorization: Bearer ${AUTH_TOKEN}" \
