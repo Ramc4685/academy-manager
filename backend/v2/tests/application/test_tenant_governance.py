@@ -13,6 +13,7 @@ from backend.v2.contexts.platform.governance.application.use_cases import (
     RequestSupportImpersonationCommand,
     RequestTenantDeletionCommand,
     RequestTenantExportCommand,
+    RevokeSupportAccessCommand,
     TenantGovernanceService,
 )
 from backend.v2.contexts.platform.governance.domain.errors import GovernancePermissionDenied
@@ -37,21 +38,108 @@ class FakeGovernanceStore:
         self.tenant_exports[request["export_request_id"]] = dict(request)
         return dict(request)
 
+    async def get_tenant_export_request(self, request_id: str) -> dict[str, Any] | None:
+        request = self.tenant_exports.get(request_id)
+        return dict(request) if request else None
+
+    async def list_tenant_export_requests(
+        self, academy_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        return [
+            dict(request)
+            for request in self.tenant_exports.values()
+            if academy_id is None or request["academy_id"] == academy_id
+        ]
+
+    async def update_tenant_export_request(
+        self, request_id: str, updates: dict[str, Any]
+    ) -> dict[str, Any]:
+        self.tenant_exports[request_id].update(updates)
+        return dict(self.tenant_exports[request_id])
+
     async def create_tenant_deletion_request(self, request: dict[str, Any]) -> dict[str, Any]:
         self.tenant_deletions[request["deletion_request_id"]] = dict(request)
         return dict(request)
+
+    async def list_tenant_deletion_requests(
+        self, academy_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        return [
+            dict(request)
+            for request in self.tenant_deletions.values()
+            if academy_id is None or request["academy_id"] == academy_id
+        ]
 
     async def create_student_data_deletion_request(self, request: dict[str, Any]) -> dict[str, Any]:
         self.student_deletions[request["student_deletion_request_id"]] = dict(request)
         return dict(request)
 
+    async def list_student_data_deletion_requests(
+        self, academy_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        return [
+            dict(request)
+            for request in self.student_deletions.values()
+            if academy_id is None or request["academy_id"] == academy_id
+        ]
+
     async def create_support_access_grant(self, grant: dict[str, Any]) -> dict[str, Any]:
         self.support_access_grants[grant["support_access_grant_id"]] = dict(grant)
+        return dict(grant)
+
+    async def list_support_access_grants(
+        self, academy_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        return [
+            dict(grant)
+            for grant in self.support_access_grants.values()
+            if academy_id is None or grant["academy_id"] == academy_id
+        ]
+
+    async def revoke_support_access_grant(
+        self, grant_id: str, updates: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        grant = self.support_access_grants.get(grant_id)
+        if grant is None:
+            return None
+        grant.update(updates)
         return dict(grant)
 
     async def create_support_impersonation_request(self, request: dict[str, Any]) -> dict[str, Any]:
         self.support_impersonation_requests[request["impersonation_request_id"]] = dict(request)
         return dict(request)
+
+    async def list_support_impersonation_requests(
+        self, academy_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        return [
+            dict(request)
+            for request in self.support_impersonation_requests.values()
+            if academy_id is None or request["academy_id"] == academy_id
+        ]
+
+    async def get_request_status(self, request_id: str) -> dict[str, Any] | None:
+        mappings = [
+            ("tenant_export", "export_request_id", self.tenant_exports),
+            ("tenant_deletion", "deletion_request_id", self.tenant_deletions),
+            ("student_data_deletion", "student_deletion_request_id", self.student_deletions),
+            ("support_access", "support_access_grant_id", self.support_access_grants),
+            (
+                "support_impersonation",
+                "impersonation_request_id",
+                self.support_impersonation_requests,
+            ),
+        ]
+        for request_type, id_field, collection in mappings:
+            request = collection.get(request_id)
+            if request:
+                return {
+                    "request_id": request[id_field],
+                    "request_type": request_type,
+                    "academy_id": request["academy_id"],
+                    "status": request["status"],
+                }
+        return None
 
     async def append_audit_log(self, audit: dict[str, Any]) -> dict[str, Any]:
         self.audit_logs.append(dict(audit))
@@ -313,3 +401,130 @@ def test_default_governance_policies_document_launch_constraints() -> None:
     assert RetentionPolicy().financial_record_retention_days == 2555
     assert PIIHandlingPolicy().redact_exports_by_default is True
     assert PIIHandlingPolicy().delete_minor_profile_without_review is False
+
+
+@pytest.mark.asyncio
+async def test_mongo_governance_store_persists_requests_and_status() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+
+    from backend.v2.contexts.platform.governance.infrastructure.mongo_governance_store import (
+        MongoGovernanceStore,
+    )
+
+    client = mongomock_motor.AsyncMongoMockClient()
+    store = MongoGovernanceStore(client["governance_test"])
+    service = _service(store)
+    actor = _academy_actor()
+
+    export = await service.request_tenant_export(
+        RequestTenantExportCommand(
+            academy_id="acad_001",
+            actor=actor,
+            include_pii=True,
+            reason="owner portability request",
+        )
+    )
+    deletion = await service.request_tenant_deletion(
+        RequestTenantDeletionCommand(
+            academy_id="acad_001",
+            actor=actor,
+            reason="tenant closure request",
+        )
+    )
+
+    exports = await service.list_tenant_export_requests(academy_id="acad_001")
+    status = await service.get_request_status(export.export_request_id)
+    audit_logs = await store.list_audit_logs(academy_id="acad_001")
+
+    assert [item.export_request_id for item in exports] == [export.export_request_id]
+    assert status.request_id == export.export_request_id
+    assert status.request_type == "tenant_export"
+    assert status.status == "queued"
+    assert deletion.hard_delete_allowed is False
+    assert [entry["action"] for entry in audit_logs] == [
+        "tenant_export.requested",
+        "tenant_deletion.requested",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_export_worker_writes_metadata_only_and_never_marks_deletions_destructive() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+
+    from backend.v2.contexts.platform.governance.application.export_worker import (
+        LocalTenantExportArtifactWriter,
+        TenantExportWorker,
+    )
+    from backend.v2.contexts.platform.governance.infrastructure.mongo_governance_store import (
+        MongoGovernanceStore,
+    )
+
+    client = mongomock_motor.AsyncMongoMockClient()
+    store = MongoGovernanceStore(client["governance_test"])
+    service = _service(store)
+    actor = _academy_actor()
+    export = await service.request_tenant_export(
+        RequestTenantExportCommand(
+            academy_id="acad_001",
+            actor=actor,
+            include_pii=False,
+            reason="test artifact",
+        )
+    )
+    deletion = await service.request_tenant_deletion(
+        RequestTenantDeletionCommand(
+            academy_id="acad_001",
+            actor=actor,
+            reason="tenant closure request",
+        )
+    )
+
+    worker = TenantExportWorker(
+        store=store,
+        artifact_writer=LocalTenantExportArtifactWriter(base_uri="local-test://exports"),
+        clock=lambda: datetime(2026, 5, 22, 16, 0, tzinfo=UTC),
+    )
+    completed = await worker.run(export.export_request_id)
+
+    deletion_status = await service.get_request_status(deletion.deletion_request_id)
+    assert completed.status == "completed"
+    assert completed.artifact_metadata == {
+        "storage": "local_test",
+        "uri": "local-test://exports/acad_001/tenant_export_001.json",
+        "include_pii": False,
+        "record_counts": {},
+        "destructive": False,
+    }
+    assert completed.artifact_expires_at == datetime(2026, 5, 29, 16, 0, tzinfo=UTC)
+    assert deletion_status.status == "pending_review"
+
+
+@pytest.mark.asyncio
+async def test_support_access_can_be_revoked_without_session_minting() -> None:
+    store = FakeGovernanceStore()
+    service = _service(store)
+    actor = _platform_actor()
+    grant = await service.grant_support_access(
+        GrantSupportAccessCommand(
+            academy_id="acad_001",
+            actor=actor,
+            support_user_id="user_support_002",
+            purpose="debug tenant onboarding",
+        )
+    )
+
+    revoked = await service.revoke_support_access(
+        RevokeSupportAccessCommand(
+            academy_id="acad_001",
+            actor=actor,
+            support_access_grant_id=grant.support_access_grant_id,
+            reason="issue resolved",
+        )
+    )
+
+    assert revoked.status == "revoked"
+    assert store.support_access_grants[grant.support_access_grant_id]["status"] == "revoked"
+    assert [entry["action"] for entry in store.audit_logs] == [
+        "support_access.granted",
+        "support_access.revoked",
+    ]

@@ -108,6 +108,15 @@ class GovernanceAuditLog(BaseModel):
     created_at: datetime
 
 
+class GovernanceRequestStatus(BaseModel):
+    model_config = {"frozen": True}
+
+    request_id: str
+    request_type: str
+    academy_id: str
+    status: str
+
+
 class TenantExportRequest(BaseModel):
     model_config = {"frozen": True}
 
@@ -120,6 +129,10 @@ class TenantExportRequest(BaseModel):
     reason: str
     retention_policy: dict[str, object]
     pii_handling_policy: dict[str, object]
+    artifact_metadata: dict[str, object] | None = None
+    artifact_expires_at: datetime | None = None
+    completed_at: datetime | None = None
+    updated_at: datetime | None = None
     created_at: datetime
 
 
@@ -168,6 +181,9 @@ class SupportAccessGrant(BaseModel):
     purpose: str
     created_at: datetime
     expires_at: datetime
+    revoked_at: datetime | None = None
+    revoked_by_user_id: str | None = None
+    revoke_reason: str | None = None
 
     @field_validator("purpose")
     @classmethod
