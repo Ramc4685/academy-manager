@@ -785,6 +785,15 @@ agent_communication:
       Verification: ruff check v2 passed; ruff format --check v2 passed; git diff --check passed; compileall over the directly conflicted v2 files passed; focused merge-adjacent suite passed 35/35; full backend v2 suite passed 330/330 with 7 mongomock utcnow deprecation warnings.
   - agent: "main"
     message: |
+      SaaS v2 Wave 6 — Agent C (platform governance/support access) on branch feat/saas-wave6-governance-support.
+
+      Implemented an isolated v2 platform governance context under backend/v2/contexts/platform/governance with policy/domain models and application use cases for tenant export requests, tenant deletion requests, student data deletion requests, support access grants, and conservative support impersonation requests. Support impersonation is audited but does not mint a session token; requests remain requires_manual_approval with impersonation_enabled=false. Added docs/requirements/2026-05-22-saas-data-governance-and-support-access.md to record retention, soft delete, PII, support access, and remaining compliance gaps.
+
+      Verification: backend focused pytest v2/tests/application/test_tenant_governance.py -q passed with 7 passed and 1 existing Starlette multipart warning. git diff --check passed.
+  - agent: "main"
+    message: "SaaS v2 Wave 6 orchestrator verification for Agent C: source .venv/bin/activate && pytest v2/tests/application/test_tenant_governance.py -q passed with 7 passed and 1 existing Starlette multipart warning. git diff --check passed. No live support impersonation session/token behavior was implemented."
+  - agent: "main"
+    message: |
       SaaS v2 Wave 6 — Agent A platform tenant lifecycle implementation in worktree academy-manager-agent-a-wave6.
 
       Added a Platform bounded context for tenant lifecycle state, plan limits, status health, and Mongo-compatible persistence over the academies collection. Added platform routes under /api/v2/platform/tenants for create, activate, suspend, cancel, reactivate, plan/limits update, status, and health. Mutations require platform_admin; status/health allow platform_admin or platform_support. Academy roles cannot access platform lifecycle routes.
