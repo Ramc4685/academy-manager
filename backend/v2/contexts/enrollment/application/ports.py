@@ -54,6 +54,8 @@ class RosterQuery(Protocol):
 
 
 class SessionWriter(Protocol):
+    async def get(self, session_id: str) -> Session | None: ...
+
     async def try_reserve_seat(self, session_id: str) -> bool:
         """Atomic capacity check + reserve. Returns False if at capacity."""
 

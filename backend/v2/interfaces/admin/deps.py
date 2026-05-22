@@ -14,6 +14,8 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
 )
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
     AcademyRevenueQuery,
+    DeleteExpense,
+    EditExpense,
     MongoExpenseRepository,
     MongoPayoutRepository,
     RecordExpense,
@@ -30,6 +32,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     CancelEnrollment,
     CancelSession,
     CreateSession,
+    EditSession,
     EditRosterAdd,
     JoinWaitlist,
     PauseEnrollment,
@@ -78,6 +81,7 @@ class AdminUseCases:
     list_admin_students: ListAdminStudents
     # sessions / roster
     create_session: CreateSession
+    edit_session: EditSession
     cancel_session: CancelSession
     edit_roster_add: EditRosterAdd
     cancel_enrollment: CancelEnrollment
@@ -106,6 +110,8 @@ class AdminUseCases:
     undo_payment_paid: UndoPaymentPaid
     # finance (# FINANCE)
     record_expense: RecordExpense
+    edit_expense: EditExpense
+    delete_expense: DeleteExpense
     expenses: MongoExpenseRepository
     payouts: MongoPayoutRepository
     revenue_query: AcademyRevenueQuery

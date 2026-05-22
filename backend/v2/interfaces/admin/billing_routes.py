@@ -11,6 +11,8 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     UndoPaymentPaidCommand,
 )
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
+    DeleteExpenseCommand,
+    EditExpenseCommand,
     RecordExpenseCommand,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import (
@@ -32,6 +34,8 @@ from backend.v2.interfaces.admin.views import (
     AdminPayoutView,
     AdminRevenueResponse,
     ApplyPaymentDiscountRequest,
+    DeleteExpenseRequest,
+    EditExpenseRequest,
     GenerateMonthlyPaymentsRequest,
     GenerateMonthlyPaymentsResponse,
     InvoiceDto,
@@ -317,6 +321,45 @@ async def record_expense(
         amount_cents=e.amount_cents,
         note=e.note,
         incurred_on=e.incurred_on,
+    )
+
+
+@router.patch("/finance/expenses/{expense_id}", response_model=AdminExpenseView)  # FINANCE
+async def edit_expense(
+    expense_id: str,
+    body: EditExpenseRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminExpenseView:
+    e = await use_cases.edit_expense.execute(
+        EditExpenseCommand(
+            expense_id=expense_id,
+            actor_id=claims.user_id,
+            **body.model_dump(exclude_unset=True),
+        )
+    )
+    return AdminExpenseView(
+        expense_id=e.expense_id,
+        category=e.category,
+        amount_cents=e.amount_cents,
+        note=e.note,
+        incurred_on=e.incurred_on,
+    )
+
+
+@router.delete("/finance/expenses/{expense_id}", status_code=204, response_model=None)  # FINANCE
+async def delete_expense(
+    expense_id: str,
+    body: DeleteExpenseRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> None:
+    await use_cases.delete_expense.execute(
+        DeleteExpenseCommand(
+            expense_id=expense_id,
+            actor_id=claims.user_id,
+            reason=body.reason,
+        )
     )
 
 

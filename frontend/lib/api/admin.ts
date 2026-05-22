@@ -20,6 +20,7 @@ export interface AdminSessionView {
   start_at: string; // ISO 8601
   end_at: string; // ISO 8601
   capacity: number;
+  status: "scheduled" | "cancelled" | "completed";
   enrolled_count: number;
   waitlist_count: number;
 }
@@ -35,6 +36,16 @@ export interface CreateSessionRequest {
   start_at: string;
   end_at: string;
   capacity: number;
+}
+
+export interface EditSessionRequest {
+  coach_id?: string;
+  title?: string;
+  location?: string;
+  start_at?: string;
+  end_at?: string;
+  capacity?: number;
+  reason?: string;
 }
 
 export type EnrollmentStatus = "active" | "paused" | "cancelled" | "withdrawn";
@@ -229,6 +240,14 @@ export interface CreateExpenseRequest {
   amount_cents: number;
   note?: string;
   incurred_on?: string;
+}
+
+export interface EditExpenseRequest {
+  category?: CreateExpenseRequest["category"];
+  amount_cents?: number;
+  note?: string;
+  incurred_on?: string;
+  reason?: string;
 }
 
 export interface AdminRevenueResponse {
@@ -516,6 +535,16 @@ export function createAdminSession(payload: CreateSessionRequest): Promise<Admin
   });
 }
 
+export function updateAdminSession(
+  sessionId: string,
+  payload: EditSessionRequest
+): Promise<AdminSessionView> {
+  return apiFetch<AdminSessionView>(`/admin/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function deleteAdminSession(sessionId: string): Promise<void> {
   return apiFetch<void>(`/admin/sessions/${sessionId}`, { method: "DELETE" });
 }
@@ -680,6 +709,23 @@ export function listExpenses(): Promise<AdminExpenseList> {
 export function createExpense(payload: CreateExpenseRequest): Promise<AdminExpenseView> {
   return apiFetch<AdminExpenseView>("/admin/finance/expenses", {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateExpense(
+  expenseId: string,
+  payload: EditExpenseRequest
+): Promise<AdminExpenseView> {
+  return apiFetch<AdminExpenseView>(`/admin/finance/expenses/${encodeURIComponent(expenseId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteExpense(expenseId: string, payload: { reason: string }): Promise<void> {
+  return apiFetch<void>(`/admin/finance/expenses/${encodeURIComponent(expenseId)}`, {
+    method: "DELETE",
     body: JSON.stringify(payload),
   });
 }

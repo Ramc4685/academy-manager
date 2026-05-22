@@ -1,14 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 
 import {
   createExpense,
+  deleteExpense,
   listExpenses,
+  updateExpense,
   type AdminExpenseView,
   type CreateExpenseRequest,
+  type EditExpenseRequest,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { useAdminAction } from "@/components/admin/admin-action-slot";
@@ -30,6 +33,8 @@ function money(cents: number): string {
 
 export default function AdminExpensesPage() {
   const [open, setOpen] = useState(false);
+  const [editExpense, setEditExpense] = useState<AdminExpenseView | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AdminExpenseView | null>(null);
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: queryKeys.admin.expenses(), queryFn: listExpenses });
   const expenses = query.data?.expenses ?? [];
@@ -59,11 +64,12 @@ export default function AdminExpensesPage() {
       ) : (
         <div className="space-y-3">
           <Card p={20}>
-            <ExpensesTable expenses={expenses} />
+            <ExpensesTable
+              expenses={expenses}
+              onEdit={setEditExpense}
+              onDelete={setDeleteTarget}
+            />
           </Card>
-          <p className="text-sm text-rally-subtle">
-            Expense edit and delete workflows are not available yet; they remain a Wave 10 operational gap.
-          </p>
         </div>
       )}
       <AddExpenseDialog
@@ -74,11 +80,39 @@ export default function AdminExpensesPage() {
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.expenses() });
         }}
       />
+      <EditExpenseDialog
+        expense={editExpense}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setEditExpense(null);
+        }}
+        onSaved={() => {
+          setEditExpense(null);
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.expenses() });
+        }}
+      />
+      <DeleteExpenseDialog
+        expense={deleteTarget}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setDeleteTarget(null);
+        }}
+        onDeleted={() => {
+          setDeleteTarget(null);
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.expenses() });
+        }}
+      />
     </section>
   );
 }
 
-function ExpensesTable({ expenses }: { expenses: AdminExpenseView[] }) {
+function ExpensesTable({
+  expenses,
+  onEdit,
+  onDelete,
+}: {
+  expenses: AdminExpenseView[];
+  onEdit: (expense: AdminExpenseView) => void;
+  onDelete: (expense: AdminExpenseView) => void;
+}) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[720px] text-sm">
@@ -95,6 +129,9 @@ function ExpensesTable({ expenses }: { expenses: AdminExpenseView[] }) {
             </th>
             <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
               Incurred
+            </th>
+            <th className="px-2 pb-3 text-right font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+              <span className="sr-only">Actions</span>
             </th>
           </tr>
         </thead>
@@ -115,11 +152,262 @@ function ExpensesTable({ expenses }: { expenses: AdminExpenseView[] }) {
               <td className="px-2 py-3 font-mono text-xs text-rally-muted">
                 {new Date(expense.incurred_on).toLocaleDateString()}
               </td>
+              <td className="px-2 py-3">
+                <div className="flex justify-end gap-2">
+                  <Button variant="secondary" size="sm" onClick={() => onEdit(expense)}>
+                    Edit
+                  </Button>
+                  <Button variant="danger" size="sm" onClick={() => onDelete(expense)}>
+                    Delete
+                  </Button>
+                </div>
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function EditExpenseDialog({
+  expense,
+  onOpenChange,
+  onSaved,
+}: {
+  expense: AdminExpenseView | null;
+  onOpenChange: (value: boolean) => void;
+  onSaved: () => void;
+}) {
+  const [category, setCategory] = useState<CreateExpenseRequest["category"]>("equipment");
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [incurredOn, setIncurredOn] = useState(new Date().toISOString().slice(0, 10));
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const open = expense !== null;
+
+  useEffect(() => {
+    if (!expense) return;
+    setCategory(expense.category as CreateExpenseRequest["category"]);
+    setAmount(String(expense.amount_cents / 100));
+    setNote(expense.note);
+    setIncurredOn(new Date(expense.incurred_on).toISOString().slice(0, 10));
+    setReason("");
+  }, [expense]);
+
+  const mutation = useMutation({
+    mutationFn: (payload: EditExpenseRequest) => updateExpense(expense!.expense_id, payload),
+    onSuccess: () => {
+      setError(null);
+      onSaved();
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault();
+    const amountCents = Math.round(Number(amount) * 100);
+    if (!amountCents || amountCents <= 0) {
+      setError("Enter a valid amount.");
+      return;
+    }
+    mutation.mutate({
+      category,
+      amount_cents: amountCents,
+      note,
+      incurred_on: incurredOn ? new Date(`${incurredOn}T00:00:00Z`).toISOString() : undefined,
+      reason,
+    });
+  }
+
+  return (
+    <Dialog.Root
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) setError(null);
+        onOpenChange(nextOpen);
+      }}
+    >
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(92vw,420px)] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-6 shadow-xl">
+          <Dialog.Title className="font-display text-lg font-semibold text-rally-ink">
+            Edit expense
+          </Dialog.Title>
+          {error && <p className="mt-3 rounded-md bg-red-50 p-2 text-sm text-red-700">{error}</p>}
+          <form onSubmit={submit} className="mt-4 space-y-3">
+            <ExpenseFields
+              category={category}
+              setCategory={setCategory}
+              amount={amount}
+              setAmount={setAmount}
+              incurredOn={incurredOn}
+              setIncurredOn={setIncurredOn}
+              note={note}
+              setNote={setNote}
+            />
+            <label className="grid gap-1.5 text-sm font-medium text-rally-ink">
+              Reason
+              <input
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                className={inputClass}
+                placeholder="Optional"
+              />
+            </label>
+            <div className="flex justify-end gap-2 pt-2">
+              <Dialog.Close asChild>
+                <Button variant="secondary" size="sm">Cancel</Button>
+              </Dialog.Close>
+              <Button type="submit" variant="volt" size="sm" disabled={mutation.isPending}>
+                {mutation.isPending ? "Saving..." : "Save"}
+              </Button>
+            </div>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function DeleteExpenseDialog({
+  expense,
+  onOpenChange,
+  onDeleted,
+}: {
+  expense: AdminExpenseView | null;
+  onOpenChange: (value: boolean) => void;
+  onDeleted: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const mutation = useMutation({
+    mutationFn: () => deleteExpense(expense!.expense_id, { reason }),
+    onSuccess: () => {
+      setReason("");
+      setError(null);
+      onDeleted();
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  return (
+    <Dialog.Root
+      open={expense !== null}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) {
+          setReason("");
+          setError(null);
+        }
+        onOpenChange(nextOpen);
+      }}
+    >
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(92vw,420px)] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-6 shadow-xl">
+          <Dialog.Title className="font-display text-lg font-semibold text-rally-ink">
+            Delete expense
+          </Dialog.Title>
+          <Dialog.Description className="mt-1 text-sm text-rally-muted">
+            The expense will be hidden from normal finance views.
+          </Dialog.Description>
+          {error && <p className="mt-3 rounded-md bg-red-50 p-2 text-sm text-red-700">{error}</p>}
+          <form
+            className="mt-4 space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!reason.trim()) {
+                setError("Enter a reason.");
+                return;
+              }
+              mutation.mutate();
+            }}
+          >
+            <label className="grid gap-1.5 text-sm font-medium text-rally-ink">
+              Reason
+              <input
+                required
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                className={inputClass}
+              />
+            </label>
+            <div className="flex justify-end gap-2 pt-2">
+              <Dialog.Close asChild>
+                <Button variant="secondary" size="sm">Cancel</Button>
+              </Dialog.Close>
+              <Button type="submit" variant="danger" size="sm" disabled={mutation.isPending}>
+                {mutation.isPending ? "Deleting..." : "Delete"}
+              </Button>
+            </div>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function ExpenseFields({
+  category,
+  setCategory,
+  amount,
+  setAmount,
+  incurredOn,
+  setIncurredOn,
+  note,
+  setNote,
+}: {
+  category: CreateExpenseRequest["category"];
+  setCategory: (value: CreateExpenseRequest["category"]) => void;
+  amount: string;
+  setAmount: (value: string) => void;
+  incurredOn: string;
+  setIncurredOn: (value: string) => void;
+  note: string;
+  setNote: (value: string) => void;
+}) {
+  return (
+    <>
+      <label className="grid gap-1.5 text-sm font-medium text-rally-ink">
+        Category
+        <select
+          value={category}
+          onChange={(event) => setCategory(event.target.value as CreateExpenseRequest["category"])}
+          className={inputClass}
+        >
+          {CATEGORIES.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="grid gap-1.5 text-sm font-medium text-rally-ink">
+        Amount
+        <input
+          type="number"
+          min="0.01"
+          step="0.01"
+          value={amount}
+          onChange={(event) => setAmount(event.target.value)}
+          className={inputClass}
+        />
+      </label>
+      <label className="grid gap-1.5 text-sm font-medium text-rally-ink">
+        Date
+        <input
+          type="date"
+          value={incurredOn}
+          onChange={(event) => setIncurredOn(event.target.value)}
+          className={inputClass}
+        />
+      </label>
+      <label className="grid gap-1.5 text-sm font-medium text-rally-ink">
+        Note
+        <input value={note} onChange={(event) => setNote(event.target.value)} className={inputClass} />
+      </label>
+    </>
   );
 }
 
@@ -173,44 +461,16 @@ function AddExpenseDialog({
           </Dialog.Title>
           {error && <p className="mt-3 rounded-md bg-red-50 p-2 text-sm text-red-700">{error}</p>}
           <form onSubmit={submit} className="mt-4 space-y-3">
-            <label className="grid gap-1.5 text-sm font-medium text-rally-ink">
-              Category
-              <select
-                value={category}
-                onChange={(event) => setCategory(event.target.value as CreateExpenseRequest["category"])}
-                className={inputClass}
-              >
-                {CATEGORIES.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="grid gap-1.5 text-sm font-medium text-rally-ink">
-              Amount
-              <input
-                type="number"
-                min="0.01"
-                step="0.01"
-                value={amount}
-                onChange={(event) => setAmount(event.target.value)}
-                className={inputClass}
-              />
-            </label>
-            <label className="grid gap-1.5 text-sm font-medium text-rally-ink">
-              Date
-              <input
-                type="date"
-                value={incurredOn}
-                onChange={(event) => setIncurredOn(event.target.value)}
-                className={inputClass}
-              />
-            </label>
-            <label className="grid gap-1.5 text-sm font-medium text-rally-ink">
-              Note
-              <input value={note} onChange={(event) => setNote(event.target.value)} className={inputClass} />
-            </label>
+            <ExpenseFields
+              category={category}
+              setCategory={setCategory}
+              amount={amount}
+              setAmount={setAmount}
+              incurredOn={incurredOn}
+              setIncurredOn={setIncurredOn}
+              note={note}
+              setNote={setNote}
+            />
             <div className="flex justify-end gap-2 pt-2">
               <Dialog.Close asChild>
                 <Button variant="secondary" size="sm">Cancel</Button>

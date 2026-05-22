@@ -73,6 +73,16 @@ class CreateSessionRequest(BaseModel):
     capacity: int
 
 
+class EditSessionRequest(BaseModel):
+    coach_id: str | None = None
+    title: str | None = None
+    location: str | None = None
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+    capacity: int | None = Field(default=None, ge=1)
+    reason: str | None = None
+
+
 # --- Enrollments ---
 
 
@@ -321,6 +331,18 @@ class RecordExpenseRequest(BaseModel):  # FINANCE
     amount_cents: int
     note: str = ""
     incurred_on: datetime | None = None
+
+
+class EditExpenseRequest(BaseModel):  # FINANCE
+    category: Literal["rent", "equipment", "salary", "marketing", "other"] | None = None
+    amount_cents: int | None = Field(default=None, ge=0)
+    note: str | None = None
+    incurred_on: datetime | None = None
+    reason: str | None = None
+
+
+class DeleteExpenseRequest(BaseModel):  # FINANCE
+    reason: str
 
 
 class AdminRevenueResponse(BaseModel):  # FINANCE

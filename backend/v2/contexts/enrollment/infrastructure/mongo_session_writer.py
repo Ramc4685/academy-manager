@@ -7,12 +7,19 @@ loser gets matched_count == 0 and we return False.
 
 from __future__ import annotations
 
+from bson import ObjectId
+
 from backend.v2.contexts.enrollment.domain.models import Session
+from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import MongoSessionRepository
 from backend.v2.shared.tenancy import TenantScopedRepository
 
 
 class MongoSessionWriter(TenantScopedRepository):
     collection_name = "sessions"
+
+    async def get(self, session_id: str) -> Session | None:
+        doc = await self._find_one(_session_filter(session_id))
+        return MongoSessionRepository._to_domain(doc) if doc else None
 
     async def try_reserve_seat(self, session_id: str) -> bool:
         result = await self.collection.update_one(
@@ -54,6 +61,12 @@ class MongoSessionWriter(TenantScopedRepository):
     async def update(self, session: Session) -> None:
         doc = session.model_dump(mode="python")
         await self._update_one(
-            {"session_id": session.session_id},
+            _session_filter(session.session_id),
             {"$set": {k: v for k, v in doc.items() if k != "academy_id"}},
         )
+
+
+def _session_filter(session_id: str) -> dict[str, object]:
+    if ObjectId.is_valid(session_id):
+        return {"$or": [{"session_id": session_id}, {"_id": ObjectId(session_id)}]}
+    return {"session_id": session_id}
