@@ -2,8 +2,13 @@
 
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { AlertTriangle, ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
 
 import { exportAdminReportCsv, getRevenue } from "@/lib/api/admin";
+import {
+  listReportSnapshots,
+  type ReportSnapshotCard,
+} from "@/lib/api/v2/reports";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 import { MiniBars } from "@/components/ds/charts";
@@ -52,7 +57,7 @@ export default function AdminReportsPage() {
 
   return (
     <section data-testid="admin-reports" className="space-y-5">
-
+      <SnapshotsBlock />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-3">
@@ -134,4 +139,73 @@ function downloadCsv(title: string, csv: string) {
   anchor.download = `${title.toLowerCase().replace(/\s+/g, "-")}.csv`;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Snapshot cards (Wave 5 — placeholders pending Agent A read models).
+// ────────────────────────────────────────────────────────────────────────────
+
+function SnapshotsBlock() {
+  const snapshotsQuery = useQuery({
+    queryKey: ["admin", "reports", "snapshots"],
+    queryFn: listReportSnapshots,
+  });
+
+  const cards = snapshotsQuery.data ?? [];
+
+  return (
+    <div className="space-y-3" data-testid="admin-reports-snapshots">
+      <div
+        role="status"
+        className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+      >
+        <AlertTriangle className="size-4 mt-0.5 shrink-0" aria-hidden="true" />
+        <div>
+          <strong className="font-semibold">Snapshots are placeholder.</strong>{" "}
+          Pre-computed reporting read models are in flight (Wave 5 Agent A).
+          These cards will populate as the read-model endpoints land.
+        </div>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {snapshotsQuery.isPending
+          ? Array.from({ length: 4 }, (_, i) => (
+              <div key={i} className="h-32 animate-pulse rounded-xl bg-neutral-100" />
+            ))
+          : cards.map((card) => <SnapshotCard key={card.key} card={card} />)}
+      </div>
+    </div>
+  );
+}
+
+function SnapshotCard({ card }: { card: ReportSnapshotCard }) {
+  return (
+    <Card p={20} className="flex flex-col" data-testid={`admin-reports-snapshot-${card.key}`}>
+      <Overline>{card.label}</Overline>
+      <div className="mt-2 flex items-baseline gap-2">
+        <BigNum size={28}>{card.value}</BigNum>
+        {card.delta && (
+          <span
+            className={`inline-flex items-center gap-0.5 font-mono text-[11px] font-bold ${
+              card.trend === "up"
+                ? "text-emerald-700"
+                : card.trend === "down"
+                  ? "text-red-700"
+                  : "text-rally-muted"
+            }`}
+            aria-label={`Change vs prior period: ${card.delta}`}
+          >
+            <TrendIcon trend={card.trend ?? "flat"} />
+            {card.delta}
+          </span>
+        )}
+      </div>
+      <p className="mt-2 text-[12px] text-rally-muted">{card.description}</p>
+    </Card>
+  );
+}
+
+function TrendIcon({ trend }: { trend: "up" | "down" | "flat" }) {
+  if (trend === "up") return <ArrowUpRight className="size-3" aria-hidden="true" />;
+  if (trend === "down") return <ArrowDownRight className="size-3" aria-hidden="true" />;
+  return <Minus className="size-3" aria-hidden="true" />;
 }
