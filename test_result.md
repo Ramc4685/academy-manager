@@ -223,6 +223,32 @@ backend:
       - working: true
         agent: "main"
         comment: "Added backend.v2.shared.ids.new_ulid() around python-ulid's stable ULID() API and replaced direct ulid.new imports. Local CI-equivalent v2 backend command passed with 212 tests and 74.40% shared coverage; import-linter contracts passed."
+  - task: "PR #55 grpcio-status dependency resolution"
+    implemented: true
+    working: true
+    file: "backend/requirements.txt"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "main"
+        comment: "GitHub Actions run 26266341878 failed Backend and Backend Lint during pip install because grpcio-status==1.80.0 requires protobuf>=6.31.1 while google-generativeai==0.8.6 pins google-ai-generativelanguage==0.6.15, which requires protobuf<6."
+      - working: "NA"
+        agent: "main"
+        comment: "Removed unused legacy google-generativeai/google-ai-generativelanguage pins and bumped protobuf to 6.33.5 so the grpcio-status 1.80.0 Dependabot PR can resolve dependencies without the protobuf 6.33.2 audit finding. Local verification pending."
+      - working: true
+        agent: "main"
+        comment: "Verified backend requirements now resolve after initial dependency fix: pip dry-run passed, Python 3.14 throwaway venv install passed, Python 3.12 throwaway venv install passed, imports for google.genai/google.api_core/grpc_status/google.protobuf passed, compileall for backend server.py and v2 passed, and git diff --check passed. GitHub Actions then failed pip-audit on protobuf 6.33.2; retesting protobuf 6.33.5."
+      - working: true
+        agent: "main"
+        comment: "Retested with protobuf 6.33.5: full requirements dry-run passed, Python 3.12 venv install/upgrade passed, pip-audit reported no known vulnerabilities, firebase/google/grpc/protobuf imports passed, CI-equivalent compileall passed, import-linter contracts passed, legacy backend tests passed with 114 tests, and v2 backend tests passed with 330 tests and 79.66% shared coverage."
+      - working: "NA"
+        agent: "main"
+        comment: "After merging PRs #47-#54 and #56-#60 to main, refreshed PR #55 against origin/main and resolved the backend/requirements.txt overlap by keeping google-genai==2.6.0, grpcio-status==1.80.0, protobuf==6.33.5, PyJWT==2.13.0, and mypy==2.1.0 while continuing to omit unused google-generativeai/google-ai-generativelanguage. Verification pending."
+      - working: true
+        agent: "main"
+        comment: "Verified refreshed PR #55 after the dependency PR batch: combined backend requirements dry-run passed, Python 3.12 venv install/upgrade passed, pip-audit found no known vulnerabilities, compileall passed, import-linter contracts passed, legacy backend tests passed with 114 tests, and v2 backend tests passed with 330 tests and 79.66% shared coverage."
   - task: "SaaS v2 tenant bootstrap and expanded guardrails"
     implemented: true
     working: true
@@ -284,6 +310,12 @@ backend:
       - working: true
         agent: "main"
         comment: "Conflict recovery verified after Ruff fixes: compileall on conflicted modules passed; focused merge-adjacent pytest passed 24/24; ruff check v2 passed; ruff format --check v2 passed; full backend v2 suite passed 374/374 with 7 existing mongomock UTC warnings; git diff --check passed."
+      - working: "NA"
+        agent: "main"
+        comment: "After merging PRs #47-#60 to main, refreshed PR #46 against origin/main. The only new conflict was test_result.md; code merged cleanly. Verification pending before marking the draft ready."
+      - working: true
+        agent: "main"
+        comment: "Verified PR #46 after final main refresh: conflict-marker scan had no real merge markers, compileall v2 passed, ruff check v2 passed, ruff format --check v2 passed, import-linter contracts passed, full backend v2 suite passed 374/374 with 7 existing mongomock UTC warnings, and git diff --check passed."
 frontend:
   - task: "frontend local BFF proxy"
     implemented: true
@@ -494,6 +526,7 @@ metadata:
 test_plan:
   current_focus:
     - "PR #46 Wave 4 merge-conflict recovery"
+    - "PR #55 grpcio-status dependency resolution"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -502,6 +535,20 @@ agent_communication:
     message: "PR #46 merge-conflict recovery verified: origin/main was merged into feat/saas-v2-wave4, conflict files were resolved, Ruff formatting/import issues from Wave 4 files were fixed, and full backend v2 tests passed 374/374. GitHub Actions should be rerun after pushing the merge commit."
   - agent: "main"
     message: "PR #46 merge-conflict recovery in progress: origin/main was merged into feat/saas-v2-wave4. Conflicts were resolved by taking current main Wave 3 enrollment/billing implementations and manually preserving Wave 4 composition wiring. Retest focused v2 merge-adjacent suites plus structural checks."
+  - agent: "main"
+    message: "PR #46 refresh in progress after merging PRs #47-#60 to main. The only conflict was test_result.md; keeping both the Wave 4 handoff entries and the PR #55 dependency-resolution history. Retest v2 backend and formatting before marking ready."
+  - agent: "main"
+    message: "PR #46 final refresh verified: compileall, ruff check, ruff format check, import-linter, full backend v2 tests, and git diff --check passed after merging final main. Ready to push, mark PR ready, and merge after GitHub checks."
+  - agent: "main"
+    message: "PR #55 dependency fix verified locally, then GitHub Actions found CVE-2026-0994 in protobuf 6.33.2 during pip-audit. The branch now pins protobuf 6.33.5 for the fixed protobuf 6 line; rerun resolver/import/audit checks before pushing."
+  - agent: "main"
+    message: "PR #55 protobuf 6.33.5 retest complete: requirements dry-run passed, Python 3.12 install/upgrade passed, pip-audit found no known vulnerabilities, imports/compileall/import-linter passed, legacy backend tests passed with 114 tests, and v2 backend tests passed with 330 tests at 79.66% shared coverage. Local mypy was not used as a blocker because it reports broad pre-existing v2 typing errors outside CI, while GitHub Backend Lint is already green on this PR."
+  - agent: "main"
+    message: "PR #55 refresh in progress after merging the other dependency PRs. The only conflict was backend/requirements.txt; it now combines main's google-genai/PyJWT/mypy bumps with PR #55's grpcio-status/protobuf resolver fix. Retest requirements resolution and backend gates before merging."
+  - agent: "main"
+    message: "PR #55 refresh verification passed after merging main: requirements dry-run, Python 3.12 install, pip-audit, compileall, import-linter, legacy backend tests, and v2 backend tests all passed. Ready to push the refreshed PR branch and merge after GitHub checks."
+  - agent: "main"
+    message: "PR #55 fix in progress: Backend CI failed before tests at pip dependency resolution. The branch now keeps grpcio-status==1.80.0, removes unused legacy google-generativeai/google-ai-generativelanguage pins, and bumps protobuf to 6.33.5. Retest dependency install, pip-audit, and backend checks."
   - agent: "main"
     message: "SaaS v2 Wave 3 integration complete on feat/saas-v2-wave3. Agent A/B/C branches were merged from origin/main baseline. Merge conflicts were limited to enrollment application ports and test_result.md; ports now include both SessionOccurrenceRepository and EnrollmentEventRepository. Billing ledger migration was renumbered to 0091 after Agent B used 0090 for enrollment_events. Verification: Agent A focused suite 30 passed, Agent B focused suite 39 passed, Agent C focused suite 32 passed, full backend v2 suite 330 passed with 8 warnings, git diff --check passed before this status update."
   - agent: "main"
