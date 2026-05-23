@@ -5,7 +5,7 @@ Admin-shaped — academy-wide read fields included. Per docs/security-matrix.md.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, model_validator
@@ -19,6 +19,12 @@ class AdminUserView(BaseModel):
     display_name: str
     role: Literal["admin", "coach", "parent"]
     status: str
+
+
+class AdminUserDetailView(AdminUserView):
+    phone: str | None = None
+    roles: list[Literal["admin", "coach", "parent"]] = []
+    linked_student_count: int = 0
 
 
 class AdminUserList(BaseModel):
@@ -38,9 +44,39 @@ class AdminStudentView(BaseModel):
     dues_status: Literal["current", "due", "overdue"] = "current"
 
 
+class AdminStudentDetailView(AdminStudentView):
+    date_of_birth: date | None = None
+    level: str | None = None
+    notes: str | None = None
+    parent_phone: str | None = None
+    parent_details: str | None = None
+
+
 class AdminStudentList(BaseModel):
     students: list[AdminStudentView]
     next_cursor: str | None = None
+
+
+class UpdateAdminStudentRequest(BaseModel):
+    full_name: str | None = Field(default=None, min_length=1, max_length=120)
+    date_of_birth: date | None = None
+    level: str | None = Field(default=None, max_length=80)
+    status: str | None = Field(default=None, max_length=32)
+    parent_id: str | None = Field(default=None, min_length=1, max_length=120)
+    notes: str | None = Field(default=None, max_length=2000)
+    reason: str = Field(default="admin profile update", min_length=1, max_length=500)
+
+
+class UpdateAdminUserRequest(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+    phone: str | None = Field(default=None, max_length=40)
+    status: str | None = Field(default=None, max_length=32)
+    reason: str = Field(default="admin user update", min_length=1, max_length=500)
+
+
+class UpdateAdminUserRoleRequest(BaseModel):
+    role: Literal["admin", "coach", "parent"]
+    reason: str = Field(default="admin role change", min_length=1, max_length=500)
 
 
 # --- Sessions ---
@@ -525,10 +561,6 @@ class AdminGatewayView(BaseModel):
     stripe_connected: bool
     stripe_account_id_masked: str | None = None
     manual_methods: list[str]
-
-
-class UpdateAdminUserRoleRequest(BaseModel):
-    role: Literal["admin", "coach", "parent"]
 
 
 class ReportsKpiResponse(BaseModel):

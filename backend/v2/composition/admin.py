@@ -48,7 +48,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
     MongoSubscriptionRepository,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    GetAdminStudent,
     ListAdminStudents,
+    UpdateAdminStudent,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     CancelEnrollment,
@@ -116,7 +118,9 @@ from backend.v2.contexts.identity.application.update_academy_notifications_use_c
 )
 from backend.v2.contexts.identity.application.update_academy_use_case import UpdateAcademyUseCase
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+    GetAdminUser,
     ListAdminUsers,
+    UpdateAdminUser,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
@@ -375,7 +379,11 @@ def compose_admin(
     change_user_role = ChangeUserRole(users_r)
 
     list_admin_users = ListAdminUsers(users_r)
+    get_admin_user = GetAdminUser(users_r)
+    update_admin_user = UpdateAdminUser(users_r)
     list_admin_students = ListAdminStudents(students_r)
+    get_admin_student = GetAdminStudent(students_r)
+    update_admin_student = UpdateAdminStudent(students_r)
 
     # Closures for the BFF deps that need composed reads.
     # Day-of-week abbreviations used by the legacy seed schema.
@@ -775,6 +783,10 @@ def compose_admin(
         update_academy_notifications_use_case=update_academy_notifications_use_case,
         get_academy_gateway_use_case=get_academy_gateway_use_case,
         change_user_role=change_user_role,
+        get_admin_user=get_admin_user,
+        update_admin_user=update_admin_user,
+        get_admin_student=get_admin_student,
+        update_admin_student=update_admin_student,
     )
 
 

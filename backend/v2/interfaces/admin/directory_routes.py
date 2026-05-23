@@ -7,14 +7,25 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    UpdateAdminStudentCommand,
     decode_student_cursor,
+)
+from backend.v2.contexts.identity.application.change_user_role_use_case import (
+    ChangeUserRoleCommand,
+)
+from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+    UpdateAdminUserCommand,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
+    AdminStudentDetailView,
     AdminStudentList,
     AdminStudentView,
+    AdminUserDetailView,
     AdminUserList,
     AdminUserView,
+    UpdateAdminStudentRequest,
+    UpdateAdminUserRequest,
     UpdateAdminUserRoleRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
@@ -33,6 +44,43 @@ async def list_users(
     return AdminUserList(users=[AdminUserView(**u.model_dump()) for u in users])
 
 
+@router.get("/users/{user_id}", response_model=AdminUserDetailView)
+async def get_user(
+    user_id: str,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminUserDetailView:
+    use_case = use_cases.get_admin_user
+    if use_case is None:
+        raise HTTPException(status_code=503, detail="Admin user detail is not configured")
+    user = await use_case.execute(user_id, academy_id=claims.academy_id)
+    return AdminUserDetailView(**user.model_dump())
+
+
+@router.patch("/users/{user_id}", response_model=AdminUserDetailView)
+async def update_user(
+    user_id: str,
+    payload: UpdateAdminUserRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminUserDetailView:
+    use_case = use_cases.update_admin_user
+    if use_case is None:
+        raise HTTPException(status_code=503, detail="Admin user edit is not configured")
+    user = await use_case.execute(
+        user_id,
+        UpdateAdminUserCommand(
+            display_name=payload.display_name,
+            phone=payload.phone,
+            status=payload.status,
+            actor_id=claims.user_id,
+            reason=payload.reason,
+        ),
+        academy_id=claims.academy_id,
+    )
+    return AdminUserDetailView(**user.model_dump())
+
+
 @router.patch("/users/{user_id}/role", response_model=AdminUserView)
 async def update_user_role(
     user_id: str,
@@ -49,7 +97,13 @@ async def update_user_role(
 
         raise SelfRoleChangeForbidden("cannot change your own role")
     user = await use_cases.change_user_role.execute(
-        user_id, payload.role, academy_id=claims.academy_id
+        user_id,
+        ChangeUserRoleCommand(
+            role=payload.role,
+            actor_id=claims.user_id,
+            reason=payload.reason,
+        ),
+        academy_id=claims.academy_id,
     )
     return AdminUserView(**user.model_dump())
 
@@ -78,3 +132,42 @@ async def list_students(
         students=[AdminStudentView(**s.model_dump()) for s in page.students],
         next_cursor=page.next_cursor,
     )
+
+
+@router.get("/students/{student_id}", response_model=AdminStudentDetailView)
+async def get_student(
+    student_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminStudentDetailView:
+    use_case = use_cases.get_admin_student
+    if use_case is None:
+        raise HTTPException(status_code=503, detail="Admin student detail is not configured")
+    student = await use_case.execute(student_id)
+    return AdminStudentDetailView(**student.model_dump())
+
+
+@router.patch("/students/{student_id}", response_model=AdminStudentDetailView)
+async def update_student(
+    student_id: str,
+    payload: UpdateAdminStudentRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminStudentDetailView:
+    use_case = use_cases.update_admin_student
+    if use_case is None:
+        raise HTTPException(status_code=503, detail="Admin student edit is not configured")
+    student = await use_case.execute(
+        student_id,
+        UpdateAdminStudentCommand(
+            full_name=payload.full_name,
+            date_of_birth=payload.date_of_birth,
+            level=payload.level,
+            status=payload.status,
+            parent_id=payload.parent_id,
+            notes=payload.notes,
+            actor_id=claims.user_id,
+            reason=payload.reason,
+        ),
+    )
+    return AdminStudentDetailView(**student.model_dump())

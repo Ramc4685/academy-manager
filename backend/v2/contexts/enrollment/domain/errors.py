@@ -27,6 +27,11 @@ class StudentNotEnrolled(DomainError):
     status_code = 409
 
 
+class StudentNotFound(DomainError):
+    code = "Enrollment.StudentNotFound"
+    status_code = 404
+
+
 class CapacityExceeded(DomainError):
     code = "Enrollment.CapacityExceeded"
     status_code = 409
