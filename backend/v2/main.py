@@ -193,7 +193,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # must not break a state transition.
         try:
             await app.state.platform_audit.record_event(command)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("platform_audit_emit_failed: %s", exc)
 
     app.state.tenant_lifecycle = TenantLifecycleService(

@@ -117,7 +117,7 @@ class TenantLifecycleService:
                     after_snapshot=after.model_dump(mode="json"),
                 )
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning(
                 "tenant_lifecycle_audit_emit_failed action=%s tenant=%s err=%s",
                 action,
