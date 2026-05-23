@@ -211,9 +211,13 @@ export default function AdminSessionDetailPage() {
             onDelete={(enrollment) => setRemoveTarget(enrollment)}
             onPause={(enrollment) => setPauseTarget(enrollment)}
             onResume={(id) =>
-              resumeEnrollment(id).then(() =>
-                queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) })
-              )
+              resumeEnrollment(id).then(() => {
+                void queryClient.invalidateQueries({
+                  queryKey: queryKeys.admin.enrollments(sessionId),
+                });
+                void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
+                void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions() });
+              })
             }
             onTransfer={(enrollment) => setTransferTarget(enrollment)}
             onWithdraw={(enrollment) => setWithdrawalTarget(enrollment)}
