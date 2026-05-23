@@ -102,7 +102,7 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Wave 11 Agent E: Make admin payment operations explainable with manual partial payments, overpayments to credits, selected dues reminders, invoice detail, and request-based invoice/receipt artifacts."
+user_problem_statement: "Wave 12 final launch-candidate gate after Wave 11 merge: verify SaaS static smoke, backend v2 suite, frontend typecheck/lint/build, Playwright route matrix, and document any local smoke blockers."
 backend:
   - task: "Wave 11 Agent E admin payment dues invoice correctness"
     implemented: true
@@ -132,6 +132,9 @@ backend:
       - working: true
         agent: "main"
         comment: "Verification passed for scaffolding: bash -n scripts/smoke/saas_readiness_smoke.sh scripts/dev/saas_staging.sh, scripts/smoke/saas_readiness_smoke.sh --static-only, and git diff --check. Full local SaaS stack up/smoke and BLNO seed were skipped because this linked worktree has no backend/.venv/bin/python and the local SaaS ports are already occupied by an existing Docker listener."
+      - working: "NA"
+        agent: "main"
+        comment: "Wave 12 final-gate update after Wave 10/11 merge: static SaaS smoke passed, backend ruff check/format passed, and full backend v2 suite passed with 548 tests. Backend mypy remains blocked by an existing duplicate module-name failure for admin_payment_ops.py. Full Docker SaaS staging up/smoke and BLNO seed remain blocked in this environment because Docker is unavailable and no local public NEXT_PUBLIC_FIREBASE_API_KEY is exported for the frontend emulator build. scripts/dev/seed_blno_demo_data.py is still absent, as documented."
   - task: "Wave 10 admin ops waiver/message/report detail routes"
     implemented: true
     working: true
@@ -437,11 +440,11 @@ frontend:
         comment: "Updated admin payments UI to record amount received, manual method including bank transfer, reference number, discount reason, invoice detail, and request-based invoice/receipt artifact actions. Updated dues UI for selected parent reminders while keeping full-list behavior when no parents are selected. Verification passed: pnpm typecheck and pnpm build."
   - task: "Wave 12 SaaS Playwright route matrix scaffold"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/e2e/specs/saas-launch-route-matrix.spec.ts"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: "NA"
         agent: "main"
@@ -449,6 +452,9 @@ frontend:
       - working: true
         agent: "main"
         comment: "Frontend verification passed after pnpm install restored node_modules: pnpm typecheck, pnpm build, and NEXT_PUBLIC_E2E_AUTH_BYPASS=1 PLAYWRIGHT_PORT=3109 pnpm exec playwright test e2e/specs/saas-launch-route-matrix.spec.ts --project=chromium-mobile --workers=1 --trace=off --output=/tmp/academy-wave12-pw-results (17 passed). An earlier route-matrix attempt without explicit NEXT_PUBLIC_E2E_AUTH_BYPASS redirected to /login and later hit Playwright artifact ENOSPC; the documented command now includes the bypass env and temp output path."
+      - working: true
+        agent: "main"
+        comment: "Wave 12 final-gate rerun after Wave 10/11 merge passed from clean worktree: pnpm typecheck, pnpm lint, pnpm build, and NEXT_PUBLIC_E2E_AUTH_BYPASS=1 PLAYWRIGHT_PORT=3107 pnpm exec playwright test e2e/specs/saas-launch-route-matrix.spec.ts --project=chromium-mobile --workers=1 --trace=off --output=/tmp/academy-wave12-pw-results returned 17 passed."
   - task: "Wave 10 admin ops detail frontend"
     implemented: true
     working: true
@@ -716,11 +722,8 @@ metadata:
   run_ui: true
 test_plan:
   current_focus:
-    - "Wave 9 admin operations cleanup"
     - "Wave 12 SaaS launch smoke and gate scaffolding"
     - "Wave 12 SaaS Playwright route matrix scaffold"
-    - "Wave 10 admin ops waiver/message/report detail routes"
-    - "Wave 10 admin ops detail frontend"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -729,6 +732,8 @@ agent_communication:
     message: "Wave 12 Agent F scaffolding pass: tightened SaaS smoke coverage for tenant-host-required and frontend proxy auth/tenant preservation, added docs/qa/saas-launch-gate-checklist.md, updated SaaS local staging runbook with clean startup/BLNO idempotent seed notes, and added frontend/e2e/specs/saas-launch-route-matrix.spec.ts for the requested admin/coach/parent route matrix. Retest static smoke, launch route matrix Playwright, backend v2 tests, frontend typecheck/build, and git diff --check. Do not perform final launch signoff until Wave 10 and Wave 11 branches are merged."
   - agent: "main"
     message: "Wave 12 Agent F verification update: static SaaS smoke, frontend typecheck/build, focused Chromium route matrix (17 passed), and git diff --check passed. Full saas_staging up/smoke, BLNO seed, seed_blno_demo_data.py, and backend v2 pytest were skipped because backend/.venv/bin/python is absent in this worktree; seed_blno_demo_data.py is also absent. Final launch gates still wait for Wave 10 and Wave 11 merge."
+  - agent: "main"
+    message: "Wave 12 final-gate rerun after Wave 10 and Wave 11 merged: scripts/smoke/saas_readiness_smoke.sh --static-only passed; backend ruff check/format and pytest v2/tests --override-ini=\"testpaths=v2/tests\" -q passed with 548 tests; frontend pnpm typecheck, pnpm lint, pnpm build passed; Playwright route matrix passed 17/17; git diff --check passed. Backend mypy remains blocked by the existing duplicate module-name failure for v2.contexts.billing.application.use_cases.admin_payment_ops/backend.v2.contexts.billing.application.use_cases.admin_payment_ops. Full Docker SaaS staging up/smoke and BLNO seed remain blocked locally because Docker is unavailable and no local public NEXT_PUBLIC_FIREBASE_API_KEY is exported. No deploy and no real secrets were used."
   - agent: "main"
     message: "Wave 10 Agent C implementation is ready for focused verification: backend waiver template/signed detail routes, message broadcast scope metadata, admin reports KPI dashboard data, waiver drilldown pages, message recipient picker without user ID typing, and reports dashboard-first UI. Planned checks: requested focused backend pytest files, frontend pnpm typecheck, frontend pnpm build, git diff --check, and browser smoke only if the local stack is available with usable Firebase config."
   - agent: "main"

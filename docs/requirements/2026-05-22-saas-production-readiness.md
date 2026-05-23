@@ -1,10 +1,12 @@
 # SaaS v2 Production Readiness
 
-Date: 2026-05-22
+Date: 2026-05-23
 
-Status: Wave 7 readiness scaffolding. Final launch signoff is blocked until
-Wave 6 tenant lifecycle, platform billing, governance/export/support access,
-and platform audit outputs are merged and verified.
+Status: Wave 12 launch-candidate verification after Wave 10 and Wave 11 merge.
+Static SaaS checks, backend v2 verification, frontend typecheck/lint/build,
+and the Playwright route matrix passed. Full local/prod-like SaaS HTTP smoke is
+still blocked in this environment because Docker is unavailable and no local
+public Firebase Web API key is exported for the frontend emulator build.
 
 Scope:
 
@@ -49,31 +51,31 @@ paste production Firebase tokens into shell history.
 | v2-only route enforcement | PASS | `SaasLegacyRouteGuard` returns 410 for legacy `/api/*` in SaaS mode; frontend SaaS source check fails legacy calls. |
 | Tenant routing | TODO | Resolver exists for subdomain, custom domain, and approved internal header. Launch still needs real beta tenant/domain records and suspended-tenant smoke in a prod-like SaaS environment. |
 | Auth readiness | PASS | Membership claims, active/inactive membership rejection tests, and real Mongo membership/platform-role repository wiring are present for SaaS mode. |
-| Billing/payment safety | BLOCKED BY WAVE 6 | Parent billing idempotency and platform billing domain/use cases exist. Launch needs platform billing persistence/routes, Stripe test/live runbook signoff, and webhook endpoint finalization. |
-| Email/SMS safety | TODO | Legacy email safety exists, but v2 tenant-scoped reminder delivery needs production readiness proof. SMS remains not applicable until a provider exists. |
-| Observability | TODO | v2 structured logging, tracing, outbox/event audit exist. Launch needs request-id middleware proof, tenant-safe log-field review, alert rules, and platform/admin audit coverage. |
-| Data governance | BLOCKED BY WAVE 6 | Governance policy/use cases exist. Launch needs Mongo persistence, platform BFF routes, export artifact worker, and support access audit verification. |
+| Billing/payment safety | BACKEND VERIFIED, SMOKE PENDING | Parent billing idempotency, platform billing, Wave 11 payment correctness, and full backend v2 tests passed. Launch still needs Stripe test/live runbook signoff and prod-like HTTP smoke. |
+| Email/SMS safety | BACKEND VERIFIED, SMOKE PENDING | Legacy email safety and selected dues reminder backend/UI paths are present. Tenant-scoped reminder delivery still needs prod-like smoke. SMS remains not applicable until a provider exists. |
+| Observability | PARTIAL | v2 structured logging, tracing, outbox/event audit, platform/admin audit context, and full backend v2 tests passed. Launch still needs alert rules and tenant-safe log-field review. |
+| Data governance | BACKEND VERIFIED, SMOKE PENDING | Governance persistence/routes and full backend v2 tests passed. Launch still needs export artifact/storage runbook proof in prod-like staging. |
 | Backup/recovery | TODO | Mongo backup expectations are documented; launch needs restore-drill evidence and tenant export path once governance is wired. |
-| CI and smoke tests | TODO | Existing CI runs backend/frontend verification; SaaS smoke script added. Launch needs CI integration or documented manual run evidence against a prod-like SaaS environment. |
+| CI and smoke tests | PARTIAL PASS | GitHub CI passed on Wave 11 PRs; local static smoke/backend/frontend/Playwright gate passed on the merged candidate. Full SaaS HTTP smoke still needs Docker/prod-like staging. |
 | Production deploy | NOT APPLICABLE | Wave 7 scaffolding does not deploy and does not mutate production data. |
 
 Wave 12 launch-candidate addendum:
 
 | Gate | Status | Required evidence before launch |
 | --- | --- | --- |
-| SaaS route enforcement | SCAFFOLDED | `scripts/smoke/saas_readiness_smoke.sh` full run against SaaS-mode local/prod-like stack. |
-| Membership auth | BLOCKED BY WAVE 10/11 MERGE | Active membership, inactive membership rejection, and platform-role separation verified against merged branch. |
-| Explicit tenant resolution | SCAFFOLDED | Unknown tenant rejected, auth-only tenant inference rejected, and tenant host/custom-domain/internal-header paths verified. |
-| No `default_academy_id` SaaS path | SCAFFOLDED | Static smoke passes. |
-| Occurrence attendance | BLOCKED BY WAVE 10/11 MERGE | Coach attendance uses occurrence IDs and tenant-scoped records. |
-| Enrollment events | BLOCKED BY WAVE 10/11 MERGE | Enrollment state changes write durable events/audit rows. |
-| Billing ledger/idempotency | BLOCKED BY WAVE 10/11 MERGE | Invoice/payment generation and webhook/event replay are idempotent. |
-| Coach payout occurrence basis | BLOCKED BY WAVE 10/11 MERGE | Coach payout calculations are based on attended occurrences, not schedule templates alone. |
-| Platform billing | BLOCKED BY WAVE 10/11 MERGE | Platform billing persistence/routes and Stripe-safe test config verified. |
-| Governance/support | BLOCKED BY WAVE 10/11 MERGE | Export, deletion request, support access, and impersonation-disablement gates verified. |
-| Platform audit | BLOCKED BY WAVE 10/11 MERGE | Platform tenant/billing/governance actions write durable audit rows. |
-| Local smoke | SCAFFOLDED | `scripts/dev/saas_staging.sh up`, BLNO seed, and `scripts/dev/saas_staging.sh smoke` evidence attached. |
-| Full backend/frontend verification | PENDING | `pytest v2/tests -q`, `pnpm typecheck`, and `pnpm build` pass on merged launch candidate. |
+| SaaS route enforcement | STATIC PASS, HTTP PENDING | Static smoke passed; full run still needs SaaS-mode local/prod-like stack. |
+| Membership auth | BACKEND PASS, SMOKE PENDING | Full backend v2 suite passed after Wave 10/11 merge. |
+| Explicit tenant resolution | BACKEND PASS, SMOKE PENDING | Backend tenant tests passed through the full suite; real tenant host/custom-domain/internal-header smoke remains pending. |
+| No `default_academy_id` SaaS path | PASS | Static smoke passed. |
+| Occurrence attendance | BACKEND PASS | Full backend v2 suite passed. |
+| Enrollment events | BACKEND PASS | Wave 11 lifecycle tests and full backend v2 suite passed. |
+| Billing ledger/idempotency | BACKEND PASS | Wave 11 payment tests and full backend v2 suite passed. |
+| Coach payout occurrence basis | BACKEND PASS, SMOKE PENDING | Full backend v2 suite passed; manual prod-like route smoke remains pending. |
+| Platform billing | BACKEND PASS, SMOKE PENDING | Full backend v2 suite passed; Stripe-safe local/prod-like smoke remains pending. |
+| Governance/support | BACKEND PASS, SMOKE PENDING | Full backend v2 suite passed; export/support route smoke remains pending. |
+| Platform audit | BACKEND PASS, SMOKE PENDING | Full backend v2 suite passed; prod-like durable audit check remains pending. |
+| Local smoke | BLOCKED LOCALLY | Docker is unavailable and no local public Firebase Web API key is exported. |
+| Full backend/frontend verification | PARTIAL PASS | Backend ruff/format and 548 v2 tests passed; frontend typecheck/lint/build passed; Playwright route matrix passed 17/17. Backend mypy remains blocked by the existing duplicate module-name failure for `admin_payment_ops.py`. |
 
 Current production config note:
 
