@@ -18,9 +18,11 @@ from pydantic import BaseModel, Field
 
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentEventRepository,
+    EnrollmentLifecycleBillingPort,
     EnrollmentQuery,
     EnrollmentWriter,
     SessionWriter,
+    StudentQuery,
     StudentWriter,
     WaitlistRepository,
 )
@@ -56,6 +58,11 @@ async def _record_lifecycle_event(
     to_session_id: str | None = None,
     actor_id: str | None = None,
     reason: str | None = None,
+    billing_policy: str | None = None,
+    billing_result: str | None = None,
+    credit_id: str | None = None,
+    refund_id: str | None = None,
+    metadata: dict[str, str] | None = None,
 ) -> None:
     if enrollment_events is None:
         return
@@ -74,6 +81,11 @@ async def _record_lifecycle_event(
             reason=reason,
             effective_at=effective_at,
             occurred_at=occurred_at,
+            billing_policy=billing_policy,
+            billing_result=billing_result,
+            credit_id=credit_id,
+            refund_id=refund_id,
+            metadata=metadata or {},
         )
     )
 
@@ -270,7 +282,9 @@ class EditRosterAdd:
 class CancelEnrollmentCommand(BaseModel):
     model_config = {"frozen": True}
     enrollment_id: str
-    reason: Literal["admin_cancel", "parent_cancel"] = "admin_cancel"
+    event_type: Literal["cancelled", "removed"] = "cancelled"
+    reason: str = Field(default="admin_cancel", min_length=1)
+    effective_at: datetime | None = None
     actor_id: str | None = None
 
 
@@ -303,16 +317,21 @@ class CancelEnrollment:
         await _record_lifecycle_event(
             self._enrollment_events,
             academy_id=self._academy_id,
-            event_type="cancelled",
+            event_type=cmd.event_type,
             enrollment_id=e.enrollment_id,
             session_id=e.session_id,
             student_id=e.student_id,
             actor_id=cmd.actor_id,
             reason=cmd.reason,
-            effective_at=now,
+            effective_at=cmd.effective_at or now,
             occurred_at=now,
         )
         await self._sessions.release_seat(e.session_id)
+        cancel_reason: Literal["admin_cancel", "parent_cancel", "session_cancelled"]
+        if cmd.reason in {"admin_cancel", "parent_cancel", "session_cancelled"}:
+            cancel_reason = cmd.reason  # type: ignore[assignment]
+        else:
+            cancel_reason = "admin_cancel"
         await self._outbox.append(
             EnrollmentCancelled(
                 aggregate_id=e.enrollment_id,
@@ -321,7 +340,7 @@ class CancelEnrollment:
                     enrollment_id=e.enrollment_id,
                     session_id=e.session_id,
                     student_id=e.student_id,
-                    reason=cmd.reason,
+                    reason=cancel_reason,
                 ),
             )
         )
@@ -331,6 +350,7 @@ class TransferEnrollmentCommand(BaseModel):
     model_config = {"frozen": True}
     enrollment_id: str
     target_session_id: str
+    effective_at: datetime | None = None
     actor_id: str | None = None
     reason: str | None = None
 
@@ -348,11 +368,13 @@ class TransferEnrollment:
         enrollments: EnrollmentWriter,
         sessions: SessionWriter,
         enrollment_events: EnrollmentEventRepository | None = None,
+        billing: EnrollmentLifecycleBillingPort | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
         self._sessions = sessions
         self._enrollment_events = enrollment_events
+        self._billing = billing
         self._now = clock
 
     async def execute(self, cmd: TransferEnrollmentCommand) -> Enrollment:
@@ -368,6 +390,21 @@ class TransferEnrollment:
             raise CapacityExceeded("target session full", session_id=cmd.target_session_id)
         await self._enrollments.update_session(enrollment.enrollment_id, cmd.target_session_id)
         now = self._now()
+        effective_at = cmd.effective_at or now
+        billing_decision = {
+            "billing_policy": None,
+            "billing_result": None,
+            "metadata": {},
+        }
+        if self._billing is not None and cmd.actor_id is not None:
+            billing_decision = await self._billing.record_move_proration(
+                enrollment=enrollment,
+                from_session_id=enrollment.session_id,
+                to_session_id=cmd.target_session_id,
+                effective_at=effective_at,
+                actor_id=cmd.actor_id,
+                reason=cmd.reason,
+            )
         await _record_lifecycle_event(
             self._enrollment_events,
             academy_id=enrollment.academy_id,
@@ -379,8 +416,11 @@ class TransferEnrollment:
             student_id=enrollment.student_id,
             actor_id=cmd.actor_id,
             reason=cmd.reason,
-            effective_at=now,
+            effective_at=effective_at,
             occurred_at=now,
+            billing_policy=billing_decision.get("billing_policy"),
+            billing_result=billing_decision.get("billing_result"),
+            metadata=billing_decision.get("metadata", {}),
         )
         await self._sessions.release_seat(enrollment.session_id)
         return enrollment.model_copy(update={"session_id": cmd.target_session_id})
@@ -389,6 +429,7 @@ class TransferEnrollment:
 class PauseEnrollmentCommand(BaseModel):
     model_config = {"frozen": True}
     enrollment_id: str
+    effective_at: datetime | None = None
     actor_id: str | None = None
     reason: str | None = None
 
@@ -402,10 +443,16 @@ class PauseEnrollment:
     def __init__(
         self,
         enrollments: EnrollmentWriter,
+        sessions: SessionWriter | None = None,
+        students: StudentQuery | None = None,
+        waitlist: WaitlistRepository | None = None,
         enrollment_events: EnrollmentEventRepository | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
+        self._sessions = sessions
+        self._students = students
+        self._waitlist = waitlist
         self._enrollment_events = enrollment_events
         self._now = clock
 
@@ -417,17 +464,105 @@ class PauseEnrollment:
             return
         await self._enrollments.update_status(e.enrollment_id, "paused")
         now = self._now()
+        effective_at = cmd.effective_at or now
+        waitlist_id: str | None = None
+        if self._sessions is not None:
+            await self._sessions.release_seat(e.session_id)
+        if self._waitlist is not None:
+            parent_id = ""
+            if self._students is not None:
+                students = await self._students.by_ids([e.student_id])
+                if students:
+                    parent_id = students[0].parent_id
+            entry = WaitlistEntry(
+                waitlist_id=str(new_ulid()),
+                academy_id=e.academy_id,
+                session_id=e.session_id,
+                student_id=e.student_id,
+                parent_id=parent_id,
+                joined_at=now,
+                status="waiting",
+            )
+            await self._waitlist.add(entry)
+            waitlist_id = entry.waitlist_id
         await _record_lifecycle_event(
             self._enrollment_events,
             academy_id=e.academy_id,
             event_type="paused",
             enrollment_id=e.enrollment_id,
+            waitlist_id=waitlist_id,
             session_id=e.session_id,
             student_id=e.student_id,
             actor_id=cmd.actor_id,
             reason=cmd.reason,
-            effective_at=now,
+            effective_at=effective_at,
             occurred_at=now,
+            billing_policy="release_seat_waitlist_stop_billing",
+            billing_result="future_billing_stopped",
+            metadata={"seat_policy": "released_to_waitlist"},
+        )
+
+
+class WithdrawEnrollmentCommand(BaseModel):
+    model_config = {"frozen": True}
+    enrollment_id: str
+    effective_at: datetime
+    outcome: Literal["credit", "refund", "adjustment"] = "credit"
+    actor_id: str
+    reason: str = Field(min_length=1)
+
+
+class WithdrawEnrollment:
+    def __init__(
+        self,
+        *,
+        enrollments: EnrollmentWriter,
+        enrollment_events: EnrollmentEventRepository | None = None,
+        billing: EnrollmentLifecycleBillingPort | None = None,
+        clock: Clock = lambda: datetime.now(UTC),
+    ) -> None:
+        self._enrollments = enrollments
+        self._enrollment_events = enrollment_events
+        self._billing = billing
+        self._now = clock
+
+    async def execute(self, cmd: WithdrawEnrollmentCommand) -> None:
+        e = await self._enrollments.get(cmd.enrollment_id)
+        if e is None:
+            raise EnrollmentNotFound("enrollment missing")
+        if e.status == "withdrawn":
+            return
+        now = self._now()
+        billing_decision = {
+            "billing_policy": f"withdrawal_{cmd.outcome}",
+            "billing_result": "recorded",
+            "metadata": {"outcome": cmd.outcome},
+        }
+        if self._billing is not None:
+            billing_decision = await self._billing.record_withdrawal_decision(
+                enrollment=e,
+                outcome=cmd.outcome,
+                effective_at=cmd.effective_at,
+                actor_id=cmd.actor_id,
+                reason=cmd.reason,
+            )
+        await self._enrollments.update_status(e.enrollment_id, "withdrawn")
+        await _record_lifecycle_event(
+            self._enrollment_events,
+            academy_id=e.academy_id,
+            event_type="withdrawn",
+            enrollment_id=e.enrollment_id,
+            session_id=e.session_id,
+            student_id=e.student_id,
+            actor_id=cmd.actor_id,
+            reason=cmd.reason,
+            effective_at=cmd.effective_at,
+            occurred_at=now,
+            billing_policy=billing_decision.get("billing_policy"),
+            billing_result=billing_decision.get("billing_result"),
+            credit_id=billing_decision.get("credit_id"),
+            refund_id=billing_decision.get("refund_id"),
+            metadata=billing_decision.get("metadata", {"outcome": cmd.outcome}),
         )
 
 

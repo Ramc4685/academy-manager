@@ -73,6 +73,41 @@ export interface CreateEnrollmentRequest {
 
 export interface TransferEnrollmentRequest {
   target_session_id: string;
+  effective_date: string;
+  reason?: string;
+}
+
+export interface PauseEnrollmentRequest {
+  effective_date: string;
+  reason?: string;
+}
+
+export interface WithdrawEnrollmentRequest {
+  effective_date: string;
+  outcome?: "credit" | "refund" | "adjustment";
+  reason: string;
+}
+
+export interface RemoveEnrollmentRequest {
+  effective_date: string;
+  reason: string;
+}
+
+export interface EnrollmentEventView {
+  event_id: string;
+  event_type: string;
+  effective_date: string;
+  reason: string | null;
+  billing_policy: string | null;
+  billing_result: string | null;
+  credit_id: string | null;
+  refund_id: string | null;
+  metadata: Record<string, string>;
+}
+
+export interface EnrollmentEventsResponse {
+  enrollment_id: string;
+  events: EnrollmentEventView[];
 }
 
 export type WaitlistStatus = "waiting" | "skipped" | "promoted" | "removed";
@@ -445,7 +480,7 @@ export interface AdminPauseRequestView {
   period: string;
   reason: string | null;
   status: "pending" | "approved" | "declined";
-  requested_at: string;
+  created_at: string;
   decided_at: string | null;
   decided_by: string | null;
 }
@@ -677,8 +712,24 @@ export function approveWithdrawalCredit(
   );
 }
 
-export function deleteEnrollment(enrollmentId: string): Promise<void> {
-  return apiFetch<void>(`/admin/enrollments/${enrollmentId}`, { method: "DELETE" });
+export function withdrawEnrollment(
+  enrollmentId: string,
+  payload: WithdrawEnrollmentRequest
+): Promise<void> {
+  return apiFetch<void>(`/admin/enrollments/${enrollmentId}/withdraw`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteEnrollment(
+  enrollmentId: string,
+  payload: RemoveEnrollmentRequest
+): Promise<void> {
+  return apiFetch<void>(`/admin/enrollments/${enrollmentId}`, {
+    method: "DELETE",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function transferEnrollment(
@@ -691,12 +742,24 @@ export function transferEnrollment(
   });
 }
 
-export function pauseEnrollment(enrollmentId: string): Promise<void> {
-  return apiFetch<void>(`/admin/enrollments/${enrollmentId}/pause`, { method: "POST" });
+export function pauseEnrollment(
+  enrollmentId: string,
+  payload: PauseEnrollmentRequest
+): Promise<void> {
+  return apiFetch<void>(`/admin/enrollments/${enrollmentId}/pause`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function resumeEnrollment(enrollmentId: string): Promise<void> {
   return apiFetch<void>(`/admin/enrollments/${enrollmentId}/resume`, { method: "POST" });
+}
+
+export function listEnrollmentEvents(enrollmentId: string): Promise<EnrollmentEventsResponse> {
+  return apiFetch<EnrollmentEventsResponse>(`/admin/enrollments/${enrollmentId}/events`, {
+    method: "GET",
+  });
 }
 
 // ---------------------------------------------------------------------------

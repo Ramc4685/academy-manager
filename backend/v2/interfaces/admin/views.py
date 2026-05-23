@@ -146,6 +146,24 @@ class EditRosterAddRequest(BaseModel):
 
 class TransferEnrollmentRequest(BaseModel):
     target_session_id: str
+    effective_date: date
+    reason: str | None = None
+
+
+class PauseEnrollmentRequest(BaseModel):
+    effective_date: date
+    reason: str | None = None
+
+
+class WithdrawEnrollmentRequest(BaseModel):
+    effective_date: date
+    outcome: Literal["credit", "refund", "adjustment"] = "credit"
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class RemoveEnrollmentRequest(BaseModel):
+    effective_date: date
+    reason: str = Field(min_length=1, max_length=500)
 
 
 # --- Waitlist ---
@@ -619,10 +637,12 @@ class EnrollmentEventDto(BaseModel):
     event_id: str
     event_type: str
     effective_date: str
-    actor_id: str
     reason: str | None = None
+    billing_policy: str | None = None
     billing_result: str | None = None
     credit_id: str | None = None
+    refund_id: str | None = None
+    metadata: dict[str, str] = Field(default_factory=dict)
 
 
 class EnrollmentEventsResponse(BaseModel):

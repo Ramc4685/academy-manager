@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
 from backend.v2.contexts.enrollment.domain.models import (
@@ -94,3 +94,26 @@ class EnrollmentEventRepository(Protocol):
     async def record(self, event: EnrollmentLifecycleEvent) -> None: ...
 
     async def list_for_enrollment(self, enrollment_id: str) -> list[EnrollmentLifecycleEvent]: ...
+
+
+class EnrollmentLifecycleBillingPort(Protocol):
+    async def record_move_proration(
+        self,
+        *,
+        enrollment: Enrollment,
+        from_session_id: str,
+        to_session_id: str,
+        effective_at: datetime,
+        actor_id: str,
+        reason: str | None,
+    ) -> dict[str, Any]: ...
+
+    async def record_withdrawal_decision(
+        self,
+        *,
+        enrollment: Enrollment,
+        outcome: str,
+        effective_at: datetime,
+        actor_id: str,
+        reason: str,
+    ) -> dict[str, Any]: ...

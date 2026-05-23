@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 
 from fastapi import APIRouter, Depends, Query
 
@@ -14,6 +14,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     EditSessionCommand,
     PauseEnrollmentCommand,
     TransferEnrollmentCommand,
+    WithdrawEnrollmentCommand,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
@@ -26,12 +27,25 @@ from backend.v2.interfaces.admin.views import (
     EditSessionRequest,
     EnrollmentEventDto,
     EnrollmentEventsResponse,
+    PauseEnrollmentRequest,
+    RemoveEnrollmentRequest,
     TransferEnrollmentRequest,
+    WithdrawEnrollmentRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
 router = APIRouter(tags=["admin.sessions"])
+
+
+def _start_of_day_utc(value: date) -> datetime:
+    return datetime.combine(value, time.min, tzinfo=UTC)
+
+
+def _event_field(event: object, field_name: str, default: object = None) -> object:
+    if isinstance(event, dict):
+        return event.get(field_name, default)
+    return getattr(event, field_name, default)
 
 
 @router.get("/sessions", response_model=AdminSessionList, summary="List sessions for a date range")
@@ -148,13 +162,17 @@ async def get_enrollment_events(
         enrollment_id=enrollment_id,
         events=[
             EnrollmentEventDto(
-                event_id=str(e.get("event_id", "")),
-                event_type=str(e.get("event_type", "")),
-                effective_date=str(e.get("effective_date", ""))[:10],
-                actor_id=str(e.get("actor_id", "")),
-                reason=e.get("reason"),
-                billing_result=e.get("billing_result"),
-                credit_id=e.get("credit_id"),
+                event_id=str(_event_field(e, "event_id", "")),
+                event_type=str(_event_field(e, "event_type", "")),
+                effective_date=str(
+                    _event_field(e, "effective_date", None) or _event_field(e, "effective_at", "")
+                )[:10],
+                reason=_event_field(e, "reason"),  # type: ignore[arg-type]
+                billing_policy=_event_field(e, "billing_policy"),  # type: ignore[arg-type]
+                billing_result=_event_field(e, "billing_result"),  # type: ignore[arg-type]
+                credit_id=_event_field(e, "credit_id"),  # type: ignore[arg-type]
+                refund_id=_event_field(e, "refund_id"),  # type: ignore[arg-type]
+                metadata=_event_field(e, "metadata", {}) or {},  # type: ignore[arg-type]
             )
             for e in events
         ],
@@ -164,13 +182,16 @@ async def get_enrollment_events(
 @router.delete("/enrollments/{enrollment_id}", status_code=204, response_model=None)
 async def cancel_enrollment(
     enrollment_id: str,
+    body: RemoveEnrollmentRequest,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
     await use_cases.cancel_enrollment.execute(
         CancelEnrollmentCommand(
             enrollment_id=enrollment_id,
-            reason="admin_cancel",
+            event_type="removed",
+            effective_at=_start_of_day_utc(body.effective_date),
+            reason=body.reason,
             actor_id=claims.user_id,
         )
     )
@@ -187,7 +208,9 @@ async def transfer_enrollment(
         TransferEnrollmentCommand(
             enrollment_id=enrollment_id,
             target_session_id=body.target_session_id,
+            effective_at=_start_of_day_utc(body.effective_date),
             actor_id=claims.user_id,
+            reason=body.reason,
         )
     )
     return AdminEnrollmentView(
@@ -205,11 +228,35 @@ async def transfer_enrollment(
 @router.post("/enrollments/{enrollment_id}/pause", status_code=204, response_model=None)
 async def pause_enrollment(
     enrollment_id: str,
+    body: PauseEnrollmentRequest,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
     await use_cases.pause_enrollment.execute(
-        PauseEnrollmentCommand(enrollment_id=enrollment_id, actor_id=claims.user_id)
+        PauseEnrollmentCommand(
+            enrollment_id=enrollment_id,
+            effective_at=_start_of_day_utc(body.effective_date),
+            actor_id=claims.user_id,
+            reason=body.reason,
+        )
+    )
+
+
+@router.post("/enrollments/{enrollment_id}/withdraw", status_code=204, response_model=None)
+async def withdraw_enrollment(
+    enrollment_id: str,
+    body: WithdrawEnrollmentRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> None:
+    await use_cases.withdraw_enrollment.execute(
+        WithdrawEnrollmentCommand(
+            enrollment_id=enrollment_id,
+            effective_at=_start_of_day_utc(body.effective_date),
+            outcome=body.outcome,
+            actor_id=claims.user_id,
+            reason=body.reason,
+        )
     )
 
 

@@ -430,6 +430,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     ResumeEnrollment,
     SkipFromWaitlist,
     TransferEnrollment,
+    WithdrawEnrollment,
 )
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     ApprovePauseRequest,
@@ -440,6 +441,7 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserSummary,
@@ -545,6 +547,17 @@ class FakeEnrollmentWriter:
 
 
 @dataclass
+class FakeEnrollmentEvents:
+    rows: list[EnrollmentLifecycleEvent] = field(default_factory=list)
+
+    async def record(self, event):
+        self.rows.append(event)
+
+    async def list_for_enrollment(self, enrollment_id):
+        return [event for event in self.rows if event.enrollment_id == enrollment_id]
+
+
+@dataclass
 class _AdminFakeEnrollmentQuery:
     rows: dict[str, Any] = field(default_factory=dict)
 
@@ -567,6 +580,11 @@ class FakeStudentWriter:
 
     async def upsert(self, student):
         self.students[student.student_id] = student
+
+    async def by_ids(self, student_ids):
+        return [
+            self.students[student_id] for student_id in student_ids if student_id in self.students
+        ]
 
 
 @dataclass
@@ -591,6 +609,41 @@ class FakeWaitlistRepo:
         e = self.entries.get(waitlist_id)
         if e is not None:
             self.entries[waitlist_id] = e.model_copy(update={"status": status})
+
+
+class FakeLifecycleBilling:
+    async def record_move_proration(
+        self,
+        *,
+        enrollment,
+        from_session_id,
+        to_session_id,
+        effective_at,
+        actor_id,
+        reason,
+    ):
+        _ = (enrollment, from_session_id, to_session_id, effective_at, actor_id, reason)
+        return {
+            "billing_policy": "move_proration",
+            "billing_result": "recorded",
+            "metadata": {},
+        }
+
+    async def record_withdrawal_decision(
+        self,
+        *,
+        enrollment,
+        outcome,
+        effective_at,
+        actor_id,
+        reason,
+    ):
+        _ = (enrollment, effective_at, actor_id, reason)
+        return {
+            "billing_policy": f"withdrawal_{outcome}",
+            "billing_result": "recorded",
+            "metadata": {"outcome": outcome},
+        }
 
 
 @dataclass
@@ -852,6 +905,7 @@ def admin_seed():
         "sessions": sessions,
         "enrollments": FakeEnrollmentWriter(),
         "enrollment_query": _AdminFakeEnrollmentQuery(),
+        "enrollment_events": FakeEnrollmentEvents(),
         "students": FakeStudentWriter(),
         "waitlist": FakeWaitlistRepo(),
         "pause_requests": FakePauseRequestRepo(),
@@ -870,9 +924,11 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     sessions = seed["sessions"]
     enrollments_w = seed["enrollments"]
     enrollments_q = seed["enrollment_query"]
+    enrollment_events = seed["enrollment_events"]
     students = seed["students"]
     waitlist = seed["waitlist"]
     pause_requests = seed["pause_requests"]
+    lifecycle_billing = FakeLifecycleBilling()
     payments = seed["payments"]
     outbox = seed["outbox"]
     idem = seed["idempotency"]
@@ -896,19 +952,49 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         sessions=sessions,
         enrollments=enrollments_w,
         students=students,
+        enrollment_events=enrollment_events,
         academy_id="acad",
     )
     cancel_enrollment = CancelEnrollment(
         enrollments=enrollments_w,
         sessions=sessions,
         outbox=outbox,
+        enrollment_events=enrollment_events,
         academy_id="acad",
     )
-    transfer_enrollment = TransferEnrollment(enrollments=enrollments_w, sessions=sessions)
-    pause_enrollment = PauseEnrollment(enrollments=enrollments_w)
-    resume_enrollment = ResumeEnrollment(enrollments=enrollments_w)
-    join_waitlist = JoinWaitlist(waitlist=waitlist, academy_id="acad")
-    promote = PromoteFromWaitlist(waitlist=waitlist, outbox=outbox, academy_id="acad")
+    transfer_enrollment = TransferEnrollment(
+        enrollments=enrollments_w,
+        sessions=sessions,
+        enrollment_events=enrollment_events,
+        billing=lifecycle_billing,
+    )
+    pause_enrollment = PauseEnrollment(
+        enrollments=enrollments_w,
+        sessions=sessions,
+        students=students,
+        waitlist=waitlist,
+        enrollment_events=enrollment_events,
+    )
+    resume_enrollment = ResumeEnrollment(
+        enrollments=enrollments_w,
+        enrollment_events=enrollment_events,
+    )
+    withdraw_enrollment = WithdrawEnrollment(
+        enrollments=enrollments_w,
+        enrollment_events=enrollment_events,
+        billing=lifecycle_billing,
+    )
+    join_waitlist = JoinWaitlist(
+        waitlist=waitlist,
+        enrollment_events=enrollment_events,
+        academy_id="acad",
+    )
+    promote = PromoteFromWaitlist(
+        waitlist=waitlist,
+        outbox=outbox,
+        enrollment_events=enrollment_events,
+        academy_id="acad",
+    )
     skip = SkipFromWaitlist(waitlist=waitlist)
     remove = RemoveFromWaitlist(waitlist=waitlist)
     list_admin_pause_requests = ListAdminPauseRequests(pause_requests=pause_requests)
@@ -1083,6 +1169,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         transfer_enrollment=transfer_enrollment,
         pause_enrollment=pause_enrollment,
         resume_enrollment=resume_enrollment,
+        withdraw_enrollment=withdraw_enrollment,
         join_waitlist=join_waitlist,
         promote_from_waitlist=promote,
         skip_from_waitlist=skip,
@@ -1120,7 +1207,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                 "pending_waivers": 0,
             }
         ),
-        list_enrollment_events=AsyncMock(return_value=[]),
+        list_enrollment_events=enrollment_events.list_for_enrollment,
         list_billing_invoices=AsyncMock(return_value=[]),
         comms=comms,
         list_admin_waivers=waivers,  # type: ignore[arg-type]

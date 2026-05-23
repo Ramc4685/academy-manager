@@ -116,7 +116,10 @@ def test_pause_and_resume_enrollment(admin_client):
     )
     enrollment_id = r.json()["enrollment_id"]
 
-    p = admin_client.post(f"/api/v2/admin/enrollments/{enrollment_id}/pause")
+    p = admin_client.post(
+        f"/api/v2/admin/enrollments/{enrollment_id}/pause",
+        json={"effective_date": "2026-05-20", "reason": "temporary pause"},
+    )
     assert p.status_code == 204
     assert admin_client.seed["enrollments"].rows[enrollment_id].status == "paused"
 
@@ -151,7 +154,11 @@ def test_transfer_enrollment_reserves_target_and_releases_source(admin_client):
 
     r = admin_client.post(
         f"/api/v2/admin/enrollments/{enrollment_id}/transfer",
-        json={"target_session_id": target_session_id},
+        json={
+            "target_session_id": target_session_id,
+            "effective_date": "2026-05-20",
+            "reason": "schedule change",
+        },
     )
 
     assert r.status_code == 200, r.text
@@ -180,7 +187,11 @@ def test_cancel_enrollment_emits_event(admin_client):
     )
     enrollment_id = r.json()["enrollment_id"]
     outbox_len_before = len(admin_client.seed["outbox"].events)
-    d = admin_client.delete(f"/api/v2/admin/enrollments/{enrollment_id}")
+    d = admin_client.request(
+        "DELETE",
+        f"/api/v2/admin/enrollments/{enrollment_id}",
+        json={"effective_date": "2026-05-20", "reason": "admin cleanup"},
+    )
     assert d.status_code == 204
     # EnrollmentCancelled event was appended.
     new_events = admin_client.seed["outbox"].events[outbox_len_before:]
