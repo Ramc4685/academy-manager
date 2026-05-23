@@ -26,6 +26,7 @@ from backend.v2.contexts.enrollment.application.ports import (
 )
 from backend.v2.contexts.enrollment.domain.errors import (
     EnrollmentNotFound,
+    SessionNotFound,
 )
 from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentCancelled,
@@ -109,6 +110,39 @@ class CreateSession:
         )
         await self._sessions.create(session)
         return session
+
+
+class EditSessionCommand(BaseModel):
+    model_config = {"frozen": True}
+    session_id: str
+    coach_id: str | None = None
+    title: str | None = None
+    location: str | None = None
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+    capacity: int | None = Field(default=None, ge=1)
+    actor_id: str | None = None
+    reason: str | None = None
+
+
+class EditSession:
+    def __init__(self, *, sessions: SessionWriter) -> None:
+        self._sessions = sessions
+
+    async def execute(self, cmd: EditSessionCommand) -> Session:
+        current = await self._sessions.get(cmd.session_id)
+        if current is None:
+            raise SessionNotFound("session missing", session_id=cmd.session_id)
+
+        update: dict[str, object] = {}
+        for field_name in ("coach_id", "title", "location", "start_at", "end_at", "capacity"):
+            value = getattr(cmd, field_name)
+            if value is not None:
+                update[field_name] = value
+
+        updated = current.model_copy(update=update)
+        await self._sessions.update(updated)
+        return updated
 
 
 class CancelSessionCommand(BaseModel):

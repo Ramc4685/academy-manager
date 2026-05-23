@@ -391,6 +391,8 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
 )
 from backend.v2.contexts.billing.application.use_cases.finance import (
     AcademyRevenueQuery,
+    DeleteExpense,
+    EditExpense,
     Expense,
     Payout,
     RecordExpense,
@@ -421,6 +423,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     CancelSession,
     CreateSession,
     EditRosterAdd,
+    EditSession,
     JoinWaitlist,
     PauseEnrollment,
     RemoveFromWaitlist,
@@ -499,6 +502,9 @@ class FakeSessionWriter:
     async def update_status(self, session_id, status):
         s = self.sessions[session_id]
         self.sessions[session_id] = s.model_copy(update={"status": status})
+
+    async def get(self, session_id):
+        return self.sessions.get(session_id)
 
     async def create(self, session):
         self.sessions[session.session_id] = session
@@ -709,7 +715,28 @@ class FakeExpenseRepo:
         self.rows[e.expense_id] = e
 
     async def list_recent(self, limit: int = 200):
-        return sorted(self.rows.values(), key=lambda e: e.incurred_on, reverse=True)[:limit]
+        return sorted(
+            (e for e in self.rows.values() if e.deleted_at is None),
+            key=lambda e: e.incurred_on,
+            reverse=True,
+        )[:limit]
+
+    async def get(self, expense_id):
+        row = self.rows.get(expense_id)
+        return row if row and row.deleted_at is None else None
+
+    async def update(self, expense):
+        self.rows[expense.expense_id] = expense
+
+    async def soft_delete(self, expense_id, *, actor_id, reason):
+        row = self.rows[expense_id]
+        self.rows[expense_id] = row.model_copy(
+            update={
+                "deleted_at": _now(),
+                "deleted_by": actor_id,
+                "delete_reason": reason,
+            }
+        )
 
 
 @dataclass
@@ -822,6 +849,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     comms = CommsService(messages=messages, academy_id="acad")  # type: ignore[arg-type]
 
     create_session = CreateSession(sessions=sessions, academy_id="acad")
+    edit_session = EditSession(sessions=sessions)
     cancel_session = CancelSession(
         sessions=sessions,
         enrollments_query=enrollments_q,
@@ -859,6 +887,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     apply_payment_discount = ApplyPaymentDiscount(payments=payments)
     undo_payment_paid = UndoPaymentPaid(payments=payments)
     record_expense = RecordExpense(expenses=expenses, academy_id="acad")  # type: ignore[arg-type]
+    edit_expense = EditExpense(expenses=expenses)  # type: ignore[arg-type]
+    delete_expense = DeleteExpense(expenses=expenses)  # type: ignore[arg-type]
     revenue_query = AcademyRevenueQuery(payments=payments)
 
     async def list_admin_sessions(on_date, *, window=None):
@@ -1011,6 +1041,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         list_admin_users=_ListAdminUsers(),  # type: ignore[arg-type]
         list_admin_students=_ListAdminStudents(),  # type: ignore[arg-type]
         create_session=create_session,
+        edit_session=edit_session,
         cancel_session=cancel_session,
         edit_roster_add=edit_roster_add,
         cancel_enrollment=cancel_enrollment,
@@ -1034,6 +1065,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         apply_payment_discount=apply_payment_discount,
         undo_payment_paid=undo_payment_paid,
         record_expense=record_expense,
+        edit_expense=edit_expense,
+        delete_expense=delete_expense,
         expenses=expenses,  # type: ignore[arg-type]
         payouts=payouts,  # type: ignore[arg-type]
         revenue_query=revenue_query,

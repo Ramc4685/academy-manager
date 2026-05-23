@@ -20,6 +20,8 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
 )
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
     AcademyRevenueQuery,
+    DeleteExpense,
+    EditExpense,
     MongoExpenseRepository,
     MongoPayoutRepository,
     RecordExpense,
@@ -55,6 +57,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     CancelSession,
     CreateSession,
     EditRosterAdd,
+    EditSession,
     JoinWaitlist,
     PauseEnrollment,
     RemoveFromWaitlist,
@@ -270,6 +273,7 @@ def compose_admin(
     pause_requests = MongoPauseRequestRepository(db)
 
     create_session = CreateSession(sessions=sessions_w, academy_id=academy_id)
+    edit_session = EditSession(sessions=sessions_w)
     cancel_session = CancelSession(
         sessions=sessions_w,
         enrollments_query=enrollments_r,
@@ -354,6 +358,8 @@ def compose_admin(
     expenses_repo = MongoExpenseRepository(db)
     payouts_repo = MongoPayoutRepository(db)
     record_expense = RecordExpense(expenses=expenses_repo, academy_id=academy_id)
+    edit_expense = EditExpense(expenses=expenses_repo)
+    delete_expense = DeleteExpense(expenses=expenses_repo)
     revenue_query = AcademyRevenueQuery(payments=payments_repo)
 
     # Comms
@@ -728,6 +734,7 @@ def compose_admin(
         list_admin_users=list_admin_users,
         list_admin_students=list_admin_students,
         create_session=create_session,
+        edit_session=edit_session,
         cancel_session=cancel_session,
         edit_roster_add=edit_roster_add,
         cancel_enrollment=cancel_enrollment,
@@ -752,6 +759,8 @@ def compose_admin(
         apply_payment_discount=apply_payment_discount,
         undo_payment_paid=undo_payment_paid,
         record_expense=record_expense,
+        edit_expense=edit_expense,
+        delete_expense=delete_expense,
         expenses=expenses_repo,
         payouts=payouts_repo,
         revenue_query=revenue_query,

@@ -8,7 +8,7 @@
  * cancel session.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -16,6 +16,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 
 import {
   listAdminSessions,
+  listAdminUsers,
   listAdminStudents,
   listSessionEnrollments,
   listSessionWaitlist,
@@ -25,6 +26,7 @@ import {
   resumeEnrollment,
   transferEnrollment,
   deleteAdminSession,
+  updateAdminSession,
   promoteWaitlist,
   approveWithdrawalCredit,
   previewWithdrawalCredit,
@@ -35,10 +37,12 @@ import {
   type AdminEnrollmentQuote,
   type EnrollmentStatus,
   type AdminSessionView,
+  type AdminUserView,
   type AdminStudentView,
   type AdminWaitlistEntry,
   type WaitlistStatus,
   type CreateEnrollmentRequest,
+  type EditSessionRequest,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -64,11 +68,16 @@ const WAITLIST_CHIP: Record<WaitlistStatus, { variant: ChipVariant; label: strin
   removed: { variant: "expired", label: "REMOVED" },
 };
 
+function toDateTimeLocal(value: string): string {
+  return new Date(value).toISOString().slice(0, 16);
+}
+
 export default function AdminSessionDetailPage() {
   const params = useParams();
   const sessionId = params.id as string;
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [transferTarget, setTransferTarget] = useState<AdminEnrollmentView | null>(null);
   const [withdrawalTarget, setWithdrawalTarget] = useState<AdminEnrollmentView | null>(null);
 
@@ -106,7 +115,7 @@ export default function AdminSessionDetailPage() {
     },
   });
 
-  const session = sessionsQuery.data;
+  const session = sessionsQuery.data ?? null;
   const enrollments = enrollmentsQuery.data?.enrollments ?? [];
   const waitlist = waitlistQuery.data?.waitlist ?? [];
   const waitingCount = waitlist.filter((w) => w.status === "waiting").length;
@@ -143,7 +152,11 @@ export default function AdminSessionDetailPage() {
           )}
         </div>
         <div className="flex gap-2">
-          {/* TODO(wave9): Add a real edit action when the admin session update endpoint ships. */}
+          {session && (
+            <Button variant="secondary" size="sm" onClick={() => setEditOpen(true)}>
+              Edit session
+            </Button>
+          )}
           <Button
             variant="primary"
             size="sm"
@@ -258,6 +271,16 @@ export default function AdminSessionDetailPage() {
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
         }}
       />
+      <SessionEditDialog
+        open={editOpen}
+        session={session}
+        onOpenChange={setEditOpen}
+        onSaved={() => {
+          setEditOpen(false);
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionDetail(sessionId) });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions() });
+        }}
+      />
       <TransferEnrollmentDialog
         enrollment={transferTarget}
         currentSessionId={sessionId}
@@ -280,6 +303,149 @@ export default function AdminSessionDetailPage() {
         }}
       />
     </section>
+  );
+}
+
+function SessionEditDialog({
+  open,
+  session,
+  onOpenChange,
+  onSaved,
+}: {
+  open: boolean;
+  session: AdminSessionView | null;
+  onOpenChange: (open: boolean) => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState<EditSessionRequest>({});
+  const [error, setError] = useState<string | null>(null);
+  const coachesQuery = useQuery({
+    queryKey: queryKeys.admin.users("coach"),
+    queryFn: () => listAdminUsers("coach"),
+    enabled: open,
+  });
+  const coaches = coachesQuery.data?.users ?? [];
+  useEffect(() => {
+    if (!session || !open) return;
+    setForm({
+      coach_id: session.coach_id,
+      title: session.title,
+      location: session.location,
+      start_at: toDateTimeLocal(session.start_at),
+      end_at: toDateTimeLocal(session.end_at),
+      capacity: session.capacity,
+      reason: "",
+    });
+  }, [open, session]);
+
+  const mutation = useMutation({
+    mutationFn: (payload: EditSessionRequest) => updateAdminSession(session!.session_id, payload),
+    onSuccess: () => {
+      setError(null);
+      onSaved();
+    },
+    onError: (err: Error) => setError(err.message ?? "Failed to update session."),
+  });
+
+  return (
+    <RallyDialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) {
+          setError(null);
+          setForm({});
+        }
+        onOpenChange(nextOpen);
+      }}
+      title="Edit session"
+      description="Update schedule, capacity, and coach assignment."
+      overline="Session"
+    >
+      {error && <DialogError message={error} />}
+      <form
+        className="space-y-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          mutation.mutate(form);
+        }}
+      >
+        <Field label="Coach">
+          {coaches.length > 0 ? (
+            <CoachSelect
+              coaches={coaches}
+              value={form.coach_id ?? ""}
+              onChange={(coachId) => setForm((f) => ({ ...f, coach_id: coachId }))}
+            />
+          ) : (
+            <input
+              value={form.coach_id ?? ""}
+              onChange={(event) => setForm((f) => ({ ...f, coach_id: event.target.value }))}
+              className={inputClass}
+              placeholder={coachesQuery.isLoading ? "Loading coaches..." : "Coach reference"}
+            />
+          )}
+        </Field>
+        <Field label="Name">
+          <input
+            value={form.title ?? ""}
+            onChange={(event) => setForm((f) => ({ ...f, title: event.target.value }))}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Location">
+          <input
+            value={form.location ?? ""}
+            onChange={(event) => setForm((f) => ({ ...f, location: event.target.value }))}
+            className={inputClass}
+          />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Start">
+            <input
+              type="datetime-local"
+              value={form.start_at ?? ""}
+              onChange={(event) => setForm((f) => ({ ...f, start_at: event.target.value }))}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="End">
+            <input
+              type="datetime-local"
+              value={form.end_at ?? ""}
+              onChange={(event) => setForm((f) => ({ ...f, end_at: event.target.value }))}
+              className={inputClass}
+            />
+          </Field>
+        </div>
+        <Field label="Capacity">
+          <input
+            type="number"
+            min={1}
+            value={form.capacity ?? 1}
+            onChange={(event) =>
+              setForm((f) => ({ ...f, capacity: parseInt(event.target.value, 10) || 1 }))
+            }
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Reason">
+          <input
+            value={form.reason ?? ""}
+            onChange={(event) => setForm((f) => ({ ...f, reason: event.target.value }))}
+            className={inputClass}
+            placeholder="Optional"
+          />
+        </Field>
+        <DialogActions>
+          <Button variant="secondary" size="sm" type="button" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button variant="primary" size="sm" type="submit" disabled={mutation.isPending}>
+            {mutation.isPending ? "Saving..." : "Save"}
+          </Button>
+        </DialogActions>
+      </form>
+    </RallyDialog>
   );
 }
 
@@ -931,6 +1097,27 @@ function StudentSelect({
       {students.map((student) => (
         <option key={student.student_id} value={student.student_id}>
           {student.full_name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function CoachSelect({
+  coaches,
+  value,
+  onChange,
+}: {
+  coaches: AdminUserView[];
+  value: string;
+  onChange: (coachId: string) => void;
+}) {
+  return (
+    <select value={value} onChange={(event) => onChange(event.target.value)} className={inputClass}>
+      <option value="">Select coach</option>
+      {coaches.map((coach) => (
+        <option key={coach.user_id} value={coach.user_id}>
+          {coach.display_name} ({coach.email})
         </option>
       ))}
     </select>

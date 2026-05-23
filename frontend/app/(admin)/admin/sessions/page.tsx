@@ -11,7 +11,7 @@
  */
 
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 
@@ -19,10 +19,12 @@ import {
   listAdminSessions,
   listAdminUsers,
   createAdminSession,
+  updateAdminSession,
   deleteAdminSession,
   type AdminUserView,
   type AdminSessionView,
   type CreateSessionRequest,
+  type EditSessionRequest,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -48,6 +50,10 @@ function formatTimeRange(start: string, end: string): string {
   return `${fmt(start)} – ${fmt(end)}`;
 }
 
+function toDateTimeLocal(value: string): string {
+  return new Date(value).toISOString().slice(0, 16);
+}
+
 function fillChip(enrolled: number, capacity: number): { variant: ChipVariant; label: string } {
   if (capacity <= 0) return { variant: "draft", label: "DRAFT" };
   const pct = enrolled / capacity;
@@ -60,6 +66,7 @@ export default function AdminSessionsPage() {
   const [date, setDate] = useState<string>(todayISO());
   const [view, setView] = useState<"table" | "calendar">("table");
   const [createOpen, setCreateOpen] = useState(false);
+  const [editSession, setEditSession] = useState<AdminSessionView | null>(null);
   const queryClient = useQueryClient();
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -121,6 +128,7 @@ export default function AdminSessionsPage() {
       ) : (
         <SessionList
           sessions={sessions}
+          onEdit={setEditSession}
           onDelete={(id) => {
             if (confirm("Cancel this session? This cannot be undone.")) {
               deleteMutation.mutate(id);
@@ -134,6 +142,16 @@ export default function AdminSessionsPage() {
         onOpenChange={setCreateOpen}
         onCreated={() => {
           setCreateOpen(false);
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions(date) });
+        }}
+      />
+      <EditSessionDialog
+        session={editSession}
+        onOpenChange={(open) => {
+          if (!open) setEditSession(null);
+        }}
+        onSaved={() => {
+          setEditSession(null);
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions(date) });
         }}
       />
@@ -212,9 +230,11 @@ function DateInput({ value, onChange }: { value: string; onChange: (v: string) =
 
 function SessionList({
   sessions,
+  onEdit,
   onDelete,
 }: {
   sessions: AdminSessionView[];
+  onEdit: (session: AdminSessionView) => void;
   onDelete: (id: string) => void;
 }) {
   return (
@@ -273,14 +293,24 @@ function SessionList({
                     {s.waitlist_count}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      onClick={() => onDelete(s.session_id)}
-                      aria-label={`Cancel session ${s.title}`}
-                    >
-                      Cancel
-                    </Button>
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => onEdit(s)}
+                        aria-label={`Edit session ${s.title}`}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => onDelete(s.session_id)}
+                        aria-label={`Cancel session ${s.title}`}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               );
@@ -289,6 +319,167 @@ function SessionList({
         </table>
       </div>
     </Card>
+  );
+}
+
+function EditSessionDialog({
+  session,
+  onOpenChange,
+  onSaved,
+}: {
+  session: AdminSessionView | null;
+  onOpenChange: (open: boolean) => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState<EditSessionRequest>({});
+  const [error, setError] = useState<string | null>(null);
+  const open = session !== null;
+  const coachesQuery = useQuery({
+    queryKey: queryKeys.admin.users("coach"),
+    queryFn: () => listAdminUsers("coach"),
+    enabled: open,
+  });
+  const coaches = coachesQuery.data?.users ?? [];
+
+  const mutation = useMutation({
+    mutationFn: (payload: EditSessionRequest) => updateAdminSession(session!.session_id, payload),
+    onSuccess: () => {
+      setError(null);
+      onSaved();
+    },
+    onError: (err: Error) => setError(err.message ?? "Failed to update session."),
+  });
+
+  useEffect(() => {
+    if (!session) return;
+    setForm({
+      coach_id: session.coach_id,
+      title: session.title,
+      location: session.location,
+      start_at: toDateTimeLocal(session.start_at),
+      end_at: toDateTimeLocal(session.end_at),
+      capacity: session.capacity,
+      reason: "",
+    });
+  }, [session]);
+
+  return (
+    <Dialog.Root
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) {
+          setForm({});
+          setError(null);
+        }
+        onOpenChange(nextOpen);
+      }}
+    >
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-rally-ink/40" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-xl focus:outline-none">
+          <Overline>Session</Overline>
+          <Dialog.Title className="mt-1 font-display text-xl font-semibold tracking-[-0.01em]">
+            Edit session
+          </Dialog.Title>
+          <Dialog.Description className="mb-4 mt-1 text-sm text-rally-muted">
+            Update schedule, capacity, and coach assignment.
+          </Dialog.Description>
+          {error && (
+            <p role="alert" className="mb-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}
+            </p>
+          )}
+          <form
+            className="space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              mutation.mutate(form);
+            }}
+          >
+            <Field label="Coach">
+              {coaches.length > 0 ? (
+                <CoachSelect
+                  coaches={coaches}
+                  value={form.coach_id ?? ""}
+                  onChange={(coachId) => setForm((f) => ({ ...f, coach_id: coachId }))}
+                />
+              ) : (
+                <input
+                  type="text"
+                  value={form.coach_id ?? ""}
+                  onChange={(event) => setForm((f) => ({ ...f, coach_id: event.target.value }))}
+                  className={inputClass}
+                  placeholder={coachesQuery.isLoading ? "Loading coaches…" : "Coach reference"}
+                />
+              )}
+            </Field>
+            <Field label="Name">
+              <input
+                type="text"
+                value={form.title ?? ""}
+                onChange={(event) => setForm((f) => ({ ...f, title: event.target.value }))}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Location">
+              <input
+                type="text"
+                value={form.location ?? ""}
+                onChange={(event) => setForm((f) => ({ ...f, location: event.target.value }))}
+                className={inputClass}
+              />
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Start">
+                <input
+                  type="datetime-local"
+                  value={form.start_at ?? ""}
+                  onChange={(event) => setForm((f) => ({ ...f, start_at: event.target.value }))}
+                  className={inputClass}
+                />
+              </Field>
+              <Field label="End">
+                <input
+                  type="datetime-local"
+                  value={form.end_at ?? ""}
+                  onChange={(event) => setForm((f) => ({ ...f, end_at: event.target.value }))}
+                  className={inputClass}
+                />
+              </Field>
+            </div>
+            <Field label="Capacity">
+              <input
+                type="number"
+                min={1}
+                value={form.capacity ?? 1}
+                onChange={(event) =>
+                  setForm((f) => ({ ...f, capacity: parseInt(event.target.value, 10) || 1 }))
+                }
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Reason">
+              <input
+                value={form.reason ?? ""}
+                onChange={(event) => setForm((f) => ({ ...f, reason: event.target.value }))}
+                className={inputClass}
+                placeholder="Optional"
+              />
+            </Field>
+            <div className="flex justify-end gap-2 pt-2">
+              <Dialog.Close asChild>
+                <Button variant="secondary" size="sm" type="button">
+                  Cancel
+                </Button>
+              </Dialog.Close>
+              <Button variant="primary" size="sm" type="submit" disabled={mutation.isPending}>
+                {mutation.isPending ? "Saving…" : "Save"}
+              </Button>
+            </div>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
