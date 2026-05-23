@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { listDuesFollowup, sendDuesReminders } from "@/lib/api/admin";
@@ -21,25 +21,34 @@ export default function AdminDuesPage() {
     queryFn: listDuesFollowup,
   });
   const reminderMutation = useMutation({
-    mutationFn: sendDuesReminders,
+    mutationFn: (parentIds: string[] | undefined) =>
+      sendDuesReminders(parentIds ? { parent_ids: parentIds } : {}),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["admin", "dues-followup"] }),
   });
   const { mutate: sendReminderBatch, isPending: sendingReminders } = reminderMutation;
+  const [selectedParentIds, setSelectedParentIds] = useState<string[]>([]);
 
   const parents = data?.parents ?? [];
+  const selectedCount = selectedParentIds.length;
   const totalDue = parents.reduce((sum, parent) => sum + parent.total_due_cents, 0);
+  const visibleParentIds = parents.map((parent) => parent.parent_id);
+  const allSelected = visibleParentIds.length > 0 && visibleParentIds.every((id) => selectedParentIds.includes(id));
 
   const topbarAction = useMemo(
     () => (
       <Button
         variant="primary"
-        onClick={() => sendReminderBatch()}
+        onClick={() => sendReminderBatch(selectedCount ? selectedParentIds : undefined)}
         disabled={sendingReminders || parents.length === 0}
       >
-        {sendingReminders ? "Sending..." : "Email listed parents"}
+        {sendingReminders
+          ? "Sending..."
+          : selectedCount
+            ? `Email ${selectedCount} selected`
+            : "Email listed parents"}
       </Button>
     ),
-    [parents.length, sendReminderBatch, sendingReminders]
+    [parents.length, selectedCount, selectedParentIds, sendReminderBatch, sendingReminders]
   );
   useAdminAction(topbarAction);
 
@@ -55,7 +64,9 @@ export default function AdminDuesPage() {
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
           {reminderMutation.data.blocked
             ? reminderMutation.data.reason
-            : `${reminderMutation.data.sent} dues reminder email(s) sent to parents currently listed.`}
+            : `${reminderMutation.data.sent} dues reminder email(s) sent.`}
+          {reminderMutation.data.generated_invoice_artifacts > 0 &&
+            ` ${reminderMutation.data.generated_invoice_artifacts} invoice artifact(s) generated.`}
         </div>
       )}
 
@@ -70,11 +81,21 @@ export default function AdminDuesPage() {
       ) : (
         <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
           <p className="border-b border-neutral-200 px-4 py-3 text-sm text-neutral-600 dark:border-neutral-800 dark:text-neutral-300">
-            Reminder emails are sent to the parents shown in this pending-dues list. Selecting individual parents is not available yet.
+            Select parents to send targeted reminders. With none selected, the reminder uses the full pending-dues list.
           </p>
           <table className="w-full min-w-[720px] text-sm">
             <thead>
               <tr className="border-b border-neutral-200 text-left text-neutral-500 dark:border-neutral-800">
+                <th className="px-4 py-3">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all parents"
+                    checked={allSelected}
+                    onChange={(event) => {
+                      setSelectedParentIds(event.target.checked ? visibleParentIds : []);
+                    }}
+                  />
+                </th>
                 <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Parent</th>
                 <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Email</th>
                 <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Stage</th>
@@ -85,6 +106,20 @@ export default function AdminDuesPage() {
             <tbody>
               {parents.map((parent) => (
                 <tr key={parent.parent_id} data-testid={`admin-dues-row-${parent.parent_id}`} className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
+                  <td className="px-4 py-3">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${parent.parent_name || parent.email || "parent"}`}
+                      checked={selectedParentIds.includes(parent.parent_id)}
+                      onChange={(event) => {
+                        setSelectedParentIds((current) =>
+                          event.target.checked
+                            ? Array.from(new Set([...current, parent.parent_id]))
+                            : current.filter((id) => id !== parent.parent_id)
+                        );
+                      }}
+                    />
+                  </td>
                   <td className="px-4 py-3">
                     <div className="font-medium">{parent.parent_name || "Parent"}</div>
                   </td>

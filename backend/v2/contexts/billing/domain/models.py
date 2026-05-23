@@ -13,7 +13,13 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 PaymentStatus = Literal[
-    "pending", "succeeded", "failed", "refunded", "partially_refunded", "expired"
+    "pending",
+    "partially_paid",
+    "succeeded",
+    "failed",
+    "refunded",
+    "partially_refunded",
+    "expired",
 ]
 SubscriptionStatus = Literal["active", "past_due", "cancelled", "incomplete"]
 CreditEntryType = Literal[

@@ -233,6 +233,10 @@ class AdminPaymentView(BaseModel):
     amount_cents: int
     discount_cents: int = 0
     final_amount_cents: int | None = None
+    amount_received_cents: int = 0
+    paid_amount_cents: int = 0
+    balance_due_cents: int | None = None
+    overpayment_credit_cents: int = 0
     currency: str
     status: str
     refunded_cents: int
@@ -274,12 +278,15 @@ class GenerateMonthlyPaymentsResponse(BaseModel):
 
 
 class MarkPaymentPaidRequest(BaseModel):
-    payment_method: str = "cash"
+    payment_method: Literal["cash", "check", "zelle", "venmo", "bank_transfer", "other"] = "cash"
+    amount_received_cents: int | None = Field(default=None, gt=0)
+    reference_number: str | None = None
     notes: str = ""
 
 
 class ApplyPaymentDiscountRequest(BaseModel):
     discount_cents: int
+    reason: str = Field(min_length=1)
 
 
 class AdminEnrollmentQuoteRequest(BaseModel):
@@ -350,6 +357,39 @@ class InvoiceDto(BaseModel):
 
 class InvoicesResponse(BaseModel):
     invoices: list[InvoiceDto]
+
+
+class InvoiceAllocationDto(BaseModel):
+    payment_id: str
+    amount_cents: int
+
+
+class InvoiceCreditUsageDto(BaseModel):
+    credit_id: str
+    amount_cents: int
+
+
+class InvoiceDetailResponse(BaseModel):
+    invoice_number: str
+    period: str
+    lines: list[InvoiceLineDto]
+    due_amount_cents: int
+    paid_amount_cents: int
+    status: str
+    allocations: list[InvoiceAllocationDto] = []
+    credit_usage: list[InvoiceCreditUsageDto] = []
+    invoice_pdf_artifact_id: str | None = None
+    receipt_artifact_id: str | None = None
+
+
+class GenerateInvoiceArtifactRequest(BaseModel):
+    artifact_type: Literal["invoice_pdf", "receipt"]
+
+
+class GenerateInvoiceArtifactResponse(BaseModel):
+    artifact_id: str
+    artifact_type: Literal["invoice_pdf", "receipt"]
+    status: Literal["generated"]
 
 
 # --- Finance (# FINANCE) ---
@@ -431,7 +471,13 @@ class DuesFollowupResponse(BaseModel):
 class SendDuesRemindersResponse(BaseModel):
     sent: int
     blocked: bool
-    reason: str
+    reason: str | None
+    selected_parent_ids: list[str] = []
+    generated_invoice_artifacts: int = 0
+
+
+class SendDuesRemindersRequest(BaseModel):
+    parent_ids: list[str] | None = None
 
 
 # --- Comms ---

@@ -36,8 +36,13 @@ from backend.v2.interfaces.admin.views import (
     ApplyPaymentDiscountRequest,
     DeleteExpenseRequest,
     EditExpenseRequest,
+    GenerateInvoiceArtifactRequest,
+    GenerateInvoiceArtifactResponse,
     GenerateMonthlyPaymentsRequest,
     GenerateMonthlyPaymentsResponse,
+    InvoiceAllocationDto,
+    InvoiceCreditUsageDto,
+    InvoiceDetailResponse,
     InvoiceDto,
     InvoiceLineDto,
     InvoicesResponse,
@@ -85,6 +90,66 @@ async def list_billing_invoices(
             )
         )
     return InvoicesResponse(invoices=invoices)
+
+
+@router.get("/billing/invoices/{invoice_id}", response_model=InvoiceDetailResponse)
+async def get_billing_invoice_detail(
+    invoice_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> InvoiceDetailResponse:
+    raw = await use_cases.get_billing_invoice_detail(invoice_id)  # type: ignore[operator]
+    return InvoiceDetailResponse(
+        invoice_number=str(raw["invoice_number"]),
+        period=str(raw.get("period") or ""),
+        lines=[
+            InvoiceLineDto(
+                description=str(line.get("description", "")),
+                amount_cents=int(line.get("amount_cents", 0)),
+            )
+            for line in raw.get("lines", [])
+        ],
+        due_amount_cents=int(raw.get("due_amount_cents", 0)),
+        paid_amount_cents=int(raw.get("paid_amount_cents", 0)),
+        status=str(raw.get("status", "open")),
+        allocations=[
+            InvoiceAllocationDto(
+                payment_id=str(item.get("payment_id", "")),
+                amount_cents=int(item.get("amount_cents", 0)),
+            )
+            for item in raw.get("allocations", [])
+        ],
+        credit_usage=[
+            InvoiceCreditUsageDto(
+                credit_id=str(item.get("credit_id", "")),
+                amount_cents=int(item.get("amount_cents", 0)),
+            )
+            for item in raw.get("credit_usage", [])
+        ],
+        invoice_pdf_artifact_id=raw.get("invoice_pdf_artifact_id"),  # type: ignore[arg-type]
+        receipt_artifact_id=raw.get("receipt_artifact_id"),  # type: ignore[arg-type]
+    )
+
+
+@router.post(
+    "/billing/invoices/{invoice_id}/artifacts",
+    response_model=GenerateInvoiceArtifactResponse,
+)
+async def generate_billing_invoice_artifact(
+    invoice_id: str,
+    body: GenerateInvoiceArtifactRequest,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> GenerateInvoiceArtifactResponse:
+    raw = await use_cases.generate_billing_invoice_artifact(  # type: ignore[operator]
+        invoice_id,
+        body.artifact_type,
+    )
+    return GenerateInvoiceArtifactResponse(
+        artifact_id=str(raw["artifact_id"]),
+        artifact_type=body.artifact_type,
+        status="generated",
+    )
 
 
 def _admin_quote_response(snapshot) -> AdminEnrollmentQuoteResponse:
@@ -232,6 +297,8 @@ async def mark_payment_paid(
         MarkPaymentPaidCommand(
             payment_id=payment_id,
             payment_method=body.payment_method,
+            amount_received_cents=body.amount_received_cents,
+            reference_number=body.reference_number,
             notes=body.notes,
         )
     )
@@ -249,6 +316,7 @@ async def apply_payment_discount(
         ApplyPaymentDiscountCommand(
             payment_id=payment_id,
             discount_cents=body.discount_cents,
+            reason=body.reason,
         )
     )
     return {"ok": True}
@@ -386,6 +454,10 @@ def _payment_view(row: object) -> AdminPaymentView:
         amount_cents=amount_cents,
         discount_cents=0,
         final_amount_cents=amount_cents,
+        amount_received_cents=amount_cents if row.status == "succeeded" else 0,
+        paid_amount_cents=amount_cents if row.status == "succeeded" else 0,
+        balance_due_cents=0 if row.status == "succeeded" else amount_cents,
+        overpayment_credit_cents=0,
         currency=row.currency,
         status=row.status,
         refunded_cents=row.refunded_cents,

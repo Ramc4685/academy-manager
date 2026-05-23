@@ -105,7 +105,7 @@ def test_apply_payment_discount(admin_client):
     _seed_payment(admin_client.seed, "pay-pending", status="pending", stripe=False)
     r = admin_client.post(
         "/api/v2/admin/payments/pay-pending/discount",
-        json={"discount_cents": 2500},
+        json={"discount_cents": 2500, "reason": "sibling discount"},
     )
     assert r.status_code == 200, r.text
     assert admin_client.seed["payments"].discounts["pay-pending"] == 2500

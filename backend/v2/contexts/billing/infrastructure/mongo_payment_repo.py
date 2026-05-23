@@ -17,7 +17,7 @@ from backend.v2.contexts.billing.domain.errors import (
     PaymentNotFound,
     PaymentOperationNotAllowed,
 )
-from backend.v2.contexts.billing.domain.models import Payment
+from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment
 from backend.v2.contexts.billing.domain.proration import (
     BillingCalculationSnapshot,
     BillingPeriod,
@@ -304,6 +304,19 @@ class MongoPaymentRepository(TenantScopedRepository):
             "amount_cents": amount_cents,
             "discount_cents": discount_cents,
             "final_amount_cents": max(amount_cents - discount_cents, 0),
+            "amount_received_cents": int(doc.get("amount_received_cents", 0)),
+            "paid_amount_cents": int(doc.get("paid_amount_cents", 0)),
+            "balance_due_cents": int(
+                doc.get(
+                    "balance_due_cents",
+                    max(
+                        max(amount_cents - discount_cents, 0)
+                        - int(doc.get("paid_amount_cents", 0)),
+                        0,
+                    ),
+                )
+            ),
+            "overpayment_credit_cents": int(doc.get("overpayment_credit_cents", 0)),
             "currency": str(doc.get("currency", "usd")),
             "status": str(doc.get("status", "pending")),
             "refunded_cents": cls._refunded_cents(doc),
@@ -602,26 +615,78 @@ class MongoPaymentRepository(TenantScopedRepository):
         *,
         payment_method: str,
         notes: str,
+        amount_received_cents: int | None,
+        reference_number: str | None,
     ) -> None:
         doc = await self._get_admin_payment_doc(payment_id)
-        if str(doc.get("status") or "pending") not in {"pending", "failed"}:
-            raise PaymentOperationNotAllowed("only pending payments can be marked paid")
+        if str(doc.get("status") or "pending") not in {"pending", "failed", "partially_paid"}:
+            raise PaymentOperationNotAllowed("only open payments can receive manual payments")
+        amount_due_cents = max(self._amount_cents(doc) - self._discount_cents(doc), 0)
+        previous_received_cents = int(doc.get("amount_received_cents", 0))
+        previous_credit_cents = int(doc.get("overpayment_credit_cents", 0))
+        previous_paid_cents = min(previous_received_cents, amount_due_cents)
+        if amount_received_cents is None:
+            amount_received_cents = max(amount_due_cents - previous_paid_cents, 0)
+        if amount_received_cents <= 0:
+            raise PaymentOperationNotAllowed("manual payment amount must be positive")
+        new_received_cents = previous_received_cents + amount_received_cents
+        paid_amount_cents = min(new_received_cents, amount_due_cents)
+        balance_due_cents = max(amount_due_cents - paid_amount_cents, 0)
+        overpayment_credit_cents = max(new_received_cents - amount_due_cents, 0)
+        new_credit_cents = max(overpayment_credit_cents - previous_credit_cents, 0)
+        status = "succeeded" if balance_due_cents == 0 else "partially_paid"
         now = datetime.now(UTC)
         await self._update_one(
             _payment_lookup(payment_id),
             {
                 "$set": {
-                    "status": "succeeded",
+                    "status": status,
                     "payment_method": payment_method,
                     "notes": notes,
-                    "paid_at": now,
+                    "reference_number": reference_number,
+                    "amount_received_cents": new_received_cents,
+                    "paid_amount_cents": paid_amount_cents,
+                    "balance_due_cents": balance_due_cents,
+                    "overpayment_credit_cents": overpayment_credit_cents,
+                    "paid_at": now if status == "succeeded" else None,
                     "payment_date": now,
                     "updated_at": now,
                 }
             },
         )
+        if new_credit_cents > 0 and self._credit_ledger is not None:
+            existing_credit = await self._db["account_credit_ledger"].find_one(
+                {
+                    "academy_id": current_academy_id(),
+                    "source_type": "OVERPAYMENT",
+                    "source_id": payment_id,
+                }
+            )
+            if existing_credit is None:
+                await self._credit_ledger.create(
+                    CreditLedgerEntry(
+                        credit_id=str(new_ulid()),
+                        academy_id=current_academy_id(),
+                        parent_id=str(doc.get("parent_id") or doc.get("parent_user_id") or ""),
+                        student_id=doc.get("student_id"),  # type: ignore[arg-type]
+                        enrollment_id=doc.get("enrollment_id"),  # type: ignore[arg-type]
+                        invoice_id=payment_id,
+                        type="MANUAL_CREDIT",
+                        status="APPROVED",
+                        amount_cents=new_credit_cents,
+                        remaining_amount_cents=new_credit_cents,
+                        currency=str(doc.get("currency", "usd")),
+                        reason=f"Overpayment on payment {payment_id}",
+                        source_type="OVERPAYMENT",
+                        source_id=payment_id,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
 
-    async def apply_payment_discount(self, payment_id: str, discount_cents: int) -> None:
+    async def apply_payment_discount(
+        self, payment_id: str, discount_cents: int, *, reason: str
+    ) -> None:
         doc = await self._get_admin_payment_doc(payment_id)
         if str(doc.get("status") or "pending") != "pending":
             raise PaymentOperationNotAllowed("only pending payments can be discounted")
@@ -633,6 +698,8 @@ class MongoPaymentRepository(TenantScopedRepository):
                 "$set": {
                     "discount_cents": discount_cents,
                     "discount": discount_cents / 100,
+                    "discount_reason": reason,
+                    "balance_due_cents": max(self._amount_cents(doc) - discount_cents, 0),
                     "updated_at": datetime.now(UTC),
                 }
             },

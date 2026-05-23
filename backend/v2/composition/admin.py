@@ -16,6 +16,7 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     ApplyPaymentDiscount,
     GenerateMonthlyPayments,
     MarkPaymentPaid,
+    SendDuesReminders,
     UndoPaymentPaid,
 )
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
@@ -673,7 +674,170 @@ def compose_admin(
                         totals[key]["email"] = user.get("email")
         return sorted(totals.values(), key=lambda row: int(row["total_due_cents"]), reverse=True)
 
-    async def send_dues_reminders():
+    async def get_billing_invoice_detail(invoice_id: str) -> dict[str, Any]:
+        invoice = await db["invoices"].find_one(
+            {
+                "academy_id": academy_id,
+                "$or": [{"invoice_id": invoice_id}, {"invoice_number": invoice_id}],
+            }
+        )
+        if invoice is not None:
+            inv_id = str(invoice.get("invoice_id") or invoice_id)
+            lines = [
+                {
+                    "description": str(line.get("description", "")),
+                    "amount_cents": int(line.get("amount_cents", 0)),
+                }
+                async for line in db["invoice_lines"].find(
+                    {"academy_id": academy_id, "invoice_id": inv_id}
+                )
+            ]
+            allocations = [
+                {
+                    "payment_id": str(row.get("payment_id", "")),
+                    "amount_cents": int(row.get("amount_cents", 0)),
+                }
+                async for row in db["payment_allocations"].find(
+                    {"academy_id": academy_id, "invoice_id": inv_id}
+                )
+            ]
+            credit_usage = [
+                {
+                    "credit_id": str(row.get("credit_id", "")),
+                    "amount_cents": int(row.get("amount_cents", 0)),
+                }
+                async for row in db["credit_applications"].find(
+                    {"academy_id": academy_id, "invoice_id": inv_id}
+                )
+            ]
+            total = int(invoice.get("total_cents", 0))
+            due = int(invoice.get("balance_due_cents", 0))
+            return {
+                "invoice_number": str(invoice.get("invoice_number") or inv_id),
+                "period": str(invoice.get("period") or ""),
+                "lines": lines,
+                "due_amount_cents": due,
+                "paid_amount_cents": max(total - due, 0),
+                "status": str(invoice.get("status", "open")),
+                "allocations": allocations,
+                "credit_usage": credit_usage,
+                "invoice_pdf_artifact_id": invoice.get("invoice_pdf_artifact_id")
+                or invoice.get("pdf_artifact_id"),
+                "receipt_artifact_id": invoice.get("receipt_artifact_id"),
+            }
+
+        payment = await payments_repo._find_one(  # type: ignore[attr-defined]
+            {"$or": [{"payment_id": invoice_id}, {"invoice_number": invoice_id}]}
+        )
+        if payment is None:
+            from backend.v2.contexts.billing.domain.errors import PaymentNotFound
+
+            raise PaymentNotFound("invoice not found", payment_id=invoice_id)
+        row = payments_repo._to_admin_row(payment, None)  # type: ignore[attr-defined]
+        final_amount = int(row["final_amount_cents"])
+        paid_amount = int(row.get("paid_amount_cents") or 0)
+        if paid_amount == 0 and str(row["status"]) == "succeeded":
+            paid_amount = final_amount
+        due = int(row.get("balance_due_cents") or max(final_amount - paid_amount, 0))
+        allocations = []
+        if paid_amount:
+            allocations.append({"payment_id": str(row["payment_id"]), "amount_cents": paid_amount})
+        credit_usage = []
+        applied_credit = int(payment.get("applied_credit_cents", 0))
+        if applied_credit:
+            credit_usage.append({"credit_id": "account_credit", "amount_cents": applied_credit})
+        return {
+            "invoice_number": str(payment.get("invoice_number") or row["payment_id"]),
+            "period": str(payment.get("period") or ""),
+            "lines": [
+                {
+                    "description": f"Tuition {payment.get('period') or ''}".strip(),
+                    "amount_cents": int(payment.get("gross_amount_cents") or row["amount_cents"]),
+                }
+            ],
+            "due_amount_cents": due,
+            "paid_amount_cents": paid_amount,
+            "status": str(row["status"]),
+            "allocations": allocations,
+            "credit_usage": credit_usage,
+            "invoice_pdf_artifact_id": payment.get("invoice_pdf_artifact_id"),
+            "receipt_artifact_id": payment.get("receipt_artifact_id"),
+        }
+
+    async def generate_billing_invoice_artifact(
+        invoice_id: str, artifact_type: str
+    ) -> dict[str, Any]:
+        artifact_id = str(new_ulid())
+        now = datetime.now(UTC)
+        await db["billing_artifacts"].insert_one(
+            {
+                "academy_id": academy_id,
+                "artifact_id": artifact_id,
+                "invoice_id": invoice_id,
+                "artifact_type": artifact_type,
+                "status": "generated",
+                "created_at": now,
+            }
+        )
+        field = "receipt_artifact_id" if artifact_type == "receipt" else "invoice_pdf_artifact_id"
+        await db["invoices"].update_one(
+            {
+                "academy_id": academy_id,
+                "$or": [{"invoice_id": invoice_id}, {"invoice_number": invoice_id}],
+            },
+            {"$set": {field: artifact_id, "updated_at": now}},
+        )
+        await db["payments"].update_one(
+            {
+                "academy_id": academy_id,
+                "$or": [{"payment_id": invoice_id}, {"invoice_number": invoice_id}],
+            },
+            {"$set": {field: artifact_id, "updated_at": now}},
+        )
+        return {"artifact_id": artifact_id, "artifact_type": artifact_type, "status": "generated"}
+
+    class _DuesReminderSender:
+        async def send_dues_reminders(
+            self,
+            *,
+            parent_ids: list[str] | None,
+            generate_invoice_artifacts: bool,
+        ) -> dict[str, object]:
+            rows = await list_dues_followup()
+            if parent_ids is not None:
+                selected = set(parent_ids)
+                rows = [row for row in rows if str(row["parent_id"]) in selected]
+            generated = 0
+            if generate_invoice_artifacts:
+                for row in rows:
+                    payment_cursor = payments_repo._find_many(  # type: ignore[attr-defined]
+                        {
+                            "status": {"$in": ["pending", "partially_paid"]},
+                            "$or": [
+                                {"parent_id": row["parent_id"]},
+                                {"parent_user_id": row["parent_id"]},
+                            ],
+                            "is_deleted": {"$ne": True},
+                        },
+                        sort=[("created_at", -1)],
+                    )
+                    async for payment in payment_cursor:
+                        await generate_billing_invoice_artifact(
+                            str(payment.get("payment_id") or payment.get("invoice_number")),
+                            "invoice_pdf",
+                        )
+                        generated += 1
+            return {
+                "sent": 0,
+                "blocked": True,
+                "reason": f"Local/test safety block: {len(rows)} reminder(s) were not sent.",
+                "selected_parent_ids": parent_ids or [str(row["parent_id"]) for row in rows],
+                "generated_invoice_artifacts": generated,
+            }
+
+    send_dues_reminders = SendDuesReminders(sender=_DuesReminderSender())
+
+    async def _legacy_send_dues_reminders():
         rows = await list_dues_followup()
         return {
             "sent": 0,
@@ -763,6 +927,8 @@ def compose_admin(
         approve_withdrawal_credit=approve_withdrawal_credit,
         list_payments_recent=list_payments_recent,
         list_billing_invoices=billing_ledger_repo.list_invoices_for_academy,
+        get_billing_invoice_detail=get_billing_invoice_detail,
+        generate_billing_invoice_artifact=generate_billing_invoice_artifact,
         generate_monthly_payments=generate_monthly_payments,
         mark_payment_paid=mark_payment_paid,
         apply_payment_discount=apply_payment_discount,

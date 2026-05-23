@@ -387,6 +387,7 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     GenerateMonthlyPayments,
     GenerateMonthlyPaymentsResult,
     MarkPaymentPaid,
+    SendDuesReminders,
     UndoPaymentPaid,
 )
 from backend.v2.contexts.billing.application.use_cases.finance import (
@@ -684,7 +685,10 @@ class FakePauseRequestRepo:
 class FakePaymentRepo:
     rows: dict[str, Payment] = field(default_factory=dict)
     discounts: dict[str, int] = field(default_factory=dict)
+    discount_reasons: dict[str, str] = field(default_factory=dict)
     generated_periods: list[str] = field(default_factory=list)
+    manual_records: dict[str, dict[str, object]] = field(default_factory=dict)
+    credits: list[dict[str, object]] = field(default_factory=list)
 
     async def save(self, p):
         self.rows[p.payment_id] = p
@@ -708,15 +712,50 @@ class FakePaymentRepo:
         self.generated_periods.append(period)
         return GenerateMonthlyPaymentsResult(created=1, skipped_existing=0)
 
-    async def mark_payment_paid(self, payment_id, *, payment_method, notes):
+    async def mark_payment_paid(
+        self,
+        payment_id,
+        *,
+        payment_method,
+        notes,
+        amount_received_cents=None,
+        reference_number=None,
+    ):
         p = self.rows.get(payment_id)
         if p is None:
             raise PaymentNotFound("no such payment", payment_id=payment_id)
-        if p.status not in ("pending", "failed"):
-            raise PaymentOperationNotAllowed("only pending payments can be marked paid")
-        self.rows[payment_id] = p.model_copy(update={"status": "succeeded"})
+        if p.status not in ("pending", "failed", "partially_paid"):
+            raise PaymentOperationNotAllowed("only open payments can receive manual payments")
+        existing = self.manual_records.get(payment_id, {})
+        previous_received = int(existing.get("amount_received_cents", 0))
+        amount_due = p.amount_cents
+        if amount_received_cents is None:
+            amount_received_cents = max(amount_due - previous_received, 0)
+        new_received = previous_received + amount_received_cents
+        paid_amount = min(new_received, amount_due)
+        balance_due = max(amount_due - paid_amount, 0)
+        overpayment = max(new_received - amount_due, 0)
+        status = "succeeded" if balance_due == 0 else "partially_paid"
+        self.manual_records[payment_id] = {
+            "payment_method": payment_method,
+            "notes": notes,
+            "reference_number": reference_number,
+            "amount_received_cents": new_received,
+            "paid_amount_cents": paid_amount,
+            "balance_due_cents": balance_due,
+            "overpayment_credit_cents": overpayment,
+        }
+        if overpayment and not any(c["payment_id"] == payment_id for c in self.credits):
+            self.credits.append(
+                {
+                    "payment_id": payment_id,
+                    "parent_id": p.parent_id,
+                    "amount_cents": overpayment,
+                }
+            )
+        self.rows[payment_id] = p.model_copy(update={"status": status})
 
-    async def apply_payment_discount(self, payment_id, discount_cents):
+    async def apply_payment_discount(self, payment_id, discount_cents, *, reason):
         p = self.rows.get(payment_id)
         if p is None:
             raise PaymentNotFound("no such payment", payment_id=payment_id)
@@ -725,6 +764,7 @@ class FakePaymentRepo:
         if discount_cents > p.amount_cents:
             raise PaymentOperationNotAllowed("discount cannot exceed payment amount")
         self.discounts[payment_id] = discount_cents
+        self.discount_reasons[payment_id] = reason
 
     async def undo_payment_paid(self, payment_id):
         p = self.rows.get(payment_id)
@@ -914,6 +954,8 @@ def admin_seed():
         "payouts": FakePayoutRepo(),
         "messages": FakeMessageRepo(),
         "waivers": FakeAdminWaivers(),
+        "invoice_details": {},
+        "invoice_artifacts": {},
         "outbox": _AdminFakeOutbox(),
         "idempotency": _AdminFakeIdempotencyStore(),
         "stripe": FakeStripeGateway(),
@@ -1068,8 +1110,29 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     async def list_dues_followup():
         return []
 
-    async def send_dues_reminders():
-        return {"sent": 0, "blocked": True, "reason": "test safety block"}
+    async def get_billing_invoice_detail(invoice_id):
+        return seed["invoice_details"][invoice_id]
+
+    async def generate_billing_invoice_artifact(invoice_id, artifact_type):
+        artifact_id = f"{artifact_type}-{invoice_id}"
+        seed["invoice_artifacts"][artifact_id] = {
+            "invoice_id": invoice_id,
+            "artifact_type": artifact_type,
+        }
+        return {"artifact_id": artifact_id, "artifact_type": artifact_type, "status": "generated"}
+
+    class _FakeDuesReminderSender:
+        async def send_dues_reminders(self, *, parent_ids, generate_invoice_artifacts):
+            generated = len(parent_ids or []) if generate_invoice_artifacts else 0
+            return {
+                "sent": len(parent_ids or []),
+                "blocked": False,
+                "reason": None,
+                "selected_parent_ids": parent_ids or [],
+                "generated_invoice_artifacts": generated,
+            }
+
+    send_dues_reminders = SendDuesReminders(sender=_FakeDuesReminderSender())
 
     async def export_report_csv(report_name):
         return f"name\n{report_name}\n"
@@ -1182,6 +1245,9 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         preview_withdrawal_credit=_FakePreviewWithdrawalCredit(),  # type: ignore[arg-type]
         approve_withdrawal_credit=_FakeApproveWithdrawalCredit(),  # type: ignore[arg-type]
         list_payments_recent=list_payments_recent,
+        list_billing_invoices=AsyncMock(return_value=[]),
+        get_billing_invoice_detail=get_billing_invoice_detail,
+        generate_billing_invoice_artifact=generate_billing_invoice_artifact,
         generate_monthly_payments=generate_monthly_payments,
         mark_payment_paid=mark_payment_paid,
         apply_payment_discount=apply_payment_discount,
@@ -1208,7 +1274,6 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             }
         ),
         list_enrollment_events=enrollment_events.list_for_enrollment,
-        list_billing_invoices=AsyncMock(return_value=[]),
         comms=comms,
         list_admin_waivers=waivers,  # type: ignore[arg-type]
         get_academy_use_case=AsyncMock(),
