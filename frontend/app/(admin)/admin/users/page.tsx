@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
 import {
@@ -92,10 +93,16 @@ function UsersTable({ users }: { users: AdminUserView[] }) {
           {users.map((user) => (
             <tr key={user.user_id} data-testid={`admin-users-row-${user.user_id}`} className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
               <td className="px-2 py-3">
-                <div className="flex items-center gap-3">
+                <Link
+                  href={`/admin/users/${encodeURIComponent(user.user_id)}`}
+                  className="group flex items-center gap-3 rounded focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
+                  data-testid={`admin-users-link-${user.user_id}`}
+                >
                   <Avatar name={user.display_name} size={32} />
-                  <div className="font-medium text-rally-base">{user.display_name}</div>
-                </div>
+                  <div className="font-medium text-rally-base group-hover:underline">
+                    {user.display_name}
+                  </div>
+                </Link>
               </td>
               <td className="px-2 py-3 text-rally-base">{user.email}</td>
               <td className="px-2 py-3 text-rally-muted">{user.phone || "—"}</td>

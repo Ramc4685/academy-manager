@@ -16,7 +16,9 @@ from bson import ObjectId
 from pymongo import ReturnDocument
 
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+    AdminUserDetail,
     AdminUserSummary,
+    UpdateAdminUserCommand,
 )
 from backend.v2.contexts.identity.domain.models import Role, User
 
@@ -137,7 +139,33 @@ class MongoUserRepository:
             display_name=user.display_name,
             role=primary_role,
             status=status,
+            phone=str(doc.get("phone")) if doc.get("phone") is not None else None,
         )
+
+    def _to_admin_detail(
+        self, doc: dict[str, object], *, linked_student_count: int
+    ) -> AdminUserDetail:
+        user = self._to_domain(doc)
+        summary = self._to_admin_summary(doc)
+        return AdminUserDetail(
+            **summary.model_dump(),
+            roles=user.roles,
+            linked_student_count=linked_student_count,
+        )
+
+    @staticmethod
+    def _id_filter(user_id: str) -> dict[str, object]:
+        ids: list[object] = [user_id]
+        if ObjectId.is_valid(user_id):
+            ids.append(ObjectId(user_id))
+        return {
+            "$or": [
+                {"user_id": user_id},
+                {"auth_uid": user_id},
+                {"firebase_uid": user_id},
+                {"_id": {"$in": ids}},
+            ]
+        }
 
     async def list_users(
         self, role: Role | None = None, academy_id: str | None = None
@@ -148,24 +176,138 @@ class MongoUserRepository:
         cursor = self.collection.find(query).sort([("role", 1), ("display_name", 1), ("email", 1)])
         return [self._to_admin_summary(doc) async for doc in cursor]
 
-    async def change_role(
-        self, user_id: str, role: Role, *, academy_id: str
-    ) -> AdminUserSummary | None:
-        ids: list[object] = [user_id]
-        if ObjectId.is_valid(user_id):
-            ids.append(ObjectId(user_id))
-        now = datetime.now(UTC)
-        doc = await self.collection.find_one_and_update(
+    async def get_admin_user(self, user_id: str, *, academy_id: str) -> AdminUserDetail | None:
+        doc = await self.collection.find_one({"academy_id": academy_id, **self._id_filter(user_id)})
+        if doc is None:
+            return None
+        lookup_ids = [
+            str(value)
+            for value in (
+                doc.get("user_id"),
+                doc.get("auth_uid"),
+                doc.get("firebase_uid"),
+                doc.get("_id"),
+            )
+            if value
+        ]
+        linked_student_count = await self._db["students"].count_documents(
             {
                 "academy_id": academy_id,
                 "$or": [
-                    {"user_id": user_id},
-                    {"auth_uid": user_id},
-                    {"firebase_uid": user_id},
-                    {"_id": {"$in": ids}},
+                    {"parent_id": {"$in": lookup_ids}},
+                    {"parent_user_id": {"$in": lookup_ids}},
                 ],
-            },
+            }
+        )
+        return self._to_admin_detail(doc, linked_student_count=linked_student_count)
+
+    async def update_admin_user(
+        self,
+        user_id: str,
+        command: UpdateAdminUserCommand,
+        *,
+        academy_id: str,
+    ) -> AdminUserDetail | None:
+        before = await self.collection.find_one(
+            {"academy_id": academy_id, **self._id_filter(user_id)}
+        )
+        if before is None:
+            return None
+        set_doc: dict[str, object] = {"updated_at": datetime.now(UTC)}
+        if command.display_name is not None:
+            set_doc["display_name"] = " ".join(command.display_name.split())
+        if command.phone is not None:
+            set_doc["phone"] = command.phone.strip() or None
+        if command.status is not None:
+            set_doc["status"] = command.status
+            set_doc["is_active"] = command.status == "active"
+        changed = [
+            key
+            for key, value in set_doc.items()
+            if key != "updated_at" and before.get(key) != value
+        ]
+        doc = await self.collection.find_one_and_update(
+            {"academy_id": academy_id, **self._id_filter(user_id)},
+            {"$set": set_doc},
+            return_document=ReturnDocument.AFTER,
+        )
+        if doc is None:
+            return None
+        if changed:
+            await self._write_audit(
+                academy_id=academy_id,
+                actor_id=command.actor_id,
+                action="user.edited",
+                entity_id=self._to_domain(doc).user_id,
+                reason=command.reason,
+                changed_keys=changed,
+                before=before,
+                after=doc,
+            )
+        return await self.get_admin_user(self._to_domain(doc).user_id, academy_id=academy_id)
+
+    async def change_role(
+        self,
+        user_id: str,
+        role: Role,
+        *,
+        academy_id: str,
+        actor_id: str,
+        reason: str,
+    ) -> AdminUserSummary | None:
+        now = datetime.now(UTC)
+        before = await self.collection.find_one(
+            {"academy_id": academy_id, **self._id_filter(user_id)}
+        )
+        if before is None:
+            return None
+        doc = await self.collection.find_one_and_update(
+            {"academy_id": academy_id, **self._id_filter(user_id)},
             {"$set": {"role": role, "roles": [role], "updated_at": now}},
             return_document=ReturnDocument.AFTER,
         )
+        if doc is not None:
+            await self._write_audit(
+                academy_id=academy_id,
+                actor_id=actor_id,
+                action="user.role_changed",
+                entity_id=self._to_domain(doc).user_id,
+                reason=reason,
+                changed_keys=["role", "roles"],
+                before=before,
+                after=doc,
+            )
         return self._to_admin_summary(doc) if doc else None
+
+    async def _write_audit(
+        self,
+        *,
+        academy_id: str,
+        actor_id: str,
+        action: str,
+        entity_id: str,
+        reason: str,
+        changed_keys: list[str],
+        before: dict[str, Any],
+        after: dict[str, Any],
+    ) -> None:
+        from backend.v2.shared.ids import new_ulid
+
+        def pick(doc: dict[str, Any]) -> dict[str, Any]:
+            return {key: doc.get(key) for key in changed_keys}
+
+        await self._db["audit_logs"].insert_one(
+            {
+                "audit_id": str(new_ulid()),
+                "academy_id": academy_id,
+                "actor_id": actor_id,
+                "action": action,
+                "entity_type": "user",
+                "entity_id": entity_id,
+                "reason": reason,
+                "changed_keys": changed_keys,
+                "before": pick(before),
+                "after": pick(after),
+                "created_at": datetime.now(UTC),
+            }
+        )

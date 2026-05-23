@@ -331,6 +331,11 @@ export interface AdminUserView {
   phone?: string | null;
 }
 
+export interface AdminUserDetail extends AdminUserView {
+  roles: AdminUserRole[];
+  linked_student_count: number;
+}
+
 export interface AdminUserList {
   users: AdminUserView[];
 }
@@ -467,6 +472,27 @@ export function listAdminUsers(role?: AdminUserRole): Promise<AdminUserList> {
   return apiFetch<AdminUserList>(`/admin/users${q}`, { method: "GET" });
 }
 
+export function getAdminUser(userId: string): Promise<AdminUserDetail> {
+  return apiFetch<AdminUserDetail>(`/admin/users/${encodeURIComponent(userId)}`, {
+    method: "GET",
+  });
+}
+
+export function updateAdminUser(
+  userId: string,
+  payload: Partial<{
+    display_name: string;
+    phone: string | null;
+    status: string;
+    reason: string;
+  }>,
+): Promise<AdminUserDetail> {
+  return apiFetch<AdminUserDetail>(`/admin/users/${encodeURIComponent(userId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
 function isQueryFunctionContext(params: ListAdminStudentsParams | QueryFunctionContextArg): params is QueryFunctionContextArg {
   return "queryKey" in params;
 }
@@ -486,11 +512,12 @@ export function listAdminStudents(
 
 export function updateAdminUserRole(
   userId: string,
-  role: AdminUserRole
+  role: AdminUserRole,
+  reason = "Admin role change",
 ): Promise<AdminUserView> {
   return apiFetch<AdminUserView>(`/admin/users/${encodeURIComponent(userId)}/role`, {
     method: "PATCH",
-    body: JSON.stringify({ role }),
+    body: JSON.stringify({ role, reason }),
   });
 }
 
