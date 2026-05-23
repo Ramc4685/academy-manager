@@ -99,7 +99,13 @@ async def _wire(
         idempotency_store=idem,
         academy_id="acad",
     )
-    promote = PromoteFromWaitlist(waitlist=waitlist, outbox=outbox, academy_id="acad")
+    promote = PromoteFromWaitlist(
+        waitlist=waitlist,
+        sessions=sessions_w,
+        enrollments=enrollments_w,
+        outbox=outbox,
+        academy_id="acad",
+    )
     issue_refund = IssueRefund(
         payment_repo=payments_repo,
         stripe=FakeStripeGateway(),
@@ -138,14 +144,13 @@ async def test_on_payment_succeeded_handler_creates_enrollment(db, acad) -> None
             "coach_id": "coach-1",
             "title": "Junior A",
             "location": "Court 1",
-            "start_at": datetime(2026, 6, 1, 9, 0, tzinfo=UTC),
-            "end_at": datetime(2026, 6, 1, 10, 30, tzinfo=UTC),
+            "start_at": datetime(2026, 5, 16, 9, 0, tzinfo=UTC),
+            "end_at": datetime(2026, 5, 16, 10, 30, tzinfo=UTC),
             "capacity": 2,
             "reserved_seats": 0,
             "status": "scheduled",
         }
     )
-
     # Fire the handler the same way the dispatcher would.
     event = PaymentSucceeded(
         aggregate_id="pay-1",
@@ -231,6 +236,20 @@ async def test_on_enrollment_cancelled_promotes_oldest_waitlist_entry(db, acad) 
     await _wire(db)
 
     session_id = str(new_ulid())
+    await db["sessions"].insert_one(
+        {
+            "session_id": session_id,
+            "academy_id": "acad",
+            "coach_id": "coach-1",
+            "title": "Junior A",
+            "location": "Court 1",
+            "start_at": datetime(2026, 6, 1, 9, 0, tzinfo=UTC),
+            "end_at": datetime(2026, 6, 1, 10, 30, tzinfo=UTC),
+            "capacity": 2,
+            "reserved_seats": 0,
+            "status": "scheduled",
+        }
+    )
     # Older entry.
     older_id = str(new_ulid())
     await db["waitlist"].insert_one(

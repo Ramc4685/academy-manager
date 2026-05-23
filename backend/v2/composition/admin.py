@@ -324,6 +324,8 @@ def compose_admin(
     )
     promote = PromoteFromWaitlist(
         waitlist=waitlist,
+        sessions=sessions_w,
+        enrollments=enrollments_w,
         outbox=outbox,
         enrollment_events=enrollment_events,
         academy_id=academy_id,
