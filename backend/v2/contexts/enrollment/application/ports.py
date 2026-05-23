@@ -77,6 +77,10 @@ class EnrollmentWriter(Protocol):
 
     async def get(self, enrollment_id: str) -> Enrollment | None: ...
 
+    async def find_for_session_student(
+        self, session_id: str, student_id: str
+    ) -> Enrollment | None: ...
+
 
 class StudentWriter(Protocol):
     async def upsert(self, student: Student) -> None: ...

@@ -192,6 +192,8 @@ def compose_parent(
     )
     promote = PromoteFromWaitlist(
         waitlist=waitlist,
+        sessions=sessions_writer,
+        enrollments=enrollments_writer,
         outbox=outbox,
         enrollment_events=enrollment_events,
         academy_id=academy_id,

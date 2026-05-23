@@ -76,6 +76,7 @@ def _normalize_waitlist_entries(entries: object) -> list[AdminWaitlistEntry]:
         }
         for e in entries
     ]
+    rows = [row for row in rows if row.get("status") == "waiting"]
     return [
         AdminWaitlistEntry(
             **{

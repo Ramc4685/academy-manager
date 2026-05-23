@@ -69,6 +69,16 @@ class FakeEnrollments:
             update={"session_id": session_id}
         )
 
+    async def find_for_session_student(self, session_id: str, student_id: str) -> Enrollment | None:
+        return next(
+            (
+                enrollment
+                for enrollment in self.rows.values()
+                if enrollment.session_id == session_id and enrollment.student_id == student_id
+            ),
+            None,
+        )
+
 
 @dataclass
 class FakeWaitlist:
@@ -247,6 +257,8 @@ async def test_waitlist_and_promotion_record_lifecycle_events() -> None:
     )
     promote = PromoteFromWaitlist(
         waitlist=waitlist,
+        sessions=FakeSessions(),
+        enrollments=FakeEnrollments(rows={}),
         outbox=FakeOutbox(),
         enrollment_events=events,
         academy_id="acad",

@@ -546,6 +546,31 @@ class FakeEnrollmentWriter:
     async def get(self, enrollment_id):
         return self.rows.get(enrollment_id)
 
+    async def active_for_session(self, session_id):
+        return [
+            enrollment
+            for enrollment in self.rows.values()
+            if enrollment.session_id == session_id and enrollment.status == "active"
+        ]
+
+    async def is_active(self, session_id, student_id):
+        return any(
+            enrollment.session_id == session_id
+            and enrollment.student_id == student_id
+            and enrollment.status == "active"
+            for enrollment in self.rows.values()
+        )
+
+    async def find_for_session_student(self, session_id, student_id):
+        return next(
+            (
+                enrollment
+                for enrollment in self.rows.values()
+                if enrollment.session_id == session_id and enrollment.student_id == student_id
+            ),
+            None,
+        )
+
 
 @dataclass
 class FakeEnrollmentEvents:
@@ -930,6 +955,7 @@ def _now() -> datetime:
 @pytest.fixture
 def admin_seed():
     sessions = FakeSessionWriter()
+    enrollments = FakeEnrollmentWriter()
     sessions.sessions["sess-1"] = Session(
         session_id="sess-1",
         academy_id="acad",
@@ -943,8 +969,8 @@ def admin_seed():
     )
     return {
         "sessions": sessions,
-        "enrollments": FakeEnrollmentWriter(),
-        "enrollment_query": _AdminFakeEnrollmentQuery(),
+        "enrollments": enrollments,
+        "enrollment_query": enrollments,
         "enrollment_events": FakeEnrollmentEvents(),
         "students": FakeStudentWriter(),
         "waitlist": FakeWaitlistRepo(),
@@ -1033,6 +1059,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     )
     promote = PromoteFromWaitlist(
         waitlist=waitlist,
+        sessions=sessions,
+        enrollments=enrollments_w,
         outbox=outbox,
         enrollment_events=enrollment_events,
         academy_id="acad",

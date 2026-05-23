@@ -60,3 +60,7 @@ class MongoEnrollmentWriter(TenantScopedRepository):
     async def get(self, enrollment_id: str) -> Enrollment | None:
         doc = await self._find_one({"enrollment_id": enrollment_id})
         return self._to_domain(doc) if doc else None
+
+    async def find_for_session_student(self, session_id: str, student_id: str) -> Enrollment | None:
+        doc = await self._find_one({"session_id": session_id, "student_id": student_id})
+        return self._to_domain(doc) if doc else None
