@@ -36,9 +36,7 @@ async def register_parent(request: Request) -> RegisterParentResponse:
     # domain / approved internal header) and stored it on request.state.
     # In SaaS mode an unresolved tenant is a client error (400) — we
     # MUST NOT fall back to ``default-academy`` here (fixes #81).
-    resolved_academy_id: str | None = getattr(
-        request.state, "resolved_academy_id", None
-    )
+    resolved_academy_id: str | None = getattr(request.state, "resolved_academy_id", None)
     saas_mode = bool(getattr(request.app.state, "saas_mode", False))
     if saas_mode and not resolved_academy_id:
         raise HTTPException(

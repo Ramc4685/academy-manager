@@ -194,9 +194,7 @@ async def test_register_public_parent_saas_requires_resolved_tenant() -> None:
     the route fails to resolve a tenant. The use case raises so the
     bug is loud."""
     use_case = RegisterPublicParent(
-        verifier=FakeVerifier(
-            {"email": "new.parent@example.com", "uid": "firebase-parent-1"}
-        ),
+        verifier=FakeVerifier({"email": "new.parent@example.com", "uid": "firebase-parent-1"}),
         users=FakeUsers(),
         memberships=FakeMemberships(),
         saas_mode=True,

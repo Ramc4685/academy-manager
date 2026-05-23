@@ -82,9 +82,7 @@ class RegisterPublicParent:
         # academy_id is a programmer error (the route should 400 first).
         if academy_id is None:
             if self._saas_mode:
-                raise InvalidToken(
-                    "tenant required for parent registration in SaaS mode"
-                )
+                raise InvalidToken("tenant required for parent registration in SaaS mode")
             target_academy_id = self._default_academy_id
         else:
             target_academy_id = academy_id
