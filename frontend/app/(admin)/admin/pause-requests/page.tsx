@@ -47,7 +47,7 @@ export default function AdminPauseRequestsPage() {
             <table className="w-full min-w-[840px] text-sm">
               <thead>
                 <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
-                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Request</th>
+                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Requested</th>
                   <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Period</th>
                   <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Reason</th>
                   <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Status</th>
@@ -94,9 +94,15 @@ function PauseRow({
   return (
     <tr data-testid={`admin-pause-requests-row-${request.pause_request_id}`} className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
       <td className="px-2 py-3">
-        <div className="font-mono text-[10px] text-rally-base">{request.pause_request_id}</div>
-        <div className="mt-1 font-mono text-[10px] text-rally-subtle">
-          Parent {request.parent_id.slice(0, 14)} · enrollment {request.enrollment_id.slice(0, 14)}
+        <div className="font-medium text-rally-base">
+          {new Date(request.created_at).toLocaleDateString(undefined, {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })}
+        </div>
+        <div className="mt-1 text-xs text-rally-subtle">
+          Awaiting admin decision
         </div>
       </td>
       <td className="px-2 py-3 font-medium text-rally-base">{request.period}</td>

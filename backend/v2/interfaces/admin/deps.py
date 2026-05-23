@@ -42,6 +42,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     ResumeEnrollment,
     SkipFromWaitlist,
     TransferEnrollment,
+    WithdrawEnrollment,
 )
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     ApprovePauseRequest,
@@ -92,6 +93,7 @@ class AdminUseCases:
     transfer_enrollment: TransferEnrollment
     pause_enrollment: PauseEnrollment
     resume_enrollment: ResumeEnrollment
+    withdraw_enrollment: WithdrawEnrollment
     # waitlist
     join_waitlist: JoinWaitlist
     promote_from_waitlist: PromoteFromWaitlist

@@ -64,6 +64,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     ResumeEnrollment,
     SkipFromWaitlist,
     TransferEnrollment,
+    WithdrawEnrollment,
 )
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     ApprovePauseRequest,
@@ -302,9 +303,16 @@ def compose_admin(
     )
     pause_enrollment = PauseEnrollment(
         enrollments=enrollments_w,
+        sessions=sessions_w,
+        students=students_r,
+        waitlist=waitlist,
         enrollment_events=enrollment_events,
     )
     resume_enrollment = ResumeEnrollment(
+        enrollments=enrollments_w,
+        enrollment_events=enrollment_events,
+    )
+    withdraw_enrollment = WithdrawEnrollment(
         enrollments=enrollments_w,
         enrollment_events=enrollment_events,
     )
@@ -741,6 +749,7 @@ def compose_admin(
         transfer_enrollment=transfer_enrollment,
         pause_enrollment=pause_enrollment,
         resume_enrollment=resume_enrollment,
+        withdraw_enrollment=withdraw_enrollment,
         join_waitlist=join_waitlist,
         promote_from_waitlist=promote,
         skip_from_waitlist=skip,

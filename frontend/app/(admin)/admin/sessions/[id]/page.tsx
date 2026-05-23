@@ -20,11 +20,13 @@ import {
   listAdminStudents,
   listSessionEnrollments,
   listSessionWaitlist,
+  listEnrollmentEvents,
   createEnrollment,
   deleteEnrollment,
   pauseEnrollment,
   resumeEnrollment,
   transferEnrollment,
+  withdrawEnrollment,
   deleteAdminSession,
   updateAdminSession,
   promoteWaitlist,
@@ -72,12 +74,18 @@ function toDateTimeLocal(value: string): string {
   return new Date(value).toISOString().slice(0, 16);
 }
 
+function todayDateInput(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export default function AdminSessionDetailPage() {
   const params = useParams();
   const sessionId = params.id as string;
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [pauseTarget, setPauseTarget] = useState<AdminEnrollmentView | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<AdminEnrollmentView | null>(null);
   const [transferTarget, setTransferTarget] = useState<AdminEnrollmentView | null>(null);
   const [withdrawalTarget, setWithdrawalTarget] = useState<AdminEnrollmentView | null>(null);
 
@@ -200,18 +208,8 @@ export default function AdminSessionDetailPage() {
         ) : (
           <RosterTable
             enrollments={enrollments}
-            onDelete={(id) => {
-              if (confirm("Remove this enrollment?")) {
-                deleteEnrollment(id).then(() =>
-                  queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) })
-                );
-              }
-            }}
-            onPause={(id) =>
-              pauseEnrollment(id).then(() =>
-                queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) })
-              )
-            }
+            onDelete={(enrollment) => setRemoveTarget(enrollment)}
+            onPause={(enrollment) => setPauseTarget(enrollment)}
             onResume={(id) =>
               resumeEnrollment(id).then(() =>
                 queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) })
@@ -292,6 +290,16 @@ export default function AdminSessionDetailPage() {
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions() });
         }}
       />
+      <PauseEnrollmentDialog
+        enrollment={pauseTarget}
+        onClose={() => setPauseTarget(null)}
+        onPaused={() => {
+          setPauseTarget(null);
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions() });
+        }}
+      />
       <WithdrawalCreditDialog
         enrollment={withdrawalTarget}
         onClose={() => setWithdrawalTarget(null)}
@@ -300,6 +308,15 @@ export default function AdminSessionDetailPage() {
           void queryClient.invalidateQueries({
             queryKey: queryKeys.admin.enrollments(sessionId),
           });
+        }}
+      />
+      <RemoveEnrollmentDialog
+        enrollment={removeTarget}
+        onClose={() => setRemoveTarget(null)}
+        onRemoved={() => {
+          setRemoveTarget(null);
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions() });
         }}
       />
     </section>
@@ -462,8 +479,8 @@ function RosterTable({
   onWithdraw,
 }: {
   enrollments: AdminEnrollmentView[];
-  onDelete: (id: string) => void;
-  onPause: (id: string) => void;
+  onDelete: (enrollment: AdminEnrollmentView) => void;
+  onPause: (enrollment: AdminEnrollmentView) => void;
   onResume: (id: string) => void;
   onTransfer: (enrollment: AdminEnrollmentView) => void;
   onWithdraw: (enrollment: AdminEnrollmentView) => void;
@@ -499,11 +516,12 @@ function RosterTable({
                 </td>
                 <td className="px-4 py-3 font-mono text-rally-muted">
                   {new Date(e.enrolled_at).toLocaleDateString()}
+                  <EnrollmentHistory enrollmentId={e.enrollment_id} />
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2 justify-end">
                     {e.status === "active" ? (
-                      <Button variant="secondary" size="sm" onClick={() => onPause(e.enrollment_id)}>
+                      <Button variant="secondary" size="sm" onClick={() => onPause(e)}>
                         Pause
                       </Button>
                     ) : e.status === "paused" ? (
@@ -522,7 +540,7 @@ function RosterTable({
                     <Button
                       variant="danger"
                       size="sm"
-                      onClick={() => onDelete(e.enrollment_id)}
+                      onClick={() => onDelete(e)}
                       aria-label={`Remove ${e.full_name}`}
                     >
                       Remove
@@ -534,6 +552,24 @@ function RosterTable({
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function EnrollmentHistory({ enrollmentId }: { enrollmentId: string }) {
+  const eventsQuery = useQuery({
+    queryKey: ["admin", "enrollment-events", enrollmentId],
+    queryFn: () => listEnrollmentEvents(enrollmentId),
+    staleTime: 30_000,
+  });
+  const events = eventsQuery.data?.events ?? [];
+  const latest = events.at(-1);
+  if (!latest) {
+    return null;
+  }
+  return (
+    <div className="mt-1 text-[11px] font-normal text-rally-subtle">
+      {formatLifecycleType(latest.event_type)} · {formatDateOnly(latest.effective_date)}
     </div>
   );
 }
@@ -731,6 +767,88 @@ function AddToRosterDialog({
   );
 }
 
+function PauseEnrollmentDialog({
+  enrollment,
+  onClose,
+  onPaused,
+}: {
+  enrollment: AdminEnrollmentView | null;
+  onClose: () => void;
+  onPaused: () => void;
+}) {
+  const [effectiveDate, setEffectiveDate] = useState(todayDateInput());
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const mutation = useMutation({
+    mutationFn: () =>
+      pauseEnrollment(enrollment!.enrollment_id, {
+        effective_date: effectiveDate,
+        reason: reason || undefined,
+      }),
+    onSuccess: () => {
+      setEffectiveDate(todayDateInput());
+      setReason("");
+      setError(null);
+      onPaused();
+    },
+    onError: (err: Error) => setError(err.message ?? "Could not pause enrollment."),
+  });
+
+  return (
+    <RallyDialog
+      open={enrollment !== null}
+      onOpenChange={(open) => !open && onClose()}
+      title="Pause enrollment"
+      description={
+        enrollment
+          ? `Pause ${enrollment.full_name}, release the seat, and move them to the waitlist.`
+          : ""
+      }
+      overline="Lifecycle"
+    >
+      {error && <DialogError message={error} />}
+      <form
+        className="space-y-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          mutation.mutate();
+        }}
+      >
+        <Field label="Effective date" required>
+          <input
+            type="date"
+            required
+            value={effectiveDate}
+            onChange={(event) => setEffectiveDate(event.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Reason">
+          <textarea
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            rows={3}
+            className={inputClass}
+          />
+        </Field>
+        <DialogActions>
+          <Button variant="secondary" size="sm" type="button" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            type="submit"
+            disabled={!effectiveDate || mutation.isPending}
+          >
+            {mutation.isPending ? "Pausing..." : "Pause"}
+          </Button>
+        </DialogActions>
+      </form>
+    </RallyDialog>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Transfer enrollment dialog
 // ─────────────────────────────────────────────────────────────────────────────
@@ -749,6 +867,8 @@ function TransferEnrollmentDialog({
   onMoved: () => void;
 }) {
   const [targetSessionId, setTargetSessionId] = useState("");
+  const [effectiveDate, setEffectiveDate] = useState(todayDateInput());
+  const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   // Fetch all upcoming sessions (next 30 days) so the dropdown isn't
   // limited to today's two slots — moving a student to a different weekly
@@ -784,9 +904,15 @@ function TransferEnrollmentDialog({
   })();
   const mutation = useMutation({
     mutationFn: () =>
-      transferEnrollment(enrollment!.enrollment_id, { target_session_id: targetSessionId }),
+      transferEnrollment(enrollment!.enrollment_id, {
+        target_session_id: targetSessionId,
+        effective_date: effectiveDate,
+        reason: reason || undefined,
+      }),
     onSuccess: () => {
       setTargetSessionId("");
+      setEffectiveDate(todayDateInput());
+      setReason("");
       setError(null);
       onMoved();
     },
@@ -817,6 +943,23 @@ function TransferEnrollmentDialog({
             loading={sessionsQuery.isLoading}
           />
         </Field>
+        <Field label="Effective date" required>
+          <input
+            type="date"
+            required
+            value={effectiveDate}
+            onChange={(event) => setEffectiveDate(event.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Reason">
+          <input
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            className={inputClass}
+            placeholder="Optional"
+          />
+        </Field>
         <DialogActions>
           <Button variant="secondary" size="sm" type="button" onClick={onClose}>
             Cancel
@@ -826,7 +969,10 @@ function TransferEnrollmentDialog({
             size="sm"
             type="submit"
             disabled={
-              mutation.isPending || candidateSessions.length === 0 || !targetSessionId
+              mutation.isPending ||
+              candidateSessions.length === 0 ||
+              !targetSessionId ||
+              !effectiveDate
             }
           >
             {mutation.isPending ? "Moving…" : "Move"}
@@ -971,7 +1117,8 @@ function WithdrawalCreditDialog({
   onClose: () => void;
   onApproved: () => void;
 }) {
-  const [withdrawalDate, setWithdrawalDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [withdrawalDate, setWithdrawalDate] = useState(todayDateInput);
+  const [outcome, setOutcome] = useState<"credit" | "refund" | "adjustment">("credit");
   const [adminNote, setAdminNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const previewMutation = useMutation({
@@ -982,12 +1129,22 @@ function WithdrawalCreditDialog({
     onError: (err: Error) => setError(err.message ?? "Could not preview credit."),
   });
   const approveMutation = useMutation({
-    mutationFn: () =>
-      approveWithdrawalCredit(enrollment!.enrollment_id, {
-        withdrawal_date: `${withdrawalDate}T00:00:00.000Z`,
-        admin_note: adminNote,
-      }),
+    mutationFn: async () => {
+      if (outcome === "credit") {
+        await approveWithdrawalCredit(enrollment!.enrollment_id, {
+          withdrawal_date: `${withdrawalDate}T00:00:00.000Z`,
+          admin_note: adminNote,
+        });
+        return;
+      }
+      await withdrawEnrollment(enrollment!.enrollment_id, {
+        effective_date: withdrawalDate,
+        outcome,
+        reason: adminNote || `Withdrawal ${outcome}`,
+      });
+    },
     onSuccess: () => {
+      setOutcome("credit");
       setAdminNote("");
       setError(null);
       onApproved();
@@ -1013,6 +1170,20 @@ function WithdrawalCreditDialog({
             </p>
           )}
           <div className="space-y-3">
+            <Field label="Outcome" required>
+              <select
+                value={outcome}
+                onChange={(event) => {
+                  setOutcome(event.target.value as "credit" | "refund" | "adjustment");
+                  previewMutation.reset();
+                }}
+                className={inputClass}
+              >
+                <option value="credit">Account credit</option>
+                <option value="refund">Refund</option>
+                <option value="adjustment">Admin adjustment</option>
+              </select>
+            </Field>
             <Field label="Withdrawal date" required>
               <input
                 type="date"
@@ -1025,14 +1196,16 @@ function WithdrawalCreditDialog({
                 className={inputClass}
               />
             </Field>
-            <button
-              type="button"
-              disabled={!withdrawalDate || previewMutation.isPending}
-              onClick={() => previewMutation.mutate()}
-              className="min-h-touch rounded-md border border-blue-300 px-3 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-60 dark:border-blue-700 dark:text-blue-300"
-            >
-              {previewMutation.isPending ? "Previewing..." : "Preview credit"}
-            </button>
+            {outcome === "credit" && (
+              <button
+                type="button"
+                disabled={!withdrawalDate || previewMutation.isPending}
+                onClick={() => previewMutation.mutate()}
+                className="min-h-touch rounded-md border border-blue-300 px-3 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-60 dark:border-blue-700 dark:text-blue-300"
+              >
+                {previewMutation.isPending ? "Previewing..." : "Preview credit"}
+              </button>
+            )}
             {preview && (
               <div className="rounded-md bg-neutral-50 p-3 text-sm dark:bg-neutral-800">
                 <p className="font-medium">Credit: {preview.display_amount}</p>
@@ -1060,17 +1233,100 @@ function WithdrawalCreditDialog({
               </button>
               <button
                 type="button"
-                disabled={!preview || approveMutation.isPending}
+                disabled={
+                  !withdrawalDate ||
+                  approveMutation.isPending ||
+                  (outcome === "credit" && !preview)
+                }
                 onClick={() => approveMutation.mutate()}
                 className="min-h-touch rounded-md bg-orange-600 px-4 text-sm font-medium text-white hover:bg-orange-700 disabled:opacity-60"
               >
-                {approveMutation.isPending ? "Approving..." : "Approve withdrawal"}
+                {approveMutation.isPending ? "Saving..." : "Withdraw"}
               </button>
             </div>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+function RemoveEnrollmentDialog({
+  enrollment,
+  onClose,
+  onRemoved,
+}: {
+  enrollment: AdminEnrollmentView | null;
+  onClose: () => void;
+  onRemoved: () => void;
+}) {
+  const [effectiveDate, setEffectiveDate] = useState(todayDateInput);
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const mutation = useMutation({
+    mutationFn: () =>
+      deleteEnrollment(enrollment!.enrollment_id, {
+        effective_date: effectiveDate,
+        reason,
+      }),
+    onSuccess: () => {
+      setEffectiveDate(todayDateInput());
+      setReason("");
+      setError(null);
+      onRemoved();
+    },
+    onError: (err: Error) => setError(err.message ?? "Could not remove enrollment."),
+  });
+
+  return (
+    <RallyDialog
+      open={enrollment !== null}
+      onOpenChange={(open) => !open && onClose()}
+      title="Remove enrollment"
+      description={enrollment ? `Remove ${enrollment.full_name} from this roster.` : ""}
+      overline="Lifecycle"
+    >
+      {error && <DialogError message={error} />}
+      <form
+        className="space-y-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          mutation.mutate();
+        }}
+      >
+        <Field label="Effective date" required>
+          <input
+            type="date"
+            required
+            value={effectiveDate}
+            onChange={(event) => setEffectiveDate(event.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Reason" required>
+          <textarea
+            required
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            rows={3}
+            className={inputClass}
+          />
+        </Field>
+        <DialogActions>
+          <Button variant="secondary" size="sm" type="button" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            type="submit"
+            disabled={!effectiveDate || !reason.trim() || mutation.isPending}
+          >
+            {mutation.isPending ? "Removing..." : "Remove"}
+          </Button>
+        </DialogActions>
+      </form>
+    </RallyDialog>
   );
 }
 
@@ -1138,6 +1394,30 @@ function formatShortDateTime(value: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function formatDateOnly(value: string): string {
+  if (!value) return "date pending";
+  return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatLifecycleType(value: string): string {
+  const labels: Record<string, string> = {
+    created: "Added",
+    moved: "Moved",
+    paused: "Paused",
+    resumed: "Resumed",
+    withdrawn: "Withdrawn",
+    removed: "Removed",
+    cancelled: "Cancelled",
+    waitlisted: "Waitlisted",
+    promoted: "Promoted",
+  };
+  return labels[value] ?? "Updated";
 }
 
 function Field({

@@ -15,6 +15,7 @@ EnrollmentLifecycleEventType = Literal[
     "paused",
     "resumed",
     "cancelled",
+    "removed",
     "withdrawn",
     "waitlisted",
     "promoted",
