@@ -426,6 +426,12 @@ class AdminMessageView(BaseModel):
     recipient_id: str | None
     body: str
     created_at: datetime
+    sent_at: datetime
+    is_broadcast: bool
+    scope_type: str | None = None
+    scope_label: str | None = None
+    recipient_count: int | None = None
+    delivery_status: str | None = None
 
 
 class AdminMessageList(BaseModel):
@@ -445,6 +451,7 @@ class AdminWaiverSummaryView(BaseModel):
 
 
 class AdminWaiverDocumentView(BaseModel):
+    waiver_id: str
     title: str
     version: str
     description: str | None = None
@@ -457,22 +464,55 @@ class AdminWaiverDocumentView(BaseModel):
 
 class AdminWaiverStudentView(BaseModel):
     waiver_id: str
+    signature_id: str | None = None
     student_id: str
     student_name: str
     parent_id: str
     parent_name: str | None = None
     parent_email: str | None = None
     status: AdminWaiverStatus
+    template_id: str | None = None
     version: str | None = None
     signed_at: datetime | None = None
     method: str | None = None
     expires_at: datetime | None = None
+    artifact_status: str = "unavailable"
+    share_status: str = "unavailable"
 
 
 class AdminWaiverList(BaseModel):
     summary: AdminWaiverSummaryView
     current_waiver: AdminWaiverDocumentView | None = None
     waivers: list[AdminWaiverStudentView] = []
+
+
+class AdminWaiverTemplateDetailView(BaseModel):
+    waiver_id: str
+    title: str
+    version: str
+    body: str | None = None
+    content_hash: str | None = None
+    effective_at: datetime | None = None
+    artifact_status: str
+    share_status: str
+    gap_note: str
+
+
+class AdminWaiverSignatureDetailView(BaseModel):
+    signature_id: str
+    student_name: str
+    parent_name: str | None = None
+    parent_email: str | None = None
+    signed_at: datetime
+    signer_name: str | None = None
+    signer_email: str | None = None
+    waiver_title: str | None = None
+    waiver_version: str | None = None
+    template_reference: str | None = None
+    content_hash: str | None = None
+    artifact_status: str
+    share_status: str
+    gap_note: str
 
 
 AdminAttentionSeverity = Literal["high", "medium", "low"]
@@ -500,6 +540,8 @@ class AdminAttentionList(BaseModel):
 
 class BroadcastRequest(BaseModel):
     body: str
+    scope_type: str = "academy"
+    scope_label: str | None = None
 
 
 class DMRequest(BaseModel):

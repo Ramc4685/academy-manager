@@ -104,6 +104,26 @@
 
 user_problem_statement: "Merged BFF/DDD code; verify and fix local v2/BFF startup."
 backend:
+  - task: "Wave 10 admin ops waiver/message/report detail routes"
+    implemented: true
+    working: true
+    file: "backend/v2/interfaces/admin/waiver_routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Wave 10 Agent C added read-only admin waiver template and signed-waiver detail routes, message broadcast scope metadata, live reports KPI dashboard route coverage, and focused backend tests. Verification pending."
+      - working: true
+        agent: "main"
+        comment: "Focused backend verification passed using the existing shared backend venv because this linked worktree has no backend/.venv: /Users/ramc/Documents/Code/academy-manager/backend/.venv/bin/python -m pytest v2/tests/application/test_admin_waiver_details.py v2/tests/application/test_admin_message_campaign_details.py v2/tests/interface/test_admin_ops_detail_routes.py -q returned 8 passed."
+      - working: true
+        agent: "main"
+        comment: "After rebasing onto origin/main 0b5750a and resolving Wave 9 overlap, the same focused backend suite passed again with 8 passed."
+      - working: true
+        agent: "main"
+        comment: "Narrow acceptance fix added wrong-persona 404 coverage for waiver template/signature detail routes and repository-level tenant-isolation coverage for template/signature detail lookups. Verification passed: /Users/ramc/Documents/Code/academy-manager/backend/.venv/bin/python -m pytest v2/tests/application/test_admin_waiver_details.py v2/tests/application/test_admin_message_campaign_details.py v2/tests/interface/test_admin_ops_detail_routes.py v2/tests/contract/test_admin_waivers_mongo_repo.py -q returned 14 passed. git diff --check passed."
   - task: "SaaS v2 Wave 7 production readiness scaffolding"
     implemented: true
     working: true
@@ -376,6 +396,23 @@ backend:
         agent: "main"
         comment: "Agent B Wave 6 added a new Platform billing slice separate from parent tuition Billing. The model covers platform plans, plan limits, tenant subscriptions, billing/trial/cancellation status, and tenant Stripe customer/subscription IDs. Application tests cover trial creation, Stripe subscription activation, period-end cancellation scheduling, plan-limit checks, and absence of parent/student/enrollment/session tuition fields. Verification: focused platform billing pytest passed 4/4; targeted ruff passed; git diff --check passed."
 frontend:
+  - task: "Wave 10 admin ops detail frontend"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/admin/waivers/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Wave 10 Agent C added waiver template/signed-record drilldown pages, kept new DM creation disabled until a real recipient picker/search API exists so no user ID typing is required, made broadcast scope visible, and added live KPI cards while keeping CSV export secondary. Verification pending."
+      - working: "NA"
+        agent: "main"
+        comment: "Frontend verification: pnpm install was required because this worktree had no node_modules; pnpm typecheck passed. pnpm build started Next 15 but failed with ENOSPC no space left on device while writing build output; df showed only ~1.1GiB free on /System/Volumes/Data. Browser smoke was attempted because localhost:3001/admin/waivers responds over HTTP and /api/v2/healthz returns ok, but the Playwright MCP browser profile is locked by another session, so route smoke remains unverified."
+      - working: true
+        agent: "main"
+        comment: "After rebasing onto origin/main 0b5750a, resolved frontend conflicts by preserving Wave 9 admin ops cleanup and layering Wave 10 detail links/KPI/scope metadata. Verification passed: pnpm typecheck, pnpm build, and git diff --check. Browser smoke remains skipped because the Playwright MCP browser profile is locked by another session."
   - task: "Wave 9 admin shell branding cleanup"
     implemented: true
     working: true
@@ -622,17 +659,25 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 22
+  test_sequence: 23
   run_ui: true
 test_plan:
   current_focus:
-    - "Wave 9 admin shell branding cleanup"
-    - "Wave 9 admin roster technical leakage cleanup"
     - "Wave 9 admin operations cleanup"
+    - "Wave 10 admin ops waiver/message/report detail routes"
+    - "Wave 10 admin ops detail frontend"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "Wave 10 Agent C implementation is ready for focused verification: backend waiver template/signed detail routes, message broadcast scope metadata, admin reports KPI dashboard data, waiver drilldown pages, message recipient picker without user ID typing, and reports dashboard-first UI. Planned checks: requested focused backend pytest files, frontend pnpm typecheck, frontend pnpm build, git diff --check, and browser smoke only if the local stack is available with usable Firebase config."
+  - agent: "main"
+    message: "Wave 10 Agent C verification update: focused backend tests passed 8/8 via the shared backend venv because backend/.venv is absent in this linked worktree; frontend pnpm typecheck passed after pnpm install; git diff --check passed. pnpm build failed due ENOSPC with only about 1.1GiB free. Browser smoke could not run because the Playwright MCP browser profile is already locked by another session, though curl confirmed localhost:3001/admin/waivers returns HTML and /api/v2/healthz returns ok."
+  - agent: "main"
+    message: "Wave 10 Agent C rebase update: fetched/rebased onto origin/main 0b5750a with autostash. Conflicts in admin messages/reports/waivers and test_result.md were resolved by preserving Wave 9 cleanup: no internal recipient ID UI, reports dashboard first with exports secondary, and waiver unavailable artifact copy; Wave 10 detail routes/links, broadcast scope metadata, and live KPI cards were retained. The deleted Wave 9 frontend/lib/api/v2/reports.ts was not resurrected. Post-rebase verification passed: backend focused tests 8/8, frontend pnpm typecheck, frontend pnpm build, git diff --check."
+  - agent: "main"
+    message: "Wave 10 Agent C narrow acceptance fix: added wrong-persona 404 tests for /api/v2/admin/waivers/{waiver_id} and /api/v2/admin/waivers/signatures/{signature_id}. Interface harness does not model tenant mismatch for waiver detail fakes, so tenant isolation was covered at the real MongoAdminWaiverRepository boundary for template/signature detail lookups. Verification passed: focused backend suite plus contract admin-waiver repo tests 14/14 and git diff --check. Frontend typecheck was not run because no frontend files changed in this fix."
   - agent: "main"
     message: "Wave 9 Agent D admin shell branding cleanup verification complete. Frontend-only changes passed pnpm build, pnpm typecheck, git diff --check, and a focused Playwright admin-shell smoke with stubbed BFF data. The shell now uses /api/v2/admin/academy display_name with Academy fallback, keeps admin email/role visible, and does not display Rally Academy, COURT 7, academy_id, or user_id in normal shell UI. Exact BLNO manual login was not completed because the running local ports are shared/outside this worktree and the Firebase emulator lacked the expected admin login user."
   - agent: "main"

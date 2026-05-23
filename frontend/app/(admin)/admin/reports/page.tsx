@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
-import { exportAdminReportCsv, getRevenue } from "@/lib/api/admin";
+import { exportAdminReportCsv, getAdminReportKpis, getRevenue } from "@/lib/api/admin";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 import { MiniBars } from "@/components/ds/charts";
@@ -35,6 +35,11 @@ export default function AdminReportsPage() {
     queryFn: getRevenue,
   });
 
+  const kpiQuery = useQuery({
+    queryKey: ["admin", "reports", "kpis"],
+    queryFn: getAdminReportKpis,
+  });
+
   const exportMutation = useMutation({
     mutationFn: async (report: (typeof REPORTS)[number]) => {
       const csv = await exportAdminReportCsv(report.name);
@@ -52,11 +57,35 @@ export default function AdminReportsPage() {
   const latestMonth = last6Months.at(-1);
   const latestRevenue = latestMonth ? revenueByMonth[latestMonth] : null;
   const sixMonthRevenue = chartValues.reduce((total, value) => total + value, 0);
+  const kpis = kpiQuery.data;
 
   return (
     <section data-testid="admin-reports" className="space-y-5">
       <div className="space-y-3">
         <Overline>Dashboard</Overline>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <KpiCard
+            label="Active students"
+            value={kpis ? formatInteger(kpis.active_students) : kpiQuery.isLoading ? "Loading" : "No data"}
+            description="Students with at least one active enrollment."
+          />
+          <KpiCard
+            label="Attendance rate (30d)"
+            value={kpis ? formatPercent(kpis.attendance_rate_30d) : kpiQuery.isLoading ? "Loading" : "No data"}
+            description="Present or late attendance marks across the last 30 days."
+          />
+          <KpiCard
+            label="Dues collected (MTD)"
+            value={kpis ? formatCurrency(kpis.dues_collected_mtd_cents) : kpiQuery.isLoading ? "Loading" : "No data"}
+            description="Paid tuition and dues recorded for the current month."
+          />
+          <KpiCard
+            label="Pending waivers"
+            value={kpis ? formatInteger(kpis.pending_waivers) : kpiQuery.isLoading ? "Loading" : "No data"}
+            description="Active students without a current signed waiver record."
+          />
+        </div>
+
         <Card p={24} className="flex flex-col gap-6">
           <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -91,28 +120,33 @@ export default function AdminReportsPage() {
       </div>
 
       <div className="space-y-3">
-        <Overline>Exports</Overline>
+        <div>
+          <Overline>Exports</Overline>
+          <p className="mt-1 text-sm text-neutral-500">
+            Download CSV only after reviewing the in-app dashboard above.
+          </p>
+        </div>
         <div className="grid gap-4 lg:grid-cols-3">
-        {REPORTS.map((report) => (
-          <Card
-            key={report.name}
-            p={20}
-            className="flex flex-col"
-          >
-            <h2 className="font-semibold text-lg">{report.title}</h2>
-            <p className="mt-1 min-h-[3rem] text-sm text-neutral-500 flex-1">{report.description}</p>
-            <div className="mt-4">
-              <Button
-                variant="secondary"
-                onClick={() => exportMutation.mutate(report)}
-                disabled={exportMutation.isPending}
-                full
-              >
-                {exportMutation.isPending && exportMutation.variables?.name === report.name ? "Exporting..." : "Export CSV"}
-              </Button>
-            </div>
-          </Card>
-        ))}
+          {REPORTS.map((report) => (
+            <Card
+              key={report.name}
+              p={20}
+              className="flex flex-col"
+            >
+              <h2 className="font-semibold text-lg">{report.title}</h2>
+              <p className="mt-1 min-h-[3rem] text-sm text-neutral-500 flex-1">{report.description}</p>
+              <div className="mt-4">
+                <Button
+                  variant="secondary"
+                  onClick={() => exportMutation.mutate(report)}
+                  disabled={exportMutation.isPending}
+                  full
+                >
+                  {exportMutation.isPending && exportMutation.variables?.name === report.name ? "Exporting..." : "Export CSV"}
+                </Button>
+              </div>
+            </Card>
+          ))}
         </div>
       </div>
 
@@ -142,6 +176,24 @@ export default function AdminReportsPage() {
   );
 }
 
+function KpiCard({
+  label,
+  value,
+  description,
+}: {
+  label: string;
+  value: string;
+  description: string;
+}) {
+  return (
+    <Card p={20} className="flex flex-col">
+      <Overline>{label}</Overline>
+      <BigNum size={28}>{value}</BigNum>
+      <p className="mt-2 text-[12px] text-rally-muted">{description}</p>
+    </Card>
+  );
+}
+
 function DashboardTerm({ label, value }: { label: string; value: string }) {
   return (
     <div>
@@ -149,6 +201,17 @@ function DashboardTerm({ label, value }: { label: string; value: string }) {
       <dd className="mt-1 text-sm font-semibold text-rally-ink">{value}</dd>
     </div>
   );
+}
+
+function formatInteger(value: number): string {
+  return new Intl.NumberFormat("en-US").format(value);
+}
+
+function formatPercent(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "percent",
+    maximumFractionDigits: 0,
+  }).format(value);
 }
 
 function formatCurrency(cents: number) {

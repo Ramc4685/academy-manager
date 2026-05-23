@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
 import {
@@ -11,7 +12,6 @@ import {
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { Avatar, BigNum, Card, Chip, LaneHeader, Overline } from "@/components/ds";
-import { Button } from "@/components/ds/button";
 
 export default function AdminWaiversPage() {
   const waiversQuery = useQuery({
@@ -166,6 +166,14 @@ function CurrentWaiverCard({
               <MetaTerm label="Last edited" value={formatDate(waiver.last_edited_at)} />
               <MetaTerm label="Adoption" value={adoption ?? "Not reported"} />
             </dl>
+            <div className="mt-5">
+              <Link
+                href={`/admin/waivers/${encodeURIComponent(waiver.waiver_id)}`}
+                className="inline-flex min-h-touch items-center rounded-md bg-rally-ink px-3 py-2 text-sm font-semibold text-white transition hover:bg-rally-ink/90"
+              >
+                Open template
+              </Link>
+            </div>
           </div>
         </div>
       </Card>
@@ -191,12 +199,9 @@ function CurrentWaiverCard({
           </div>
         </div>
         <div className="mt-5 border-t border-neutral-100 pt-4">
-          <Button type="button" variant="secondary" size="sm" disabled full>
-            Template preview unavailable
-          </Button>
-          <p className="mt-2 text-[12px] leading-5 text-rally-subtle">
-            The admin API reports template metadata only. Template text and signed waiver
-            artifacts need backend support before they can be opened or exported here.
+          <p className="text-[12px] leading-5 text-rally-subtle">
+            Signed waiver PDF artifacts and share links need backend support before they
+            can be opened or exported here.
           </p>
         </div>
       </Card>
@@ -223,8 +228,9 @@ function WaiversTable({ waivers }: { waivers: AdminWaiverStudentRow[] }) {
             <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Version</th>
             <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Signed</th>
             <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Method</th>
-            <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Expires</th>
+            <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Artifact</th>
             <th className="px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Status</th>
+            <th className="px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Detail</th>
           </tr>
         </thead>
         <tbody>
@@ -252,11 +258,23 @@ function WaiversTable({ waivers }: { waivers: AdminWaiverStudentRow[] }) {
                 {formatDate(waiver.signed_at)}
               </td>
               <td className="px-3 py-4 text-[12px] text-rally-muted">{waiver.method ?? "-"}</td>
-              <td className="px-3 py-4 font-mono text-[11px] font-semibold uppercase tracking-[0.05em] text-rally-muted">
-                {formatDate(waiver.expires_at)}
+              <td className="px-3 py-4 text-[12px] text-rally-muted">
+                {artifactLabel(waiver.artifact_status)}
               </td>
               <td className="px-5 py-4">
                 <Chip variant={chipForStatus(waiver.status)} label={labelForStatus(waiver.status)} />
+              </td>
+              <td className="px-5 py-4">
+                {waiver.signature_id ? (
+                  <Link
+                    href={`/admin/waivers/signatures/${encodeURIComponent(waiver.signature_id)}`}
+                    className="text-sm font-semibold text-rally-cobalt hover:underline"
+                  >
+                    Open signed record
+                  </Link>
+                ) : (
+                  <span className="text-[12px] text-rally-subtle">Not signed</span>
+                )}
               </td>
             </tr>
           ))}
@@ -264,6 +282,11 @@ function WaiversTable({ waivers }: { waivers: AdminWaiverStudentRow[] }) {
       </table>
     </div>
   );
+}
+
+function artifactLabel(status: string | null | undefined): string {
+  if (status === "stored_reference") return "Stored reference";
+  return "Unavailable";
 }
 
 function chipForStatus(status: AdminWaiverStatus) {
