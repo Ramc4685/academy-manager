@@ -107,6 +107,40 @@ ensure_env_file() {
   chmod 600 "${ENV_FILE}"
 }
 
+read_local_env_value() {
+  local key="$1"
+  local file line value
+  for file in "${REPO_ROOT}/frontend/.env.local" "${REPO_ROOT}/frontend/.env" "${ENV_FILE}"; do
+    [[ -f "${file}" ]] || continue
+    line="$(awk -F= -v key="${key}" '$1 == key {print substr($0, index($0, "=") + 1)}' "${file}" | tail -n 1)"
+    [[ -n "${line}" ]] || continue
+    value="${line%\"}"
+    value="${value#\"}"
+    value="${value%\'}"
+    value="${value#\'}"
+    if [[ -n "${value}" ]]; then
+      printf '%s\n' "${value}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+firebase_api_key() {
+  if [[ -n "${NEXT_PUBLIC_FIREBASE_API_KEY:-}" ]]; then
+    printf '%s\n' "${NEXT_PUBLIC_FIREBASE_API_KEY}"
+    return 0
+  fi
+  read_local_env_value NEXT_PUBLIC_FIREBASE_API_KEY
+}
+
+require_firebase_api_key() {
+  local api_key
+  api_key="$(firebase_api_key || true)"
+  [[ -n "${api_key}" ]] || die "Missing NEXT_PUBLIC_FIREBASE_API_KEY. Add the real public Firebase web API key to frontend/.env.local or export it before running SaaS staging."
+  printf '%s\n' "${api_key}"
+}
+
 # Wait up to <timeout>s for a URL to return 2xx.
 wait_for_url() {
   local url="$1"
@@ -124,10 +158,12 @@ wait_for_url() {
 # --- commands ---------------------------------------------------------------
 
 cmd_up() {
-  preflight
   ensure_env_file
+  local api_key
+  api_key="$(require_firebase_api_key)"
+  preflight
   log "Building and starting stack (project=${PROJECT_NAME})..."
-  "${COMPOSE[@]}" up -d --build
+  NEXT_PUBLIC_FIREBASE_API_KEY="${api_key}" "${COMPOSE[@]}" up -d --build
   log "Waiting for backend health (up to 90s)..."
   if wait_for_url "http://127.0.0.1:8001/api/v2/healthz" 90; then
     log "Backend is healthy."

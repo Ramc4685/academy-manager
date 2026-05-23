@@ -66,6 +66,16 @@ You will still need real staging (or Phase B tunnels) to satisfy:
 
 - Ports 3000, 4000, 8001, 9099, 27017 are free, or you accept that the
   default dev compose stack is down.
+- A real public Firebase Web API key is available locally. Put it in
+  `frontend/.env.local` or export it before starting the stack:
+
+  ```bash
+  NEXT_PUBLIC_FIREBASE_API_KEY=your-public-web-api-key
+  ```
+
+  The Auth emulator still handles local sign-in; this key is required so the
+  Docker-built browser bundle initializes Firebase without falling back to a
+  fake or dummy key.
 
 ## Bring it up
 
@@ -77,9 +87,11 @@ What this does:
 
 1. Generates `.local/saas-staging.env` with random `JWT_SECRET` and
    `ADMIN_PASSWORD` if it does not exist (gitignored).
-2. Builds the frontend with `NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST=http://localhost:9099`.
-3. Starts: `mongo`, `firebase-emulator` (auth-only), `backend`, `frontend`.
-4. Waits for the backend to respond to `/api/v2/healthz`.
+2. Reads `NEXT_PUBLIC_FIREBASE_API_KEY` from the environment,
+   `frontend/.env.local`, or `frontend/.env`, and fails early if it is missing.
+3. Builds the frontend with `NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST=http://localhost:9099`.
+4. Starts: `mongo`, `firebase-emulator` (auth-only), `backend`, `frontend`.
+5. Waits for the backend to respond to `/api/v2/healthz`.
 
 Stack identifier: `docker compose -p saas-staging ps` to inspect.
 

@@ -106,7 +106,7 @@ services:
       args:
         BFF_API_ORIGIN: http://backend:8001
         NEXT_PUBLIC_API_BASE: /api/v2
-        NEXT_PUBLIC_FIREBASE_API_KEY: fake-emulator-api-key
+        NEXT_PUBLIC_FIREBASE_API_KEY: ${NEXT_PUBLIC_FIREBASE_API_KEY:-}
         NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: academy-courtmastr.firebaseapp.com
         NEXT_PUBLIC_FIREBASE_PROJECT_ID: academy-courtmastr
         NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: academy-courtmastr.firebasestorage.app
