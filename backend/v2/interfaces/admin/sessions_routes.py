@@ -165,8 +165,7 @@ async def get_enrollment_events(
                 event_id=str(_event_field(e, "event_id", "")),
                 event_type=str(_event_field(e, "event_type", "")),
                 effective_date=str(
-                    _event_field(e, "effective_date", None)
-                    or _event_field(e, "effective_at", "")
+                    _event_field(e, "effective_date", None) or _event_field(e, "effective_at", "")
                 )[:10],
                 reason=_event_field(e, "reason"),  # type: ignore[arg-type]
                 billing_policy=_event_field(e, "billing_policy"),  # type: ignore[arg-type]

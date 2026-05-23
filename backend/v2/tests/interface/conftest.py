@@ -432,7 +432,6 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     TransferEnrollment,
     WithdrawEnrollment,
 )
-from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     ApprovePauseRequest,
     DeclinePauseRequest,
@@ -442,6 +441,7 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserSummary,
@@ -582,7 +582,9 @@ class FakeStudentWriter:
         self.students[student.student_id] = student
 
     async def by_ids(self, student_ids):
-        return [self.students[student_id] for student_id in student_ids if student_id in self.students]
+        return [
+            self.students[student_id] for student_id in student_ids if student_id in self.students
+        ]
 
 
 @dataclass

@@ -158,7 +158,11 @@ async def test_pause_releases_seat_waitlists_student_and_records_effective_date(
         enrollments=enrollments,
         sessions=sessions,
         students=FakeStudents(
-            rows={"stu-1": Student(student_id="stu-1", academy_id="acad", parent_id="parent-1", full_name="Alice")}
+            rows={
+                "stu-1": Student(
+                    student_id="stu-1", academy_id="acad", parent_id="parent-1", full_name="Alice"
+                )
+            }
         ),
         waitlist=waitlist,
         enrollment_events=events,
