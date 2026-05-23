@@ -636,6 +636,28 @@ class FakeWaitlistRepo:
         if e is not None:
             self.entries[waitlist_id] = e.model_copy(update={"status": status})
 
+    async def find_waiting_for_session_student(self, session_id, student_id):
+        return next(
+            (
+                entry
+                for entry in self.entries.values()
+                if entry.session_id == session_id
+                and entry.student_id == student_id
+                and entry.status == "waiting"
+            ),
+            None,
+        )
+
+    async def remove_waiting_for_session_student(self, session_id, student_id):
+        self.entries = {
+            waitlist_id: entry.model_copy(update={"status": "removed"})
+            if entry.session_id == session_id
+            and entry.student_id == student_id
+            and entry.status == "waiting"
+            else entry
+            for waitlist_id, entry in self.entries.items()
+        }
+
 
 class FakeLifecycleBilling:
     async def record_move_proration(
@@ -1045,6 +1067,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     )
     resume_enrollment = ResumeEnrollment(
         enrollments=enrollments_w,
+        sessions=sessions,
+        waitlist=waitlist,
         enrollment_events=enrollment_events,
     )
     withdraw_enrollment = WithdrawEnrollment(

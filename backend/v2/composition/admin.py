@@ -311,6 +311,8 @@ def compose_admin(
     )
     resume_enrollment = ResumeEnrollment(
         enrollments=enrollments_w,
+        sessions=sessions_w,
+        waitlist=waitlist,
         enrollment_events=enrollment_events,
     )
     withdraw_enrollment = WithdrawEnrollment(
