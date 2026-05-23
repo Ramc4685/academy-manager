@@ -57,6 +57,24 @@ paste production Firebase tokens into shell history.
 | CI and smoke tests | TODO | Existing CI runs backend/frontend verification; SaaS smoke script added. Launch needs CI integration or documented manual run evidence against a prod-like SaaS environment. |
 | Production deploy | NOT APPLICABLE | Wave 7 scaffolding does not deploy and does not mutate production data. |
 
+Wave 12 launch-candidate addendum:
+
+| Gate | Status | Required evidence before launch |
+| --- | --- | --- |
+| SaaS route enforcement | SCAFFOLDED | `scripts/smoke/saas_readiness_smoke.sh` full run against SaaS-mode local/prod-like stack. |
+| Membership auth | BLOCKED BY WAVE 10/11 MERGE | Active membership, inactive membership rejection, and platform-role separation verified against merged branch. |
+| Explicit tenant resolution | SCAFFOLDED | Unknown tenant rejected, auth-only tenant inference rejected, and tenant host/custom-domain/internal-header paths verified. |
+| No `default_academy_id` SaaS path | SCAFFOLDED | Static smoke passes. |
+| Occurrence attendance | BLOCKED BY WAVE 10/11 MERGE | Coach attendance uses occurrence IDs and tenant-scoped records. |
+| Enrollment events | BLOCKED BY WAVE 10/11 MERGE | Enrollment state changes write durable events/audit rows. |
+| Billing ledger/idempotency | BLOCKED BY WAVE 10/11 MERGE | Invoice/payment generation and webhook/event replay are idempotent. |
+| Coach payout occurrence basis | BLOCKED BY WAVE 10/11 MERGE | Coach payout calculations are based on attended occurrences, not schedule templates alone. |
+| Platform billing | BLOCKED BY WAVE 10/11 MERGE | Platform billing persistence/routes and Stripe-safe test config verified. |
+| Governance/support | BLOCKED BY WAVE 10/11 MERGE | Export, deletion request, support access, and impersonation-disablement gates verified. |
+| Platform audit | BLOCKED BY WAVE 10/11 MERGE | Platform tenant/billing/governance actions write durable audit rows. |
+| Local smoke | SCAFFOLDED | `scripts/dev/saas_staging.sh up`, BLNO seed, and `scripts/dev/saas_staging.sh smoke` evidence attached. |
+| Full backend/frontend verification | PENDING | `pytest v2/tests -q`, `pnpm typecheck`, and `pnpm build` pass on merged launch candidate. |
+
 Current production config note:
 
 - `backend/fly.toml` enables `V2_ENABLED=1` but does not enable

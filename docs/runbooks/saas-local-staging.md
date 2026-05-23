@@ -83,6 +83,20 @@ You will still need real staging (or Phase B tunnels) to satisfy:
 scripts/dev/saas_staging.sh up
 ```
 
+Clean startup checklist:
+
+1. Confirm Docker Desktop is running.
+2. Confirm the default local ports are not already occupied by another stack:
+   3000, 4000, 8001, 9099, and 27017.
+3. Confirm `backend/.venv/bin/python` exists and has
+   `backend/requirements.txt` installed.
+4. Start from a stopped SaaS staging stack:
+   `scripts/dev/saas_staging.sh down`. Use `nuke` only when you explicitly
+   want to remove local staging Mongo/emulator volumes.
+5. Run `scripts/dev/saas_staging.sh up` and wait for `/api/v2/healthz`.
+6. Seed the desired tenant, then run smoke. Do not use production Mongo,
+   production Firebase, real Stripe keys, or real email credentials.
+
 What this does:
 
 1. Generates `.local/saas-staging.env` with random `JWT_SECRET` and
@@ -186,6 +200,43 @@ scripts/dev/saas_staging.sh smoke \
 Then open `http://blno.localhost:3000/login`, sign in with
 `admin@blno-badminton.dev` and the generated emulator password, and confirm
 the admin pages load through `/api/v2/*` without 401/500 responses.
+
+The seed path is intended to be idempotent. Re-running the BLNO command
+upserts the academy, owner user, active admin membership, academy settings,
+and platform admin role, then mints a fresh emulator ID token. The generated
+owner password is stored per owner email in `.local/saas-staging-credentials.json`.
+
+There is no `scripts/dev/seed_blno_demo_data.py` in this branch. If a later
+wave adds it, keep it local-only, idempotent, and safe to re-run against the
+Docker Mongo/Firebase emulator stack.
+
+## Wave 12 launch-candidate checks
+
+This pass adds scaffolding only. Final signoff waits for Wave 10 and Wave 11
+branches to merge.
+
+```bash
+scripts/smoke/saas_readiness_smoke.sh --static-only
+cd frontend
+NEXT_PUBLIC_E2E_AUTH_BYPASS=1 PLAYWRIGHT_PORT=3107 pnpm exec playwright test e2e/specs/saas-launch-route-matrix.spec.ts --project=chromium-mobile --workers=1 --trace=off --output=/tmp/academy-wave12-pw-results
+```
+
+The route matrix scaffold covers:
+
+- admin dashboard, sessions, students, users, waitlist, pause requests,
+  payments, dues, expenses, payouts, reports, messages, waivers, settings,
+  and audit logs
+- coach today
+- parent payments
+
+The HTTP smoke covers or explicitly skips:
+
+- `/api/v2/healthz`
+- legacy `/api/*` blocked in SaaS mode
+- unknown tenant rejected
+- authenticated request without tenant host/header rejected
+- frontend proxy preserving `Authorization`
+- frontend proxy preserving tenant host via `/api/v2/me`
 
 ## Troubleshooting
 
