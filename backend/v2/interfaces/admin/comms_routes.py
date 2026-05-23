@@ -12,8 +12,8 @@ from backend.v2.interfaces.admin.views import (
     DMRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
 from backend.v2.shared.comms import Message
+from backend.v2.shared.http import require_persona
 
 router = APIRouter(tags=["admin.comms"])
 

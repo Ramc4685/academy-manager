@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
-from fastapi import HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
     AdminWaiverReport,
