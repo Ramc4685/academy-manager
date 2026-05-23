@@ -4,26 +4,18 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
-    GetAdminStudent,
-    UpdateAdminStudent,
     UpdateAdminStudentCommand,
     decode_student_cursor,
-)
-from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
-    MongoStudentRepository,
 )
 from backend.v2.contexts.identity.application.change_user_role_use_case import (
     ChangeUserRoleCommand,
 )
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
-    GetAdminUser,
-    UpdateAdminUser,
     UpdateAdminUserCommand,
 )
-from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
     AdminStudentDetailView,
@@ -55,11 +47,12 @@ async def list_users(
 @router.get("/users/{user_id}", response_model=AdminUserDetailView)
 async def get_user(
     user_id: str,
-    request: Request,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminUserDetailView:
-    use_case = use_cases.get_admin_user or _get_admin_user_use_case(request)
+    use_case = use_cases.get_admin_user
+    if use_case is None:
+        raise HTTPException(status_code=503, detail="Admin user detail is not configured")
     user = await use_case.execute(user_id, academy_id=claims.academy_id)
     return AdminUserDetailView(**user.model_dump())
 
@@ -68,11 +61,12 @@ async def get_user(
 async def update_user(
     user_id: str,
     payload: UpdateAdminUserRequest,
-    request: Request,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminUserDetailView:
-    use_case = use_cases.update_admin_user or _update_admin_user_use_case(request)
+    use_case = use_cases.update_admin_user
+    if use_case is None:
+        raise HTTPException(status_code=503, detail="Admin user edit is not configured")
     user = await use_case.execute(
         user_id,
         UpdateAdminUserCommand(
@@ -143,11 +137,12 @@ async def list_students(
 @router.get("/students/{student_id}", response_model=AdminStudentDetailView)
 async def get_student(
     student_id: str,
-    request: Request,
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminStudentDetailView:
-    use_case = use_cases.get_admin_student or _get_admin_student_use_case(request)
+    use_case = use_cases.get_admin_student
+    if use_case is None:
+        raise HTTPException(status_code=503, detail="Admin student detail is not configured")
     student = await use_case.execute(student_id)
     return AdminStudentDetailView(**student.model_dump())
 
@@ -156,11 +151,12 @@ async def get_student(
 async def update_student(
     student_id: str,
     payload: UpdateAdminStudentRequest,
-    request: Request,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminStudentDetailView:
-    use_case = use_cases.update_admin_student or _update_admin_student_use_case(request)
+    use_case = use_cases.update_admin_student
+    if use_case is None:
+        raise HTTPException(status_code=503, detail="Admin student edit is not configured")
     student = await use_case.execute(
         student_id,
         UpdateAdminStudentCommand(
@@ -175,26 +171,3 @@ async def update_student(
         ),
     )
     return AdminStudentDetailView(**student.model_dump())
-
-
-def _db_from_request(request: Request):
-    db = getattr(request.app.state, "db", None)
-    if db is None:
-        raise HTTPException(status_code=503, detail="Admin directory store is not configured")
-    return db
-
-
-def _get_admin_student_use_case(request: Request) -> GetAdminStudent:
-    return GetAdminStudent(MongoStudentRepository(_db_from_request(request)))
-
-
-def _update_admin_student_use_case(request: Request) -> UpdateAdminStudent:
-    return UpdateAdminStudent(MongoStudentRepository(_db_from_request(request)))
-
-
-def _get_admin_user_use_case(request: Request) -> GetAdminUser:
-    return GetAdminUser(MongoUserRepository(_db_from_request(request)))
-
-
-def _update_admin_user_use_case(request: Request) -> UpdateAdminUser:
-    return UpdateAdminUser(MongoUserRepository(_db_from_request(request)))
