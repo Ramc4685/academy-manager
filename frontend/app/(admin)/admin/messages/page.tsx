@@ -1,8 +1,6 @@
 "use client";
 
 /**
- * Admin messages — Rally restyle.
- *
  * Admin messages.
  *
  * Preserves: broadcast composer, recent broadcasts list, DM thread list,
@@ -53,13 +51,14 @@ export default function AdminMessagesPage() {
         <Card p={16} style={{ borderColor: "#fecaca", background: "#fef2f2" }}>
           <div role="alert" className="flex items-center justify-between gap-3">
             <p className="text-sm text-red-800">Failed to load messages.</p>
-            <Button variant="secondary" size="sm" onClick={() => void refetch()}>Retry</Button>
+            <Button variant="secondary" size="sm" onClick={() => void refetch()}>
+              Retry
+            </Button>
           </div>
         </Card>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* Broadcast panel */}
         <Card p={20}>
           <LaneHeader index="01" title="Broadcast" />
           <BroadcastComposer onSent={invalidate} />
@@ -85,7 +84,6 @@ export default function AdminMessagesPage() {
           </div>
         </Card>
 
-        {/* DM panel */}
         <Card p={20}>
           <LaneHeader index="02" title="Direct messages" />
 
@@ -151,9 +149,7 @@ export default function AdminMessagesPage() {
                 </>
               )}
 
-              {!dmRecipientId && (
-                <NewConversationUnavailable />
-              )}
+              {!dmRecipientId && <NewConversationUnavailable />}
             </>
           )}
         </Card>
@@ -162,14 +158,17 @@ export default function AdminMessagesPage() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-
 function BroadcastComposer({ onSent }: { onSent: () => void }) {
   const [body, setBody] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const mutation = useMutation({
-    mutationFn: () => broadcastMessage({ body }),
+    mutationFn: () =>
+      broadcastMessage({
+        body,
+        scope_type: "academy",
+        scope_label: "Whole academy announcement",
+      }),
     onSuccess: () => {
       setBody("");
       setError(null);
@@ -198,14 +197,14 @@ function BroadcastComposer({ onSent }: { onSent: () => void }) {
         required
         value={body}
         onChange={(e) => setBody(e.target.value)}
-        placeholder="Write an academy-wide announcement…"
+        placeholder="Write an academy-wide announcement..."
         rows={3}
         className="w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30 resize-none"
         aria-label="Broadcast message body"
       />
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-3">
         <p className="mr-auto self-center text-[12px] text-rally-subtle">
-          Sends to the current academy broadcast audience.
+          Audience: whole academy announcement.
         </p>
         <Button
           type="submit"
@@ -213,7 +212,7 @@ function BroadcastComposer({ onSent }: { onSent: () => void }) {
           size="sm"
           disabled={mutation.isPending || !body.trim()}
         >
-          {mutation.isPending ? "Sending…" : "Send broadcast"}
+          {mutation.isPending ? "Sending..." : "Send broadcast"}
         </Button>
       </div>
     </form>
@@ -256,7 +255,7 @@ function DmComposer({
         type="text"
         value={body}
         onChange={(e) => setBody(e.target.value)}
-        placeholder="Type a message…"
+        placeholder="Type a message..."
         className="flex-1 rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30"
         aria-label="DM message body"
       />
@@ -300,7 +299,10 @@ function MessageBubble({ message }: { message: AdminMessageView }) {
     <li className="rounded-md bg-rally-paper px-3 py-2">
       <p className="text-sm text-rally-ink">{message.body}</p>
       <p className="mt-1 font-mono text-[10px] text-rally-subtle">
-        {new Date(message.sent_at).toLocaleString()}
+        {message.is_broadcast
+          ? `${message.scope_label ?? "Whole academy announcement"} · ${message.delivery_status ?? "recorded"}`
+          : "Direct conversation"}{" "}
+        · {new Date(message.sent_at).toLocaleString()}
       </p>
     </li>
   );

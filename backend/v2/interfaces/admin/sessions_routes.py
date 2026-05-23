@@ -11,6 +11,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     CancelSessionCommand,
     CreateSessionCommand,
     EditRosterAddCommand,
+    EditSessionCommand,
     PauseEnrollmentCommand,
     TransferEnrollmentCommand,
 )
@@ -22,6 +23,7 @@ from backend.v2.interfaces.admin.views import (
     AdminSessionView,
     CreateSessionRequest,
     EditRosterAddRequest,
+    EditSessionRequest,
     EnrollmentEventDto,
     EnrollmentEventsResponse,
     TransferEnrollmentRequest,
@@ -55,6 +57,23 @@ async def create_session(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionView:
     session = await use_cases.create_session.execute(CreateSessionCommand(**body.model_dump()))
+    return AdminSessionView(**session.model_dump(exclude={"academy_id"}))
+
+
+@router.patch("/sessions/{session_id}", response_model=AdminSessionView, summary="Edit session")
+async def edit_session(
+    session_id: str,
+    body: EditSessionRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminSessionView:
+    session = await use_cases.edit_session.execute(
+        EditSessionCommand(
+            session_id=session_id,
+            actor_id=claims.user_id,
+            **body.model_dump(exclude_unset=True),
+        )
+    )
     return AdminSessionView(**session.model_dump(exclude={"academy_id"}))
 
 

@@ -118,6 +118,26 @@ backend:
       - working: true
         agent: "main"
         comment: "Verification passed for scaffolding: bash -n scripts/smoke/saas_readiness_smoke.sh scripts/dev/saas_staging.sh, scripts/smoke/saas_readiness_smoke.sh --static-only, and git diff --check. Full local SaaS stack up/smoke and BLNO seed were skipped because this linked worktree has no backend/.venv/bin/python and the local SaaS ports are already occupied by an existing Docker listener."
+  - task: "Wave 10 admin ops waiver/message/report detail routes"
+    implemented: true
+    working: true
+    file: "backend/v2/interfaces/admin/waiver_routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Wave 10 Agent C added read-only admin waiver template and signed-waiver detail routes, message broadcast scope metadata, live reports KPI dashboard route coverage, and focused backend tests. Verification pending."
+      - working: true
+        agent: "main"
+        comment: "Focused backend verification passed using the existing shared backend venv because this linked worktree has no backend/.venv: /Users/ramc/Documents/Code/academy-manager/backend/.venv/bin/python -m pytest v2/tests/application/test_admin_waiver_details.py v2/tests/application/test_admin_message_campaign_details.py v2/tests/interface/test_admin_ops_detail_routes.py -q returned 8 passed."
+      - working: true
+        agent: "main"
+        comment: "After rebasing onto origin/main 0b5750a and resolving Wave 9 overlap, the same focused backend suite passed again with 8 passed."
+      - working: true
+        agent: "main"
+        comment: "Narrow acceptance fix added wrong-persona 404 coverage for waiver template/signature detail routes and repository-level tenant-isolation coverage for template/signature detail lookups. Verification passed: /Users/ramc/Documents/Code/academy-manager/backend/.venv/bin/python -m pytest v2/tests/application/test_admin_waiver_details.py v2/tests/application/test_admin_message_campaign_details.py v2/tests/interface/test_admin_ops_detail_routes.py v2/tests/contract/test_admin_waivers_mongo_repo.py -q returned 14 passed. git diff --check passed."
   - task: "SaaS v2 Wave 7 production readiness scaffolding"
     implemented: true
     working: true
@@ -404,6 +424,23 @@ frontend:
       - working: true
         agent: "main"
         comment: "Frontend verification passed after pnpm install restored node_modules: pnpm typecheck, pnpm build, and NEXT_PUBLIC_E2E_AUTH_BYPASS=1 PLAYWRIGHT_PORT=3109 pnpm exec playwright test e2e/specs/saas-launch-route-matrix.spec.ts --project=chromium-mobile --workers=1 --trace=off --output=/tmp/academy-wave12-pw-results (17 passed). An earlier route-matrix attempt without explicit NEXT_PUBLIC_E2E_AUTH_BYPASS redirected to /login and later hit Playwright artifact ENOSPC; the documented command now includes the bypass env and temp output path."
+  - task: "Wave 10 admin ops detail frontend"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/admin/waivers/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Wave 10 Agent C added waiver template/signed-record drilldown pages, kept new DM creation disabled until a real recipient picker/search API exists so no user ID typing is required, made broadcast scope visible, and added live KPI cards while keeping CSV export secondary. Verification pending."
+      - working: "NA"
+        agent: "main"
+        comment: "Frontend verification: pnpm install was required because this worktree had no node_modules; pnpm typecheck passed. pnpm build started Next 15 but failed with ENOSPC no space left on device while writing build output; df showed only ~1.1GiB free on /System/Volumes/Data. Browser smoke was attempted because localhost:3001/admin/waivers responds over HTTP and /api/v2/healthz returns ok, but the Playwright MCP browser profile is locked by another session, so route smoke remains unverified."
+      - working: true
+        agent: "main"
+        comment: "After rebasing onto origin/main 0b5750a, resolved frontend conflicts by preserving Wave 9 admin ops cleanup and layering Wave 10 detail links/KPI/scope metadata. Verification passed: pnpm typecheck, pnpm build, and git diff --check. Browser smoke remains skipped because the Playwright MCP browser profile is locked by another session."
   - task: "Wave 9 admin shell branding cleanup"
     implemented: true
     working: true
@@ -654,11 +691,11 @@ metadata:
   run_ui: true
 test_plan:
   current_focus:
-    - "Wave 9 admin shell branding cleanup"
-    - "Wave 9 admin roster technical leakage cleanup"
     - "Wave 9 admin operations cleanup"
     - "Wave 12 SaaS launch smoke and gate scaffolding"
     - "Wave 12 SaaS Playwright route matrix scaffold"
+    - "Wave 10 admin ops waiver/message/report detail routes"
+    - "Wave 10 admin ops detail frontend"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -667,6 +704,14 @@ agent_communication:
     message: "Wave 12 Agent F scaffolding pass: tightened SaaS smoke coverage for tenant-host-required and frontend proxy auth/tenant preservation, added docs/qa/saas-launch-gate-checklist.md, updated SaaS local staging runbook with clean startup/BLNO idempotent seed notes, and added frontend/e2e/specs/saas-launch-route-matrix.spec.ts for the requested admin/coach/parent route matrix. Retest static smoke, launch route matrix Playwright, backend v2 tests, frontend typecheck/build, and git diff --check. Do not perform final launch signoff until Wave 10 and Wave 11 branches are merged."
   - agent: "main"
     message: "Wave 12 Agent F verification update: static SaaS smoke, frontend typecheck/build, focused Chromium route matrix (17 passed), and git diff --check passed. Full saas_staging up/smoke, BLNO seed, seed_blno_demo_data.py, and backend v2 pytest were skipped because backend/.venv/bin/python is absent in this worktree; seed_blno_demo_data.py is also absent. Final launch gates still wait for Wave 10 and Wave 11 merge."
+  - agent: "main"
+    message: "Wave 10 Agent C implementation is ready for focused verification: backend waiver template/signed detail routes, message broadcast scope metadata, admin reports KPI dashboard data, waiver drilldown pages, message recipient picker without user ID typing, and reports dashboard-first UI. Planned checks: requested focused backend pytest files, frontend pnpm typecheck, frontend pnpm build, git diff --check, and browser smoke only if the local stack is available with usable Firebase config."
+  - agent: "main"
+    message: "Wave 10 Agent C verification update: focused backend tests passed 8/8 via the shared backend venv because backend/.venv is absent in this linked worktree; frontend pnpm typecheck passed after pnpm install; git diff --check passed. pnpm build failed due ENOSPC with only about 1.1GiB free. Browser smoke could not run because the Playwright MCP browser profile is already locked by another session, though curl confirmed localhost:3001/admin/waivers returns HTML and /api/v2/healthz returns ok."
+  - agent: "main"
+    message: "Wave 10 Agent C rebase update: fetched/rebased onto origin/main 0b5750a with autostash. Conflicts in admin messages/reports/waivers and test_result.md were resolved by preserving Wave 9 cleanup: no internal recipient ID UI, reports dashboard first with exports secondary, and waiver unavailable artifact copy; Wave 10 detail routes/links, broadcast scope metadata, and live KPI cards were retained. The deleted Wave 9 frontend/lib/api/v2/reports.ts was not resurrected. Post-rebase verification passed: backend focused tests 8/8, frontend pnpm typecheck, frontend pnpm build, git diff --check."
+  - agent: "main"
+    message: "Wave 10 Agent C narrow acceptance fix: added wrong-persona 404 tests for /api/v2/admin/waivers/{waiver_id} and /api/v2/admin/waivers/signatures/{signature_id}. Interface harness does not model tenant mismatch for waiver detail fakes, so tenant isolation was covered at the real MongoAdminWaiverRepository boundary for template/signature detail lookups. Verification passed: focused backend suite plus contract admin-waiver repo tests 14/14 and git diff --check. Frontend typecheck was not run because no frontend files changed in this fix."
   - agent: "main"
     message: "Wave 9 Agent D admin shell branding cleanup verification complete. Frontend-only changes passed pnpm build, pnpm typecheck, git diff --check, and a focused Playwright admin-shell smoke with stubbed BFF data. The shell now uses /api/v2/admin/academy display_name with Academy fallback, keeps admin email/role visible, and does not display Rally Academy, COURT 7, academy_id, or user_id in normal shell UI. Exact BLNO manual login was not completed because the running local ports are shared/outside this worktree and the Firebase emulator lacked the expected admin login user."
   - agent: "main"
@@ -937,6 +982,11 @@ agent_communication:
       Browser check status: opened http://blno.localhost:3000/login in the in-app Browser and confirmed the login page renders without console errors, but Firebase Web Auth rejected the Docker build's fake NEXT_PUBLIC_FIREBASE_API_KEY before emulator login could complete. No real public Firebase web API key was present in frontend/.env.local, frontend/.env, .env, or .local/saas-staging.env in this worktree. Per AGENTS.md, do not fall back to dummy Firebase keys for Auth testing, so manual login-to-/admin and Students/Sessions/Payments/Reports browser checks remain blocked until a real public Firebase web API key is supplied to the local staging frontend build.
   - agent: "main"
     message: |
+      SaaS local staging Firebase browser-login fix on 2026-05-22: updated scripts/dev/saas_staging.sh to require a real local NEXT_PUBLIC_FIREBASE_API_KEY from the environment, frontend/.env.local, or frontend/.env before building the Docker frontend image. Updated docker-compose.saas.yml so the frontend build arg comes from that resolved local value instead of a hardcoded fake key. Updated frontend/Dockerfile to actually accept and export NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST during the Next build, and kept frontend/lib/auth/firebase.ts using a build-time emulator host constant so the browser bundle connects to the local Auth emulator. Updated docs/runbooks/saas-local-staging.md with the local key prerequisite.
+
+      Verification: env -u NEXT_PUBLIC_FIREBASE_API_KEY scripts/dev/saas_staging.sh up fails early with the expected missing-key message before Docker build; bash -n scripts/dev/saas_staging.sh passed; docker compose config shows NEXT_PUBLIC_FIREBASE_API_KEY is empty without the env and set when supplied, while NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST remains http://localhost:9099; frontend pnpm typecheck passed; frontend pnpm build passed; git diff --check passed. SaaS staging rebuild and browser login-to-/admin were not rerun because this worktree still does not contain a real local public Firebase Web API key.
+  - agent: "main"
+    message: |
       Wave 9 Agent F money-admin cleanup in worktree /Users/ramc/.config/superpowers/worktrees/academy-manager/wave9-admin-money-cleanup on branch feat/wave9-admin-money-cleanup.
 
       Implemented display-only frontend cleanup for admin money pages. Payments no longer show invoice/payment ID fallbacks or parent IDs in the normal table; labels now use payment, amount due, amount paid, status, and method. Dues no longer shows parent IDs and the reminder action now states it emails the currently listed pending-dues parents because selective reminders are not available yet. Expenses keep add-expense behavior and document edit/delete as a Wave 10 gap. Payouts and coach payslip no longer show coach/payout IDs in normal cards/tables; they use coach display name, email, and assigned session counts where existing admin user/session APIs can provide them. Payout review copy now describes the missing detailed payout view in admin-facing language and does not change payout formulas.
@@ -945,3 +995,33 @@ agent_communication:
   - agent: "main"
     message: |
       Wave 9 Agent F verification update: installed frontend dependencies in the isolated worktree because node_modules was absent, then ran pnpm typecheck (passed), pnpm build (passed; affected admin money routes built), and git diff --check (passed). Started this worktree's frontend on localhost:3002 against the running local backend on 8001 to browser-check /admin/payments, /admin/dues, /admin/expenses, /admin/payouts, and /admin/coach-payslip. Manual browser smoke could not complete because the local frontend environment available to this worktree does not provide a usable NEXT_PUBLIC_FIREBASE_API_KEY; Firebase throws auth/invalid-api-key before protected admin pages render. No backend behavior was changed.
+  - agent: "main"
+    message: |
+      Wave 10 Agent B session/expense edit implementation in worktree /Users/ramc/.config/superpowers/worktrees/academy-manager/wave10-session-expense-edit on branch feat/wave10-session-expense-edit.
+
+      Implemented admin session editing for existing model-supported fields only: title/name, location, start/end schedule metadata, capacity, and coach assignment. No session pricing edit was added because the Enrollment Session aggregate has no clean per-session fee field; pricing remains deferred to Wave 11 billing policy/session-pricing ownership. Implemented admin expense editing and soft-delete with delete reason; normal expense listing excludes soft-deleted rows. Frontend admin sessions and expenses pages now expose edit/delete dialogs without showing internal IDs in normal UI.
+
+      Shared files touched narrowly: frontend/lib/api/admin.ts for typed admin client contracts; backend/v2/interfaces/admin/views.py for request DTOs; backend/v2/interfaces/admin/deps.py and backend/v2/composition/admin.py for use-case wiring; backend/v2/tests/interface/conftest.py for route-test fakes; backend/v2/interfaces/admin/billing_routes.py and backend/v2/contexts/billing/application/use_cases/finance.py for expense edit/soft-delete only.
+
+      Verification: backend focused tests via uv run --no-project --with-requirements requirements.txt --with-requirements requirements-v2.txt pytest v2/tests/application/test_admin_session_edit.py v2/tests/application/test_admin_expense_edit.py v2/tests/interface/test_admin_session_expense_routes.py -q passed with 8 passed; frontend pnpm typecheck passed after installing node_modules in this isolated worktree; git diff --check passed. The exact backend venv command could not run because backend/.venv is absent in this linked worktree. pnpm build failed with ENOSPC because the filesystem has only 164 MiB available. Browser smoke skipped: local_test_stack status reports MongoDB stopped, and build/local disk state is not healthy enough for a reliable manual admin smoke.
+  - agent: "main"
+    message: |
+      Wave 10 Agent B focused follow-up for orchestrator acceptance gaps.
+
+      Added explicit validation coverage: session edit rejects invalid capacity with 422, expense edit rejects negative amount with 422, and expense soft-delete rejects a missing reason with 422. Added not-found/cross-tenant coverage where feasible: application tests assert missing rows reject without writes, and Mongo-backed repository/use-case tests assert tenant-scoped session edit and expense edit/delete cannot mutate rows that exist only under another academy. The admin interface fixture does not model tenant context, so cross-tenant rejection is covered at the repository/application boundary where TenantScopedRepository enforces academy isolation.
+
+      Audit/event behavior: this slice did not wire existing audit/event infrastructure. Session edit receives actor_id/reason at the route/use-case boundary but does not persist an audit event yet. Expense edit receives actor_id/reason at the route/use-case boundary but does not persist an audit event yet. Expense soft-delete persists deleted_by/delete_reason/deleted_at on the expense row. Durable audit persistence for session edits and expense edits/deletes remains a product/architecture gap.
+
+      Verification: backend focused tests via uv run --no-project --with-requirements requirements.txt --with-requirements requirements-v2.txt pytest v2/tests/application/test_admin_session_edit.py v2/tests/application/test_admin_expense_edit.py v2/tests/interface/test_admin_session_expense_routes.py -q passed with 14 passed.
+  - agent: "main"
+    message: |
+      Wave 10 Agent A student/user edit worktree update on branch feat/wave10-student-user-edit.
+
+      Implemented admin-maintainable Students and Coaches/Parents inside the assigned ownership area. Added v2 admin student detail/update and user detail/update routes, safe student profile fields (full name, date of birth, level, status, notes, parent association only as existing parent_id), parent contact detail display, user display name/phone/status edits, and explicit role-change action with actor/reason context. Student/user mutations write best-effort audit_logs rows with actor_id, reason, changed_keys, before, and after snapshots. Platform audit is separate infrastructure and was not changed in this wave.
+
+      Shared seam files touched narrowly: backend/v2/interfaces/admin/views.py for student/user request/detail DTOs and role-change reason; backend/v2/interfaces/admin/deps.py for optional student/user detail/update use-case hooks used by tests/routes; frontend/lib/api/admin.ts for user detail/update helpers and role-change reason; frontend/lib/query/keys.ts for user detail cache key. Also merged origin/main 0b5750a cleanly before this update; those Wave 9 ops cleanup files were not edited by this agent beyond the merge.
+
+      Verification passed after merge: backend focused pytest v2/tests/application/test_admin_student_edit.py v2/tests/application/test_admin_user_edit.py v2/tests/interface/test_admin_student_user_routes.py -q (11 passed); existing admin directory interface pytest v2/tests/interface/test_admin_directory.py -q (6 passed); focused ruff check and ruff format --check on changed backend files passed; frontend pnpm typecheck passed; frontend pnpm build passed; git diff --check passed. Browser smoke was not run because no local authenticated stack was started for this worktree.
+  - agent: "main"
+    message: |
+      Wave 10 Agent A browser smoke addendum: scripts/local_test_stack.sh status showed Firebase Auth/UI, backend, and frontend running, but MongoDB stopped. In-app Browser loaded http://localhost:3001/admin/students and http://localhost:3001/admin/users; both redirected to /login as expected for an unauthenticated session, rendered the login page, and reported no browser console errors. Authenticated student/user detail/edit browser smoke was not run because the local stack was incomplete and no authenticated admin session was established.

@@ -16,6 +16,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from backend.v2.contexts.billing.application.ports import PaymentRepository
+from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -29,6 +30,14 @@ class Expense(BaseModel):
     amount_cents: int = Field(ge=0)
     note: str = ""
     incurred_on: datetime
+    deleted_at: datetime | None = None
+    deleted_by: str | None = None
+    delete_reason: str | None = None
+
+
+class ExpenseNotFound(DomainError):
+    code = "Finance.ExpenseNotFound"
+    status_code = 404
 
 
 # FINANCE
@@ -56,6 +65,9 @@ class MongoExpenseRepository(TenantScopedRepository):
             amount_cents=int(doc["amount_cents"]),  # type: ignore[arg-type]
             note=str(doc.get("note", "")),
             incurred_on=doc["incurred_on"],  # type: ignore[arg-type]
+            deleted_at=doc.get("deleted_at"),  # type: ignore[arg-type]
+            deleted_by=doc.get("deleted_by"),  # type: ignore[arg-type]
+            delete_reason=doc.get("delete_reason"),  # type: ignore[arg-type]
         )
 
     async def add(self, e: Expense) -> None:
@@ -63,8 +75,35 @@ class MongoExpenseRepository(TenantScopedRepository):
             {k: v for k, v in e.model_dump(mode="python").items() if k != "academy_id"}
         )
 
+    async def get(self, expense_id: str) -> Expense | None:
+        doc = await self._find_one({"expense_id": expense_id, "deleted_at": None})
+        return self._to_domain(doc) if doc else None
+
+    async def update(self, e: Expense) -> None:
+        doc = e.model_dump(mode="python")
+        result = await self._update_one(
+            {"expense_id": e.expense_id, "deleted_at": None},
+            {"$set": {k: v for k, v in doc.items() if k != "academy_id"}},
+        )
+        if result.matched_count == 0:
+            raise ExpenseNotFound("expense missing", expense_id=e.expense_id)
+
+    async def soft_delete(self, expense_id: str, *, actor_id: str, reason: str) -> None:
+        result = await self._update_one(
+            {"expense_id": expense_id, "deleted_at": None},
+            {
+                "$set": {
+                    "deleted_at": datetime.now(UTC),
+                    "deleted_by": actor_id,
+                    "delete_reason": reason,
+                }
+            },
+        )
+        if result.matched_count == 0:
+            raise ExpenseNotFound("expense missing", expense_id=expense_id)
+
     async def list_recent(self, limit: int = 200) -> list[Expense]:
-        cursor = self._find_many({}, sort=[("incurred_on", -1)], limit=limit)
+        cursor = self._find_many({"deleted_at": None}, sort=[("incurred_on", -1)], limit=limit)
         return [self._to_domain(d) async for d in cursor]
 
 
@@ -119,6 +158,54 @@ class RecordExpense:
         )
         await self._expenses.add(e)
         return e
+
+
+class EditExpenseCommand(BaseModel):
+    model_config = {"frozen": True}
+    expense_id: str
+    category: Literal["rent", "equipment", "salary", "marketing", "other"] | None = None
+    amount_cents: int | None = Field(default=None, ge=0)
+    note: str | None = None
+    incurred_on: datetime | None = None
+    actor_id: str | None = None
+    reason: str | None = None
+
+
+class EditExpense:
+    def __init__(self, *, expenses: MongoExpenseRepository) -> None:
+        self._expenses = expenses
+
+    async def execute(self, cmd: EditExpenseCommand) -> Expense:
+        current = await self._expenses.get(cmd.expense_id)
+        if current is None:
+            raise ExpenseNotFound("expense missing", expense_id=cmd.expense_id)
+        update: dict[str, object] = {}
+        for field_name in ("category", "amount_cents", "note", "incurred_on"):
+            value = getattr(cmd, field_name)
+            if value is not None:
+                update[field_name] = value
+        edited = current.model_copy(update=update)
+        await self._expenses.update(edited)
+        return edited
+
+
+class DeleteExpenseCommand(BaseModel):
+    model_config = {"frozen": True}
+    expense_id: str
+    actor_id: str
+    reason: str
+
+
+class DeleteExpense:
+    def __init__(self, *, expenses: MongoExpenseRepository) -> None:
+        self._expenses = expenses
+
+    async def execute(self, cmd: DeleteExpenseCommand) -> None:
+        await self._expenses.soft_delete(
+            cmd.expense_id,
+            actor_id=cmd.actor_id,
+            reason=cmd.reason,
+        )
 
 
 # FINANCE

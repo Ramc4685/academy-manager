@@ -1,20 +1,28 @@
 #!/usr/bin/env bash
 #
-# SaaS staging orchestrator. Drives a local Docker stack that approximates
-# the SaaS production deployment (Wave 7 contract) for the smoke tests.
+# SaaS staging orchestrator — drives a local Docker stack that approximates
+# the SaaS production deployment for testing.
 #
-# Usage:
-#   scripts/dev/saas_staging.sh up         # build + start backend, frontend, mongo, firebase emulator
-#   scripts/dev/saas_staging.sh seed       # seed tenant + emulator user, print smoke exports
-#   scripts/dev/saas_staging.sh token      # mint a fresh ID token (re-runs seed)
-#   scripts/dev/saas_staging.sh smoke      # run scripts/smoke/saas_readiness_smoke.sh against the stack
-#   scripts/dev/saas_staging.sh smoke --slug blno --domain blno.localhost ...
-#   scripts/dev/saas_staging.sh logs <svc> # tail logs for backend|frontend|mongo|firebase-emulator
-#   scripts/dev/saas_staging.sh ps         # show container status
+# Quick start (one command):
+#   make up               # build, start, seed, show URLs + creds
+#
+# Or step by step:
+#   scripts/dev/saas_staging.sh up         # build + start the stack
+#   scripts/dev/saas_staging.sh seed       # seed tenant + Firebase test user
+#   scripts/dev/saas_staging.sh status     # show containers + URLs + creds
+#   scripts/dev/saas_staging.sh smoke      # run the SaaS readiness smoke
+#
+# Custom test data:
+#   scripts/dev/saas_staging.sh seed --slug blno --domain blno.localhost ...
+#
+# Lifecycle:
+#   scripts/dev/saas_staging.sh logs <svc> # tail logs (backend|frontend|mongo|firebase-emulator)
+#   scripts/dev/saas_staging.sh urls       # just print access URLs
+#   scripts/dev/saas_staging.sh reset      # wipe test data, keep stack running
 #   scripts/dev/saas_staging.sh down       # stop containers, keep volumes
-#   scripts/dev/saas_staging.sh nuke       # stop + remove volumes (fresh slate)
+#   scripts/dev/saas_staging.sh nuke       # stop + remove volumes (interactive confirm)
 #
-# Compose project is `saas-staging` to isolate from the default dev compose.
+# Compose project is `saas-staging` to isolate from any other compose stack.
 
 set -euo pipefail
 
@@ -28,9 +36,13 @@ COMPOSE=(docker compose -p "${PROJECT_NAME}" "${COMPOSE_FILES[@]}")
 
 LOCAL_DIR="${REPO_ROOT}/.local"
 ENV_FILE="${LOCAL_DIR}/saas-staging.env"
+CREDS_FILE="${LOCAL_DIR}/saas-staging-credentials.json"
 VENV_PYTHON="${VENV_PYTHON:-${REPO_ROOT}/backend/.venv/bin/python}"
 SMOKE_SCRIPT="${REPO_ROOT}/scripts/smoke/saas_readiness_smoke.sh"
 SEED_SCRIPT="${REPO_ROOT}/scripts/dev/seed_saas_staging.py"
+
+# Ports the stack binds. Used by pre-flight + status.
+declare -a REQUIRED_PORTS=(3000 4000 8001 9099 27017)
 
 # --- helpers ----------------------------------------------------------------
 
@@ -38,21 +50,46 @@ log()  { printf '\033[1;34m[saas-staging]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[saas-staging]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[saas-staging]\033[0m %s\n' "$*" >&2; exit 1; }
 
-require_python_venv() {
+# Pre-flight checks for `up`. Fails fast with a clear message if the host
+# can't run the stack — much friendlier than a 2-minute docker build crash.
+preflight() {
+  # Docker daemon reachable?
+  if ! docker info >/dev/null 2>&1; then
+    die "Docker daemon is not running. Start Docker Desktop, then retry."
+  fi
+
+  # Python venv exists?
   if [[ ! -x "${VENV_PYTHON}" ]]; then
     die "backend/.venv not found. Create it with:
   python3 -m venv backend/.venv
   backend/.venv/bin/pip install -r backend/requirements.txt"
   fi
+
+  # Ports free? (Allow ports occupied by THIS compose project — already-running stack.)
+  local conflicting=()
+  if command -v lsof >/dev/null 2>&1; then
+    for port in "${REQUIRED_PORTS[@]}"; do
+      local procs
+      procs="$(lsof -nP -iTCP:"${port}" -sTCP:LISTEN 2>/dev/null || true)"
+      if [[ -n "${procs}" ]]; then
+        # Filter out our own containers (com.docker.* / Docker / containerd).
+        if printf '%s\n' "${procs}" | grep -qvE '(com.docker|docker|containerd)'; then
+          conflicting+=("${port}")
+        fi
+      fi
+    done
+  fi
+  if (( ${#conflicting[@]} > 0 )); then
+    warn "Ports already in use by non-Docker processes: ${conflicting[*]}"
+    warn "Free them first, or your stack may fail to start."
+    warn "  lsof -nP -iTCP -sTCP:LISTEN | awk '\$9 ~ /:(${REQUIRED_PORTS[*]})\$/'"
+    warn "  (replace spaces in the awk pattern with |)"
+    # Don't die — Docker may still be able to share the port with the existing user.
+  fi
 }
 
-# Generate random hex secret without echoing to a log file.
 random_hex() { LC_ALL=C openssl rand -hex "${1:-32}"; }
-
-# Generate a strong random password (only printable, no quotes/backslash).
-random_password() {
-  LC_ALL=C openssl rand -base64 36 | tr -d '\n=+/' | cut -c1-28
-}
+random_password() { LC_ALL=C openssl rand -base64 36 | tr -d '\n=+/' | cut -c1-28; }
 
 ensure_env_file() {
   if [[ -f "${ENV_FILE}" ]]; then
@@ -70,40 +107,185 @@ ensure_env_file() {
   chmod 600 "${ENV_FILE}"
 }
 
-cmd_up() {
-  ensure_env_file
-  log "Building and starting stack (project=${PROJECT_NAME})..."
-  "${COMPOSE[@]}" up -d --build
-  log "Stack is up. Waiting for backend health..."
+read_local_env_value() {
+  local key="$1"
+  local file line value
+  for file in "${REPO_ROOT}/frontend/.env.local" "${REPO_ROOT}/frontend/.env" "${ENV_FILE}"; do
+    [[ -f "${file}" ]] || continue
+    line="$(awk -F= -v key="${key}" '$1 == key {print substr($0, index($0, "=") + 1)}' "${file}" | tail -n 1)"
+    [[ -n "${line}" ]] || continue
+    value="${line%\"}"
+    value="${value#\"}"
+    value="${value%\'}"
+    value="${value#\'}"
+    if [[ -n "${value}" ]]; then
+      printf '%s\n' "${value}"
+      return 0
+    fi
+  done
+  return 1
+}
 
-  # Wait up to 90s for the backend to respond to /api/v2/healthz.
-  local deadline=$(( $(date +%s) + 90 ))
+firebase_api_key() {
+  if [[ -n "${NEXT_PUBLIC_FIREBASE_API_KEY:-}" ]]; then
+    printf '%s\n' "${NEXT_PUBLIC_FIREBASE_API_KEY}"
+    return 0
+  fi
+  read_local_env_value NEXT_PUBLIC_FIREBASE_API_KEY
+}
+
+require_firebase_api_key() {
+  local api_key
+  api_key="$(firebase_api_key || true)"
+  [[ -n "${api_key}" ]] || die "Missing NEXT_PUBLIC_FIREBASE_API_KEY. Add the real public Firebase web API key to frontend/.env.local or export it before running SaaS staging."
+  printf '%s\n' "${api_key}"
+}
+
+# Wait up to <timeout>s for a URL to return 2xx.
+wait_for_url() {
+  local url="$1"
+  local timeout_s="${2:-90}"
+  local deadline=$(( $(date +%s) + timeout_s ))
   while (( $(date +%s) < deadline )); do
-    if curl -fsS http://127.0.0.1:8001/api/v2/healthz >/dev/null 2>&1; then
-      log "Backend is healthy. Next step: scripts/dev/saas_staging.sh seed"
+    if curl -fsS "${url}" >/dev/null 2>&1; then
       return 0
     fi
     sleep 2
   done
-  warn "Backend did not respond on http://127.0.0.1:8001/api/v2/healthz within 90s."
-  warn "Run: scripts/dev/saas_staging.sh logs backend"
-  exit 1
+  return 1
+}
+
+# --- commands ---------------------------------------------------------------
+
+cmd_up() {
+  ensure_env_file
+  local api_key
+  api_key="$(require_firebase_api_key)"
+  preflight
+  log "Building and starting stack (project=${PROJECT_NAME})..."
+  NEXT_PUBLIC_FIREBASE_API_KEY="${api_key}" "${COMPOSE[@]}" up -d --build
+  log "Waiting for backend health (up to 90s)..."
+  if wait_for_url "http://127.0.0.1:8001/api/v2/healthz" 90; then
+    log "Backend is healthy."
+    log "Next:  scripts/dev/saas_staging.sh seed   (or: make saas-seed)"
+  else
+    warn "Backend did not respond on http://127.0.0.1:8001/api/v2/healthz within 90s."
+    warn "Inspect logs:  scripts/dev/saas_staging.sh logs backend"
+    exit 1
+  fi
 }
 
 cmd_seed() {
-  require_python_venv
+  if [[ ! -x "${VENV_PYTHON}" ]]; then
+    die "backend/.venv not found. Run preflight check or create the venv first."
+  fi
   log "Seeding tenant + Firebase emulator user..."
   "${VENV_PYTHON}" "${SEED_SCRIPT}" "$@"
 }
 
-cmd_token() {
-  # Same as seed (idempotent): re-runs and prints a fresh ID token.
-  cmd_seed "$@"
+# Reset: wipe seeded test data + emulator users, but keep the stack running.
+# Use this when you want a clean slate without paying the docker rebuild cost.
+cmd_reset() {
+  if ! "${COMPOSE[@]}" ps --status running --quiet 2>/dev/null | grep -q .; then
+    die "Stack is not running. Use 'nuke' to clean state, or 'up' to start."
+  fi
+  warn "This will wipe ALL SaaS staging Mongo data + Firebase emulator users."
+  warn "(The stack stays up; this is a fast in-place reset.)"
+  read -r -p "Type 'reset' to confirm: " confirm
+  [[ "${confirm}" == "reset" ]] || die "Aborted."
+
+  log "Wiping Mongo SaaS staging DB..."
+  "${COMPOSE[@]}" exec -T mongo mongosh academy_manager_saas_staging --quiet \
+    --eval 'db.getCollectionNames().forEach(c => { if (!c.startsWith("system.")) db[c].drop(); })'
+
+  log "Wiping Firebase emulator users..."
+  # The emulator exposes an admin endpoint for project-wide account deletion.
+  curl -fsS -X DELETE \
+    "http://127.0.0.1:9099/emulator/v1/projects/academy-courtmastr/accounts" >/dev/null
+
+  rm -f "${CREDS_FILE}"
+  log "Reset complete. Re-seed with:  scripts/dev/saas_staging.sh seed"
+}
+
+# Status: show what's running + the URLs and login credentials at a glance.
+cmd_status() {
+  printf '\n  \033[1mSaaS staging — current status\033[0m\n\n'
+
+  printf '  \033[1mContainers (project=%s):\033[0m\n' "${PROJECT_NAME}"
+  if ! "${COMPOSE[@]}" ps --format 'table {{.Service}}\t{{.Status}}' 2>/dev/null \
+       | sed 's/^/    /' ; then
+    printf '    (stack not running)\n'
+    printf '    Run:  scripts/dev/saas_staging.sh up   (or: make saas-up)\n\n'
+    return 0
+  fi
+  printf '\n'
+
+  printf '  \033[1mAccess URLs:\033[0m\n'
+  printf '    Frontend:              http://localhost:3000\n'
+  printf '    Backend API:           http://127.0.0.1:8001\n'
+  printf '    Backend health:        http://127.0.0.1:8001/api/v2/healthz\n'
+  printf '    Firebase Emulator UI:  http://localhost:4000\n'
+  printf '    Mongo:                 mongodb://127.0.0.1:27017/academy_manager_saas_staging\n'
+  printf '\n'
+
+  # If creds file exists, surface them.
+  if [[ -f "${CREDS_FILE}" ]] && command -v "${VENV_PYTHON}" >/dev/null 2>&1; then
+    printf '  \033[1mSeeded test user:\033[0m\n'
+    "${VENV_PYTHON}" - <<PYEOF || true
+import json
+try:
+    d = json.load(open("${CREDS_FILE}"))
+    print(f"    Email:    {d.get('owner_email','(unknown)')}")
+    print(f"    Password: {d.get('owner_password','(unknown)')}")
+    print(f"    File:     ${CREDS_FILE}")
+except Exception as e:
+    print(f"    (could not read creds: {e})")
+PYEOF
+    printf '\n'
+  else
+    printf '  \033[1mSeeded test user:\033[0m  (no credentials file yet — run: scripts/dev/saas_staging.sh seed)\n\n'
+  fi
+
+  # Tenant-host pointer (for browser-based subdomain testing).
+  if command -v "${VENV_PYTHON}" >/dev/null 2>&1; then
+    local tenants
+    tenants="$("${VENV_PYTHON}" - <<'PYEOF' 2>/dev/null || true
+from pymongo import MongoClient
+try:
+    db = MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000).academy_manager_saas_staging
+    for a in db.academies.find({}, {"_id":0,"slug":1,"primary_domain":1,"display_name":1}):
+        print(f"    {a.get('slug','?'):16s} {a.get('primary_domain','?'):28s} {a.get('display_name','')}")
+except Exception:
+    pass
+PYEOF
+)"
+    if [[ -n "${tenants}" ]]; then
+      printf '  \033[1mSeeded tenants:\033[0m\n%s\n\n' "${tenants}"
+      printf '    Browser:  http://<primary_domain>:3000/login\n'
+      printf '    (e.g.     http://acme.localhost:3000/login)\n\n'
+    fi
+  fi
+
+  printf '  Run smoke:  scripts/dev/saas_staging.sh smoke   (or: make saas-test)\n\n'
+}
+
+# urls: minimal "where do I click?" output — used by other scripts.
+cmd_urls() {
+  cat <<EOF
+http://localhost:3000              # Frontend (any tenant via Host header)
+http://acme.localhost:3000         # Frontend, scoped to acme tenant
+http://127.0.0.1:8001              # Backend API root
+http://127.0.0.1:8001/api/v2/healthz   # Backend health check
+http://localhost:4000              # Firebase Emulator UI
+mongodb://127.0.0.1:27017          # Mongo (db: academy_manager_saas_staging)
+EOF
 }
 
 cmd_smoke() {
-  require_python_venv
-  [[ -x "${SMOKE_SCRIPT}" ]] || die "Smoke script not found or not executable: ${SMOKE_SCRIPT}"
+  if [[ ! -x "${VENV_PYTHON}" ]]; then
+    die "backend/.venv not found."
+  fi
+  [[ -x "${SMOKE_SCRIPT}" ]] || die "Smoke script not found: ${SMOKE_SCRIPT}"
 
   log "Generating fresh smoke env from seed..."
   local seed_json
@@ -112,7 +294,7 @@ cmd_smoke() {
   local api_url frontend_url tenant_frontend_url tenant_host hdr_name hdr_val id_token
   api_url="$(printf '%s' "${seed_json}"      | "${VENV_PYTHON}" -c 'import json,sys;print(json.load(sys.stdin)["api_url"])')"
   frontend_url="$(printf '%s' "${seed_json}" | "${VENV_PYTHON}" -c 'import json,sys;print(json.load(sys.stdin)["frontend_url"])')"
-  tenant_frontend_url="$(printf '%s' "${seed_json}" | "${VENV_PYTHON}" -c 'import json,sys;print(json.load(sys.stdin)["tenant_frontend_url"])')"
+  tenant_frontend_url="$(printf '%s' "${seed_json}" | "${VENV_PYTHON}" -c 'import json,sys;print(json.load(sys.stdin).get("tenant_frontend_url",""))')"
   tenant_host="$(printf '%s' "${seed_json}"  | "${VENV_PYTHON}" -c 'import json,sys;print(json.load(sys.stdin)["unknown_host_for_smoke"])')"
   hdr_name="$(printf '%s' "${seed_json}"     | "${VENV_PYTHON}" -c 'import json,sys;print(json.load(sys.stdin)["internal_tenant_header_name"])')"
   hdr_val="$(printf '%s' "${seed_json}"      | "${VENV_PYTHON}" -c 'import json,sys;print(json.load(sys.stdin)["academy_id"])')"
@@ -129,19 +311,21 @@ cmd_smoke() {
     "${SMOKE_SCRIPT}"
 }
 
+cmd_token() { cmd_seed "$@"; }
+
 cmd_logs() {
   local service="${1:-backend}"
   shift || true
   "${COMPOSE[@]}" logs -f --tail=200 "${service}" "$@"
 }
 
-cmd_ps() {
-  "${COMPOSE[@]}" ps
-}
+cmd_ps() { "${COMPOSE[@]}" ps; }
 
 cmd_down() {
   log "Stopping stack (keeping volumes)..."
   "${COMPOSE[@]}" down
+  log "Stopped. Mongo data + emulator state preserved."
+  log "Restart with:  scripts/dev/saas_staging.sh up   (or: make saas-up)"
 }
 
 cmd_nuke() {
@@ -149,13 +333,13 @@ cmd_nuke() {
   read -r -p "Type 'nuke' to confirm: " confirm
   [[ "${confirm}" == "nuke" ]] || die "Aborted."
   "${COMPOSE[@]}" down -v
-  rm -f "${ENV_FILE}" || true
-  rm -f "${LOCAL_DIR}/saas-staging-credentials.json" || true
-  log "Nuked. Run 'up' to rebuild from a clean slate."
+  rm -f "${ENV_FILE}" "${CREDS_FILE}"
+  rm -f "${LOCAL_DIR}/saas-tunnel-urls.env" "${LOCAL_DIR}/saas-tunnel-cors.yml"
+  log "Nuked. Run 'up' to rebuild from a clean slate (or: make up)."
 }
 
 usage() {
-  sed -n '3,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,29p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 main() {
@@ -164,6 +348,9 @@ main() {
   case "${cmd}" in
     up)     cmd_up "$@" ;;
     seed)   cmd_seed "$@" ;;
+    reset)  cmd_reset "$@" ;;
+    status) cmd_status "$@" ;;
+    urls)   cmd_urls "$@" ;;
     token)  cmd_token "$@" ;;
     smoke)  cmd_smoke "$@" ;;
     logs)   cmd_logs "$@" ;;

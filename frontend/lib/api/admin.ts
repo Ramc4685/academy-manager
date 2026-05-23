@@ -20,6 +20,7 @@ export interface AdminSessionView {
   start_at: string; // ISO 8601
   end_at: string; // ISO 8601
   capacity: number;
+  status: "scheduled" | "cancelled" | "completed";
   enrolled_count: number;
   waitlist_count: number;
 }
@@ -35,6 +36,16 @@ export interface CreateSessionRequest {
   start_at: string;
   end_at: string;
   capacity: number;
+}
+
+export interface EditSessionRequest {
+  coach_id?: string;
+  title?: string;
+  location?: string;
+  start_at?: string;
+  end_at?: string;
+  capacity?: number;
+  reason?: string;
 }
 
 export type EnrollmentStatus = "active" | "paused" | "cancelled" | "withdrawn";
@@ -231,17 +242,38 @@ export interface CreateExpenseRequest {
   incurred_on?: string;
 }
 
+export interface EditExpenseRequest {
+  category?: CreateExpenseRequest["category"];
+  amount_cents?: number;
+  note?: string;
+  incurred_on?: string;
+  reason?: string;
+}
+
 export interface AdminRevenueResponse {
   by_month: Record<string, number>; // "YYYY-MM": cents
 }
 
+export interface AdminReportsKpiResponse {
+  active_students: number;
+  attendance_rate_30d: number;
+  dues_collected_mtd_cents: number;
+  pending_waivers: number;
+}
+
 export interface AdminMessageView {
   message_id: string;
+  kind: "dm" | "announcement" | string;
   sender_id: string;
   recipient_id: string | null; // null for broadcast
   body: string;
+  created_at?: string;
   sent_at: string;
   is_broadcast: boolean;
+  scope_type?: string | null;
+  scope_label?: string | null;
+  recipient_count?: number | null;
+  delivery_status?: string | null;
 }
 
 export interface AdminMessageList {
@@ -260,6 +292,7 @@ export interface AdminWaiverSummary {
 }
 
 export interface AdminCurrentWaiverView {
+  waiver_id: string;
   title: string;
   version: string;
   description?: string | null;
@@ -272,22 +305,55 @@ export interface AdminCurrentWaiverView {
 
 export interface AdminWaiverStudentRow {
   waiver_id: string;
+  signature_id?: string | null;
   student_id: string;
   student_name: string;
   parent_id: string;
   parent_name: string | null;
   parent_email: string | null;
   status: AdminWaiverStatus;
+  template_id?: string | null;
   version: string | null;
   signed_at: string | null;
   method: string | null;
   expires_at: string | null;
+  artifact_status?: string | null;
+  share_status?: string | null;
 }
 
 export interface AdminWaiverList {
   summary: AdminWaiverSummary;
   current_waiver?: AdminCurrentWaiverView | null;
   waivers: AdminWaiverStudentRow[];
+}
+
+export interface AdminWaiverTemplateDetail {
+  waiver_id: string;
+  title: string;
+  version: string;
+  body: string | null;
+  content_hash: string | null;
+  effective_at: string | null;
+  artifact_status: string;
+  share_status: string;
+  gap_note: string;
+}
+
+export interface AdminWaiverSignatureDetail {
+  signature_id: string;
+  student_name: string;
+  parent_name: string | null;
+  parent_email: string | null;
+  signed_at: string;
+  signer_name: string | null;
+  signer_email: string | null;
+  waiver_title: string | null;
+  waiver_version: string | null;
+  template_reference: string | null;
+  content_hash: string | null;
+  artifact_status: string;
+  share_status: string;
+  gap_note: string;
 }
 
 export type AdminAttentionSeverity = "high" | "medium" | "low";
@@ -313,6 +379,8 @@ export interface AdminAttentionList {
 
 export interface BroadcastRequest {
   body: string;
+  scope_type?: string;
+  scope_label?: string | null;
 }
 
 export interface DmRequest {
@@ -329,6 +397,11 @@ export interface AdminUserView {
   role: AdminUserRole;
   status: string;
   phone?: string | null;
+}
+
+export interface AdminUserDetail extends AdminUserView {
+  roles: AdminUserRole[];
+  linked_student_count: number;
 }
 
 export interface AdminUserList {
@@ -467,6 +540,27 @@ export function listAdminUsers(role?: AdminUserRole): Promise<AdminUserList> {
   return apiFetch<AdminUserList>(`/admin/users${q}`, { method: "GET" });
 }
 
+export function getAdminUser(userId: string): Promise<AdminUserDetail> {
+  return apiFetch<AdminUserDetail>(`/admin/users/${encodeURIComponent(userId)}`, {
+    method: "GET",
+  });
+}
+
+export function updateAdminUser(
+  userId: string,
+  payload: Partial<{
+    display_name: string;
+    phone: string | null;
+    status: string;
+    reason: string;
+  }>,
+): Promise<AdminUserDetail> {
+  return apiFetch<AdminUserDetail>(`/admin/users/${encodeURIComponent(userId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
 function isQueryFunctionContext(params: ListAdminStudentsParams | QueryFunctionContextArg): params is QueryFunctionContextArg {
   return "queryKey" in params;
 }
@@ -486,11 +580,12 @@ export function listAdminStudents(
 
 export function updateAdminUserRole(
   userId: string,
-  role: AdminUserRole
+  role: AdminUserRole,
+  reason = "Admin role change",
 ): Promise<AdminUserView> {
   return apiFetch<AdminUserView>(`/admin/users/${encodeURIComponent(userId)}/role`, {
     method: "PATCH",
-    body: JSON.stringify({ role }),
+    body: JSON.stringify({ role, reason }),
   });
 }
 
@@ -512,6 +607,16 @@ export function listAdminSessions(
 export function createAdminSession(payload: CreateSessionRequest): Promise<AdminSessionView> {
   return apiFetch<AdminSessionView>("/admin/sessions", {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateAdminSession(
+  sessionId: string,
+  payload: EditSessionRequest
+): Promise<AdminSessionView> {
+  return apiFetch<AdminSessionView>(`/admin/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
 }
@@ -684,8 +789,29 @@ export function createExpense(payload: CreateExpenseRequest): Promise<AdminExpen
   });
 }
 
+export function updateExpense(
+  expenseId: string,
+  payload: EditExpenseRequest
+): Promise<AdminExpenseView> {
+  return apiFetch<AdminExpenseView>(`/admin/finance/expenses/${encodeURIComponent(expenseId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteExpense(expenseId: string, payload: { reason: string }): Promise<void> {
+  return apiFetch<void>(`/admin/finance/expenses/${encodeURIComponent(expenseId)}`, {
+    method: "DELETE",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getRevenue(): Promise<AdminRevenueResponse> {
   return apiFetch<AdminRevenueResponse>("/admin/finance/revenue", { method: "GET" });
+}
+
+export function getAdminReportKpis(): Promise<AdminReportsKpiResponse> {
+  return apiFetch<AdminReportsKpiResponse>("/admin/reports/kpis", { method: "GET" });
 }
 
 // ---------------------------------------------------------------------------
@@ -712,6 +838,19 @@ export function sendDm(payload: DmRequest): Promise<AdminMessageView> {
 
 export function listAdminWaivers(): Promise<AdminWaiverList> {
   return apiFetch<AdminWaiverList>("/admin/waivers", { method: "GET" });
+}
+
+export function getAdminWaiverTemplate(waiverId: string): Promise<AdminWaiverTemplateDetail> {
+  return apiFetch<AdminWaiverTemplateDetail>(`/admin/waivers/${encodeURIComponent(waiverId)}`, {
+    method: "GET",
+  });
+}
+
+export function getAdminWaiverSignature(signatureId: string): Promise<AdminWaiverSignatureDetail> {
+  return apiFetch<AdminWaiverSignatureDetail>(
+    `/admin/waivers/signatures/${encodeURIComponent(signatureId)}`,
+    { method: "GET" },
+  );
 }
 
 export function listAdminAttention(): Promise<AdminAttentionList> {

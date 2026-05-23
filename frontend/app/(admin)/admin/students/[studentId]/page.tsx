@@ -3,13 +3,8 @@
 /**
  * Admin student detail page.
  *
- * Wave 5 — Agent B. Pulls a single student from the v2 BFF and exposes
- * an edit form for the fields the backend will support. The PATCH route
- * (`/api/v2/admin/students/{id}`) is not yet shipped (see TODO inside
- * `lib/api/v2/students.ts`), so the form surfaces backend errors rather
- * than silently faking success.
- *
- * No raw internal ids are rendered in normal UI.
+ * Pulls a single student from the v2 BFF and exposes safe admin-editable
+ * fields. No raw internal ids are rendered in normal UI.
  */
 
 import { useEffect, useState } from "react";
@@ -183,9 +178,17 @@ function Header({ student }: { student: AdminStudentDetail }) {
           {student.parent_email && (
             <a
               href={`mailto:${student.parent_email}`}
-              className="font-mono text-[12px] hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
+              className="block hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
             >
               {student.parent_email}
+            </a>
+          )}
+          {student.parent_phone && (
+            <a
+              href={`tel:${student.parent_phone}`}
+              className="block hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
+            >
+              {student.parent_phone}
             </a>
           )}
         </div>
@@ -224,19 +227,24 @@ function StudentEditForm({
   onSaved: () => void;
 }) {
   const [fullName, setFullName] = useState(student.full_name);
+  const [dateOfBirth, setDateOfBirth] = useState(student.date_of_birth ?? "");
+  const [level, setLevel] = useState(student.level ?? "");
   const [status, setStatus] = useState<EditableStatus>(
     (student.status as EditableStatus) ?? "active",
   );
   const [notes, setNotes] = useState(student.notes ?? "");
+  const [reason, setReason] = useState("Admin profile update");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitOk, setSubmitOk] = useState(false);
 
   // Keep local state in sync if the server-side data refreshes.
   useEffect(() => {
     setFullName(student.full_name);
+    setDateOfBirth(student.date_of_birth ?? "");
+    setLevel(student.level ?? "");
     setStatus((student.status as EditableStatus) ?? "active");
     setNotes(student.notes ?? "");
-  }, [student.full_name, student.status, student.notes]);
+  }, [student.full_name, student.date_of_birth, student.level, student.status, student.notes]);
 
   const mutation = useMutation({
     mutationFn: (payload: UpdateAdminStudentRequest) =>
@@ -255,6 +263,8 @@ function StudentEditForm({
 
   const dirty =
     fullName !== student.full_name ||
+    dateOfBirth !== (student.date_of_birth ?? "") ||
+    level !== (student.level ?? "") ||
     status !== student.status ||
     (notes ?? "") !== (student.notes ?? "");
 
@@ -268,8 +278,11 @@ function StudentEditForm({
         setSubmitError(null);
         const payload: UpdateAdminStudentRequest = {};
         if (fullName !== student.full_name) payload.full_name = fullName;
+        if (dateOfBirth !== (student.date_of_birth ?? "")) payload.date_of_birth = dateOfBirth || null;
+        if (level !== (student.level ?? "")) payload.level = level || null;
         if (status !== student.status) payload.status = status;
         if ((notes ?? "") !== (student.notes ?? "")) payload.notes = notes || null;
+        payload.reason = reason;
         mutation.mutate(payload);
       }}
     >
@@ -284,6 +297,28 @@ function StudentEditForm({
           maxLength={120}
         />
       </Field>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Date of birth" htmlFor="student-dob">
+          <input
+            id="student-dob"
+            type="date"
+            value={dateOfBirth}
+            onChange={(e) => setDateOfBirth(e.target.value)}
+            className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+          />
+        </Field>
+
+        <Field label="Level" htmlFor="student-level">
+          <input
+            id="student-level"
+            value={level}
+            onChange={(e) => setLevel(e.target.value)}
+            className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+            maxLength={80}
+          />
+        </Field>
+      </div>
 
       <Field label="Status" htmlFor="student-status">
         <select
@@ -307,6 +342,17 @@ function StudentEditForm({
           maxLength={2000}
           className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
           placeholder="Allergies, behavioural notes, comms preferences…"
+        />
+      </Field>
+
+      <Field label="Reason" htmlFor="student-edit-reason">
+        <input
+          id="student-edit-reason"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+          required
+          maxLength={500}
         />
       </Field>
 
@@ -346,6 +392,8 @@ function StudentEditForm({
             size="sm"
             onClick={() => {
               setFullName(student.full_name);
+              setDateOfBirth(student.date_of_birth ?? "");
+              setLevel(student.level ?? "");
               setStatus((student.status as EditableStatus) ?? "active");
               setNotes(student.notes ?? "");
               setSubmitError(null);

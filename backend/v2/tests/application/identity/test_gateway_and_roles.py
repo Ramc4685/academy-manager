@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock
 import pytest
 from backend.v2.contexts.identity.application.change_user_role_use_case import (
     ChangeUserRole,
+    ChangeUserRoleCommand,
 )
 from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
     GetAcademyGatewayUseCase,
@@ -36,10 +37,24 @@ async def test_change_user_role_requires_same_academy_match():
         status="active",
     )
 
-    output = await ChangeUserRole(repo).execute("user-1", "coach", academy_id="acad")
+    output = await ChangeUserRole(repo).execute(
+        "user-1",
+        ChangeUserRoleCommand(
+            role="coach",
+            actor_id="admin-1",
+            reason="Coach onboarding",
+        ),
+        academy_id="acad",
+    )
 
     assert output.role == "coach"
-    repo.change_role.assert_awaited_once_with("user-1", "coach", academy_id="acad")
+    repo.change_role.assert_awaited_once_with(
+        "user-1",
+        "coach",
+        academy_id="acad",
+        actor_id="admin-1",
+        reason="Coach onboarding",
+    )
 
 
 @pytest.mark.asyncio
@@ -48,4 +63,12 @@ async def test_change_user_role_raises_when_target_not_in_academy():
     repo.change_role.return_value = None
 
     with pytest.raises(UserNotFound):
-        await ChangeUserRole(repo).execute("user-1", "coach", academy_id="other-acad")
+        await ChangeUserRole(repo).execute(
+            "user-1",
+            ChangeUserRoleCommand(
+                role="coach",
+                actor_id="admin-1",
+                reason="Coach onboarding",
+            ),
+            academy_id="other-acad",
+        )

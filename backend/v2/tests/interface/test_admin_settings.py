@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from backend.v2.contexts.identity.application.change_user_role_use_case import (
+    ChangeUserRoleCommand,
+)
 from backend.v2.contexts.identity.application.get_academy_fees_use_case import (
     GetAcademyFeesOutput,
 )
@@ -156,7 +159,13 @@ def test_patch_user_role_contract(admin_client):
     assert response.status_code == 200, response.text
     assert response.json()["role"] == "admin"
     admin_client.use_cases.change_user_role.execute.assert_awaited_once_with(
-        "coach-1", "admin", academy_id="acad"
+        "coach-1",
+        ChangeUserRoleCommand(
+            role="admin",
+            actor_id="u-admin",
+            reason="admin role change",
+        ),
+        academy_id="acad",
     )
 
 

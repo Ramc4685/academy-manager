@@ -5,7 +5,7 @@ Admin-shaped — academy-wide read fields included. Per docs/security-matrix.md.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, model_validator
@@ -19,6 +19,12 @@ class AdminUserView(BaseModel):
     display_name: str
     role: Literal["admin", "coach", "parent"]
     status: str
+
+
+class AdminUserDetailView(AdminUserView):
+    phone: str | None = None
+    roles: list[Literal["admin", "coach", "parent"]] = []
+    linked_student_count: int = 0
 
 
 class AdminUserList(BaseModel):
@@ -38,9 +44,39 @@ class AdminStudentView(BaseModel):
     dues_status: Literal["current", "due", "overdue"] = "current"
 
 
+class AdminStudentDetailView(AdminStudentView):
+    date_of_birth: date | None = None
+    level: str | None = None
+    notes: str | None = None
+    parent_phone: str | None = None
+    parent_details: str | None = None
+
+
 class AdminStudentList(BaseModel):
     students: list[AdminStudentView]
     next_cursor: str | None = None
+
+
+class UpdateAdminStudentRequest(BaseModel):
+    full_name: str | None = Field(default=None, min_length=1, max_length=120)
+    date_of_birth: date | None = None
+    level: str | None = Field(default=None, max_length=80)
+    status: str | None = Field(default=None, max_length=32)
+    parent_id: str | None = Field(default=None, min_length=1, max_length=120)
+    notes: str | None = Field(default=None, max_length=2000)
+    reason: str = Field(default="admin profile update", min_length=1, max_length=500)
+
+
+class UpdateAdminUserRequest(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+    phone: str | None = Field(default=None, max_length=40)
+    status: str | None = Field(default=None, max_length=32)
+    reason: str = Field(default="admin user update", min_length=1, max_length=500)
+
+
+class UpdateAdminUserRoleRequest(BaseModel):
+    role: Literal["admin", "coach", "parent"]
+    reason: str = Field(default="admin role change", min_length=1, max_length=500)
 
 
 # --- Sessions ---
@@ -71,6 +107,16 @@ class CreateSessionRequest(BaseModel):
     start_at: datetime
     end_at: datetime
     capacity: int
+
+
+class EditSessionRequest(BaseModel):
+    coach_id: str | None = None
+    title: str | None = None
+    location: str | None = None
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+    capacity: int | None = Field(default=None, ge=1)
+    reason: str | None = None
 
 
 # --- Enrollments ---
@@ -323,6 +369,18 @@ class RecordExpenseRequest(BaseModel):  # FINANCE
     incurred_on: datetime | None = None
 
 
+class EditExpenseRequest(BaseModel):  # FINANCE
+    category: Literal["rent", "equipment", "salary", "marketing", "other"] | None = None
+    amount_cents: int | None = Field(default=None, ge=0)
+    note: str | None = None
+    incurred_on: datetime | None = None
+    reason: str | None = None
+
+
+class DeleteExpenseRequest(BaseModel):  # FINANCE
+    reason: str
+
+
 class AdminRevenueResponse(BaseModel):  # FINANCE
     by_month: dict[str, int]
 
@@ -368,6 +426,12 @@ class AdminMessageView(BaseModel):
     recipient_id: str | None
     body: str
     created_at: datetime
+    sent_at: datetime
+    is_broadcast: bool
+    scope_type: str | None = None
+    scope_label: str | None = None
+    recipient_count: int | None = None
+    delivery_status: str | None = None
 
 
 class AdminMessageList(BaseModel):
@@ -387,6 +451,7 @@ class AdminWaiverSummaryView(BaseModel):
 
 
 class AdminWaiverDocumentView(BaseModel):
+    waiver_id: str
     title: str
     version: str
     description: str | None = None
@@ -399,22 +464,55 @@ class AdminWaiverDocumentView(BaseModel):
 
 class AdminWaiverStudentView(BaseModel):
     waiver_id: str
+    signature_id: str | None = None
     student_id: str
     student_name: str
     parent_id: str
     parent_name: str | None = None
     parent_email: str | None = None
     status: AdminWaiverStatus
+    template_id: str | None = None
     version: str | None = None
     signed_at: datetime | None = None
     method: str | None = None
     expires_at: datetime | None = None
+    artifact_status: str = "unavailable"
+    share_status: str = "unavailable"
 
 
 class AdminWaiverList(BaseModel):
     summary: AdminWaiverSummaryView
     current_waiver: AdminWaiverDocumentView | None = None
     waivers: list[AdminWaiverStudentView] = []
+
+
+class AdminWaiverTemplateDetailView(BaseModel):
+    waiver_id: str
+    title: str
+    version: str
+    body: str | None = None
+    content_hash: str | None = None
+    effective_at: datetime | None = None
+    artifact_status: str
+    share_status: str
+    gap_note: str
+
+
+class AdminWaiverSignatureDetailView(BaseModel):
+    signature_id: str
+    student_name: str
+    parent_name: str | None = None
+    parent_email: str | None = None
+    signed_at: datetime
+    signer_name: str | None = None
+    signer_email: str | None = None
+    waiver_title: str | None = None
+    waiver_version: str | None = None
+    template_reference: str | None = None
+    content_hash: str | None = None
+    artifact_status: str
+    share_status: str
+    gap_note: str
 
 
 AdminAttentionSeverity = Literal["high", "medium", "low"]
@@ -442,6 +540,8 @@ class AdminAttentionList(BaseModel):
 
 class BroadcastRequest(BaseModel):
     body: str
+    scope_type: str = "academy"
+    scope_label: str | None = None
 
 
 class DMRequest(BaseModel):
@@ -503,10 +603,6 @@ class AdminGatewayView(BaseModel):
     stripe_connected: bool
     stripe_account_id_masked: str | None = None
     manual_methods: list[str]
-
-
-class UpdateAdminUserRoleRequest(BaseModel):
-    role: Literal["admin", "coach", "parent"]
 
 
 class ReportsKpiResponse(BaseModel):
