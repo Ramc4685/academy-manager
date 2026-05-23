@@ -91,6 +91,7 @@ async def test_user_repo_bootstraps_new_public_parent(db) -> None:
         email="parent@example.com",
         display_name="Parent One",
         firebase_uid="firebase-parent-1",
+        academy_id="academy-a",
     )
 
     assert user.user_id == "firebase-parent-1"
@@ -122,8 +123,12 @@ async def test_user_repo_adds_parent_role_without_dropping_existing_roles(db) ->
         email="coach-parent@example.com",
         display_name="Coach Parent",
         firebase_uid="firebase-coach-parent",
+        academy_id="academy-a",
     )
 
     assert user.roles == ("coach", "parent")
     stored = await db["users"].find_one({"email": "coach-parent@example.com"})
     assert stored["role"] == "coach"
+    # Original tenant preserved on existing users; the new academy_id
+    # argument is only honored on first insert (fixes #81).
+    assert stored["academy_id"] == "academy-a"

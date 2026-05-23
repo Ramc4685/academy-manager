@@ -78,7 +78,26 @@ class MongoUserRepository:
         )
         return self._to_domain(doc) if doc else None
 
-    async def ensure_parent_user(self, *, email: str, display_name: str, firebase_uid: str) -> User:
+    async def ensure_parent_user(
+        self,
+        *,
+        email: str,
+        display_name: str,
+        firebase_uid: str,
+        academy_id: str,
+    ) -> User:
+        """Insert or update the parent ``User`` row for ``(email, firebase_uid)``.
+
+        ``academy_id`` is the resolved tenant the request was made
+        against. It is written to ``User.academy_id`` ONLY on first
+        insert. For an existing user, the original ``academy_id`` is
+        preserved; multi-tenant access is carried by ``AcademyMembership``
+        rows the calling use case writes separately.
+
+        Fixes #81 — previously this method always wrote
+        ``self._default_academy_id``, dropping every SaaS-mode parent
+        into ``default-academy``.
+        """
         existing = await self.collection.find_one(
             {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}
         )
@@ -117,7 +136,7 @@ class MongoUserRepository:
             "role": "parent",
             "status": "active",
             "is_active": True,
-            "academy_id": self._default_academy_id,
+            "academy_id": academy_id,
             "created_at": now,
             "updated_at": now,
         }
