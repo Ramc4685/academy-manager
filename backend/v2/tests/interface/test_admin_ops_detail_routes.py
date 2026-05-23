@@ -83,20 +83,14 @@ def test_admin_can_open_signed_waiver_detail(admin_client):
     assert body["share_status"] == "unavailable"
 
 
-def test_waiver_template_detail_wrong_persona_404(
-    coach_on_admin_client, parent_on_admin_client
-):
+def test_waiver_template_detail_wrong_persona_404(coach_on_admin_client, parent_on_admin_client):
     assert coach_on_admin_client.get("/api/v2/admin/waivers/wt-2026").status_code == 404
     assert parent_on_admin_client.get("/api/v2/admin/waivers/wt-2026").status_code == 404
 
 
 def test_signed_waiver_detail_wrong_persona_404(coach_on_admin_client, parent_on_admin_client):
-    assert (
-        coach_on_admin_client.get("/api/v2/admin/waivers/signatures/ws-1").status_code == 404
-    )
-    assert (
-        parent_on_admin_client.get("/api/v2/admin/waivers/signatures/ws-1").status_code == 404
-    )
+    assert coach_on_admin_client.get("/api/v2/admin/waivers/signatures/ws-1").status_code == 404
+    assert parent_on_admin_client.get("/api/v2/admin/waivers/signatures/ws-1").status_code == 404
 
 
 def test_admin_message_broadcast_response_includes_scope(admin_client):

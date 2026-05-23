@@ -53,9 +53,7 @@ class FakeWaiverQuery:
             effective_from=_dt("2026-01-01T00:00:00"),
         )
 
-    async def get_signature_detail(
-        self, signature_id: str
-    ) -> AdminWaiverSignatureDetail | None:
+    async def get_signature_detail(self, signature_id: str) -> AdminWaiverSignatureDetail | None:
         if signature_id != "ws-1":
             return None
         return AdminWaiverSignatureDetail(

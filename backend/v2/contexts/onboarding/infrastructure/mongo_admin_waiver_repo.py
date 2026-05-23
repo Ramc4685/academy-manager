@@ -116,7 +116,9 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
 
         waivers = [
             AdminWaiverDocument(
-                waiver_id=str(doc.get("waiver_template_id") or doc.get("waiver_id") or doc.get("_id")),
+                waiver_id=str(
+                    doc.get("waiver_template_id") or doc.get("waiver_id") or doc.get("_id")
+                ),
                 version=str(doc.get("version") or ""),
                 title=str(doc.get("name") or doc.get("title") or "") or None,
                 body=str(doc.get("body") or doc.get("text") or doc.get("waiver_text") or "")
@@ -354,7 +356,9 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
         )
         if doc is None:
             return None
-        template_id = str(doc.get("waiver_version_id") or doc.get("waiver_template_id") or "") or None
+        template_id = (
+            str(doc.get("waiver_version_id") or doc.get("waiver_template_id") or "") or None
+        )
         template = await self._template_doc(academy_id, template_id) if template_id else None
         return await self._signature_detail(
             academy_id=academy_id,
@@ -450,7 +454,9 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
         )
 
     async def _student_by_id(self, academy_id: str, student_id: str) -> dict[str, Any] | None:
-        doc = await self._db["students"].find_one({"academy_id": academy_id, "student_id": student_id})
+        doc = await self._db["students"].find_one(
+            {"academy_id": academy_id, "student_id": student_id}
+        )
         if doc is None and BsonObjectId.is_valid(student_id):
             doc = await self._db["students"].find_one(
                 {"academy_id": academy_id, "_id": BsonObjectId(student_id)}

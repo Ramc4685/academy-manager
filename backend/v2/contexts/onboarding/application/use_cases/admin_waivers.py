@@ -188,7 +188,9 @@ class ListAdminWaivers:
                     signed_at=acceptance.accepted_at if acceptance else None,
                     signed_by_user_id=(acceptance.accepted_by_user_id if acceptance else None),
                     artifact_status=(
-                        "stored_reference" if acceptance and acceptance.artifact_id else "unavailable"
+                        "stored_reference"
+                        if acceptance and acceptance.artifact_id
+                        else "unavailable"
                     ),
                     share_status="unavailable",
                 )
