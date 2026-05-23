@@ -6,8 +6,8 @@
  * Preserves: table/calendar view toggle, date filter, create dialog,
  * cancel-with-confirm. Calendar still dynamic-imported.
  *
- * Backend gap: AdminSessionView has coach_id but no coach_name. Coach
- * is rendered as an Avatar from coach_id. Phase 6 may add coach_name.
+ * Backend gap: AdminSessionView may have coach_id without coach_name.
+ * Normal admin UI intentionally avoids rendering raw coach references.
  */
 
 import dynamic from "next/dynamic";
@@ -255,9 +255,9 @@ function SessionList({
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
-                      <Avatar name={s.coach_name || s.coach_id} size={28} />
-                      <span className={s.coach_name ? "font-medium text-rally-ink" : "font-mono text-xs text-rally-muted"}>
-                        {s.coach_name || `${s.coach_id.slice(0, 6)}…`}
+                      <Avatar name={s.coach_name || "Coach"} size={28} />
+                      <span className="font-medium text-rally-ink">
+                        {s.coach_name || "Coach assigned"}
                       </span>
                     </div>
                   </td>
@@ -409,7 +409,7 @@ function CreateSessionDialog({
                   value={form.coach_id}
                   onChange={(e) => setForm((f) => ({ ...f, coach_id: e.target.value }))}
                   className={inputClass}
-                  placeholder={coachesQuery.isLoading ? "Loading coaches…" : "Coach Mongo ID"}
+                  placeholder={coachesQuery.isLoading ? "Loading coaches…" : "Coach reference"}
                 />
               )}
             </Field>

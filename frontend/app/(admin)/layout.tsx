@@ -3,11 +3,13 @@
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { getAdminAcademy } from "@/lib/api/admin";
 import { usePersonaAuth } from "@/lib/auth/use-persona-auth";
 import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
+import { queryKeys } from "@/lib/query/keys";
 import { TenantProvider } from "@/lib/tenant/tenant-context";
 
 import { Avatar } from "@/components/ds/avatar";
@@ -31,6 +33,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const { hasUpdate, applyUpdate } = useServiceWorkerUpdate();
   const auth = usePersonaAuth("admin");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const academyQuery = useQuery({
+    queryKey: queryKeys.admin.academy(),
+    queryFn: getAdminAcademy,
+    enabled: auth.checked && auth.authorized,
+  });
 
   if (!auth.checked) {
     return (
@@ -50,6 +57,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   const meta = metaForPath(pathname);
   const adminName = auth.user?.email ?? "Admin";
+  const adminRole = auth.user?.roles.includes("admin") ? "Admin" : "Staff";
+  const academyName = displayAcademyName(academyQuery.data?.display_name);
 
   return (
     <TenantProvider>
@@ -57,13 +66,20 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <AdminActionSlotProvider>
       <div className="min-h-screen flex bg-rally-paper">
         {/* Sidebar — desktop only */}
-        <DesktopSidebar pathname={pathname} adminName={adminName} />
+        <DesktopSidebar
+          pathname={pathname}
+          adminName={adminName}
+          adminRole={adminRole}
+          academyName={academyName}
+        />
 
         {/* Mobile drawer */}
         {drawerOpen && (
           <MobileDrawer
             pathname={pathname}
             adminName={adminName}
+            adminRole={adminRole}
+            academyName={academyName}
             onClose={() => setDrawerOpen(false)}
           />
         )}
@@ -85,6 +101,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       </AdminActionSlotProvider>
     </TenantProvider>
   );
+}
+
+function displayAcademyName(name: string | null | undefined): string {
+  const trimmed = name?.trim();
+  return trimmed || "Academy";
 }
 
 /**
@@ -112,9 +133,13 @@ function TenantChangeInvalidator() {
 function DesktopSidebar({
   pathname,
   adminName,
+  adminRole,
+  academyName,
 }: {
   pathname: string;
   adminName: string;
+  adminRole: string;
+  academyName: string;
 }) {
   return (
     <aside
@@ -126,18 +151,18 @@ function DesktopSidebar({
       }}
       aria-label="Admin navigation"
     >
-      <SidebarBrand />
+      <SidebarBrand academyName={academyName} />
       <nav className="flex-1 py-2">
         {ADMIN_NAV.map((group) => (
           <NavGroup key={group.group} group={group.group} items={group.items} pathname={pathname} />
         ))}
       </nav>
-      <SidebarUserPill name={adminName} />
+      <SidebarUserPill name={adminName} role={adminRole} />
     </aside>
   );
 }
 
-function SidebarBrand() {
+function SidebarBrand({ academyName }: { academyName: string }) {
   return (
     <div className="px-5 py-5 border-b" style={{ borderColor: "#1e293b" }}>
       <div className="flex items-center gap-2.5">
@@ -151,10 +176,12 @@ function SidebarBrand() {
           />
           <ShuttleMark size={18} />
         </div>
-        <div className="leading-tight">
-          <div className="font-display font-bold text-[15px] text-white tracking-[-0.01em]">Rally Academy</div>
+        <div className="leading-tight min-w-0">
+          <div className="font-display font-bold text-[15px] text-white tracking-[-0.01em] truncate max-w-[160px]" title={academyName}>
+            {academyName}
+          </div>
           <div className="font-mono text-[9px] font-bold tracking-lane mt-0.5" style={{ color: "#64748b" }}>
-            ADMIN · COURT 7
+            Academy Manager
           </div>
         </div>
       </div>
@@ -229,7 +256,7 @@ function slug(label: string): string {
   return label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
-function SidebarUserPill({ name }: { name: string }) {
+function SidebarUserPill({ name, role }: { name: string; role: string }) {
   return (
     <div className="p-3.5 border-t" style={{ borderColor: "#1e293b" }}>
       <div
@@ -243,7 +270,7 @@ function SidebarUserPill({ name }: { name: string }) {
             className="font-mono text-[9px] font-bold tracking-[0.15em] mt-0.5"
             style={{ color: "#64748b" }}
           >
-            ADMIN
+            {role}
           </div>
         </div>
       </div>
@@ -258,10 +285,14 @@ function SidebarUserPill({ name }: { name: string }) {
 function MobileDrawer({
   pathname,
   adminName,
+  adminRole,
+  academyName,
   onClose,
 }: {
   pathname: string;
   adminName: string;
+  adminRole: string;
+  academyName: string;
   onClose: () => void;
 }) {
   return (
@@ -278,7 +309,7 @@ function MobileDrawer({
         data-testid="admin-mobile-drawer"
       >
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "#1e293b" }}>
-          <SidebarBrand />
+          <SidebarBrand academyName={academyName} />
           <button
             aria-label="Close menu"
             onClick={onClose}
@@ -293,7 +324,7 @@ function MobileDrawer({
             <NavGroup key={group.group} group={group.group} items={group.items} pathname={pathname} />
           ))}
         </nav>
-        <SidebarUserPill name={adminName} />
+        <SidebarUserPill name={adminName} role={adminRole} />
       </aside>
     </div>
   );

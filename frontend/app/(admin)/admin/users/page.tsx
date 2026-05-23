@@ -27,8 +27,8 @@ export default function AdminUsersPage() {
     queryFn: () => listAdminUsers(role),
   });
 
-  // Defensive: webkit's production build crashes on data.users.length
-  // when the BFF returns a partial shape (e.g. {} from a catch-all stub).
+  // Defensive: production builds can crash on data.users.length when an
+  // upstream route returns a partial shape (e.g. {} from a catch-all stub).
   const users = data?.users ?? [];
 
   return (
@@ -83,9 +83,9 @@ function UsersTable({ users }: { users: AdminUserView[] }) {
           <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
             <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Name</th>
             <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Email</th>
+            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Phone</th>
             <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Role</th>
             <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Status</th>
-            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Mongo ID</th>
           </tr>
         </thead>
         <tbody>
@@ -98,13 +98,13 @@ function UsersTable({ users }: { users: AdminUserView[] }) {
                 </div>
               </td>
               <td className="px-2 py-3 text-rally-base">{user.email}</td>
+              <td className="px-2 py-3 text-rally-muted">{user.phone || "—"}</td>
               <td className="px-2 py-3">
                 <Chip variant={mapRoleToStatus(user.role)} label={user.role.toUpperCase()} />
               </td>
               <td className="px-2 py-3">
                 <Chip variant={user.status === "active" ? "enrolled" : "expired"} label={user.status.toUpperCase()} />
               </td>
-              <td className="px-2 py-3 font-mono text-[10px] text-rally-subtle">{user.user_id}</td>
             </tr>
           ))}
         </tbody>

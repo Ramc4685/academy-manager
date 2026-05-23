@@ -22,6 +22,10 @@ import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft } from "lucide-react";
 
 import {
+  listAdminSessions,
+  listAdminUsers,
+} from "@/lib/api/admin";
+import {
   getAdminPayoutReview,
   listAdminPayouts,
   type AdminPayoutReview,
@@ -46,6 +50,14 @@ export default function AdminPayoutReviewPage() {
     queryKey: ["admin", "finance", "payouts"],
     queryFn: listAdminPayouts,
   });
+  const coachesQuery = useQuery({
+    queryKey: ["admin", "users", "coach"],
+    queryFn: () => listAdminUsers("coach"),
+  });
+  const sessionsQuery = useQuery({
+    queryKey: ["admin", "sessions", "payout-review-display"],
+    queryFn: () => listAdminSessions(),
+  });
 
   const summary = useMemo(
     () => listQuery.data?.payouts.find((p) => p.payout_id === payoutId) ?? null,
@@ -57,13 +69,22 @@ export default function AdminPayoutReviewPage() {
     queryFn: () => getAdminPayoutReview(payoutId, summary!),
     enabled: Boolean(summary),
   });
+  const coach = useMemo(
+    () => coachesQuery.data?.users.find((user) => user.user_id === summary?.coach_id) ?? null,
+    [coachesQuery.data, summary?.coach_id],
+  );
+  const assignedSessions = useMemo(
+    () => sessionsQuery.data?.sessions.filter((session) => session.coach_id === summary?.coach_id).length ?? 0,
+    [sessionsQuery.data, summary?.coach_id],
+  );
+  const coachName = coach?.display_name || coach?.email || "Coach";
 
   if (!payoutId) {
     return (
       <section className="space-y-4">
         <BackLink />
         <Card p={20}>
-          <p className="text-sm text-rally-muted">Missing payout id.</p>
+          <p className="text-sm text-rally-muted">Missing payout.</p>
         </Card>
       </section>
     );
@@ -100,7 +121,9 @@ export default function AdminPayoutReviewPage() {
       <BackLink />
       <MockBanner />
       <Header
-        coachId={summary.coach_id}
+        coachName={coachName}
+        coachEmail={coach?.email ?? null}
+        assignedSessions={assignedSessions}
         amountCents={summary.amount_cents}
         periodStart={summary.period_start}
         periodEnd={summary.period_end}
@@ -131,8 +154,8 @@ function MockBanner() {
       <AlertTriangle className="size-4 mt-0.5 shrink-0" aria-hidden="true" />
       <div>
         <strong className="font-semibold">Breakdown is provisional.</strong>{" "}
-        The occurrence-by-occurrence backing endpoint is in flight (Wave 5 Agent A).
-        Amounts below are derived from the rolled-up payout total.
+        Session-level payout details are not available yet. Amounts below are estimated
+        from the rolled-up payout total until the detailed payout view is added.
       </div>
     </div>
   );
@@ -151,13 +174,17 @@ function BackLink() {
 }
 
 function Header({
-  coachId,
+  coachName,
+  coachEmail,
+  assignedSessions,
   amountCents,
   periodStart,
   periodEnd,
   paidAt,
 }: {
-  coachId: string;
+  coachName: string;
+  coachEmail: string | null;
+  assignedSessions: number;
   amountCents: number;
   periodStart: string;
   periodEnd: string;
@@ -167,12 +194,17 @@ function Header({
     <Card p={20}>
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-4 min-w-0">
-          <Avatar name={coachId} size={48} />
+          <Avatar name={coachName} size={48} />
           <div className="min-w-0">
             <Overline>Coach payout</Overline>
             <h2 className="font-display text-xl font-semibold tracking-[-0.01em] text-rally-ink mt-1">
-              {new Date(periodStart).toLocaleDateString()} – {new Date(periodEnd).toLocaleDateString()}
+              {coachName}
             </h2>
+            <p className="mt-0.5 text-sm text-rally-muted">
+              {coachEmail ? `${coachEmail} · ` : ""}
+              {assignedSessions} assigned session{assignedSessions === 1 ? "" : "s"} ·{" "}
+              {new Date(periodStart).toLocaleDateString()} - {new Date(periodEnd).toLocaleDateString()}
+            </p>
             <div className="mt-1 flex items-center gap-2">
               <Chip
                 variant={paidAt ? "paid" : "pending"}

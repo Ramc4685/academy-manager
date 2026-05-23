@@ -3,7 +3,14 @@
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
-import { listPayouts, type AdminPayoutView } from "@/lib/api/admin";
+import {
+  listAdminSessions,
+  listAdminUsers,
+  listPayouts,
+  type AdminPayoutView,
+  type AdminSessionView,
+  type AdminUserView,
+} from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { Avatar } from "@/components/ds/avatar";
 import { Card } from "@/components/ds/card";
@@ -15,7 +22,17 @@ function money(cents: number): string {
 
 export default function AdminPayoutsPage() {
   const query = useQuery({ queryKey: queryKeys.admin.payouts(), queryFn: listPayouts });
+  const coachesQuery = useQuery({
+    queryKey: ["admin", "users", "coach"],
+    queryFn: () => listAdminUsers("coach"),
+  });
+  const sessionsQuery = useQuery({
+    queryKey: ["admin", "sessions", "payout-display"],
+    queryFn: () => listAdminSessions(),
+  });
   const payouts = query.data?.payouts ?? [];
+  const coaches = coachesQuery.data?.users ?? [];
+  const sessions = sessionsQuery.data?.sessions ?? [];
 
   return (
     <section data-testid="admin-payouts" className="space-y-5">
@@ -31,14 +48,22 @@ export default function AdminPayoutsPage() {
         </p>
       ) : (
         <Card p={20}>
-          <PayoutsTable payouts={payouts} />
+          <PayoutsTable payouts={payouts} coaches={coaches} sessions={sessions} />
         </Card>
       )}
     </section>
   );
 }
 
-function PayoutsTable({ payouts }: { payouts: AdminPayoutView[] }) {
+function PayoutsTable({
+  payouts,
+  coaches,
+  sessions,
+}: {
+  payouts: AdminPayoutView[];
+  coaches: AdminUserView[];
+  sessions: AdminSessionView[];
+}) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[720px] text-sm">
@@ -59,40 +84,48 @@ function PayoutsTable({ payouts }: { payouts: AdminPayoutView[] }) {
           </tr>
         </thead>
         <tbody>
-          {payouts.map((payout) => (
-            <tr
-              key={payout.payout_id}
-              data-testid={`admin-payouts-row-${payout.payout_id}`}
-              className="border-b border-rally-line last:border-0"
-            >
-              <td className="px-2 py-3">
-                <Link
-                  href={`/admin/payouts/${payout.payout_id}`}
-                  className="flex items-center gap-3 group focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
-                  data-testid={`admin-payouts-link-${payout.payout_id}`}
-                >
-                  <Avatar name={payout.coach_id} size={32} />
-                  <div>
-                    <div className="font-mono text-xs text-rally-ink group-hover:underline">{payout.coach_id}</div>
-                    <div className="font-mono text-[10px] text-rally-muted">{payout.payout_id}</div>
-                  </div>
-                </Link>
-              </td>
-              <td className="px-2 py-3 text-right font-mono font-medium tabular-nums">
-                {money(payout.amount_cents)}
-              </td>
-              <td className="px-2 py-3 font-mono text-xs text-rally-muted">
-                {new Date(payout.period_start).toLocaleDateString()} -{" "}
-                {new Date(payout.period_end).toLocaleDateString()}
-              </td>
-              <td className="px-2 py-3">
-                <Chip
-                  variant={payout.paid_at ? "paid" : "pending"}
-                  label={payout.paid_at ? "PAID" : "PENDING"}
-                />
-              </td>
-            </tr>
-          ))}
+          {payouts.map((payout) => {
+            const coach = coaches.find((user) => user.user_id === payout.coach_id) ?? null;
+            const assignedSessions = sessions.filter((session) => session.coach_id === payout.coach_id).length;
+            const coachName = coach?.display_name || coach?.email || "Coach";
+            return (
+              <tr
+                key={payout.payout_id}
+                data-testid={`admin-payouts-row-${payout.payout_id}`}
+                className="border-b border-rally-line last:border-0"
+              >
+                <td className="px-2 py-3">
+                  <Link
+                    href={`/admin/payouts/${payout.payout_id}`}
+                    className="flex items-center gap-3 group focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
+                    data-testid={`admin-payouts-link-${payout.payout_id}`}
+                  >
+                    <Avatar name={coachName} size={32} />
+                    <div>
+                      <div className="font-medium text-rally-ink group-hover:underline">{coachName}</div>
+                      <div className="text-xs text-rally-muted">
+                        {coach?.email ? `${coach.email} · ` : ""}
+                        {assignedSessions} assigned session{assignedSessions === 1 ? "" : "s"}
+                      </div>
+                    </div>
+                  </Link>
+                </td>
+                <td className="px-2 py-3 text-right font-mono font-medium tabular-nums">
+                  {money(payout.amount_cents)}
+                </td>
+                <td className="px-2 py-3 font-mono text-xs text-rally-muted">
+                  {new Date(payout.period_start).toLocaleDateString()} -{" "}
+                  {new Date(payout.period_end).toLocaleDateString()}
+                </td>
+                <td className="px-2 py-3">
+                  <Chip
+                    variant={payout.paid_at ? "paid" : "pending"}
+                    label={payout.paid_at ? "PAID" : "PENDING"}
+                  />
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

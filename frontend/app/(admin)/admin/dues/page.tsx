@@ -36,7 +36,7 @@ export default function AdminDuesPage() {
         onClick={() => sendReminderBatch()}
         disabled={sendingReminders || parents.length === 0}
       >
-        {sendingReminders ? "Checking..." : "Send reminders"}
+        {sendingReminders ? "Sending..." : "Email listed parents"}
       </Button>
     ),
     [parents.length, sendReminderBatch, sendingReminders]
@@ -55,7 +55,7 @@ export default function AdminDuesPage() {
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
           {reminderMutation.data.blocked
             ? reminderMutation.data.reason
-            : `${reminderMutation.data.sent} reminder(s) sent.`}
+            : `${reminderMutation.data.sent} dues reminder email(s) sent to parents currently listed.`}
         </div>
       )}
 
@@ -69,6 +69,9 @@ export default function AdminDuesPage() {
         <p data-testid="admin-dues-empty" className="text-sm text-neutral-500">No pending dues.</p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+          <p className="border-b border-neutral-200 px-4 py-3 text-sm text-neutral-600 dark:border-neutral-800 dark:text-neutral-300">
+            Reminder emails are sent to the parents shown in this pending-dues list. Selecting individual parents is not available yet.
+          </p>
           <table className="w-full min-w-[720px] text-sm">
             <thead>
               <tr className="border-b border-neutral-200 text-left text-neutral-500 dark:border-neutral-800">
@@ -84,7 +87,6 @@ export default function AdminDuesPage() {
                 <tr key={parent.parent_id} data-testid={`admin-dues-row-${parent.parent_id}`} className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
                   <td className="px-4 py-3">
                     <div className="font-medium">{parent.parent_name || "Parent"}</div>
-                    <div className="font-mono text-xs text-neutral-500">{parent.parent_id}</div>
                   </td>
                   <td className="px-4 py-3 text-neutral-600 dark:text-neutral-300">{parent.email ?? "-"}</td>
                   <td className="px-4 py-3">

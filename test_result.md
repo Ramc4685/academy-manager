@@ -376,6 +376,34 @@ backend:
         agent: "main"
         comment: "Agent B Wave 6 added a new Platform billing slice separate from parent tuition Billing. The model covers platform plans, plan limits, tenant subscriptions, billing/trial/cancellation status, and tenant Stripe customer/subscription IDs. Application tests cover trial creation, Stripe subscription activation, period-end cancellation scheduling, plan-limit checks, and absence of parent/student/enrollment/session tuition fields. Verification: focused platform billing pytest passed 4/4; targeted ruff passed; git diff --check passed."
 frontend:
+  - task: "Wave 9 admin shell branding cleanup"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/layout.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Agent D Wave 9 removed hardcoded Rally Academy and ADMIN · COURT 7 from the admin shell, wired the shell and topbar academy chip to the existing /api/v2/admin/academy display_name via getAdminAcademy(), kept neutral Academy fallback for loading/error, preserved visible admin email and role, and added focused admin-shell e2e assertions that no demo branding, academy_id, or user_id appears in the shell. Verification pending."
+      - working: true
+        agent: "main"
+        comment: "Verification passed: frontend pnpm install restored node_modules for this worktree; pnpm build passed; pnpm typecheck passed when rerun by itself after an initial concurrent .next/types race with build; git diff --check passed; focused Playwright smoke passed on isolated e2e port with admin shell display_name, email, role, no Rally Academy, no COURT 7, and no visible academy_id/user_id. Local stack was running, but exact BLNO manual login was skipped because port 3000 belongs to a Docker listener outside this worktree, the active script-managed frontend is on 3001, the Playwright MCP browser profile was locked, and the Firebase emulator did not contain ramchand4685@gmail.com for password login."
+  - task: "Wave 9 admin operations cleanup"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/admin"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Agent G Wave 9 cleaned Waivers, Messages, Reports, and Audit Logs within the admin frontend scope. Waivers no longer fall back to parent/internal IDs and show a disabled unavailable state for missing template/artifact support. Messages hide recipient IDs from thread labels, clarify broadcast scope, and disable new direct-message targeting until a user-facing recipient picker/search API exists. Reports removed placeholder snapshot metrics and now leads with the real revenue read model, leaving CSV export secondary. Audit logs keep support references but use professional action/entity labels. Verification pending."
+      - working: true
+        agent: "main"
+        comment: "Verification passed: frontend pnpm typecheck, frontend pnpm build, git diff --check, and Playwright browser route checks for /admin/waivers, /admin/messages, /admin/reports, and /admin/audit-logs against the Wave 9 frontend on localhost:3003. Browser checks used NEXT_PUBLIC_E2E_AUTH_BYPASS=1 plus API stubs because real local Firebase login was blocked by emulator credentials; the route checks verified no console errors, hidden normal-page internal IDs on Waivers/Messages, disabled recipient picker state, real revenue dashboard data, no placeholder report snapshots, and professional audit support references."
   - task: "frontend local BFF proxy"
     implemented: true
     working: true
@@ -577,20 +605,48 @@ frontend:
           composition wiring, focused application/contract tests, and raw-Mongo guard
           coverage for enrollment_events. Verification: focused Wave 3 suite passed
           (39 tests) and structural layering passed.
+  - task: "Wave 9 admin roster technical leakage cleanup"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/admin/students/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Agent E Wave 9 removed normal-table technical leakage from admin Students, Sessions, and Coaches & Parents pages. Students copy now says Students/Active/Paused, BFF/loaded copy was removed, student and parent internal ID fallbacks were hidden from normal rows, Users no longer shows Mongo ID and now shows phone when returned, Sessions no longer falls back to coach/session ID fragments in visible UI, and add/create fallback placeholders no longer say Mongo ID. Session edit is still a backend/API gap; no fake edit button was added."
+      - working: true
+        agent: "main"
+        comment: "Verification passed: frontend pnpm typecheck, frontend pnpm build, git diff --check, and a Playwright browser render check against the Wave 9 worktree dev server on localhost:3011 using E2E auth bypass and realistic admin route stubs. The browser check visited /admin/students, /admin/sessions, /admin/users, and /admin/sessions/session-raw-1 and found no visible BFF, loaded-students, Mongo ID, Firebase UID, stu_*, 24-char Mongo ID, or ULID-like raw IDs in body text. Real local-stack API browser auth was attempted but skipped because local Mongo has no admin document and running seed_local.py would destructively reset transactional collections."
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 21
+  test_sequence: 22
   run_ui: true
 test_plan:
   current_focus:
-    - "SaaS v2 Wave 7 production readiness scaffolding"
+    - "Wave 9 admin shell branding cleanup"
+    - "Wave 9 admin roster technical leakage cleanup"
+    - "Wave 9 admin operations cleanup"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 agent_communication:
   - agent: "main"
+    message: "Wave 9 Agent D admin shell branding cleanup verification complete. Frontend-only changes passed pnpm build, pnpm typecheck, git diff --check, and a focused Playwright admin-shell smoke with stubbed BFF data. The shell now uses /api/v2/admin/academy display_name with Academy fallback, keeps admin email/role visible, and does not display Rally Academy, COURT 7, academy_id, or user_id in normal shell UI. Exact BLNO manual login was not completed because the running local ports are shared/outside this worktree and the Firebase emulator lacked the expected admin login user."
+  - agent: "main"
+    message: "Wave 9 Agent D admin shell branding cleanup is implemented in the frontend only. Retest that the admin shell uses /api/v2/admin/academy display_name with Academy fallback, shows the logged-in admin email and role, and does not show Rally Academy, COURT 7, academy_id, user_id, Firebase UID, Mongo ID, or other internal IDs in the shell. Planned checks: frontend typecheck, frontend build, focused admin-shell e2e/manual browser if local stack is available, and git diff --check."
+  - agent: "main"
+    message: "Agent G Wave 9 admin operations cleanup verification complete. Passed frontend pnpm typecheck, pnpm build, git diff --check, and browser route checks for Waivers/Messages/Reports/Audit Logs using the worktree frontend on localhost:3003 with E2E auth bypass and page API stubs. Real local Firebase login was attempted but blocked by emulator credential mismatch, so browser checks did not use live authenticated backend data."
+  - agent: "main"
+    message: "Agent G Wave 9 admin operations cleanup implemented in frontend admin operational pages only. Retest /admin/waivers, /admin/messages, /admin/reports, and /admin/audit-logs. Key expected behavior: normal Waivers/Messages UI should not leak internal IDs, Messages should not provide a fake recipient targeting control without a picker endpoint, Reports should show only real revenue dashboard data plus secondary CSV exports, and Audit Logs should retain support references with clearer labels. Planned checks: frontend pnpm typecheck, pnpm build, browser route checks if local stack is available, and git diff --check."
+  - agent: "main"
     message: "Wave 7 production readiness scaffolding added docs/requirements/2026-05-22-saas-production-readiness.md, scripts/smoke/saas_readiness_smoke.sh, and DEPLOYMENT.md SaaS readiness notes. Retest focused backend SaaS routing/tenant/isolation/static-guard tests, run scripts/smoke/saas_readiness_smoke.sh --static-only, run frontend typecheck/build if dependencies are available, and keep Wave 6 blockers visible. Do not deploy and do not use real secrets."
+  - agent: "main"
+    message: "Agent E Wave 9 implementation ready for verification: check /admin/students, /admin/sessions, /admin/sessions/{id}, and /admin/users for no visible BFF/loaded-students/Mongo/raw internal ID copy in normal tables. Run frontend pnpm typecheck, pnpm build, browser check if the local stack is available, and git diff --check. Known backend gap: no admin session update endpoint/edit route exists, so no edit session button was added."
+  - agent: "main"
+    message: "Agent E Wave 9 verification complete. frontend pnpm typecheck and pnpm build passed after installing node_modules. git diff --check passed. Browser render check passed on the Wave 9 worktree dev server with E2E auth bypass and realistic admin stubs for /admin/students, /admin/sessions, /admin/users, and /admin/sessions/session-raw-1; no forbidden technical leakage appeared in body text. Real local API browser auth was not completed because academy_manager_local has no admin user and seed_local.py is destructive."
   - agent: "main"
     message: "Wave 7 verification complete for scaffolding only: static smoke passed, focused backend SaaS guard tests passed with 30 tests, frontend typecheck/build passed after pnpm install restored node_modules, and git diff --check passed. Full HTTP smoke and production deploy were not run. Wave 6 blockers remain: real membership/platform-role auth wiring, bootstrap composition, platform billing persistence/routes, governance/support persistence/routes, platform audit, and Fly health check move to /api/v2/healthz before enabling V2_SAAS_MODE."
   - agent: "main"
@@ -850,3 +906,13 @@ agent_communication:
       SaaS local staging Firebase browser-login fix on 2026-05-22: updated scripts/dev/saas_staging.sh to require a real local NEXT_PUBLIC_FIREBASE_API_KEY from the environment, frontend/.env.local, or frontend/.env before building the Docker frontend image. Updated docker-compose.saas.yml so the frontend build arg comes from that resolved local value instead of a hardcoded fake key. Updated frontend/Dockerfile to actually accept and export NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST during the Next build, and kept frontend/lib/auth/firebase.ts using a build-time emulator host constant so the browser bundle connects to the local Auth emulator. Updated docs/runbooks/saas-local-staging.md with the local key prerequisite.
 
       Verification: env -u NEXT_PUBLIC_FIREBASE_API_KEY scripts/dev/saas_staging.sh up fails early with the expected missing-key message before Docker build; bash -n scripts/dev/saas_staging.sh passed; docker compose config shows NEXT_PUBLIC_FIREBASE_API_KEY is empty without the env and set when supplied, while NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST remains http://localhost:9099; frontend pnpm typecheck passed; frontend pnpm build passed; git diff --check passed. SaaS staging rebuild and browser login-to-/admin were not rerun because this worktree still does not contain a real local public Firebase Web API key.
+  - agent: "main"
+    message: |
+      Wave 9 Agent F money-admin cleanup in worktree /Users/ramc/.config/superpowers/worktrees/academy-manager/wave9-admin-money-cleanup on branch feat/wave9-admin-money-cleanup.
+
+      Implemented display-only frontend cleanup for admin money pages. Payments no longer show invoice/payment ID fallbacks or parent IDs in the normal table; labels now use payment, amount due, amount paid, status, and method. Dues no longer shows parent IDs and the reminder action now states it emails the currently listed pending-dues parents because selective reminders are not available yet. Expenses keep add-expense behavior and document edit/delete as a Wave 10 gap. Payouts and coach payslip no longer show coach/payout IDs in normal cards/tables; they use coach display name, email, and assigned session counts where existing admin user/session APIs can provide them. Payout review copy now describes the missing detailed payout view in admin-facing language and does not change payout formulas.
+
+      Verification pending: frontend pnpm typecheck, frontend pnpm build, browser route checks if local stack is available, and git diff --check.
+  - agent: "main"
+    message: |
+      Wave 9 Agent F verification update: installed frontend dependencies in the isolated worktree because node_modules was absent, then ran pnpm typecheck (passed), pnpm build (passed; affected admin money routes built), and git diff --check (passed). Started this worktree's frontend on localhost:3002 against the running local backend on 8001 to browser-check /admin/payments, /admin/dues, /admin/expenses, /admin/payouts, and /admin/coach-payslip. Manual browser smoke could not complete because the local frontend environment available to this worktree does not provide a usable NEXT_PUBLIC_FIREBASE_API_KEY; Firebase throws auth/invalid-api-key before protected admin pages render. No backend behavior was changed.

@@ -5,6 +5,24 @@ contract well enough to run `scripts/smoke/saas_readiness_smoke.sh` end to
 end. Phase B (Cloudflare Tunnel) covers the gaps this leaves open — see
 that section near the bottom.
 
+## 5-second cheat sheet
+
+```bash
+make help          # show everything below
+
+make up            # build, start, seed, show URLs + login credentials
+make test          # run the SaaS readiness smoke (7 gates)
+make saas-status   # what's running + where to point your browser + creds
+make down          # stop (Mongo data preserved)
+make saas-reset    # wipe seeded data, keep stack running (fast)
+make saas-nuke     # stop + wipe everything (interactive confirm)
+```
+
+After `make up`, point your browser at the URL `make saas-status` prints
+(typically `http://acme.localhost:3000/login`) and sign in with the
+displayed email + password. The Firebase emulator handles auth — no real
+Firebase project is touched.
+
 ## What this proves
 
 - Backend boots in SaaS mode (`V2_ENABLED=1`, `V2_SAAS_MODE=true`).

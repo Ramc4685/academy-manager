@@ -38,6 +38,16 @@ function finalCents(payment: AdminPaymentView): number {
   return payment.final_amount_cents ?? Math.max(payment.amount_cents - payment.discount_cents, 0);
 }
 
+function paymentDisplayLabel(payment: AdminPaymentView): string {
+  if (payment.period) return `Tuition for ${payment.period}`;
+  return payment.stripe_linked ? "Stripe payment" : "Manual payment";
+}
+
+function paidCents(payment: AdminPaymentView): number | null {
+  if (!["succeeded", "partially_refunded", "refunded"].includes(payment.status)) return null;
+  return Math.max(finalCents(payment) - payment.refunded_cents, 0);
+}
+
 const STATUS_CHIP: Record<PaymentStatus, { variant: ChipVariant; label: string }> = {
   succeeded: { variant: "paid", label: "PAID" },
   pending: { variant: "pending", label: "PENDING" },
@@ -74,7 +84,7 @@ export default function AdminPaymentsPage() {
 
   const payments = data?.payments ?? [];
   const pendingCount = payments.filter((p) => p.status === "pending").length;
-  const paidCents = payments
+  const collectedCents = payments
     .filter((p) => ["succeeded", "partially_refunded", "refunded"].includes(p.status))
     .reduce((sum, p) => sum + finalCents(p) - p.refunded_cents, 0);
 
@@ -89,7 +99,7 @@ export default function AdminPaymentsPage() {
       {/* KPI strip */}
       <div className="grid gap-3 sm:grid-cols-3">
         <Metric label="Open invoices" value={String(pendingCount)} />
-        <Metric label="Collected (net)" value={formatCents(paidCents)} />
+        <Metric label="Collected (net)" value={formatCents(collectedCents)} />
         <Metric label="Total payments" value={String(payments.length)} />
       </div>
 
@@ -116,12 +126,12 @@ export default function AdminPaymentsPage() {
             <table className="w-full min-w-[980px] text-sm" data-testid="admin-payments-table">
               <thead>
                 <tr className="border-b border-rally-line text-left">
-                  <Th>Invoice</Th>
+                  <Th>Payment</Th>
                   <Th>Student</Th>
                   <Th>Period</Th>
-                  <Th align="right">Amount</Th>
+                  <Th align="right">Amount due</Th>
                   <Th align="right">Discount</Th>
-                  <Th align="right">Final</Th>
+                  <Th align="right">Amount paid</Th>
                   <Th>Status</Th>
                   <Th>Method</Th>
                   <Th><span className="sr-only">Actions</span></Th>
@@ -131,6 +141,7 @@ export default function AdminPaymentsPage() {
                 {payments.map((p) => {
                   const chip = STATUS_CHIP[p.status];
                   const method = methodChip(p);
+                  const rowPaidCents = paidCents(p);
                   return (
                     <tr
                       key={p.payment_id}
@@ -138,19 +149,19 @@ export default function AdminPaymentsPage() {
                       className="border-b border-rally-line/60 last:border-0"
                     >
                       <td className="px-4 py-3">
-                        <div className="font-mono text-xs text-rally-ink">
-                          {p.invoice_number || `${p.payment_id.slice(0, 12)}…`}
+                        <div className="font-medium text-rally-ink">
+                          {paymentDisplayLabel(p)}
                         </div>
-                        <div className="mt-0.5 font-mono text-[11px] text-rally-subtle">
-                          {new Date(p.created_at).toLocaleDateString()}
+                        <div className="mt-0.5 text-xs text-rally-subtle">
+                          Created {new Date(p.created_at).toLocaleDateString()}
                         </div>
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-display font-semibold text-rally-ink">
                           {p.student_name || "Unassigned"}
                         </div>
-                        <div className="mt-0.5 font-mono text-[11px] text-rally-subtle">
-                          {p.parent_id.slice(0, 14)}
+                        <div className="mt-0.5 text-xs text-rally-subtle">
+                          Parent on file
                         </div>
                       </td>
                       <td className="px-4 py-3 text-rally-muted">{p.period || "—"}</td>
@@ -159,7 +170,7 @@ export default function AdminPaymentsPage() {
                         {p.discount_cents ? formatCents(p.discount_cents) : "—"}
                       </td>
                       <td className="px-4 py-3 text-right font-mono font-semibold tabular-nums text-rally-ink">
-                        {formatCents(finalCents(p))}
+                        {rowPaidCents === null ? "—" : formatCents(rowPaidCents)}
                       </td>
                       <td className="px-4 py-3">
                         <Chip variant={chip.variant} label={chip.label} />
@@ -385,7 +396,7 @@ function DiscountDialog({
       onOpenChange={(open) => !open && onClose()}
       overline="Discount"
       title="Apply discount"
-      description={payment ? `Invoice ${payment.invoice_number || payment.payment_id.slice(0, 12)}` : ""}
+      description={payment ? `${paymentDisplayLabel(payment)} · ${formatCents(finalCents(payment))} due` : ""}
     >
       <form
         className="space-y-3"
@@ -439,8 +450,8 @@ function MarkPaidDialog({
       open={payment !== null}
       onOpenChange={(open) => !open && onClose()}
       overline="Payment"
-      title="Mark invoice paid"
-      description={payment ? `${formatCents(finalCents(payment))} for ${payment.student_name || "student"}` : ""}
+      title="Record manual payment"
+      description={payment ? `${paymentDisplayLabel(payment)} for ${payment.student_name || "student"}` : ""}
     >
       <form
         className="space-y-3"
@@ -450,6 +461,13 @@ function MarkPaidDialog({
         }}
       >
         {error && <Alert tone="red">{error}</Alert>}
+        {payment && (
+          <div className="grid gap-2 rounded-md border border-rally-line bg-rally-paper/50 p-3 text-sm">
+            <SummaryRow label="Amount due" value={formatCents(finalCents(payment))} />
+            <SummaryRow label="Amount paid" value={formatCents(finalCents(payment))} />
+            <SummaryRow label="Status after save" value="Paid" />
+          </div>
+        )}
         <Field label="Payment method" required>
           <select value={method} onChange={(event) => setMethod(event.target.value)} className={inputClass}>
             <option value="cash">Cash</option>
@@ -618,6 +636,15 @@ function Alert({ tone, children }: { tone: "green" | "red"; children: React.Reac
       ? "bg-green-50 text-green-800"
       : "bg-red-50 text-red-700";
   return <p className={`rounded-md p-3 text-sm ${cls}`}>{children}</p>;
+}
+
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <span className="text-rally-muted">{label}</span>
+      <span className="font-mono font-medium tabular-nums text-rally-ink">{value}</span>
+    </div>
+  );
 }
 
 function Th({

@@ -35,7 +35,7 @@ export default function AdminAuditLogsPage() {
 
   return (
     <section data-testid="admin-audit-logs" className="space-y-6">
-
+      <LaneHeader index="01" title="Operational audit trail" />
 
       {isError ? (
         <Card p={16} accent="#ef4444" className="bg-red-50/50">
@@ -65,7 +65,7 @@ export default function AdminAuditLogsPage() {
             <tbody>
               {logs.map((log) => {
                 const actionVariant = getActionVariant(log.action);
-                const actorName = log.actor_id ?? "System";
+                const actorName = log.actor_id ? "Admin or system actor" : "System event";
                 return (
                   <tr 
                     key={log.audit_id} 
@@ -78,23 +78,30 @@ export default function AdminAuditLogsPage() {
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-3">
                         <Avatar name={actorName} size={28} />
-                        <span className="font-medium text-slate-700 dark:text-slate-200">
-                          {actorName}
-                        </span>
+                        <div>
+                          <div className="font-medium text-slate-700 dark:text-slate-200">
+                            {actorName}
+                          </div>
+                          {log.actor_id ? (
+                            <div className="font-mono text-[11px] text-slate-400">
+                              Support ref {log.actor_id}
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
                     </td>
                     <td className="px-5 py-4">
-                      <Chip variant={actionVariant} label={log.action.toUpperCase()} />
+                      <Chip variant={actionVariant} label={formatActionLabel(log.action)} />
                     </td>
                     <td className="px-5 py-4">
-                      <div className="flex items-center gap-2">
-                        <span className="text-slate-600 dark:text-slate-400">
-                          {log.entity_type ?? "unknown"}
-                        </span>
+                      <div>
+                        <div className="font-medium text-slate-600 dark:text-slate-400">
+                          {formatEntityType(log.entity_type)}
+                        </div>
                         {log.entity_id ? (
-                          <span className="font-mono text-[13px] text-slate-400 dark:text-slate-500">
-                            {log.entity_id}
-                          </span>
+                          <div className="font-mono text-[11px] text-slate-400 dark:text-slate-500">
+                            Support ref {log.entity_id}
+                          </div>
                         ) : null}
                       </div>
                     </td>
@@ -107,6 +114,19 @@ export default function AdminAuditLogsPage() {
       )}
     </section>
   );
+}
+
+function formatActionLabel(action: string) {
+  return action
+    .replace(/[._-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatEntityType(entityType: string | null) {
+  if (!entityType) return "System";
+  return entityType
+    .replace(/[._-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function Skeleton() {

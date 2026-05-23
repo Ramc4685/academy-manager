@@ -328,6 +328,7 @@ export interface AdminUserView {
   display_name: string;
   role: AdminUserRole;
   status: string;
+  phone?: string | null;
 }
 
 export interface AdminUserList {
