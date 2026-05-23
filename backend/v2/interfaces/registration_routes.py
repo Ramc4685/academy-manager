@@ -31,8 +31,23 @@ async def register_parent(request: Request) -> RegisterParentResponse:
     if token is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
+    # Resolve the tenant the parent is registering against. The middleware
+    # already computed this from the request host (subdomain / custom
+    # domain / approved internal header) and stored it on request.state.
+    # In SaaS mode an unresolved tenant is a client error (400) — we
+    # MUST NOT fall back to ``default-academy`` here (fixes #81).
+    resolved_academy_id: str | None = getattr(
+        request.state, "resolved_academy_id", None
+    )
+    saas_mode = bool(getattr(request.app.state, "saas_mode", False))
+    if saas_mode and not resolved_academy_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Tenant could not be resolved from the request host",
+        )
+
     use_case: RegisterPublicParent = request.app.state.register_public_parent
-    user = await use_case.execute(token)
+    user = await use_case.execute(token, academy_id=resolved_academy_id)
     return RegisterParentResponse(
         user_id=user.user_id,
         email=user.email,

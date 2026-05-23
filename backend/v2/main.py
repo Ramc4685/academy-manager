@@ -59,8 +59,21 @@ from backend.v2.contexts.identity.infrastructure.mongo_user_repo import (
 from backend.v2.contexts.platform.application.use_cases.tenant_lifecycle import (
     TenantLifecycleService,
 )
+from backend.v2.contexts.platform.audit.application.use_cases import (
+    PlatformAuditService,
+    RecordPlatformAuditEventCommand,
+)
+from backend.v2.contexts.platform.audit.infrastructure.mongo_platform_audit_repo import (
+    MongoPlatformAuditRepository,
+)
 from backend.v2.contexts.platform.billing.infrastructure.composition import (
     build_platform_billing_use_cases,
+)
+from backend.v2.contexts.platform.governance.application.use_cases import (
+    TenantGovernanceService,
+)
+from backend.v2.contexts.platform.governance.infrastructure.mongo_governance_store import (
+    MongoGovernanceStore,
 )
 from backend.v2.contexts.platform.infrastructure.mongo_tenant_lifecycle_repo import (
     MongoTenantLifecycleRepository,
@@ -142,6 +155,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.register_public_parent = RegisterPublicParent(
         verifier=verifier,
         users=users_repo,
+        memberships=membership_repo if settings.saas_mode else None,
+        default_academy_id=settings.default_academy_id,
+        saas_mode=settings.saas_mode,
     )
     app.state.bootstrap_academy = BootstrapAcademy(
         store=MongoTenantBootstrapStore(db),
@@ -160,8 +176,29 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.saas_mode = settings.saas_mode
     app.state.default_academy_id = settings.default_academy_id
+    # Platform audit + governance services (issues #78, #79).
+    # Constructed before TenantLifecycleService so the lifecycle service can
+    # receive a recorder callable that emits one platform_audit_events row
+    # per state transition (issue #80).
+    app.state.platform_audit = PlatformAuditService(
+        audit_events=MongoPlatformAuditRepository(db),
+    )
+    app.state.tenant_governance = TenantGovernanceService(
+        store=MongoGovernanceStore(db),
+    )
+
+    async def _record_lifecycle_audit(command: RecordPlatformAuditEventCommand) -> None:
+        # Wrapper so TenantLifecycleService doesn't depend on the audit
+        # context directly. Logged-not-raised on failure: an audit gap
+        # must not break a state transition.
+        try:
+            await app.state.platform_audit.record_event(command)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("platform_audit_emit_failed: %s", exc)
+
     app.state.tenant_lifecycle = TenantLifecycleService(
         tenants=MongoTenantLifecycleRepository(db),
+        audit_recorder=_record_lifecycle_audit,
     )
     app.state.platform_billing = build_platform_billing_use_cases(db)
 

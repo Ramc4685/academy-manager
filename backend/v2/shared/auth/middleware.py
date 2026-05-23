@@ -132,6 +132,14 @@ class TenancyMiddleware(BaseHTTPMiddleware):
                 # routes (healthz) keep working.
                 log.info("auth_failed: %s", exc.code)
 
+        # Expose the resolved tenant (if any) on request.state so public
+        # routes that intentionally run before membership is established
+        # — e.g. ``/api/v2/register/parent`` — can pick up the tenant
+        # from the request host without re-resolving. Routes that
+        # require an authenticated membership keep using
+        # ``request.state.auth_claims``.
+        request.state.resolved_academy_id = resolved_academy_id
+
         # --- 3. Set request.state + tenant ContextVar --------------------
         tenant_token = None
         if claims is not None:

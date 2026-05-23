@@ -20,10 +20,18 @@ class UserRepository(Protocol):
 
 
 class PublicParentRegistrationRepository(UserRepository, Protocol):
-    """Write port for first-time parent self-registration."""
+    """Write port for first-time parent self-registration.
+
+    ``academy_id`` is the resolved tenant the request was made against.
+    The implementation MUST write that value into ``User.academy_id`` on
+    first insert (legacy single-tenant field) — never the configured
+    default. For an existing user, the implementation MUST NOT overwrite
+    the original ``academy_id``; multi-tenant access is carried by
+    ``AcademyMembership`` rows added separately by the calling use case.
+    """
 
     async def ensure_parent_user(
-        self, *, email: str, display_name: str, firebase_uid: str
+        self, *, email: str, display_name: str, firebase_uid: str, academy_id: str
     ) -> User: ...
 
 
