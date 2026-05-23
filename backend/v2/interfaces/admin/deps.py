@@ -10,6 +10,7 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     ApplyPaymentDiscount,
     GenerateMonthlyPayments,
     MarkPaymentPaid,
+    SendDuesReminders,
     UndoPaymentPaid,
 )
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
@@ -110,6 +111,8 @@ class AdminUseCases:
     approve_withdrawal_credit: ApproveWithdrawalCredit
     list_payments_recent: object  # callable
     list_billing_invoices: object  # async (limit: int = 100) -> list[dict]
+    get_billing_invoice_detail: object  # async (invoice_id: str) -> dict
+    generate_billing_invoice_artifact: object  # async (invoice_id: str, artifact_type: str) -> dict
     generate_monthly_payments: GenerateMonthlyPayments
     mark_payment_paid: MarkPaymentPaid
     apply_payment_discount: ApplyPaymentDiscount
@@ -127,7 +130,7 @@ class AdminUseCases:
     list_waitlist_for_session: object  # callable
     list_audit_logs: object  # callable
     list_dues_followup: object  # callable
-    send_dues_reminders: object  # callable
+    send_dues_reminders: SendDuesReminders
     export_report_csv: object  # callable
     get_reports_kpis: object  # async () -> dict[str, int | float]
     list_enrollment_events: object  # async (enrollment_id: str) -> list[dict]

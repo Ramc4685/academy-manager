@@ -155,6 +155,8 @@ export type PaymentStatus =
   | "failed"
   | "expired";
 
+export type AdminPaymentStatus = PaymentStatus | "partially_paid";
+
 export interface AdminPaymentView {
   payment_id: string;
   parent_id: string;
@@ -166,6 +168,10 @@ export interface AdminPaymentView {
   amount_cents: number;
   discount_cents: number;
   final_amount_cents: number | null;
+  amount_received_cents: number;
+  paid_amount_cents: number;
+  balance_due_cents: number | null;
+  overpayment_credit_cents: number;
   currency: string;
   status: PaymentStatus;
   refunded_cents: number;
@@ -205,12 +211,49 @@ export interface GenerateMonthlyPaymentsResponse {
 }
 
 export interface MarkPaymentPaidRequest {
-  payment_method: string;
+  payment_method: "cash" | "check" | "zelle" | "venmo" | "bank_transfer" | "other";
+  amount_received_cents?: number;
+  reference_number?: string;
   notes?: string;
 }
 
 export interface ApplyPaymentDiscountRequest {
   discount_cents: number;
+  reason: string;
+}
+
+export interface InvoiceLineView {
+  description: string;
+  amount_cents: number;
+}
+
+export interface InvoiceAllocationView {
+  payment_id: string;
+  amount_cents: number;
+}
+
+export interface InvoiceCreditUsageView {
+  credit_id: string;
+  amount_cents: number;
+}
+
+export interface AdminInvoiceDetail {
+  invoice_number: string;
+  period: string;
+  lines: InvoiceLineView[];
+  due_amount_cents: number;
+  paid_amount_cents: number;
+  status: string;
+  allocations: InvoiceAllocationView[];
+  credit_usage: InvoiceCreditUsageView[];
+  invoice_pdf_artifact_id: string | null;
+  receipt_artifact_id: string | null;
+}
+
+export interface GenerateInvoiceArtifactResponse {
+  artifact_id: string;
+  artifact_type: "invoice_pdf" | "receipt";
+  status: "generated";
 }
 
 export interface AdminEnrollmentQuote {
@@ -519,6 +562,8 @@ export interface SendDuesRemindersResponse {
   sent: number;
   blocked: boolean;
   reason: string | null;
+  selected_parent_ids: string[];
+  generated_invoice_artifacts: number;
 }
 
 export interface AdminAcademyView {
@@ -833,6 +878,26 @@ export function undoPaymentPaid(paymentId: string): Promise<void> {
   return apiFetch<void>(`/admin/payments/${paymentId}/undo-paid`, { method: "POST" });
 }
 
+export function getAdminInvoiceDetail(invoiceId: string): Promise<AdminInvoiceDetail> {
+  return apiFetch<AdminInvoiceDetail>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}`,
+    { method: "GET" },
+  );
+}
+
+export function generateAdminInvoiceArtifact(
+  invoiceId: string,
+  artifactType: "invoice_pdf" | "receipt",
+): Promise<GenerateInvoiceArtifactResponse> {
+  return apiFetch<GenerateInvoiceArtifactResponse>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/artifacts`,
+    {
+      method: "POST",
+      body: JSON.stringify({ artifact_type: artifactType }),
+    },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Finance
 // ---------------------------------------------------------------------------
@@ -948,8 +1013,11 @@ export function listDuesFollowup(): Promise<DuesFollowupResponse> {
   return apiFetch<DuesFollowupResponse>("/admin/dues-followup", { method: "GET" });
 }
 
-export function sendDuesReminders(): Promise<SendDuesRemindersResponse> {
-  return apiFetch<SendDuesRemindersResponse>("/admin/dues-reminders", { method: "POST" });
+export function sendDuesReminders(payload: { parent_ids?: string[] } = {}): Promise<SendDuesRemindersResponse> {
+  return apiFetch<SendDuesRemindersResponse>("/admin/dues-reminders", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function exportAdminReportCsv(reportName: string): Promise<string> {

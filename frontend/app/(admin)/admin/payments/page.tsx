@@ -14,13 +14,15 @@ import * as Dialog from "@radix-ui/react-dialog";
 
 import {
   applyPaymentDiscount,
+  generateAdminInvoiceArtifact,
   generateMonthlyPayments,
+  getAdminInvoiceDetail,
   listAdminPayments,
   markPaymentPaid,
   refundPayment,
   undoPaymentPaid,
+  type AdminPaymentStatus,
   type AdminPaymentView,
-  type PaymentStatus,
   type RefundRequest,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
@@ -44,13 +46,19 @@ function paymentDisplayLabel(payment: AdminPaymentView): string {
 }
 
 function paidCents(payment: AdminPaymentView): number | null {
+  if (payment.paid_amount_cents > 0) return Math.max(payment.paid_amount_cents - payment.refunded_cents, 0);
   if (!["succeeded", "partially_refunded", "refunded"].includes(payment.status)) return null;
   return Math.max(finalCents(payment) - payment.refunded_cents, 0);
 }
 
-const STATUS_CHIP: Record<PaymentStatus, { variant: ChipVariant; label: string }> = {
+function adminPaymentStatus(payment: AdminPaymentView): AdminPaymentStatus {
+  return payment.status as AdminPaymentStatus;
+}
+
+const STATUS_CHIP: Record<AdminPaymentStatus, { variant: ChipVariant; label: string }> = {
   succeeded: { variant: "paid", label: "PAID" },
   pending: { variant: "pending", label: "PENDING" },
+  partially_paid: { variant: "partial", label: "PARTIAL" },
   refunded: { variant: "refunded", label: "REFUNDED" },
   partially_refunded: { variant: "partial", label: "PARTIAL" },
   failed: { variant: "failed", label: "FAILED" },
@@ -69,6 +77,7 @@ export default function AdminPaymentsPage() {
   const [refundTarget, setRefundTarget] = useState<AdminPaymentView | null>(null);
   const [paidTarget, setPaidTarget] = useState<AdminPaymentView | null>(null);
   const [discountTarget, setDiscountTarget] = useState<AdminPaymentView | null>(null);
+  const [invoiceTarget, setInvoiceTarget] = useState<AdminPaymentView | null>(null);
   const [generateOpen, setGenerateOpen] = useState(false);
   const queryClient = useQueryClient();
 
@@ -83,10 +92,12 @@ export default function AdminPaymentsPage() {
   });
 
   const payments = data?.payments ?? [];
-  const pendingCount = payments.filter((p) => p.status === "pending").length;
+  const pendingCount = payments.filter((p) => {
+    const status = adminPaymentStatus(p);
+    return status === "pending" || status === "partially_paid";
+  }).length;
   const collectedCents = payments
-    .filter((p) => ["succeeded", "partially_refunded", "refunded"].includes(p.status))
-    .reduce((sum, p) => sum + finalCents(p) - p.refunded_cents, 0);
+    .reduce((sum, p) => sum + (paidCents(p) ?? 0), 0);
 
   return (
     <section data-testid="admin-payments" className="space-y-5">
@@ -139,7 +150,7 @@ export default function AdminPaymentsPage() {
               </thead>
               <tbody>
                 {payments.map((p) => {
-                  const chip = STATUS_CHIP[p.status];
+                  const chip = STATUS_CHIP[adminPaymentStatus(p)];
                   const method = methodChip(p);
                   const rowPaidCents = paidCents(p);
                   return (
@@ -182,6 +193,7 @@ export default function AdminPaymentsPage() {
                         <PaymentActions
                           payment={p}
                           onDiscount={() => setDiscountTarget(p)}
+                          onInvoice={() => setInvoiceTarget(p)}
                           onPaid={() => setPaidTarget(p)}
                           onRefund={() => setRefundTarget(p)}
                           onUndo={() => undoMutation.mutate(p.payment_id)}
@@ -226,6 +238,7 @@ export default function AdminPaymentsPage() {
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.payments() });
         }}
       />
+      <InvoiceDialog payment={invoiceTarget} onClose={() => setInvoiceTarget(null)} />
     </section>
   );
 }
@@ -246,6 +259,7 @@ function Metric({ label, value }: { label: string; value: string }) {
 function PaymentActions({
   payment,
   onDiscount,
+  onInvoice,
   onPaid,
   onRefund,
   onUndo,
@@ -253,12 +267,14 @@ function PaymentActions({
 }: {
   payment: AdminPaymentView;
   onDiscount: () => void;
+  onInvoice: () => void;
   onPaid: () => void;
   onRefund: () => void;
   onUndo: () => void;
   undoPending: boolean;
 }) {
-  const isPending = payment.status === "pending";
+  const status = adminPaymentStatus(payment);
+  const isPending = status === "pending" || status === "partially_paid";
   const isPaid = payment.status === "succeeded" || payment.status === "partially_refunded";
   // Refund eligibility: must be paid/partial AND have remaining balance
   const refundable = isPaid && payment.refunded_cents < finalCents(payment);
@@ -266,6 +282,7 @@ function PaymentActions({
   const undoable = isPaid && !payment.stripe_linked;
   return (
     <div className="flex justify-end gap-2">
+      <Button variant="secondary" size="sm" onClick={onInvoice}>Invoice</Button>
       {isPending && (
         <>
           <Button variant="secondary" size="sm" onClick={onDiscount}>Discount</Button>
@@ -376,14 +393,17 @@ function DiscountDialog({
   onSaved: () => void;
 }) {
   const [amountInput, setAmountInput] = useState("");
+  const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const mutation = useMutation({
     mutationFn: () =>
       applyPaymentDiscount(payment!.payment_id, {
         discount_cents: Math.round(Number(amountInput) * 100),
+        reason,
       }),
     onSuccess: () => {
       setAmountInput("");
+      setReason("");
       setError(null);
       onSaved();
     },
@@ -417,6 +437,15 @@ function DiscountDialog({
             className={inputClass}
           />
         </Field>
+        <Field label="Reason" required>
+          <input
+            type="text"
+            required
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            className={inputClass}
+          />
+        </Field>
         <DialogActions onCancel={onClose} submitLabel={mutation.isPending ? "Saving…" : "Save"} />
       </form>
     </RallyDialog>
@@ -433,11 +462,21 @@ function MarkPaidDialog({
   onSaved: () => void;
 }) {
   const [method, setMethod] = useState("cash");
+  const [amountInput, setAmountInput] = useState("");
+  const [referenceNumber, setReferenceNumber] = useState("");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
   const mutation = useMutation({
-    mutationFn: () => markPaymentPaid(payment!.payment_id, { payment_method: method, notes }),
+    mutationFn: () =>
+      markPaymentPaid(payment!.payment_id, {
+        payment_method: method as "cash" | "check" | "zelle" | "venmo" | "bank_transfer" | "other",
+        amount_received_cents: amountInput ? Math.round(Number(amountInput) * 100) : undefined,
+        reference_number: referenceNumber || undefined,
+        notes,
+      }),
     onSuccess: () => {
+      setAmountInput("");
+      setReferenceNumber("");
       setNotes("");
       setError(null);
       onSaved();
@@ -463,25 +502,133 @@ function MarkPaidDialog({
         {error && <Alert tone="red">{error}</Alert>}
         {payment && (
           <div className="grid gap-2 rounded-md border border-rally-line bg-rally-paper/50 p-3 text-sm">
-            <SummaryRow label="Amount due" value={formatCents(finalCents(payment))} />
-            <SummaryRow label="Amount paid" value={formatCents(finalCents(payment))} />
-            <SummaryRow label="Status after save" value="Paid" />
+            <SummaryRow label="Invoice total" value={formatCents(finalCents(payment))} />
+            <SummaryRow label="Already paid" value={formatCents(payment.paid_amount_cents || 0)} />
+            <SummaryRow label="Open balance" value={formatCents(payment.balance_due_cents ?? finalCents(payment))} />
           </div>
         )}
+        <Field label="Amount received (USD)" required>
+          <input
+            type="number"
+            min="0.01"
+            step="0.01"
+            required
+            value={amountInput}
+            onChange={(event) => setAmountInput(event.target.value)}
+            placeholder={payment ? ((payment.balance_due_cents ?? finalCents(payment)) / 100).toFixed(2) : ""}
+            className={inputClass}
+          />
+        </Field>
         <Field label="Payment method" required>
           <select value={method} onChange={(event) => setMethod(event.target.value)} className={inputClass}>
             <option value="cash">Cash</option>
             <option value="check">Check</option>
             <option value="zelle">Zelle</option>
             <option value="venmo">Venmo</option>
+            <option value="bank_transfer">Bank transfer</option>
             <option value="other">Other</option>
           </select>
+        </Field>
+        <Field label="Reference">
+          <input
+            value={referenceNumber}
+            onChange={(event) => setReferenceNumber(event.target.value)}
+            className={inputClass}
+          />
         </Field>
         <Field label="Notes">
           <input value={notes} onChange={(event) => setNotes(event.target.value)} className={inputClass} />
         </Field>
         <DialogActions onCancel={onClose} submitLabel={mutation.isPending ? "Saving…" : "Mark paid"} />
       </form>
+    </RallyDialog>
+  );
+}
+
+function InvoiceDialog({
+  payment,
+  onClose,
+}: {
+  payment: AdminPaymentView | null;
+  onClose: () => void;
+}) {
+  const invoiceId = payment?.invoice_number || payment?.payment_id || "";
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ["admin", "invoice-detail", invoiceId],
+    queryFn: () => getAdminInvoiceDetail(invoiceId),
+    enabled: Boolean(payment),
+  });
+  const artifactMutation = useMutation({
+    mutationFn: (artifactType: "invoice_pdf" | "receipt") =>
+      generateAdminInvoiceArtifact(invoiceId, artifactType),
+    onSuccess: () => void refetch(),
+  });
+
+  return (
+    <RallyDialog
+      open={payment !== null}
+      onOpenChange={(open) => !open && onClose()}
+      overline="Invoice"
+      title={data?.invoice_number || payment?.invoice_number || "Invoice detail"}
+      description={data ? `${data.status} · ${formatCents(data.due_amount_cents)} due` : ""}
+    >
+      {isLoading ? (
+        <TableSkeleton />
+      ) : isError || !data ? (
+        <Alert tone="red">Could not load invoice detail.</Alert>
+      ) : (
+        <div className="space-y-4 text-sm">
+          <div className="grid gap-2 rounded-md border border-rally-line bg-rally-paper/50 p-3">
+            <SummaryRow label="Paid" value={formatCents(data.paid_amount_cents)} />
+            <SummaryRow label="Due" value={formatCents(data.due_amount_cents)} />
+            <SummaryRow label="Status" value={data.status} />
+          </div>
+          <div>
+            <div className="font-medium text-rally-ink">Lines</div>
+            {data.lines.map((line) => (
+              <SummaryRow key={`${line.description}-${line.amount_cents}`} label={line.description} value={formatCents(line.amount_cents)} />
+            ))}
+          </div>
+          <div>
+            <div className="font-medium text-rally-ink">Allocations</div>
+            {data.allocations.length === 0 ? (
+              <p className="text-rally-subtle">No payments allocated yet.</p>
+            ) : (
+              data.allocations.map((row) => (
+                <SummaryRow key={row.payment_id} label={row.payment_id} value={formatCents(row.amount_cents)} />
+              ))
+            )}
+          </div>
+          {data.credit_usage.length > 0 && (
+            <div>
+              <div className="font-medium text-rally-ink">Credits used</div>
+              {data.credit_usage.map((row) => (
+                <SummaryRow key={row.credit_id} label={row.credit_id} value={formatCents(row.amount_cents)} />
+              ))}
+            </div>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              type="button"
+              onClick={() => artifactMutation.mutate("invoice_pdf")}
+              disabled={artifactMutation.isPending}
+            >
+              {data.invoice_pdf_artifact_id ? "Regenerate invoice" : "Generate invoice"}
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              type="button"
+              onClick={() => artifactMutation.mutate("receipt")}
+              disabled={artifactMutation.isPending}
+            >
+              {data.receipt_artifact_id ? "Regenerate receipt" : "Generate receipt"}
+            </Button>
+          </div>
+        </div>
+      )}
     </RallyDialog>
   );
 }

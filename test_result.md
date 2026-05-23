@@ -102,8 +102,22 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Wave 12 Agent F: documentation/test scaffolding only for SaaS launch-candidate local smoke, Playwright route matrix, BLNO seed path notes, and launch-gate docs. Final smoke and launch signoff wait until Wave 10 and Wave 11 branches are merged."
+user_problem_statement: "Wave 11 Agent E: Make admin payment operations explainable with manual partial payments, overpayments to credits, selected dues reminders, invoice detail, and request-based invoice/receipt artifacts."
 backend:
+  - task: "Wave 11 Agent E admin payment dues invoice correctness"
+    implemented: true
+    working: true
+    file: "backend/v2/contexts/billing/application/use_cases/admin_payment_ops.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added RED tests for manual amount-received payment recording, supported manual methods, required discount reason, selected dues reminders, invoice detail, and request-based invoice/receipt artifacts."
+      - working: true
+        agent: "main"
+        comment: "Implemented manual partial/exact/overpayment handling in v2 billing, automatic overpayment credits through the account credit ledger, selected-recipient dues reminder command/route support, invoice detail route, and request-based artifact generation route. Focused Wave 11 backend suite passed: /Users/ramc/Documents/Code/academy-manager/backend/.venv/bin/python -m pytest v2/tests/application/test_manual_payment_correctness.py v2/tests/application/test_dues_reminders.py v2/tests/interface/test_admin_payment_dues_routes.py v2/tests/interface/test_admin_billing.py -q returned 34 passed. Ruff check on touched v2 billing/admin/tests passed."
   - task: "Wave 12 SaaS launch smoke and gate scaffolding"
     implemented: true
     working: "NA"
@@ -410,6 +424,17 @@ backend:
         agent: "main"
         comment: "Agent B Wave 6 added a new Platform billing slice separate from parent tuition Billing. The model covers platform plans, plan limits, tenant subscriptions, billing/trial/cancellation status, and tenant Stripe customer/subscription IDs. Application tests cover trial creation, Stripe subscription activation, period-end cancellation scheduling, plan-limit checks, and absence of parent/student/enrollment/session tuition fields. Verification: focused platform billing pytest passed 4/4; targeted ruff passed; git diff --check passed."
 frontend:
+  - task: "Wave 11 Agent E admin payment dues UI"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/admin/payments/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Updated admin payments UI to record amount received, manual method including bank transfer, reference number, discount reason, invoice detail, and request-based invoice/receipt artifact actions. Updated dues UI for selected parent reminders while keeping full-list behavior when no parents are selected. Verification passed: pnpm typecheck and pnpm build."
   - task: "Wave 12 SaaS Playwright route matrix scaffold"
     implemented: true
     working: "NA"
