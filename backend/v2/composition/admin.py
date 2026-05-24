@@ -85,6 +85,9 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import 
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_writer import (
     MongoEnrollmentWriter,
 )
+from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import (
+    MongoSessionOccurrenceRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_pause_request_repo import (
     MongoPauseRequestRepository,
 )
@@ -126,11 +129,17 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
 )
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
+from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
+    ManageAdminWaiverTemplates,
+)
 from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
     ListAdminWaivers,
 )
 from backend.v2.contexts.onboarding.infrastructure.mongo_admin_waiver_repo import (
     MongoAdminWaiverRepository,
+)
+from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_template_repo import (
+    MongoWaiverTemplateRepository,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases
 from backend.v2.shared.comms import CommsService, MongoMessageRepository
@@ -226,6 +235,164 @@ def _make_reports_kpis(db: AsyncIOMotorDatabase[Any]) -> object:
     return get_reports_kpis
 
 
+def _month_bounds(period: str) -> tuple[datetime, datetime]:
+    year_str, month_str = period.split("-", 1)
+    year = int(year_str)
+    month = int(month_str)
+    start = datetime(year, month, 1, tzinfo=UTC)
+    if month == 12:
+        end = datetime(year + 1, 1, 1, tzinfo=UTC)
+    else:
+        end = datetime(year, month + 1, 1, tzinfo=UTC)
+    return start, end
+
+
+def _payment_final_amount_cents(payment: dict[str, Any]) -> int:
+    for key in ("final_amount_cents", "amount_cents", "gross_amount_cents"):
+        value = payment.get(key)
+        if value is not None:
+            return int(value)
+    return 0
+
+
+def _payment_collected_cents(payment: dict[str, Any]) -> int:
+    status = str(payment.get("status") or "")
+    if status in {"partially_paid", "pending", "failed"}:
+        return max(
+            int(payment.get("paid_amount_cents") or payment.get("amount_received_cents") or 0),
+            0,
+        )
+    if status in {"succeeded", "paid", "partially_refunded", "refunded"}:
+        paid = int(
+            payment.get("paid_amount_cents")
+            or payment.get("amount_received_cents")
+            or _payment_final_amount_cents(payment)
+        )
+        return max(paid - int(payment.get("refunded_cents") or 0), 0)
+    return 0
+
+
+def _payment_outstanding_cents(payment: dict[str, Any]) -> int:
+    status = str(payment.get("status") or "")
+    if status not in {"pending", "failed", "partially_paid"}:
+        return 0
+    balance = payment.get("balance_due_cents")
+    if balance is not None:
+        return max(int(balance), 0)
+    return max(_payment_final_amount_cents(payment) - _payment_collected_cents(payment), 0)
+
+
+def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
+    """Returns an async callable for the owner finance/operations dashboard."""
+    from backend.v2.shared.tenancy import current_academy_id
+
+    async def get_reports_dashboard(period: str) -> dict[str, Any]:
+        academy_id = current_academy_id()
+        start, end = _month_bounds(period)
+
+        cash_collected_cents = 0
+        outstanding_dues_cents = 0
+        payment_rows = 0
+        payments_cursor = db["payments"].find(
+            {
+                "academy_id": academy_id,
+                "period": period,
+                "is_deleted": {"$ne": True},
+            }
+        )
+        async for payment in payments_cursor:
+            payment_rows += 1
+            cash_collected_cents += _payment_collected_cents(payment)
+            outstanding_dues_cents += _payment_outstanding_cents(payment)
+
+        present_count = 0
+        recorded_count = 0
+        attendance_cursor = db["attendance"].find(
+            {
+                "academy_id": academy_id,
+                "marked_at": {"$gte": start, "$lt": end},
+                "status": {"$in": ["present", "late", "absent"]},
+            }
+        )
+        async for attendance in attendance_cursor:
+            recorded_count += 1
+            if str(attendance.get("status")) in {"present", "late"}:
+                present_count += 1
+        attendance_rate = round(present_count / recorded_count, 4) if recorded_count else None
+
+        session_ids: list[str] = []
+        scheduled_count = 0
+        completed_count = 0
+        cancelled_count = 0
+        capacity = 0
+        sessions_cursor = db["sessions"].find(
+            {
+                "academy_id": academy_id,
+                "start_at": {"$gte": start, "$lt": end},
+                "is_deleted": {"$ne": True},
+            }
+        )
+        async for session in sessions_cursor:
+            session_id = str(session.get("session_id") or session.get("_id"))
+            session_ids.append(session_id)
+            status = str(session.get("status") or "scheduled")
+            if status == "completed":
+                completed_count += 1
+            elif status == "cancelled":
+                cancelled_count += 1
+            else:
+                scheduled_count += 1
+            if status != "cancelled":
+                capacity += int(session.get("capacity") or session.get("max_students") or 0)
+
+        enrolled_seats = 0
+        if session_ids:
+            enrollments_cursor = db["enrollments"].find(
+                {
+                    "academy_id": academy_id,
+                    "session_id": {"$in": session_ids},
+                    "status": {"$in": ["active", "paused"]},
+                    "is_deleted": {"$ne": True},
+                },
+                {"student_id": 1},
+            )
+            async for _enrollment in enrollments_cursor:
+                enrolled_seats += 1
+        capacity_utilization = round(enrolled_seats / capacity, 4) if capacity else None
+
+        empty_states: list[str] = []
+        if cash_collected_cents == 0:
+            empty_states.append("No collected payment rows found for this month.")
+        if recorded_count == 0:
+            empty_states.append("No attendance marks found for this month.")
+        if not session_ids:
+            empty_states.append("No sessions found for this month.")
+
+        return {
+            "period": period,
+            "cash_collected_cents": cash_collected_cents,
+            "outstanding_dues_cents": outstanding_dues_cents,
+            "attendance": {
+                "present_count": present_count,
+                "recorded_count": recorded_count,
+                "attendance_rate": attendance_rate,
+                "empty": recorded_count == 0,
+            },
+            "sessions": {
+                "scheduled_count": scheduled_count,
+                "completed_count": completed_count,
+                "cancelled_count": cancelled_count,
+                "enrolled_seats": enrolled_seats,
+                "capacity": capacity,
+                "capacity_utilization": capacity_utilization,
+                "empty": not session_ids,
+            },
+            "empty_states": empty_states,
+        }
+
+    return get_reports_dashboard
+
+
 def _make_list_enrollment_events(db: Any) -> object:
     from backend.v2.shared.tenancy import current_academy_id
 
@@ -266,6 +433,7 @@ def compose_admin(
     users_r = MongoUserRepository(db, default_academy_id=academy_id)
     sessions_w = MongoSessionWriter(db)
     sessions_r = MongoSessionRepository(db)
+    occurrences_r = MongoSessionOccurrenceRepository(db)
     enrollments_w = MongoEnrollmentWriter(db)
     enrollments_r = MongoEnrollmentRepository(db)
     enrollment_events = MongoEnrollmentEventRepository(db)
@@ -378,6 +546,8 @@ def compose_admin(
     comms = CommsService(messages=messages_repo, academy_id=academy_id)
     waivers_repo = MongoAdminWaiverRepository(db)
     list_admin_waivers = ListAdminWaivers(waivers_repo)
+    waiver_templates_repo = MongoWaiverTemplateRepository(db)
+    manage_admin_waiver_templates = ManageAdminWaiverTemplates(waiver_templates_repo)
     # Identity / Settings
     academy_repo = MongoAcademyRepository(db)
     get_academy_use_case = GetAcademyUseCase(academy_repo)
@@ -563,6 +733,56 @@ def compose_admin(
                 }
             )
         return out
+
+    async def _occurrence_row(occurrence) -> dict[str, Any]:
+        attendance_cursor = db.attendance.find(
+            {"academy_id": academy_id, "occurrence_id": occurrence.occurrence_id},
+            sort=[("marked_at", -1)],
+        )
+        marked_by: set[str] = set()
+        last_marked_at = None
+        count = 0
+        async for attendance in attendance_cursor:
+            count += 1
+            if last_marked_at is None:
+                last_marked_at = attendance.get("marked_at")
+            marker = attendance.get("marked_by")
+            if marker:
+                marked_by.add(str(marker))
+        return {
+            "occurrence_id": occurrence.occurrence_id,
+            "session_id": occurrence.template_session_id or occurrence.session_id,
+            "start_at": occurrence.start_at,
+            "end_at": occurrence.end_at,
+            "status": occurrence.status,
+            "scheduled_coach_id": occurrence.scheduled_coach_id,
+            "actual_coach_id": occurrence.actual_coach_id,
+            "substitute_coach_id": occurrence.substitute_coach_id,
+            "attendance_marked_count": count,
+            "attendance_marked_by": sorted(marked_by),
+            "attendance_last_marked_at": last_marked_at,
+        }
+
+    async def list_session_occurrences(session_id: str) -> list[dict[str, Any]]:
+        occurrences = await occurrences_r.list_for_session(session_id)
+        return [await _occurrence_row(occurrence) for occurrence in occurrences]
+
+    async def update_session_occurrence_coach(
+        *,
+        occurrence_id: str,
+        actual_coach_id: str | None,
+        substitute_coach_id: str | None,
+        actor_id: str,
+        reason: str,
+    ) -> dict[str, Any] | None:
+        _ = actor_id
+        occurrence = await occurrences_r.update_coach_assignment(
+            occurrence_id=occurrence_id,
+            actual_coach_id=actual_coach_id,
+            substitute_coach_id=substitute_coach_id,
+            assignment_reason=reason,
+        )
+        return None if occurrence is None else await _occurrence_row(occurrence)
 
     async def list_waitlist_for_session(session_id: str):
         cursor = waitlist._find_many(  # type: ignore[attr-defined]
@@ -904,7 +1124,7 @@ def compose_admin(
             writer.writerow([f"unknown report {report_name}"])
         return out.getvalue()
 
-    return AdminUseCases(
+    admin = AdminUseCases(
         list_admin_users=list_admin_users,
         list_admin_students=list_admin_students,
         create_session=create_session,
@@ -942,6 +1162,8 @@ def compose_admin(
         payouts=payouts_repo,
         revenue_query=revenue_query,
         list_admin_sessions=list_admin_sessions,
+        list_session_occurrences=list_session_occurrences,
+        update_session_occurrence_coach=update_session_occurrence_coach,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
         list_audit_logs=list_audit_logs,
@@ -952,6 +1174,7 @@ def compose_admin(
         list_enrollment_events=_make_list_enrollment_events(db),
         comms=comms,
         list_admin_waivers=list_admin_waivers,
+        manage_admin_waiver_templates=manage_admin_waiver_templates,
         get_academy_use_case=get_academy_use_case,
         update_academy_use_case=update_academy_use_case,
         get_academy_fees_use_case=get_academy_fees_use_case,
@@ -965,6 +1188,8 @@ def compose_admin(
         get_admin_student=get_admin_student,
         update_admin_student=update_admin_student,
     )
+    admin.get_reports_dashboard = _make_reports_dashboard(db)  # type: ignore[attr-defined]
+    return admin
 
 
 class _EnrollmentLifecycleEventSink:

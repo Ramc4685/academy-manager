@@ -29,6 +29,30 @@ export interface AdminSessionList {
   sessions: AdminSessionView[];
 }
 
+export interface AdminSessionOccurrenceView {
+  occurrence_id: string;
+  session_id: string;
+  start_at: string;
+  end_at: string;
+  status: "scheduled" | "cancelled" | "completed";
+  scheduled_coach_id: string;
+  actual_coach_id: string | null;
+  substitute_coach_id: string | null;
+  attendance_marked_count: number;
+  attendance_marked_by: string[];
+  attendance_last_marked_at: string | null;
+}
+
+export interface AdminSessionOccurrenceList {
+  occurrences: AdminSessionOccurrenceView[];
+}
+
+export interface UpdateSessionOccurrenceCoachRequest {
+  actual_coach_id?: string | null;
+  substitute_coach_id?: string | null;
+  reason: string;
+}
+
 export interface CreateSessionRequest {
   coach_id: string;
   title: string;
@@ -337,6 +361,32 @@ export interface AdminReportsKpiResponse {
   attendance_rate_30d: number;
   dues_collected_mtd_cents: number;
   pending_waivers: number;
+}
+
+export interface AdminReportsAttendanceSummary {
+  present_count: number;
+  recorded_count: number;
+  attendance_rate: number | null;
+  empty: boolean;
+}
+
+export interface AdminReportsSessionsSummary {
+  scheduled_count: number;
+  completed_count: number;
+  cancelled_count: number;
+  enrolled_seats: number;
+  capacity: number;
+  capacity_utilization: number | null;
+  empty: boolean;
+}
+
+export interface AdminReportsDashboardResponse {
+  period: string;
+  cash_collected_cents: number;
+  outstanding_dues_cents: number;
+  attendance: AdminReportsAttendanceSummary;
+  sessions: AdminReportsSessionsSummary;
+  empty_states: string[];
 }
 
 export interface AdminMessageView {
@@ -705,6 +755,28 @@ export function deleteAdminSession(sessionId: string): Promise<void> {
   return apiFetch<void>(`/admin/sessions/${sessionId}`, { method: "DELETE" });
 }
 
+export function listSessionOccurrences(
+  sessionId: string
+): Promise<AdminSessionOccurrenceList> {
+  return apiFetch<AdminSessionOccurrenceList>(
+    `/admin/sessions/${encodeURIComponent(sessionId)}/occurrences`,
+    { method: "GET" }
+  );
+}
+
+export function updateSessionOccurrenceCoach(
+  occurrenceId: string,
+  payload: UpdateSessionOccurrenceCoachRequest
+): Promise<AdminSessionOccurrenceView> {
+  return apiFetch<AdminSessionOccurrenceView>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/coach`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Enrollments
 // ---------------------------------------------------------------------------
@@ -940,6 +1012,13 @@ export function getRevenue(): Promise<AdminRevenueResponse> {
 
 export function getAdminReportKpis(): Promise<AdminReportsKpiResponse> {
   return apiFetch<AdminReportsKpiResponse>("/admin/reports/kpis", { method: "GET" });
+}
+
+export function getAdminReportsDashboard(period: string): Promise<AdminReportsDashboardResponse> {
+  return apiFetch<AdminReportsDashboardResponse>(
+    `/admin/reports/dashboard?period=${encodeURIComponent(period)}`,
+    { method: "GET" },
+  );
 }
 
 // ---------------------------------------------------------------------------

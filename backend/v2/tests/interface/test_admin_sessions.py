@@ -32,6 +32,52 @@ def test_list_sessions_parent_persona_returns_404(parent_on_admin_client):
     assert r.status_code == 404
 
 
+def test_list_session_occurrences_shows_assignment_state(admin_client):
+    r = admin_client.get("/api/v2/admin/sessions/sess-1/occurrences")
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["occurrences"] == [
+        {
+            "occurrence_id": "occ-admin-1",
+            "session_id": "sess-1",
+            "start_at": "2026-05-16T09:00:00Z",
+            "end_at": "2026-05-16T10:30:00Z",
+            "status": "scheduled",
+            "scheduled_coach_id": "coach-1",
+            "actual_coach_id": None,
+            "substitute_coach_id": None,
+            "attendance_marked_count": 0,
+            "attendance_marked_by": [],
+            "attendance_last_marked_at": None,
+        }
+    ]
+
+
+def test_update_session_occurrence_actual_coach(admin_client):
+    r = admin_client.patch(
+        "/api/v2/admin/session-occurrences/occ-admin-1/coach",
+        json={
+            "actual_coach_id": "coach-2",
+            "substitute_coach_id": "coach-3",
+            "reason": "substitute",
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["occurrence_id"] == "occ-admin-1"
+    assert body["actual_coach_id"] == "coach-2"
+    assert body["substitute_coach_id"] == "coach-3"
+    assert admin_client.seed["occurrences"].rows["occ-admin-1"].actual_coach_id == "coach-2"
+    assert admin_client.seed["occurrences"].rows["occ-admin-1"].substitute_coach_id == "coach-3"
+
+
+def test_list_session_occurrences_wrong_persona_returns_404(coach_on_admin_client):
+    r = coach_on_admin_client.get("/api/v2/admin/sessions/sess-1/occurrences")
+    assert r.status_code == 404
+
+
 def test_create_session_happy_path(admin_client):
     r = admin_client.post(
         "/api/v2/admin/sessions",

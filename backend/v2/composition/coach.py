@@ -24,8 +24,8 @@ from backend.v2.contexts.coaching.infrastructure.mongo_session_notes_repo import
 from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
     GetSessionRoster,
 )
-from backend.v2.contexts.enrollment.application.use_cases.list_coach_sessions_for_date import (
-    ListCoachSessionsForDate,
+from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences_for_date import (
+    ListCoachOccurrencesForDate,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
@@ -51,7 +51,7 @@ from .coaching_lookups import (
 
 @dataclass
 class CoachComposition:
-    list_today: ListCoachSessionsForDate
+    list_today: ListCoachOccurrencesForDate
     get_roster: GetSessionRoster
     mark_attendance: MarkAttendance
     get_dashboard_metrics: object
@@ -125,7 +125,9 @@ def compose_coach(
         }
 
     return CoachComposition(
-        list_today=ListCoachSessionsForDate(sessions=sessions_repo),
+        list_today=ListCoachOccurrencesForDate(
+            occurrences=occurrences_repo, sessions=sessions_repo
+        ),
         get_roster=GetSessionRoster(enrollments=enrollments_repo, students=students_repo),
         mark_attendance=MarkAttendance(
             attendance_repo=attendance_repo,

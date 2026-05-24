@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
+    AdminWaiverTemplateRecord,
+    AssignWaiverTemplateToRegistrationCommand,
+    CreateDraftWaiverTemplateCommand,
+    ManageAdminWaiverTemplates,
+    PublishWaiverTemplateCommand,
+    WaiverTemplateNotDraft,
+    WaiverTemplateNotFound,
+)
 from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
     AdminWaiverReport,
     AdminWaiverStudentRow,
@@ -15,7 +24,10 @@ from backend.v2.interfaces.admin.views import (
     AdminWaiverSignatureDetailView,
     AdminWaiverStudentView,
     AdminWaiverSummaryView,
+    AdminWaiverTemplateCreateRequest,
     AdminWaiverTemplateDetailView,
+    AdminWaiverTemplateManagementList,
+    AdminWaiverTemplateManagementView,
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
@@ -36,6 +48,90 @@ async def list_admin_waivers(
         current_waiver=active,
         waivers=rows,
     )
+
+
+@router.get("/waivers/templates", response_model=AdminWaiverTemplateManagementList)
+async def list_admin_waiver_templates(
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminWaiverTemplateManagementList:
+    manager = _template_manager(use_cases)
+    templates = await manager.list_templates()
+    return AdminWaiverTemplateManagementList(
+        templates=[_template_management_view(template) for template in templates]
+    )
+
+
+@router.post(
+    "/waivers/templates",
+    response_model=AdminWaiverTemplateManagementView,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_admin_waiver_template(
+    request: AdminWaiverTemplateCreateRequest,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminWaiverTemplateManagementView:
+    manager = _template_manager(use_cases)
+    try:
+        template = await manager.create_draft(
+            CreateDraftWaiverTemplateCommand(
+                title=request.title,
+                body=request.body,
+                content=request.content,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _template_management_view(template)
+
+
+@router.post(
+    "/waivers/templates/{waiver_template_id}/publish",
+    response_model=AdminWaiverTemplateManagementView,
+)
+async def publish_admin_waiver_template(
+    waiver_template_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminWaiverTemplateManagementView:
+    manager = _template_manager(use_cases)
+    try:
+        template = await manager.publish(
+            PublishWaiverTemplateCommand(waiver_template_id=waiver_template_id)
+        )
+    except WaiverTemplateNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except WaiverTemplateNotDraft as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _template_management_view(template)
+
+
+@router.post(
+    "/waivers/templates/{waiver_template_id}/assign-registration",
+    response_model=AdminWaiverTemplateManagementView,
+)
+async def assign_admin_waiver_template_to_registration(
+    waiver_template_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminWaiverTemplateManagementView:
+    manager = _template_manager(use_cases)
+    try:
+        template = await manager.assign_to_registration(
+            AssignWaiverTemplateToRegistrationCommand(waiver_template_id=waiver_template_id)
+        )
+    except WaiverTemplateNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _template_management_view(template)
+
+
+def _template_manager(use_cases: AdminUseCases) -> ManageAdminWaiverTemplates:
+    if use_cases.manage_admin_waiver_templates is None:
+        raise HTTPException(status_code=503, detail="Waiver template management unavailable")
+    return use_cases.manage_admin_waiver_templates
 
 
 @router.get("/waivers/signatures/{signature_id}", response_model=AdminWaiverSignatureDetailView)
@@ -84,6 +180,24 @@ async def get_waiver_template_detail(
         artifact_status=detail.artifact_status,
         share_status=detail.share_status,
         gap_note=detail.gap_note,
+    )
+
+
+def _template_management_view(
+    template: AdminWaiverTemplateRecord,
+) -> AdminWaiverTemplateManagementView:
+    return AdminWaiverTemplateManagementView(
+        waiver_template_id=template.waiver_template_id,
+        title=template.title,
+        body=template.body,
+        status=template.status,
+        version=template.version,
+        content_hash=template.content_hash,
+        effective_at=template.effective_from,
+        published_at=template.published_at,
+        assigned_to_registration=template.assigned_to_registration,
+        assigned_at=template.assigned_at,
+        updated_at=template.updated_at,
     )
 
 

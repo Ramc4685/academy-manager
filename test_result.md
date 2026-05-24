@@ -104,6 +104,85 @@
 
 user_problem_statement: "Wave 12 final launch-candidate gate after Wave 11 merge: verify SaaS static smoke, backend v2 suite, frontend typecheck/lint/build, Playwright route matrix, and document any local smoke blockers."
 backend:
+  - task: "Issue #95 admin waiver template management backend slice"
+    implemented: true
+    working: true
+    file: "backend/v2/interfaces/admin/waiver_routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added RED application, Mongo contract, and admin BFF tests for creating draft waiver templates with body/content, listing template metadata, publishing draft versions, preserving published snapshots by superseding active templates, and wrong-persona/tenant-isolation coverage."
+      - working: true
+        agent: "main"
+        comment: "Implemented ManageAdminWaiverTemplates, Mongo waiver_template management methods, and admin routes for POST/GET /api/v2/admin/waivers/templates plus publish. Verification passed: focused waiver pytest returned 25 passed; Ruff check and Ruff format --check passed on touched backend files."
+      - working: true
+        agent: "main"
+        comment: "Added registration-assignment support for active waiver templates via application command and admin BFF route. Verification passed: waiver management focused tests returned 9 passed, full backend v2 suite returned 580 passed with 7 existing mongomock datetime warnings, Ruff check v2 passed, Ruff format --check v2 passed, frontend build passed. Backend mypy remains blocked by the existing duplicate module-name issue for admin_payment_ops.py."
+  - task: "Issue #97 owner reports dashboard first slice"
+    implemented: true
+    working: true
+    file: "backend/v2/interfaces/admin/reports_routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added RED interface and Mongo-composition tests for GET /api/v2/admin/reports/dashboard?period=YYYY-MM covering owner finance/operations response shape, seeded monthly data, invalid period validation, and meaningful empty states."
+      - working: true
+        agent: "main"
+        comment: "Implemented the reports dashboard route and composed monthly Mongo reads for cash collected, outstanding dues, attendance rate, and session/capacity summary. Verification passed: focused reports dashboard pytest 5/5 and Ruff check on the reports slice backend files."
+  - task: "Issue #80 platform billing audit follow-up slice"
+    implemented: true
+    working: true
+    file: "backend/v2/contexts/platform/billing/application/use_cases/manage_platform_billing.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added RED application/interface coverage for platform billing trial-start audit emission before implementation. Selected platform billing as the narrowest non-lifecycle platform write path because it already has tenant scope and a single write command."
+      - working: true
+        agent: "main"
+        comment: "Implemented optional platform audit recorder support for StartTenantTrial, passed platform-admin actor/request metadata from the billing route, and wired billing composition to the Mongo-backed PlatformAuditService so trial-start writes emit unified platform_audit_events. Verification passed: focused platform billing application/interface tests returned 10 passed; Ruff check and Ruff format --check passed on touched backend files."
+      - working: true
+        agent: "main"
+        comment: "Integration verification passed after combining #80/#93/#95/#97 slices: full backend v2 suite returned 580 passed with 7 existing mongomock datetime warnings, Ruff check v2 passed, and Ruff format --check v2 passed. Backend mypy remains blocked by the existing duplicate module-name issue for admin_payment_ops.py."
+  - task: "Issue #93 occurrence-driven coach attendance slice"
+    implemented: true
+    working: true
+    file: "backend/v2/interfaces/coach/today_routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Started issue #93 first slice: coach today now reads real session_occurrences assigned by scheduled/actual/substitute coach, returns stored occurrence_id values, and frontend coach attendance sends occurrence_id in MarkAttendance payload. Focused backend and frontend verification is next."
+      - working: true
+        agent: "main"
+        comment: "Verification passed: focused backend coach occurrence/attendance suite returned 27 passed; Ruff check passed on touched backend files; frontend pnpm typecheck passed after installing node_modules in the isolated worktree."
+      - working: true
+        agent: "main"
+        comment: "Broader verification passed: full backend v2 suite returned 560 passed with 7 existing mongomock deprecation warnings; frontend pnpm lint passed with the existing Next lint deprecation notice."
+  - task: "Issue #93 admin occurrence coach assignment slice"
+    implemented: true
+    working: true
+    file: "backend/v2/interfaces/admin/sessions_routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added admin session occurrence list and actual-coach override endpoints backed by session_occurrences, plus interface coverage for list/update/wrong-persona behavior. Frontend session detail now shows dated occurrences, assignment state, attendance marked by/when, and a change-coach dialog. Focused verification is running next."
+      - working: true
+        agent: "main"
+        comment: "Completed substitute-coach support in the admin occurrence mutation/UI and removed visible coach/marker internal IDs from the admin occurrence table. Verification passed: focused #93 backend suite returned 41 passed, Ruff check passed on touched backend files, and frontend pnpm typecheck passed."
   - task: "Wave 11 Agent E admin payment dues invoice correctness"
     implemented: true
     working: true
@@ -427,6 +506,31 @@ backend:
         agent: "main"
         comment: "Agent B Wave 6 added a new Platform billing slice separate from parent tuition Billing. The model covers platform plans, plan limits, tenant subscriptions, billing/trial/cancellation status, and tenant Stripe customer/subscription IDs. Application tests cover trial creation, Stripe subscription activation, period-end cancellation scheduling, plan-limit checks, and absence of parent/student/enrollment/session tuition fields. Verification: focused platform billing pytest passed 4/4; targeted ruff passed; git diff --check passed."
 frontend:
+  - task: "Issue #93 admin occurrence coach assignment UI"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/admin/sessions/[id]/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added an Occurrences section to admin session detail using the new admin BFF client calls. It displays scheduled/actual/substitute coaches, attendance count, marked-by users, last marked timestamp, and lets admins save an actual-coach override with a reason. Frontend typecheck is running next."
+      - working: true
+        agent: "main"
+        comment: "Updated the dialog to support substitute coaches and changed the table to render coach/staff names instead of raw IDs. Verification passed: frontend pnpm typecheck."
+  - task: "Issue #97 owner reports dashboard UI first slice"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/admin/reports/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Updated /admin/reports to load the new monthly reports dashboard before export cards, show cash collected, outstanding dues, attendance, capacity/session summary, and empty states without claiming payroll accuracy. Verification passed: frontend pnpm typecheck."
   - task: "Wave 11 Agent E admin payment dues UI"
     implemented: true
     working: true
@@ -718,16 +822,25 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 23
+  test_sequence: 24
   run_ui: true
 test_plan:
   current_focus:
-    - "Wave 12 SaaS launch smoke and gate scaffolding"
-    - "Wave 12 SaaS Playwright route matrix scaffold"
+    - "Issue #93 admin occurrence coach assignment slice"
+    - "Issue #93 admin occurrence coach assignment UI"
+    - "Issue #95 waiver template management slice"
+    - "Issue #97 owner reports dashboard first slice"
+    - "Issue #80 platform billing audit follow-up slice"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "Issue #93 admin occurrence assignment slice is implemented and ready for focused verification: backend admin session occurrence list/update routes and frontend admin session detail occurrence table/dialog. Planned checks: admin session focused pytest, coach occurrence regression suite, Ruff on touched backend files, frontend pnpm typecheck/lint, and broader v2 pytest after worker outputs are integrated."
+  - agent: "main"
+    message: "Combined issue-slice verification update: #93 admin occurrence assignment and coach occurrence attendance are green; #95 backend create/list/publish/assign-registration is green but still partial against the full issue; #97 first dashboard slice is green but still partial against the expanded owner dashboard issue; #80 platform billing trial audit is green but governance audit paths remain open. Verification passed: full backend v2 suite 580 passed, Ruff check/format v2 passed, frontend pnpm typecheck/lint/build passed, git diff --check passed. Backend mypy is still blocked by the existing duplicate module-name failure for admin_payment_ops.py."
+  - agent: "main"
+    message: "Issue #97 reports dashboard first slice is implemented: backend GET /api/v2/admin/reports/dashboard?period=YYYY-MM returns monthly cash collected, outstanding dues, attendance summary, sessions/capacity summary, and empty states from existing collections; /admin/reports now consumes that dashboard before CSV/export cards. Verification passed: focused backend reports dashboard pytest 5/5, Ruff check on touched reports backend files, and frontend pnpm typecheck. Broader backend/frontend suites and browser smoke were not run."
   - agent: "main"
     message: "Wave 12 Agent F scaffolding pass: tightened SaaS smoke coverage for tenant-host-required and frontend proxy auth/tenant preservation, added docs/qa/saas-launch-gate-checklist.md, updated SaaS local staging runbook with clean startup/BLNO idempotent seed notes, and added frontend/e2e/specs/saas-launch-route-matrix.spec.ts for the requested admin/coach/parent route matrix. Retest static smoke, launch route matrix Playwright, backend v2 tests, frontend typecheck/build, and git diff --check. Do not perform final launch signoff until Wave 10 and Wave 11 branches are merged."
   - agent: "main"

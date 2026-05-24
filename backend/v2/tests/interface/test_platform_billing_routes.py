@@ -9,6 +9,9 @@ from datetime import UTC, datetime, timedelta
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend.v2.contexts.platform.audit.application.use_cases import (
+    RecordPlatformAuditEventCommand,
+)
 from backend.v2.contexts.platform.billing.application.use_cases.manage_platform_billing import (
     ActivateTenantSubscription,
     CheckPlanLimits,
@@ -55,6 +58,14 @@ class FakeTenantSubscriptionRepository:
         self.by_academy[subscription.academy_id] = subscription
 
 
+class FakePlatformAuditRecorder:
+    def __init__(self) -> None:
+        self.commands: list[RecordPlatformAuditEventCommand] = []
+
+    async def record_event(self, command: RecordPlatformAuditEventCommand) -> None:
+        self.commands.append(command)
+
+
 def _clock() -> datetime:
     return datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 
@@ -81,6 +92,7 @@ def _academy_admin_claims() -> AuthClaims:
 def _billing_use_cases(
     plans: FakePlanRepository,
     subscriptions: FakeTenantSubscriptionRepository,
+    audit: FakePlatformAuditRecorder | None = None,
 ) -> PlatformBillingUseCases:
     return PlatformBillingUseCases(
         list_plans=ListPlatformPlans(plans=plans),
@@ -91,6 +103,7 @@ def _billing_use_cases(
             subscriptions=subscriptions,
             id_factory=lambda: "platform-sub-1",
             clock=_clock,
+            audit_recorder=audit.record_event if audit else None,
         ),
         activate_subscription=ActivateTenantSubscription(
             plans=plans,
@@ -109,9 +122,15 @@ def _billing_use_cases(
 
 def _app(
     claims: AuthClaims,
-) -> tuple[FastAPI, FakePlanRepository, FakeTenantSubscriptionRepository]:
+) -> tuple[
+    FastAPI,
+    FakePlanRepository,
+    FakeTenantSubscriptionRepository,
+    FakePlatformAuditRecorder,
+]:
     plans = FakePlanRepository()
     subscriptions = FakeTenantSubscriptionRepository()
+    audit = FakePlatformAuditRecorder()
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(billing_router, prefix="/api/v2")
@@ -119,15 +138,18 @@ def _app(
     app.dependency_overrides[get_platform_billing] = lambda: _billing_use_cases(
         plans,
         subscriptions,
+        audit,
     )
-    return app, plans, subscriptions
+    return app, plans, subscriptions, audit
 
 
 @contextmanager
-def _client(claims: AuthClaims) -> Iterator[tuple[TestClient, FakePlanRepository]]:
-    app, plans, _subscriptions = _app(claims)
+def _client(
+    claims: AuthClaims,
+) -> Iterator[tuple[TestClient, FakePlanRepository, FakePlatformAuditRecorder]]:
+    app, plans, _subscriptions, audit = _app(claims)
     with TestClient(app) as client:
-        yield client, plans
+        yield client, plans, audit
 
 
 def _plan_payload(**overrides: object) -> dict[str, object]:
@@ -149,7 +171,7 @@ def _plan_payload(**overrides: object) -> dict[str, object]:
 
 
 def test_platform_admin_can_manage_billing_lifecycle_routes() -> None:
-    with _client(_platform_admin_claims()) as (client, _plans):
+    with _client(_platform_admin_claims()) as (client, _plans, _audit):
         created_plan = client.put(
             "/api/v2/platform/billing/plans/plan-growth",
             json=_plan_payload(),
@@ -206,7 +228,7 @@ def test_platform_admin_can_manage_billing_lifecycle_routes() -> None:
 
 
 def test_academy_admin_cannot_access_platform_billing_routes() -> None:
-    with _client(_academy_admin_claims()) as (client, _plans):
+    with _client(_academy_admin_claims()) as (client, _plans, _audit):
         list_response = client.get("/api/v2/platform/billing/plans")
         create_response = client.put(
             "/api/v2/platform/billing/plans/plan-growth",
@@ -219,3 +241,35 @@ def test_academy_admin_cannot_access_platform_billing_routes() -> None:
     assert list_response.status_code == 404
     assert create_response.status_code == 404
     assert subscription_response.status_code == 404
+
+
+def test_start_trial_route_emits_unified_platform_audit_event() -> None:
+    with _client(_platform_admin_claims()) as (client, _plans, audit):
+        created_plan = client.put(
+            "/api/v2/platform/billing/plans/plan-growth",
+            json=_plan_payload(),
+        )
+        trial = client.post(
+            "/api/v2/platform/billing/tenants/academy-1/trial",
+            json={
+                "plan_id": "plan-growth",
+                "trial_ends_at": (_clock() + timedelta(days=14)).isoformat(),
+            },
+            headers={"x-request-id": "req-platform-billing-1"},
+        )
+
+    assert created_plan.status_code == 200, created_plan.text
+    assert trial.status_code == 200, trial.text
+    assert len(audit.commands) == 1
+    event = audit.commands[0]
+    assert event.actor_user_id == "platform-admin"
+    assert event.actor_membership_id is None
+    assert event.platform_actor_role == "platform_admin"
+    assert event.academy_id == "academy-1"
+    assert event.action == "platform_billing.trial_started"
+    assert event.entity_type == "tenant_subscription"
+    assert event.entity_id == "platform-sub-1"
+    assert event.before_snapshot is None
+    assert event.after_snapshot is not None
+    assert event.after_snapshot["plan_id"] == "plan-growth"
+    assert event.request_id == "req-platform-billing-1"

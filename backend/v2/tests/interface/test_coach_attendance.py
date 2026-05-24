@@ -9,7 +9,7 @@ from __future__ import annotations
 def _payload(**overrides):
     base = {
         "mutation_id": "01HXMUT123",
-        "occurrence_id": "s-today-1:2026-05-16T09:00:00+00:00",
+        "occurrence_id": "occ-today-1",
         "session_id": "s-today-1",
         "student_id": "st1",
         "status": "present",

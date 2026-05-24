@@ -21,14 +21,14 @@ from backend.v2.contexts.coaching.application.use_cases.session_notes import (
 from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
     GetSessionRoster,
 )
-from backend.v2.contexts.enrollment.application.use_cases.list_coach_sessions_for_date import (
-    ListCoachSessionsForDate,
+from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences_for_date import (
+    ListCoachOccurrencesForDate,
 )
 
 
 @dataclass
 class CoachUseCases:
-    list_today: ListCoachSessionsForDate
+    list_today: ListCoachOccurrencesForDate
     get_roster: GetSessionRoster
     mark_attendance: MarkAttendance
     get_dashboard_metrics: object  # callable

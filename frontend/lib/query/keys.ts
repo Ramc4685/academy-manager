@@ -21,6 +21,8 @@ export const queryKeys = {
       ["admin", "students", params?.search ?? "", params?.status ?? "all", params?.limit ?? "default"] as const,
     studentDetail: (studentId: string) => ["admin", "student", studentId] as const,
     sessionDetail: (sessionId: string) => ["admin", "session", sessionId] as const,
+    sessionOccurrences: (sessionId: string) =>
+      ["admin", "session", sessionId, "occurrences"] as const,
     enrollments: (sessionId: string) => ["admin", "enrollments", sessionId] as const,
     waitlist: (sessionId: string) => ["admin", "waitlist", sessionId] as const,
     globalWaitlist: () => ["admin", "waitlist", "global"] as const,

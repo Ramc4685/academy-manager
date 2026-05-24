@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, time
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     CancelEnrollmentCommand,
@@ -21,6 +21,8 @@ from backend.v2.interfaces.admin.views import (
     AdminEnrollmentList,
     AdminEnrollmentView,
     AdminSessionList,
+    AdminSessionOccurrenceList,
+    AdminSessionOccurrenceView,
     AdminSessionView,
     CreateSessionRequest,
     EditRosterAddRequest,
@@ -30,6 +32,7 @@ from backend.v2.interfaces.admin.views import (
     PauseEnrollmentRequest,
     RemoveEnrollmentRequest,
     TransferEnrollmentRequest,
+    UpdateSessionOccurrenceCoachRequest,
     WithdrawEnrollmentRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
@@ -103,6 +106,45 @@ async def cancel_session(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
     await use_cases.cancel_session.execute(CancelSessionCommand(session_id=session_id))
+
+
+@router.get(
+    "/sessions/{session_id}/occurrences",
+    response_model=AdminSessionOccurrenceList,
+    summary="List dated occurrences and coach assignment state for a session",
+)
+async def list_session_occurrences(
+    session_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminSessionOccurrenceList:
+    rows = await use_cases.list_session_occurrences(session_id)  # type: ignore[operator]
+    return AdminSessionOccurrenceList(
+        occurrences=[AdminSessionOccurrenceView(**row) for row in rows]
+    )
+
+
+@router.patch(
+    "/session-occurrences/{occurrence_id}/coach",
+    response_model=AdminSessionOccurrenceView,
+    summary="Override actual or substitute coach for a dated occurrence",
+)
+async def update_session_occurrence_coach(
+    occurrence_id: str,
+    body: UpdateSessionOccurrenceCoachRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminSessionOccurrenceView:
+    row = await use_cases.update_session_occurrence_coach(  # type: ignore[operator]
+        occurrence_id=occurrence_id,
+        actual_coach_id=body.actual_coach_id,
+        substitute_coach_id=body.substitute_coach_id,
+        actor_id=claims.user_id,
+        reason=body.reason,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Occurrence not found")
+    return AdminSessionOccurrenceView(**row)
 
 
 @router.get(

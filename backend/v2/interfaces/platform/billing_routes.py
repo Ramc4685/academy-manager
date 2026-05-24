@@ -145,7 +145,8 @@ async def get_tenant_subscription(
 async def start_trial(
     academy_id: str,
     payload: StartTrialRequest,
-    _: AuthClaims = Depends(require_platform_admin),
+    request: Request,
+    claims: AuthClaims = Depends(require_platform_admin),
     billing: PlatformBillingUseCases = Depends(get_platform_billing),
 ) -> TenantSubscriptionResponse:
     subscription = await billing.start_trial.execute(
@@ -153,6 +154,11 @@ async def start_trial(
             academy_id=academy_id,
             plan_id=payload.plan_id,
             trial_ends_at=payload.trial_ends_at,
+            actor_user_id=claims.user_id,
+            actor_membership_id=claims.membership_id,
+            platform_actor_role=_platform_role(claims),
+            request_id=_request_id(request),
+            ip_address=request.client.host if request.client else None,
         )
     )
     return _subscription_response(subscription)
@@ -248,3 +254,15 @@ def _limit_report_response(report: PlanLimitReport) -> PlanLimitReportResponse:
         allowed=report.allowed,
         violations=report.violations,
     )
+
+
+def _platform_role(claims: AuthClaims) -> str | None:
+    if claims.is_platform_admin():
+        return "platform_admin"
+    if claims.has_platform_role("platform_support"):
+        return "platform_support"
+    return None
+
+
+def _request_id(request: Request) -> str | None:
+    return request.headers.get("x-request-id") or getattr(request.state, "request_id", None)

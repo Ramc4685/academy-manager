@@ -3,7 +3,7 @@
   "sessions": [
     {
       "session_id": "s-today-1",
-      "occurrence_id": "s-today-1:2026-05-16T09:00:00Z",
+      "occurrence_id": "occ-today-1",
       "title": "Junior A",
       "location": "Court 1",
       "start_at": "2026-05-16T09:00:00Z",
@@ -15,7 +15,7 @@
     },
     {
       "session_id": "s-today-2",
-      "occurrence_id": "s-today-2:2026-05-16T18:00:00Z",
+      "occurrence_id": "occ-today-2",
       "title": "Adult B",
       "location": "Court 2",
       "start_at": "2026-05-16T18:00:00Z",
