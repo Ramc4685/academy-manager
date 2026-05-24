@@ -299,8 +299,11 @@ test.describe("Rally admin shell", () => {
     await expect(page).toHaveURL(/\/admin\/settings\?panel=academy$/);
 
     for (const panel of SETTINGS_PANELS) {
-      await page.getByRole("button", { name: panel.label }).click();
+      const tab = page.getByRole("button", { name: panel.label, exact: true });
+      await tab.scrollIntoViewIfNeeded();
+      await tab.click();
       await expect(page).toHaveURL(new RegExp(`panel=${panel.key}`));
+      await expect(tab).toHaveAttribute("aria-pressed", "true");
       await expect(page.getByTestId(panel.testid)).toBeVisible();
     }
     expect(errors, `App console errors on settings: ${errors.join("\n")}`).toEqual([]);
