@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field, field_validator
 
 from backend.v2.contexts.platform.application.ports import TenantLifecycleRepository
+from backend.v2.contexts.platform.audit.application.use_cases import (
+    RecordPlatformAuditEventCommand,
+)
 from backend.v2.contexts.platform.domain.errors import (
     TenantAlreadyExists,
     TenantInvalidTransition,
@@ -15,6 +19,13 @@ from backend.v2.contexts.platform.domain.errors import (
 )
 from backend.v2.contexts.platform.domain.models import Tenant, TenantHealth, TenantLimits
 from backend.v2.shared.ids import new_ulid
+
+log = logging.getLogger(__name__)
+
+#: Async callable that persists a single platform_audit_events row.
+#: Provided by the composition root; injected into TenantLifecycleService
+#: so each state transition leaves an auditable trail (fixes #80).
+AuditRecorder = Callable[[RecordPlatformAuditEventCommand], Awaitable[None]]
 
 
 class CreateTenantCommand(BaseModel):
@@ -68,10 +79,51 @@ class TenantLifecycleService:
         tenants: TenantLifecycleRepository,
         id_factory: Callable[[str], str] | None = None,
         clock: Callable[[], datetime] | None = None,
+        audit_recorder: AuditRecorder | None = None,
     ) -> None:
         self._tenants = tenants
         self._id_factory = id_factory or (lambda prefix: f"{prefix}{new_ulid()}")
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._audit_recorder = audit_recorder
+
+    async def _emit_audit(
+        self,
+        *,
+        actor_user_id: str,
+        academy_id: str,
+        action: str,
+        entity_id: str,
+        before: Tenant | None,
+        after: Tenant,
+    ) -> None:
+        """Append one platform_audit_events row for a lifecycle transition.
+
+        Failures are logged but do not propagate — an audit gap must
+        never break the underlying state transition the caller is
+        depending on. The audit-emission outage is its own observability
+        signal.
+        """
+        if self._audit_recorder is None:
+            return
+        try:
+            await self._audit_recorder(
+                RecordPlatformAuditEventCommand(
+                    actor_user_id=actor_user_id,
+                    academy_id=academy_id,
+                    action=action,
+                    entity_type="tenant",
+                    entity_id=entity_id,
+                    before_snapshot=before.model_dump(mode="json") if before else None,
+                    after_snapshot=after.model_dump(mode="json"),
+                )
+            )
+        except Exception as exc:
+            log.warning(
+                "tenant_lifecycle_audit_emit_failed action=%s tenant=%s err=%s",
+                action,
+                entity_id,
+                exc,
+            )
 
     async def create_tenant(self, command: CreateTenantCommand) -> Tenant:
         if await self._tenants.get_by_slug(command.slug):
@@ -93,7 +145,16 @@ class TenantLifecycleService:
             created_at=now,
             updated_at=now,
         )
-        return await self._tenants.create(tenant)
+        created = await self._tenants.create(tenant)
+        await self._emit_audit(
+            actor_user_id=command.actor_user_id,
+            academy_id=created.academy_id,
+            action="tenant.created",
+            entity_id=created.academy_id,
+            before=None,
+            after=created,
+        )
+        return created
 
     async def get_tenant(self, academy_id: str) -> Tenant:
         tenant = await self._tenants.get_by_id(academy_id)
@@ -108,7 +169,7 @@ class TenantLifecycleService:
         tenant = await self.get_tenant(academy_id)
         self._require_status(tenant, {"provisioning"}, target_status="active")
         now = self._clock()
-        return await self._tenants.save(
+        saved = await self._tenants.save(
             tenant.model_copy(
                 update={
                     "status": "active",
@@ -119,6 +180,15 @@ class TenantLifecycleService:
                 }
             )
         )
+        await self._emit_audit(
+            actor_user_id=actor_user_id,
+            academy_id=academy_id,
+            action="tenant.activated",
+            entity_id=academy_id,
+            before=tenant,
+            after=saved,
+        )
+        return saved
 
     async def suspend_tenant(
         self,
@@ -130,7 +200,7 @@ class TenantLifecycleService:
         tenant = await self.get_tenant(academy_id)
         self._require_status(tenant, {"active"}, target_status="suspended")
         now = self._clock()
-        return await self._tenants.save(
+        saved = await self._tenants.save(
             tenant.model_copy(
                 update={
                     "status": "suspended",
@@ -141,6 +211,15 @@ class TenantLifecycleService:
                 }
             )
         )
+        await self._emit_audit(
+            actor_user_id=actor_user_id,
+            academy_id=academy_id,
+            action="tenant.suspended",
+            entity_id=academy_id,
+            before=tenant,
+            after=saved,
+        )
+        return saved
 
     async def cancel_tenant(
         self,
@@ -156,7 +235,7 @@ class TenantLifecycleService:
             target_status="cancelled",
         )
         now = self._clock()
-        return await self._tenants.save(
+        saved = await self._tenants.save(
             tenant.model_copy(
                 update={
                     "status": "cancelled",
@@ -167,12 +246,21 @@ class TenantLifecycleService:
                 }
             )
         )
+        await self._emit_audit(
+            actor_user_id=actor_user_id,
+            academy_id=academy_id,
+            action="tenant.cancelled",
+            entity_id=academy_id,
+            before=tenant,
+            after=saved,
+        )
+        return saved
 
     async def reactivate_tenant(self, academy_id: str, *, actor_user_id: str) -> Tenant:
         tenant = await self.get_tenant(academy_id)
         self._require_status(tenant, {"suspended", "cancelled"}, target_status="active")
         now = self._clock()
-        return await self._tenants.save(
+        saved = await self._tenants.save(
             tenant.model_copy(
                 update={
                     "status": "active",
@@ -183,6 +271,15 @@ class TenantLifecycleService:
                 }
             )
         )
+        await self._emit_audit(
+            actor_user_id=actor_user_id,
+            academy_id=academy_id,
+            action="tenant.reactivated",
+            entity_id=academy_id,
+            before=tenant,
+            after=saved,
+        )
+        return saved
 
     async def update_plan_limits(
         self,
@@ -193,7 +290,7 @@ class TenantLifecycleService:
         if tenant.status == "cancelled":
             raise TenantInvalidTransition("cannot update plan limits for a cancelled tenant")
         now = self._clock()
-        return await self._tenants.save(
+        saved = await self._tenants.save(
             tenant.model_copy(
                 update={
                     "plan_code": command.plan_code,
@@ -203,6 +300,15 @@ class TenantLifecycleService:
                 }
             )
         )
+        await self._emit_audit(
+            actor_user_id=command.actor_user_id,
+            academy_id=academy_id,
+            action="tenant.plan_updated",
+            entity_id=academy_id,
+            before=tenant,
+            after=saved,
+        )
+        return saved
 
     @staticmethod
     def _require_status(tenant: Tenant, allowed: set[str], *, target_status: str) -> None:
