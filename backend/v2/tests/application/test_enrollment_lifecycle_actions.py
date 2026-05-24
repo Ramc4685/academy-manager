@@ -11,6 +11,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     CancelEnrollmentCommand,
     PauseEnrollment,
     PauseEnrollmentCommand,
+    ResumeEnrollment,
     TransferEnrollment,
     TransferEnrollmentCommand,
     WithdrawEnrollment,
@@ -84,6 +85,30 @@ class FakeWaitlist:
 
     async def add(self, entry: WaitlistEntry) -> None:
         self.entries.append(entry)
+
+    async def find_waiting_for_session_student(
+        self, session_id: str, student_id: str
+    ) -> WaitlistEntry | None:
+        return next(
+            (
+                entry
+                for entry in self.entries
+                if entry.session_id == session_id
+                and entry.student_id == student_id
+                and entry.status == "waiting"
+            ),
+            None,
+        )
+
+    async def remove_waiting_for_session_student(self, session_id: str, student_id: str) -> None:
+        self.entries = [
+            entry.model_copy(update={"status": "removed"})
+            if entry.session_id == session_id
+            and entry.student_id == student_id
+            and entry.status == "waiting"
+            else entry
+            for entry in self.entries
+        ]
 
 
 @dataclass
@@ -192,6 +217,78 @@ async def test_pause_releases_seat_waitlists_student_and_records_effective_date(
     assert event.billing_policy == "release_seat_waitlist_stop_billing"
     assert event.billing_result == "future_billing_stopped"
     assert event.waitlist_id == waitlist.entries[0].waitlist_id
+
+
+@pytest.mark.asyncio
+async def test_resume_clears_pause_waitlist_and_reserves_seat() -> None:
+    enrollments = FakeEnrollments(rows={"enr-1": _enrollment("paused")})
+    sessions = FakeSessions(reserved={"sess-1": 0})
+    waitlist = FakeWaitlist(
+        entries=[
+            WaitlistEntry(
+                waitlist_id="wait-1",
+                academy_id="acad",
+                session_id="sess-1",
+                student_id="stu-1",
+                parent_id="parent-1",
+                joined_at=_now(),
+                status="waiting",
+            )
+        ]
+    )
+
+    use_case = ResumeEnrollment(
+        enrollments=enrollments,
+        sessions=sessions,
+        waitlist=waitlist,
+        enrollment_events=FakeEnrollmentEvents(),
+        clock=_now,
+    )
+
+    await use_case.execute("enr-1", actor_id="admin-1", reason="returning")
+
+    assert enrollments.rows["enr-1"].status == "active"
+    assert sessions.reserved["sess-1"] == 1
+    assert [entry.status for entry in waitlist.entries] == ["removed"]
+
+
+@pytest.mark.asyncio
+async def test_pause_resume_pause_keeps_one_active_waitlist_row() -> None:
+    enrollments = FakeEnrollments(rows={"enr-1": _enrollment()})
+    sessions = FakeSessions()
+    waitlist = FakeWaitlist()
+    events = FakeEnrollmentEvents()
+    students = FakeStudents(
+        rows={
+            "stu-1": Student(
+                student_id="stu-1", academy_id="acad", parent_id="parent-1", full_name="Alice"
+            )
+        }
+    )
+    pause = PauseEnrollment(
+        enrollments=enrollments,
+        sessions=sessions,
+        students=students,
+        waitlist=waitlist,
+        enrollment_events=events,
+        clock=_now,
+    )
+    resume = ResumeEnrollment(
+        enrollments=enrollments,
+        sessions=sessions,
+        waitlist=waitlist,
+        enrollment_events=events,
+        clock=_now,
+    )
+
+    await pause.execute(PauseEnrollmentCommand(enrollment_id="enr-1", actor_id="admin-1"))
+    await resume.execute("enr-1", actor_id="admin-1")
+    await pause.execute(PauseEnrollmentCommand(enrollment_id="enr-1", actor_id="admin-1"))
+
+    waiting = [entry for entry in waitlist.entries if entry.status == "waiting"]
+    assert len(waiting) == 1
+    assert waiting[0].student_id == "stu-1"
+    assert sessions.reserved["sess-1"] == 0
 
 
 @pytest.mark.asyncio

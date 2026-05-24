@@ -479,6 +479,8 @@ def compose_admin(
     )
     resume_enrollment = ResumeEnrollment(
         enrollments=enrollments_w,
+        sessions=sessions_w,
+        waitlist=waitlist,
         enrollment_events=enrollment_events,
     )
     withdraw_enrollment = WithdrawEnrollment(
@@ -701,7 +703,7 @@ def compose_admin(
 
     async def list_admin_enrollments_for_session(session_id: str):
         cursor = enrollments_r._find_many(  # type: ignore[attr-defined]
-            {"session_id": session_id, "status": {"$in": ["active", "paused"]}},
+            {"session_id": session_id, "status": "active"},
             sort=[("created_at", 1), ("enrollment_id", 1)],
         )
         enrollment_docs = [doc async for doc in cursor]

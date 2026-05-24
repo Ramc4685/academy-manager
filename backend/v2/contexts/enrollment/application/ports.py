@@ -111,6 +111,14 @@ class WaitlistRepository(Protocol):
 
     async def update_status(self, waitlist_id: str, status: str) -> None: ...
 
+    async def find_waiting_for_session_student(
+        self, session_id: str, student_id: str
+    ) -> WaitlistEntry | None: ...
+
+    async def remove_waiting_for_session_student(
+        self, session_id: str, student_id: str
+    ) -> None: ...
+
 
 class EnrollmentEventRepository(Protocol):
     async def record(self, event: EnrollmentLifecycleEvent) -> None: ...

@@ -1182,3 +1182,29 @@ agent_communication:
       Waitlist promotion now reserves a session seat and creates an active enrollment for the promoted student. If the student already has a paused enrollment in the same session, promotion resumes that enrollment instead of creating a duplicate. Active waitlist APIs now hide non-waiting rows so previously promoted entries do not remain in the Waitlist section.
 
       Verification passed: first added regression test failed with zero enrollments after promotion; after implementation, focused waitlist/event/handler suite passed with 16 passed and 7 existing mongomock datetime warnings; full backend v2 suite passed with 550 passed and 7 existing warnings; ruff check and ruff format --check passed on touched v2 files; scripts/dev/saas_staging.sh up rebuilt the local Docker SaaS stack; full scripts/smoke/saas_readiness_smoke.sh passed; local BLNO Docker data was manually reset for Tara's waitlist row and POST /api/v2/admin/sessions/sess_blno_match_sat/waitlist/promote returned wait_tara_match, after which Tara appeared in roster as active and the waitlist API returned empty.
+  - agent: "main"
+    message: |
+      Follow-up bugfix for issue #98 on branch feat/fix-promoted-waitlist-roster after manual BLNO testing found repeated Pause/Resume created duplicate Tara waitlist rows.
+
+      Root cause: Pause released the seat and always inserted a new waiting row; Resume only changed the enrollment status to active and did not reserve the seat or clear pause-created waiting rows. Resume now reserves the seat and removes all waiting rows for the same session/student. Pause reuses an existing waiting row if one already exists instead of adding another duplicate.
+
+      Verification passed: new lifecycle tests first failed because ResumeEnrollment had no session/waitlist dependencies; after implementation, focused lifecycle/admin waitlist suite passed with 30 passed; full backend v2 suite passed with 552 passed and 7 existing warnings; ruff check and ruff format --check passed on touched v2 files; scripts/dev/saas_staging.sh up rebuilt the local Docker SaaS stack; full scripts/smoke/saas_readiness_smoke.sh passed. Local BLNO verification: before resume, Tara had three waiting rows; POST /api/v2/admin/enrollments/01KSAG3G4N22NNQ5PNSR5MJA1E/resume returned 204, Tara became active, and the session waitlist API returned empty.
+  - agent: "main"
+    message: |
+      Second follow-up for issue #98 on branch feat/fix-promoted-waitlist-roster after manual BLNO testing clarified expected roster counts: Pause should remove the student from the active roster count and move them to Waitlist; Resume or Promote should put them back in roster and remove the waitlist row.
+
+      Root cause: production admin session detail composition queried both active and paused enrollments for the roster list, while the UI displayed roster count from that list. Paused enrollments were correctly releasing seats, but still appeared in the roster card. The session detail page also refreshed only roster after Resume, not Waitlist.
+
+      Changes: admin session roster query now returns active enrollments only; added structural and route regression coverage for active-only roster policy; session detail Resume now invalidates roster, waitlist, and session list queries.
+
+      Verification passed: structural regression first failed on the active+paused query; focused roster/lifecycle tests passed with 18 passed; full backend v2 suite passed with 553 passed and 7 existing warnings; frontend pnpm typecheck and pnpm build passed; ruff check and format checks passed; scripts/dev/saas_staging.sh up rebuilt local Docker SaaS stack; full scripts/smoke/saas_readiness_smoke.sh passed. Local BLNO verification against sess_blno_match_sat: before roster=2/waitlist=0; after pausing Leela roster=1/waitlist=1; after resuming Leela roster=2/waitlist=0.
+  - agent: "main"
+    message: |
+      PR #100 review follow-up on branch feat/fix-promoted-waitlist-roster.
+
+      Addressed two unresolved Codex review threads: MongoEnrollmentWriter.find_for_session_student now deterministically prefers active/default-active enrollments, then paused enrollments, before falling back to historical rows, so waitlist promotion resumes a paused enrollment even when an older cancelled row exists. Admin waitlist normalization now recomputes positions after filtering out promoted/removed/skipped rows so visible waiting entries start at position 1.
+
+      TDD verification: test_find_for_session_student_prefers_resumable_enrollment first failed by returning enr-cancelled instead of enr-paused; test_normalize_waitlist_recomputes_positions_after_filtering first failed with visible position 2 instead of 1. After implementation both tests passed. Focused backend suite passed: pytest v2/tests/interface/test_admin_waitlist.py v2/tests/contract/test_mongo_enrollment_writer.py v2/tests/interface/test_admin_sessions.py v2/tests/application/test_enrollment_lifecycle_actions.py -q returned 29 passed.
+  - agent: "main"
+    message: |
+      PR #100 merge-conflict follow-up: merged current origin/main into feat/fix-promoted-waitlist-roster and resolved conflicts by preserving the deterministic Mongo enrollment lookup plus the PR #100 test_result handoff notes. Post-merge focused verification passed: pytest v2/tests/interface/test_admin_waitlist.py v2/tests/contract/test_mongo_enrollment_writer.py v2/tests/interface/test_admin_sessions.py v2/tests/application/test_enrollment_lifecycle_actions.py -q returned 29 passed; ruff check and ruff format --check passed on touched v2 files via uv-provided ruff==0.6.9 because this worktree venv does not include Ruff; git diff --check passed.

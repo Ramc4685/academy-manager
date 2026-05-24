@@ -62,5 +62,12 @@ class MongoEnrollmentWriter(TenantScopedRepository):
         return self._to_domain(doc) if doc else None
 
     async def find_for_session_student(self, session_id: str, student_id: str) -> Enrollment | None:
-        doc = await self._find_one({"session_id": session_id, "student_id": student_id})
+        base_filter = {"session_id": session_id, "student_id": student_id}
+        doc = await self._find_one({**base_filter, "status": "active"})
+        if doc is None:
+            doc = await self._find_one({**base_filter, "status": {"$exists": False}})
+        if doc is None:
+            doc = await self._find_one({**base_filter, "status": "paused"})
+        if doc is None:
+            doc = await self._find_one(base_filter)
         return self._to_domain(doc) if doc else None
