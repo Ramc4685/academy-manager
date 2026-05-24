@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from backend.v2.contexts.enrollment.domain.models import Enrollment
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
+from backend.v2.interfaces.admin.waitlist_routes import _normalize_waitlist_entries
 
 
 def _add(seed, waitlist_id: str, joined_at: datetime, status: str = "waiting"):
@@ -44,6 +45,36 @@ def test_list_global_waitlist_groups_waiting_entries(admin_client):
         "w1",
         "w2",
     ]
+
+
+def test_normalize_waitlist_recomputes_positions_after_filtering():
+    joined_at = datetime(2026, 5, 16, 8, 0, tzinfo=UTC)
+
+    rows = _normalize_waitlist_entries(
+        [
+            {
+                "waitlist_id": "promoted",
+                "session_id": "sess-1",
+                "student_id": "st-promoted",
+                "parent_id": "p-promoted",
+                "joined_at": joined_at,
+                "status": "promoted",
+                "position": 1,
+            },
+            {
+                "waitlist_id": "waiting",
+                "session_id": "sess-1",
+                "student_id": "st-waiting",
+                "parent_id": "p-waiting",
+                "joined_at": joined_at,
+                "status": "waiting",
+                "position": 2,
+            },
+        ]
+    )
+
+    assert [row.waitlist_id for row in rows] == ["waiting"]
+    assert [row.position for row in rows] == [1]
 
 
 def test_list_waitlist_wrong_persona_404(coach_on_admin_client):

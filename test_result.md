@@ -1085,3 +1085,10 @@ agent_communication:
       Changes: admin session roster query now returns active enrollments only; added structural and route regression coverage for active-only roster policy; session detail Resume now invalidates roster, waitlist, and session list queries.
 
       Verification passed: structural regression first failed on the active+paused query; focused roster/lifecycle tests passed with 18 passed; full backend v2 suite passed with 553 passed and 7 existing warnings; frontend pnpm typecheck and pnpm build passed; ruff check and format checks passed; scripts/dev/saas_staging.sh up rebuilt local Docker SaaS stack; full scripts/smoke/saas_readiness_smoke.sh passed. Local BLNO verification against sess_blno_match_sat: before roster=2/waitlist=0; after pausing Leela roster=1/waitlist=1; after resuming Leela roster=2/waitlist=0.
+  - agent: "main"
+    message: |
+      PR #100 review follow-up on branch feat/fix-promoted-waitlist-roster.
+
+      Addressed two unresolved Codex review threads: MongoEnrollmentWriter.find_for_session_student now deterministically prefers active/default-active enrollments, then paused enrollments, before falling back to historical rows, so waitlist promotion resumes a paused enrollment even when an older cancelled row exists. Admin waitlist normalization now recomputes positions after filtering out promoted/removed/skipped rows so visible waiting entries start at position 1.
+
+      TDD verification: test_find_for_session_student_prefers_resumable_enrollment first failed by returning enr-cancelled instead of enr-paused; test_normalize_waitlist_recomputes_positions_after_filtering first failed with visible position 2 instead of 1. After implementation both tests passed. Focused backend suite passed: pytest v2/tests/interface/test_admin_waitlist.py v2/tests/contract/test_mongo_enrollment_writer.py v2/tests/interface/test_admin_sessions.py v2/tests/application/test_enrollment_lifecycle_actions.py -q returned 29 passed.

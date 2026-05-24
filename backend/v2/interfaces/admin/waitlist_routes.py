@@ -81,7 +81,7 @@ def _normalize_waitlist_entries(entries: object) -> list[AdminWaitlistEntry]:
         AdminWaitlistEntry(
             **{
                 **row,
-                "position": int(row.get("position") or idx),
+                "position": idx,
                 "full_name": str(row.get("full_name") or "(unknown)"),
                 "added_at": row.get("added_at") or row["joined_at"],
             }
