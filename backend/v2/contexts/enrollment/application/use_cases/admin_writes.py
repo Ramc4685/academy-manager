@@ -469,22 +469,28 @@ class PauseEnrollment:
         if self._sessions is not None:
             await self._sessions.release_seat(e.session_id)
         if self._waitlist is not None:
-            parent_id = ""
-            if self._students is not None:
-                students = await self._students.by_ids([e.student_id])
-                if students:
-                    parent_id = students[0].parent_id
-            entry = WaitlistEntry(
-                waitlist_id=str(new_ulid()),
-                academy_id=e.academy_id,
-                session_id=e.session_id,
-                student_id=e.student_id,
-                parent_id=parent_id,
-                joined_at=now,
-                status="waiting",
+            existing_waitlist = await self._waitlist.find_waiting_for_session_student(
+                e.session_id, e.student_id
             )
-            await self._waitlist.add(entry)
-            waitlist_id = entry.waitlist_id
+            if existing_waitlist is not None:
+                waitlist_id = existing_waitlist.waitlist_id
+            else:
+                parent_id = ""
+                if self._students is not None:
+                    students = await self._students.by_ids([e.student_id])
+                    if students:
+                        parent_id = students[0].parent_id
+                entry = WaitlistEntry(
+                    waitlist_id=str(new_ulid()),
+                    academy_id=e.academy_id,
+                    session_id=e.session_id,
+                    student_id=e.student_id,
+                    parent_id=parent_id,
+                    joined_at=now,
+                    status="waiting",
+                )
+                await self._waitlist.add(entry)
+                waitlist_id = entry.waitlist_id
         await _record_lifecycle_event(
             self._enrollment_events,
             academy_id=e.academy_id,
@@ -570,10 +576,14 @@ class ResumeEnrollment:
     def __init__(
         self,
         enrollments: EnrollmentWriter,
+        sessions: SessionWriter | None = None,
+        waitlist: WaitlistRepository | None = None,
         enrollment_events: EnrollmentEventRepository | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
+        self._sessions = sessions
+        self._waitlist = waitlist
         self._enrollment_events = enrollment_events
         self._now = clock
 
@@ -589,7 +599,15 @@ class ResumeEnrollment:
             raise EnrollmentNotFound("enrollment missing")
         if e.status != "paused":
             return
+        if self._sessions is not None:
+            reserved = await self._sessions.try_reserve_seat(e.session_id)
+            if not reserved:
+                from backend.v2.contexts.enrollment.domain.errors import CapacityExceeded
+
+                raise CapacityExceeded("session full", session_id=e.session_id)
         await self._enrollments.update_status(e.enrollment_id, "active")
+        if self._waitlist is not None:
+            await self._waitlist.remove_waiting_for_session_student(e.session_id, e.student_id)
         now = self._now()
         await _record_lifecycle_event(
             self._enrollment_events,

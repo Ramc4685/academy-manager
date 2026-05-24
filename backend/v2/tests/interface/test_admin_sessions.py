@@ -122,10 +122,37 @@ def test_pause_and_resume_enrollment(admin_client):
     )
     assert p.status_code == 204
     assert admin_client.seed["enrollments"].rows[enrollment_id].status == "paused"
+    paused_listing = admin_client.get("/api/v2/admin/sessions/sess-1/enrollments").json()
+    assert paused_listing["enrollments"] == []
+    waiting = [
+        entry
+        for entry in admin_client.seed["waitlist"].entries.values()
+        if entry.student_id == "st-1" and entry.status == "waiting"
+    ]
+    assert len(waiting) == 1
 
     res = admin_client.post(f"/api/v2/admin/enrollments/{enrollment_id}/resume")
     assert res.status_code == 204
     assert admin_client.seed["enrollments"].rows[enrollment_id].status == "active"
+    resumed_listing = admin_client.get("/api/v2/admin/sessions/sess-1/enrollments").json()
+    assert [entry["enrollment_id"] for entry in resumed_listing["enrollments"]] == [enrollment_id]
+    assert [
+        entry
+        for entry in admin_client.seed["waitlist"].entries.values()
+        if entry.student_id == "st-1" and entry.status == "waiting"
+    ] == []
+
+    p2 = admin_client.post(
+        f"/api/v2/admin/enrollments/{enrollment_id}/pause",
+        json={"effective_date": "2026-05-21", "reason": "second temporary pause"},
+    )
+    assert p2.status_code == 204
+    waiting_after_second_pause = [
+        entry
+        for entry in admin_client.seed["waitlist"].entries.values()
+        if entry.student_id == "st-1" and entry.status == "waiting"
+    ]
+    assert len(waiting_after_second_pause) == 1
 
 
 def test_transfer_enrollment_reserves_target_and_releases_source(admin_client):

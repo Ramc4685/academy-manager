@@ -37,3 +37,17 @@ class MongoWaitlistRepository(TenantScopedRepository):
 
     async def update_status(self, waitlist_id: str, status: str) -> None:
         await self._update_one({"waitlist_id": waitlist_id}, {"$set": {"status": status}})
+
+    async def find_waiting_for_session_student(
+        self, session_id: str, student_id: str
+    ) -> WaitlistEntry | None:
+        doc = await self._find_one(
+            {"session_id": session_id, "student_id": student_id, "status": "waiting"}
+        )
+        return self._to_domain(doc) if doc else None
+
+    async def remove_waiting_for_session_student(self, session_id: str, student_id: str) -> None:
+        await self.collection.update_many(
+            self._scoped({"session_id": session_id, "student_id": student_id, "status": "waiting"}),
+            {"$set": {"status": "removed"}},
+        )
