@@ -43,6 +43,21 @@ async function stubMe(page: Page) {
   });
 }
 
+async function stubAdminAcademy(page: Page) {
+  await page.route(/\/api\/v2\/admin\/academy(?:\?.*)?$/, (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, {
+      academy_id: "academy-e2e",
+      display_name: "Academy E2E",
+      timezone: "UTC",
+      contact_email: null,
+      contact_phone: null,
+      hours_text: null,
+      address: null,
+    });
+  });
+}
+
 test.describe("admin students", () => {
   test("searches, filters, and loads the next cursor using BFF-rendered attendance and dues", async ({
     page,
@@ -50,6 +65,7 @@ test.describe("admin students", () => {
     const errors = collectConsoleErrors(page);
     const requests: string[] = [];
     await stubMe(page);
+    await stubAdminAcademy(page);
     await page.route("**/api/v2/admin/students*", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       const url = new URL(route.request().url());
@@ -175,6 +191,7 @@ test.describe("admin students", () => {
 
   test("shows a truthful empty state", async ({ page }) => {
     await stubMe(page);
+    await stubAdminAcademy(page);
     await page.route("**/api/v2/admin/students*", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, { students: [], next_cursor: null });
@@ -186,6 +203,7 @@ test.describe("admin students", () => {
 
   test("shows a truthful error state", async ({ page }) => {
     await stubMe(page);
+    await stubAdminAcademy(page);
     await page.route("**/api/v2/admin/students*", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, { error: { message: "boom" } }, 500);
