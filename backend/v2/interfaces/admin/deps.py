@@ -74,6 +74,9 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     ListAdminUsers,
     UpdateAdminUser,
 )
+from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
+    ManageAdminWaiverTemplates,
+)
 from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
     ListAdminWaivers,
 )
@@ -126,6 +129,8 @@ class AdminUseCases:
     revenue_query: AcademyRevenueQuery
     # reads
     list_admin_sessions: object  # callable
+    list_session_occurrences: object  # async (session_id: str) -> list[dict]
+    update_session_occurrence_coach: object  # async (...) -> dict | None
     list_admin_enrollments_for_session: object  # callable
     list_waitlist_for_session: object  # callable
     list_audit_logs: object  # callable
@@ -151,6 +156,7 @@ class AdminUseCases:
     update_admin_user: UpdateAdminUser | None = None
     get_admin_student: GetAdminStudent | None = None
     update_admin_student: UpdateAdminStudent | None = None
+    manage_admin_waiver_templates: ManageAdminWaiverTemplates | None = None
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:

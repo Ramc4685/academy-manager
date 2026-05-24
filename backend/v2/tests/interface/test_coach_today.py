@@ -15,10 +15,7 @@ def test_coach_today_happy_path(coach_client):
     session_ids = [s["session_id"] for s in body["sessions"]]
     assert session_ids == ["s-today-1", "s-today-2"]
     occurrence_ids = [s["occurrence_id"] for s in body["sessions"]]
-    assert occurrence_ids == [
-        "s-today-1:2026-05-16T09:00:00+00:00",
-        "s-today-2:2026-05-16T18:00:00+00:00",
-    ]
+    assert occurrence_ids == ["occ-today-1", "occ-today-2"]
     # Coach BFF must not leak other coaches' sessions.
     assert "s-other-coach" not in session_ids
     # Roster is composed for assigned sessions.

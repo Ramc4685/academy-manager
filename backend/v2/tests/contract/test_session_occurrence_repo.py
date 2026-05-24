@@ -64,3 +64,38 @@ async def test_occurrence_repo_deduplicates_same_session_start(db) -> None:
         )
 
     assert [row.occurrence_id for row in rows] == ["occ-a"]
+
+
+@pytest.mark.asyncio
+async def test_occurrence_repo_lists_occurrences_assigned_to_coach_on_date(db) -> None:
+    await run_pending_migrations(db)
+
+    with tenant_scope("academy-a"):
+        repo = MongoSessionOccurrenceRepository(db)
+        await repo.save_many(
+            [
+                _occurrence("occ-scheduled", "academy-a", "sess-1"),
+                _occurrence("occ-actual", "academy-a", "sess-2").model_copy(
+                    update={"scheduled_coach_id": "coach-2", "actual_coach_id": "coach-1"}
+                ),
+                _occurrence("occ-sub", "academy-a", "sess-3").model_copy(
+                    update={"scheduled_coach_id": "coach-2", "substitute_coach_id": "coach-1"}
+                ),
+                _occurrence("occ-other", "academy-a", "sess-4").model_copy(
+                    update={"scheduled_coach_id": "coach-2"}
+                ),
+                _occurrence("occ-other-day", "academy-a", "sess-5").model_copy(
+                    update={
+                        "start_at": datetime(2026, 6, 2, 18, 0, tzinfo=UTC),
+                        "end_at": datetime(2026, 6, 2, 19, 0, tzinfo=UTC),
+                    }
+                ),
+            ]
+        )
+
+        rows = await repo.list_for_coach_on_date(
+            coach_id="coach-1",
+            on_date=datetime(2026, 6, 1, tzinfo=UTC).date(),
+        )
+
+    assert [row.occurrence_id for row in rows] == ["occ-scheduled", "occ-actual", "occ-sub"]

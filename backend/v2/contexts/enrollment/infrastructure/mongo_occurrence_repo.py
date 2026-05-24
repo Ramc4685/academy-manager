@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime, time
 from typing import Any
 
 from pymongo.errors import DuplicateKeyError
@@ -35,6 +36,39 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
         doc = await self._find_one({"occurrence_id": occurrence_id})
         return self._to_domain(doc) if doc else None
 
+    async def list_for_session(self, session_id: str) -> list[SessionOccurrence]:
+        cursor = self._find_many(
+            {
+                "$or": [
+                    {"session_id": session_id},
+                    {"template_session_id": session_id},
+                ]
+            },
+            sort=[("start_at", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
+    async def list_for_coach_on_date(
+        self,
+        *,
+        coach_id: str,
+        on_date: date,
+    ) -> list[SessionOccurrence]:
+        start, end = _day_bounds_utc(on_date)
+        cursor = self._find_many(
+            {
+                "start_at": {"$gte": start, "$lte": end},
+                "status": {"$ne": "cancelled"},
+                "$or": [
+                    {"scheduled_coach_id": coach_id},
+                    {"actual_coach_id": coach_id},
+                    {"substitute_coach_id": coach_id},
+                ],
+            },
+            sort=[("start_at", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def list_for_session_between(
         self,
         *,
@@ -58,6 +92,30 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
             except DuplicateKeyError:
                 continue
 
+    async def update_coach_assignment(
+        self,
+        *,
+        occurrence_id: str,
+        actual_coach_id: str | None = None,
+        substitute_coach_id: str | None = None,
+        assignment_reason: str | None = None,
+    ) -> SessionOccurrence | None:
+        update_fields: dict[str, Any] = {
+            "updated_at": datetime.now(UTC),
+        }
+        if actual_coach_id is not None:
+            update_fields["actual_coach_id"] = actual_coach_id
+        if substitute_coach_id is not None:
+            update_fields["substitute_coach_id"] = substitute_coach_id
+        if assignment_reason is not None:
+            update_fields["coach_assignment_reason"] = assignment_reason
+
+        await self._update_one(
+            {"occurrence_id": occurrence_id},
+            {"$set": update_fields},
+        )
+        return await self.get(occurrence_id)
+
 
 def _to_doc(occurrence: SessionOccurrence) -> dict[str, Any]:
     return {
@@ -74,6 +132,13 @@ def _to_doc(occurrence: SessionOccurrence) -> dict[str, Any]:
         "cancellation_reason": occurrence.cancellation_reason,
         "template_session_id": occurrence.template_session_id,
     }
+
+
+def _day_bounds_utc(on_date: date) -> tuple[datetime, datetime]:
+    return (
+        datetime.combine(on_date, time.min, tzinfo=UTC),
+        datetime.combine(on_date, time.max, tzinfo=UTC),
+    )
 
 
 def _optional_str(value: object | None) -> str | None:

@@ -100,6 +100,30 @@ class AdminSessionList(BaseModel):
     sessions: list[AdminSessionView]
 
 
+class AdminSessionOccurrenceView(BaseModel):
+    occurrence_id: str
+    session_id: str
+    start_at: datetime
+    end_at: datetime
+    status: Literal["scheduled", "cancelled", "completed"]
+    scheduled_coach_id: str
+    actual_coach_id: str | None = None
+    substitute_coach_id: str | None = None
+    attendance_marked_count: int = 0
+    attendance_marked_by: list[str] = Field(default_factory=list)
+    attendance_last_marked_at: datetime | None = None
+
+
+class AdminSessionOccurrenceList(BaseModel):
+    occurrences: list[AdminSessionOccurrenceView]
+
+
+class UpdateSessionOccurrenceCoachRequest(BaseModel):
+    actual_coach_id: str | None = None
+    substitute_coach_id: str | None = None
+    reason: str
+
+
 class CreateSessionRequest(BaseModel):
     coach_id: str
     title: str
@@ -503,6 +527,7 @@ class AdminMessageList(BaseModel):
 
 
 AdminWaiverStatus = Literal["signed", "pending", "expiring", "outdated"]
+AdminWaiverTemplateStatus = Literal["draft", "active", "superseded", "retired"]
 
 
 class AdminWaiverSummaryView(BaseModel):
@@ -548,6 +573,30 @@ class AdminWaiverList(BaseModel):
     summary: AdminWaiverSummaryView
     current_waiver: AdminWaiverDocumentView | None = None
     waivers: list[AdminWaiverStudentView] = []
+
+
+class AdminWaiverTemplateCreateRequest(BaseModel):
+    title: str
+    body: str | None = None
+    content: str | None = None
+
+
+class AdminWaiverTemplateManagementView(BaseModel):
+    waiver_template_id: str
+    title: str
+    body: str
+    status: AdminWaiverTemplateStatus
+    version: str | None = None
+    content_hash: str | None = None
+    effective_at: datetime | None = None
+    published_at: datetime | None = None
+    assigned_to_registration: bool = False
+    assigned_at: datetime | None = None
+    updated_at: datetime
+
+
+class AdminWaiverTemplateManagementList(BaseModel):
+    templates: list[AdminWaiverTemplateManagementView] = []
 
 
 class AdminWaiverTemplateDetailView(BaseModel):
@@ -674,6 +723,32 @@ class ReportsKpiResponse(BaseModel):
     attendance_rate_30d: float = 0.0
     dues_collected_mtd_cents: int = 0
     pending_waivers: int = 0
+
+
+class AdminReportsAttendanceSummary(BaseModel):
+    present_count: int = 0
+    recorded_count: int = 0
+    attendance_rate: float | None = None
+    empty: bool = True
+
+
+class AdminReportsSessionsSummary(BaseModel):
+    scheduled_count: int = 0
+    completed_count: int = 0
+    cancelled_count: int = 0
+    enrolled_seats: int = 0
+    capacity: int = 0
+    capacity_utilization: float | None = None
+    empty: bool = True
+
+
+class AdminReportsDashboardResponse(BaseModel):
+    period: str
+    cash_collected_cents: int = 0
+    outstanding_dues_cents: int = 0
+    attendance: AdminReportsAttendanceSummary = Field(default_factory=AdminReportsAttendanceSummary)
+    sessions: AdminReportsSessionsSummary = Field(default_factory=AdminReportsSessionsSummary)
+    empty_states: list[str] = []
 
 
 # --- Enrollment Events ---

@@ -231,6 +231,13 @@ async function stubParentBff(page: Page) {
   );
 }
 
+async function openAdminDrawer(page: Page) {
+  const button = page.getByTestId("admin-open-drawer");
+  await expect(button).toBeVisible();
+  await button.scrollIntoViewIfNeeded();
+  await button.click({ force: true });
+}
+
 test.describe("Rally admin shell", () => {
   test("admin shell uses academy display name without demo branding or internal IDs", async ({ page }) => {
     const errors = collectConsoleErrors(page);
@@ -240,7 +247,7 @@ test.describe("Rally admin shell", () => {
     await expect(page.getByTestId("tenant-switcher-single")).toContainText("Academy E2E", {
       timeout: 10_000,
     });
-    await page.getByTestId("admin-open-drawer").click();
+    await openAdminDrawer(page);
     const drawer = page.getByTestId("admin-mobile-drawer");
     await expect(drawer.getByText("Academy E2E")).toBeVisible();
     await expect(drawer.getByText("admin@example.com")).toBeVisible();
@@ -257,7 +264,7 @@ test.describe("Rally admin shell", () => {
     await stubAdminBff(page);
     await page.goto("/admin");
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
-    await page.getByTestId("admin-open-drawer").click();
+    await openAdminDrawer(page);
     const drawer = page.getByTestId("admin-mobile-drawer");
     await expect(drawer).toBeVisible();
     await expect(drawer.getByText("WORK", { exact: true })).toBeVisible();
@@ -299,8 +306,11 @@ test.describe("Rally admin shell", () => {
     await expect(page).toHaveURL(/\/admin\/settings\?panel=academy$/);
 
     for (const panel of SETTINGS_PANELS) {
-      await page.getByRole("button", { name: panel.label }).click();
+      const tab = page.getByRole("button", { name: panel.label, exact: true });
+      await tab.scrollIntoViewIfNeeded();
+      await tab.click();
       await expect(page).toHaveURL(new RegExp(`panel=${panel.key}`));
+      await expect(tab).toHaveAttribute("aria-pressed", "true");
       await expect(page.getByTestId(panel.testid)).toBeVisible();
     }
     expect(errors, `App console errors on settings: ${errors.join("\n")}`).toEqual([]);

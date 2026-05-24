@@ -24,6 +24,15 @@ class SessionQuery(Protocol):
 class SessionOccurrenceRepository(Protocol):
     async def get(self, occurrence_id: str) -> SessionOccurrence | None: ...
 
+    async def list_for_session(self, session_id: str) -> list[SessionOccurrence]: ...
+
+    async def list_for_coach_on_date(
+        self,
+        *,
+        coach_id: str,
+        on_date: date,
+    ) -> list[SessionOccurrence]: ...
+
     async def list_for_session_between(
         self,
         *,
@@ -33,6 +42,15 @@ class SessionOccurrenceRepository(Protocol):
     ) -> list[SessionOccurrence]: ...
 
     async def save_many(self, occurrences: list[SessionOccurrence]) -> None: ...
+
+    async def update_coach_assignment(
+        self,
+        *,
+        occurrence_id: str,
+        actual_coach_id: str | None = None,
+        substitute_coach_id: str | None = None,
+        assignment_reason: str | None = None,
+    ) -> SessionOccurrence | None: ...
 
 
 class EnrollmentQuery(Protocol):

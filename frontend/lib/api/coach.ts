@@ -19,6 +19,7 @@ export interface CoachRosterEntry {
 
 export interface CoachSession {
   session_id: string;
+  occurrence_id: string;
   title: string;
   location: string;
   start_at: string;
@@ -41,6 +42,7 @@ export interface CoachDashboardResponse {
 
 export interface MarkAttendanceRequest {
   mutation_id: string;
+  occurrence_id: string;
   session_id: string;
   student_id: string;
   status: AttendanceStatus;
@@ -50,6 +52,7 @@ export interface MarkAttendanceRequest {
 
 export interface MarkAttendanceResponse {
   attendance_id: string;
+  occurrence_id: string;
   session_id: string;
   student_id: string;
   status: AttendanceStatus;

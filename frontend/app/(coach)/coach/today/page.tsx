@@ -53,7 +53,7 @@ export default function CoachTodayPage() {
 
       <ul className="space-y-3" data-testid="session-list">
         {sessions.map((s) => (
-          <li key={s.session_id}>
+          <li key={s.occurrence_id}>
             <Link
               href={`/coach/sessions/${s.session_id}` as Parameters<typeof Link>[0]["href"]}
               className="block rounded-lg border border-neutral-200 bg-white p-4 hover:border-blue-400 dark:border-neutral-800 dark:bg-neutral-900"

@@ -5,6 +5,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from mongomock_motor import AsyncMongoMockClient
 
+from backend.v2.contexts.platform.audit.application.use_cases import (
+    RecordPlatformAuditEventCommand,
+)
 from backend.v2.contexts.platform.billing.application.use_cases.manage_platform_billing import (
     ActivateTenantSubscription,
     ActivateTenantSubscriptionCommand,
@@ -14,11 +17,15 @@ from backend.v2.contexts.platform.billing.application.use_cases.manage_platform_
     ScheduleTenantCancellationCommand,
     StartTenantTrial,
     StartTenantTrialCommand,
+    UpsertPlatformPlanCommand,
 )
 from backend.v2.contexts.platform.billing.domain.models import (
     PlanLimits,
     PlatformPlan,
     TenantSubscription,
+)
+from backend.v2.contexts.platform.billing.infrastructure.composition import (
+    build_platform_billing_use_cases,
 )
 from backend.v2.contexts.platform.billing.infrastructure.mongo_repositories import (
     MongoPlatformPlanRepository,
@@ -45,6 +52,14 @@ class FakeTenantSubscriptionRepository:
     async def save(self, subscription: TenantSubscription) -> None:
         self.saved.append(subscription)
         self.by_academy[subscription.academy_id] = subscription
+
+
+class FakePlatformAuditRecorder:
+    def __init__(self) -> None:
+        self.commands: list[RecordPlatformAuditEventCommand] = []
+
+    async def record_event(self, command: RecordPlatformAuditEventCommand) -> None:
+        self.commands.append(command)
 
 
 def _clock() -> datetime:
@@ -99,6 +114,50 @@ async def test_start_trial_creates_platform_subscription_without_tuition_fields(
 
     tuition_fields = {"parent_id", "student_id", "enrollment_id", "session_id"}
     assert tuition_fields.isdisjoint(TenantSubscription.model_fields)
+
+
+@pytest.mark.asyncio
+async def test_start_trial_emits_unified_platform_audit_event() -> None:
+    plans = FakePlanRepository([_plan()])
+    subscriptions = FakeTenantSubscriptionRepository()
+    audit = FakePlatformAuditRecorder()
+    trial_ends_at = _clock() + timedelta(days=14)
+
+    result = await StartTenantTrial(
+        plans=plans,
+        subscriptions=subscriptions,
+        id_factory=lambda: "platform-sub-1",
+        clock=_clock,
+        audit_recorder=audit.record_event,
+    ).execute(
+        StartTenantTrialCommand(
+            academy_id="academy-1",
+            plan_id="plan-growth",
+            trial_ends_at=trial_ends_at,
+            actor_user_id="platform-admin-1",
+            actor_membership_id="platform-membership-1",
+            platform_actor_role="platform_admin",
+            request_id="req-123",
+            ip_address="203.0.113.10",
+        )
+    )
+
+    assert result.subscription_id == "platform-sub-1"
+    assert len(audit.commands) == 1
+    event = audit.commands[0]
+    assert event.actor_user_id == "platform-admin-1"
+    assert event.actor_membership_id == "platform-membership-1"
+    assert event.platform_actor_role == "platform_admin"
+    assert event.academy_id == "academy-1"
+    assert event.action == "platform_billing.trial_started"
+    assert event.entity_type == "tenant_subscription"
+    assert event.entity_id == "platform-sub-1"
+    assert event.before_snapshot is None
+    assert event.after_snapshot is not None
+    assert event.after_snapshot["billing_status"] == "trialing"
+    assert event.after_snapshot["trial_ends_at"] == "2026-06-15T12:00:00Z"
+    assert event.request_id == "req-123"
+    assert event.ip_address == "203.0.113.10"
 
 
 @pytest.mark.asyncio
@@ -250,3 +309,44 @@ async def test_mongo_repositories_persist_platform_plans_and_tenant_subscription
     assert listed_plans == [plan]
     assert stored_subscription == subscription
     assert await db["subscriptions"].count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+async def test_composed_start_trial_writes_platform_audit_events_collection() -> None:
+    client = AsyncMongoMockClient()
+    db = client["academy_manager_test"]
+    use_cases = build_platform_billing_use_cases(db)
+    await use_cases.upsert_plan.execute(
+        UpsertPlatformPlanCommand(
+            plan_id="plan-growth",
+            code="growth",
+            display_name="Growth",
+            monthly_price_cents=29_900,
+            limits=PlanLimits(
+                max_active_students=250,
+                max_locations=2,
+                max_staff_members=12,
+            ),
+            status="active",
+        )
+    )
+
+    await use_cases.start_trial.execute(
+        StartTenantTrialCommand(
+            academy_id="academy-1",
+            plan_id="plan-growth",
+            trial_ends_at=_clock() + timedelta(days=14),
+            actor_user_id="platform-admin-1",
+            platform_actor_role="platform_admin",
+        )
+    )
+
+    audit_doc = await db["platform_audit_events"].find_one(
+        {"action": "platform_billing.trial_started"}
+    )
+    assert audit_doc is not None
+    assert audit_doc["actor_user_id"] == "platform-admin-1"
+    assert audit_doc["platform_actor_role"] == "platform_admin"
+    assert audit_doc["academy_id"] == "academy-1"
+    assert audit_doc["entity_type"] == "tenant_subscription"
+    assert audit_doc["after_snapshot"]["billing_status"] == "trialing"

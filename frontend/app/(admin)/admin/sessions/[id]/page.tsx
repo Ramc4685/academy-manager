@@ -19,6 +19,7 @@ import {
   listAdminUsers,
   listAdminStudents,
   listSessionEnrollments,
+  listSessionOccurrences,
   listSessionWaitlist,
   listEnrollmentEvents,
   createEnrollment,
@@ -29,6 +30,7 @@ import {
   withdrawEnrollment,
   deleteAdminSession,
   updateAdminSession,
+  updateSessionOccurrenceCoach,
   promoteWaitlist,
   approveWithdrawalCredit,
   previewWithdrawalCredit,
@@ -37,6 +39,7 @@ import {
   deleteWaitlistEntry,
   type AdminEnrollmentView,
   type AdminEnrollmentQuote,
+  type AdminSessionOccurrenceView,
   type EnrollmentStatus,
   type AdminSessionView,
   type AdminUserView,
@@ -88,6 +91,7 @@ export default function AdminSessionDetailPage() {
   const [removeTarget, setRemoveTarget] = useState<AdminEnrollmentView | null>(null);
   const [transferTarget, setTransferTarget] = useState<AdminEnrollmentView | null>(null);
   const [withdrawalTarget, setWithdrawalTarget] = useState<AdminEnrollmentView | null>(null);
+  const [occurrenceTarget, setOccurrenceTarget] = useState<AdminSessionOccurrenceView | null>(null);
 
   const sessionsQuery = useQuery({
     queryKey: queryKeys.admin.sessionDetail(sessionId),
@@ -101,6 +105,16 @@ export default function AdminSessionDetailPage() {
   const enrollmentsQuery = useQuery({
     queryKey: queryKeys.admin.enrollments(sessionId),
     queryFn: () => listSessionEnrollments(sessionId),
+  });
+
+  const occurrencesQuery = useQuery({
+    queryKey: queryKeys.admin.sessionOccurrences(sessionId),
+    queryFn: () => listSessionOccurrences(sessionId),
+  });
+
+  const usersQuery = useQuery({
+    queryKey: queryKeys.admin.users(),
+    queryFn: () => listAdminUsers(),
   });
 
   const waitlistQuery = useQuery({
@@ -125,6 +139,10 @@ export default function AdminSessionDetailPage() {
 
   const session = sessionsQuery.data ?? null;
   const enrollments = enrollmentsQuery.data?.enrollments ?? [];
+  const occurrences = occurrencesQuery.data?.occurrences ?? [];
+  const userNameById = new Map(
+    (usersQuery.data?.users ?? []).map((user) => [user.user_id, user.display_name || user.email])
+  );
   const waitlist = waitlistQuery.data?.waitlist ?? [];
   const waitingCount = waitlist.filter((w) => w.status === "waiting").length;
 
@@ -188,10 +206,26 @@ export default function AdminSessionDetailPage() {
         </div>
       </div>
 
+      {/* Occurrences */}
+      <Card p={20}>
+        <LaneHeader index="01" title="Occurrences" />
+        {occurrencesQuery.isLoading ? (
+          <TableSkeleton />
+        ) : occurrences.length === 0 ? (
+          <p className="text-sm text-rally-subtle">No dated occurrences found.</p>
+        ) : (
+          <OccurrenceTable
+            occurrences={occurrences}
+            userNameById={userNameById}
+            onEdit={setOccurrenceTarget}
+          />
+        )}
+      </Card>
+
       {/* Roster */}
       <Card p={20}>
         <LaneHeader
-          index="01"
+          index="02"
           title="Roster"
           action={
             session && (
@@ -228,7 +262,7 @@ export default function AdminSessionDetailPage() {
       {/* Waitlist */}
       <Card p={20}>
         <LaneHeader
-          index="02"
+          index="03"
           title="Waitlist"
           action={
             <Button
@@ -283,6 +317,16 @@ export default function AdminSessionDetailPage() {
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions() });
         }}
       />
+      <OccurrenceCoachDialog
+        occurrence={occurrenceTarget}
+        onClose={() => setOccurrenceTarget(null)}
+        onSaved={() => {
+          setOccurrenceTarget(null);
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.admin.sessionOccurrences(sessionId),
+          });
+        }}
+      />
       <TransferEnrollmentDialog
         enrollment={transferTarget}
         currentSessionId={sessionId}
@@ -324,6 +368,207 @@ export default function AdminSessionDetailPage() {
         }}
       />
     </section>
+  );
+}
+
+function OccurrenceTable({
+  occurrences,
+  userNameById,
+  onEdit,
+}: {
+  occurrences: AdminSessionOccurrenceView[];
+  userNameById: Map<string, string>;
+  onEdit: (occurrence: AdminSessionOccurrenceView) => void;
+}) {
+  const coachLabel = (coachId: string | null | undefined, fallback: string) =>
+    coachId ? userNameById.get(coachId) ?? fallback : "-";
+  const markerLabel = (markerId: string) => userNameById.get(markerId) ?? "Staff member";
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-sm">
+        <thead>
+          <tr className="border-b border-rally-line text-xs uppercase tracking-wide text-rally-muted">
+            <Th>Date</Th>
+            <Th>Scheduled</Th>
+            <Th>Actual</Th>
+            <Th>Substitute</Th>
+            <Th>Attendance</Th>
+            <Th>Action</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {occurrences.map((occurrence) => (
+            <tr key={occurrence.occurrence_id} className="border-b border-rally-line/60">
+              <td className="py-3 pr-4">
+                <p className="font-medium text-rally-ink">
+                  {new Date(occurrence.start_at).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </p>
+                <p className="text-xs text-rally-muted">
+                  {new Date(occurrence.start_at).toLocaleTimeString(undefined, {
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                  {" - "}
+                  {new Date(occurrence.end_at).toLocaleTimeString(undefined, {
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                </p>
+              </td>
+              <td className="py-3 pr-4 text-rally-muted">
+                {coachLabel(occurrence.scheduled_coach_id, "Scheduled coach")}
+              </td>
+              <td className="py-3 pr-4 text-rally-muted">
+                {coachLabel(occurrence.actual_coach_id, "Assigned coach")}
+              </td>
+              <td className="py-3 pr-4 text-rally-muted">
+                {coachLabel(occurrence.substitute_coach_id, "Substitute coach")}
+              </td>
+              <td className="py-3 pr-4 text-rally-muted">
+                {occurrence.attendance_marked_count > 0 ? (
+                  <div className="space-y-1">
+                    <p>{occurrence.attendance_marked_count} marks</p>
+                    <p className="text-xs">
+                      By{" "}
+                      {occurrence.attendance_marked_by.map(markerLabel).join(", ") ||
+                        "staff member"}
+                    </p>
+                    <p className="text-xs">
+                      {occurrence.attendance_last_marked_at
+                        ? new Date(occurrence.attendance_last_marked_at).toLocaleString()
+                        : "Time not recorded"}
+                    </p>
+                  </div>
+                ) : (
+                  "Not marked"
+                )}
+              </td>
+              <td className="py-3">
+                <Button variant="secondary" size="sm" onClick={() => onEdit(occurrence)}>
+                  Change coach
+                </Button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function OccurrenceCoachDialog({
+  occurrence,
+  onClose,
+  onSaved,
+}: {
+  occurrence: AdminSessionOccurrenceView | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [coachId, setCoachId] = useState("");
+  const [substituteCoachId, setSubstituteCoachId] = useState("");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const coachesQuery = useQuery({
+    queryKey: queryKeys.admin.users("coach"),
+    queryFn: () => listAdminUsers("coach"),
+    enabled: Boolean(occurrence),
+  });
+  const coaches = coachesQuery.data?.users ?? [];
+
+  useEffect(() => {
+    if (!occurrence) return;
+    setCoachId(occurrence.actual_coach_id ?? occurrence.scheduled_coach_id);
+    setSubstituteCoachId(occurrence.substitute_coach_id ?? "");
+    setReason("");
+    setError(null);
+  }, [occurrence]);
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      updateSessionOccurrenceCoach(occurrence!.occurrence_id, {
+        actual_coach_id: coachId,
+        substitute_coach_id: substituteCoachId || null,
+        reason,
+      }),
+    onSuccess: onSaved,
+    onError: (err: Error) => setError(err.message ?? "Failed to update occurrence."),
+  });
+
+  return (
+    <RallyDialog
+      open={Boolean(occurrence)}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      title="Change occurrence coach"
+      description="Set the actual coach for this dated class occurrence."
+      overline="Occurrence"
+    >
+      {error && <DialogError message={error} />}
+      <form
+        className="space-y-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          mutation.mutate();
+        }}
+      >
+        <Field label="Actual coach">
+          {coaches.length > 0 ? (
+            <CoachSelect coaches={coaches} value={coachId} onChange={setCoachId} />
+          ) : (
+            <input
+              value={coachId}
+              onChange={(event) => setCoachId(event.target.value)}
+              className={inputClass}
+              placeholder={coachesQuery.isLoading ? "Loading coaches..." : "Coach reference"}
+            />
+          )}
+        </Field>
+        <Field label="Substitute coach">
+          {coaches.length > 0 ? (
+            <CoachSelect
+              coaches={coaches}
+              value={substituteCoachId}
+              onChange={setSubstituteCoachId}
+            />
+          ) : (
+            <input
+              value={substituteCoachId}
+              onChange={(event) => setSubstituteCoachId(event.target.value)}
+              className={inputClass}
+              placeholder={coachesQuery.isLoading ? "Loading coaches..." : "Optional substitute"}
+            />
+          )}
+        </Field>
+        <Field label="Reason">
+          <input
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            required
+            className={inputClass}
+            placeholder="Schedule change, substitute, correction"
+          />
+        </Field>
+        <DialogActions>
+          <Button variant="secondary" size="sm" type="button" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            type="submit"
+            disabled={mutation.isPending || !coachId || !reason.trim()}
+          >
+            {mutation.isPending ? "Saving..." : "Save"}
+          </Button>
+        </DialogActions>
+      </form>
+    </RallyDialog>
   );
 }
 

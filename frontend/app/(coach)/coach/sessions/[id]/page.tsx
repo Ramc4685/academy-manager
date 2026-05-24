@@ -91,6 +91,7 @@ export default function SessionDetailPage({ params }: PageProps) {
     mutationFn: async (vars: { student_id: string; status: AttendanceStatus }) => {
       const payload = {
         mutation_id: ulid(),
+        occurrence_id: session?.occurrence_id ?? "",
         session_id: id,
         student_id: vars.student_id,
         status: vars.status,
@@ -113,6 +114,7 @@ export default function SessionDetailPage({ params }: PageProps) {
       void syncNow();
       return {
         attendance_id: payload.mutation_id,
+        occurrence_id: payload.occurrence_id,
         session_id: payload.session_id,
         student_id: payload.student_id,
         status: payload.status,

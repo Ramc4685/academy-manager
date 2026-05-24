@@ -26,10 +26,15 @@ from backend.v2.contexts.coaching.application.use_cases.session_notes import (
 from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
     GetSessionRoster,
 )
-from backend.v2.contexts.enrollment.application.use_cases.list_coach_sessions_for_date import (
-    ListCoachSessionsForDate,
+from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences_for_date import (
+    ListCoachOccurrencesForDate,
 )
-from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, Student
+from backend.v2.contexts.enrollment.domain.models import (
+    Enrollment,
+    Session,
+    SessionOccurrence,
+    Student,
+)
 from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
@@ -74,6 +79,33 @@ class FakeStudentQuery:
 
     async def by_ids(self, student_ids: list[str]) -> list[Student]:
         return [self._by_id[s] for s in student_ids if s in self._by_id]
+
+
+class FakeOccurrenceQuery:
+    def __init__(self, occurrences: list[SessionOccurrence]) -> None:
+        self._occurrences = occurrences
+
+    async def get(self, occurrence_id: str) -> SessionOccurrence | None:
+        for occurrence in self._occurrences:
+            if occurrence.occurrence_id == occurrence_id:
+                return occurrence
+        return None
+
+    async def list_for_coach_on_date(
+        self, *, coach_id: str, on_date: date
+    ) -> list[SessionOccurrence]:
+        return [
+            occurrence
+            for occurrence in self._occurrences
+            if occurrence.start_at.date() == on_date
+            and occurrence.status != "cancelled"
+            and coach_id
+            in {
+                occurrence.scheduled_coach_id,
+                occurrence.actual_coach_id,
+                occurrence.substitute_coach_id,
+            }
+        ]
 
 
 class FakeAttendanceRepo:
@@ -209,10 +241,44 @@ def seed():
         Student(student_id="st1", academy_id="test-academy", parent_id="p1", full_name="Alice"),
         Student(student_id="st2", academy_id="test-academy", parent_id="p2", full_name="Bob"),
     ]
+    occurrences = [
+        SessionOccurrence(
+            occurrence_id="occ-today-1",
+            academy_id="test-academy",
+            session_id="occurrence-session-1",
+            template_session_id="s-today-1",
+            start_at=datetime(2026, 5, 16, 9, 0, tzinfo=UTC),
+            end_at=datetime(2026, 5, 16, 10, 30, tzinfo=UTC),
+            status="scheduled",
+            scheduled_coach_id="coach-1",
+        ),
+        SessionOccurrence(
+            occurrence_id="occ-today-2",
+            academy_id="test-academy",
+            session_id="occurrence-session-2",
+            template_session_id="s-today-2",
+            start_at=datetime(2026, 5, 16, 18, 0, tzinfo=UTC),
+            end_at=datetime(2026, 5, 16, 19, 30, tzinfo=UTC),
+            status="scheduled",
+            scheduled_coach_id="coach-2",
+            actual_coach_id="coach-1",
+        ),
+        SessionOccurrence(
+            occurrence_id="occ-other-coach",
+            academy_id="test-academy",
+            session_id="occurrence-session-3",
+            template_session_id="s-other-coach",
+            start_at=datetime(2026, 5, 16, 12, 0, tzinfo=UTC),
+            end_at=datetime(2026, 5, 16, 13, 0, tzinfo=UTC),
+            status="scheduled",
+            scheduled_coach_id="coach-2",
+        ),
+    ]
     return {
         "sessions": sessions,
         "enrollments": enrollments,
         "students": students,
+        "occurrences": occurrences,
     }
 
 
@@ -247,6 +313,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
     sessions = FakeSessionQuery(seed_data["sessions"])
     enrollments = FakeEnrollmentQuery(seed_data["enrollments"])
     students = FakeStudentQuery(seed_data["students"])
+    occurrences = FakeOccurrenceQuery(seed_data["occurrences"])
 
     # Adapters wiring coach lookups to enrollment queries.
     class _SL:
@@ -266,16 +333,18 @@ def _build_use_cases(seed_data) -> CoachUseCases:
 
     class _OL:
         async def get(self, occurrence_id):
-            session_id = occurrence_id.split(":", 1)[0]
-            s = await sessions.get(session_id)
-            if s is None:
+            occurrence = await occurrences.get(occurrence_id)
+            if occurrence is None:
                 return None
             return OccurrenceDetails(
                 occurrence_id=occurrence_id,
-                session_id=s.session_id,
-                starts_at=s.start_at,
-                status=s.status,
-                scheduled_coach_id=s.coach_id,
+                session_id=occurrence.session_id,
+                starts_at=occurrence.start_at,
+                status=occurrence.status,
+                scheduled_coach_id=occurrence.scheduled_coach_id,
+                actual_coach_id=occurrence.actual_coach_id,
+                substitute_coach_id=occurrence.substitute_coach_id,
+                template_session_id=occurrence.template_session_id,
             )
 
     class _EL:
@@ -294,7 +363,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
     notes = FakeCoachingNotesRepo()
     session_lookup = _SL()
     return CoachUseCases(
-        list_today=ListCoachSessionsForDate(sessions=sessions),
+        list_today=ListCoachOccurrencesForDate(occurrences=occurrences, sessions=sessions),
         get_roster=GetSessionRoster(enrollments=enrollments, students=students),
         mark_attendance=MarkAttendance(
             attendance_repo=FakeAttendanceRepo(),
@@ -516,6 +585,38 @@ class FakeSessionWriter:
 
     async def update(self, session):
         self.sessions[session.session_id] = session
+
+
+@dataclass
+class FakeAdminOccurrenceRepo:
+    rows: dict[str, SessionOccurrence] = field(default_factory=dict)
+
+    async def list_for_session(self, session_id: str) -> list[SessionOccurrence]:
+        return [
+            occurrence
+            for occurrence in sorted(self.rows.values(), key=lambda row: row.start_at)
+            if occurrence.session_id == session_id or occurrence.template_session_id == session_id
+        ]
+
+    async def update_coach_assignment(
+        self,
+        *,
+        occurrence_id: str,
+        actual_coach_id: str | None = None,
+        substitute_coach_id: str | None = None,
+        assignment_reason: str | None = None,
+    ) -> SessionOccurrence | None:
+        _ = assignment_reason
+        occurrence = self.rows.get(occurrence_id)
+        if occurrence is None:
+            return None
+        update: dict[str, str] = {}
+        if actual_coach_id is not None:
+            update["actual_coach_id"] = actual_coach_id
+        if substitute_coach_id is not None:
+            update["substitute_coach_id"] = substitute_coach_id
+        self.rows[occurrence_id] = occurrence.model_copy(update=update)
+        return self.rows[occurrence_id]
 
 
 @dataclass
@@ -978,6 +1079,7 @@ def _now() -> datetime:
 def admin_seed():
     sessions = FakeSessionWriter()
     enrollments = FakeEnrollmentWriter()
+    occurrences = FakeAdminOccurrenceRepo()
     sessions.sessions["sess-1"] = Session(
         session_id="sess-1",
         academy_id="acad",
@@ -989,8 +1091,18 @@ def admin_seed():
         capacity=8,
         status="scheduled",
     )
+    occurrences.rows["occ-admin-1"] = SessionOccurrence(
+        occurrence_id="occ-admin-1",
+        academy_id="acad",
+        session_id="sess-1",
+        start_at=datetime(2026, 5, 16, 9, 0, tzinfo=UTC),
+        end_at=datetime(2026, 5, 16, 10, 30, tzinfo=UTC),
+        status="scheduled",
+        scheduled_coach_id="coach-1",
+    )
     return {
         "sessions": sessions,
+        "occurrences": occurrences,
         "enrollments": enrollments,
         "enrollment_query": enrollments,
         "enrollment_events": FakeEnrollmentEvents(),
@@ -1012,6 +1124,7 @@ def admin_seed():
 
 def _build_admin_use_cases(seed) -> AdminUseCases:
     sessions = seed["sessions"]
+    occurrences = seed["occurrences"]
     enrollments_w = seed["enrollments"]
     enrollments_q = seed["enrollment_query"]
     enrollment_events = seed["enrollment_events"]
@@ -1130,6 +1243,41 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                 }
             )
         return out
+
+    async def _occurrence_row(occurrence):
+        return {
+            "occurrence_id": occurrence.occurrence_id,
+            "session_id": occurrence.template_session_id or occurrence.session_id,
+            "start_at": occurrence.start_at,
+            "end_at": occurrence.end_at,
+            "status": occurrence.status,
+            "scheduled_coach_id": occurrence.scheduled_coach_id,
+            "actual_coach_id": occurrence.actual_coach_id,
+            "substitute_coach_id": occurrence.substitute_coach_id,
+            "attendance_marked_count": 0,
+            "attendance_marked_by": [],
+            "attendance_last_marked_at": None,
+        }
+
+    async def list_session_occurrences(session_id):
+        rows = await occurrences.list_for_session(session_id)
+        return [await _occurrence_row(row) for row in rows]
+
+    async def update_session_occurrence_coach(
+        *,
+        occurrence_id,
+        actual_coach_id,
+        substitute_coach_id,
+        actor_id,
+        reason,
+    ):
+        _ = (actor_id, reason)
+        row = await occurrences.update_coach_assignment(
+            occurrence_id=occurrence_id,
+            actual_coach_id=actual_coach_id,
+            substitute_coach_id=substitute_coach_id,
+        )
+        return None if row is None else await _occurrence_row(row)
 
     async def list_waitlist_for_session(session_id):
         return [e for e in waitlist.entries.values() if e.session_id == session_id]
@@ -1311,6 +1459,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         payouts=payouts,  # type: ignore[arg-type]
         revenue_query=revenue_query,
         list_admin_sessions=list_admin_sessions,
+        list_session_occurrences=list_session_occurrences,
+        update_session_occurrence_coach=update_session_occurrence_coach,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
         list_audit_logs=list_audit_logs,

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
+from backend.v2.contexts.platform.audit.application.use_cases import (
+    RecordPlatformAuditEventCommand,
+)
 from backend.v2.contexts.platform.billing.application.ports import (
     PlatformPlanRepository,
     TenantSubscriptionRepository,
@@ -20,6 +24,10 @@ from backend.v2.contexts.platform.billing.domain.models import (
 )
 from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.ids import new_ulid
+
+log = logging.getLogger(__name__)
+
+AuditRecorder = Callable[[RecordPlatformAuditEventCommand], Awaitable[object]]
 
 
 class PlatformPlanNotFound(DomainError):
@@ -52,6 +60,11 @@ class StartTenantTrialCommand(BaseModel):
     academy_id: str = Field(min_length=1)
     plan_id: str = Field(min_length=1)
     trial_ends_at: datetime
+    actor_user_id: str | None = Field(default=None, min_length=1)
+    actor_membership_id: str | None = None
+    platform_actor_role: str | None = None
+    request_id: str | None = None
+    ip_address: str | None = None
 
 
 class ActivateTenantSubscriptionCommand(BaseModel):
@@ -130,11 +143,13 @@ class StartTenantTrial:
         subscriptions: TenantSubscriptionRepository,
         id_factory: Callable[[], str] | None = None,
         clock: Callable[[], datetime] | None = None,
+        audit_recorder: AuditRecorder | None = None,
     ) -> None:
         self._plans = plans
         self._subscriptions = subscriptions
         self._id_factory = id_factory or (lambda: f"platform_sub_{new_ulid()}")
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._audit_recorder = audit_recorder
 
     async def execute(self, command: StartTenantTrialCommand) -> TenantSubscription:
         plan = await _require_active_plan(self._plans, command.plan_id)
@@ -160,7 +175,41 @@ class StartTenantTrial:
             updated_at=now,
         )
         await self._subscriptions.save(subscription)
+        await self._emit_audit(command=command, before=existing, after=subscription)
         return subscription
+
+    async def _emit_audit(
+        self,
+        *,
+        command: StartTenantTrialCommand,
+        before: TenantSubscription | None,
+        after: TenantSubscription,
+    ) -> None:
+        if self._audit_recorder is None or command.actor_user_id is None:
+            return
+        try:
+            await self._audit_recorder(
+                RecordPlatformAuditEventCommand(
+                    actor_user_id=command.actor_user_id,
+                    actor_membership_id=command.actor_membership_id,
+                    academy_id=command.academy_id,
+                    platform_actor_role=command.platform_actor_role,
+                    action="platform_billing.trial_started",
+                    entity_type="tenant_subscription",
+                    entity_id=after.subscription_id,
+                    before_snapshot=before.model_dump(mode="json") if before else None,
+                    after_snapshot=after.model_dump(mode="json"),
+                    request_id=command.request_id,
+                    ip_address=command.ip_address,
+                )
+            )
+        except Exception as exc:
+            log.warning(
+                "platform_billing_audit_emit_failed action=%s academy=%s err=%s",
+                "platform_billing.trial_started",
+                command.academy_id,
+                exc,
+            )
 
 
 class ActivateTenantSubscription:

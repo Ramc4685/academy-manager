@@ -48,12 +48,14 @@ async def get_today(
     sessions = await use_cases.list_today.execute(claims.user_id, target_date)
 
     # Fan-out roster fetches concurrently.
-    rosters = await asyncio.gather(*[use_cases.get_roster.execute(s.session_id) for s in sessions])
+    rosters = await asyncio.gather(
+        *[use_cases.get_roster.execute(s.roster_session_id) for s in sessions]
+    )
 
     out = [
         CoachSession(
             session_id=s.session_id,
-            occurrence_id=f"{s.session_id}:{s.start_at.isoformat()}",
+            occurrence_id=s.occurrence_id,
             title=s.title,
             location=s.location,
             start_at=s.start_at,

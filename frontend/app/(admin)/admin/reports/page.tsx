@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
-import { exportAdminReportCsv, getAdminReportKpis, getRevenue } from "@/lib/api/admin";
+import { exportAdminReportCsv, getAdminReportsDashboard, getRevenue } from "@/lib/api/admin";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 import { MiniBars } from "@/components/ds/charts";
@@ -29,15 +29,16 @@ const REPORTS = [
 
 export default function AdminReportsPage() {
   const [preview, setPreview] = useState<{ title: string; csv: string } | null>(null);
+  const [period, setPeriod] = useState(() => currentPeriod());
 
   const revenueQuery = useQuery({
     queryKey: ["admin", "revenue"],
     queryFn: getRevenue,
   });
 
-  const kpiQuery = useQuery({
-    queryKey: ["admin", "reports", "kpis"],
-    queryFn: getAdminReportKpis,
+  const dashboardQuery = useQuery({
+    queryKey: ["admin", "reports", "dashboard", period],
+    queryFn: () => getAdminReportsDashboard(period),
   });
 
   const exportMutation = useMutation({
@@ -57,34 +58,94 @@ export default function AdminReportsPage() {
   const latestMonth = last6Months.at(-1);
   const latestRevenue = latestMonth ? revenueByMonth[latestMonth] : null;
   const sixMonthRevenue = chartValues.reduce((total, value) => total + value, 0);
-  const kpis = kpiQuery.data;
+  const dashboard = dashboardQuery.data;
 
   return (
     <section data-testid="admin-reports" className="space-y-5">
       <div className="space-y-3">
-        <Overline>Dashboard</Overline>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <Overline>Owner dashboard</Overline>
+            <p className="mt-1 text-sm text-rally-subtle">
+              Finance and operations for the selected month.
+            </p>
+          </div>
+          <label className="flex flex-col gap-1 text-sm font-medium text-rally-ink">
+            Month
+            <input
+              type="month"
+              value={period}
+              onChange={(event) => setPeriod(event.target.value || currentPeriod())}
+              className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-accent focus:outline-none focus:ring-2 focus:ring-rally-accent/20 dark:bg-neutral-950"
+            />
+          </label>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <KpiCard
-            label="Active students"
-            value={kpis ? formatInteger(kpis.active_students) : kpiQuery.isLoading ? "Loading" : "No data"}
-            description="Students with at least one active enrollment."
+            label="Cash collected"
+            value={dashboard ? formatCurrency(dashboard.cash_collected_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            description="Recorded payments net of refunds for this period."
           />
           <KpiCard
-            label="Attendance rate (30d)"
-            value={kpis ? formatPercent(kpis.attendance_rate_30d) : kpiQuery.isLoading ? "Loading" : "No data"}
-            description="Present or late attendance marks across the last 30 days."
+            label="Outstanding dues"
+            value={dashboard ? formatCurrency(dashboard.outstanding_dues_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            description="Open or partially paid dues still requiring follow-up."
           />
           <KpiCard
-            label="Dues collected (MTD)"
-            value={kpis ? formatCurrency(kpis.dues_collected_mtd_cents) : kpiQuery.isLoading ? "Loading" : "No data"}
-            description="Paid tuition and dues recorded for the current month."
+            label="Attendance rate"
+            value={dashboard ? formatNullablePercent(dashboard.attendance.attendance_rate) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            description="Present or late marks out of recorded attendance."
           />
           <KpiCard
-            label="Pending waivers"
-            value={kpis ? formatInteger(kpis.pending_waivers) : kpiQuery.isLoading ? "Loading" : "No data"}
-            description="Active students without a current signed waiver record."
+            label="Capacity used"
+            value={dashboard ? formatNullablePercent(dashboard.sessions.capacity_utilization) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            description="Enrolled seats against scheduled and completed capacity."
           />
         </div>
+
+        {dashboardQuery.isError && (
+          <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+            Could not load the reports dashboard.
+          </p>
+        )}
+
+        {dashboard?.empty_states.length ? (
+          <Card p={20}>
+            <Overline>Empty states</Overline>
+            <ul className="mt-3 space-y-2 text-sm text-rally-subtle">
+              {dashboard.empty_states.map((state) => (
+                <li key={state}>{state}</li>
+              ))}
+            </ul>
+          </Card>
+        ) : null}
+
+        <Card p={24} className="flex flex-col gap-6">
+          <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <Overline>Operations summary</Overline>
+              <div className="mt-2">
+                <BigNum size={32}>
+                  {dashboard ? formatInteger(dashboard.sessions.scheduled_count + dashboard.sessions.completed_count) : "No data"}
+                </BigNum>
+              </div>
+              <p className="text-sm text-neutral-500 mt-1">
+                Scheduled and completed sessions in {formatMonth(period)}.
+              </p>
+            </div>
+            <dl className="grid min-w-64 gap-3 sm:grid-cols-2">
+              <DashboardTerm label="Completed" value={dashboard ? formatInteger(dashboard.sessions.completed_count) : "No data"} />
+              <DashboardTerm label="Cancelled" value={dashboard ? formatInteger(dashboard.sessions.cancelled_count) : "No data"} />
+              <DashboardTerm label="Seats" value={dashboard ? `${formatInteger(dashboard.sessions.enrolled_seats)} / ${formatInteger(dashboard.sessions.capacity)}` : "No data"} />
+              <DashboardTerm label="Attendance marks" value={dashboard ? formatInteger(dashboard.attendance.recorded_count) : "No data"} />
+            </dl>
+          </div>
+          <dl className="grid gap-3 border-t border-neutral-100 pt-4 sm:grid-cols-3">
+            <DashboardTerm label="Present / late" value={dashboard ? formatInteger(dashboard.attendance.present_count) : "No data"} />
+            <DashboardTerm label="Recorded attendance" value={dashboard ? formatInteger(dashboard.attendance.recorded_count) : "No data"} />
+            <DashboardTerm label="Period" value={formatMonth(period)} />
+          </dl>
+        </Card>
 
         <Card p={24} className="flex flex-col gap-6">
           <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
@@ -214,6 +275,10 @@ function formatPercent(value: number): string {
   }).format(value);
 }
 
+function formatNullablePercent(value: number | null): string {
+  return value == null ? "No records" : formatPercent(value);
+}
+
 function formatCurrency(cents: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
 }
@@ -224,6 +289,11 @@ function formatMonth(value: string) {
   return new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric" }).format(
     new Date(year, month - 1, 1),
   );
+}
+
+function currentPeriod() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function downloadCsv(title: string, csv: string) {
