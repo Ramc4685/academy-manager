@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     AdminStudentDetail,
+    AdminStudentParentChangeResult,
+    AdminStudentParentSummary,
 )
+from backend.v2.contexts.enrollment.domain.errors import StudentParentInvalidRole
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserDetail,
     AdminUserSummary,
@@ -14,6 +17,7 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
 class StudentDetailStub:
     def __init__(self) -> None:
         self.updated = None
+        self.parent_change = None
 
     async def execute(self, student_id, command=None):
         if command is not None:
@@ -46,6 +50,37 @@ class StudentDetailStub:
             level="beginner",
             notes="Bring water",
         )
+
+
+class StudentParentChangeStub:
+    def __init__(self) -> None:
+        self.command = None
+
+    async def execute(self, student_id, command):
+        self.command = command
+        return AdminStudentParentChangeResult(
+            student_id=student_id,
+            parent=AdminStudentParentSummary(
+                parent_id=command.parent_id,
+                display_name="Parent Two",
+                email="parent2@example.com",
+                phone="555-0202",
+            ),
+            previous_parent_id="parent-1",
+            warnings=["Historical billing, waiver, credit, and waitlist rows were not rewritten."],
+            impact_counts={
+                "payments": 2,
+                "waivers": 1,
+                "credits": 1,
+                "waitlist": 1,
+            },
+        )
+
+
+class StudentParentChangeErrorStub:
+    async def execute(self, student_id, command):
+        _ = (student_id, command)
+        raise StudentParentInvalidRole("user does not have parent role", parent_id="coach-1")
 
 
 class UserDetailStub:
@@ -121,6 +156,43 @@ def test_admin_can_get_and_update_student_detail(admin_client):
     assert stub.updated.reason == "Parent requested correction"
 
 
+def test_admin_can_change_student_parent(admin_client):
+    stub = StudentParentChangeStub()
+    admin_client.use_cases.change_admin_student_parent = stub  # type: ignore[attr-defined]
+
+    response = admin_client.post(
+        "/api/v2/admin/students/st-1/change-parent",
+        json={"parent_id": "parent-2", "reason": "Custody update"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["student_id"] == "st-1"
+    assert body["parent"]["parent_id"] == "parent-2"
+    assert body["parent"]["email"] == "parent2@example.com"
+    assert body["previous_parent_id"] == "parent-1"
+    assert body["impact_counts"]["payments"] == 2
+    assert stub.command.parent_id == "parent-2"
+    assert stub.command.actor_id == "u-admin"
+    assert stub.command.reason == "Custody update"
+
+
+def test_change_student_parent_returns_structured_validation_errors(admin_client):
+    admin_client.use_cases.change_admin_student_parent = StudentParentChangeErrorStub()  # type: ignore[attr-defined]
+
+    response = admin_client.post(
+        "/api/v2/admin/students/st-1/change-parent",
+        json={"parent_id": "coach-1", "reason": "Custody update"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"] == {
+        "code": "Enrollment.StudentParentInvalidRole",
+        "message": "user does not have parent role",
+        "details": {"parent_id": "coach-1"},
+    }
+
+
 def test_admin_can_get_and_update_user_detail(admin_client):
     stub = UserDetailStub()
     admin_client.use_cases.get_admin_user = stub  # type: ignore[attr-defined]
@@ -165,3 +237,10 @@ def test_role_change_uses_explicit_audit_context(admin_client):
 def test_user_and_student_detail_wrong_persona_404(coach_on_admin_client):
     assert coach_on_admin_client.get("/api/v2/admin/users/user-1").status_code == 404
     assert coach_on_admin_client.get("/api/v2/admin/students/st-1").status_code == 404
+    assert (
+        coach_on_admin_client.post(
+            "/api/v2/admin/students/st-1/change-parent",
+            json={"parent_id": "parent-2", "reason": "Custody update"},
+        ).status_code
+        == 404
+    )

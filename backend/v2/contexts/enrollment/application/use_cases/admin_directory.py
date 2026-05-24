@@ -59,6 +59,33 @@ class UpdateAdminStudentCommand(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
+class ChangeAdminStudentParentCommand(BaseModel):
+    model_config = {"frozen": True}
+
+    parent_id: str = Field(min_length=1, max_length=120)
+    actor_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class AdminStudentParentSummary(BaseModel):
+    model_config = {"frozen": True}
+
+    parent_id: str
+    display_name: str
+    email: str
+    phone: str | None = None
+
+
+class AdminStudentParentChangeResult(BaseModel):
+    model_config = {"frozen": True}
+
+    student_id: str
+    parent: AdminStudentParentSummary
+    previous_parent_id: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    impact_counts: dict[str, int] = Field(default_factory=dict)
+
+
 class AdminStudentPage(BaseModel):
     model_config = {"frozen": True}
 
@@ -112,6 +139,14 @@ class AdminStudentWriter(Protocol):
     ) -> AdminStudentDetail | None: ...
 
 
+class AdminStudentParentChanger(Protocol):
+    async def change_admin_student_parent(
+        self,
+        student_id: str,
+        command: ChangeAdminStudentParentCommand,
+    ) -> AdminStudentParentChangeResult | None: ...
+
+
 class ListAdminStudents:
     def __init__(self, students: AdminStudentDirectoryQuery) -> None:
         self._students = students
@@ -157,6 +192,23 @@ class UpdateAdminStudent:
         from backend.v2.contexts.enrollment.domain.errors import StudentNotFound
 
         updated = await self._students.update_admin_student(student_id, command)
+        if updated is None:
+            raise StudentNotFound("student not found")
+        return updated
+
+
+class ChangeAdminStudentParent:
+    def __init__(self, students: AdminStudentParentChanger) -> None:
+        self._students = students
+
+    async def execute(
+        self,
+        student_id: str,
+        command: ChangeAdminStudentParentCommand,
+    ) -> AdminStudentParentChangeResult:
+        from backend.v2.contexts.enrollment.domain.errors import StudentNotFound
+
+        updated = await self._students.change_admin_student_parent(student_id, command)
         if updated is None:
             raise StudentNotFound("student not found")
         return updated

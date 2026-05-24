@@ -2,8 +2,8 @@
 
 These exercise the load-bearing wiring that production cutover depends on:
 
-- Billing.PaymentSucceeded → Enrollment.ConfirmEnrollment + Onboarding state
-  transition (PENDING_APPROVAL).
+- Billing.PaymentSucceeded → Onboarding state transition (PENDING_APPROVAL);
+  admin approval owns enrollment creation.
 - Enrollment.CapacityExceeded → outbox event (auto-refund chain in Wave 2
   composition follows from here).
 - Enrollment.EnrollmentCancelled → Enrollment.PromoteFromWaitlist (FIFO).
@@ -126,12 +126,11 @@ async def _wire(
 
 
 @pytest.mark.asyncio
-async def test_on_payment_succeeded_handler_creates_enrollment(db, acad) -> None:
+async def test_on_payment_succeeded_handler_marks_application_pending_approval(db, acad) -> None:
     """The composition handler:
-    1. ConfirmEnrollment runs.
-    2. Session.reserved_seats increments.
-    3. An Enrollment row is created.
-    4. Outbox carries EnrollmentConfirmed for downstream handlers.
+    1. Moves the paid application to admin review.
+    2. Does not reserve a seat.
+    3. Does not create an enrollment before admin approval.
     """
     await _wire(db)
 
@@ -151,6 +150,21 @@ async def test_on_payment_succeeded_handler_creates_enrollment(db, acad) -> None
             "status": "scheduled",
         }
     )
+    now = datetime.now(UTC)
+    await db["onboarding_applications"].insert_one(
+        {
+            "application_id": "app-1",
+            "academy_id": "acad",
+            "parent_user_id": "parent-1",
+            "parent_email": "parent@example.com",
+            "status": "CHECKOUT_PENDING",
+            "selected_session_id": session_id,
+            "payment_id": "pay-1",
+            "expires_at": now,
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
     # Fire the handler the same way the dispatcher would.
     event = PaymentSucceeded(
         aggregate_id="pay-1",
@@ -168,24 +182,18 @@ async def test_on_payment_succeeded_handler_creates_enrollment(db, acad) -> None
 
     # Assertions.
     enrollments = [doc async for doc in db["enrollments"].find({})]
-    assert len(enrollments) == 1
-    assert enrollments[0]["session_id"] == session_id
-    assert enrollments[0]["status"] == "active"
+    assert enrollments == []
 
     session = await db["sessions"].find_one({"session_id": session_id})
-    assert session["reserved_seats"] == 1
+    assert session["reserved_seats"] == 0
 
-    # Outbox got the downstream EnrollmentConfirmed event.
-    outbox_events = [doc async for doc in db["outbox_events"].find({})]
-    names = [e["name"] for e in outbox_events]
-    assert "Enrollment.EnrollmentConfirmed" in names
+    application = await db["onboarding_applications"].find_one({"application_id": "app-1"})
+    assert application["status"] == "PENDING_APPROVAL"
 
 
 @pytest.mark.asyncio
-async def test_on_payment_succeeded_at_capacity_emits_capacity_exceeded(db, acad) -> None:
-    """When the session is full, ConfirmEnrollment writes CapacityExceeded
-    to the outbox (which the on_capacity_exceeded handler reacts to by
-    auto-refunding via the Billing IssueRefund use case)."""
+async def test_on_payment_succeeded_at_capacity_still_defers_to_admin_review(db, acad) -> None:
+    """Capacity is evaluated by the admin approval use case, not checkout."""
     await _wire(db)
 
     # Seed a full session.
@@ -204,6 +212,21 @@ async def test_on_payment_succeeded_at_capacity_emits_capacity_exceeded(db, acad
             "status": "scheduled",
         }
     )
+    now = datetime.now(UTC)
+    await db["onboarding_applications"].insert_one(
+        {
+            "application_id": "app-2",
+            "academy_id": "acad",
+            "parent_user_id": "parent-2",
+            "parent_email": "parent2@example.com",
+            "status": "CHECKOUT_PENDING",
+            "selected_session_id": session_id,
+            "payment_id": "pay-2",
+            "expires_at": now,
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
 
     event = PaymentSucceeded(
         aggregate_id="pay-2",
@@ -217,16 +240,14 @@ async def test_on_payment_succeeded_at_capacity_emits_capacity_exceeded(db, acad
             succeeded_at=datetime.now(UTC),
         ),
     )
-    # The handler propagates the CapacityExceeded exception per its
-    # implementation (it logs and re-raises so the dispatcher can retry/
-    # dead-letter); the event is still appended to the outbox before
-    # the exception fires.
-    with pytest.raises(Exception):  # noqa: B017
-        await on_payment_succeeded(event)
+    await on_payment_succeeded(event)
 
     events = [doc async for doc in db["outbox_events"].find({})]
-    names = [e["name"] for e in events]
-    assert "Enrollment.CapacityExceeded" in names
+    assert events == []
+    enrollments = [doc async for doc in db["enrollments"].find({})]
+    assert enrollments == []
+    application = await db["onboarding_applications"].find_one({"application_id": "app-2"})
+    assert application["status"] == "PENDING_APPROVAL"
 
 
 @pytest.mark.asyncio

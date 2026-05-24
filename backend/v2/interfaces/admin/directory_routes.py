@@ -7,6 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    ChangeAdminStudentParentCommand,
     UpdateAdminStudentCommand,
     decode_student_cursor,
 )
@@ -20,10 +21,12 @@ from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
     AdminStudentDetailView,
     AdminStudentList,
+    AdminStudentParentChangeView,
     AdminStudentView,
     AdminUserDetailView,
     AdminUserList,
     AdminUserView,
+    ChangeAdminStudentParentRequest,
     UpdateAdminStudentRequest,
     UpdateAdminUserRequest,
     UpdateAdminUserRoleRequest,
@@ -171,3 +174,27 @@ async def update_student(
         ),
     )
     return AdminStudentDetailView(**student.model_dump())
+
+
+@router.post("/students/{student_id}/change-parent", response_model=AdminStudentParentChangeView)
+async def change_student_parent(
+    student_id: str,
+    payload: ChangeAdminStudentParentRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminStudentParentChangeView:
+    use_case = use_cases.change_admin_student_parent
+    if use_case is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Admin student parent change is not configured",
+        )
+    result = await use_case.execute(
+        student_id,
+        ChangeAdminStudentParentCommand(
+            parent_id=payload.parent_id,
+            actor_id=claims.user_id,
+            reason=payload.reason,
+        ),
+    )
+    return AdminStudentParentChangeView(**result.model_dump())

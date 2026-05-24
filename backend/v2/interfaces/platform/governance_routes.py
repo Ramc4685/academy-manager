@@ -168,6 +168,9 @@ def get_tenant_governance(request: Request) -> TenantGovernanceService:
     use_case = getattr(request.app.state, "tenant_governance", None)
     if use_case is None:
         raise HTTPException(status_code=503, detail="Tenant governance is not configured")
+    platform_audit = getattr(request.app.state, "platform_audit", None)
+    if platform_audit is not None and getattr(use_case, "_audit_recorder", None) is None:
+        use_case.configure_audit_recorder(platform_audit.record_event)
     return use_case  # type: ignore[no-any-return]
 
 

@@ -67,6 +67,26 @@ class UpdateAdminStudentRequest(BaseModel):
     reason: str = Field(default="admin profile update", min_length=1, max_length=500)
 
 
+class ChangeAdminStudentParentRequest(BaseModel):
+    parent_id: str = Field(min_length=1, max_length=120)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class AdminStudentParentSummaryView(BaseModel):
+    parent_id: str
+    display_name: str
+    email: EmailStr
+    phone: str | None = None
+
+
+class AdminStudentParentChangeView(BaseModel):
+    student_id: str
+    parent: AdminStudentParentSummaryView
+    previous_parent_id: str | None = None
+    warnings: list[str] = []
+    impact_counts: dict[str, int] = {}
+
+
 class UpdateAdminUserRequest(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=120)
     phone: str | None = Field(default=None, max_length=40)
@@ -432,6 +452,53 @@ class AdminPayoutList(BaseModel):  # FINANCE
     payouts: list[AdminPayoutView]
 
 
+class GeneratePayoutPeriodRequest(BaseModel):
+    coach_id: str
+    period_start: datetime
+    period_end: datetime
+
+
+class MarkPayoutPeriodPaidRequest(BaseModel):
+    method: Literal["bank_transfer", "cash", "check", "other"]
+    paid_at: datetime
+    amount_cents: int = Field(ge=0)
+    reference: str | None = None
+
+
+class AdminPayoutPeriodLineView(BaseModel):
+    occurrence_id: str
+    coach_id: str
+    basis: Literal["scheduled", "substitute", "actual"]
+    minutes: str
+    amount_cents: int
+    currency: str
+    rate_id: str
+
+
+class AdminPayoutPeriodView(BaseModel):
+    period_id: str
+    coach_id: str
+    period_start: datetime
+    period_end: datetime
+    status: Literal["draft", "approved", "paid"]
+    currency: str
+    total_amount_cents: int
+    lines: list[AdminPayoutPeriodLineView]
+    unpaid_occurrence_ids: list[str]
+    generated_at: datetime
+    approved_at: datetime | None = None
+    paid_at: datetime | None = None
+    paid_method: str | None = None
+    paid_amount_cents: int | None = None
+    paid_reference: str | None = None
+
+
+class AdminPayoutPayslipView(BaseModel):
+    printable: bool = True
+    period: AdminPayoutPeriodView
+    lines: list[AdminPayoutPeriodLineView]
+
+
 class AdminExpenseView(BaseModel):  # FINANCE
     expense_id: str
     category: str
@@ -611,6 +678,52 @@ class AdminWaiverTemplateDetailView(BaseModel):
     gap_note: str
 
 
+class AdminRegistrationRowView(BaseModel):
+    application_id: str
+    status: str
+    parent_email: str
+    parent_name: str | None = None
+    student_name: str | None = None
+    selected_session_id: str | None = None
+    waiver_required: bool = False
+    waiver_satisfied: bool = False
+    updated_at: datetime
+
+
+class AdminRegistrationListView(BaseModel):
+    registrations: list[AdminRegistrationRowView] = []
+
+
+class AdminRegistrationDetailView(AdminRegistrationRowView):
+    parent_user_id: str
+    child_first_name: str = ""
+    child_last_name: str = ""
+    child_skill_level: str = ""
+    payment_id: str | None = None
+    student_id: str | None = None
+    enrollment_id: str | None = None
+    waitlist_id: str | None = None
+    session_title: str | None = None
+    session_capacity: int | None = None
+    waiver_template_id: str | None = None
+    waiver_title: str | None = None
+    waiver_version: str | None = None
+
+
+class AdminRegistrationApproveRequest(BaseModel):
+    session_id: str | None = None
+    waiver_override_reason: str | None = None
+
+
+class AdminRegistrationWaitlistRequest(BaseModel):
+    session_id: str | None = None
+    reason: str | None = None
+
+
+class AdminRegistrationRejectRequest(BaseModel):
+    reason: str
+
+
 class AdminWaiverSignatureDetailView(BaseModel):
     signature_id: str
     student_name: str
@@ -739,7 +852,50 @@ class AdminReportsSessionsSummary(BaseModel):
     enrolled_seats: int = 0
     capacity: int = 0
     capacity_utilization: float | None = None
+    waitlist_count: int = 0
     empty: bool = True
+
+
+class AdminReportsExpenseCategory(BaseModel):
+    category: str
+    amount_cents: int
+    count: int
+
+
+class AdminReportsExpensesSummary(BaseModel):
+    total_cents: int = 0
+    by_category: list[AdminReportsExpenseCategory] = []
+
+
+class AdminReportsCollectionsAgingBucket(BaseModel):
+    label: str
+    amount_cents: int
+    family_count: int
+
+
+class AdminReportsCollectionsRisk(BaseModel):
+    overdue_family_count: int = 0
+    overdue_cents: int = 0
+    failed_payment_count: int = 0
+    partial_payment_count: int = 0
+    aging_buckets: list[AdminReportsCollectionsAgingBucket] = []
+
+
+class AdminReportsProfitAndLoss(BaseModel):
+    revenue_cents: int = 0
+    coach_payroll_cents: int | None = None
+    rent_cents: int = 0
+    misc_expenses_cents: int = 0
+    net_profit_cents: int | None = None
+    profit_margin: float | None = None
+
+
+class AdminReportsPayrollSummary(BaseModel):
+    estimated_cents: int | None = None
+    approved_cents: int | None = None
+    paid_cents: int | None = None
+    unpaid_cents: int | None = None
+    blocked_by: str | None = None
 
 
 class AdminReportsDashboardResponse(BaseModel):
@@ -748,6 +904,12 @@ class AdminReportsDashboardResponse(BaseModel):
     outstanding_dues_cents: int = 0
     attendance: AdminReportsAttendanceSummary = Field(default_factory=AdminReportsAttendanceSummary)
     sessions: AdminReportsSessionsSummary = Field(default_factory=AdminReportsSessionsSummary)
+    expenses: AdminReportsExpensesSummary = Field(default_factory=AdminReportsExpensesSummary)
+    collections_risk: AdminReportsCollectionsRisk = Field(
+        default_factory=AdminReportsCollectionsRisk
+    )
+    profit_and_loss: AdminReportsProfitAndLoss = Field(default_factory=AdminReportsProfitAndLoss)
+    payroll: AdminReportsPayrollSummary = Field(default_factory=AdminReportsPayrollSummary)
     empty_states: list[str] = []
 
 

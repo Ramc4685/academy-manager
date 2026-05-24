@@ -1,11 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  assignAdminWaiverTemplateToRegistration,
+  createAdminWaiverTemplate,
   listAdminWaivers,
+  listAdminWaiverTemplates,
+  publishAdminWaiverTemplate,
   type AdminCurrentWaiverView,
+  type AdminWaiverTemplateManagementView,
   type AdminWaiverStatus,
   type AdminWaiverStudentRow,
   type AdminWaiverSummary,
@@ -14,10 +20,34 @@ import { queryKeys } from "@/lib/query/keys";
 import { Avatar, BigNum, Card, Chip, LaneHeader, Overline } from "@/components/ds";
 
 export default function AdminWaiversPage() {
+  const queryClient = useQueryClient();
   const waiversQuery = useQuery({
     queryKey: queryKeys.admin.waivers(),
     queryFn: () => listAdminWaivers(),
     retry: false,
+  });
+  const templatesQuery = useQuery({
+    queryKey: queryKeys.admin.waiverTemplates(),
+    queryFn: () => listAdminWaiverTemplates(),
+    retry: false,
+  });
+
+  const refreshTemplates = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waiverTemplates() });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waivers() });
+  };
+
+  const createMutation = useMutation({
+    mutationFn: createAdminWaiverTemplate,
+    onSuccess: refreshTemplates,
+  });
+  const publishMutation = useMutation({
+    mutationFn: publishAdminWaiverTemplate,
+    onSuccess: refreshTemplates,
+  });
+  const assignMutation = useMutation({
+    mutationFn: assignAdminWaiverTemplateToRegistration,
+    onSuccess: refreshTemplates,
   });
 
   if (waiversQuery.isError) {
@@ -59,7 +89,20 @@ export default function AdminWaiversPage() {
       <LaneHeader index="01" title="Current waiver" />
       <CurrentWaiverCard waiver={currentWaiver} summary={summary} />
 
-      <LaneHeader index="02" title="Per-student status" />
+      <LaneHeader index="02" title="Template management" />
+      <TemplateManagementPanel
+        templates={templatesQuery.data?.templates ?? []}
+        loading={templatesQuery.isPending}
+        error={templatesQuery.isError}
+        createPending={createMutation.isPending}
+        publishPending={publishMutation.isPending}
+        assignPending={assignMutation.isPending}
+        onCreate={(payload) => createMutation.mutate(payload)}
+        onPublish={(templateId) => publishMutation.mutate(templateId)}
+        onAssign={(templateId) => assignMutation.mutate(templateId)}
+      />
+
+      <LaneHeader index="03" title="Per-student status" />
       <Card p={0}>
         {waivers.length === 0 ? (
           <p className="p-5 text-sm text-rally-subtle" data-testid="admin-waivers-empty">
@@ -70,6 +113,159 @@ export default function AdminWaiversPage() {
         )}
       </Card>
     </section>
+  );
+}
+
+function TemplateManagementPanel({
+  templates,
+  loading,
+  error,
+  createPending,
+  publishPending,
+  assignPending,
+  onCreate,
+  onPublish,
+  onAssign,
+}: {
+  templates: AdminWaiverTemplateManagementView[];
+  loading: boolean;
+  error: boolean;
+  createPending: boolean;
+  publishPending: boolean;
+  assignPending: boolean;
+  onCreate: (payload: { title: string; body: string }) => void;
+  onPublish: (templateId: string) => void;
+  onAssign: (templateId: string) => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const submit = () => {
+    const cleanTitle = title.trim();
+    const cleanBody = body.trim();
+    if (!cleanTitle || !cleanBody) {
+      setFormError("Title and waiver body are required.");
+      return;
+    }
+    setFormError(null);
+    onCreate({ title: cleanTitle, body: cleanBody });
+    setTitle("");
+    setBody("");
+  };
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-[0.78fr_1.22fr]">
+      <Card p={20}>
+        <Overline>Create draft</Overline>
+        <div className="mt-4 space-y-3">
+          <label className="block text-sm font-semibold text-rally-ink">
+            Template title
+            <input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              className="mt-2 min-h-touch w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-rally-cobalt"
+              placeholder="Liability and media release"
+            />
+          </label>
+          <label className="block text-sm font-semibold text-rally-ink">
+            Waiver body
+            <textarea
+              value={body}
+              onChange={(event) => setBody(event.target.value)}
+              className="mt-2 min-h-[160px] w-full rounded-md border border-neutral-200 px-3 py-2 text-sm leading-6 outline-none focus:border-rally-cobalt"
+              placeholder="Paste the exact waiver text parents must sign."
+            />
+          </label>
+          {formError && <p role="alert" className="text-sm text-red-700">{formError}</p>}
+          <button
+            type="button"
+            onClick={submit}
+            disabled={createPending}
+            className="inline-flex min-h-touch items-center rounded-md bg-rally-ink px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {createPending ? "Saving..." : "Create draft"}
+          </button>
+        </div>
+      </Card>
+
+      <Card p={0}>
+        {loading ? (
+          <p className="p-5 text-sm text-rally-subtle">Loading templates...</p>
+        ) : error ? (
+          <p role="alert" className="p-5 text-sm text-red-700">Could not load waiver templates.</p>
+        ) : templates.length === 0 ? (
+          <p className="p-5 text-sm text-rally-subtle" data-testid="admin-waiver-templates-empty">
+            No waiver templates created yet.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[780px] text-sm">
+              <thead>
+                <tr className="border-b border-neutral-200 bg-neutral-50 text-left">
+                  <th className="px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Template</th>
+                  <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Status</th>
+                  <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Registration</th>
+                  <th className="px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {templates.map((template) => (
+                  <tr
+                    key={template.waiver_template_id}
+                    data-testid={`admin-waiver-template-row-${template.waiver_template_id}`}
+                    className="border-b border-neutral-100 last:border-0"
+                  >
+                    <td className="px-5 py-4">
+                      <div className="font-semibold text-rally-base">{template.title}</div>
+                      <div className="mt-1 font-mono text-[11px] text-rally-subtle">
+                        {template.version ? `Version ${template.version}` : "Draft version"}
+                      </div>
+                    </td>
+                    <td className="px-3 py-4">
+                      <Chip variant={chipForTemplate(template)} label={template.status.toUpperCase()} />
+                    </td>
+                    <td className="px-3 py-4 text-[12px] text-rally-muted">
+                      {template.assigned_to_registration ? "Required for registration" : "Not assigned"}
+                    </td>
+                    <td className="px-5 py-4">
+                      <div className="flex flex-wrap gap-2">
+                        <Link
+                          href={`/admin/waivers/${encodeURIComponent(template.waiver_template_id)}`}
+                          className="inline-flex min-h-touch items-center rounded-md border border-neutral-200 px-3 py-2 text-sm font-semibold text-rally-ink"
+                        >
+                          Open
+                        </Link>
+                        {template.status === "draft" && (
+                          <button
+                            type="button"
+                            onClick={() => onPublish(template.waiver_template_id)}
+                            disabled={publishPending}
+                            className="inline-flex min-h-touch items-center rounded-md bg-rally-cobalt px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Publish
+                          </button>
+                        )}
+                        {template.status === "active" && !template.assigned_to_registration && (
+                          <button
+                            type="button"
+                            onClick={() => onAssign(template.waiver_template_id)}
+                            disabled={assignPending}
+                            className="inline-flex min-h-touch items-center rounded-md bg-rally-ink px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Require
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
   );
 }
 
@@ -287,6 +483,12 @@ function WaiversTable({ waivers }: { waivers: AdminWaiverStudentRow[] }) {
 function artifactLabel(status: string | null | undefined): string {
   if (status === "stored_reference") return "Stored reference";
   return "Unavailable";
+}
+
+function chipForTemplate(template: AdminWaiverTemplateManagementView) {
+  if (template.status === "draft") return "draft";
+  if (template.status === "active") return "enrolled";
+  return "paused";
 }
 
 function chipForStatus(status: AdminWaiverStatus) {

@@ -96,7 +96,11 @@ def _billing_use_cases(
 ) -> PlatformBillingUseCases:
     return PlatformBillingUseCases(
         list_plans=ListPlatformPlans(plans=plans),
-        upsert_plan=UpsertPlatformPlan(plans=plans, clock=_clock),
+        upsert_plan=UpsertPlatformPlan(
+            plans=plans,
+            clock=_clock,
+            audit_recorder=audit.record_event if audit else None,
+        ),
         get_subscription=GetTenantSubscription(subscriptions=subscriptions),
         start_trial=StartTenantTrial(
             plans=plans,
@@ -110,11 +114,13 @@ def _billing_use_cases(
             subscriptions=subscriptions,
             id_factory=lambda: "platform-sub-unused",
             clock=_clock,
+            audit_recorder=audit.record_event if audit else None,
         ),
         schedule_cancellation=ScheduleTenantCancellation(
             plans=plans,
             subscriptions=subscriptions,
             clock=_clock,
+            audit_recorder=audit.record_event if audit else None,
         ),
         check_limits=CheckPlanLimits(plans=plans, subscriptions=subscriptions),
     )
@@ -249,6 +255,7 @@ def test_start_trial_route_emits_unified_platform_audit_event() -> None:
             "/api/v2/platform/billing/plans/plan-growth",
             json=_plan_payload(),
         )
+        audit.commands.clear()
         trial = client.post(
             "/api/v2/platform/billing/tenants/academy-1/trial",
             json={
@@ -273,3 +280,61 @@ def test_start_trial_route_emits_unified_platform_audit_event() -> None:
     assert event.after_snapshot is not None
     assert event.after_snapshot["plan_id"] == "plan-growth"
     assert event.request_id == "req-platform-billing-1"
+
+
+def test_billing_write_routes_emit_one_unified_platform_audit_event_each() -> None:
+    with _client(_platform_admin_claims()) as (client, _plans, audit):
+        created_plan = client.put(
+            "/api/v2/platform/billing/plans/plan-growth",
+            json=_plan_payload(),
+            headers={"x-request-id": "req-plan"},
+        )
+        trial = client.post(
+            "/api/v2/platform/billing/tenants/academy-1/trial",
+            json={
+                "plan_id": "plan-growth",
+                "trial_ends_at": (_clock() + timedelta(days=14)).isoformat(),
+            },
+            headers={"x-request-id": "req-trial"},
+        )
+        activated = client.post(
+            "/api/v2/platform/billing/tenants/academy-1/activate-subscription",
+            json={
+                "plan_id": "plan-growth",
+                "stripe_customer_id": "cus_platform_123",
+                "stripe_subscription_id": "sub_platform_123",
+                "current_period_start": _clock().isoformat(),
+                "current_period_end": (_clock() + timedelta(days=30)).isoformat(),
+            },
+            headers={"x-request-id": "req-activate"},
+        )
+        scheduled = client.post(
+            "/api/v2/platform/billing/tenants/academy-1/schedule-cancellation",
+            headers={"x-request-id": "req-schedule"},
+        )
+        cancelled = client.post(
+            "/api/v2/platform/billing/tenants/academy-1/cancel-now",
+            headers={"x-request-id": "req-cancel"},
+        )
+
+    assert created_plan.status_code == 200, created_plan.text
+    assert trial.status_code == 200, trial.text
+    assert activated.status_code == 200, activated.text
+    assert scheduled.status_code == 200, scheduled.text
+    assert cancelled.status_code == 200, cancelled.text
+    assert [event.action for event in audit.commands] == [
+        "platform_billing.plan_upserted",
+        "platform_billing.trial_started",
+        "platform_billing.subscription_activated",
+        "platform_billing.cancellation_scheduled",
+        "platform_billing.subscription_cancelled",
+    ]
+    assert [event.request_id for event in audit.commands] == [
+        "req-plan",
+        "req-trial",
+        "req-activate",
+        "req-schedule",
+        "req-cancel",
+    ]
+    assert all(event.actor_user_id == "platform-admin" for event in audit.commands)
+    assert all(event.platform_actor_role == "platform_admin" for event in audit.commands)

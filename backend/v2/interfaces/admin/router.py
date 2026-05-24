@@ -12,6 +12,8 @@ from .dashboard_routes import router as dashboard_router
 from .directory_routes import router as directory_router
 from .dues_routes import router as dues_router
 from .pause_routes import router as pause_router
+from .payout_period_routes import router as payout_period_router
+from .registration_routes import router as registration_router
 from .reports_routes import router as reports_router
 from .sessions_routes import router as sessions_router
 from .waitlist_routes import router as waitlist_router
@@ -22,11 +24,13 @@ router.include_router(audit_router)
 router.include_router(dashboard_router)
 router.include_router(directory_router)
 router.include_router(pause_router)
+router.include_router(registration_router)
 router.include_router(dues_router)
 router.include_router(reports_router)
 router.include_router(sessions_router)
 router.include_router(waitlist_router)
 router.include_router(billing_router)
+router.include_router(payout_period_router)
 router.include_router(comms_router)
 router.include_router(academy_router)
 router.include_router(waiver_router)

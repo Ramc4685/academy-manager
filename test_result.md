@@ -104,6 +104,34 @@
 
 user_problem_statement: "Wave 12 final launch-candidate gate after Wave 11 merge: verify SaaS static smoke, backend v2 suite, frontend typecheck/lint/build, Playwright route matrix, and document any local smoke blockers."
 backend:
+  - task: "Issue #94 admin payout period backend slice"
+    implemented: true
+    working: true
+    file: "backend/v2/interfaces/admin/payout_period_routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added RED application/interface coverage for payout period paid metadata, idempotent mark-paid, admin generate/review/approve/mark-paid routes, printable payslip payload, and wrong-persona behavior."
+      - working: true
+        agent: "main"
+        comment: "Implemented admin payout-period routes and wired them through existing finance PayoutPeriod persistence plus coaching ComputeCoachPayout using completed payable session_occurrences with actual > substitute > scheduled attribution. Mark-paid persists method/date/amount/reference and repeats are idempotent. Verification passed: uv run pytest v2/tests/application/test_payout_period.py v2/tests/interface/test_admin_payout_periods.py -q returned 21 passed; uv run pytest v2/tests/contract/test_finance_mongo_repos.py -q returned 12 passed; ruff check and ruff format --check passed on touched backend files. TODO: no existing tenant/admin audit recording port is available in admin composition for payout-period events, so payout audit emission remains unwired."
+  - task: "Issue #101 safe change-student-parent backend workflow"
+    implemented: true
+    working: true
+    file: "backend/v2/interfaces/admin/directory_routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added RED application/interface/contract coverage for POST /api/v2/admin/students/{student_id}/change-parent, parent validation failures, student parent_id/parent_user_id consistency, audit emission, and no rewrites of historical payments/waivers/credits/waitlist rows."
+      - working: true
+        agent: "main"
+        comment: "Implemented ChangeAdminStudentParent use case, admin DTO/route/wiring, Mongo validation/update/audit logic, and structured parent validation errors. Verification passed: focused pytest for admin student edit/routes/Mongo repo returned 16 passed; ruff check and ruff format --check passed on the touched backend files; git diff --check passed."
   - task: "Issue #95 admin waiver template management backend slice"
     implemented: true
     working: true
@@ -152,6 +180,9 @@ backend:
       - working: true
         agent: "main"
         comment: "Integration verification passed after combining #80/#93/#95/#97 slices: full backend v2 suite returned 580 passed with 7 existing mongomock datetime warnings, Ruff check v2 passed, and Ruff format --check v2 passed. Backend mypy remains blocked by the existing duplicate module-name issue for admin_payment_ops.py."
+      - working: true
+        agent: "main"
+        comment: "Implemented remaining Issue #80 platform audit gaps: plan upsert, subscription activation, scheduled cancellation, immediate cancellation, and governance/support writes now emit unified platform_audit_events after successful saves while governance keeps existing platform_governance_audit_logs. Verification passed: focused billing pytest 15 passed, focused governance pytest 18 passed, Ruff check and Ruff format --check passed on touched backend files."
   - task: "Issue #93 occurrence-driven coach attendance slice"
     implemented: true
     working: true
@@ -506,6 +537,17 @@ backend:
         agent: "main"
         comment: "Agent B Wave 6 added a new Platform billing slice separate from parent tuition Billing. The model covers platform plans, plan limits, tenant subscriptions, billing/trial/cancellation status, and tenant Stripe customer/subscription IDs. Application tests cover trial creation, Stripe subscription activation, period-end cancellation scheduling, plan-limit checks, and absence of parent/student/enrollment/session tuition fields. Verification: focused platform billing pytest passed 4/4; targeted ruff passed; git diff --check passed."
 frontend:
+  - task: "Issue #101 safe change-student-parent admin UI"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/admin/students/[studentId]/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added a minimal admin student detail Parent account panel that loads active parent users, filters by name/email/phone, posts the new /admin/students/{student_id}/change-parent route with reason, handles success/error/warnings, and invalidates student detail/list plus parent user cache after success. Added typed admin API request/response/helper in frontend/lib/api/admin.ts. Verification passed: frontend pnpm typecheck."
   - task: "Issue #93 admin occurrence coach assignment UI"
     implemented: true
     working: true
@@ -559,6 +601,20 @@ frontend:
       - working: true
         agent: "main"
         comment: "Wave 12 final-gate rerun after Wave 10/11 merge passed from clean worktree: pnpm typecheck, pnpm lint, pnpm build, and NEXT_PUBLIC_E2E_AUTH_BYPASS=1 PLAYWRIGHT_PORT=3107 pnpm exec playwright test e2e/specs/saas-launch-route-matrix.spec.ts --project=chromium-mobile --workers=1 --trace=off --output=/tmp/academy-wave12-pw-results returned 17 passed."
+      - working: true
+        agent: "main"
+        comment: "Added /admin/registrations to the SaaS launch route matrix and stubbed GET /api/v2/admin/registrations with { registrations: [] }. Focused verification passed: pnpm exec playwright test --grep \"(route /admin/registrations mounts|admin route mounts: registrations)\" returned 4 passed across chromium-mobile and webkit-mobile."
+  - task: "Admin shell registrations route coverage"
+    implemented: true
+    working: true
+    file: "frontend/e2e/specs/admin-shell.spec.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added /admin/registrations to the existing admin shell route-mount matrix and stubbed GET /api/v2/admin/registrations with { registrations: [] }. Focused Playwright grep for the new registrations route passed in both admin-shell and SaaS route-matrix specs."
   - task: "Wave 10 admin ops detail frontend"
     implemented: true
     working: true
@@ -822,10 +878,14 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 24
+  test_sequence: 27
   run_ui: true
 test_plan:
   current_focus:
+    - "Issue #101 safe change-student-parent admin UI"
+    - "Admin shell registrations route coverage"
+    - "Wave 12 SaaS Playwright route matrix scaffold"
+    - "Issue #94 admin payout period backend slice"
     - "Issue #93 admin occurrence coach assignment slice"
     - "Issue #93 admin occurrence coach assignment UI"
     - "Issue #95 waiver template management slice"
@@ -835,6 +895,14 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "Issue #101 frontend slice implemented in /Users/ramc/.config/superpowers/worktrees/academy-manager/complete-remaining-issues on branch feat/complete-remaining-issues. Student detail now has a Parent account panel that lists active parent users from the existing admin users API, supports client-side search by name/email/phone, submits the new safe change-parent backend endpoint with a reason, refreshes the student detail/list after success, and avoids visible raw IDs. Verification passed: cd frontend && pnpm typecheck. Browser smoke was not run because this was a focused shared-worktree frontend slice."
+  - agent: "main"
+    message: "Frontend e2e registrations route coverage added in complete-remaining-issues: admin-shell and SaaS launch route matrix now include /admin/registrations and stub GET /api/v2/admin/registrations as { registrations: [] }. Verification passed with pnpm exec playwright test --grep \"(route /admin/registrations mounts|admin route mounts: registrations)\" returning 4 passed across chromium-mobile and webkit-mobile."
+  - agent: "main"
+    message: "Issue #94 admin payout-period backend slice implemented: new admin routes generate/review/approve/mark-paid/printable payslip from persisted finance payout periods, mark-paid stores method/date/amount/reference idempotently, and production composition calculates periods from completed payable session_occurrences via ComputeCoachPayout with actual_coach_id > substitute_coach_id > scheduled_coach_id. Verification passed: focused payout application/interface pytest 21 passed, finance Mongo contract pytest 12 passed, and ruff check/format passed on touched backend files. Audit emission TODO remains because admin composition has only audit-log reads, not an existing tenant/admin audit recorder port."
+  - agent: "main"
+    message: "Issue #80 remaining platform audit gaps implemented: platform billing writes now dual-write unified platform audit events for plan upsert, trial start, subscription activation, cancellation scheduling, and cancel-now; governance/support writes retain governance audit logs and also emit unified platform audit commands/events. Verification passed: source .venv/bin/activate && pytest v2/tests/application/test_platform_billing.py v2/tests/interface/test_platform_billing_routes.py -q returned 15 passed; source .venv/bin/activate && pytest v2/tests/application/test_tenant_governance.py v2/tests/interface/test_platform_governance_routes.py -q returned 18 passed; ruff check and ruff format --check passed on touched backend files."
   - agent: "main"
     message: "Issue #93 admin occurrence assignment slice is implemented and ready for focused verification: backend admin session occurrence list/update routes and frontend admin session detail occurrence table/dialog. Planned checks: admin session focused pytest, coach occurrence regression suite, Ruff on touched backend files, frontend pnpm typecheck/lint, and broader v2 pytest after worker outputs are integrated."
   - agent: "main"
@@ -1208,3 +1276,10 @@ agent_communication:
   - agent: "main"
     message: |
       PR #100 merge-conflict follow-up: merged current origin/main into feat/fix-promoted-waitlist-roster and resolved conflicts by preserving the deterministic Mongo enrollment lookup plus the PR #100 test_result handoff notes. Post-merge focused verification passed: pytest v2/tests/interface/test_admin_waitlist.py v2/tests/contract/test_mongo_enrollment_writer.py v2/tests/interface/test_admin_sessions.py v2/tests/application/test_enrollment_lifecycle_actions.py -q returned 29 passed; ruff check and ruff format --check passed on touched v2 files via uv-provided ruff==0.6.9 because this worktree venv does not include Ruff; git diff --check passed.
+  - agent: "main"
+    message: |
+      Multi-agent issue completion branch feat/complete-remaining-issues in worktree /Users/ramc/.config/superpowers/worktrees/academy-manager/complete-remaining-issues.
+
+      Implemented remaining open issue slices across platform audit (#80), coach payout periods (#94), waiver template management and registration assignment (#95), admin registration approval workflow (#96), owner reports dashboard extensions (#97), and safe student parent change (#101). Payment success now moves onboarding applications to PENDING_APPROVAL; admin review approves, waitlists, or rejects and owns enrollment/waitlist creation. Cross-context registration orchestration lives in composition to preserve context layering.
+
+      Verification passed: backend source .venv/bin/activate && ruff check v2; backend ruff format --check v2; backend pytest v2/tests --override-ini="testpaths=v2/tests" -q returned 609 passed; backend PYTHONPATH=/Users/ramc/.config/superpowers/worktrees/academy-manager/complete-remaining-issues lint-imports --config pyproject.toml kept all 4 contracts; backend python -m compileall v2 passed; frontend pnpm typecheck; frontend pnpm lint; frontend pnpm build. Additional focused subagent checks passed for platform audit, payouts, student parent change, registration route matrix, and admin route coverage. The documented backend mypy command failed before useful checking because mypy maps v2 files as both v2.* and backend.v2.* in this linked worktree; an alternate root-qualified mypy run still exposed broad pre-existing v2 type debt, so mypy remains not green.

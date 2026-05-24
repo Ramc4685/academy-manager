@@ -16,12 +16,22 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+from pydantic import BaseModel, Field
+
 from backend.v2.contexts.finance.application.ports import PayoutPeriodRepository
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
     approve,
     mark_paid,
 )
+
+
+class MarkPayoutPaidCommand(BaseModel):
+    period_id: str
+    method: str = Field(min_length=1)
+    paid_at: datetime
+    amount_minor: int = Field(ge=0)
+    reference: str | None = None
 
 
 class _BaseTransition:
@@ -51,9 +61,33 @@ class ApprovePayoutPeriod(_BaseTransition):
 
 
 class MarkPayoutPaid(_BaseTransition):
-    async def execute(self, *, period_id: str) -> PayoutPeriod:
-        period = await self._load(period_id)
-        paid = mark_paid(period, at=self._clock())
+    async def execute(
+        self,
+        command: MarkPayoutPaidCommand | None = None,
+        *,
+        period_id: str | None = None,
+    ) -> PayoutPeriod:
+        if command is None:
+            if period_id is None:
+                raise TypeError("MarkPayoutPaid.execute requires command or period_id")
+            period = await self._load(period_id)
+            command = MarkPayoutPaidCommand(
+                period_id=period_id,
+                method="unspecified",
+                paid_at=self._clock(),
+                amount_minor=period.total_minor,
+                reference=None,
+            )
+        else:
+            period = await self._load(command.period_id)
+
+        paid = mark_paid(
+            period,
+            at=command.paid_at,
+            method=command.method,
+            amount_minor=command.amount_minor,
+            reference=command.reference,
+        )
         if paid is period:
             return period
         return await self._repo.replace(paid)

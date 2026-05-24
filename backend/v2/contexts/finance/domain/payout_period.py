@@ -82,6 +82,9 @@ class PayoutPeriod(BaseModel):
     generated_at: datetime
     approved_at: datetime | None = None
     paid_at: datetime | None = None
+    paid_method: str | None = None
+    paid_amount_minor: int | None = Field(default=None, ge=0)
+    paid_reference: str | None = None
 
     @model_validator(mode="after")
     def _validate_window_and_totals(self) -> PayoutPeriod:
@@ -100,10 +103,14 @@ class PayoutPeriod(BaseModel):
                 raise ValueError("PayoutPeriod.approved_at required when status=paid")
             if self.paid_at is None:
                 raise ValueError("PayoutPeriod.paid_at required when status=paid")
+            if self.paid_method is None:
+                raise ValueError("PayoutPeriod.paid_method required when status=paid")
+            if self.paid_amount_minor is None:
+                raise ValueError("PayoutPeriod.paid_amount_minor required when status=paid")
         return self
 
 
-class PayoutPeriodStateError(Exception):
+class PayoutPeriodStateError(ValueError):
     """Raised when a state transition is illegal (e.g. approve a paid period)."""
 
 
@@ -122,7 +129,14 @@ def approve(period: PayoutPeriod, *, at: datetime) -> PayoutPeriod:
     return period.model_copy(update={"status": "approved", "approved_at": at})
 
 
-def mark_paid(period: PayoutPeriod, *, at: datetime) -> PayoutPeriod:
+def mark_paid(
+    period: PayoutPeriod,
+    *,
+    at: datetime,
+    method: str,
+    amount_minor: int,
+    reference: str | None = None,
+) -> PayoutPeriod:
     """Return a new ``PayoutPeriod`` with status=paid.
 
     Idempotent: marking an already-paid period returns it unchanged.
@@ -135,4 +149,12 @@ def mark_paid(period: PayoutPeriod, *, at: datetime) -> PayoutPeriod:
         raise PayoutPeriodStateError(
             f"cannot mark payout period {period.period_id!r} paid from status 'draft'"
         )
-    return period.model_copy(update={"status": "paid", "paid_at": at})
+    return period.model_copy(
+        update={
+            "status": "paid",
+            "paid_at": at,
+            "paid_method": method,
+            "paid_amount_minor": amount_minor,
+            "paid_reference": reference,
+        }
+    )

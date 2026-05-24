@@ -5,7 +5,7 @@ from multiple contexts. Registers `@handler` for every cross-context event
 in Waves 2+.
 
 Wave 2 wires:
-- `Billing.PaymentSucceeded` → Enrollment.ConfirmEnrollment (+ Onboarding transition to PENDING_APPROVAL)
+- `Billing.PaymentSucceeded` → Onboarding transition to PENDING_APPROVAL
 - `Enrollment.CapacityExceeded` → Billing.IssueRefund (auto-refund)
 - `Billing.CheckoutExpired` → Onboarding transition to CHECKOUT_EXPIRED
 - `Enrollment.EnrollmentCancelled` → Enrollment.PromoteFromWaitlist
@@ -26,7 +26,6 @@ from backend.v2.contexts.billing.domain.events import (
 )
 from backend.v2.contexts.enrollment.application.use_cases.confirm_enrollment import (
     ConfirmEnrollment,
-    ConfirmEnrollmentCommand,
 )
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
@@ -78,33 +77,13 @@ def _require_deps() -> HandlerDeps:
 async def on_payment_succeeded(event: PaymentSucceeded) -> None:
     deps = _require_deps()
     payload = event.payload
-    # Pull child profile from the Onboarding application via payment metadata
-    # in a real wire-up. Wave 2's parent BFF route writes the application_id
-    # into a Stripe metadata field; the webhook handler propagates it on the
-    # Payment aggregate. For now we pass empty student names — admin completes
-    # the profile, mirroring the legacy "PENDING_APPROVAL" stage.
     with tenant_scope(event.academy_id):
         if payload.session_id is None:
             log.info("PaymentSucceeded without session_id; subscription path TBD")
             return
-        try:
-            await deps.confirm_enrollment.execute(
-                ConfirmEnrollmentCommand(
-                    payment_id=payload.payment_id,
-                    parent_id=payload.parent_id,
-                    session_id=payload.session_id,
-                    student_first_name="",
-                    student_last_name="",
-                )
-            )
-            await deps.transition_application.execute_for_payment(
-                payment_id=payload.payment_id, to="PENDING_APPROVAL"
-            )
-        except Exception:
-            # CapacityExceededEvent was already appended by ConfirmEnrollment;
-            # auto-refund handler reacts.
-            log.exception("ConfirmEnrollment failed for payment %s", payload.payment_id)
-            raise
+        await deps.transition_application.execute_for_payment(
+            payment_id=payload.payment_id, to="PENDING_APPROVAL"
+        )
 
 
 @handler(event=CheckoutExpired, schema_version=1)

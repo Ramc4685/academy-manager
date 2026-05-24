@@ -57,7 +57,37 @@ def test_admin_reports_dashboard_returns_owner_finance_and_ops_shape(
                 "enrolled_seats": 18,
                 "capacity": 24,
                 "capacity_utilization": 0.75,
+                "waitlist_count": 3,
                 "empty": False,
+            },
+            "expenses": {
+                "total_cents": 4_500,
+                "by_category": [{"category": "rent", "amount_cents": 4_500, "count": 1}],
+            },
+            "collections_risk": {
+                "overdue_family_count": 2,
+                "overdue_cents": 65_00,
+                "failed_payment_count": 1,
+                "partial_payment_count": 1,
+                "aging_buckets": [
+                    {"label": "Current", "amount_cents": 0, "family_count": 0},
+                    {"label": "1-30", "amount_cents": 65_00, "family_count": 2},
+                ],
+            },
+            "profit_and_loss": {
+                "revenue_cents": 185_00,
+                "coach_payroll_cents": 7_500,
+                "rent_cents": 4_500,
+                "misc_expenses_cents": 0,
+                "net_profit_cents": 6_500,
+                "profit_margin": 0.3514,
+            },
+            "payroll": {
+                "estimated_cents": 10_000,
+                "approved_cents": 7_500,
+                "paid_cents": 2_500,
+                "unpaid_cents": 5_000,
+                "blocked_by": None,
             },
             "empty_states": [],
         }
@@ -83,7 +113,37 @@ def test_admin_reports_dashboard_returns_owner_finance_and_ops_shape(
             "enrolled_seats": 18,
             "capacity": 24,
             "capacity_utilization": 0.75,
+            "waitlist_count": 3,
             "empty": False,
+        },
+        "expenses": {
+            "total_cents": 4500,
+            "by_category": [{"category": "rent", "amount_cents": 4500, "count": 1}],
+        },
+        "collections_risk": {
+            "overdue_family_count": 2,
+            "overdue_cents": 6500,
+            "failed_payment_count": 1,
+            "partial_payment_count": 1,
+            "aging_buckets": [
+                {"label": "Current", "amount_cents": 0, "family_count": 0},
+                {"label": "1-30", "amount_cents": 6500, "family_count": 2},
+            ],
+        },
+        "profit_and_loss": {
+            "revenue_cents": 18500,
+            "coach_payroll_cents": 7500,
+            "rent_cents": 4500,
+            "misc_expenses_cents": 0,
+            "net_profit_cents": 6500,
+            "profit_margin": 0.3514,
+        },
+        "payroll": {
+            "estimated_cents": 10000,
+            "approved_cents": 7500,
+            "paid_cents": 2500,
+            "unpaid_cents": 5000,
+            "blocked_by": None,
         },
         "empty_states": [],
     }
@@ -109,12 +169,38 @@ def test_admin_reports_dashboard_empty_state(reports_admin_client) -> None:
                 "enrolled_seats": 0,
                 "capacity": 0,
                 "capacity_utilization": None,
+                "waitlist_count": 0,
                 "empty": True,
+            },
+            "expenses": {"total_cents": 0, "by_category": []},
+            "collections_risk": {
+                "overdue_family_count": 0,
+                "overdue_cents": 0,
+                "failed_payment_count": 0,
+                "partial_payment_count": 0,
+                "aging_buckets": [],
+            },
+            "profit_and_loss": {
+                "revenue_cents": 0,
+                "coach_payroll_cents": None,
+                "rent_cents": 0,
+                "misc_expenses_cents": 0,
+                "net_profit_cents": None,
+                "profit_margin": None,
+            },
+            "payroll": {
+                "estimated_cents": None,
+                "approved_cents": None,
+                "paid_cents": None,
+                "unpaid_cents": None,
+                "blocked_by": "No generated payout periods for this month.",
             },
             "empty_states": [
                 "No collected payment rows found for this month.",
                 "No attendance marks found for this month.",
                 "No sessions found for this month.",
+                "No expenses found for this month.",
+                "No payout periods generated for this month.",
             ],
         }
     )
@@ -126,10 +212,14 @@ def test_admin_reports_dashboard_empty_state(reports_admin_client) -> None:
     assert body["cash_collected_cents"] == 0
     assert body["attendance"]["attendance_rate"] is None
     assert body["sessions"]["capacity_utilization"] is None
+    assert body["profit_and_loss"]["net_profit_cents"] is None
+    assert body["payroll"]["blocked_by"] == "No generated payout periods for this month."
     assert body["empty_states"] == [
         "No collected payment rows found for this month.",
         "No attendance marks found for this month.",
         "No sessions found for this month.",
+        "No expenses found for this month.",
+        "No payout periods generated for this month.",
     ]
 
 

@@ -103,6 +103,16 @@ class MongoWaiverTemplateRepository(TenantScopedRepository):
             return self._to_domain(doc)
         return None
 
+    async def get_registration_template(self) -> AdminWaiverTemplateRecord | None:
+        cursor = self._find_many(
+            {"status": "active", "assigned_to_registration": True},
+            sort=[("assigned_at", -1), ("effective_from", -1)],
+            limit=1,
+        )
+        async for doc in cursor:
+            return self._to_record(doc)
+        return None
+
     async def list_templates(self) -> list[AdminWaiverTemplateRecord]:
         cursor = self._find_many(sort=[("updated_at", -1)])
         return [self._to_record(doc) async for doc in cursor]

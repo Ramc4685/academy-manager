@@ -7,6 +7,9 @@ from typing import Any
 
 import pytest
 
+from backend.v2.contexts.platform.audit.application.use_cases import (
+    RecordPlatformAuditEventCommand,
+)
 from backend.v2.contexts.platform.governance.application.use_cases import (
     GrantSupportAccessCommand,
     RequestStudentDataDeletionCommand,
@@ -146,6 +149,14 @@ class FakeGovernanceStore:
         return dict(audit)
 
 
+class FakePlatformAuditRecorder:
+    def __init__(self) -> None:
+        self.commands: list[RecordPlatformAuditEventCommand] = []
+
+    async def record_event(self, command: RecordPlatformAuditEventCommand) -> None:
+        self.commands.append(command)
+
+
 def _service(store: FakeGovernanceStore) -> TenantGovernanceService:
     counters: dict[str, int] = {}
     now = datetime(2026, 5, 22, 15, 30, tzinfo=UTC)
@@ -155,6 +166,25 @@ def _service(store: FakeGovernanceStore) -> TenantGovernanceService:
         return f"{prefix}{counters[prefix]:03d}"
 
     return TenantGovernanceService(store=store, id_factory=_id, clock=lambda: now)
+
+
+def _service_with_platform_audit(
+    store: FakeGovernanceStore,
+    audit: FakePlatformAuditRecorder,
+) -> TenantGovernanceService:
+    counters: dict[str, int] = {}
+    now = datetime(2026, 5, 22, 15, 30, tzinfo=UTC)
+
+    def _id(prefix: str) -> str:
+        counters[prefix] = counters.get(prefix, 0) + 1
+        return f"{prefix}{counters[prefix]:03d}"
+
+    return TenantGovernanceService(
+        store=store,
+        id_factory=_id,
+        clock=lambda: now,
+        audit_recorder=audit.record_event,
+    )
 
 
 def _platform_actor() -> GovernanceActor:
@@ -239,6 +269,39 @@ async def test_tenant_export_request_captures_retention_pii_and_audit() -> None:
     )
     assert store.audit_logs[0]["before_snapshot"] is None
     assert store.audit_logs[0]["after_snapshot"]["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_tenant_export_request_dual_writes_unified_platform_audit_event() -> None:
+    store = FakeGovernanceStore()
+    audit = FakePlatformAuditRecorder()
+    service = _service_with_platform_audit(store, audit)
+    actor = _academy_actor()
+
+    result = await service.request_tenant_export(
+        RequestTenantExportCommand(
+            academy_id="acad_001",
+            actor=actor,
+            include_pii=False,
+            reason="customer admin download",
+        )
+    )
+
+    assert len(store.audit_logs) == 1
+    assert len(audit.commands) == 1
+    event = audit.commands[0]
+    assert event.actor_user_id == actor.actor_user_id
+    assert event.actor_membership_id == actor.actor_membership_id
+    assert event.platform_actor_role is None
+    assert event.academy_id == "acad_001"
+    assert event.action == "tenant_export.requested"
+    assert event.entity_type == "tenant_export_request"
+    assert event.entity_id == result.export_request_id
+    assert event.before_snapshot is None
+    assert event.after_snapshot is not None
+    assert event.after_snapshot["status"] == "queued"
+    assert event.request_id == actor.request_id
+    assert event.ip_address == actor.ip_address
 
 
 @pytest.mark.asyncio
@@ -339,6 +402,107 @@ async def test_support_access_requires_platform_role_and_writes_complete_audit_l
         entity_type="support_access_grant",
         entity_id="support_access_001",
     )
+
+
+@pytest.mark.asyncio
+async def test_support_access_grant_dual_writes_unified_platform_audit_event() -> None:
+    store = FakeGovernanceStore()
+    audit = FakePlatformAuditRecorder()
+    service = _service_with_platform_audit(store, audit)
+    actor = _platform_actor()
+
+    result = await service.grant_support_access(
+        GrantSupportAccessCommand(
+            academy_id="acad_001",
+            actor=actor,
+            support_user_id="user_support_002",
+            purpose="debug tenant onboarding",
+            expires_in_hours=2,
+        )
+    )
+
+    assert len(store.audit_logs) == 1
+    assert len(audit.commands) == 1
+    event = audit.commands[0]
+    assert event.actor_user_id == actor.actor_user_id
+    assert event.platform_actor_role == "platform_support"
+    assert event.academy_id == "acad_001"
+    assert event.action == "support_access.granted"
+    assert event.entity_type == "support_access_grant"
+    assert event.entity_id == result.support_access_grant_id
+    assert event.after_snapshot is not None
+    assert event.after_snapshot["support_user_id"] == "user_support_002"
+    assert event.request_id == actor.request_id
+    assert event.ip_address == actor.ip_address
+
+
+@pytest.mark.asyncio
+async def test_governance_writes_each_emit_exactly_one_unified_platform_audit_event() -> None:
+    store = FakeGovernanceStore()
+    audit = FakePlatformAuditRecorder()
+    service = _service_with_platform_audit(store, audit)
+    academy_actor = _academy_actor()
+    platform_actor = _platform_actor()
+
+    await service.request_tenant_export(
+        RequestTenantExportCommand(
+            academy_id="acad_001",
+            actor=academy_actor,
+            include_pii=False,
+            reason="owner export",
+        )
+    )
+    await service.request_tenant_deletion(
+        RequestTenantDeletionCommand(
+            academy_id="acad_001",
+            actor=academy_actor,
+            reason="owner closure",
+        )
+    )
+    await service.request_student_data_deletion(
+        RequestStudentDataDeletionCommand(
+            academy_id="acad_001",
+            student_id="student_001",
+            actor=academy_actor,
+            reason="parent erasure",
+        )
+    )
+    grant = await service.grant_support_access(
+        GrantSupportAccessCommand(
+            academy_id="acad_001",
+            actor=platform_actor,
+            support_user_id="user_support_002",
+            purpose="debug tenant onboarding",
+        )
+    )
+    await service.revoke_support_access(
+        RevokeSupportAccessCommand(
+            academy_id="acad_001",
+            actor=platform_actor,
+            support_access_grant_id=grant.support_access_grant_id,
+            reason="issue resolved",
+        )
+    )
+    await service.request_support_impersonation(
+        RequestSupportImpersonationCommand(
+            academy_id="acad_001",
+            actor=platform_actor,
+            target_user_id="user_parent_001",
+            purpose="reproduce issue",
+        )
+    )
+
+    expected_actions = [
+        "tenant_export.requested",
+        "tenant_deletion.requested",
+        "student_data_deletion.requested",
+        "support_access.granted",
+        "support_access.revoked",
+        "support_impersonation.requested",
+    ]
+    assert [entry["action"] for entry in store.audit_logs] == expected_actions
+    assert [event.action for event in audit.commands] == expected_actions
+    assert len(audit.commands) == len(expected_actions)
 
 
 @pytest.mark.asyncio

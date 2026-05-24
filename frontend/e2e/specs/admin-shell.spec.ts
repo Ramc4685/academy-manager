@@ -26,6 +26,7 @@ const ADMIN_ROUTES = [
   { href: "/admin/sessions", testid: "admin-sessions" },
   { href: "/admin/students", testid: "admin-students" },
   { href: "/admin/users", testid: "admin-users" },
+  { href: "/admin/registrations", testid: "admin-registrations" },
   { href: "/admin/waitlist", testid: "admin-waitlist" },
   { href: "/admin/pause-requests", testid: "admin-pause-requests" },
   { href: "/admin/payments", testid: "admin-payments" },
@@ -125,6 +126,9 @@ async function stubAdminBff(page: Page) {
   });
   await page.route("**/api/v2/admin/students*", (route) =>
     fulfillJson(route, { students: [] })
+  );
+  await page.route("**/api/v2/admin/registrations*", (route) =>
+    fulfillJson(route, { registrations: [] })
   );
   await page.route("**/api/v2/admin/payments*", (route) =>
     fulfillJson(route, { payments: [] })

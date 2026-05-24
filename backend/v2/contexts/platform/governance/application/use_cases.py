@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
+from backend.v2.contexts.platform.audit.application.use_cases import (
+    RecordPlatformAuditEventCommand,
+)
 from backend.v2.contexts.platform.governance.domain.errors import (
     GovernancePermissionDenied,
     GovernanceRequestNotFound,
@@ -26,6 +30,10 @@ from backend.v2.contexts.platform.governance.domain.models import (
     TenantDeletionRequest,
     TenantExportRequest,
 )
+
+log = logging.getLogger(__name__)
+
+AuditRecorder = Callable[[RecordPlatformAuditEventCommand], Awaitable[object]]
 
 
 class TenantGovernanceStore(Protocol):
@@ -147,10 +155,15 @@ class TenantGovernanceService:
         store: TenantGovernanceStore,
         id_factory: Callable[[str], str] | None = None,
         clock: Callable[[], datetime] | None = None,
+        audit_recorder: AuditRecorder | None = None,
     ) -> None:
         self._store = store
         self._id_factory = id_factory or (lambda prefix: f"{prefix}{uuid4().hex}")
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._audit_recorder = audit_recorder
+
+    def configure_audit_recorder(self, audit_recorder: AuditRecorder) -> None:
+        self._audit_recorder = audit_recorder
 
     async def request_tenant_export(
         self, command: RequestTenantExportCommand
@@ -398,7 +411,35 @@ class TenantGovernanceService:
             created_at=created_at,
         )
         await self._store.append_audit_log(audit.model_dump())
+        await self._append_platform_audit(audit)
 
     def _require_platform_support(self, actor: GovernanceActor) -> None:
         if not actor.has_platform_support_access():
             raise GovernancePermissionDenied("platform support role required")
+
+    async def _append_platform_audit(self, audit: GovernanceAuditLog) -> None:
+        if self._audit_recorder is None:
+            return
+        try:
+            await self._audit_recorder(
+                RecordPlatformAuditEventCommand(
+                    actor_user_id=audit.actor_user_id,
+                    actor_membership_id=audit.actor_membership_id,
+                    academy_id=audit.academy_id,
+                    platform_actor_role=audit.actor_platform_role,
+                    action=audit.action,
+                    entity_type=audit.entity_type,
+                    entity_id=audit.entity_id,
+                    before_snapshot=audit.before_snapshot,
+                    after_snapshot=audit.after_snapshot,
+                    request_id=audit.request_id,
+                    ip_address=audit.ip_address,
+                )
+            )
+        except Exception as exc:
+            log.warning(
+                "platform_governance_audit_emit_failed action=%s entity=%s err=%s",
+                audit.action,
+                audit.entity_id,
+                exc,
+            )

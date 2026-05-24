@@ -8,6 +8,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend.v2.contexts.platform.audit.application.use_cases import (
+    RecordPlatformAuditEventCommand,
+)
 from backend.v2.contexts.platform.governance.application.use_cases import (
     TenantGovernanceService,
 )
@@ -15,6 +18,14 @@ from backend.v2.interfaces.platform.governance_routes import router as governanc
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
 from backend.v2.tests.application.test_tenant_governance import FakeGovernanceStore
+
+
+class FakePlatformAuditRecorder:
+    def __init__(self) -> None:
+        self.commands: list[RecordPlatformAuditEventCommand] = []
+
+    async def record_event(self, command: RecordPlatformAuditEventCommand) -> None:
+        self.commands.append(command)
 
 
 def _platform_admin_claims() -> AuthClaims:
@@ -45,7 +56,11 @@ def _academy_admin_claims() -> AuthClaims:
     )
 
 
-def _app(claims: AuthClaims, store: FakeGovernanceStore) -> FastAPI:
+def _app(
+    claims: AuthClaims,
+    store: FakeGovernanceStore,
+    audit: FakePlatformAuditRecorder | None = None,
+) -> FastAPI:
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(governance_router, prefix="/api/v2")
@@ -59,6 +74,8 @@ def _app(claims: AuthClaims, store: FakeGovernanceStore) -> FastAPI:
         store=store,
         id_factory=_id,
     )
+    if audit is not None:
+        app.state.platform_audit = audit
 
     async def _override_claims() -> AuthClaims:
         return claims
@@ -146,6 +163,47 @@ def test_platform_admin_can_grant_and_revoke_support_access(
     assert created.json()["status"] == "active"
     assert revoked.status_code == 200, revoked.text
     assert revoked.json()["status"] == "revoked"
+
+
+def test_governance_write_routes_dual_write_unified_platform_audit_events(
+    store: FakeGovernanceStore,
+) -> None:
+    audit = FakePlatformAuditRecorder()
+    with TestClient(_app(_platform_admin_claims(), store, audit)) as client:
+        export = client.post(
+            "/api/v2/platform/governance/tenant-exports",
+            json={
+                "academy_id": "acad_001",
+                "reason": "owner portability request",
+                "include_pii": False,
+            },
+            headers={"x-request-id": "req-export"},
+        )
+        grant = client.post(
+            "/api/v2/platform/governance/support-access-grants",
+            json={
+                "academy_id": "acad_001",
+                "support_user_id": "user_support_002",
+                "purpose": "debug tenant onboarding",
+                "expires_in_hours": 2,
+            },
+            headers={"x-request-id": "req-grant"},
+        )
+
+    assert export.status_code == 200, export.text
+    assert grant.status_code == 200, grant.text
+    assert [entry["action"] for entry in store.audit_logs] == [
+        "tenant_export.requested",
+        "support_access.granted",
+    ]
+    assert [event.action for event in audit.commands] == [
+        "tenant_export.requested",
+        "support_access.granted",
+    ]
+    assert [event.request_id for event in audit.commands] == ["req-export", "req-grant"]
+    assert all(event.actor_user_id == "platform-admin" for event in audit.commands)
+    assert all(event.platform_actor_role == "platform_admin" for event in audit.commands)
+    assert all(event.ip_address is not None for event in audit.commands)
 
 
 def test_platform_support_can_read_and_request_manual_impersonation(

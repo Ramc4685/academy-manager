@@ -1478,6 +1478,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         list_enrollment_events=enrollment_events.list_for_enrollment,
         comms=comms,
         list_admin_waivers=waivers,  # type: ignore[arg-type]
+        admin_registration_review=AsyncMock(),
         get_academy_use_case=AsyncMock(),
         update_academy_use_case=AsyncMock(),
         get_academy_fees_use_case=AsyncMock(),

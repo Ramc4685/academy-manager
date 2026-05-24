@@ -7,12 +7,18 @@
  * fields. No raw internal ids are rendered in normal UI.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, RefreshCw } from "lucide-react";
 
+import {
+  changeAdminStudentParent,
+  listAdminUsers,
+  type AdminUserView,
+  type ChangeAdminStudentParentRequest,
+} from "@/lib/api/admin";
 import {
   getAdminStudent,
   updateAdminStudent,
@@ -38,6 +44,11 @@ export default function AdminStudentDetailPage() {
     queryFn: () => getAdminStudent(studentId),
     enabled: Boolean(studentId),
     retry: false,
+  });
+  const parentsQuery = useQuery({
+    queryKey: queryKeys.admin.users("parent"),
+    queryFn: () => listAdminUsers("parent"),
+    enabled: Boolean(studentId),
   });
 
   if (!studentId) {
@@ -137,6 +148,22 @@ export default function AdminStudentDetailPage() {
                 value: student.dues_status.toUpperCase(),
               },
             ]}
+          />
+        </Card>
+        <Card p={20} className="lg:col-start-3">
+          <Overline>Parent account</Overline>
+          <ChangeParentPanel
+            student={student}
+            parents={parentsQuery.data?.users ?? []}
+            parentsLoading={parentsQuery.isLoading}
+            parentsError={parentsQuery.isError}
+            onSaved={() => {
+              void queryClient.invalidateQueries({
+                queryKey: queryKeys.admin.studentDetail(studentId),
+              });
+              void queryClient.invalidateQueries({ queryKey: ["admin", "students"] });
+              void queryClient.invalidateQueries({ queryKey: queryKeys.admin.users("parent") });
+            }}
           />
         </Card>
       </div>
@@ -404,6 +431,201 @@ function StudentEditForm({
           </Button>
         )}
       </div>
+    </form>
+  );
+}
+
+function ChangeParentPanel({
+  student,
+  parents,
+  parentsLoading,
+  parentsError,
+  onSaved,
+}: {
+  student: AdminStudentDetail;
+  parents: AdminUserView[];
+  parentsLoading: boolean;
+  parentsError: boolean;
+  onSaved: () => void;
+}) {
+  const activeParents = useMemo(
+    () => parents.filter((parent) => parent.status === "active"),
+    [parents],
+  );
+  const [search, setSearch] = useState("");
+  const [parentId, setParentId] = useState("");
+  const [reason, setReason] = useState("Admin parent account correction");
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitOk, setSubmitOk] = useState(false);
+  const [warnings, setWarnings] = useState<string[]>([]);
+
+  const filteredParents = useMemo(() => {
+    const normalized = search.trim().toLowerCase();
+    if (!normalized) return activeParents;
+    return activeParents.filter((parent) => {
+      const haystack = `${parent.display_name} ${parent.email} ${parent.phone ?? ""}`.toLowerCase();
+      return haystack.includes(normalized);
+    });
+  }, [activeParents, search]);
+
+  useEffect(() => {
+    if (!parentId || filteredParents.some((parent) => parent.user_id === parentId)) return;
+    setParentId("");
+  }, [filteredParents, parentId]);
+
+  useEffect(() => {
+    setParentId("");
+    setSubmitError(null);
+    setSubmitOk(false);
+    setWarnings([]);
+  }, [student.student_id, student.parent_id]);
+
+  const selectedParent = activeParents.find((parent) => parent.user_id === parentId);
+  const canSubmit = Boolean(parentId && parentId !== student.parent_id && reason.trim());
+
+  const mutation = useMutation({
+    mutationFn: (payload: ChangeAdminStudentParentRequest) =>
+      changeAdminStudentParent(student.student_id, payload),
+    onSuccess: (result) => {
+      setSubmitError(null);
+      setSubmitOk(true);
+      setWarnings(result.warnings);
+      setParentId("");
+      setSearch("");
+      onSaved();
+    },
+    onError: (err: unknown) => {
+      setSubmitOk(false);
+      setWarnings([]);
+      setSubmitError(err instanceof Error ? err.message : "Could not change parent account.");
+    },
+  });
+
+  return (
+    <form
+      className="mt-3 space-y-4"
+      data-testid="admin-student-change-parent-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!canSubmit) return;
+        setSubmitError(null);
+        setSubmitOk(false);
+        setWarnings([]);
+        mutation.mutate({ parent_id: parentId, reason: reason.trim() });
+      }}
+    >
+      <DetailList
+        rows={[
+          {
+            label: "Current parent",
+            value: student.parent_name ?? student.parent_email ?? "Parent on file",
+          },
+          {
+            label: "Available parents",
+            value: parentsLoading ? "Loading" : String(activeParents.length),
+          },
+        ]}
+      />
+
+      {parentsError && (
+        <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700">
+          Could not load parent accounts.
+        </p>
+      )}
+
+      <Field label="Search parents" htmlFor="student-parent-search">
+        <input
+          id="student-parent-search"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+          placeholder="Name, email, or phone"
+          disabled={parentsLoading || parentsError}
+        />
+      </Field>
+
+      <Field label="New parent" htmlFor="student-parent-id">
+        <select
+          id="student-parent-id"
+          value={parentId}
+          onChange={(event) => {
+            setParentId(event.target.value);
+            setSubmitOk(false);
+            setSubmitError(null);
+          }}
+          className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+          disabled={parentsLoading || parentsError || filteredParents.length === 0}
+          required
+        >
+          <option value="">
+            {parentsLoading
+              ? "Loading parents..."
+              : filteredParents.length === 0
+                ? "No active parents found"
+                : "Select a parent"}
+          </option>
+          {filteredParents.map((parent) => (
+            <option key={parent.user_id} value={parent.user_id}>
+              {parent.display_name} ({parent.email})
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      {selectedParent && (
+        <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm">
+          <div className="font-medium text-rally-ink">{selectedParent.display_name}</div>
+          <div className="text-rally-muted">{selectedParent.email}</div>
+          {selectedParent.phone && <div className="text-rally-muted">{selectedParent.phone}</div>}
+        </div>
+      )}
+
+      <Field label="Reason" htmlFor="student-parent-reason">
+        <input
+          id="student-parent-reason"
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+          required
+          maxLength={500}
+        />
+      </Field>
+
+      {submitError && (
+        <p
+          role="alert"
+          data-testid="admin-student-change-parent-error"
+          className="rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700"
+        >
+          {submitError}
+        </p>
+      )}
+      {submitOk && (
+        <p
+          role="status"
+          data-testid="admin-student-change-parent-ok"
+          className="rounded-md border border-emerald-200 bg-emerald-50 p-2 text-sm text-emerald-800"
+        >
+          Parent account changed.
+        </p>
+      )}
+      {warnings.length > 0 && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-sm text-amber-900">
+          {warnings.map((warning) => (
+            <div key={warning}>{warning}</div>
+          ))}
+        </div>
+      )}
+
+      <Button
+        type="submit"
+        variant="primary"
+        size="sm"
+        disabled={!canSubmit || mutation.isPending || parentsLoading || parentsError}
+        icon={mutation.isPending ? <RefreshCw className="size-3.5 animate-spin" /> : undefined}
+      >
+        {mutation.isPending ? "Changing..." : "Change parent"}
+      </Button>
     </form>
   );
 }
