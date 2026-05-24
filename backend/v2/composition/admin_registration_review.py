@@ -138,15 +138,17 @@ class AdminRegistrationReview:
             raise IncompleteApplication("Registration approval requires a session target")
         await self._assert_waiver_ready(app, command.waiver_override_reason)
 
+        now = self._now()
+        student_id = app.student_id or str(new_ulid())
+        existing = await self._enrollments.find_for_session_student(session_id, student_id)
         session = await self._sessions.get(session_id)
         if session is None:
             raise IncompleteApplication("Selected session is not available")
-        reserved = await self._sessions.try_reserve_seat(session_id)
-        if not reserved:
-            raise ApplicationNotEditable("Selected session is full; waitlist instead")
+        if existing is None:
+            reserved = await self._sessions.try_reserve_seat(session_id)
+            if not reserved:
+                raise ApplicationNotEditable("Selected session is full; waitlist instead")
 
-        now = self._now()
-        student_id = app.student_id or str(new_ulid())
         full_name = self._student_name(app)
         await self._students.upsert(
             Student(
@@ -163,7 +165,6 @@ class AdminRegistrationReview:
             student_id=student_id,
             status="active",
         )
-        existing = await self._enrollments.find_for_session_student(session_id, student_id)
         if existing is None:
             await self._enrollments.create(enrollment)
         else:
@@ -201,6 +202,9 @@ class AdminRegistrationReview:
         session_id = command.session_id or app.selected_session_id
         if not session_id:
             raise IncompleteApplication("Waitlisting requires a session target")
+        session = await self._sessions.get(session_id)
+        if session is None:
+            raise IncompleteApplication("Selected session is not available")
 
         now = self._now()
         student_id = app.student_id or str(new_ulid())

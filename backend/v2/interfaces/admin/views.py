@@ -721,7 +721,7 @@ class AdminRegistrationWaitlistRequest(BaseModel):
 
 
 class AdminRegistrationRejectRequest(BaseModel):
-    reason: str
+    reason: str = Field(min_length=1)
 
 
 class AdminWaiverSignatureDetailView(BaseModel):

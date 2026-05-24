@@ -102,3 +102,17 @@ def test_admin_can_waitlist_or_reject_registration(admin_client) -> None:
     assert waitlisted.json()["status"] == "WAITLISTED"
     assert rejected.status_code == 200, rejected.text
     assert rejected.json()["status"] == "DECLINED"
+
+
+def test_admin_reject_registration_requires_reason(admin_client) -> None:
+    admin_client.use_cases.admin_registration_review.reject = AsyncMock(
+        return_value=_detail("DECLINED")
+    )
+
+    response = admin_client.post(
+        "/api/v2/admin/registrations/app-1/reject",
+        json={"reason": ""},
+    )
+
+    assert response.status_code == 422, response.text
+    admin_client.use_cases.admin_registration_review.reject.assert_not_awaited()

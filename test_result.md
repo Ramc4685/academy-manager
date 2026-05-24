@@ -102,7 +102,7 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Wave 12 final launch-candidate gate after Wave 11 merge: verify SaaS static smoke, backend v2 suite, frontend typecheck/lint/build, Playwright route matrix, and document any local smoke blockers."
+user_problem_statement: "Address PR #103 review comments and verify the prior admin reports route-matrix flake fix."
 backend:
   - task: "Issue #94 admin payout period backend slice"
     implemented: true
@@ -132,6 +132,17 @@ backend:
       - working: true
         agent: "main"
         comment: "Implemented ChangeAdminStudentParent use case, admin DTO/route/wiring, Mongo validation/update/audit logic, and structured parent validation errors. Verification passed: focused pytest for admin student edit/routes/Mongo repo returned 16 passed; ruff check and ruff format --check passed on the touched backend files; git diff --check passed."
+  - task: "PR #103 registration review comments"
+    implemented: true
+    working: true
+    file: "backend/v2/composition/admin_registration_review.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Addressed PR #103 inline comments: approval now checks for an existing session/student enrollment before reserving a seat, waitlisting verifies the target session exists before student/waitlist writes, and reject request DTO rejects empty reasons at FastAPI validation. Added focused application and interface regressions. Verification passed: source .venv/bin/activate && pytest v2/tests/application/test_admin_registration_review.py v2/tests/interface/test_admin_registration_routes.py -q returned 6 passed; ruff check and ruff format --check passed on touched backend files."
   - task: "Issue #95 admin waiver template management backend slice"
     implemented: true
     working: true
@@ -604,6 +615,9 @@ frontend:
       - working: true
         agent: "main"
         comment: "Added /admin/registrations to the SaaS launch route matrix and stubbed GET /api/v2/admin/registrations with { registrations: [] }. Focused verification passed: pnpm exec playwright test --grep \"(route /admin/registrations mounts|admin route mounts: registrations)\" returned 4 passed across chromium-mobile and webkit-mobile."
+      - working: true
+        agent: "main"
+        comment: "Prior-session PR #103 flake fix verified for /admin/reports after adding a realistic reports-dashboard BFF stub: pnpm exec playwright test --project=webkit-mobile e2e/specs/saas-launch-route-matrix.spec.ts -g \"reports\" returned 1 passed."
   - task: "Admin shell registrations route coverage"
     implemented: true
     working: true
@@ -615,6 +629,9 @@ frontend:
       - working: true
         agent: "main"
         comment: "Added /admin/registrations to the existing admin shell route-mount matrix and stubbed GET /api/v2/admin/registrations with { registrations: [] }. Focused Playwright grep for the new registrations route passed in both admin-shell and SaaS route-matrix specs."
+      - working: true
+        agent: "main"
+        comment: "Prior-session reports flake fix verified after adding a realistic reports-dashboard BFF stub: pnpm e2e -- --project=webkit frontend/e2e/specs/admin-shell.spec.ts -g \"admin route mounts: reports\" expanded to the full admin-shell matrix and returned 50 passed across chromium-mobile and webkit-mobile, including /admin/reports."
   - task: "Wave 10 admin ops detail frontend"
     implemented: true
     working: true
@@ -1283,3 +1300,10 @@ agent_communication:
       Implemented remaining open issue slices across platform audit (#80), coach payout periods (#94), waiver template management and registration assignment (#95), admin registration approval workflow (#96), owner reports dashboard extensions (#97), and safe student parent change (#101). Payment success now moves onboarding applications to PENDING_APPROVAL; admin review approves, waitlists, or rejects and owns enrollment/waitlist creation. Cross-context registration orchestration lives in composition to preserve context layering.
 
       Verification passed: backend source .venv/bin/activate && ruff check v2; backend ruff format --check v2; backend pytest v2/tests --override-ini="testpaths=v2/tests" -q returned 609 passed; backend PYTHONPATH=/Users/ramc/.config/superpowers/worktrees/academy-manager/complete-remaining-issues lint-imports --config pyproject.toml kept all 4 contracts; backend python -m compileall v2 passed; frontend pnpm typecheck; frontend pnpm lint; frontend pnpm build. Additional focused subagent checks passed for platform audit, payouts, student parent change, registration route matrix, and admin route coverage. The documented backend mypy command failed before useful checking because mypy maps v2 files as both v2.* and backend.v2.* in this linked worktree; an alternate root-qualified mypy run still exposed broad pre-existing v2 type debt, so mypy remains not green.
+  - agent: "main"
+    message: |
+      PR #103 review-comment follow-up in worktree /Users/ramc/.config/superpowers/worktrees/academy-manager/complete-remaining-issues.
+
+      Addressed all three inline Codex comments: existing enrollment lookup now happens before seat reservation during registration approval, waitlisting validates the target session exists before writing student/waitlist rows, and admin reject requests enforce a non-empty reason at the request DTO boundary. Added focused regression coverage for the application and route validation cases. Preserved the prior session's admin reports route-matrix flake fix.
+
+      Verification passed: backend focused pytest returned 6 passed; backend ruff check and format check passed on touched backend files; frontend admin-shell Playwright matrix returned 50 passed across chromium-mobile and webkit-mobile; frontend SaaS route-matrix WebKit reports case returned 1 passed. Full backend v2 suite, frontend typecheck/lint/build, and PR push were not run in this turn.
