@@ -145,9 +145,9 @@ async def test_reports_dashboard_composes_monthly_finance_attendance_and_capacit
         "scheduled_count": 1,
         "completed_count": 1,
         "cancelled_count": 1,
-        "enrolled_seats": 3,
+        "enrolled_seats": 2,
         "capacity": 12,
-        "capacity_utilization": 0.25,
+        "capacity_utilization": 0.1667,
         "empty": False,
     }
     assert dashboard["empty_states"] == []

@@ -351,7 +351,7 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 {
                     "academy_id": academy_id,
                     "session_id": {"$in": session_ids},
-                    "status": {"$in": ["active", "paused"]},
+                    "status": "active",
                     "is_deleted": {"$ne": True},
                 },
                 {"student_id": 1},

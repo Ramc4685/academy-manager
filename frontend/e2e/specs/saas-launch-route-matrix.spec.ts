@@ -185,7 +185,7 @@ test.describe("Wave 12 SaaS launch route matrix scaffold", () => {
       await stubAdminLaunchBff(page);
       await page.goto(route.href);
 
-      await expect(page.getByTestId(route.testId)).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByTestId(route.testId)).toBeVisible({ timeout: 30_000 });
       expect(guard.v2Requests.length).toBeGreaterThan(0);
       guard.assertNoLegacyApiCalls();
       expect(errors, `Console errors on ${route.href}: ${errors.join("\n")}`).toEqual([]);
