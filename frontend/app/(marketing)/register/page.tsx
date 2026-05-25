@@ -5,7 +5,12 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { registerPublicParent } from "@/lib/api/registration";
-import { registerWithEmail, signInWithGoogle } from "@/lib/auth/firebase";
+import {
+  registerWithEmail,
+  sendVerificationEmail,
+  signInWithGoogle,
+  signOutCurrent,
+} from "@/lib/auth/firebase";
 
 const HERO_IMAGE =
   "https://static.prod-images.emergentagent.com/jobs/c735a2b3-2fb1-4fa5-a75c-2007226ca62e/images/1d1cfafe28a9d8df9f22f211189ef097f1bb5d348846857bdee5ba711ec35327.png";
@@ -18,6 +23,7 @@ export default function RegisterPage() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     setHydrated(true);
@@ -31,6 +37,7 @@ export default function RegisterPage() {
   async function handleGoogle() {
     setGoogleLoading(true);
     setError(null);
+    setNotice(null);
     try {
       await signInWithGoogle();
       await finishParentRegistration();
@@ -45,9 +52,14 @@ export default function RegisterPage() {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    setNotice(null);
     try {
-      await registerWithEmail(email.trim(), password);
-      await finishParentRegistration();
+      const user = await registerWithEmail(email.trim(), password);
+      await registerPublicParent();
+      await sendVerificationEmail(user);
+      await signOutCurrent();
+      setPassword("");
+      setNotice("Verification email sent. Confirm your email, then sign in to continue registration.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed. Please try again.");
     } finally {
@@ -94,7 +106,7 @@ export default function RegisterPage() {
                 Register your child
               </h2>
               <p className="mt-2 text-sm text-slate-600">
-                Use Google, or create an email and password account.
+                Continue with Google for the fastest setup. Email signup requires verification before onboarding.
               </p>
             </div>
 
@@ -103,14 +115,22 @@ export default function RegisterPage() {
               disabled={busy}
               onClick={handleGoogle}
               data-testid="register-google"
-              className="mt-8 flex min-h-touch w-full items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="mt-8 flex min-h-touch w-full items-center justify-center gap-3 rounded-md border border-blue-700 bg-blue-700 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {googleLoading ? "Connecting..." : "Continue with Google"}
+              <span className="flex size-6 items-center justify-center rounded-full bg-white text-sm font-bold text-blue-700">
+                G
+              </span>
+              <span>{googleLoading ? "Connecting..." : "Continue with Google"}</span>
+              {!googleLoading && (
+                <span className="rounded-full bg-white/15 px-2 py-0.5 text-[11px] uppercase">
+                  Recommended
+                </span>
+              )}
             </button>
 
             <div className="mt-5 flex items-center gap-3 text-xs uppercase text-slate-400">
               <div className="h-px flex-1 bg-slate-200" />
-              <span>or</span>
+              <span>Email option</span>
               <div className="h-px flex-1 bg-slate-200" />
             </div>
 
@@ -134,6 +154,15 @@ export default function RegisterPage() {
                 onChange={setPassword}
                 minLength={8}
               />
+
+              {notice ? (
+                <p
+                  role="status"
+                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800"
+                >
+                  {notice}
+                </p>
+              ) : null}
 
               {error ? (
                 <p

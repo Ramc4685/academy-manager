@@ -548,6 +548,23 @@ backend:
         agent: "main"
         comment: "Agent B Wave 6 added a new Platform billing slice separate from parent tuition Billing. The model covers platform plans, plan limits, tenant subscriptions, billing/trial/cancellation status, and tenant Stripe customer/subscription IDs. Application tests cover trial creation, Stripe subscription activation, period-end cancellation scheduling, plan-limit checks, and absence of parent/student/enrollment/session tuition fields. Verification: focused platform billing pytest passed 4/4; targeted ruff passed; git diff --check passed."
 frontend:
+  - task: "parent registration Google-first UI"
+    implemented: true
+    working: true
+    file: "frontend/app/(marketing)/register/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "main"
+        comment: "Local Playwright smoke reproduced the registration handoff issue: email signup created the Firebase user and POST /api/v2/register/parent returned 200, then the protected parent layout called /api/v2/me and received 401 because password-provider users are still unverified. The user was bounced back to /login."
+      - working: true
+        agent: "main"
+        comment: "Made Google the explicit recommended signup path and changed email signup to create the parent row, send the Firebase verification email, sign out, clear the password field, and show a verification notice on /register instead of entering protected onboarding early. Verification: rendered desktop and 390px mobile checks passed with no console warnings/errors; email signup hit Firebase signup, register/parent, and sendOobCode with 200 responses; Google button opened the Firebase Auth emulator Google popup."
+      - working: true
+        agent: "main"
+        comment: "Follow-up waiver-fill UI check passed from the clean PR worktree using Playwright with BFF stubs and E2E auth bypass: filled parent profile, child profile, accepted the waiver, observed PATCH bodies for parent_profile, child_profile, and accept_waiver=true, and confirmed the UI advanced to session selection with no console warnings/errors."
   - task: "Issue #101 safe change-student-parent admin UI"
     implemented: true
     working: true
@@ -895,10 +912,11 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 27
+  test_sequence: 28
   run_ui: true
 test_plan:
   current_focus:
+    - "parent registration Google-first UI"
     - "Issue #101 safe change-student-parent admin UI"
     - "Admin shell registrations route coverage"
     - "Wave 12 SaaS Playwright route matrix scaffold"
@@ -912,6 +930,10 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "Parent registration UI smoke complete: Google is now the recommended direct onboarding path. Email signup no longer routes into protected onboarding before verification; it creates the parent row, sends Firebase verification, signs out, and shows a verification notice on /register. Retest /register desktop/mobile, Google popup opening, and email signup status flow if this is handed to a testing agent."
+  - agent: "main"
+    message: "Parent onboarding waiver-fill check passed in the PR worktree on localhost:3002 with Playwright stubs and E2E auth bypass: parent details, child details, waiver accept, and transition to session selection all worked; patch payloads included accept_waiver=true."
   - agent: "main"
     message: "Issue #101 frontend slice implemented in /Users/ramc/.config/superpowers/worktrees/academy-manager/complete-remaining-issues on branch feat/complete-remaining-issues. Student detail now has a Parent account panel that lists active parent users from the existing admin users API, supports client-side search by name/email/phone, submits the new safe change-parent backend endpoint with a reason, refreshes the student detail/list after success, and avoids visible raw IDs. Verification passed: cd frontend && pnpm typecheck. Browser smoke was not run because this was a focused shared-worktree frontend slice."
   - agent: "main"

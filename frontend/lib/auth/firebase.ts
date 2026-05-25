@@ -14,6 +14,7 @@ import {
   createUserWithEmailAndPassword,
   getAuth,
   onAuthStateChanged,
+  sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
@@ -68,6 +69,10 @@ export async function signInWithEmail(email: string, password: string): Promise<
 export async function registerWithEmail(email: string, password: string): Promise<User> {
   const { user } = await createUserWithEmailAndPassword(auth(), email, password);
   return user;
+}
+
+export async function sendVerificationEmail(user: User): Promise<void> {
+  await sendEmailVerification(user);
 }
 
 export async function signInWithGoogle(): Promise<User> {
