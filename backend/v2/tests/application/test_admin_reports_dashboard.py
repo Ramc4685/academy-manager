@@ -30,9 +30,20 @@ async def test_reports_dashboard_composes_monthly_finance_attendance_and_capacit
                 "academy_id": "acad",
                 "period": "2026-05",
                 "status": "partially_paid",
+                "parent_id": "parent-1",
+                "due_date": "2026-05-15",
                 "amount_received_cents": 4_000,
                 "balance_due_cents": 6_000,
                 "final_amount_cents": 10_000,
+            },
+            {
+                "payment_id": "pay-3",
+                "academy_id": "acad",
+                "period": "2026-05",
+                "status": "failed",
+                "parent_id": "parent-2",
+                "due_date": "2026-04-01",
+                "final_amount_cents": 3_000,
             },
             {
                 "payment_id": "pay-other-month",
@@ -47,6 +58,32 @@ async def test_reports_dashboard_composes_monthly_finance_attendance_and_capacit
                 "period": "2026-05",
                 "status": "succeeded",
                 "final_amount_cents": 99_000,
+            },
+        ]
+    )
+    await db["expenses"].insert_many(
+        [
+            {
+                "expense_id": "exp-1",
+                "academy_id": "acad",
+                "category": "rent",
+                "amount_cents": 5_000,
+                "incurred_on": datetime(2026, 5, 2, tzinfo=UTC),
+            },
+            {
+                "expense_id": "exp-2",
+                "academy_id": "acad",
+                "category": "equipment",
+                "amount_cents": 1_200,
+                "incurred_on": datetime(2026, 5, 3, tzinfo=UTC),
+            },
+            {
+                "expense_id": "exp-deleted",
+                "academy_id": "acad",
+                "category": "other",
+                "amount_cents": 99_000,
+                "incurred_on": datetime(2026, 5, 3, tzinfo=UTC),
+                "deleted_at": datetime(2026, 5, 4, tzinfo=UTC),
             },
         ]
     )
@@ -128,13 +165,53 @@ async def test_reports_dashboard_composes_monthly_finance_attendance_and_capacit
             },
         ]
     )
+    await db["waitlist"].insert_one(
+        {
+            "waitlist_id": "wait-1",
+            "academy_id": "acad",
+            "session_id": "sess-1",
+            "status": "waiting",
+        }
+    )
+    await db["payout_periods"].insert_many(
+        [
+            {
+                "period_id": "pp-draft",
+                "academy_id": "acad",
+                "coach_id": "coach-1",
+                "period_start": datetime(2026, 5, 1, tzinfo=UTC),
+                "period_end": datetime(2026, 6, 1, tzinfo=UTC),
+                "status": "draft",
+                "total_minor": 4_000,
+            },
+            {
+                "period_id": "pp-approved",
+                "academy_id": "acad",
+                "coach_id": "coach-2",
+                "period_start": datetime(2026, 5, 1, tzinfo=UTC),
+                "period_end": datetime(2026, 6, 1, tzinfo=UTC),
+                "status": "approved",
+                "total_minor": 6_000,
+            },
+            {
+                "period_id": "pp-paid",
+                "academy_id": "acad",
+                "coach_id": "coach-3",
+                "period_start": datetime(2026, 5, 1, tzinfo=UTC),
+                "period_end": datetime(2026, 6, 1, tzinfo=UTC),
+                "status": "paid",
+                "total_minor": 3_000,
+                "paid_amount_minor": 3_000,
+            },
+        ]
+    )
 
     with tenant_scope("acad"):
         dashboard = await admin_composition._make_reports_dashboard(db)("2026-05")
 
     assert dashboard["period"] == "2026-05"
     assert dashboard["cash_collected_cents"] == 13_000
-    assert dashboard["outstanding_dues_cents"] == 6_000
+    assert dashboard["outstanding_dues_cents"] == 9_000
     assert dashboard["attendance"] == {
         "present_count": 2,
         "recorded_count": 3,
@@ -148,7 +225,42 @@ async def test_reports_dashboard_composes_monthly_finance_attendance_and_capacit
         "enrolled_seats": 2,
         "capacity": 12,
         "capacity_utilization": 0.1667,
+        "waitlist_count": 1,
         "empty": False,
+    }
+    assert dashboard["expenses"] == {
+        "total_cents": 6_200,
+        "by_category": [
+            {"category": "equipment", "amount_cents": 1_200, "count": 1},
+            {"category": "rent", "amount_cents": 5_000, "count": 1},
+        ],
+    }
+    assert dashboard["collections_risk"] == {
+        "overdue_family_count": 2,
+        "overdue_cents": 9_000,
+        "failed_payment_count": 1,
+        "partial_payment_count": 1,
+        "aging_buckets": [
+            {"label": "Current", "amount_cents": 0, "family_count": 0},
+            {"label": "1-30", "amount_cents": 6_000, "family_count": 1},
+            {"label": "31-60", "amount_cents": 0, "family_count": 0},
+            {"label": "60+", "amount_cents": 3_000, "family_count": 1},
+        ],
+    }
+    assert dashboard["profit_and_loss"] == {
+        "revenue_cents": 13_000,
+        "coach_payroll_cents": 9_000,
+        "rent_cents": 5_000,
+        "misc_expenses_cents": 1_200,
+        "net_profit_cents": -2_200,
+        "profit_margin": -0.1692,
+    }
+    assert dashboard["payroll"] == {
+        "estimated_cents": 13_000,
+        "approved_cents": 9_000,
+        "paid_cents": 3_000,
+        "unpaid_cents": 6_000,
+        "blocked_by": None,
     }
     assert dashboard["empty_states"] == []
 
@@ -179,11 +291,42 @@ async def test_reports_dashboard_returns_meaningful_empty_states() -> None:
             "enrolled_seats": 0,
             "capacity": 0,
             "capacity_utilization": None,
+            "waitlist_count": 0,
             "empty": True,
+        },
+        "expenses": {"total_cents": 0, "by_category": []},
+        "collections_risk": {
+            "overdue_family_count": 0,
+            "overdue_cents": 0,
+            "failed_payment_count": 0,
+            "partial_payment_count": 0,
+            "aging_buckets": [
+                {"label": "Current", "amount_cents": 0, "family_count": 0},
+                {"label": "1-30", "amount_cents": 0, "family_count": 0},
+                {"label": "31-60", "amount_cents": 0, "family_count": 0},
+                {"label": "60+", "amount_cents": 0, "family_count": 0},
+            ],
+        },
+        "profit_and_loss": {
+            "revenue_cents": 0,
+            "coach_payroll_cents": None,
+            "rent_cents": 0,
+            "misc_expenses_cents": 0,
+            "net_profit_cents": None,
+            "profit_margin": None,
+        },
+        "payroll": {
+            "estimated_cents": None,
+            "approved_cents": None,
+            "paid_cents": None,
+            "unpaid_cents": None,
+            "blocked_by": "No generated payout periods for this month.",
         },
         "empty_states": [
             "No collected payment rows found for this month.",
             "No attendance marks found for this month.",
             "No sessions found for this month.",
+            "No expenses found for this month.",
+            "No payout periods generated for this month.",
         ],
     }

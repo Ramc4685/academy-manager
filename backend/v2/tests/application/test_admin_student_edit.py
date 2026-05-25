@@ -8,6 +8,10 @@ import pytest
 
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     AdminStudentDetail,
+    AdminStudentParentChangeResult,
+    AdminStudentParentSummary,
+    ChangeAdminStudentParent,
+    ChangeAdminStudentParentCommand,
     GetAdminStudent,
     UpdateAdminStudent,
     UpdateAdminStudentCommand,
@@ -31,6 +35,7 @@ class FakeStudentEditor:
             level="beginner",
         )
         self.commands: list[UpdateAdminStudentCommand] = []
+        self.parent_change_commands: list[ChangeAdminStudentParentCommand] = []
 
     async def get_admin_student(self, student_id: str) -> AdminStudentDetail | None:
         return self.student if student_id == self.student.student_id else None
@@ -53,6 +58,32 @@ class FakeStudentEditor:
             }
         )
         return self.student
+
+    async def change_admin_student_parent(
+        self,
+        student_id: str,
+        command: ChangeAdminStudentParentCommand,
+    ) -> AdminStudentParentChangeResult | None:
+        self.parent_change_commands.append(command)
+        if student_id != self.student.student_id:
+            return None
+        return AdminStudentParentChangeResult(
+            student_id=student_id,
+            parent=AdminStudentParentSummary(
+                parent_id=command.parent_id,
+                display_name="Parent Two",
+                email="parent2@example.com",
+                phone="555-0202",
+            ),
+            previous_parent_id=self.student.parent_id,
+            warnings=["Historical billing, waiver, credit, and waitlist rows were not rewritten."],
+            impact_counts={
+                "payments": 1,
+                "waivers": 1,
+                "credits": 1,
+                "waitlist": 1,
+            },
+        )
 
 
 @pytest.mark.asyncio
@@ -98,5 +129,38 @@ async def test_update_admin_student_raises_when_missing() -> None:
                 full_name="Missing",
                 actor_id="admin-1",
                 reason="correction",
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_change_admin_student_parent_forwards_parent_and_audit_context() -> None:
+    repo = FakeStudentEditor()
+    command = ChangeAdminStudentParentCommand(
+        parent_id="parent-2",
+        actor_id="admin-1",
+        reason="Custody update",
+    )
+
+    result = await ChangeAdminStudentParent(repo).execute("st-1", command)
+
+    assert result.student_id == "st-1"
+    assert result.parent.parent_id == "parent-2"
+    assert result.previous_parent_id == "parent-1"
+    assert result.impact_counts["payments"] == 1
+    assert repo.parent_change_commands == [command]
+
+
+@pytest.mark.asyncio
+async def test_change_admin_student_parent_raises_when_student_missing() -> None:
+    repo = FakeStudentEditor()
+
+    with pytest.raises(StudentNotFound):
+        await ChangeAdminStudentParent(repo).execute(
+            "missing",
+            ChangeAdminStudentParentCommand(
+                parent_id="parent-2",
+                actor_id="admin-1",
+                reason="Custody update",
             ),
         )

@@ -17,6 +17,7 @@ from backend.v2.contexts.platform.billing.application.use_cases.manage_platform_
     ScheduleTenantCancellationCommand,
     StartTenantTrial,
     StartTenantTrialCommand,
+    UpsertPlatformPlan,
     UpsertPlatformPlanCommand,
 )
 from backend.v2.contexts.platform.billing.domain.models import (
@@ -36,9 +37,14 @@ from backend.v2.contexts.platform.billing.infrastructure.mongo_repositories impo
 class FakePlanRepository:
     def __init__(self, plans: list[PlatformPlan]) -> None:
         self._plans = {plan.plan_id: plan for plan in plans}
+        self.saved: list[PlatformPlan] = []
 
     async def get(self, plan_id: str) -> PlatformPlan | None:
         return self._plans.get(plan_id)
+
+    async def save(self, plan: PlatformPlan) -> None:
+        self.saved.append(plan)
+        self._plans[plan.plan_id] = plan
 
 
 class FakeTenantSubscriptionRepository:
@@ -114,6 +120,46 @@ async def test_start_trial_creates_platform_subscription_without_tuition_fields(
 
     tuition_fields = {"parent_id", "student_id", "enrollment_id", "session_id"}
     assert tuition_fields.isdisjoint(TenantSubscription.model_fields)
+
+
+@pytest.mark.asyncio
+async def test_upsert_plan_emits_one_unified_platform_audit_event_after_save() -> None:
+    plans = FakePlanRepository([])
+    audit = FakePlatformAuditRecorder()
+
+    result = await UpsertPlatformPlan(
+        plans=plans,
+        clock=_clock,
+        audit_recorder=audit.record_event,
+    ).execute(
+        UpsertPlatformPlanCommand(
+            plan_id="plan-growth",
+            academy_id="platform-control",
+            code="growth",
+            display_name="Growth",
+            monthly_price_cents=29_900,
+            limits=PlanLimits(max_active_students=250),
+            actor_user_id="platform-admin-1",
+            platform_actor_role="platform_admin",
+            request_id="req-plan",
+            ip_address="203.0.113.10",
+        )
+    )
+
+    assert plans.saved == [result]
+    assert len(audit.commands) == 1
+    event = audit.commands[0]
+    assert event.actor_user_id == "platform-admin-1"
+    assert event.platform_actor_role == "platform_admin"
+    assert event.academy_id == "platform-control"
+    assert event.action == "platform_billing.plan_upserted"
+    assert event.entity_type == "platform_plan"
+    assert event.entity_id == "plan-growth"
+    assert event.before_snapshot is None
+    assert event.after_snapshot is not None
+    assert event.after_snapshot["monthly_price_cents"] == 29_900
+    assert event.request_id == "req-plan"
+    assert event.ip_address == "203.0.113.10"
 
 
 @pytest.mark.asyncio
@@ -204,6 +250,59 @@ async def test_activate_stripe_subscription_records_customer_subscription_and_pl
 
 
 @pytest.mark.asyncio
+async def test_activate_subscription_emits_one_unified_platform_audit_event_after_save() -> None:
+    plans = FakePlanRepository([_plan()])
+    subscriptions = FakeTenantSubscriptionRepository()
+    audit = FakePlatformAuditRecorder()
+    existing = TenantSubscription(
+        subscription_id="platform-sub-1",
+        academy_id="academy-1",
+        plan_id="plan-growth",
+        billing_status="trialing",
+        trial_status="active",
+        cancellation_status="none",
+        trial_ends_at=_clock() + timedelta(days=14),
+        created_at=_clock(),
+        updated_at=_clock(),
+    )
+    await subscriptions.save(existing)
+
+    result = await ActivateTenantSubscription(
+        plans=plans,
+        subscriptions=subscriptions,
+        id_factory=lambda: "platform-sub-unused",
+        clock=_clock,
+        audit_recorder=audit.record_event,
+    ).execute(
+        ActivateTenantSubscriptionCommand(
+            academy_id="academy-1",
+            plan_id="plan-growth",
+            stripe_customer_id="cus_platform_123",
+            stripe_subscription_id="sub_platform_123",
+            current_period_start=_clock(),
+            current_period_end=_clock() + timedelta(days=30),
+            actor_user_id="platform-admin-1",
+            actor_membership_id="platform-membership-1",
+            platform_actor_role="platform_admin",
+            request_id="req-activate",
+            ip_address="203.0.113.10",
+        )
+    )
+
+    assert subscriptions.saved[-1] == result
+    assert len(audit.commands) == 1
+    event = audit.commands[0]
+    assert event.action == "platform_billing.subscription_activated"
+    assert event.entity_type == "tenant_subscription"
+    assert event.entity_id == "platform-sub-1"
+    assert event.before_snapshot is not None
+    assert event.before_snapshot["billing_status"] == "trialing"
+    assert event.after_snapshot is not None
+    assert event.after_snapshot["billing_status"] == "active"
+    assert event.request_id == "req-activate"
+
+
+@pytest.mark.asyncio
 async def test_schedule_cancellation_keeps_subscription_active_until_period_end() -> None:
     plans = FakePlanRepository([_plan()])
     subscriptions = FakeTenantSubscriptionRepository()
@@ -239,6 +338,107 @@ async def test_schedule_cancellation_keeps_subscription_active_until_period_end(
     assert result.cancellation_status == "scheduled"
     assert result.cancel_at_period_end is True
     assert result.cancelled_at is None
+
+
+@pytest.mark.asyncio
+async def test_schedule_cancellation_emits_one_unified_platform_audit_event_after_save() -> None:
+    plans = FakePlanRepository([_plan()])
+    subscriptions = FakeTenantSubscriptionRepository()
+    audit = FakePlatformAuditRecorder()
+    await subscriptions.save(
+        TenantSubscription(
+            subscription_id="platform-sub-1",
+            academy_id="academy-1",
+            plan_id="plan-growth",
+            billing_status="active",
+            trial_status="converted",
+            cancellation_status="none",
+            stripe_customer_id="cus_platform_123",
+            stripe_subscription_id="sub_platform_123",
+            current_period_start=_clock(),
+            current_period_end=_clock() + timedelta(days=30),
+            created_at=_clock(),
+            updated_at=_clock(),
+        )
+    )
+
+    result = await ScheduleTenantCancellation(
+        plans=plans,
+        subscriptions=subscriptions,
+        clock=_clock,
+        audit_recorder=audit.record_event,
+    ).execute(
+        ScheduleTenantCancellationCommand(
+            academy_id="academy-1",
+            cancel_at_period_end=True,
+            actor_user_id="platform-admin-1",
+            platform_actor_role="platform_admin",
+            request_id="req-schedule",
+            ip_address="203.0.113.10",
+        )
+    )
+
+    assert subscriptions.saved[-1] == result
+    assert len(audit.commands) == 1
+    event = audit.commands[0]
+    assert event.action == "platform_billing.cancellation_scheduled"
+    assert event.entity_id == "platform-sub-1"
+    assert event.before_snapshot is not None
+    assert event.before_snapshot["cancellation_status"] == "none"
+    assert event.after_snapshot is not None
+    assert event.after_snapshot["cancellation_status"] == "scheduled"
+    assert event.request_id == "req-schedule"
+
+
+@pytest.mark.asyncio
+async def test_cancel_now_emits_one_unified_platform_audit_event_after_save() -> None:
+    plans = FakePlanRepository([_plan()])
+    subscriptions = FakeTenantSubscriptionRepository()
+    audit = FakePlatformAuditRecorder()
+    await subscriptions.save(
+        TenantSubscription(
+            subscription_id="platform-sub-1",
+            academy_id="academy-1",
+            plan_id="plan-growth",
+            billing_status="active",
+            trial_status="converted",
+            cancellation_status="scheduled",
+            stripe_customer_id="cus_platform_123",
+            stripe_subscription_id="sub_platform_123",
+            current_period_start=_clock(),
+            current_period_end=_clock() + timedelta(days=30),
+            created_at=_clock(),
+            updated_at=_clock(),
+        )
+    )
+
+    result = await ScheduleTenantCancellation(
+        plans=plans,
+        subscriptions=subscriptions,
+        clock=_clock,
+        audit_recorder=audit.record_event,
+    ).execute(
+        ScheduleTenantCancellationCommand(
+            academy_id="academy-1",
+            cancel_at_period_end=False,
+            actor_user_id="platform-admin-1",
+            platform_actor_role="platform_admin",
+            request_id="req-cancel",
+            ip_address="203.0.113.10",
+        )
+    )
+
+    assert subscriptions.saved[-1] == result
+    assert len(audit.commands) == 1
+    event = audit.commands[0]
+    assert event.action == "platform_billing.subscription_cancelled"
+    assert event.entity_id == "platform-sub-1"
+    assert event.before_snapshot is not None
+    assert event.before_snapshot["billing_status"] == "active"
+    assert event.after_snapshot is not None
+    assert event.after_snapshot["billing_status"] == "cancelled"
+    assert event.after_snapshot["cancelled_at"] == "2026-06-01T12:00:00Z"
+    assert event.request_id == "req-cancel"
 
 
 @pytest.mark.asyncio

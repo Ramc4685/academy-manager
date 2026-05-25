@@ -6,6 +6,9 @@ from dataclasses import dataclass
 
 from fastapi import Request
 
+from backend.v2.composition.admin_registration_review import (
+    AdminRegistrationReview,
+)
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscount,
     GenerateMonthlyPayments,
@@ -27,6 +30,7 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
     PreviewWithdrawalCredit,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    ChangeAdminStudentParent,
     GetAdminStudent,
     ListAdminStudents,
     UpdateAdminStudent,
@@ -52,6 +56,13 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
 )
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
+)
+from backend.v2.contexts.finance.application.use_cases.approve_payout_period import (
+    ApprovePayoutPeriod,
+    MarkPayoutPaid,
+)
+from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
+    GeneratePayoutPeriod,
 )
 from backend.v2.contexts.identity.application.change_user_role_use_case import ChangeUserRole
 from backend.v2.contexts.identity.application.get_academy_fees_use_case import GetAcademyFeesUseCase
@@ -156,7 +167,13 @@ class AdminUseCases:
     update_admin_user: UpdateAdminUser | None = None
     get_admin_student: GetAdminStudent | None = None
     update_admin_student: UpdateAdminStudent | None = None
+    change_admin_student_parent: ChangeAdminStudentParent | None = None
     manage_admin_waiver_templates: ManageAdminWaiverTemplates | None = None
+    admin_registration_review: AdminRegistrationReview | None = None
+    payout_periods: object | None = None
+    generate_payout_period: GeneratePayoutPeriod | None = None
+    approve_payout_period: ApprovePayoutPeriod | None = None
+    mark_payout_paid: MarkPayoutPaid | None = None
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:

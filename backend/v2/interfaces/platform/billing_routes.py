@@ -118,14 +118,21 @@ async def list_plans(
 async def upsert_plan(
     plan_id: str,
     payload: UpsertPlanRequest,
-    _: AuthClaims = Depends(require_platform_admin),
+    request: Request,
+    claims: AuthClaims = Depends(require_platform_admin),
     billing: PlatformBillingUseCases = Depends(get_platform_billing),
 ) -> PlatformPlanResponse:
     command = UpsertPlatformPlanCommand.model_validate(
         {
             **payload.model_dump(),
             "plan_id": plan_id,
+            "academy_id": claims.academy_id,
             "limits": payload.limits.model_dump(),
+            "actor_user_id": claims.user_id,
+            "actor_membership_id": claims.membership_id,
+            "platform_actor_role": _platform_role(claims),
+            "request_id": _request_id(request),
+            "ip_address": request.client.host if request.client else None,
         }
     )
     plan = await billing.upsert_plan.execute(command)
@@ -171,7 +178,8 @@ async def start_trial(
 async def activate_subscription(
     academy_id: str,
     payload: ActivateSubscriptionRequest,
-    _: AuthClaims = Depends(require_platform_admin),
+    request: Request,
+    claims: AuthClaims = Depends(require_platform_admin),
     billing: PlatformBillingUseCases = Depends(get_platform_billing),
 ) -> TenantSubscriptionResponse:
     subscription = await billing.activate_subscription.execute(
@@ -182,6 +190,11 @@ async def activate_subscription(
             stripe_subscription_id=payload.stripe_subscription_id,
             current_period_start=payload.current_period_start,
             current_period_end=payload.current_period_end,
+            actor_user_id=claims.user_id,
+            actor_membership_id=claims.membership_id,
+            platform_actor_role=_platform_role(claims),
+            request_id=_request_id(request),
+            ip_address=request.client.host if request.client else None,
         )
     )
     return _subscription_response(subscription)
@@ -193,13 +206,19 @@ async def activate_subscription(
 )
 async def schedule_cancellation(
     academy_id: str,
-    _: AuthClaims = Depends(require_platform_admin),
+    request: Request,
+    claims: AuthClaims = Depends(require_platform_admin),
     billing: PlatformBillingUseCases = Depends(get_platform_billing),
 ) -> TenantSubscriptionResponse:
     subscription = await billing.schedule_cancellation.execute(
         ScheduleTenantCancellationCommand(
             academy_id=academy_id,
             cancel_at_period_end=True,
+            actor_user_id=claims.user_id,
+            actor_membership_id=claims.membership_id,
+            platform_actor_role=_platform_role(claims),
+            request_id=_request_id(request),
+            ip_address=request.client.host if request.client else None,
         )
     )
     return _subscription_response(subscription)
@@ -208,13 +227,19 @@ async def schedule_cancellation(
 @router.post("/tenants/{academy_id}/cancel-now", response_model=TenantSubscriptionResponse)
 async def cancel_immediately(
     academy_id: str,
-    _: AuthClaims = Depends(require_platform_admin),
+    request: Request,
+    claims: AuthClaims = Depends(require_platform_admin),
     billing: PlatformBillingUseCases = Depends(get_platform_billing),
 ) -> TenantSubscriptionResponse:
     subscription = await billing.schedule_cancellation.execute(
         ScheduleTenantCancellationCommand(
             academy_id=academy_id,
             cancel_at_period_end=False,
+            actor_user_id=claims.user_id,
+            actor_membership_id=claims.membership_id,
+            platform_actor_role=_platform_role(claims),
+            request_id=_request_id(request),
+            ip_address=request.client.host if request.client else None,
         )
     )
     return _subscription_response(subscription)

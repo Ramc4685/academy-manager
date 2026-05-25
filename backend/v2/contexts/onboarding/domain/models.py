@@ -22,6 +22,9 @@ ApplicationStatus = Literal[
     "CHECKOUT_PENDING",
     "CHECKOUT_EXPIRED",
     "PENDING_APPROVAL",
+    "APPROVED",
+    "WAITLISTED",
+    "DECLINED",
     "CAPACITY_FAILED_REFUNDING",
     "REFUNDED",
     "CAPACITY_FAILED_REFUND_FAILED",
@@ -66,6 +69,12 @@ class Application(BaseModel):
     waiver_acceptance: WaiverAcceptance | None = None
     stripe_checkout_session_id: str | None = None
     payment_id: str | None = None
+    student_id: str | None = None
+    enrollment_id: str | None = None
+    waitlist_id: str | None = None
+    decision_reason: str | None = None
+    decided_by: str | None = None
+    decided_at: datetime | None = None
     expires_at: datetime  # 7d TTL after creation
     created_at: datetime
     updated_at: datetime

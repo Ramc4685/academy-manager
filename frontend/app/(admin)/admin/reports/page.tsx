@@ -101,6 +101,26 @@ export default function AdminReportsPage() {
             value={dashboard ? formatNullablePercent(dashboard.sessions.capacity_utilization) : dashboardQuery.isLoading ? "Loading" : "No data"}
             description="Enrolled seats against scheduled and completed capacity."
           />
+          <KpiCard
+            label="Net profit"
+            value={dashboard ? formatNullableCurrency(dashboard.profit_and_loss.net_profit_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            description="Revenue less expenses and available coach payroll."
+          />
+          <KpiCard
+            label="Expenses"
+            value={dashboard ? formatCurrency(dashboard.expenses.total_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            description="Recorded rent, equipment, salary, marketing, and other spend."
+          />
+          <KpiCard
+            label="Payroll unpaid"
+            value={dashboard ? formatNullableCurrency(dashboard.payroll.unpaid_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            description="Approved coach payout amount not yet marked paid."
+          />
+          <KpiCard
+            label="Waitlist"
+            value={dashboard ? formatInteger(dashboard.sessions.waitlist_count) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            description="Families waiting on sessions in the selected month."
+          />
         </div>
 
         {dashboardQuery.isError && (
@@ -138,6 +158,7 @@ export default function AdminReportsPage() {
               <DashboardTerm label="Cancelled" value={dashboard ? formatInteger(dashboard.sessions.cancelled_count) : "No data"} />
               <DashboardTerm label="Seats" value={dashboard ? `${formatInteger(dashboard.sessions.enrolled_seats)} / ${formatInteger(dashboard.sessions.capacity)}` : "No data"} />
               <DashboardTerm label="Attendance marks" value={dashboard ? formatInteger(dashboard.attendance.recorded_count) : "No data"} />
+              <DashboardTerm label="Waitlist" value={dashboard ? formatInteger(dashboard.sessions.waitlist_count) : "No data"} />
             </dl>
           </div>
           <dl className="grid gap-3 border-t border-neutral-100 pt-4 sm:grid-cols-3">
@@ -146,6 +167,97 @@ export default function AdminReportsPage() {
             <DashboardTerm label="Period" value={formatMonth(period)} />
           </dl>
         </Card>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card p={24}>
+            <Overline>Profit and loss</Overline>
+            <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+              <DashboardTerm label="Revenue" value={dashboard ? formatCurrency(dashboard.profit_and_loss.revenue_cents) : "No data"} />
+              <DashboardTerm label="Coach payroll" value={dashboard ? formatNullableCurrency(dashboard.profit_and_loss.coach_payroll_cents) : "No data"} />
+              <DashboardTerm label="Rent" value={dashboard ? formatCurrency(dashboard.profit_and_loss.rent_cents) : "No data"} />
+              <DashboardTerm label="Misc expenses" value={dashboard ? formatCurrency(dashboard.profit_and_loss.misc_expenses_cents) : "No data"} />
+              <DashboardTerm label="Net profit" value={dashboard ? formatNullableCurrency(dashboard.profit_and_loss.net_profit_cents) : "No data"} />
+              <DashboardTerm label="Margin" value={dashboard ? formatNullablePercent(dashboard.profit_and_loss.profit_margin) : "No data"} />
+            </dl>
+          </Card>
+
+          <Card p={24}>
+            <Overline>Collections risk</Overline>
+            <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+              <DashboardTerm label="Families due" value={dashboard ? formatInteger(dashboard.collections_risk.overdue_family_count) : "No data"} />
+              <DashboardTerm label="Amount due" value={dashboard ? formatCurrency(dashboard.collections_risk.overdue_cents) : "No data"} />
+              <DashboardTerm label="Failed payments" value={dashboard ? formatInteger(dashboard.collections_risk.failed_payment_count) : "No data"} />
+              <DashboardTerm label="Partial payments" value={dashboard ? formatInteger(dashboard.collections_risk.partial_payment_count) : "No data"} />
+            </dl>
+            {dashboard?.collections_risk.aging_buckets.length ? (
+              <div className="mt-5 overflow-x-auto">
+                <table className="w-full min-w-[360px] text-left text-sm">
+                  <thead className="text-xs uppercase text-rally-muted">
+                    <tr>
+                      <th className="px-2 py-2">Age</th>
+                      <th className="px-2 py-2">Amount</th>
+                      <th className="px-2 py-2">Families</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-rally-line">
+                    {dashboard.collections_risk.aging_buckets.map((bucket) => (
+                      <tr key={bucket.label}>
+                        <td className="px-2 py-2 font-medium text-rally-ink">{bucket.label}</td>
+                        <td className="px-2 py-2 text-rally-muted">{formatCurrency(bucket.amount_cents)}</td>
+                        <td className="px-2 py-2 text-rally-muted">{formatInteger(bucket.family_count)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </Card>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card p={24}>
+            <Overline>Expenses</Overline>
+            {dashboard?.expenses.by_category.length ? (
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full min-w-[360px] text-left text-sm">
+                  <thead className="text-xs uppercase text-rally-muted">
+                    <tr>
+                      <th className="px-2 py-2">Category</th>
+                      <th className="px-2 py-2">Amount</th>
+                      <th className="px-2 py-2">Rows</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-rally-line">
+                    {dashboard.expenses.by_category.map((category) => (
+                      <tr key={category.category}>
+                        <td className="px-2 py-2 font-medium text-rally-ink">{category.category}</td>
+                        <td className="px-2 py-2 text-rally-muted">{formatCurrency(category.amount_cents)}</td>
+                        <td className="px-2 py-2 text-rally-muted">{formatInteger(category.count)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-rally-subtle">No expenses recorded for this month.</p>
+            )}
+          </Card>
+
+          <Card p={24}>
+            <Overline>Coach payroll</Overline>
+            <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+              <DashboardTerm label="Estimated" value={dashboard ? formatNullableCurrency(dashboard.payroll.estimated_cents) : "No data"} />
+              <DashboardTerm label="Approved" value={dashboard ? formatNullableCurrency(dashboard.payroll.approved_cents) : "No data"} />
+              <DashboardTerm label="Paid" value={dashboard ? formatNullableCurrency(dashboard.payroll.paid_cents) : "No data"} />
+              <DashboardTerm label="Unpaid" value={dashboard ? formatNullableCurrency(dashboard.payroll.unpaid_cents) : "No data"} />
+            </dl>
+            {dashboard?.payroll.blocked_by ? (
+              <p className="mt-4 rounded-md border border-dashed border-rally-line px-3 py-2 text-sm text-rally-subtle">
+                {dashboard.payroll.blocked_by}
+              </p>
+            ) : null}
+          </Card>
+        </div>
 
         <Card p={24} className="flex flex-col gap-6">
           <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
@@ -281,6 +393,10 @@ function formatNullablePercent(value: number | null): string {
 
 function formatCurrency(cents: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
+}
+
+function formatNullableCurrency(cents: number | null) {
+  return cents == null ? "Not available" : formatCurrency(cents);
 }
 
 function formatMonth(value: string) {

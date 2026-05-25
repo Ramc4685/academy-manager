@@ -24,6 +24,7 @@ import pytest
 from backend.v2.contexts.finance.application.use_cases.approve_payout_period import (
     ApprovePayoutPeriod,
     MarkPayoutPaid,
+    MarkPayoutPaidCommand,
 )
 from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
     GeneratePayoutPeriod,
@@ -216,6 +217,9 @@ def _draft_period(**overrides) -> PayoutPeriod:
         lines=[],
         unpaid_occurrence_ids=[],
         generated_at=_dt("2026-06-01T00:00:00"),
+        paid_method=None,
+        paid_amount_minor=None,
+        paid_reference=None,
     )
     base.update(overrides)
     return PayoutPeriod(**base)
@@ -237,14 +241,24 @@ def test_approve_is_idempotent_on_approved() -> None:
 
 def test_approve_rejects_paid_period() -> None:
     period = approve(_draft_period(), at=_dt("2026-06-02T12:00:00"))
-    period = mark_paid(period, at=_dt("2026-06-03T12:00:00"))
+    period = mark_paid(
+        period,
+        at=_dt("2026-06-03T12:00:00"),
+        method="cash",
+        amount_minor=0,
+    )
     with pytest.raises(PayoutPeriodStateError):
         approve(period, at=_dt("2026-06-04T12:00:00"))
 
 
 def test_mark_paid_rejects_draft() -> None:
     with pytest.raises(PayoutPeriodStateError):
-        mark_paid(_draft_period(), at=_dt("2026-06-02T12:00:00"))
+        mark_paid(
+            _draft_period(),
+            at=_dt("2026-06-02T12:00:00"),
+            method="cash",
+            amount_minor=0,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -397,10 +411,54 @@ async def test_mark_paid_use_case_full_flow() -> None:
     approver = ApprovePayoutPeriod(repository=repo, clock=lambda: _dt("2026-06-02T12:00:00"))
     payer = MarkPayoutPaid(repository=repo, clock=lambda: _dt("2026-06-03T12:00:00"))
     await approver.execute(period_id="pp-1")
-    paid = await payer.execute(period_id="pp-1")
+    paid = await payer.execute(
+        MarkPayoutPaidCommand(
+            period_id="pp-1",
+            method="bank_transfer",
+            paid_at=_dt("2026-06-03T12:00:00"),
+            amount_minor=0,
+            reference="ach-123",
+        )
+    )
     assert paid.status == "paid"
     assert paid.paid_at == _dt("2026-06-03T12:00:00")
     assert paid.approved_at == _dt("2026-06-02T12:00:00")
+    assert paid.paid_method == "bank_transfer"
+    assert paid.paid_amount_minor == 0
+    assert paid.paid_reference == "ach-123"
+
+
+@pytest.mark.asyncio
+async def test_mark_paid_use_case_is_idempotent_and_preserves_payment_metadata() -> None:
+    repo = FakeRepo()
+    await repo.save(_draft_period())
+    approver = ApprovePayoutPeriod(repository=repo, clock=lambda: _dt("2026-06-02T12:00:00"))
+    payer = MarkPayoutPaid(repository=repo, clock=lambda: _dt("2026-06-03T12:00:00"))
+    await approver.execute(period_id="pp-1")
+    first = await payer.execute(
+        MarkPayoutPaidCommand(
+            period_id="pp-1",
+            method="cash",
+            paid_at=_dt("2026-06-03T12:00:00"),
+            amount_minor=0,
+            reference="cash-envelope-7",
+        )
+    )
+    second = await payer.execute(
+        MarkPayoutPaidCommand(
+            period_id="pp-1",
+            method="check",
+            paid_at=_dt("2026-06-04T12:00:00"),
+            amount_minor=9999,
+            reference="retry-should-not-overwrite",
+        )
+    )
+    assert second is first
+    assert second.paid_method == "cash"
+    assert second.paid_at == _dt("2026-06-03T12:00:00")
+    assert second.paid_amount_minor == 0
+    assert second.paid_reference == "cash-envelope-7"
+    assert repo.replace_calls == 2
 
 
 @pytest.mark.asyncio

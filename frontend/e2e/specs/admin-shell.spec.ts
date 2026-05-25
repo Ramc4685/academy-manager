@@ -21,11 +21,61 @@ const PARENT_ME = {
   roles: ["parent"],
 };
 
+const REPORTS_DASHBOARD_EMPTY = {
+  period: "2026-05",
+  cash_collected_cents: 0,
+  outstanding_dues_cents: 0,
+  attendance: {
+    present_count: 0,
+    recorded_count: 0,
+    attendance_rate: null,
+    empty: true,
+  },
+  sessions: {
+    scheduled_count: 0,
+    completed_count: 0,
+    cancelled_count: 0,
+    enrolled_seats: 0,
+    capacity: 0,
+    capacity_utilization: null,
+    waitlist_count: 0,
+    empty: true,
+  },
+  expenses: {
+    total_cents: 0,
+    by_category: [],
+  },
+  collections_risk: {
+    overdue_family_count: 0,
+    overdue_cents: 0,
+    failed_payment_count: 0,
+    partial_payment_count: 0,
+    aging_buckets: [],
+  },
+  profit_and_loss: {
+    revenue_cents: 0,
+    coach_payroll_cents: null,
+    rent_cents: 0,
+    misc_expenses_cents: 0,
+    net_profit_cents: null,
+    profit_margin: null,
+  },
+  payroll: {
+    estimated_cents: null,
+    approved_cents: null,
+    paid_cents: null,
+    unpaid_cents: null,
+    blocked_by: "No generated payout periods for this month.",
+  },
+  empty_states: [],
+};
+
 const ADMIN_ROUTES = [
   { href: "/admin", testid: "admin-dashboard" },
   { href: "/admin/sessions", testid: "admin-sessions" },
   { href: "/admin/students", testid: "admin-students" },
   { href: "/admin/users", testid: "admin-users" },
+  { href: "/admin/registrations", testid: "admin-registrations" },
   { href: "/admin/waitlist", testid: "admin-waitlist" },
   { href: "/admin/pause-requests", testid: "admin-pause-requests" },
   { href: "/admin/payments", testid: "admin-payments" },
@@ -126,6 +176,9 @@ async function stubAdminBff(page: Page) {
   await page.route("**/api/v2/admin/students*", (route) =>
     fulfillJson(route, { students: [] })
   );
+  await page.route("**/api/v2/admin/registrations*", (route) =>
+    fulfillJson(route, { registrations: [] })
+  );
   await page.route("**/api/v2/admin/payments*", (route) =>
     fulfillJson(route, { payments: [] })
   );
@@ -182,6 +235,9 @@ async function stubAdminBff(page: Page) {
   );
   await page.route(`${financeBff}revenue*`, (route) =>
     fulfillJson(route, { by_month: {} })
+  );
+  await page.route("**/api/v2/admin/reports/dashboard*", (route) =>
+    fulfillJson(route, REPORTS_DASHBOARD_EMPTY)
   );
   await page.route(/\/api\/v2\/admin\/academy\/gateway(?:\?.*)?$/, (route) =>
     fulfillJson(route, {

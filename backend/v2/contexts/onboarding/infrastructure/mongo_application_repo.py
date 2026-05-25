@@ -29,6 +29,12 @@ class MongoApplicationRepository(TenantScopedRepository):
             waiver_acceptance=WaiverAcceptance.model_validate(wa) if wa else None,
             stripe_checkout_session_id=doc.get("stripe_checkout_session_id"),  # type: ignore[arg-type]
             payment_id=doc.get("payment_id"),  # type: ignore[arg-type]
+            student_id=doc.get("student_id"),  # type: ignore[arg-type]
+            enrollment_id=doc.get("enrollment_id"),  # type: ignore[arg-type]
+            waitlist_id=doc.get("waitlist_id"),  # type: ignore[arg-type]
+            decision_reason=doc.get("decision_reason"),  # type: ignore[arg-type]
+            decided_by=doc.get("decided_by"),  # type: ignore[arg-type]
+            decided_at=doc.get("decided_at"),  # type: ignore[arg-type]
             expires_at=doc["expires_at"],  # type: ignore[arg-type]
             created_at=doc["created_at"],  # type: ignore[arg-type]
             updated_at=doc["updated_at"],  # type: ignore[arg-type]
@@ -59,3 +65,10 @@ class MongoApplicationRepository(TenantScopedRepository):
     async def get_by_payment_id(self, payment_id: str) -> Application | None:
         doc = await self._find_one({"payment_id": payment_id})
         return self._to_domain(doc) if doc else None
+
+    async def list_by_status(self, statuses: list[str]) -> list[Application]:
+        cursor = self._find_many(
+            {"status": {"$in": statuses}},
+            sort=[("updated_at", -1), ("created_at", -1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]

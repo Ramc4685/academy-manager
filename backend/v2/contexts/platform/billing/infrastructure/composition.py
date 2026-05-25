@@ -32,7 +32,10 @@ def build_platform_billing_use_cases(db: Any) -> PlatformBillingUseCases:
     )
     return PlatformBillingUseCases(
         list_plans=ListPlatformPlans(plans=plans),
-        upsert_plan=UpsertPlatformPlan(plans=plans),
+        upsert_plan=UpsertPlatformPlan(
+            plans=plans,
+            audit_recorder=platform_audit.record_event,
+        ),
         get_subscription=GetTenantSubscription(subscriptions=subscriptions),
         start_trial=StartTenantTrial(
             plans=plans,
@@ -42,10 +45,12 @@ def build_platform_billing_use_cases(db: Any) -> PlatformBillingUseCases:
         activate_subscription=ActivateTenantSubscription(
             plans=plans,
             subscriptions=subscriptions,
+            audit_recorder=platform_audit.record_event,
         ),
         schedule_cancellation=ScheduleTenantCancellation(
             plans=plans,
             subscriptions=subscriptions,
+            audit_recorder=platform_audit.record_event,
         ),
         check_limits=CheckPlanLimits(plans=plans, subscriptions=subscriptions),
     )

@@ -11,11 +11,19 @@ from pymongo import ReturnDocument
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     AdminStudentDetail,
     AdminStudentPage,
+    AdminStudentParentChangeResult,
+    AdminStudentParentSummary,
     AdminStudentSummary,
+    ChangeAdminStudentParentCommand,
     UpdateAdminStudentCommand,
     decode_student_cursor,
     encode_student_cursor,
     full_name_key,
+)
+from backend.v2.contexts.enrollment.domain.errors import (
+    StudentParentInactive,
+    StudentParentInvalidRole,
+    StudentParentNotFound,
 )
 from backend.v2.contexts.enrollment.domain.models import Student
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
@@ -190,6 +198,73 @@ class MongoStudentRepository(TenantScopedRepository):
             )
         return await self.get_admin_student(self._summary_id(updated))
 
+    async def change_admin_student_parent(
+        self,
+        student_id: str,
+        command: ChangeAdminStudentParentCommand,
+    ) -> AdminStudentParentChangeResult | None:
+        academy_id = current_academy_id()
+        before = await self._find_one(self._id_filter(student_id))
+        if before is None:
+            return None
+
+        parent = await self._find_parent_for_change(academy_id, command.parent_id)
+        if parent is None:
+            raise StudentParentNotFound("parent not found")
+        if not self._parent_is_active(parent):
+            raise StudentParentInactive("parent is inactive", parent_id=command.parent_id)
+        if not self._parent_has_parent_role(parent):
+            raise StudentParentInvalidRole(
+                "user does not have parent role", parent_id=command.parent_id
+            )
+
+        new_parent_id = self._canonical_parent_id(parent)
+        old_parent_id = str(before.get("parent_id") or before.get("parent_user_id") or "")
+        impact_counts = await self._parent_change_impact_counts(
+            academy_id=academy_id,
+            student_id=self._summary_id(before),
+            old_parent_ids=self._parent_lookup_ids_from_student(before),
+        )
+        now = datetime.now(UTC)
+        updated = await self.collection.find_one_and_update(
+            self._scoped(self._id_filter(student_id)),
+            {
+                "$set": {
+                    "parent_id": new_parent_id,
+                    "parent_user_id": new_parent_id,
+                    "updated_at": now,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if updated is None:
+            return None
+
+        await self._write_parent_change_audit(
+            academy_id=academy_id,
+            actor_id=command.actor_id,
+            student_id=self._summary_id(updated),
+            reason=command.reason,
+            old_parent_id=old_parent_id or None,
+            new_parent_id=new_parent_id,
+            impact_counts=impact_counts,
+            created_at=now,
+        )
+        return AdminStudentParentChangeResult(
+            student_id=self._summary_id(updated),
+            parent=AdminStudentParentSummary(
+                parent_id=new_parent_id,
+                display_name=self._parent_display_name(parent)
+                or parent.get("email")
+                or new_parent_id,
+                email=str(parent.get("email") or ""),
+                phone=str(parent.get("phone")) if parent.get("phone") is not None else None,
+            ),
+            previous_parent_id=old_parent_id or None,
+            warnings=["Historical billing, waiver, credit, and waitlist rows were not rewritten."],
+            impact_counts=impact_counts,
+        )
+
     async def list_admin_students(
         self,
         *,
@@ -350,6 +425,103 @@ class MongoStudentRepository(TenantScopedRepository):
             "phone": str(user.get("phone")) if user.get("phone") is not None else None,
         }
 
+    async def _find_parent_for_change(
+        self,
+        academy_id: str,
+        parent_id: str,
+    ) -> dict[str, Any] | None:
+        return await self._db["users"].find_one(
+            {"academy_id": academy_id, **self._user_id_filter(parent_id)}
+        )
+
+    @staticmethod
+    def _user_id_filter(user_id: str) -> dict[str, object]:
+        ids: list[object] = [user_id]
+        if BsonObjectId.is_valid(user_id):
+            ids.append(BsonObjectId(user_id))
+        return {
+            "$or": [
+                {"user_id": user_id},
+                {"auth_uid": user_id},
+                {"firebase_uid": user_id},
+                {"_id": {"$in": ids}},
+            ]
+        }
+
+    @staticmethod
+    def _parent_is_active(user: dict[str, Any]) -> bool:
+        status = str(user.get("status") or "active")
+        return (
+            status not in {"inactive", "disabled", "deleted"}
+            and user.get("is_active", True) is not False
+        )
+
+    @staticmethod
+    def _parent_has_parent_role(user: dict[str, Any]) -> bool:
+        roles = user.get("roles")
+        if isinstance(roles, str):
+            normalized_roles = {roles}
+        elif isinstance(roles, list | tuple | set):
+            normalized_roles = {str(role) for role in roles}
+        else:
+            normalized_roles = set()
+        role = user.get("role")
+        if role is not None:
+            normalized_roles.add(str(role))
+        return "parent" in normalized_roles
+
+    @staticmethod
+    def _canonical_parent_id(user: dict[str, Any]) -> str:
+        return str(
+            user.get("user_id") or user.get("firebase_uid") or user.get("auth_uid") or user["_id"]
+        )
+
+    @staticmethod
+    def _parent_display_name(user: dict[str, Any]) -> str | None:
+        value = (
+            str(
+                user.get("display_name")
+                or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+                or ""
+            )
+            or None
+        )
+        return value
+
+    @staticmethod
+    def _parent_lookup_ids_from_student(student: dict[str, Any]) -> list[str]:
+        return list(
+            dict.fromkeys(
+                str(value)
+                for value in (student.get("parent_id"), student.get("parent_user_id"))
+                if value
+            )
+        )
+
+    async def _parent_change_impact_counts(
+        self,
+        *,
+        academy_id: str,
+        student_id: str,
+        old_parent_ids: list[str],
+    ) -> dict[str, int]:
+        if not old_parent_ids:
+            return {"payments": 0, "waivers": 0, "credits": 0, "waitlist": 0}
+        query = {
+            "academy_id": academy_id,
+            "student_id": student_id,
+            "$or": [
+                {"parent_id": {"$in": old_parent_ids}},
+                {"parent_user_id": {"$in": old_parent_ids}},
+            ],
+        }
+        return {
+            "payments": await self._db["payments"].count_documents(query),
+            "waivers": await self._db["waiver_acceptances"].count_documents(query),
+            "credits": await self._db["account_credit_ledger"].count_documents(query),
+            "waitlist": await self._db["waitlist"].count_documents(query),
+        }
+
     async def _write_audit(
         self,
         *,
@@ -380,6 +552,36 @@ class MongoStudentRepository(TenantScopedRepository):
                 "before": pick(before),
                 "after": pick(after),
                 "created_at": datetime.now(UTC),
+            }
+        )
+
+    async def _write_parent_change_audit(
+        self,
+        *,
+        academy_id: str,
+        actor_id: str,
+        student_id: str,
+        reason: str,
+        old_parent_id: str | None,
+        new_parent_id: str,
+        impact_counts: dict[str, int],
+        created_at: datetime,
+    ) -> None:
+        from backend.v2.shared.ids import new_ulid
+
+        await self._db["audit_logs"].insert_one(
+            {
+                "audit_id": str(new_ulid()),
+                "academy_id": academy_id,
+                "actor_id": actor_id,
+                "action": "student.parent_changed",
+                "entity_type": "student",
+                "entity_id": student_id,
+                "reason": reason,
+                "old_parent_id": old_parent_id,
+                "new_parent_id": new_parent_id,
+                "impact_counts": impact_counts,
+                "created_at": created_at,
             }
         )
 

@@ -32,6 +32,21 @@ class StudentNotFound(DomainError):
     status_code = 404
 
 
+class StudentParentNotFound(DomainError):
+    code = "Enrollment.StudentParentNotFound"
+    status_code = 404
+
+
+class StudentParentInactive(DomainError):
+    code = "Enrollment.StudentParentInactive"
+    status_code = 409
+
+
+class StudentParentInvalidRole(DomainError):
+    code = "Enrollment.StudentParentInvalidRole"
+    status_code = 409
+
+
 class CapacityExceeded(DomainError):
     code = "Enrollment.CapacityExceeded"
     status_code = 409

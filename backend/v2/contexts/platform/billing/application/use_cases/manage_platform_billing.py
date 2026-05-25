@@ -47,6 +47,7 @@ class TenantSubscriptionNotFound(DomainError):
 
 class UpsertPlatformPlanCommand(BaseModel):
     plan_id: str = Field(min_length=1)
+    academy_id: str = Field(default="platform", min_length=1)
     code: str = Field(min_length=1)
     display_name: str = Field(min_length=1)
     monthly_price_cents: int = Field(ge=0)
@@ -54,6 +55,11 @@ class UpsertPlatformPlanCommand(BaseModel):
     limits: PlanLimits
     status: PlanStatus = "active"
     stripe_price_id: str | None = None
+    actor_user_id: str | None = Field(default=None, min_length=1)
+    actor_membership_id: str | None = None
+    platform_actor_role: str | None = None
+    request_id: str | None = None
+    ip_address: str | None = None
 
 
 class StartTenantTrialCommand(BaseModel):
@@ -74,11 +80,21 @@ class ActivateTenantSubscriptionCommand(BaseModel):
     stripe_subscription_id: str = Field(min_length=1)
     current_period_start: datetime
     current_period_end: datetime
+    actor_user_id: str | None = Field(default=None, min_length=1)
+    actor_membership_id: str | None = None
+    platform_actor_role: str | None = None
+    request_id: str | None = None
+    ip_address: str | None = None
 
 
 class ScheduleTenantCancellationCommand(BaseModel):
     academy_id: str = Field(min_length=1)
     cancel_at_period_end: bool = True
+    actor_user_id: str | None = Field(default=None, min_length=1)
+    actor_membership_id: str | None = None
+    platform_actor_role: str | None = None
+    request_id: str | None = None
+    ip_address: str | None = None
 
 
 class PlatformUsage(BaseModel):
@@ -112,9 +128,11 @@ class UpsertPlatformPlan:
         *,
         plans: PlatformPlanRepository,
         clock: Callable[[], datetime] | None = None,
+        audit_recorder: AuditRecorder | None = None,
     ) -> None:
         self._plans = plans
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._audit_recorder = audit_recorder
 
     async def execute(self, command: UpsertPlatformPlanCommand) -> PlatformPlan:
         now = self._clock()
@@ -132,6 +150,20 @@ class UpsertPlatformPlan:
             updated_at=now,
         )
         await self._plans.save(plan)
+        await _emit_audit(
+            audit_recorder=self._audit_recorder,
+            actor_user_id=command.actor_user_id,
+            actor_membership_id=command.actor_membership_id,
+            platform_actor_role=command.platform_actor_role,
+            academy_id=command.academy_id,
+            action="platform_billing.plan_upserted",
+            entity_type="platform_plan",
+            entity_id=plan.plan_id,
+            before_snapshot=existing.model_dump(mode="json") if existing else None,
+            after_snapshot=plan.model_dump(mode="json"),
+            request_id=command.request_id,
+            ip_address=command.ip_address,
+        )
         return plan
 
 
@@ -175,41 +207,21 @@ class StartTenantTrial:
             updated_at=now,
         )
         await self._subscriptions.save(subscription)
-        await self._emit_audit(command=command, before=existing, after=subscription)
+        await _emit_audit(
+            audit_recorder=self._audit_recorder,
+            actor_user_id=command.actor_user_id,
+            actor_membership_id=command.actor_membership_id,
+            platform_actor_role=command.platform_actor_role,
+            academy_id=command.academy_id,
+            action="platform_billing.trial_started",
+            entity_type="tenant_subscription",
+            entity_id=subscription.subscription_id,
+            before_snapshot=existing.model_dump(mode="json") if existing else None,
+            after_snapshot=subscription.model_dump(mode="json"),
+            request_id=command.request_id,
+            ip_address=command.ip_address,
+        )
         return subscription
-
-    async def _emit_audit(
-        self,
-        *,
-        command: StartTenantTrialCommand,
-        before: TenantSubscription | None,
-        after: TenantSubscription,
-    ) -> None:
-        if self._audit_recorder is None or command.actor_user_id is None:
-            return
-        try:
-            await self._audit_recorder(
-                RecordPlatformAuditEventCommand(
-                    actor_user_id=command.actor_user_id,
-                    actor_membership_id=command.actor_membership_id,
-                    academy_id=command.academy_id,
-                    platform_actor_role=command.platform_actor_role,
-                    action="platform_billing.trial_started",
-                    entity_type="tenant_subscription",
-                    entity_id=after.subscription_id,
-                    before_snapshot=before.model_dump(mode="json") if before else None,
-                    after_snapshot=after.model_dump(mode="json"),
-                    request_id=command.request_id,
-                    ip_address=command.ip_address,
-                )
-            )
-        except Exception as exc:
-            log.warning(
-                "platform_billing_audit_emit_failed action=%s academy=%s err=%s",
-                "platform_billing.trial_started",
-                command.academy_id,
-                exc,
-            )
 
 
 class ActivateTenantSubscription:
@@ -220,11 +232,13 @@ class ActivateTenantSubscription:
         subscriptions: TenantSubscriptionRepository,
         id_factory: Callable[[], str] | None = None,
         clock: Callable[[], datetime] | None = None,
+        audit_recorder: AuditRecorder | None = None,
     ) -> None:
         self._plans = plans
         self._subscriptions = subscriptions
         self._id_factory = id_factory or (lambda: f"platform_sub_{new_ulid()}")
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._audit_recorder = audit_recorder
 
     async def execute(self, command: ActivateTenantSubscriptionCommand) -> TenantSubscription:
         plan = await _require_active_plan(self._plans, command.plan_id)
@@ -242,6 +256,20 @@ class ActivateTenantSubscription:
             now=now,
         )
         await self._subscriptions.save(subscription)
+        await _emit_audit(
+            audit_recorder=self._audit_recorder,
+            actor_user_id=command.actor_user_id,
+            actor_membership_id=command.actor_membership_id,
+            platform_actor_role=command.platform_actor_role,
+            academy_id=command.academy_id,
+            action="platform_billing.subscription_activated",
+            entity_type="tenant_subscription",
+            entity_id=subscription.subscription_id,
+            before_snapshot=existing.model_dump(mode="json") if existing else None,
+            after_snapshot=subscription.model_dump(mode="json"),
+            request_id=command.request_id,
+            ip_address=command.ip_address,
+        )
         return subscription
 
 
@@ -252,10 +280,12 @@ class ScheduleTenantCancellation:
         plans: PlatformPlanRepository,
         subscriptions: TenantSubscriptionRepository,
         clock: Callable[[], datetime] | None = None,
+        audit_recorder: AuditRecorder | None = None,
     ) -> None:
         self._plans = plans
         self._subscriptions = subscriptions
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._audit_recorder = audit_recorder
 
     async def execute(self, command: ScheduleTenantCancellationCommand) -> TenantSubscription:
         existing = await self._subscriptions.get_for_academy(command.academy_id)
@@ -285,6 +315,24 @@ class ScheduleTenantCancellation:
                 }
             )
         await self._subscriptions.save(updated)
+        await _emit_audit(
+            audit_recorder=self._audit_recorder,
+            actor_user_id=command.actor_user_id,
+            actor_membership_id=command.actor_membership_id,
+            platform_actor_role=command.platform_actor_role,
+            academy_id=command.academy_id,
+            action=(
+                "platform_billing.cancellation_scheduled"
+                if command.cancel_at_period_end
+                else "platform_billing.subscription_cancelled"
+            ),
+            entity_type="tenant_subscription",
+            entity_id=updated.subscription_id,
+            before_snapshot=existing.model_dump(mode="json"),
+            after_snapshot=updated.model_dump(mode="json"),
+            request_id=command.request_id,
+            ip_address=command.ip_address,
+        )
         return updated
 
 
@@ -391,3 +439,45 @@ def _limit_violations(limits: PlanLimits, usage: PlatformUsage) -> list[str]:
         for name, value, limit in checks
         if limit is not None and value > limit
     ]
+
+
+async def _emit_audit(
+    *,
+    audit_recorder: AuditRecorder | None,
+    actor_user_id: str | None,
+    actor_membership_id: str | None,
+    platform_actor_role: str | None,
+    academy_id: str,
+    action: str,
+    entity_type: str,
+    entity_id: str,
+    before_snapshot: dict[str, object] | None,
+    after_snapshot: dict[str, object] | None,
+    request_id: str | None,
+    ip_address: str | None,
+) -> None:
+    if audit_recorder is None or actor_user_id is None:
+        return
+    try:
+        await audit_recorder(
+            RecordPlatformAuditEventCommand(
+                actor_user_id=actor_user_id,
+                actor_membership_id=actor_membership_id,
+                academy_id=academy_id,
+                platform_actor_role=platform_actor_role,
+                action=action,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                before_snapshot=before_snapshot,
+                after_snapshot=after_snapshot,
+                request_id=request_id,
+                ip_address=ip_address,
+            )
+        )
+    except Exception as exc:
+        log.warning(
+            "platform_billing_audit_emit_failed action=%s entity=%s err=%s",
+            action,
+            entity_id,
+            exc,
+        )

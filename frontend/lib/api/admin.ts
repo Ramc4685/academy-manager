@@ -377,7 +377,50 @@ export interface AdminReportsSessionsSummary {
   enrolled_seats: number;
   capacity: number;
   capacity_utilization: number | null;
+  waitlist_count: number;
   empty: boolean;
+}
+
+export interface AdminReportsExpenseCategory {
+  category: string;
+  amount_cents: number;
+  count: number;
+}
+
+export interface AdminReportsExpensesSummary {
+  total_cents: number;
+  by_category: AdminReportsExpenseCategory[];
+}
+
+export interface AdminReportsCollectionsAgingBucket {
+  label: string;
+  amount_cents: number;
+  family_count: number;
+}
+
+export interface AdminReportsCollectionsRisk {
+  overdue_family_count: number;
+  overdue_cents: number;
+  failed_payment_count: number;
+  partial_payment_count: number;
+  aging_buckets: AdminReportsCollectionsAgingBucket[];
+}
+
+export interface AdminReportsProfitAndLoss {
+  revenue_cents: number;
+  coach_payroll_cents: number | null;
+  rent_cents: number;
+  misc_expenses_cents: number;
+  net_profit_cents: number | null;
+  profit_margin: number | null;
+}
+
+export interface AdminReportsPayrollSummary {
+  estimated_cents: number | null;
+  approved_cents: number | null;
+  paid_cents: number | null;
+  unpaid_cents: number | null;
+  blocked_by: string | null;
 }
 
 export interface AdminReportsDashboardResponse {
@@ -386,6 +429,10 @@ export interface AdminReportsDashboardResponse {
   outstanding_dues_cents: number;
   attendance: AdminReportsAttendanceSummary;
   sessions: AdminReportsSessionsSummary;
+  expenses: AdminReportsExpensesSummary;
+  collections_risk: AdminReportsCollectionsRisk;
+  profit_and_loss: AdminReportsProfitAndLoss;
+  payroll: AdminReportsPayrollSummary;
   empty_states: string[];
 }
 
@@ -455,6 +502,31 @@ export interface AdminWaiverList {
   waivers: AdminWaiverStudentRow[];
 }
 
+export type AdminWaiverTemplateStatus = "draft" | "active" | "superseded" | "retired";
+
+export interface AdminWaiverTemplateManagementView {
+  waiver_template_id: string;
+  title: string;
+  body: string;
+  status: AdminWaiverTemplateStatus;
+  version: string | null;
+  content_hash: string | null;
+  effective_at: string | null;
+  published_at: string | null;
+  assigned_to_registration: boolean;
+  assigned_at: string | null;
+  updated_at: string;
+}
+
+export interface AdminWaiverTemplateManagementList {
+  templates: AdminWaiverTemplateManagementView[];
+}
+
+export interface AdminWaiverTemplateCreateRequest {
+  title: string;
+  body: string;
+}
+
 export interface AdminWaiverTemplateDetail {
   waiver_id: string;
   title: string;
@@ -482,6 +554,38 @@ export interface AdminWaiverSignatureDetail {
   artifact_status: string;
   share_status: string;
   gap_note: string;
+}
+
+export interface AdminRegistrationRow {
+  application_id: string;
+  status: string;
+  parent_email: string;
+  parent_name: string | null;
+  student_name: string | null;
+  selected_session_id: string | null;
+  waiver_required: boolean;
+  waiver_satisfied: boolean;
+  updated_at: string;
+}
+
+export interface AdminRegistrationList {
+  registrations: AdminRegistrationRow[];
+}
+
+export interface AdminRegistrationDetail extends AdminRegistrationRow {
+  parent_user_id: string;
+  child_first_name: string;
+  child_last_name: string;
+  child_skill_level: string;
+  payment_id: string | null;
+  student_id: string | null;
+  enrollment_id: string | null;
+  waitlist_id: string | null;
+  session_title: string | null;
+  session_capacity: number | null;
+  waiver_template_id: string | null;
+  waiver_title: string | null;
+  waiver_version: string | null;
 }
 
 export type AdminAttentionSeverity = "high" | "medium" | "low";
@@ -552,6 +656,26 @@ export interface AdminStudentView {
 export interface AdminStudentList {
   students: AdminStudentView[];
   next_cursor: string | null;
+}
+
+export interface ChangeAdminStudentParentRequest {
+  parent_id: string;
+  reason: string;
+}
+
+export interface AdminStudentParentSummaryView {
+  parent_id: string;
+  display_name: string;
+  email: string;
+  phone: string | null;
+}
+
+export interface AdminStudentParentChangeView {
+  student_id: string;
+  parent: AdminStudentParentSummaryView;
+  previous_parent_id: string | null;
+  warnings: string[];
+  impact_counts: Record<string, number>;
 }
 
 export interface ListAdminStudentsParams {
@@ -706,6 +830,19 @@ export function listAdminStudents(
   if (options.cursor) q.set("cursor", options.cursor);
   const suffix = q.toString() ? `?${q.toString()}` : "";
   return apiFetch<AdminStudentList>(`/admin/students${suffix}`, { method: "GET" });
+}
+
+export function changeAdminStudentParent(
+  studentId: string,
+  payload: ChangeAdminStudentParentRequest,
+): Promise<AdminStudentParentChangeView> {
+  return apiFetch<AdminStudentParentChangeView>(
+    `/admin/students/${encodeURIComponent(studentId)}/change-parent`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 export function updateAdminUserRole(
@@ -1047,6 +1184,39 @@ export function listAdminWaivers(): Promise<AdminWaiverList> {
   return apiFetch<AdminWaiverList>("/admin/waivers", { method: "GET" });
 }
 
+export function listAdminWaiverTemplates(): Promise<AdminWaiverTemplateManagementList> {
+  return apiFetch<AdminWaiverTemplateManagementList>("/admin/waivers/templates", {
+    method: "GET",
+  });
+}
+
+export function createAdminWaiverTemplate(
+  payload: AdminWaiverTemplateCreateRequest,
+): Promise<AdminWaiverTemplateManagementView> {
+  return apiFetch<AdminWaiverTemplateManagementView>("/admin/waivers/templates", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function publishAdminWaiverTemplate(
+  waiverTemplateId: string,
+): Promise<AdminWaiverTemplateManagementView> {
+  return apiFetch<AdminWaiverTemplateManagementView>(
+    `/admin/waivers/templates/${encodeURIComponent(waiverTemplateId)}/publish`,
+    { method: "POST" },
+  );
+}
+
+export function assignAdminWaiverTemplateToRegistration(
+  waiverTemplateId: string,
+): Promise<AdminWaiverTemplateManagementView> {
+  return apiFetch<AdminWaiverTemplateManagementView>(
+    `/admin/waivers/templates/${encodeURIComponent(waiverTemplateId)}/assign-registration`,
+    { method: "POST" },
+  );
+}
+
 export function getAdminWaiverTemplate(waiverId: string): Promise<AdminWaiverTemplateDetail> {
   return apiFetch<AdminWaiverTemplateDetail>(`/admin/waivers/${encodeURIComponent(waiverId)}`, {
     method: "GET",
@@ -1057,6 +1227,47 @@ export function getAdminWaiverSignature(signatureId: string): Promise<AdminWaive
   return apiFetch<AdminWaiverSignatureDetail>(
     `/admin/waivers/signatures/${encodeURIComponent(signatureId)}`,
     { method: "GET" },
+  );
+}
+
+export function listAdminRegistrations(): Promise<AdminRegistrationList> {
+  return apiFetch<AdminRegistrationList>("/admin/registrations", { method: "GET" });
+}
+
+export function getAdminRegistration(applicationId: string): Promise<AdminRegistrationDetail> {
+  return apiFetch<AdminRegistrationDetail>(
+    `/admin/registrations/${encodeURIComponent(applicationId)}`,
+    { method: "GET" },
+  );
+}
+
+export function approveAdminRegistration(
+  applicationId: string,
+  payload: { session_id?: string | null; waiver_override_reason?: string | null } = {},
+): Promise<AdminRegistrationDetail> {
+  return apiFetch<AdminRegistrationDetail>(
+    `/admin/registrations/${encodeURIComponent(applicationId)}/approve`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export function waitlistAdminRegistration(
+  applicationId: string,
+  payload: { session_id?: string | null; reason?: string | null } = {},
+): Promise<AdminRegistrationDetail> {
+  return apiFetch<AdminRegistrationDetail>(
+    `/admin/registrations/${encodeURIComponent(applicationId)}/waitlist`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export function rejectAdminRegistration(
+  applicationId: string,
+  payload: { reason: string },
+): Promise<AdminRegistrationDetail> {
+  return apiFetch<AdminRegistrationDetail>(
+    `/admin/registrations/${encodeURIComponent(applicationId)}/reject`,
+    { method: "POST", body: JSON.stringify(payload) },
   );
 }
 

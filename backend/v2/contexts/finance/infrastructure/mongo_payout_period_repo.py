@@ -69,6 +69,9 @@ def _period_to_doc(period: PayoutPeriod) -> dict[str, Any]:
         "generated_at": period.generated_at,
         "approved_at": period.approved_at,
         "paid_at": period.paid_at,
+        "paid_method": period.paid_method,
+        "paid_amount_minor": period.paid_amount_minor,
+        "paid_reference": period.paid_reference,
     }
 
 
@@ -96,6 +99,9 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
             generated_at=doc["generated_at"],
             approved_at=doc.get("approved_at"),
             paid_at=doc.get("paid_at"),
+            paid_method=doc.get("paid_method"),
+            paid_amount_minor=doc.get("paid_amount_minor"),
+            paid_reference=doc.get("paid_reference"),
         )
 
     async def find_by_window(

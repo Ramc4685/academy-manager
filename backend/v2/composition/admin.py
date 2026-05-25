@@ -11,6 +11,9 @@ from zoneinfo import ZoneInfo
 from bson import ObjectId as BsonObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from backend.v2.composition.admin_registration_review import (
+    AdminRegistrationReview,
+)
 from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscount,
@@ -48,7 +51,12 @@ from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
 from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
     MongoSubscriptionRepository,
 )
+from backend.v2.contexts.coaching.application.use_cases.compute_payout import (
+    ComputeCoachPayout,
+)
+from backend.v2.contexts.coaching.domain.payout import CoachRate, PayableOccurrence
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    ChangeAdminStudentParent,
     GetAdminStudent,
     ListAdminStudents,
     UpdateAdminStudent,
@@ -106,6 +114,17 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_student_writer import (
 from backend.v2.contexts.enrollment.infrastructure.mongo_waitlist_repo import (
     MongoWaitlistRepository,
 )
+from backend.v2.contexts.finance.application.use_cases.approve_payout_period import (
+    ApprovePayoutPeriod,
+    MarkPayoutPaid,
+)
+from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
+    GeneratePayoutPeriod,
+)
+from backend.v2.contexts.finance.domain.payout_period import PersistedPayoutLine
+from backend.v2.contexts.finance.infrastructure.mongo_payout_period_repo import (
+    MongoPayoutPeriodRepository,
+)
 from backend.v2.contexts.identity.application.change_user_role_use_case import ChangeUserRole
 from backend.v2.contexts.identity.application.get_academy_fees_use_case import GetAcademyFeesUseCase
 from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
@@ -137,6 +156,9 @@ from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
 )
 from backend.v2.contexts.onboarding.infrastructure.mongo_admin_waiver_repo import (
     MongoAdminWaiverRepository,
+)
+from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import (
+    MongoApplicationRepository,
 )
 from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_template_repo import (
     MongoWaiverTemplateRepository,
@@ -282,6 +304,37 @@ def _payment_outstanding_cents(payment: dict[str, Any]) -> int:
     return max(_payment_final_amount_cents(payment) - _payment_collected_cents(payment), 0)
 
 
+def _coerce_report_date(value: object) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def _payment_due_date(payment: dict[str, Any], fallback: date) -> date:
+    for key in ("due_date", "due_at", "created_at"):
+        parsed = _coerce_report_date(payment.get(key))
+        if parsed is not None:
+            return parsed
+    return fallback
+
+
+def _aging_label(days_late: int) -> str:
+    if days_late <= 0:
+        return "Current"
+    if days_late <= 30:
+        return "1-30"
+    if days_late <= 60:
+        return "31-60"
+    return "60+"
+
+
 def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
     """Returns an async callable for the owner finance/operations dashboard."""
     from backend.v2.shared.tenancy import current_academy_id
@@ -292,7 +345,13 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
 
         cash_collected_cents = 0
         outstanding_dues_cents = 0
-        payment_rows = 0
+        failed_payment_count = 0
+        partial_payment_count = 0
+        collection_family_ids: set[str] = set()
+        aging_totals: dict[str, dict[str, Any]] = {
+            label: {"amount_cents": 0, "family_ids": set()}
+            for label in ("Current", "1-30", "31-60", "60+")
+        }
         payments_cursor = db["payments"].find(
             {
                 "academy_id": academy_id,
@@ -301,9 +360,32 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             }
         )
         async for payment in payments_cursor:
-            payment_rows += 1
+            status = str(payment.get("status") or "")
+            if status == "failed":
+                failed_payment_count += 1
+            elif status == "partially_paid":
+                partial_payment_count += 1
             cash_collected_cents += _payment_collected_cents(payment)
-            outstanding_dues_cents += _payment_outstanding_cents(payment)
+            outstanding = _payment_outstanding_cents(payment)
+            outstanding_dues_cents += outstanding
+            if outstanding:
+                family_id = str(
+                    payment.get("parent_id")
+                    or payment.get("family_id")
+                    or payment.get("student_id")
+                    or payment.get("payment_id")
+                    or ""
+                )
+                if family_id:
+                    collection_family_ids.add(family_id)
+                due_date = _payment_due_date(payment, end.date())
+                days_late = max((end.date() - due_date).days, 0)
+                label = _aging_label(days_late)
+                bucket = aging_totals[label]
+                bucket["amount_cents"] = int(bucket["amount_cents"]) + outstanding
+                family_ids = bucket["family_ids"]
+                if isinstance(family_ids, set) and family_id:
+                    family_ids.add(family_id)
 
         present_count = 0
         recorded_count = 0
@@ -360,6 +442,82 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 enrolled_seats += 1
         capacity_utilization = round(enrolled_seats / capacity, 4) if capacity else None
 
+        waitlist_count = 0
+        if session_ids:
+            waitlist_count = await db["waitlist"].count_documents(
+                {
+                    "academy_id": academy_id,
+                    "session_id": {"$in": session_ids},
+                    "status": {"$in": ["waiting", "active"]},
+                    "is_deleted": {"$ne": True},
+                }
+            )
+
+        expenses_total_cents = 0
+        expense_categories: dict[str, dict[str, int]] = {}
+        expenses_cursor = db["expenses"].find(
+            {
+                "academy_id": academy_id,
+                "incurred_on": {"$gte": start, "$lt": end},
+                "$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}],
+            }
+        )
+        async for expense in expenses_cursor:
+            category = str(expense.get("category") or "other")
+            amount = int(expense.get("amount_cents") or 0)
+            expenses_total_cents += amount
+            category_row = expense_categories.setdefault(
+                category,
+                {"amount_cents": 0, "count": 0},
+            )
+            category_row["amount_cents"] += amount
+            category_row["count"] += 1
+        expense_rows = [
+            {"category": category, **values}
+            for category, values in sorted(expense_categories.items())
+        ]
+        rent_cents = int(expense_categories.get("rent", {}).get("amount_cents", 0))
+        misc_expenses_cents = expenses_total_cents - rent_cents
+
+        estimated_payroll_cents = 0
+        approved_payroll_cents = 0
+        paid_payroll_cents = 0
+        payout_period_rows = 0
+        payout_cursor = db["payout_periods"].find(
+            {
+                "academy_id": academy_id,
+                "period_start": {"$gte": start, "$lt": end},
+            }
+        )
+        async for payout_period in payout_cursor:
+            payout_period_rows += 1
+            total = int(payout_period.get("total_minor") or 0)
+            estimated_payroll_cents += total
+            status = str(payout_period.get("status") or "draft")
+            if status in {"approved", "paid"}:
+                approved_payroll_cents += total
+            if status == "paid":
+                paid_payroll_cents += int(payout_period.get("paid_amount_minor") or total)
+        unpaid_payroll_cents = max(approved_payroll_cents - paid_payroll_cents, 0)
+
+        payroll_for_pnl = (
+            approved_payroll_cents
+            if approved_payroll_cents > 0
+            else estimated_payroll_cents
+            if estimated_payroll_cents > 0
+            else None
+        )
+        net_profit_cents = (
+            cash_collected_cents - expenses_total_cents - payroll_for_pnl
+            if payroll_for_pnl is not None
+            else None
+        )
+        profit_margin = (
+            round(net_profit_cents / cash_collected_cents, 4)
+            if net_profit_cents is not None and cash_collected_cents > 0
+            else None
+        )
+
         empty_states: list[str] = []
         if cash_collected_cents == 0:
             empty_states.append("No collected payment rows found for this month.")
@@ -367,6 +525,19 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             empty_states.append("No attendance marks found for this month.")
         if not session_ids:
             empty_states.append("No sessions found for this month.")
+        if expenses_total_cents == 0:
+            empty_states.append("No expenses found for this month.")
+        if payout_period_rows == 0:
+            empty_states.append("No payout periods generated for this month.")
+
+        aging_buckets = [
+            {
+                "label": label,
+                "amount_cents": int(aging_totals[label]["amount_cents"]),
+                "family_count": len(aging_totals[label]["family_ids"]),
+            }
+            for label in ("Current", "1-30", "31-60", "60+")
+        ]
 
         return {
             "period": period,
@@ -385,7 +556,36 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 "enrolled_seats": enrolled_seats,
                 "capacity": capacity,
                 "capacity_utilization": capacity_utilization,
+                "waitlist_count": waitlist_count,
                 "empty": not session_ids,
+            },
+            "expenses": {
+                "total_cents": expenses_total_cents,
+                "by_category": expense_rows,
+            },
+            "collections_risk": {
+                "overdue_family_count": len(collection_family_ids),
+                "overdue_cents": outstanding_dues_cents,
+                "failed_payment_count": failed_payment_count,
+                "partial_payment_count": partial_payment_count,
+                "aging_buckets": aging_buckets,
+            },
+            "profit_and_loss": {
+                "revenue_cents": cash_collected_cents,
+                "coach_payroll_cents": payroll_for_pnl,
+                "rent_cents": rent_cents,
+                "misc_expenses_cents": misc_expenses_cents,
+                "net_profit_cents": net_profit_cents,
+                "profit_margin": profit_margin,
+            },
+            "payroll": {
+                "estimated_cents": estimated_payroll_cents if payout_period_rows else None,
+                "approved_cents": approved_payroll_cents if payout_period_rows else None,
+                "paid_cents": paid_payroll_cents if payout_period_rows else None,
+                "unpaid_cents": unpaid_payroll_cents if payout_period_rows else None,
+                "blocked_by": None
+                if payout_period_rows
+                else "No generated payout periods for this month.",
             },
             "empty_states": empty_states,
         }
@@ -418,6 +618,115 @@ def _make_list_enrollment_events(db: Any) -> object:
         return results
 
     return list_enrollment_events
+
+
+class _MongoPayableOccurrenceQuery:
+    def __init__(self, db: AsyncIOMotorDatabase[Any]) -> None:
+        self._db = db
+
+    async def list_in_period(
+        self,
+        academy_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> list[PayableOccurrence]:
+        cursor = self._db["session_occurrences"].find(
+            {
+                "academy_id": academy_id,
+                "start_at": {"$gte": period_start, "$lt": period_end},
+            },
+            sort=[("start_at", 1)],
+        )
+        return [
+            PayableOccurrence(
+                occurrence_id=str(doc["occurrence_id"]),
+                academy_id=str(doc["academy_id"]),
+                start_at=doc["start_at"],
+                end_at=doc["end_at"],
+                status=doc.get("status", "scheduled"),
+                scheduled_coach_id=str(doc["scheduled_coach_id"]),
+                actual_coach_id=_optional_str(doc.get("actual_coach_id")),
+                substitute_coach_id=_optional_str(doc.get("substitute_coach_id")),
+                is_payable=bool(doc.get("is_payable", True)),
+            )
+            async for doc in cursor
+        ]
+
+
+class _MongoCoachRateRepository:
+    def __init__(self, db: AsyncIOMotorDatabase[Any]) -> None:
+        self._db = db
+
+    async def find_for_coach_at(self, coach_id: str, at_time: datetime) -> CoachRate | None:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        doc = await self._db["coach_rates"].find_one(
+            {
+                "academy_id": current_academy_id(),
+                "coach_id": coach_id,
+                "effective_from": {"$lte": at_time},
+                "$or": [
+                    {"effective_until": {"$exists": False}},
+                    {"effective_until": None},
+                    {"effective_until": {"$gt": at_time}},
+                ],
+                "status": {"$ne": "superseded"},
+            },
+            sort=[("effective_from", -1)],
+        )
+        if doc is None:
+            return None
+        return CoachRate(
+            rate_id=str(doc.get("rate_id") or doc.get("_id")),
+            academy_id=str(doc["academy_id"]),
+            coach_id=str(doc["coach_id"]),
+            billing_unit=doc.get("billing_unit", "per_session"),
+            amount_minor=int(doc.get("amount_minor", doc.get("amount_cents", 0))),
+            currency=str(doc.get("currency", "USD")).upper(),
+            effective_from=doc["effective_from"],
+            effective_until=doc.get("effective_until"),
+            status=doc.get("status", "active"),
+        )
+
+
+class _FinancePayoutCalculator:
+    def __init__(self, compute: ComputeCoachPayout) -> None:
+        self._compute = compute
+
+    async def calculate(
+        self,
+        *,
+        coach_id: str,
+        academy_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> object:
+        statement = await self._compute.execute(
+            coach_id=coach_id,
+            academy_id=academy_id,
+            period_start=period_start,
+            period_end=period_end,
+        )
+        return statement.model_copy(
+            update={
+                "lines": [
+                    PersistedPayoutLine(
+                        occurrence_id=line.occurrence_id,
+                        coach_id=line.coach_id,
+                        basis=line.basis,
+                        minutes=line.minutes,
+                        amount_minor=line.amount_minor,
+                        currency=line.currency,
+                        rate_id=line.rate_id,
+                    )
+                    for line in statement.lines
+                ]
+            }
+        )
+
+
+def _optional_str(value: object | None) -> str | None:
+    return None if value is None else str(value)
 
 
 def compose_admin(
@@ -538,6 +847,19 @@ def compose_admin(
     # Finance (# FINANCE)
     expenses_repo = MongoExpenseRepository(db)
     payouts_repo = MongoPayoutRepository(db)
+    payout_periods_repo = MongoPayoutPeriodRepository(db)
+    coach_payout_calculator = _FinancePayoutCalculator(
+        ComputeCoachPayout(
+            occurrences=_MongoPayableOccurrenceQuery(db),
+            rates=_MongoCoachRateRepository(db),
+        )
+    )
+    generate_payout_period = GeneratePayoutPeriod(
+        calculator=coach_payout_calculator,
+        repository=payout_periods_repo,
+    )
+    approve_payout_period = ApprovePayoutPeriod(repository=payout_periods_repo)
+    mark_payout_paid = MarkPayoutPaid(repository=payout_periods_repo)
     record_expense = RecordExpense(expenses=expenses_repo, academy_id=academy_id)
     edit_expense = EditExpense(expenses=expenses_repo)
     delete_expense = DeleteExpense(expenses=expenses_repo)
@@ -550,6 +872,16 @@ def compose_admin(
     list_admin_waivers = ListAdminWaivers(waivers_repo)
     waiver_templates_repo = MongoWaiverTemplateRepository(db)
     manage_admin_waiver_templates = ManageAdminWaiverTemplates(waiver_templates_repo)
+    admin_registration_review = AdminRegistrationReview(
+        apps=MongoApplicationRepository(db),
+        sessions=sessions_w,
+        students=students_w,
+        enrollments=enrollments_w,
+        waitlist=waitlist,
+        waiver_templates=waiver_templates_repo,
+        enrollment_events=enrollment_events,
+        academy_id=academy_id,
+    )
     # Identity / Settings
     academy_repo = MongoAcademyRepository(db)
     get_academy_use_case = GetAcademyUseCase(academy_repo)
@@ -567,6 +899,7 @@ def compose_admin(
     list_admin_students = ListAdminStudents(students_r)
     get_admin_student = GetAdminStudent(students_r)
     update_admin_student = UpdateAdminStudent(students_r)
+    change_admin_student_parent = ChangeAdminStudentParent(students_r)
 
     # Closures for the BFF deps that need composed reads.
     # Day-of-week abbreviations used by the legacy seed schema.
@@ -1163,6 +1496,10 @@ def compose_admin(
         expenses=expenses_repo,
         payouts=payouts_repo,
         revenue_query=revenue_query,
+        payout_periods=payout_periods_repo,
+        generate_payout_period=generate_payout_period,
+        approve_payout_period=approve_payout_period,
+        mark_payout_paid=mark_payout_paid,
         list_admin_sessions=list_admin_sessions,
         list_session_occurrences=list_session_occurrences,
         update_session_occurrence_coach=update_session_occurrence_coach,
@@ -1176,6 +1513,7 @@ def compose_admin(
         list_enrollment_events=_make_list_enrollment_events(db),
         comms=comms,
         list_admin_waivers=list_admin_waivers,
+        admin_registration_review=admin_registration_review,
         manage_admin_waiver_templates=manage_admin_waiver_templates,
         get_academy_use_case=get_academy_use_case,
         update_academy_use_case=update_academy_use_case,
@@ -1189,6 +1527,7 @@ def compose_admin(
         update_admin_user=update_admin_user,
         get_admin_student=get_admin_student,
         update_admin_student=update_admin_student,
+        change_admin_student_parent=change_admin_student_parent,
     )
     admin.get_reports_dashboard = _make_reports_dashboard(db)  # type: ignore[attr-defined]
     return admin
