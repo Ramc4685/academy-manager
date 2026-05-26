@@ -11,6 +11,7 @@ import {
   signInWithGoogle,
   signOutCurrent,
 } from "@/lib/auth/firebase";
+import type { User } from "@/lib/auth/firebase";
 
 const HERO_IMAGE =
   "https://static.prod-images.emergentagent.com/jobs/c735a2b3-2fb1-4fa5-a75c-2007226ca62e/images/1d1cfafe28a9d8df9f22f211189ef097f1bb5d348846857bdee5ba711ec35327.png";
@@ -24,6 +25,9 @@ export default function RegisterPage() {
   const [hydrated, setHydrated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [pendingVerificationUser, setPendingVerificationUser] =
+    useState<User | null>(null);
+  const [verificationLoading, setVerificationLoading] = useState(false);
 
   useEffect(() => {
     setHydrated(true);
@@ -38,6 +42,7 @@ export default function RegisterPage() {
     setGoogleLoading(true);
     setError(null);
     setNotice(null);
+    setPendingVerificationUser(null);
     try {
       await signInWithGoogle();
       await finishParentRegistration();
@@ -53,13 +58,12 @@ export default function RegisterPage() {
     setLoading(true);
     setError(null);
     setNotice(null);
+    setPendingVerificationUser(null);
     try {
       const user = await registerWithEmail(email.trim(), password);
       await registerPublicParent();
-      await sendVerificationEmail(user);
-      await signOutCurrent();
       setPassword("");
-      setNotice("Verification email sent. Confirm your email, then sign in to continue registration.");
+      await sendVerificationAndSignOut(user);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed. Please try again.");
     } finally {
@@ -67,7 +71,44 @@ export default function RegisterPage() {
     }
   }
 
-  const busy = !hydrated || loading || googleLoading;
+  async function sendVerificationAndSignOut(user: User) {
+    try {
+      await sendVerificationEmail(user);
+    } catch {
+      setPendingVerificationUser(user);
+      setNotice(
+        "Account created, but Firebase could not send the verification email. Try sending it again below."
+      );
+      return;
+    }
+
+    setPendingVerificationUser(null);
+    setNotice("Verification email sent. Confirm your email, then sign in to continue registration.");
+    try {
+      await signOutCurrent();
+    } catch {
+      // The account and verification email are already complete; sign-out is best effort.
+    }
+  }
+
+  async function handleResendVerification() {
+    if (!pendingVerificationUser) return;
+    setVerificationLoading(true);
+    setError(null);
+    try {
+      await sendVerificationAndSignOut(pendingVerificationUser);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Verification email could not be sent. Please try again."
+      );
+    } finally {
+      setVerificationLoading(false);
+    }
+  }
+
+  const busy = !hydrated || loading || googleLoading || verificationLoading;
 
   return (
     <main className="min-h-dvh bg-slate-50 font-body text-slate-950">
@@ -156,12 +197,19 @@ export default function RegisterPage() {
               />
 
               {notice ? (
-                <p
-                  role="status"
-                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800"
-                >
-                  {notice}
-                </p>
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
+                  <p role="status">{notice}</p>
+                  {pendingVerificationUser ? (
+                    <button
+                      type="button"
+                      onClick={handleResendVerification}
+                      disabled={busy}
+                      className="mt-3 rounded-md border border-emerald-300 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {verificationLoading ? "Sending..." : "Send verification email"}
+                    </button>
+                  ) : null}
+                </div>
               ) : null}
 
               {error ? (
