@@ -361,7 +361,7 @@ test.describe("Rally admin shell", () => {
     await expect(page.getByTestId("admin-settings-academy")).toBeVisible();
     await expect(page).toHaveURL(/\/admin\/settings\?panel=academy$/);
 
-    for (const panel of SETTINGS_PANELS) {
+    for (const panel of SETTINGS_PANELS.filter((panel) => panel.key !== "academy")) {
       const tab = page.getByRole("button", { name: panel.label, exact: true });
       await tab.scrollIntoViewIfNeeded();
       await tab.click();
