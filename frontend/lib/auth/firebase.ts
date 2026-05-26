@@ -14,6 +14,7 @@ import {
   createUserWithEmailAndPassword,
   getAuth,
   onAuthStateChanged,
+  sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
@@ -52,6 +53,23 @@ export function auth(): Auth {
 
 const E2E_BYPASS = process.env.NEXT_PUBLIC_E2E_AUTH_BYPASS === "1";
 
+declare global {
+  interface Window {
+    __E2E_FIREBASE__?: {
+      verificationFailuresRemaining?: number;
+    };
+  }
+}
+
+function fakeE2EUser(email: string): User {
+  return {
+    uid: "e2e-parent",
+    email,
+    emailVerified: false,
+    getIdToken: async () => "e2e-fake-token",
+  } as unknown as User;
+}
+
 export async function getIdToken(): Promise<string | null> {
   if (typeof window === "undefined") return null;
   if (E2E_BYPASS) return "e2e-fake-token";
@@ -66,8 +84,24 @@ export async function signInWithEmail(email: string, password: string): Promise<
 }
 
 export async function registerWithEmail(email: string, password: string): Promise<User> {
+  if (E2E_BYPASS) return fakeE2EUser(email);
   const { user } = await createUserWithEmailAndPassword(auth(), email, password);
   return user;
+}
+
+export async function sendVerificationEmail(user: User): Promise<void> {
+  if (E2E_BYPASS) {
+    const failuresRemaining =
+      typeof window === "undefined"
+        ? 0
+        : window.__E2E_FIREBASE__?.verificationFailuresRemaining ?? 0;
+    if (failuresRemaining > 0 && window.__E2E_FIREBASE__) {
+      window.__E2E_FIREBASE__.verificationFailuresRemaining = failuresRemaining - 1;
+      throw new Error("E2E verification email failure");
+    }
+    return;
+  }
+  await sendEmailVerification(user);
 }
 
 export async function signInWithGoogle(): Promise<User> {
@@ -81,6 +115,7 @@ export async function sendPasswordReset(email: string): Promise<void> {
 }
 
 export async function signOutCurrent(): Promise<void> {
+  if (E2E_BYPASS) return;
   await signOut(auth());
 }
 

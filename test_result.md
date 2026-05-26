@@ -548,6 +548,32 @@ backend:
         agent: "main"
         comment: "Agent B Wave 6 added a new Platform billing slice separate from parent tuition Billing. The model covers platform plans, plan limits, tenant subscriptions, billing/trial/cancellation status, and tenant Stripe customer/subscription IDs. Application tests cover trial creation, Stripe subscription activation, period-end cancellation scheduling, plan-limit checks, and absence of parent/student/enrollment/session tuition fields. Verification: focused platform billing pytest passed 4/4; targeted ruff passed; git diff --check passed."
 frontend:
+  - task: "parent registration Google-first UI"
+    implemented: true
+    working: true
+    file: "frontend/app/(marketing)/register/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "main"
+        comment: "Local Playwright smoke reproduced the registration handoff issue: email signup created the Firebase user and POST /api/v2/register/parent returned 200, then the protected parent layout called /api/v2/me and received 401 because password-provider users are still unverified. The user was bounced back to /login."
+      - working: true
+        agent: "main"
+        comment: "Made Google the explicit recommended signup path and changed email signup to create the parent row, send the Firebase verification email, sign out, clear the password field, and show a verification notice on /register instead of entering protected onboarding early. Verification: rendered desktop and 390px mobile checks passed with no console warnings/errors; email signup hit Firebase signup, register/parent, and sendOobCode with 200 responses; Google button opened the Firebase Auth emulator Google popup."
+      - working: true
+        agent: "main"
+        comment: "Follow-up waiver-fill UI check passed from the clean PR worktree using Playwright with BFF stubs and E2E auth bypass: filled parent profile, child profile, accepted the waiver, observed PATCH bodies for parent_profile, child_profile, and accept_waiver=true, and confirmed the UI advanced to session selection with no console warnings/errors."
+      - working: "NA"
+        agent: "main"
+        comment: "PR #106 review follow-up implemented: email registration now treats Firebase verification email and sign-out as post-creation steps. If verification email sending fails after Firebase account creation and /api/v2/register/parent succeeds, /register keeps a signed-in recovery path with a Send verification email button instead of surfacing a generic registration failure that would strand retry behind email-already-in-use. Added focused Playwright regression coverage for first-send failure and resend success. Verification pending."
+      - working: true
+        agent: "main"
+        comment: "Verification passed: focused Playwright regression PLAYWRIGHT_PORT=3121 pnpm exec playwright test e2e/specs/register-email-verification.spec.ts --project=chromium-mobile --workers=1 --trace=off --output=/tmp/pr106-register-pw-results-3121 returned 1 passed; frontend pnpm typecheck passed; frontend pnpm lint passed; frontend pnpm build passed; git diff --check passed. In-app Browser smoke loaded http://localhost:3122/register, confirmed page identity, filled email/password controls, found submit enabled, no framework overlay, and no console warnings/errors; Browser screenshot capture timed out twice, so no screenshot artifact was recorded."
+      - working: true
+        agent: "main"
+        comment: "CI follow-up for GitHub Actions run 26450747515: Frontend failed because the new registration Playwright spec was flaky on webkit-mobile. The first WebKit attempt submitted before the controlled email input survived the page hydration rerender, so browser validation kept focus on an empty required email field; retry passed, but CI failOnFlakyTests correctly failed the job. The spec now waits for the hydrated submit button to be enabled and asserts email/password values before clicking submit. Verification passed: PLAYWRIGHT_PORT=3124 webkit-only spec 1 passed; CI=1 PLAYWRIGHT_PORT=3125 focused spec across chromium-mobile and webkit-mobile returned 2 passed; pnpm typecheck passed; pnpm lint passed; git diff --check passed."
   - task: "Issue #101 safe change-student-parent admin UI"
     implemented: true
     working: true
@@ -895,10 +921,11 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 27
+  test_sequence: 29
   run_ui: true
 test_plan:
   current_focus:
+    - "parent registration Google-first UI"
     - "Issue #101 safe change-student-parent admin UI"
     - "Admin shell registrations route coverage"
     - "Wave 12 SaaS Playwright route matrix scaffold"
@@ -912,6 +939,16 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "PR #106 CI failure follow-up: GitHub run 26450747515 failed in Frontend Playwright E2E because register-email-verification.spec.ts was flaky on webkit-mobile. Root cause was a hydration race in the test: it filled email before the controlled form completed hydration, then submit saw an empty required email field. Fixed the test to wait for hydrated/enabled submit and assert both field values before submit. Local verification passed with WebKit-only and CI-mode focused Playwright runs, plus typecheck/lint/diff-check."
+  - agent: "main"
+    message: "PR #106 review follow-up verified: focused Playwright registration regression passed, frontend typecheck/lint/build passed, git diff --check passed, and in-app Browser smoke confirmed /register renders and accepts email/password field input with no console warnings/errors. Browser screenshot capture timed out twice; screenshot evidence is intentionally not claimed."
+  - agent: "main"
+    message: "PR #106 review follow-up ready for verification in /Users/ramc/.config/superpowers/worktrees/academy-manager/feat-parent-google-registration-flow: post-account-creation verification email failure now shows an on-page resend recovery path and does not rerun account creation or parent registration. Planned checks: focused Playwright registration regression, frontend typecheck/lint/build, and git diff --check."
+  - agent: "main"
+    message: "Parent registration UI smoke complete: Google is now the recommended direct onboarding path. Email signup no longer routes into protected onboarding before verification; it creates the parent row, sends Firebase verification, signs out, and shows a verification notice on /register. Retest /register desktop/mobile, Google popup opening, and email signup status flow if this is handed to a testing agent."
+  - agent: "main"
+    message: "Parent onboarding waiver-fill check passed in the PR worktree on localhost:3002 with Playwright stubs and E2E auth bypass: parent details, child details, waiver accept, and transition to session selection all worked; patch payloads included accept_waiver=true."
   - agent: "main"
     message: "Issue #101 frontend slice implemented in /Users/ramc/.config/superpowers/worktrees/academy-manager/complete-remaining-issues on branch feat/complete-remaining-issues. Student detail now has a Parent account panel that lists active parent users from the existing admin users API, supports client-side search by name/email/phone, submits the new safe change-parent backend endpoint with a reason, refreshes the student detail/list after success, and avoids visible raw IDs. Verification passed: cd frontend && pnpm typecheck. Browser smoke was not run because this was a focused shared-worktree frontend slice."
   - agent: "main"
