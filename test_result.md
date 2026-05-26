@@ -571,6 +571,9 @@ frontend:
       - working: true
         agent: "main"
         comment: "Verification passed: focused Playwright regression PLAYWRIGHT_PORT=3121 pnpm exec playwright test e2e/specs/register-email-verification.spec.ts --project=chromium-mobile --workers=1 --trace=off --output=/tmp/pr106-register-pw-results-3121 returned 1 passed; frontend pnpm typecheck passed; frontend pnpm lint passed; frontend pnpm build passed; git diff --check passed. In-app Browser smoke loaded http://localhost:3122/register, confirmed page identity, filled email/password controls, found submit enabled, no framework overlay, and no console warnings/errors; Browser screenshot capture timed out twice, so no screenshot artifact was recorded."
+      - working: true
+        agent: "main"
+        comment: "CI follow-up for GitHub Actions run 26450747515: Frontend failed because the new registration Playwright spec was flaky on webkit-mobile. The first WebKit attempt submitted before the controlled email input survived the page hydration rerender, so browser validation kept focus on an empty required email field; retry passed, but CI failOnFlakyTests correctly failed the job. The spec now waits for the hydrated submit button to be enabled and asserts email/password values before clicking submit. Verification passed: PLAYWRIGHT_PORT=3124 webkit-only spec 1 passed; CI=1 PLAYWRIGHT_PORT=3125 focused spec across chromium-mobile and webkit-mobile returned 2 passed; pnpm typecheck passed; pnpm lint passed; git diff --check passed."
   - task: "Issue #101 safe change-student-parent admin UI"
     implemented: true
     working: true
@@ -936,6 +939,8 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "PR #106 CI failure follow-up: GitHub run 26450747515 failed in Frontend Playwright E2E because register-email-verification.spec.ts was flaky on webkit-mobile. Root cause was a hydration race in the test: it filled email before the controlled form completed hydration, then submit saw an empty required email field. Fixed the test to wait for hydrated/enabled submit and assert both field values before submit. Local verification passed with WebKit-only and CI-mode focused Playwright runs, plus typecheck/lint/diff-check."
   - agent: "main"
     message: "PR #106 review follow-up verified: focused Playwright registration regression passed, frontend typecheck/lint/build passed, git diff --check passed, and in-app Browser smoke confirmed /register renders and accepts email/password field input with no console warnings/errors. Browser screenshot capture timed out twice; screenshot evidence is intentionally not claimed."
   - agent: "main"

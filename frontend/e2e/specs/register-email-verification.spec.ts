@@ -26,8 +26,11 @@ test.describe("parent email registration verification", () => {
     });
 
     await page.goto("/register");
+    await expect(page.getByTestId("register-submit")).toBeEnabled();
     await page.getByTestId("register-email").fill("parent@example.com");
+    await expect(page.getByTestId("register-email")).toHaveValue("parent@example.com");
     await page.getByTestId("register-password").fill("correct-horse-1");
+    await expect(page.getByTestId("register-password")).toHaveValue("correct-horse-1");
     await page.getByTestId("register-submit").click();
 
     await expect(page.getByRole("status")).toContainText("Account created");
