@@ -175,6 +175,8 @@ class AdminEnrollmentView(BaseModel):
     parent_id: str
     status: str
     enrolled_at: datetime | None = None
+    level: str | None = None
+    dues_status: Literal["current", "due", "overdue"] = "current"
 
 
 class AdminEnrollmentList(BaseModel):

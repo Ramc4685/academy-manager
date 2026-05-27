@@ -175,6 +175,17 @@ def test_revenue_aggregates_by_month(admin_client):
     assert r.json() == {"by_month": {}}
 
 
+def test_revenue_skips_waived_payments(admin_client):
+    _seed_payment(admin_client.seed, "pay-1", 15000, status="succeeded")
+    _seed_payment(admin_client.seed, "pay-waived", 22500, status="waived")
+
+    r = admin_client.get("/api/v2/admin/finance/revenue")
+
+    assert r.status_code == 200, r.text
+    [month_total] = r.json()["by_month"].values()
+    assert month_total == 15000
+
+
 def test_revenue_wrong_persona_404(coach_on_admin_client):
     r = coach_on_admin_client.get("/api/v2/admin/finance/revenue")
     assert r.status_code == 404

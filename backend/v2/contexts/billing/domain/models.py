@@ -20,6 +20,7 @@ PaymentStatus = Literal[
     "refunded",
     "partially_refunded",
     "expired",
+    "waived",
 ]
 SubscriptionStatus = Literal["active", "past_due", "cancelled", "incomplete"]
 CreditEntryType = Literal[

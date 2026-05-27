@@ -82,6 +82,8 @@ export interface AdminEnrollmentView {
   full_name: string;
   status: EnrollmentStatus;
   enrolled_at: string;
+  level?: string | null;
+  dues_status?: "current" | "due" | "overdue";
 }
 
 export interface AdminEnrollmentList {
@@ -173,11 +175,13 @@ export interface PromoteWaitlistResponse {
 
 export type PaymentStatus =
   | "succeeded"
+  | "paid"
   | "pending"
   | "refunded"
   | "partially_refunded"
   | "failed"
-  | "expired";
+  | "expired"
+  | "waived";
 
 export type AdminPaymentStatus = PaymentStatus | "partially_paid";
 

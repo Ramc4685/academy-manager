@@ -1043,8 +1043,18 @@ def compose_admin(
         if not enrollment_docs:
             return []
         active = [enrollments_r._to_domain(doc) for doc in enrollment_docs]  # type: ignore[attr-defined]
-        students = await students_r.by_ids([e.student_id for e in active])
+        student_ids = [e.student_id for e in active]
+        students = await students_r.by_ids(student_ids)
         by_id = {s.student_id: s for s in students}
+        student_detail_by_id: dict[str, dict[str, Any]] = {}
+        if student_ids:
+            async for student_doc in db["students"].find(
+                {"academy_id": academy_id, "student_id": {"$in": student_ids}}
+            ):
+                student_detail_by_id[str(student_doc.get("student_id"))] = student_doc
+        dues_status_by_id: dict[str, str] = {}
+        if hasattr(students_r, "_dues_statuses"):
+            dues_status_by_id = await students_r._dues_statuses(academy_id, student_ids)  # type: ignore[attr-defined]
         out: list[dict] = []
         by_enrollment_id = {
             str(doc["enrollment_id"]): doc for doc in enrollment_docs if "enrollment_id" in doc
@@ -1053,6 +1063,7 @@ def compose_admin(
             doc = by_enrollment_id.get(e.enrollment_id, {})
             s = by_id.get(e.student_id)
             full_name = s.full_name if s else "(unknown)"
+            student_doc = student_detail_by_id.get(e.student_id, {})
             out.append(
                 {
                     "enrollment_id": e.enrollment_id,
@@ -1065,6 +1076,8 @@ def compose_admin(
                     # Prefer the semantic enrolled_at field (v2/seed); fall back
                     # to created_at for any legacy docs that only have that.
                     "enrolled_at": doc.get("enrolled_at") or doc.get("created_at"),
+                    "level": student_doc.get("level"),
+                    "dues_status": dues_status_by_id.get(e.student_id, "current"),
                 }
             )
         return out

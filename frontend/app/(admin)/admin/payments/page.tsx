@@ -47,23 +47,37 @@ function paymentDisplayLabel(payment: AdminPaymentView): string {
 
 function paidCents(payment: AdminPaymentView): number | null {
   if (payment.paid_amount_cents > 0) return Math.max(payment.paid_amount_cents - payment.refunded_cents, 0);
-  if (!["succeeded", "partially_refunded", "refunded"].includes(payment.status)) return null;
+  if (!["succeeded", "paid", "partially_refunded", "refunded"].includes(payment.status)) return null;
   return Math.max(finalCents(payment) - payment.refunded_cents, 0);
 }
 
-function adminPaymentStatus(payment: AdminPaymentView): AdminPaymentStatus {
+function adminPaymentStatus(payment: AdminPaymentView): string {
   return payment.status as AdminPaymentStatus;
 }
 
-const STATUS_CHIP: Record<AdminPaymentStatus, { variant: ChipVariant; label: string }> = {
+type PaymentStatusChip = { variant: ChipVariant; label: string };
+
+const STATUS_CHIP: Record<AdminPaymentStatus, PaymentStatusChip> = {
   succeeded: { variant: "paid", label: "PAID" },
+  paid: { variant: "paid", label: "PAID" },
   pending: { variant: "pending", label: "PENDING" },
   partially_paid: { variant: "partial", label: "PARTIAL" },
   refunded: { variant: "refunded", label: "REFUNDED" },
   partially_refunded: { variant: "partial", label: "PARTIAL" },
   failed: { variant: "failed", label: "FAILED" },
   expired: { variant: "expired", label: "EXPIRED" },
+  waived: { variant: "waived", label: "WAIVED" },
 };
+
+function statusChip(status: string | null | undefined): PaymentStatusChip {
+  if (status && status in STATUS_CHIP) {
+    return STATUS_CHIP[status as AdminPaymentStatus];
+  }
+  return {
+    variant: "pending",
+    label: (status || "unknown").replaceAll("_", " ").toUpperCase(),
+  };
+}
 
 function methodChip(payment: AdminPaymentView): { variant: ChipVariant; label: string } | null {
   if (payment.stripe_linked) return { variant: "autopayOn", label: "STRIPE" };
@@ -150,7 +164,7 @@ export default function AdminPaymentsPage() {
               </thead>
               <tbody>
                 {payments.map((p) => {
-                  const chip = STATUS_CHIP[adminPaymentStatus(p)];
+                  const chip = statusChip(p.status);
                   const method = methodChip(p);
                   const rowPaidCents = paidCents(p);
                   return (
@@ -275,7 +289,10 @@ function PaymentActions({
 }) {
   const status = adminPaymentStatus(payment);
   const isPending = status === "pending" || status === "partially_paid";
-  const isPaid = payment.status === "succeeded" || payment.status === "partially_refunded";
+  const isPaid =
+    payment.status === "succeeded" ||
+    payment.status === "paid" ||
+    payment.status === "partially_refunded";
   // Refund eligibility: must be paid/partial AND have remaining balance
   const refundable = isPaid && payment.refunded_cents < finalCents(payment);
   // Undo eligibility: only manual paid, not Stripe-linked

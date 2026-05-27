@@ -141,6 +141,29 @@ def test_add_to_roster_then_list_enrollments(admin_client):
     assert any(e["student_name"] == "Alice" for e in listing["enrollments"])
 
 
+def test_list_enrollments_includes_level_and_dues_status(admin_client):
+    r = admin_client.post(
+        "/api/v2/admin/enrollments",
+        json={
+            "session_id": "sess-1",
+            "student_id": "st-1",
+            "parent_id": "p-1",
+            "full_name": "Alice",
+        },
+    )
+    assert r.status_code == 200, r.text
+    admin_client.seed["enrollment_query"].rows = dict(admin_client.seed["enrollments"].rows)
+    admin_client.seed["students"].admin_levels["st-1"] = "7"
+    admin_client.seed["students"].admin_status["st-1"] = "overdue"
+
+    listing = admin_client.get("/api/v2/admin/sessions/sess-1/enrollments")
+
+    assert listing.status_code == 200, listing.text
+    [row] = listing.json()["enrollments"]
+    assert row["level"] == "7"
+    assert row["dues_status"] == "overdue"
+
+
 def test_add_to_roster_wrong_persona_404(parent_on_admin_client):
     r = parent_on_admin_client.post(
         "/api/v2/admin/enrollments",

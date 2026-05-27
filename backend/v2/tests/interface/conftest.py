@@ -704,6 +704,7 @@ class _AdminFakeEnrollmentQuery:
 class FakeStudentWriter:
     students: dict[str, Any] = field(default_factory=dict)
     admin_status: dict[str, str] = field(default_factory=dict)
+    admin_levels: dict[str, str | None] = field(default_factory=dict)
 
     async def upsert(self, student):
         self.students[student.student_id] = student
@@ -1238,8 +1239,11 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                     "session_id": e.session_id,
                     "student_id": e.student_id,
                     "student_name": st.full_name if st else "(unknown)",
+                    "full_name": st.full_name if st else "(unknown)",
                     "parent_id": st.parent_id if st else "",
                     "status": e.status,
+                    "level": students.admin_levels.get(e.student_id),
+                    "dues_status": students.admin_status.get(e.student_id, "current"),
                 }
             )
         return out

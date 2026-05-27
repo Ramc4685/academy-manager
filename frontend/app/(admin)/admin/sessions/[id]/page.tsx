@@ -49,6 +49,7 @@ import {
   type CreateEnrollmentRequest,
   type EditSessionRequest,
 } from "@/lib/api/admin";
+import { updateAdminStudent } from "@/lib/api/v2/students";
 import { queryKeys } from "@/lib/query/keys";
 
 import { Avatar } from "@/components/ds/avatar";
@@ -96,8 +97,7 @@ export default function AdminSessionDetailPage() {
   const sessionsQuery = useQuery({
     queryKey: queryKeys.admin.sessionDetail(sessionId),
     queryFn: async () => {
-      const today = new Date().toISOString().slice(0, 10);
-      const list = await listAdminSessions(today);
+      const list = await listAdminSessions(undefined, { window: "upcoming" });
       return list.sessions.find((s) => s.session_id === sessionId) ?? null;
     },
   });
@@ -134,6 +134,22 @@ export default function AdminSessionDetailPage() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionDetail(sessionId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
+    },
+  });
+
+  const levelMutation = useMutation({
+    mutationFn: ({ studentId, level }: { studentId: string; level: string | null }) =>
+      updateAdminStudent(studentId, {
+        level,
+        reason: "session roster level update",
+      }),
+    onSuccess: (_student, variables) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.admin.studentDetail(variables.studentId),
+      });
     },
   });
 
@@ -235,6 +251,9 @@ export default function AdminSessionDetailPage() {
             )
           }
         />
+        {session && (
+          <RosterMetrics enrollments={enrollments} capacity={session.capacity} />
+        )}
         {enrollmentsQuery.isLoading ? (
           <TableSkeleton />
         ) : enrollments.length === 0 ? (
@@ -242,6 +261,10 @@ export default function AdminSessionDetailPage() {
         ) : (
           <RosterTable
             enrollments={enrollments}
+            updatingLevelStudentId={
+              levelMutation.isPending ? levelMutation.variables?.studentId : null
+            }
+            onLevelChange={(studentId, level) => levelMutation.mutate({ studentId, level })}
             onDelete={(enrollment) => setRemoveTarget(enrollment)}
             onPause={(enrollment) => setPauseTarget(enrollment)}
             onResume={(id) =>
@@ -250,7 +273,7 @@ export default function AdminSessionDetailPage() {
                   queryKey: queryKeys.admin.enrollments(sessionId),
                 });
                 void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
-                void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions() });
+                void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
               })
             }
             onTransfer={(enrollment) => setTransferTarget(enrollment)}
@@ -305,6 +328,8 @@ export default function AdminSessionDetailPage() {
         onAdded={() => {
           setAddOpen(false);
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionDetail(sessionId) });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
         }}
       />
       <SessionEditDialog
@@ -314,7 +339,7 @@ export default function AdminSessionDetailPage() {
         onSaved={() => {
           setEditOpen(false);
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionDetail(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions() });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
         }}
       />
       <OccurrenceCoachDialog
@@ -335,7 +360,7 @@ export default function AdminSessionDetailPage() {
         onMoved={() => {
           setTransferTarget(null);
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions() });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
         }}
       />
       <PauseEnrollmentDialog
@@ -345,7 +370,7 @@ export default function AdminSessionDetailPage() {
           setPauseTarget(null);
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions() });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
         }}
       />
       <WithdrawalCreditDialog
@@ -364,7 +389,7 @@ export default function AdminSessionDetailPage() {
         onRemoved={() => {
           setRemoveTarget(null);
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions() });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
         }}
       />
     </section>
@@ -719,8 +744,81 @@ function SessionEditDialog({
 // Roster table
 // ─────────────────────────────────────────────────────────────────────────────
 
+function RosterMetrics({
+  enrollments,
+  capacity,
+}: {
+  enrollments: AdminEnrollmentView[];
+  capacity: number;
+}) {
+  const filled = enrollments.length;
+  const openSpots = Math.max(capacity - filled, 0);
+  const dueCount = enrollments.filter((e) => e.dues_status === "due").length;
+  const overdueCount = enrollments.filter((e) => e.dues_status === "overdue").length;
+  const numericLevels = enrollments
+    .map((e) => Number(e.level))
+    .filter((level) => Number.isInteger(level) && level >= 1 && level <= 10);
+  const levelText =
+    numericLevels.length === 0
+      ? "No levels"
+      : `${Math.min(...numericLevels)}-${Math.max(...numericLevels)}`;
+
+  return (
+    <div className="mb-4 grid gap-2 sm:grid-cols-4">
+      <RosterMetric label="In session" value={String(filled)} />
+      <RosterMetric
+        label="Open spots"
+        value={String(openSpots)}
+        detail={openSpots > 0 ? `Add ${openSpots}` : "Full"}
+        tone={openSpots > 0 ? "open" : "full"}
+      />
+      <RosterMetric
+        label="Fee follow-up"
+        value={String(dueCount + overdueCount)}
+        detail={overdueCount > 0 ? `${overdueCount} overdue` : dueCount > 0 ? `${dueCount} due` : "Clear"}
+        tone={overdueCount > 0 ? "danger" : dueCount > 0 ? "warn" : "open"}
+      />
+      <RosterMetric label="Levels" value={levelText} detail="1-10" />
+    </div>
+  );
+}
+
+function RosterMetric({
+  label,
+  value,
+  detail,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+  tone?: "neutral" | "open" | "warn" | "danger" | "full";
+}) {
+  const toneClass =
+    tone === "danger"
+      ? "border-red-200 bg-red-50 text-red-900"
+      : tone === "warn"
+        ? "border-amber-200 bg-amber-50 text-amber-900"
+        : tone === "open"
+          ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+          : tone === "full"
+            ? "border-rally-line bg-rally-paper text-rally-ink"
+            : "border-rally-line bg-white text-rally-ink";
+  return (
+    <div className={`rounded-md border px-3 py-2 ${toneClass}`}>
+      <p className="font-mono text-[10px] font-bold uppercase tracking-overline opacity-70">
+        {label}
+      </p>
+      <p className="mt-1 font-display text-lg font-semibold">{value}</p>
+      {detail && <p className="text-xs opacity-75">{detail}</p>}
+    </div>
+  );
+}
+
 function RosterTable({
   enrollments,
+  updatingLevelStudentId,
+  onLevelChange,
   onDelete,
   onPause,
   onResume,
@@ -728,6 +826,8 @@ function RosterTable({
   onWithdraw,
 }: {
   enrollments: AdminEnrollmentView[];
+  updatingLevelStudentId: string | null;
+  onLevelChange: (studentId: string, level: string | null) => void;
   onDelete: (enrollment: AdminEnrollmentView) => void;
   onPause: (enrollment: AdminEnrollmentView) => void;
   onResume: (id: string) => void;
@@ -740,7 +840,9 @@ function RosterTable({
         <thead>
           <tr className="border-b border-rally-line text-left">
             <Th>Name</Th>
+            <Th>Level</Th>
             <Th>Status</Th>
+            <Th>Fees</Th>
             <Th>Enrolled</Th>
             <Th><span className="sr-only">Actions</span></Th>
           </tr>
@@ -752,7 +854,13 @@ function RosterTable({
               <tr
                 key={e.enrollment_id}
                 data-testid={`enrollment-row-${e.enrollment_id}`}
-                className="border-b border-rally-line/60 last:border-0"
+                className={`border-b border-rally-line/60 last:border-0 ${
+                  e.dues_status === "overdue"
+                    ? "bg-red-50/60"
+                    : e.dues_status === "due"
+                      ? "bg-amber-50/60"
+                      : ""
+                }`}
               >
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
@@ -761,7 +869,17 @@ function RosterTable({
                   </div>
                 </td>
                 <td className="px-4 py-3">
+                  <LevelSelect
+                    value={e.level ?? ""}
+                    disabled={updatingLevelStudentId === e.student_id}
+                    onChange={(level) => onLevelChange(e.student_id, level)}
+                  />
+                </td>
+                <td className="px-4 py-3">
                   <Chip variant={chip.variant} label={chip.label} />
+                </td>
+                <td className="px-4 py-3">
+                  <DuesChip status={e.dues_status ?? "current"} />
                 </td>
                 <td className="px-4 py-3 font-mono text-rally-muted">
                   {new Date(e.enrolled_at).toLocaleDateString()}
@@ -803,6 +921,40 @@ function RosterTable({
       </table>
     </div>
   );
+}
+
+function LevelSelect({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  disabled: boolean;
+  onChange: (level: string | null) => void;
+}) {
+  const normalized = /^[1-9]$|^10$/.test(value) ? value : "";
+  return (
+    <select
+      value={normalized}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value || null)}
+      className="min-h-9 rounded-md border border-rally-line bg-white px-2 py-1 font-mono text-xs font-semibold text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30 disabled:opacity-60"
+      aria-label="Student level"
+    >
+      <option value="">-</option>
+      {Array.from({ length: 10 }, (_, index) => String(index + 1)).map((level) => (
+        <option key={level} value={level}>
+          L{level}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function DuesChip({ status }: { status: "current" | "due" | "overdue" }) {
+  if (status === "current") return <Chip variant="paid" label="CURRENT" />;
+  if (status === "due") return <Chip variant="pending" label="DUE" />;
+  return <Chip variant="overdue" label="OVERDUE" />;
 }
 
 function EnrollmentHistory({ enrollmentId }: { enrollmentId: string }) {

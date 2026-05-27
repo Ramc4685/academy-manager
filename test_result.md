@@ -1438,3 +1438,22 @@ agent_communication:
       Frontend: pnpm build passes (regenerated .next/types for new /admin/registrations routes added in #103); pnpm typecheck exits 0 after build.
 
       git status: clean (working tree).
+  - agent: "main"
+    message: |
+      BLNO local Mongo import script and local data apply — 2026-05-27.
+
+      Added backend/scripts/apply_blno_mongo.py to apply a reviewed BLNO Mongo document bundle in dry-run by default, with explicit --apply for writes and --target production --confirm-production for production writes. Added backend/tests/test_apply_blno_mongo.py coverage for upsert identity filters, production/local safety gates, bundle loading, and local academy_id override.
+
+      Generated Mongo-ready BLNO bundle under .local/blno/mongo_documents from /Users/ramc/Downloads/BLno-Badmintion-Training (1).xlsx and applied it locally to DB academy_manager_local with --academy-id-override default-academy. Local counts verified: users 45, academy_memberships 45, platform_roles 1, sessions 4, students 47, enrollments 47, payments 80, payment_events 13, attendance 8, move_log 5, expenses 3, payout_rules 2, coach_rates 2, waiver_versions 1, waiver_templates 1, waiver_acceptances 47, dues_snapshots 41. Local Firebase emulator users were seeded for 45 imported users with Admin@12345 / Coach@12345 / Parent@12345 passwords and emailVerified=true. Production data was not touched.
+  - agent: "main"
+    message: |
+      BLNO session visibility fix — 2026-05-27.
+
+      User reported the admin Sessions page showed "No sessions on 2026-05-27." Root cause: the generated BLNO session docs had start_at on 2026-05-01, while the admin sessions route filters by exact requested date. Corrected .local/blno/mongo_documents session and session_occurrence start/end datetimes so Wednesday sessions start on 2026-05-27 and Thursday sessions start on 2026-05-28, then reapplied the local bundle with python scripts/apply_blno_mongo.py --apply --academy-id-override default-academy. Verification: direct Mongo query for 2026-05-27 returned two Wednesday sessions with active roster counts 10 and 11.
+  - agent: "main"
+    message: |
+      BLNO admin UI manual-pass fixes — 2026-05-27.
+
+      User reported four local admin issues: Sessions should show academy sessions instead of only today's date-filtered view; session detail needs roster metrics, student levels, and fee-due highlighting; /admin/payments crashed on unmapped payment statuses; /admin/finance/revenue returned 500. Implemented upcoming-session list/detail lookup, roster metrics plus inline level 1-10 editing and dues chips, defensive payment status chips for legacy paid/waived rows, and backend support for waived payment rows as non-revenue payments.
+
+      Verification: backend focused pytest for Mongo payments, admin billing, and admin sessions returned 38 passed; backend ruff check and ruff format --check passed on touched v2 backend files; frontend pnpm typecheck passed; frontend pnpm lint passed; Playwright admin-shell checks for /admin/sessions, /admin/payments, session detail, and legacy paid/waived payment statuses returned 4 passed on chromium-mobile. In-app Browser authenticated local QA was blocked because the running local frontend reports Firebase auth/invalid-api-key at login; no production deploy was run.

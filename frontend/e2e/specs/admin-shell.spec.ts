@@ -354,6 +354,71 @@ test.describe("Rally admin shell", () => {
     });
   }
 
+  test("payments renders legacy paid and waived statuses without crashing", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.route("**/api/v2/admin/payments*", (route) =>
+      fulfillJson(route, {
+        payments: [
+          {
+            payment_id: "legacy-paid",
+            parent_id: "parent-1",
+            student_id: "student-1",
+            student_name: "Alice Chen",
+            enrollment_id: "enrollment-1",
+            session_id: "session-1",
+            period: "2026-05",
+            amount_cents: 12000,
+            discount_cents: 0,
+            final_amount_cents: 12000,
+            amount_received_cents: 12000,
+            paid_amount_cents: 12000,
+            balance_due_cents: 0,
+            overpayment_credit_cents: 0,
+            currency: "usd",
+            status: "paid",
+            refunded_cents: 0,
+            invoice_number: null,
+            payment_method: "cash",
+            stripe_linked: false,
+            created_at: "2026-05-01T12:00:00Z",
+          },
+          {
+            payment_id: "legacy-waived",
+            parent_id: "parent-2",
+            student_id: "student-2",
+            student_name: "Bob Rao",
+            enrollment_id: "enrollment-2",
+            session_id: "session-1",
+            period: "2026-05",
+            amount_cents: 12000,
+            discount_cents: 12000,
+            final_amount_cents: 0,
+            amount_received_cents: 0,
+            paid_amount_cents: 0,
+            balance_due_cents: 0,
+            overpayment_credit_cents: 0,
+            currency: "usd",
+            status: "waived",
+            refunded_cents: 0,
+            invoice_number: null,
+            payment_method: null,
+            stripe_linked: false,
+            created_at: "2026-05-02T12:00:00Z",
+          },
+        ],
+      })
+    );
+
+    await page.goto("/admin/payments");
+
+    await expect(page.getByTestId("payment-row-legacy-paid")).toBeVisible();
+    await expect(page.getByTestId("payment-row-legacy-paid").getByText("PAID")).toBeVisible();
+    await expect(page.getByTestId("payment-row-legacy-waived")).toBeVisible();
+    await expect(page.getByTestId("payment-row-legacy-waived").getByText("WAIVED")).toBeVisible();
+    expect(errors, `Console errors on legacy payment statuses: ${errors.join("\n")}`).toEqual([]);
+  });
+
   test("settings defaults to academy and each panel tab updates the URL", async ({ page }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
