@@ -31,6 +31,7 @@ import {
   deleteAdminSession,
   updateAdminSession,
   updateSessionOccurrenceCoach,
+  updateOccurrenceCoachAttendance,
   promoteWaitlist,
   approveWithdrawalCredit,
   previewWithdrawalCredit,
@@ -93,6 +94,7 @@ export default function AdminSessionDetailPage() {
   const [transferTarget, setTransferTarget] = useState<AdminEnrollmentView | null>(null);
   const [withdrawalTarget, setWithdrawalTarget] = useState<AdminEnrollmentView | null>(null);
   const [occurrenceTarget, setOccurrenceTarget] = useState<AdminSessionOccurrenceView | null>(null);
+  const [attendanceTarget, setAttendanceTarget] = useState<AdminSessionOccurrenceView | null>(null);
 
   const sessionsQuery = useQuery({
     queryKey: queryKeys.admin.sessionDetail(sessionId),
@@ -234,6 +236,7 @@ export default function AdminSessionDetailPage() {
             occurrences={occurrences}
             userNameById={userNameById}
             onEdit={setOccurrenceTarget}
+            onAttendance={setAttendanceTarget}
           />
         )}
       </Card>
@@ -352,6 +355,16 @@ export default function AdminSessionDetailPage() {
           });
         }}
       />
+      <CoachAttendanceDialog
+        occurrence={attendanceTarget}
+        onClose={() => setAttendanceTarget(null)}
+        onSaved={() => {
+          setAttendanceTarget(null);
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.admin.sessionOccurrences(sessionId),
+          });
+        }}
+      />
       <TransferEnrollmentDialog
         enrollment={transferTarget}
         currentSessionId={sessionId}
@@ -400,14 +413,18 @@ function OccurrenceTable({
   occurrences,
   userNameById,
   onEdit,
+  onAttendance,
 }: {
   occurrences: AdminSessionOccurrenceView[];
   userNameById: Map<string, string>;
   onEdit: (occurrence: AdminSessionOccurrenceView) => void;
+  onAttendance: (occurrence: AdminSessionOccurrenceView) => void;
 }) {
   const coachLabel = (coachId: string | null | undefined, fallback: string) =>
     coachId ? userNameById.get(coachId) ?? fallback : "-";
   const markerLabel = (markerId: string) => userNameById.get(markerId) ?? "Staff member";
+  const moneyLabel = (minor: number | null) =>
+    minor == null ? "" : ` · $${(minor / 100).toFixed(2)}`;
 
   return (
     <div className="overflow-x-auto">
@@ -419,6 +436,7 @@ function OccurrenceTable({
             <Th>Actual</Th>
             <Th>Substitute</Th>
             <Th>Attendance</Th>
+            <Th>Payroll</Th>
             <Th>Action</Th>
           </tr>
         </thead>
@@ -472,16 +490,177 @@ function OccurrenceTable({
                   "Not marked"
                 )}
               </td>
+              <td className="py-3 pr-4 text-rally-muted">
+                {occurrence.coach_attendance.length > 0 ? (
+                  <div className="space-y-1">
+                    {occurrence.coach_attendance.map((row) => (
+                      <p key={row.attendance_id} className="text-xs">
+                        <span className="font-medium text-rally-ink">
+                          {coachLabel(row.coach_id, "Coach")}
+                        </span>{" "}
+                        {row.status} · {row.role}
+                        {moneyLabel(row.rate_override_minor)}
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  "Not marked"
+                )}
+              </td>
               <td className="py-3">
-                <Button variant="secondary" size="sm" onClick={() => onEdit(occurrence)}>
-                  Change coach
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="secondary" size="sm" onClick={() => onEdit(occurrence)}>
+                    Change coach
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => onAttendance(occurrence)}>
+                    Coach attendance
+                  </Button>
+                </div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function CoachAttendanceDialog({
+  occurrence,
+  onClose,
+  onSaved,
+}: {
+  occurrence: AdminSessionOccurrenceView | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [coachId, setCoachId] = useState("");
+  const [status, setStatus] = useState<"present" | "absent">("present");
+  const [role, setRole] = useState<"lead" | "assistant">("lead");
+  const [rateOverride, setRateOverride] = useState("");
+  const [note, setNote] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const coachesQuery = useQuery({
+    queryKey: queryKeys.admin.users("coach"),
+    queryFn: () => listAdminUsers("coach"),
+    enabled: Boolean(occurrence),
+  });
+  const coaches = coachesQuery.data?.users ?? [];
+
+  useEffect(() => {
+    if (!occurrence) return;
+    const existing = occurrence.coach_attendance[0];
+    setCoachId(existing?.coach_id ?? occurrence.actual_coach_id ?? occurrence.scheduled_coach_id);
+    setStatus(existing?.status ?? "present");
+    setRole(existing?.role ?? "lead");
+    setRateOverride(
+      existing?.rate_override_minor == null ? "" : (existing.rate_override_minor / 100).toFixed(2)
+    );
+    setNote(existing?.note ?? "");
+    setError(null);
+  }, [occurrence]);
+
+  const mutation = useMutation({
+    mutationFn: () => {
+      const trimmedRate = rateOverride.trim();
+      const rate_override_minor =
+        trimmedRate.length === 0 ? null : Math.round(Number(trimmedRate) * 100);
+      return updateOccurrenceCoachAttendance(occurrence!.occurrence_id, {
+        coach_id: coachId,
+        status,
+        role,
+        rate_override_minor,
+        note,
+      });
+    },
+    onSuccess: onSaved,
+    onError: (err: Error) => setError(err.message ?? "Failed to save coach attendance."),
+  });
+
+  return (
+    <RallyDialog
+      open={Boolean(occurrence)}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      title="Coach payroll attendance"
+      description="Record which coach was present for this dated class."
+      overline="Occurrence"
+    >
+      {error && <DialogError message={error} />}
+      <form
+        className="space-y-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          mutation.mutate();
+        }}
+      >
+        <Field label="Coach">
+          {coaches.length > 0 ? (
+            <CoachSelect coaches={coaches} value={coachId} onChange={setCoachId} />
+          ) : (
+            <input
+              value={coachId}
+              onChange={(event) => setCoachId(event.target.value)}
+              className={inputClass}
+              placeholder={coachesQuery.isLoading ? "Loading coaches..." : "Coach reference"}
+            />
+          )}
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Status">
+            <select
+              value={status}
+              onChange={(event) => setStatus(event.target.value as "present" | "absent")}
+              className={inputClass}
+            >
+              <option value="present">Present</option>
+              <option value="absent">Absent</option>
+            </select>
+          </Field>
+          <Field label="Role">
+            <select
+              value={role}
+              onChange={(event) => setRole(event.target.value as "lead" | "assistant")}
+              className={inputClass}
+            >
+              <option value="lead">Lead</option>
+              <option value="assistant">Assistant</option>
+            </select>
+          </Field>
+        </div>
+        <Field label="Pay override">
+          <input
+            value={rateOverride}
+            onChange={(event) => setRateOverride(event.target.value)}
+            className={inputClass}
+            inputMode="decimal"
+            placeholder="Optional amount, e.g. 15.00"
+          />
+        </Field>
+        <Field label="Note">
+          <input
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            className={inputClass}
+            placeholder="Optional"
+          />
+        </Field>
+        <DialogActions>
+          <Button variant="secondary" size="sm" type="button" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            type="submit"
+            disabled={mutation.isPending || !coachId || Number.isNaN(Number(rateOverride || "0"))}
+          >
+            {mutation.isPending ? "Saving..." : "Save"}
+          </Button>
+        </DialogActions>
+      </form>
+    </RallyDialog>
   );
 }
 

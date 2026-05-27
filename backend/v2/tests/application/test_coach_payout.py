@@ -46,6 +46,7 @@ from backend.v2.contexts.coaching.application.use_cases.compute_payout import (
     ComputeCoachPayout,
 )
 from backend.v2.contexts.coaching.domain.payout import (
+    CoachAttendanceForPayout,
     CoachRate,
     PayableOccurrence,
     PayoutLine,
@@ -68,6 +69,7 @@ def _occurrence(
     actual_coach_id: str | None = None,
     substitute_coach_id: str | None = None,
     academy_id: str = "acad-1",
+    coach_attendance: list[CoachAttendanceForPayout] | None = None,
 ) -> PayableOccurrence:
     return PayableOccurrence(
         occurrence_id=occurrence_id,
@@ -79,6 +81,7 @@ def _occurrence(
         actual_coach_id=actual_coach_id,
         substitute_coach_id=substitute_coach_id,
         is_payable=is_payable,
+        coach_attendance=coach_attendance or [],
     )
 
 
@@ -370,6 +373,122 @@ async def test_non_payable_occurrences_are_skipped() -> None:
         period_end=_dt("2026-06-01T00:00:00"),
     )
     assert statement.lines == []
+
+
+@pytest.mark.asyncio
+async def test_attendance_present_row_pays_scheduled_occurrence_even_before_status_completed() -> (
+    None
+):
+    rate = CoachRate(
+        rate_id="cr-1",
+        academy_id="acad-1",
+        coach_id="coach-A",
+        billing_unit="per_session",
+        amount_minor=5000,
+        currency="USD",
+        effective_from=_dt("2026-01-01T00:00:00"),
+        effective_until=None,
+        status="active",
+    )
+    occ = _occurrence(
+        "occ-1",
+        start="2026-05-10T18:00:00",
+        end="2026-05-10T19:00:00",
+        status="scheduled",
+        coach_attendance=[
+            CoachAttendanceForPayout(
+                coach_id="coach-A",
+                status="present",
+                role="lead",
+                rate_override_minor=None,
+            )
+        ],
+    )
+    use_case = ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery([occ]),
+        rates=FakeRateRepo([rate]),
+    )
+    statement = await use_case.execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+    assert statement.total_minor == 5000
+    assert statement.lines[0].basis == "lead"
+
+
+@pytest.mark.asyncio
+async def test_attendance_absent_row_blocks_scheduled_fallback_pay() -> None:
+    rate = CoachRate(
+        rate_id="cr-1",
+        academy_id="acad-1",
+        coach_id="coach-A",
+        billing_unit="per_session",
+        amount_minor=5000,
+        currency="USD",
+        effective_from=_dt("2026-01-01T00:00:00"),
+        effective_until=None,
+        status="active",
+    )
+    occ = _occurrence(
+        "occ-1",
+        start="2026-05-10T18:00:00",
+        end="2026-05-10T19:00:00",
+        scheduled_coach_id="coach-A",
+        coach_attendance=[
+            CoachAttendanceForPayout(
+                coach_id="coach-A",
+                status="absent",
+                role="lead",
+                rate_override_minor=None,
+            )
+        ],
+    )
+    use_case = ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery([occ]),
+        rates=FakeRateRepo([rate]),
+    )
+    statement = await use_case.execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+    assert statement.lines == []
+    assert statement.total_minor == 0
+
+
+@pytest.mark.asyncio
+async def test_attendance_assistant_rate_override_pays_without_rate_sheet() -> None:
+    occ = _occurrence(
+        "occ-1",
+        start="2026-05-10T18:00:00",
+        end="2026-05-10T19:00:00",
+        scheduled_coach_id="coach-A",
+        coach_attendance=[
+            CoachAttendanceForPayout(
+                coach_id="coach-assistant",
+                status="present",
+                role="assistant",
+                rate_override_minor=1500,
+            )
+        ],
+    )
+    use_case = ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery([occ]),
+        rates=FakeRateRepo([]),
+    )
+    statement = await use_case.execute(
+        coach_id="coach-assistant",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+    assert statement.lines[0].basis == "assistant"
+    assert statement.lines[0].amount_minor == 1500
+    assert statement.lines[0].rate_id == "override:occ-1:coach-assistant"
+    assert statement.total_minor == 1500
 
 
 # ---------------------------------------------------------------------------

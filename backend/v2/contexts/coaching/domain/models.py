@@ -11,6 +11,9 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 AttendanceStatus = Literal["present", "absent", "late"]
+CoachAttendanceStatus = Literal["present", "absent"]
+CoachAttendanceRole = Literal["lead", "assistant"]
+CoachAttendanceSource = Literal["coach_self", "admin"]
 
 
 class Attendance(BaseModel):
@@ -28,3 +31,21 @@ class Attendance(BaseModel):
     marked_at_client: datetime | None = None
     status: AttendanceStatus
     client_app_version: str = Field(default="unknown")
+
+
+class CoachAttendance(BaseModel):
+    """One payroll attendance mark for one coach in one occurrence."""
+
+    model_config = {"frozen": True}
+
+    attendance_id: str
+    academy_id: str
+    occurrence_id: str
+    coach_id: str
+    status: CoachAttendanceStatus
+    role: CoachAttendanceRole = "lead"
+    source: CoachAttendanceSource
+    marked_by: str
+    marked_at: datetime
+    rate_override_minor: int | None = Field(default=None, ge=0)
+    note: str = ""

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from calendar import monthrange
 from datetime import UTC, datetime
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -135,94 +135,138 @@ class MongoPayoutRepository(TenantScopedRepository):
         persisted = [self._to_domain(d) async for d in cursor]
         if persisted:
             return persisted
-        return await self._derive_from_expected_revenue()
+        return await self._derive_from_coach_attendance()
 
     async def list_for_coach(self, coach_id: str) -> list[Payout]:
         cursor = self._find_many({"coach_id": coach_id}, sort=[("period_start", -1)], limit=500)
         return [self._to_domain(d) async for d in cursor]
 
-    async def _derive_from_expected_revenue(self) -> list[Payout]:
+    async def _derive_from_coach_attendance(self) -> list[Payout]:
         academy_id = current_academy_id()
-        sessions_by_id = {
-            str(doc["session_id"]): str(doc["coach_id"])
-            async for doc in self._db["sessions"].find(
-                {"academy_id": academy_id, "coach_id": {"$exists": True}},
-                {"session_id": 1, "coach_id": 1},
-            )
-        }
-        if not sessions_by_id:
-            return []
-
-        rules_by_coach = {
-            str(doc["coach_id"]): doc
-            async for doc in self._db["payout_rules"].find(
+        attendance_rows = [
+            doc
+            async for doc in self._db["coach_attendance"].find(
                 {
                     "academy_id": academy_id,
-                    "is_active": True,
-                    "rule_type": "revenue_percentage",
+                    "status": "present",
+                },
+                sort=[("marked_at", 1)],
+            )
+        ]
+        if not attendance_rows:
+            return []
+
+        occurrence_ids = sorted({str(row["occurrence_id"]) for row in attendance_rows})
+        occurrence_docs = {
+            str(doc["occurrence_id"]): doc
+            async for doc in self._db["session_occurrences"].find(
+                {
+                    "academy_id": academy_id,
+                    "occurrence_id": {"$in": occurrence_ids},
+                    "is_payable": {"$ne": False},
+                    "status": {"$ne": "cancelled"},
                 }
             )
         }
-        if not rules_by_coach:
+        if not occurrence_docs:
             return []
 
-        grouped: dict[tuple[str, str], dict[str, object]] = {}
-        cursor = self._db["payments"].find(
+        students_by_occurrence: dict[str, set[str]] = {
+            occurrence_id: set() for occurrence_id in occurrence_ids
+        }
+        student_cursor = self._db["attendance"].find(
             {
                 "academy_id": academy_id,
-                "is_deleted": {"$ne": True},
-                "period": {"$type": "string"},
-                "status": {"$nin": ["waived", "cancelled", "refunded"]},
+                "occurrence_id": {"$in": occurrence_ids},
+                "status": {"$in": ["present", "late"]},
             },
-            {"period": 1, "session_id": 1, "student_id": 1, "amount_cents": 1},
+            {"occurrence_id": 1, "student_id": 1},
         )
-        async for payment in cursor:
-            coach_id = sessions_by_id.get(str(payment.get("session_id")))
-            if not coach_id or coach_id not in rules_by_coach:
+        async for row in student_cursor:
+            if row.get("student_id"):
+                students_by_occurrence.setdefault(str(row["occurrence_id"]), set()).add(
+                    str(row["student_id"])
+                )
+
+        grouped: dict[tuple[str, str], dict[str, object]] = {}
+        for attendance in attendance_rows:
+            occurrence_id = str(attendance["occurrence_id"])
+            occurrence = occurrence_docs.get(occurrence_id)
+            if occurrence is None:
                 continue
-            period = str(payment.get("period") or "")
-            if len(period) != 7 or period[4] != "-":
+            coach_id = str(attendance["coach_id"])
+            start_at = occurrence["start_at"]
+            amount = await self._attendance_amount_minor(attendance, coach_id, start_at, occurrence)
+            if amount is None:
                 continue
-            key = (period, coach_id)
+            period = start_at.strftime("%Y-%m")
             bucket = grouped.setdefault(
-                key,
-                {"revenue": 0, "students": set(), "sessions": set()},
+                (period, coach_id),
+                {"amount": 0, "students": set(), "occurrences": set()},
             )
-            bucket["revenue"] = int(bucket["revenue"]) + int(payment.get("amount_cents") or 0)
-            if payment.get("student_id"):
-                bucket["students"].add(str(payment["student_id"]))  # type: ignore[attr-defined]
-            if payment.get("session_id"):
-                bucket["sessions"].add(str(payment["session_id"]))  # type: ignore[attr-defined]
+            bucket["amount"] = int(bucket["amount"]) + amount
+            bucket["occurrences"].add(occurrence_id)  # type: ignore[attr-defined]
+            bucket["students"].update(students_by_occurrence.get(occurrence_id, set()))  # type: ignore[attr-defined]
 
         payouts: list[Payout] = []
         for (period, coach_id), bucket in grouped.items():
-            expected_revenue = int(bucket["revenue"])
-            if expected_revenue <= 0:
+            amount_cents = int(bucket["amount"])
+            if amount_cents <= 0:
                 continue
-            percent = Decimal(str(rules_by_coach[coach_id].get("value", 0)))
-            if percent <= 1:
-                percent *= Decimal("100")
-            amount = int(
-                (Decimal(expected_revenue) * percent / Decimal("100")).quantize(
-                    Decimal("1"), rounding=ROUND_HALF_UP
-                )
-            )
             period_start, period_end = _period_window(period)
             payouts.append(
                 Payout(
-                    payout_id=f"derived:{period}:{coach_id}",
+                    payout_id=f"attendance:{period}:{coach_id}",
                     academy_id=academy_id,
                     coach_id=coach_id,
-                    amount_cents=amount,
+                    amount_cents=amount_cents,
                     period_start=period_start,
                     period_end=period_end,
-                    expected_revenue_cents=expected_revenue,
                     students_count=len(bucket["students"]),  # type: ignore[arg-type]
-                    sessions_count=len(bucket["sessions"]),  # type: ignore[arg-type]
-                    rule_label=f"{percent:g}% expected revenue",
+                    sessions_count=len(bucket["occurrences"]),  # type: ignore[arg-type]
+                    rule_label="Coach attendance",
                 )
             )
         return sorted(payouts, key=lambda payout: payout.period_start, reverse=True)
+
+    async def _attendance_amount_minor(
+        self,
+        attendance: dict[str, object],
+        coach_id: str,
+        start_at: datetime,
+        occurrence: dict[str, object],
+    ) -> int | None:
+        if attendance.get("rate_override_minor") is not None:
+            return int(attendance["rate_override_minor"])
+
+        rate = await self._db["coach_rates"].find_one(
+            {
+                "academy_id": current_academy_id(),
+                "coach_id": coach_id,
+                "effective_from": {"$lte": start_at},
+                "$or": [
+                    {"effective_until": {"$exists": False}},
+                    {"effective_until": None},
+                    {"effective_until": {"$gt": start_at}},
+                ],
+                "status": {"$ne": "superseded"},
+            },
+            sort=[("effective_from", -1)],
+        )
+        if rate is None:
+            return None
+
+        amount_minor = int(rate.get("amount_minor", rate.get("amount_cents", 0)))
+        if rate.get("billing_unit", "per_session") == "per_session":
+            return amount_minor
+
+        end_at = occurrence["end_at"]
+        minutes = Decimal((end_at - start_at).total_seconds()) / Decimal(60)  # type: ignore[operator]
+        return int(
+            (Decimal(amount_minor) * minutes / Decimal(60)).quantize(
+                Decimal("1"), rounding=ROUND_HALF_EVEN
+            )
+        )
 
 
 def _period_window(period: str) -> tuple[datetime, datetime]:

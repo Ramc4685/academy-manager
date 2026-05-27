@@ -41,16 +41,38 @@ export interface AdminSessionOccurrenceView {
   attendance_marked_count: number;
   attendance_marked_by: string[];
   attendance_last_marked_at: string | null;
+  coach_attendance: AdminCoachAttendanceView[];
 }
 
 export interface AdminSessionOccurrenceList {
   occurrences: AdminSessionOccurrenceView[];
 }
 
+export interface AdminCoachAttendanceView {
+  attendance_id: string;
+  occurrence_id: string;
+  coach_id: string;
+  status: "present" | "absent";
+  role: "lead" | "assistant";
+  source: "coach_self" | "admin";
+  marked_by: string;
+  marked_at: string;
+  rate_override_minor: number | null;
+  note: string;
+}
+
 export interface UpdateSessionOccurrenceCoachRequest {
   actual_coach_id?: string | null;
   substitute_coach_id?: string | null;
   reason: string;
+}
+
+export interface UpdateOccurrenceCoachAttendanceRequest {
+  coach_id: string;
+  status: "present" | "absent";
+  role: "lead" | "assistant";
+  rate_override_minor?: number | null;
+  note?: string;
 }
 
 export interface CreateSessionRequest {
@@ -915,6 +937,19 @@ export function updateSessionOccurrenceCoach(
 ): Promise<AdminSessionOccurrenceView> {
   return apiFetch<AdminSessionOccurrenceView>(
     `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/coach`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export function updateOccurrenceCoachAttendance(
+  occurrenceId: string,
+  payload: UpdateOccurrenceCoachAttendanceRequest
+): Promise<AdminCoachAttendanceView> {
+  return apiFetch<AdminCoachAttendanceView>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/coach-attendance`,
     {
       method: "PATCH",
       body: JSON.stringify(payload),

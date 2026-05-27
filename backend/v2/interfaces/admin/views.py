@@ -120,6 +120,19 @@ class AdminSessionList(BaseModel):
     sessions: list[AdminSessionView]
 
 
+class AdminCoachAttendanceView(BaseModel):
+    attendance_id: str
+    occurrence_id: str
+    coach_id: str
+    status: Literal["present", "absent"]
+    role: Literal["lead", "assistant"]
+    source: Literal["coach_self", "admin"]
+    marked_by: str
+    marked_at: datetime
+    rate_override_minor: int | None = None
+    note: str = ""
+
+
 class AdminSessionOccurrenceView(BaseModel):
     occurrence_id: str
     session_id: str
@@ -132,6 +145,7 @@ class AdminSessionOccurrenceView(BaseModel):
     attendance_marked_count: int = 0
     attendance_marked_by: list[str] = Field(default_factory=list)
     attendance_last_marked_at: datetime | None = None
+    coach_attendance: list[AdminCoachAttendanceView] = Field(default_factory=list)
 
 
 class AdminSessionOccurrenceList(BaseModel):
@@ -142,6 +156,14 @@ class UpdateSessionOccurrenceCoachRequest(BaseModel):
     actual_coach_id: str | None = None
     substitute_coach_id: str | None = None
     reason: str
+
+
+class UpdateOccurrenceCoachAttendanceRequest(BaseModel):
+    coach_id: str
+    status: Literal["present", "absent"]
+    role: Literal["lead", "assistant"] = "lead"
+    rate_override_minor: int | None = Field(default=None, ge=0)
+    note: str = ""
 
 
 class CreateSessionRequest(BaseModel):
