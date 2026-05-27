@@ -39,7 +39,7 @@
   "devDependencies": {
     "@fullcalendar/daygrid": "6.1.15",
     "@fullcalendar/react": "6.1.15",
-    "@lhci/cli": "0.14.0",
+    "@lhci/cli": "0.15.1",
     "@opennextjs/cloudflare": "^1.19.11",
     "@playwright/test": "1.60.0",
     "@size-limit/preset-app": "11.1.6",
@@ -75,6 +75,9 @@
     }
   ],
   "pnpm": {
+    "overrides": {
+      "tmp": "0.2.6"
+    },
     "onlyBuiltDependencies": [
       "esbuild",
       "protobufjs",

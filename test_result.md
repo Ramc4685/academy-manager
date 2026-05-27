@@ -241,11 +241,11 @@ backend:
         comment: "Implemented manual partial/exact/overpayment handling in v2 billing, automatic overpayment credits through the account credit ledger, selected-recipient dues reminder command/route support, invoice detail route, and request-based artifact generation route. Focused Wave 11 backend suite passed: /Users/ramc/Documents/Code/academy-manager/backend/.venv/bin/python -m pytest v2/tests/application/test_manual_payment_correctness.py v2/tests/application/test_dues_reminders.py v2/tests/interface/test_admin_payment_dues_routes.py v2/tests/interface/test_admin_billing.py -q returned 34 passed. Ruff check on touched v2 billing/admin/tests passed."
   - task: "Wave 12 SaaS launch smoke and gate scaffolding"
     implemented: true
-    working: "NA"
+    working: true
     file: "scripts/smoke/saas_readiness_smoke.sh"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: "NA"
         agent: "main"
@@ -547,6 +547,17 @@ backend:
       - working: true
         agent: "main"
         comment: "Agent B Wave 6 added a new Platform billing slice separate from parent tuition Billing. The model covers platform plans, plan limits, tenant subscriptions, billing/trial/cancellation status, and tenant Stripe customer/subscription IDs. Application tests cover trial creation, Stripe subscription activation, period-end cancellation scheduling, plan-limit checks, and absence of parent/student/enrollment/session tuition fields. Verification: focused platform billing pytest passed 4/4; targeted ruff passed; git diff --check passed."
+  - task: "COU-12 baseline regression — admin directory dues_status contract failure"
+    implemented: true
+    working: false
+    file: "backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: false
+        agent: "testing"
+        comment: "Baseline regression audit 2026-05-27 (COU-12). Full v2 suite: 612 collected, 611 passed, 1 FAILED. Failing: v2/tests/contract/test_admin_directory_mongo_student_repo.py::test_list_admin_students_returns_rich_default_page_without_per_student_fanout. Assertion: bob.dues_status == 'due' but got 'overdue'. Bob seeded with status=pending, due_at=now+5d (future), created_at=now-1d. _payment_is_overdue should return False for this payment, yielding 'due', but repo returns 'overdue'. Likely a datetime/timezone interaction in mongomock_motor or a logic change in _dues_statuses/_payment_is_overdue. No code changes per COU-12 read-only scope."
 frontend:
   - task: "parent registration Google-first UI"
     implemented: true
@@ -938,13 +949,31 @@ frontend:
       - working: true
         agent: "main"
         comment: "Added live-local authenticated Playwright coverage in frontend/e2e/specs/local-auth-qa.spec.ts with frontend/playwright.local-auth.config.ts and package script pnpm e2e:local-auth. The suite is opt-in behind LOCAL_AUTH_E2E=1 so normal CI can skip without a seeded stack, and it logs in through the real Firebase Auth emulator against scripts/local_test_stack.sh seeded services for parent/admin/coach. Verification passed against an isolated seeded stack on Mongo 27018, Firebase Auth 9109, backend 8011, frontend 3011: LOCAL_AUTH_E2E=1 LOCAL_AUTH_BASE_URL=http://localhost:3011 pnpm e2e:local-auth returned 3 passed. The default pnpm e2e:local-auth run returned 3 skipped as intended."
+  - task: "PR CI failure feedback loop"
+    implemented: true
+    working: "NA"
+    file: "scripts/ci/pr_failure_feedback.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: false
+        agent: "main"
+        comment: "GitHub Actions run 26512428900 failed in Production / Frontend at the Dependency vulnerability scan step. The failed CI command was pnpm audit --audit-level=high. It reported GHSA-ph9p-34f9-6g65 for tmp <0.2.6 via @lhci/cli@0.14.0 and stopped before typecheck/lint/build/E2E."
+      - working: "NA"
+        agent: "main"
+        comment: "Added scripts/ci/pr_failure_feedback.py to summarize failing GitHub Actions jobs from a run URL/id, updated docs/agent/feedback-loop.md with the PR failure loop, added the missing frontend audit command to AGENTS.md and docs/agent/testing-verification.md, and updated docs/ci-cd.md. Also updated frontend @lhci/cli to 0.15.1 with a pnpm tmp override at 0.2.6 so the current audit failure can self-heal locally before pushing. Verification in progress."
+      - working: true
+        agent: "main"
+        comment: "Verification passed: scripts/ci/pr_failure_feedback.py 26512428900 summarized the failed Frontend / Dependency vulnerability scan step and extracted the tmp advisory evidence; python3 -m py_compile scripts/ci/pr_failure_feedback.py passed; npx pnpm@9.15.9 install --frozen-lockfile passed; npx pnpm@9.15.9 audit --audit-level=high passed with no high advisories remaining; npx pnpm@9.15.9 typecheck passed; npx pnpm@9.15.9 lint passed; npx pnpm@9.15.9 build passed; serialized QA Playwright regression passed with 8 passed after one parallel Chromium wrong-role redirect flake reran green; git diff --check passed."
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 33
+  test_sequence: 34
   run_ui: true
 test_plan:
   current_focus:
+    - "PR CI failure feedback loop"
     - "CourtMastr QA walkthrough defect batch"
     - "parent registration Google-first UI"
     - "Issue #101 safe change-student-parent admin UI"
@@ -960,6 +989,8 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "PR #108 CI failure feedback loop complete locally. Run 26512428900 failed before tests at Frontend / Dependency vulnerability scan: pnpm audit --audit-level=high reported tmp <0.2.6 via @lhci/cli@0.14.0. Added scripts/ci/pr_failure_feedback.py and updated agent/pre-push docs so future agents inspect run logs, reproduce the exact failed command locally, record the cause in test_result.md, and add missing local checks before pushing. Dependency remediation updates @lhci/cli and forces tmp 0.2.6 through pnpm overrides. Verification passed: pr_failure_feedback script, py_compile, pnpm 9 frozen install, audit high gate, typecheck, lint, build, serialized QA Playwright 8 passed, and git diff --check. Note: the first parallel QA Playwright rerun had one Chromium wrong-role redirect flake that passed on focused rerun and in the serialized full rerun."
   - agent: "main"
     message: "Live authenticated QA coverage added for the first CourtMastr defect batch. New opt-in suite frontend/e2e/specs/local-auth-qa.spec.ts logs in as seeded parent/admin/coach against scripts/local_test_stack.sh services without route-stubbing protected app APIs. Verified with an isolated seeded stack: Mongo 27018, Firebase Auth 9109, backend 8011, frontend 3011; LOCAL_AUTH_E2E=1 LOCAL_AUTH_BASE_URL=http://localhost:3011 pnpm e2e:local-auth returned 3 passed. Default pnpm e2e:local-auth returned 3 skipped for environments without a seeded stack."
   - agent: "main"
@@ -1371,3 +1402,39 @@ agent_communication:
       Addressed all three inline Codex comments: existing enrollment lookup now happens before seat reservation during registration approval, waitlisting validates the target session exists before writing student/waitlist rows, and admin reject requests enforce a non-empty reason at the request DTO boundary. Added focused regression coverage for the application and route validation cases. Preserved the prior session's admin reports route-matrix flake fix.
 
       Verification passed: backend focused pytest returned 6 passed; backend ruff check and format check passed on touched backend files; frontend admin-shell Playwright matrix returned 50 passed across chromium-mobile and webkit-mobile; frontend SaaS route-matrix WebKit reports case returned 1 passed. Full backend v2 suite, frontend typecheck/lint/build, and PR push were not run in this turn.
+  - agent: "testing"
+    message: |
+      COU-12 baseline regression audit — 2026-05-27.
+
+      Backend (pytest v2/tests):
+      - Collected: 612 tests
+      - Passed: 611
+      - Failed: 1
+      - FAILED: v2/tests/contract/test_admin_directory_mongo_student_repo.py::test_list_admin_students_returns_rich_default_page_without_per_student_fanout
+        - bob.dues_status expected 'due' got 'overdue'. Bob has pending payment with due_at=now+5d (not overdue) and created_at=now-1d (within 30-day cutoff). _payment_is_overdue should return False but doesn't. Likely mongomock_motor datetime handling or recent logic change.
+      - Coverage: 87.61% (threshold 70% — PASSED)
+      - Coverage gaps: v2/shared/events/dispatcher.py 36%, v2/shared/observability/logging.py 38%, v2/shared/observability/tracing.py 43%
+      - 7 existing mongomock utcnow deprecation warnings (unchanged from prior runs)
+
+      Frontend (pnpm):
+      - typecheck: PASSED (0 errors)
+      - lint: PASSED (0 ESLint warnings/errors; deprecation notice for next lint → ESLint CLI)
+      - build: PASSED (0 errors/warnings; 45+ routes compiled)
+      - e2e: 136 tests in 10 files (not run live — no authenticated local stack; inventory audited via --list)
+        Files: admin-shell.spec.ts, admin-students.spec.ts, admin-waivers.spec.ts, coach-offline-writes.spec.ts, coach-today.spec.ts, register-email-verification.spec.ts, saas-attendance-billing.spec.ts, saas-launch-route-matrix.spec.ts, saas-parent-waivers.spec.ts, saas-tenant-isolation.spec.ts
+
+      Flake list: none confirmed; 1 deterministic failure (dues_status regression, see backend task added above).
+      Coverage gaps: dispatcher, logging, tracing modules in v2/shared have <45% coverage.
+      No code changes made.
+  - agent: "vp-engineering"
+    message: |
+      COU-17 commit hygiene verification — 2026-05-27.
+
+      All Wave 0-4 in-flight changes were already committed to main in prior sessions (Plans.md Phases 1-2 complete). Phase 3 full verification:
+
+      Backend (pytest v2/tests): 612 passed, 0 failed.
+      - Fixed date-sensitive failure in test_admin_directory_mongo_student_repo.py: test used hardcoded 2026-05-20 fixture with due_at=now+5d (2026-05-25); as of 2026-05-27 that date was in the past making "due" payments appear "overdue". Fix: changed _seed_directory to use datetime.now(UTC) and return now; updated last_seen_at assertion to use seeded_now with ms-truncation to match mongomock precision.
+
+      Frontend: pnpm build passes (regenerated .next/types for new /admin/registrations routes added in #103); pnpm typecheck exits 0 after build.
+
+      git status: clean (working tree).

@@ -124,3 +124,39 @@ Examples worth capturing:
 - A migration or deploy gotcha.
 - A cross-persona auth rule.
 - A flaky test workaround with a reason.
+
+---
+
+## PR Failure Loop
+
+When a PR check fails, do not guess from the GitHub UI summary.
+
+1. Inspect the failed run:
+
+   ```bash
+   scripts/ci/pr_failure_feedback.py <actions-run-url-or-id>
+   ```
+
+2. Copy the failing job, failing step, command, and shortest useful log
+   snippet into `test_result.md`.
+3. Add the missing local command to the relevant pre-push checklist when CI
+   caught something the local loop did not.
+4. Reproduce the first failed command locally before editing.
+5. Fix the narrow cause, then rerun the failed command and the normal
+   verification block for the touched area.
+6. Only push after the local command that failed in CI is green.
+
+For frontend changes, the CI-equivalent local block is:
+
+```bash
+cd frontend
+pnpm install --frozen-lockfile
+pnpm audit --audit-level=high
+pnpm typecheck
+pnpm lint
+pnpm build
+```
+
+If `pnpm audit --audit-level=high` fails, treat it as blocking. Prefer a
+targeted dependency upgrade or package-manager override over bypassing the
+audit gate.

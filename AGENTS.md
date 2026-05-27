@@ -220,6 +220,8 @@ Always activate the venv before running ruff. The system ruff version will produ
 Frontend (from `frontend/`):
 
 ```bash
+pnpm install --frozen-lockfile
+pnpm audit --audit-level=high
 pnpm typecheck
 pnpm lint
 pnpm build
