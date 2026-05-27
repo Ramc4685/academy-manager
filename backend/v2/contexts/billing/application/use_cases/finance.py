@@ -10,7 +10,9 @@ For now: simple CRUD aggregations.
 # FINANCE
 from __future__ import annotations
 
+from calendar import monthrange
 from datetime import UTC, datetime
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -19,6 +21,7 @@ from backend.v2.contexts.billing.application.ports import PaymentRepository
 from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository
+from backend.v2.shared.tenancy.context import current_academy_id
 
 
 # FINANCE
@@ -50,6 +53,10 @@ class Payout(BaseModel):
     period_start: datetime
     period_end: datetime
     paid_at: datetime | None = None
+    expected_revenue_cents: int | None = None
+    students_count: int | None = None
+    sessions_count: int | None = None
+    rule_label: str | None = None
 
 
 # FINANCE
@@ -125,11 +132,108 @@ class MongoPayoutRepository(TenantScopedRepository):
 
     async def list_all(self) -> list[Payout]:
         cursor = self._find_many({}, sort=[("period_start", -1)], limit=500)
-        return [self._to_domain(d) async for d in cursor]
+        persisted = [self._to_domain(d) async for d in cursor]
+        if persisted:
+            return persisted
+        return await self._derive_from_expected_revenue()
 
     async def list_for_coach(self, coach_id: str) -> list[Payout]:
         cursor = self._find_many({"coach_id": coach_id}, sort=[("period_start", -1)], limit=500)
         return [self._to_domain(d) async for d in cursor]
+
+    async def _derive_from_expected_revenue(self) -> list[Payout]:
+        academy_id = current_academy_id()
+        sessions_by_id = {
+            str(doc["session_id"]): str(doc["coach_id"])
+            async for doc in self._db["sessions"].find(
+                {"academy_id": academy_id, "coach_id": {"$exists": True}},
+                {"session_id": 1, "coach_id": 1},
+            )
+        }
+        if not sessions_by_id:
+            return []
+
+        rules_by_coach = {
+            str(doc["coach_id"]): doc
+            async for doc in self._db["payout_rules"].find(
+                {
+                    "academy_id": academy_id,
+                    "is_active": True,
+                    "rule_type": "revenue_percentage",
+                }
+            )
+        }
+        if not rules_by_coach:
+            return []
+
+        grouped: dict[tuple[str, str], dict[str, object]] = {}
+        cursor = self._db["payments"].find(
+            {
+                "academy_id": academy_id,
+                "is_deleted": {"$ne": True},
+                "period": {"$type": "string"},
+                "status": {"$nin": ["waived", "cancelled", "refunded"]},
+            },
+            {"period": 1, "session_id": 1, "student_id": 1, "amount_cents": 1},
+        )
+        async for payment in cursor:
+            coach_id = sessions_by_id.get(str(payment.get("session_id")))
+            if not coach_id or coach_id not in rules_by_coach:
+                continue
+            period = str(payment.get("period") or "")
+            if len(period) != 7 or period[4] != "-":
+                continue
+            key = (period, coach_id)
+            bucket = grouped.setdefault(
+                key,
+                {"revenue": 0, "students": set(), "sessions": set()},
+            )
+            bucket["revenue"] = int(bucket["revenue"]) + int(payment.get("amount_cents") or 0)
+            if payment.get("student_id"):
+                bucket["students"].add(str(payment["student_id"]))  # type: ignore[attr-defined]
+            if payment.get("session_id"):
+                bucket["sessions"].add(str(payment["session_id"]))  # type: ignore[attr-defined]
+
+        payouts: list[Payout] = []
+        for (period, coach_id), bucket in grouped.items():
+            expected_revenue = int(bucket["revenue"])
+            if expected_revenue <= 0:
+                continue
+            percent = Decimal(str(rules_by_coach[coach_id].get("value", 0)))
+            if percent <= 1:
+                percent *= Decimal("100")
+            amount = int(
+                (Decimal(expected_revenue) * percent / Decimal("100")).quantize(
+                    Decimal("1"), rounding=ROUND_HALF_UP
+                )
+            )
+            period_start, period_end = _period_window(period)
+            payouts.append(
+                Payout(
+                    payout_id=f"derived:{period}:{coach_id}",
+                    academy_id=academy_id,
+                    coach_id=coach_id,
+                    amount_cents=amount,
+                    period_start=period_start,
+                    period_end=period_end,
+                    expected_revenue_cents=expected_revenue,
+                    students_count=len(bucket["students"]),  # type: ignore[arg-type]
+                    sessions_count=len(bucket["sessions"]),  # type: ignore[arg-type]
+                    rule_label=f"{percent:g}% expected revenue",
+                )
+            )
+        return sorted(payouts, key=lambda payout: payout.period_start, reverse=True)
+
+
+def _period_window(period: str) -> tuple[datetime, datetime]:
+    year, month = (int(part) for part in period.split("-", 1))
+    period_start = datetime(year, month, 1, tzinfo=UTC)
+    if month == 12:
+        period_end = datetime(year + 1, 1, 1, tzinfo=UTC)
+    else:
+        last_day = monthrange(year, month)[1]
+        period_end = datetime(year, month, last_day, 23, 59, 59, 999000, tzinfo=UTC)
+    return period_start, period_end
 
 
 # FINANCE

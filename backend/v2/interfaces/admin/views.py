@@ -448,6 +448,10 @@ class AdminPayoutView(BaseModel):  # FINANCE
     period_start: datetime
     period_end: datetime
     paid_at: datetime | None
+    expected_revenue_cents: int | None = None
+    students_count: int | None = None
+    sessions_count: int | None = None
+    rule_label: str | None = None
 
 
 class AdminPayoutList(BaseModel):  # FINANCE

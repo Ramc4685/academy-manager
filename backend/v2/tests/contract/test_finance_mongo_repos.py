@@ -23,6 +23,7 @@ from decimal import Decimal
 
 import pytest
 
+from backend.v2.contexts.billing.application.use_cases.finance import MongoPayoutRepository
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
     PersistedPayoutLine,
@@ -104,6 +105,81 @@ def _make_period(
 # ---------------------------------------------------------------------------
 # PayoutPeriod repo
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_payout_repo_derives_expected_revenue_payouts_when_no_periods_exist(db, acad) -> None:
+    repo = MongoPayoutRepository(db)
+    await db["sessions"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "session_id": "sess-beginner",
+                "coach_id": "coach-blno",
+                "title": "Beginner",
+            },
+            {
+                "academy_id": acad,
+                "session_id": "sess-intermediate",
+                "coach_id": "coach-blno",
+                "title": "Intermediate",
+            },
+        ]
+    )
+    await db["payout_rules"].insert_one(
+        {
+            "academy_id": acad,
+            "coach_id": "coach-blno",
+            "rule_type": "revenue_percentage",
+            "value": 30,
+            "is_active": True,
+        }
+    )
+    await db["payments"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "payment_id": "pay-1",
+                "period": "2026-05",
+                "session_id": "sess-beginner",
+                "student_id": "student-1",
+                "amount_cents": 6000,
+                "status": "succeeded",
+                "is_deleted": False,
+            },
+            {
+                "academy_id": acad,
+                "payment_id": "pay-2",
+                "period": "2026-05",
+                "session_id": "sess-intermediate",
+                "student_id": "student-2",
+                "amount_cents": 7000,
+                "status": "pending",
+                "is_deleted": False,
+            },
+            {
+                "academy_id": acad,
+                "payment_id": "pay-waived",
+                "period": "2026-05",
+                "session_id": "sess-intermediate",
+                "student_id": "student-3",
+                "amount_cents": 7000,
+                "status": "waived",
+                "is_deleted": False,
+            },
+        ]
+    )
+
+    rows = await repo.list_all()
+
+    assert len(rows) == 1
+    payout = rows[0]
+    assert payout.coach_id == "coach-blno"
+    assert payout.amount_cents == 3900
+    assert payout.expected_revenue_cents == 13000
+    assert payout.students_count == 2
+    assert payout.sessions_count == 2
+    assert payout.rule_label == "30% expected revenue"
 
 
 @pytest.mark.asyncio

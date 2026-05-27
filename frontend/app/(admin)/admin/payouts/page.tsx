@@ -20,6 +20,10 @@ function money(cents: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
 }
 
+function dateLabel(value: string): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone: "UTC" }).format(new Date(value));
+}
+
 export default function AdminPayoutsPage() {
   const query = useQuery({ queryKey: queryKeys.admin.payouts(), queryFn: listPayouts });
   const coachesQuery = useQuery({
@@ -105,17 +109,25 @@ function PayoutsTable({
                       <div className="font-medium text-rally-ink group-hover:underline">{coachName}</div>
                       <div className="text-xs text-rally-muted">
                         {coach?.email ? `${coach.email} · ` : ""}
-                        {assignedSessions} assigned session{assignedSessions === 1 ? "" : "s"}
+                        {payout.sessions_count ?? assignedSessions} session
+                        {(payout.sessions_count ?? assignedSessions) === 1 ? "" : "s"} ·{" "}
+                        {payout.students_count ?? 0} student
+                        {(payout.students_count ?? 0) === 1 ? "" : "s"}
                       </div>
                     </div>
                   </Link>
                 </td>
                 <td className="px-2 py-3 text-right font-mono font-medium tabular-nums">
-                  {money(payout.amount_cents)}
+                  <div>{money(payout.amount_cents)}</div>
+                  {payout.expected_revenue_cents != null ? (
+                    <div className="text-xs font-normal text-rally-muted">
+                      {money(payout.expected_revenue_cents)} expected
+                    </div>
+                  ) : null}
                 </td>
                 <td className="px-2 py-3 font-mono text-xs text-rally-muted">
-                  {new Date(payout.period_start).toLocaleDateString()} -{" "}
-                  {new Date(payout.period_end).toLocaleDateString()}
+                  {dateLabel(payout.period_start)} - {dateLabel(payout.period_end)}
+                  {payout.rule_label ? <div>{payout.rule_label}</div> : null}
                 </td>
                 <td className="px-2 py-3">
                   <Chip

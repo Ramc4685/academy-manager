@@ -323,6 +323,10 @@ export interface AdminPayoutView {
   period_start: string;
   period_end: string;
   paid_at: string | null;
+  expected_revenue_cents?: number | null;
+  students_count?: number | null;
+  sessions_count?: number | null;
+  rule_label?: string | null;
 }
 
 export interface AdminPayoutList {

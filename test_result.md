@@ -1457,3 +1457,10 @@ agent_communication:
       User reported four local admin issues: Sessions should show academy sessions instead of only today's date-filtered view; session detail needs roster metrics, student levels, and fee-due highlighting; /admin/payments crashed on unmapped payment statuses; /admin/finance/revenue returned 500. Implemented upcoming-session list/detail lookup, roster metrics plus inline level 1-10 editing and dues chips, defensive payment status chips for legacy paid/waived rows, and backend support for waived payment rows as non-revenue payments.
 
       Verification: backend focused pytest for Mongo payments, admin billing, and admin sessions returned 38 passed; backend ruff check and ruff format --check passed on touched v2 backend files; frontend pnpm typecheck passed; frontend pnpm lint passed; Playwright admin-shell checks for /admin/sessions, /admin/payments, session detail, and legacy paid/waived payment statuses returned 4 passed on chromium-mobile. In-app Browser authenticated local QA was blocked because the running local frontend reports Firebase auth/invalid-api-key at login; no production deploy was run.
+  - agent: "main"
+    message: |
+      BLNO coach payout/payslip defect fix — 2026-05-27.
+
+      User reported Coach payouts showed "No payouts yet" and Coach payslip showed incorrect hardcoded earnings. Root cause: /admin/payouts read only the legacy payouts collection, while BLNO import populated payout_rules/payments but no payout rows; /admin/coach-payslip derived earnings in the frontend as students * $28 instead of using BLNO's 30% expected-revenue payout rule.
+
+      Implemented MongoPayoutRepository fallback derivation from payment expected revenue, sessions, and active revenue_percentage payout_rules when no persisted payout rows exist. Added payout metadata fields for expected revenue, student count, session count, and rule label. Updated Coach payouts and Coach payslip frontend pages to use the same backend payout data. Local BLNO browser verification now shows May payouts: Gowtham $414.00 from $1,380.00 expected revenue and Kishore $354.00 from $1,180.00 expected revenue.
