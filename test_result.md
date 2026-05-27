@@ -921,13 +921,31 @@ frontend:
       - working: true
         agent: "main"
         comment: "Verification passed: frontend pnpm typecheck, frontend pnpm build, git diff --check, and a Playwright browser render check against the Wave 9 worktree dev server on localhost:3011 using E2E auth bypass and realistic admin route stubs. The browser check visited /admin/students, /admin/sessions, /admin/users, and /admin/sessions/session-raw-1 and found no visible BFF, loaded-students, Mongo ID, Firebase UID, stu_*, 24-char Mongo ID, or ULID-like raw IDs in body text. Real local-stack API browser auth was attempted but skipped because local Mongo has no admin document and running seed_local.py would destructively reset transactional collections."
+  - task: "CourtMastr QA walkthrough defect batch"
+    implemented: true
+    working: true
+    file: "frontend/e2e/specs/qa-defects.spec.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "main"
+        comment: "Added RED Playwright coverage for QA findings: parent onboarding child DOB must avoid native date picker behavior, skill level must avoid native select interaction, billing portal failures must show visible parent feedback, and wrong-role admin access must carry an access-denied message after redirect. Initial corrected RED run failed for the expected app behaviors."
+      - working: true
+        agent: "main"
+        comment: "Implemented first QA defect batch: child DOB is now a stable YYYY-MM-DD text field with a hyphen-capable keyboard, skill level is a native radio group with full-size touch targets, parent billing portal errors/missing URLs render an inline alert, and persona auth redirects include access_denied so target layouts can show a no-access banner that clears on route changes. Recorded separate QA defects in docs/qa/2026-05-26-courtmastr-qa-defects.md. Verification passed: focused chromium-mobile QA spec 3 passed before review fixes; final full QA spec across chromium-mobile and webkit-mobile returned 8 passed; frontend pnpm typecheck, pnpm lint, pnpm build, and git diff --check passed. In-app Browser loaded localhost:3001 landing page with no console warnings/errors; auth-gated flows were verified by Playwright route stubs rather than Browser because Browser does not provide the per-test API stubbing used by the E2E suite."
+      - working: true
+        agent: "main"
+        comment: "Added live-local authenticated Playwright coverage in frontend/e2e/specs/local-auth-qa.spec.ts with frontend/playwright.local-auth.config.ts and package script pnpm e2e:local-auth. The suite is opt-in behind LOCAL_AUTH_E2E=1 so normal CI can skip without a seeded stack, and it logs in through the real Firebase Auth emulator against scripts/local_test_stack.sh seeded services for parent/admin/coach. Verification passed against an isolated seeded stack on Mongo 27018, Firebase Auth 9109, backend 8011, frontend 3011: LOCAL_AUTH_E2E=1 LOCAL_AUTH_BASE_URL=http://localhost:3011 pnpm e2e:local-auth returned 3 passed. The default pnpm e2e:local-auth run returned 3 skipped as intended."
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 30
+  test_sequence: 33
   run_ui: true
 test_plan:
   current_focus:
+    - "CourtMastr QA walkthrough defect batch"
     - "parent registration Google-first UI"
     - "Issue #101 safe change-student-parent admin UI"
     - "Admin shell registrations route coverage"
@@ -942,6 +960,10 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "Live authenticated QA coverage added for the first CourtMastr defect batch. New opt-in suite frontend/e2e/specs/local-auth-qa.spec.ts logs in as seeded parent/admin/coach against scripts/local_test_stack.sh services without route-stubbing protected app APIs. Verified with an isolated seeded stack: Mongo 27018, Firebase Auth 9109, backend 8011, frontend 3011; LOCAL_AUTH_E2E=1 LOCAL_AUTH_BASE_URL=http://localhost:3011 pnpm e2e:local-auth returned 3 passed. Default pnpm e2e:local-auth returned 3 skipped for environments without a seeded stack."
+  - agent: "main"
+    message: "CourtMastr QA walkthrough first defect batch implemented on feat/qa-defect-triage. Separate defects are recorded in docs/qa/2026-05-26-courtmastr-qa-defects.md. Fixed onboarding child DOB/native picker and skill select interaction, billing portal silent failure, and wrong-role admin/coach persona redirect messaging. Verification passed: Playwright QA defect spec 8/8 across chromium-mobile and webkit-mobile, frontend typecheck/lint/build, git diff --check, and Browser landing-page smoke with no console warnings/errors. Remaining open QA defects: owner/admin signup path, forgot-password UX, parent loading skeletons, and broader landing copy/pricing improvements."
   - agent: "main"
     message: "Main CI run 26452572015 investigation: PR run 26451589552 passed the PR code, and the post-merge main push failed on a different existing flaky test: frontend/e2e/specs/admin-shell.spec.ts settings defaults to academy and each panel tab updates the URL on webkit-mobile. The failing attempt expected panel=fees but remained on panel=academy; retry passed, so CI failed due failOnFlakyTests. Stabilized the test by skipping the already-verified academy no-op tab click and exercising only real tab transitions. Verification passed: focused WebKit repeat-each=5, CI-shaped focused settings spec across chromium-mobile/webkit-mobile, frontend typecheck, frontend lint, and git diff --check."
   - agent: "main"

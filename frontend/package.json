@@ -15,6 +15,7 @@
     "size": "size-limit",
     "lhci": "lhci autorun",
     "e2e": "playwright test",
+    "e2e:local-auth": "playwright test -c playwright.local-auth.config.ts",
     "e2e:ui": "playwright test --ui"
   },
   "dependencies": {
