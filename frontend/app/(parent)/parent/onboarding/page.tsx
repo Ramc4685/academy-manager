@@ -238,16 +238,43 @@ function ChildStep({
         <input value={v.last_name} onChange={(e) => setV({ ...v, last_name: e.target.value })} required />
       </Field>
       <Field label="Date of birth">
-        <input type="date" value={v.date_of_birth} onChange={(e) => setV({ ...v, date_of_birth: e.target.value })} required />
+        <input
+          type="text"
+          inputMode="text"
+          autoComplete="bday"
+          placeholder="YYYY-MM-DD"
+          pattern="\d{4}-\d{2}-\d{2}"
+          maxLength={10}
+          value={v.date_of_birth}
+          onChange={(e) => setV({ ...v, date_of_birth: e.target.value })}
+          required
+        />
       </Field>
-      <Field label="Skill level">
-        <select value={v.skill_level} onChange={(e) => setV({ ...v, skill_level: e.target.value as never })}>
-          <option value="">—</option>
-          <option value="beginner">Beginner</option>
-          <option value="intermediate">Intermediate</option>
-          <option value="advanced">Advanced</option>
-        </select>
-      </Field>
+      <fieldset className="space-y-2">
+        <legend className="text-sm font-medium">Skill level</legend>
+        <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Skill level">
+          {(["beginner", "intermediate", "advanced"] as const).map((level) => (
+            <label
+              key={level}
+              className={`relative flex min-h-11 items-center justify-center rounded-md border px-2 text-center text-sm capitalize ${
+                v.skill_level === level
+                  ? "border-blue-600 bg-blue-50 font-semibold text-blue-700 dark:border-blue-400 dark:bg-blue-950/40 dark:text-blue-200"
+                  : "border-neutral-300 text-neutral-700 dark:border-neutral-700 dark:text-neutral-300"
+              }`}
+            >
+              <input
+                type="radio"
+                name="skill-level"
+                value={level}
+                checked={v.skill_level === level}
+                onChange={() => setV({ ...v, skill_level: level })}
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+              />
+              {level}
+            </label>
+          ))}
+        </div>
+      </fieldset>
       <button type="submit" disabled={saving} className="primary">
         Next
       </button>
@@ -459,7 +486,7 @@ function formatCents(cents: number): string {
 function OnboardingStyles() {
   return (
     <style jsx global>{`
-      [data-testid="parent-onboarding"] input,
+      [data-testid="parent-onboarding"] input:not([type="radio"]):not([type="checkbox"]),
       [data-testid="parent-onboarding"] select {
         width: 100%;
         min-height: 44px;

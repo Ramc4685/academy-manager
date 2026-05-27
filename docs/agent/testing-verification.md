@@ -20,7 +20,9 @@ Frontend:
 
 ```bash
 cd frontend
+pnpm audit --audit-level=high
 pnpm typecheck
+pnpm lint
 pnpm build
 ```
 
@@ -43,6 +45,8 @@ pytest v2/tests
 ## Verification Strategy
 
 - Run focused tests first.
+- Run the same audit and install commands used by CI when dependency files
+  change.
 - Run broader checks after focused behavior passes.
 - Run frontend build after route, bundling, or environment changes.
 - Run backend tests after API, auth, database, billing, or scheduler changes.

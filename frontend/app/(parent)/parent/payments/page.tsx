@@ -21,6 +21,7 @@ export default function ParentPaymentsPage() {
   const [pauseEnrollmentId, setPauseEnrollmentId] = useState("");
   const [pausePeriod, setPausePeriod] = useState(currentPeriod());
   const [pauseReason, setPauseReason] = useState("");
+  const [portalError, setPortalError] = useState<string | null>(null);
   const paymentsQuery = useQuery({
     queryKey: ["parent", "payments"],
     queryFn: listParentPayments,
@@ -39,8 +40,19 @@ export default function ParentPaymentsPage() {
   });
   const portalMutation = useMutation({
     mutationFn: () => openBillingPortal({ return_url: window.location.href }),
+    onMutate: () => {
+      setPortalError(null);
+    },
     onSuccess: (res) => {
+      if (!res.redirect_url) {
+        setPortalError("Billing portal could not open because Stripe did not return a portal URL.");
+        return;
+      }
       window.location.href = res.redirect_url;
+    },
+    onError: (error) => {
+      const detail = error instanceof Error ? error.message : "Request failed";
+      setPortalError(`Billing portal could not open. ${detail}`);
     },
   });
   const autopayMutation = useMutation({
@@ -105,6 +117,15 @@ export default function ParentPaymentsPage() {
           {portalMutation.isPending ? "Opening..." : "Billing portal"}
         </button>
       </div>
+      {portalError && (
+        <p
+          role="alert"
+          data-testid="billing-portal-error"
+          className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-100"
+        >
+          {portalError}
+        </p>
+      )}
 
       {creditBalance > 0 && (
         <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900 dark:bg-emerald-950/30">

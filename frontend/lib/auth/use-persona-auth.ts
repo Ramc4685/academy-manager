@@ -39,7 +39,11 @@ export function usePersonaAuth(requiredRole: UserRole): PersonaAuthState {
             return;
           }
           setState({ checked: true, authorized: false, user: null });
-          router.replace(homeForRoles(currentUser.roles));
+          const target = new URL(homeForRoles(currentUser.roles), window.location.origin);
+          target.searchParams.set("access_denied", requiredRole);
+          router.replace(
+            `${target.pathname}${target.search}` as Parameters<typeof router.replace>[0]
+          );
         })
         .catch(() => {
           if (!cancelled) {
