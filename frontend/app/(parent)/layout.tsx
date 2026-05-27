@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePersonaAuth } from "@/lib/auth/use-persona-auth";
 import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
+import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
 
 export default function ParentLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -41,7 +42,10 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
         </div>
       </header>
 
-      <main className="mx-auto max-w-md px-4 py-6">{children}</main>
+      <main className="mx-auto max-w-md px-4 py-6">
+        <AccessDeniedNotice />
+        {children}
+      </main>
       <nav className="fixed bottom-0 left-0 right-0 border-t border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950">
         <div className="mx-auto flex max-w-md">
           <BottomTab href="/parent/dashboard" label="Home" active={pathname === "/parent/dashboard"} />

@@ -9,6 +9,7 @@ import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
 import { startAutoSync } from "@/lib/offline/sync";
 import { CoachInstallCard } from "@/components/coach/install-card";
+import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
 
 export default function CoachLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -54,6 +55,7 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
       </header>
 
       <main className="flex-1 px-4 py-4 pb-24">
+        <AccessDeniedNotice />
         <CoachInstallCard />
         {children}
       </main>

@@ -15,9 +15,17 @@ Production deployment is handled by one GitHub Actions workflow:
 - **Backend** installs legacy + v2 Python dependencies, compiles backend code,
   runs the broad non-live legacy pytest suite, runs v2 import-linter
   boundaries, and runs `backend/v2/tests` with shared coverage.
-- **Frontend** installs `frontend/` with pnpm, then runs typecheck, lint,
-  build, OpenAPI drift check, size budget reporting, Lighthouse when configured,
-  and Playwright E2E.
+- **Frontend** installs `frontend/` with pnpm, runs
+  `pnpm audit --audit-level=high`, then runs typecheck, lint, build, OpenAPI
+  drift check, size budget reporting, Lighthouse when configured, and
+  Playwright E2E.
+
+When a PR run fails, summarize the failing job and local reproduction command
+before patching:
+
+```bash
+scripts/ci/pr_failure_feedback.py <actions-run-url-or-id>
+```
 
 The legacy CRA app has been removed. The old Cloudflare Pages project
 `courtmastr-academy` is unbound from `academy.courtmastr.com` and deleted during

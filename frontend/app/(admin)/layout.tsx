@@ -26,6 +26,7 @@ import {
   AdminActionSlotProvider,
 } from "@/components/admin/admin-action-slot";
 import { TenantSwitcher } from "@/components/admin/tenant-switcher";
+import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? "/admin";
@@ -95,7 +96,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             onApplyUpdate={applyUpdate}
             onOpenDrawer={() => setDrawerOpen(true)}
           />
-          <main className="flex-1 p-4 md:p-6 overflow-y-auto">{children}</main>
+          <main className="flex-1 p-4 md:p-6 overflow-y-auto">
+            <AccessDeniedNotice />
+            {children}
+          </main>
         </div>
       </div>
       </AdminActionSlotProvider>
