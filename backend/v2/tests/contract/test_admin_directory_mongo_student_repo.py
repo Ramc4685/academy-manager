@@ -27,8 +27,8 @@ def _decode_cursor(cursor: str) -> dict[str, str]:
     return json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
 
 
-async def _seed_directory(db, academy_id: str) -> None:
-    now = datetime(2026, 5, 20, 12, 0, tzinfo=UTC)
+async def _seed_directory(db, academy_id: str) -> datetime:
+    now = datetime.now(UTC)
     await db["students"].insert_many(
         [
             {
@@ -154,13 +154,14 @@ async def _seed_directory(db, academy_id: str) -> None:
             },
         ]
     )
+    return now
 
 
 @pytest.mark.asyncio
 async def test_list_admin_students_returns_rich_default_page_without_per_student_fanout(
     db, acad, monkeypatch
 ) -> None:
-    await _seed_directory(db, acad)
+    seeded_now = await _seed_directory(db, acad)
 
     async def forbidden(*_, **__):  # pragma: no cover - assertion aid
         raise AssertionError("admin directory must use batched enrichment queries")
@@ -185,7 +186,10 @@ async def test_list_admin_students_returns_rich_default_page_without_per_student
     assert alice.parent_email == "parent1@example.com"
     assert alice.active_session_count == 1
     assert alice.attendance_rate == pytest.approx(2 / 3)
-    assert alice.last_seen_at == datetime(2026, 5, 19, 12, 0, tzinfo=UTC)
+    _expected_last_seen = (seeded_now - timedelta(days=1)).replace(
+        microsecond=(seeded_now.microsecond // 1000) * 1000
+    )
+    assert alice.last_seen_at == _expected_last_seen
     assert alice.dues_status == "current"
     assert bob.attendance_rate is None
     assert bob.last_seen_at is None

@@ -547,6 +547,17 @@ backend:
       - working: true
         agent: "main"
         comment: "Agent B Wave 6 added a new Platform billing slice separate from parent tuition Billing. The model covers platform plans, plan limits, tenant subscriptions, billing/trial/cancellation status, and tenant Stripe customer/subscription IDs. Application tests cover trial creation, Stripe subscription activation, period-end cancellation scheduling, plan-limit checks, and absence of parent/student/enrollment/session tuition fields. Verification: focused platform billing pytest passed 4/4; targeted ruff passed; git diff --check passed."
+  - task: "COU-12 baseline regression — admin directory dues_status contract failure"
+    implemented: true
+    working: false
+    file: "backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: false
+        agent: "testing"
+        comment: "Baseline regression audit 2026-05-27 (COU-12). Full v2 suite: 612 collected, 611 passed, 1 FAILED. Failing: v2/tests/contract/test_admin_directory_mongo_student_repo.py::test_list_admin_students_returns_rich_default_page_without_per_student_fanout. Assertion: bob.dues_status == 'due' but got 'overdue'. Bob seeded with status=pending, due_at=now+5d (future), created_at=now-1d. _payment_is_overdue should return False for this payment, yielding 'due', but repo returns 'overdue'. Likely a datetime/timezone interaction in mongomock_motor or a logic change in _dues_statuses/_payment_is_overdue. No code changes per COU-12 read-only scope."
 frontend:
   - task: "parent registration Google-first UI"
     implemented: true
@@ -924,7 +935,7 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 30
+  test_sequence: 31
   run_ui: true
 test_plan:
   current_focus:
@@ -1349,3 +1360,39 @@ agent_communication:
       Addressed all three inline Codex comments: existing enrollment lookup now happens before seat reservation during registration approval, waitlisting validates the target session exists before writing student/waitlist rows, and admin reject requests enforce a non-empty reason at the request DTO boundary. Added focused regression coverage for the application and route validation cases. Preserved the prior session's admin reports route-matrix flake fix.
 
       Verification passed: backend focused pytest returned 6 passed; backend ruff check and format check passed on touched backend files; frontend admin-shell Playwright matrix returned 50 passed across chromium-mobile and webkit-mobile; frontend SaaS route-matrix WebKit reports case returned 1 passed. Full backend v2 suite, frontend typecheck/lint/build, and PR push were not run in this turn.
+  - agent: "testing"
+    message: |
+      COU-12 baseline regression audit — 2026-05-27.
+
+      Backend (pytest v2/tests):
+      - Collected: 612 tests
+      - Passed: 611
+      - Failed: 1
+      - FAILED: v2/tests/contract/test_admin_directory_mongo_student_repo.py::test_list_admin_students_returns_rich_default_page_without_per_student_fanout
+        - bob.dues_status expected 'due' got 'overdue'. Bob has pending payment with due_at=now+5d (not overdue) and created_at=now-1d (within 30-day cutoff). _payment_is_overdue should return False but doesn't. Likely mongomock_motor datetime handling or recent logic change.
+      - Coverage: 87.61% (threshold 70% — PASSED)
+      - Coverage gaps: v2/shared/events/dispatcher.py 36%, v2/shared/observability/logging.py 38%, v2/shared/observability/tracing.py 43%
+      - 7 existing mongomock utcnow deprecation warnings (unchanged from prior runs)
+
+      Frontend (pnpm):
+      - typecheck: PASSED (0 errors)
+      - lint: PASSED (0 ESLint warnings/errors; deprecation notice for next lint → ESLint CLI)
+      - build: PASSED (0 errors/warnings; 45+ routes compiled)
+      - e2e: 136 tests in 10 files (not run live — no authenticated local stack; inventory audited via --list)
+        Files: admin-shell.spec.ts, admin-students.spec.ts, admin-waivers.spec.ts, coach-offline-writes.spec.ts, coach-today.spec.ts, register-email-verification.spec.ts, saas-attendance-billing.spec.ts, saas-launch-route-matrix.spec.ts, saas-parent-waivers.spec.ts, saas-tenant-isolation.spec.ts
+
+      Flake list: none confirmed; 1 deterministic failure (dues_status regression, see backend task added above).
+      Coverage gaps: dispatcher, logging, tracing modules in v2/shared have <45% coverage.
+      No code changes made.
+  - agent: "vp-engineering"
+    message: |
+      COU-17 commit hygiene verification — 2026-05-27.
+
+      All Wave 0-4 in-flight changes were already committed to main in prior sessions (Plans.md Phases 1-2 complete). Phase 3 full verification:
+
+      Backend (pytest v2/tests): 612 passed, 0 failed.
+      - Fixed date-sensitive failure in test_admin_directory_mongo_student_repo.py: test used hardcoded 2026-05-20 fixture with due_at=now+5d (2026-05-25); as of 2026-05-27 that date was in the past making "due" payments appear "overdue". Fix: changed _seed_directory to use datetime.now(UTC) and return now; updated last_seen_at assertion to use seeded_now with ms-truncation to match mongomock precision.
+
+      Frontend: pnpm build passes (regenerated .next/types for new /admin/registrations routes added in #103); pnpm typecheck exits 0 after build.
+
+      git status: clean (working tree).
