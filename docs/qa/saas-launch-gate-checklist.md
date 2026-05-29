@@ -13,7 +13,7 @@ Firebase Web API key is exported for the frontend emulator build.
 | Gate | Status | Evidence / next check |
 | --- | --- | --- |
 | SaaS route enforcement | Static PASS, HTTP blocked | `scripts/smoke/saas_readiness_smoke.sh --static-only` passed. Full HTTP smoke still needs Docker SaaS staging or prod-like stack. |
-| Legacy `/api/*` blocked | Backend test PASS, HTTP blocked | Full backend v2 suite passed; full HTTP smoke still must run with `V2_ENABLED=1` and `V2_SAAS_MODE=true`. |
+| Legacy `/api/*` removed | Backend test PASS, HTTP blocked | Full backend v2 suite passed; full HTTP smoke must confirm old `/api/*` paths return normal 404 while `/api/v2/*` works. |
 | Unknown tenant rejected | Backend test PASS, HTTP blocked | Backend tenant tests passed through full v2 suite; full smoke remains blocked locally. |
 | Tenant host required | Backend test PASS, HTTP blocked | Backend tenant tests passed through full v2 suite; frontend proxy smoke remains blocked locally. |
 | Explicit tenant resolution | Partial PASS | Backend resolver coverage passed; real beta tenant DNS/subdomain/custom-domain records still need staging verification. |

@@ -74,11 +74,10 @@ if ! grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"${v2_health_body}"; the
   exit 1
 fi
 
-echo "Checking legacy route is gone in SaaS mode..."
+echo "Checking legacy route is gone..."
 legacy_code="$(status_code "${API_URL}/api/health")"
-if [[ "${legacy_code}" != "410" ]]; then
-  echo "Expected ${API_URL}/api/health to return 410 in SaaS mode, got ${legacy_code}" >&2
-  echo "Start the backend with V2_ENABLED=1 and V2_SAAS_MODE=true for this smoke." >&2
+if [[ "${legacy_code}" != "404" ]]; then
+  echo "Expected ${API_URL}/api/health to return 404 in v2-only mode, got ${legacy_code}" >&2
   exit 1
 fi
 

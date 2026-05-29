@@ -58,7 +58,7 @@ The following variables were introduced in Phase 5 and must be set in production
 | Variable | Required | Description |
 |---|---|---|
 | `STRIPE_API_KEY` | Yes | Stripe secret key (`sk_live_...` or `sk_test_...`). Without this, all billing endpoints return 503. |
-| `STRIPE_WEBHOOK_SECRET` | Yes | Stripe webhook signing secret (`whsec_...`). Without this, `POST /api/webhook/stripe` returns 503 and all Stripe payment confirmations are silently dropped. |
+| `STRIPE_WEBHOOK_SECRET` | Yes | Stripe webhook signing secret (`whsec_...`). Without this, `POST /api/v2/parent/webhooks/stripe` returns 503 and all Stripe payment confirmations are silently dropped. |
 | `SCHEDULER_TZ` | No | IANA timezone for scheduled billing jobs. The backend default is `UTC`; production sets `America/Chicago` in `backend/fly.toml`. |
 
 Set these on Fly with:
@@ -72,15 +72,14 @@ flyctl secrets set \
 
 ## SaaS v2 Production Readiness
 
-SaaS mode is v2-only and remains gated until the Wave 6 platform outputs are
-merged and verified. Do not enable SaaS mode in production until
+SaaS mode uses the v2 backend runtime and remains launch-gated until the Wave 6
+platform outputs are merged and verified. Do not enable SaaS mode in production until
 `docs/requirements/2026-05-22-saas-production-readiness.md` has no
 `BLOCKED BY WAVE 6` or unresolved `TODO` launch gates.
 
 Required SaaS env additions:
 
 ```bash
-V2_ENABLED=1
 V2_SAAS_MODE=true
 # Only when an approved internal caller exists:
 V2_ALLOWED_INTERNAL_TENANT_HEADER=X-Internal-Academy-Id
@@ -108,13 +107,13 @@ scripts/smoke/saas_readiness_smoke.sh
 This smoke is non-destructive. It must not be pointed at production with real
 auth tokens unless an operator explicitly approves that test.
 
-## Auth Migration Notes
+## Auth Notes
 
-With `FIREBASE_AUTH_ENABLED=true`:
+The backend now runs `backend.v2.main:app` directly:
 
-- **Legacy routes are disabled.** `/api/auth/login`, `/api/auth/refresh`,
-  `/api/auth/forgot-password`, and `/api/auth/reset-password` return **HTTP 410**.
-  The frontend already routes those flows through Firebase.
+- **Legacy routes are removed.** `/api/auth/login`, `/api/auth/refresh`,
+  `/api/auth/forgot-password`, and `/api/auth/reset-password` are not mounted and
+  return normal **HTTP 404**.
 - **Token verification uses Firebase Admin SDK** with `check_revoked=True`.
   Admin-disabling a user in the Firebase console takes effect on the next
   request — no waiting for token expiry.
@@ -144,7 +143,7 @@ With `FIREBASE_AUTH_ENABLED=true`:
 
 ```bash
 docker compose up --build
-curl http://127.0.0.1:8001/api/health
+curl http://127.0.0.1:8001/api/v2/healthz
 cd frontend
 BFF_API_ORIGIN=http://127.0.0.1:8001 pnpm dev
 open http://localhost:3001
@@ -215,7 +214,7 @@ Actions.
 ## Payments
 
 1. Configure Stripe live or test keys.
-2. Create a webhook endpoint pointing to `/api/webhook/stripe`.
+2. Create a webhook endpoint pointing to `/api/v2/parent/webhooks/stripe`.
 3. Subscribe to checkout session events used by the app.
 4. Store the Stripe webhook signing secret in `STRIPE_WEBHOOK_SECRET`.
 5. Run a test registration checkout and confirm the registration payment changes from pending to paid.
@@ -237,7 +236,7 @@ Email delivery is always blocked outside production, even when a real Resend key
 The backend exposes:
 
 ```bash
-GET /api/health
+GET /api/v2/healthz
 ```
 
 Monitor this endpoint from the production region. Alert on non-2xx responses, elevated latency, and repeated application errors. Application logs should be shipped to the platform log drain or external logging service.

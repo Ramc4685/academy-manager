@@ -6,39 +6,38 @@ Use this file for FastAPI, MongoDB, Firebase Auth, Stripe, Resend, scheduler, ba
 
 ## Commands
 
-Legacy backend:
+Backend:
 
 ```bash
 cd backend
 source .venv/bin/activate
 pytest
-uvicorn server:app --host 127.0.0.1 --port 8001 --reload
+uvicorn backend.v2.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
-Focused tests:
+Focused v2 tests:
 
 ```bash
 cd backend
 source .venv/bin/activate
-pytest tests/test_firebase_auth.py
-pytest tests/test_stripe_webhook_idempotency.py
-pytest tests/test_coach_today.py
+pytest v2/tests/interface
+pytest v2/tests/contract
 ```
 
-v2 backend, when present:
+Run the v2 app directly:
 
 ```bash
 cd backend
 source .venv/bin/activate
 pytest v2/tests
-uvicorn v2.main:app --reload --port 8001
+uvicorn backend.v2.main:app --reload --port 8001
 ```
 
 ---
 
-## Legacy Backend Rules
+## Retired Legacy Source Rules
 
-- Legacy app entry point is `backend/server.py`.
+- Legacy source remains in the tree during decommission but is not the runtime entry point.
 - Legacy routers live under `backend/routers/`.
 - Shared legacy services live under `backend/services/`.
 - Keep legacy fixes narrow and compatible with existing `/api/*` clients.
@@ -76,7 +75,7 @@ Production auth uses Firebase Authentication plus MongoDB app roles.
 
 - Firebase token verification belongs in backend auth infrastructure.
 - JWT/Firebase identity proves who the user is; app role and academy access still come from MongoDB/app records.
-- When `FIREBASE_AUTH_ENABLED=true`, legacy password endpoints may be disabled or return 410 by design.
+- Legacy password endpoints are removed from the v2-only backend; do not add new `/api/auth/*` password routes.
 - Email verification is enforced server-side for password-provider Firebase users.
 - Never store Firebase service account JSON in git.
 
@@ -90,7 +89,7 @@ Production auth uses Firebase Authentication plus MongoDB app roles.
 - Local Stripe webhook testing uses:
 
 ```bash
-stripe listen --forward-to 127.0.0.1:8001/api/webhook/stripe
+stripe listen --forward-to 127.0.0.1:8001/api/v2/parent/webhooks/stripe
 ```
 
 ---

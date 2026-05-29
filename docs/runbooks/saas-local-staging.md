@@ -25,8 +25,8 @@ Firebase project is touched.
 
 ## What this proves
 
-- Backend boots in SaaS mode (`V2_ENABLED=1`, `V2_SAAS_MODE=true`).
-- Legacy `/api/health` returns **410** (SaaS guard active).
+- Backend boots in SaaS mode (`V2_SAAS_MODE=true`).
+- Legacy `/api/*` runtime routes are absent from the v2 backend.
 - `/api/v2/healthz` returns OK.
 - Unknown tenant hosts return **401/403** at `/api/v2/me` (no anonymous tenant fallback).
 - A seeded tenant + Firebase emulator user produces a valid Firebase ID token,
@@ -243,7 +243,7 @@ The HTTP smoke covers or explicitly skips:
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `up` hangs waiting for backend | Module-level import in legacy server died | `logs backend` — usually a missing env. Compare `.local/saas-staging.env` against `backend/.env.example`. |
-| Smoke fails: `/api/health` returned 200 (expected 410) | Backend booted but `V2_SAAS_MODE` was not picked up | Recreate containers: `down` then `up`. Env-var changes in compose require recreation, not just restart. |
+| Smoke finds a legacy `/api/*` route still returning 200 | Backend booted through the old legacy runtime or stale containers are running | Recreate containers: `down` then `up`. Env-var changes in compose require recreation, not just restart. |
 | Smoke fails: `/api/v2/me` returned 500 | Mongo collection state or emulator user mismatch | Re-run `seed`. If still broken, `nuke` and start over. |
 | Frontend shows wrong API base in network tab | Build args are baked in at image build time | After changing `docker-compose.saas.yml` build args, run `up` again — it will rebuild. |
 | Emulator UI at :4000 won't load | Emulator did not start cleanly | `logs firebase-emulator`. First run downloads a JAR; needs internet. |

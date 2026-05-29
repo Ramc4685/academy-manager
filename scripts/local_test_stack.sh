@@ -123,11 +123,31 @@ read_frontend_env() {
 }
 
 firebase_api_key() {
-  if [ -n "${NEXT_PUBLIC_FIREBASE_API_KEY:-}" ]; then
+  if is_valid_firebase_api_key "${NEXT_PUBLIC_FIREBASE_API_KEY:-}"; then
     printf '%s\n' "${NEXT_PUBLIC_FIREBASE_API_KEY}"
     return 0
   fi
-  read_frontend_env NEXT_PUBLIC_FIREBASE_API_KEY || read_frontend_env REACT_APP_FIREBASE_API_KEY
+  value="$(read_frontend_env NEXT_PUBLIC_FIREBASE_API_KEY || true)"
+  if is_valid_firebase_api_key "${value}"; then
+    printf '%s\n' "${value}"
+    return 0
+  fi
+  value="$(read_frontend_env REACT_APP_FIREBASE_API_KEY || true)"
+  if is_valid_firebase_api_key "${value}"; then
+    printf '%s\n' "${value}"
+    return 0
+  fi
+  return 1
+}
+
+is_valid_firebase_api_key() {
+  key="${1:-}"
+  [ "${key}" != "dummy" ] || return 1
+  [ "${#key}" -ge 30 ] || return 1
+  case "${key}" in
+    AIza*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 start_mongo() {
@@ -170,10 +190,10 @@ start_backend() {
     cd "${ROOT_DIR}/backend"
     # shellcheck disable=SC1091
     . .venv/bin/activate
-    nohup env APP_ENV=development EMAIL_DELIVERY_MODE=disabled MONGO_URL="${MONGO_URL}" DB_NAME="${DB_NAME}" V2_ENABLED=1 FIREBASE_AUTH_ENABLED=true FIREBASE_PROJECT_ID="${FIREBASE_PROJECT_ID}" FIREBASE_AUTH_EMULATOR_HOST="${FIREBASE_AUTH_EMULATOR_HOST}" FRONTEND_URL="${FRONTEND_URL}" CORS_ORIGINS="${FRONTEND_URL},http://127.0.0.1:${FRONTEND_PORT}" COOKIE_SECURE=false V2_ALLOWED_INTERNAL_TENANT_HEADER=x-academy-id PYTHONPATH="${ROOT_DIR}" uvicorn server:app --host "${BACKEND_HOST}" --port "${BACKEND_PORT}" --reload
+    nohup env APP_ENV=development EMAIL_DELIVERY_MODE=disabled MONGO_URL="${MONGO_URL}" DB_NAME="${DB_NAME}" FIREBASE_AUTH_ENABLED=true FIREBASE_PROJECT_ID="${FIREBASE_PROJECT_ID}" FIREBASE_AUTH_EMULATOR_HOST="${FIREBASE_AUTH_EMULATOR_HOST}" FRONTEND_URL="${FRONTEND_URL}" CORS_ORIGINS="${FRONTEND_URL},http://127.0.0.1:${FRONTEND_PORT}" COOKIE_SECURE=false V2_ALLOWED_INTERNAL_TENANT_HEADER=x-academy-id PYTHONPATH="${ROOT_DIR}" uvicorn backend.v2.main:app --host "${BACKEND_HOST}" --port "${BACKEND_PORT}" --reload
   ) >"${LOG_DIR}/backend.log" 2>&1 &
   write_pid backend "$!"
-  wait_for_url "Backend health" "${BACKEND_URL}/api/health" 60 || { tail -n 120 "${LOG_DIR}/backend.log" >&2 || true; exit 1; }
+  wait_for_url "Backend health" "${BACKEND_URL}/api/v2/healthz" 60 || { tail -n 120 "${LOG_DIR}/backend.log" >&2 || true; exit 1; }
 }
 
 start_frontend() {
@@ -185,11 +205,18 @@ start_frontend() {
   api_key="$(firebase_api_key || true)"
   [ -n "${api_key}" ] || die "Missing NEXT_PUBLIC_FIREBASE_API_KEY. Add it to frontend/.env.local or export it."
   log "Starting frontend on ${FRONTEND_URL}"
-  (
-    cd "${ROOT_DIR}/frontend"
-    nohup env BFF_API_ORIGIN="${BACKEND_URL}" NEXT_PUBLIC_API_BASE=/api/v2 NEXT_PUBLIC_FIREBASE_API_KEY="${api_key}" NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN="${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:-${FIREBASE_PROJECT_ID}.firebaseapp.com}" NEXT_PUBLIC_FIREBASE_PROJECT_ID="${NEXT_PUBLIC_FIREBASE_PROJECT_ID:-${FIREBASE_PROJECT_ID}}" NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET="${NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:-${FIREBASE_PROJECT_ID}.firebasestorage.app}" NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID="${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:-953230788846}" NEXT_PUBLIC_FIREBASE_APP_ID="${NEXT_PUBLIC_FIREBASE_APP_ID:-1:953230788846:web:1f2819c11418ecf5860bff}" NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID="${NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID:-G-Z6GS6WRZY8}" NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST="${NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST:-http://${FIREBASE_AUTH_EMULATOR_HOST}}" NEXT_PUBLIC_ACADEMY_SLUG=default-academy PORT="${FRONTEND_PORT}" pnpm dev
-  ) >"${LOG_DIR}/frontend.log" 2>&1 &
-  write_pid frontend "$!"
+  frontend_cmd="cd '${ROOT_DIR}/frontend' && env BFF_API_ORIGIN='${BACKEND_URL}' NEXT_PUBLIC_API_BASE=/api/v2 NEXT_PUBLIC_FIREBASE_API_KEY='${api_key}' NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN='${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:-${FIREBASE_PROJECT_ID}.firebaseapp.com}' NEXT_PUBLIC_FIREBASE_PROJECT_ID='${NEXT_PUBLIC_FIREBASE_PROJECT_ID:-${FIREBASE_PROJECT_ID}}' NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET='${NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:-${FIREBASE_PROJECT_ID}.firebasestorage.app}' NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID='${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:-953230788846}' NEXT_PUBLIC_FIREBASE_APP_ID='${NEXT_PUBLIC_FIREBASE_APP_ID:-1:953230788846:web:1f2819c11418ecf5860bff}' NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID='${NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID:-G-Z6GS6WRZY8}' NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST='${NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST:-http://${FIREBASE_AUTH_EMULATOR_HOST}}' NEXT_PUBLIC_ACADEMY_SLUG=default-academy PORT='${FRONTEND_PORT}' pnpm dev >'${LOG_DIR}/frontend.log' 2>&1"
+  if command -v screen >/dev/null 2>&1; then
+    screen -S academy-frontend -X quit >/dev/null 2>&1 || true
+    screen -dmS academy-frontend bash -lc "${frontend_cmd}"
+    screen_pid="$( (screen -ls || true) | awk '/academy-frontend/ {split($1, parts, "."); print parts[1]; exit}')"
+    if [ -n "${screen_pid}" ]; then
+      write_pid frontend "${screen_pid}"
+    fi
+  else
+    nohup bash -lc "${frontend_cmd}" >/dev/null 2>&1 &
+    write_pid frontend "$!"
+  fi
   wait_for_url "Frontend BFF proxy" "${FRONTEND_URL}/api/v2/healthz" 90 || { tail -n 120 "${LOG_DIR}/frontend.log" >&2 || true; exit 1; }
 }
 
@@ -206,7 +233,6 @@ smoke() {
   log "Checking local ports"
   status
   log "Checking backend health"
-  curl -fsS "${BACKEND_URL}/api/health"; printf '\n'
   curl -fsS "${BACKEND_URL}/api/v2/healthz"; printf '\n'
   log "Checking frontend BFF proxy"
   curl -fsS "${FRONTEND_URL}/api/v2/healthz"; printf '\n'

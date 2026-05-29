@@ -70,6 +70,36 @@ class TenantScopedRepository:
             cursor = cursor.limit(limit)
         return cursor
 
+    def _find_many_in_collection(
+        self,
+        collection_name: str,
+        filter_: Mapping[str, Any] | None = None,
+        projection: Mapping[str, Any] | None = None,
+        *,
+        sort: list[tuple[str, int]] | None = None,
+        limit: int | None = None,
+    ):
+        cursor = self._db[collection_name].find(self._scoped(filter_), projection)
+        if sort:
+            cursor = cursor.sort(sort)
+        if limit:
+            cursor = cursor.limit(limit)
+        return cursor
+
+    async def _find_one_in_collection(
+        self,
+        collection_name: str,
+        filter_: Mapping[str, Any] | None = None,
+        *,
+        sort: list[tuple[str, int]] | None = None,
+        session: AsyncIOMotorClientSession | None = None,
+    ) -> dict[str, Any] | None:
+        return await self._db[collection_name].find_one(
+            self._scoped(filter_),
+            sort=sort,
+            session=session,
+        )
+
     async def _insert_one(
         self,
         doc: Mapping[str, Any],

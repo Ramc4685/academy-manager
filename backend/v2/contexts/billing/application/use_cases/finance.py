@@ -145,9 +145,9 @@ class MongoPayoutRepository(TenantScopedRepository):
         academy_id = current_academy_id()
         attendance_rows = [
             doc
-            async for doc in self._db["coach_attendance"].find(
+            async for doc in self._find_many_in_collection(
+                "coach_attendance",
                 {
-                    "academy_id": academy_id,
                     "status": "present",
                 },
                 sort=[("marked_at", 1)],
@@ -159,13 +159,13 @@ class MongoPayoutRepository(TenantScopedRepository):
         occurrence_ids = sorted({str(row["occurrence_id"]) for row in attendance_rows})
         occurrence_docs = {
             str(doc["occurrence_id"]): doc
-            async for doc in self._db["session_occurrences"].find(
+            async for doc in self._find_many_in_collection(
+                "session_occurrences",
                 {
-                    "academy_id": academy_id,
                     "occurrence_id": {"$in": occurrence_ids},
                     "is_payable": {"$ne": False},
                     "status": {"$ne": "cancelled"},
-                }
+                },
             )
         }
         if not occurrence_docs:
@@ -174,9 +174,9 @@ class MongoPayoutRepository(TenantScopedRepository):
         students_by_occurrence: dict[str, set[str]] = {
             occurrence_id: set() for occurrence_id in occurrence_ids
         }
-        student_cursor = self._db["attendance"].find(
+        student_cursor = self._find_many_in_collection(
+            "attendance",
             {
-                "academy_id": academy_id,
                 "occurrence_id": {"$in": occurrence_ids},
                 "status": {"$in": ["present", "late"]},
             },
@@ -239,9 +239,9 @@ class MongoPayoutRepository(TenantScopedRepository):
         if attendance.get("rate_override_minor") is not None:
             return int(attendance["rate_override_minor"])
 
-        rate = await self._db["coach_rates"].find_one(
+        rate = await self._find_one_in_collection(
+            "coach_rates",
             {
-                "academy_id": current_academy_id(),
                 "coach_id": coach_id,
                 "effective_from": {"$lte": start_at},
                 "$or": [

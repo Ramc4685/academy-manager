@@ -135,7 +135,7 @@ Backend:
 cd backend
 source .venv/bin/activate
 pytest
-uvicorn server:app --host 127.0.0.1 --port 8001 --reload
+uvicorn backend.v2.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
 Frontend:
@@ -190,7 +190,7 @@ Container smoke:
 
 ```bash
 docker compose up --build
-curl http://127.0.0.1:8001/api/health
+curl http://127.0.0.1:8001/api/v2/healthz
 ```
 
 ---

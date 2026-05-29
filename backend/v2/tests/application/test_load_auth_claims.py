@@ -116,6 +116,7 @@ def _coach_membership(academy_id: str = "academy-court") -> AcademyMembership:
 def _build(
     *,
     token_email: str | None = "coach@example.com",
+    token_claims: dict[str, object] | None = None,
     users: list[User] | None = None,
     memberships: list[AcademyMembership] | None = None,
     platform_roles: list[PlatformRole] | None = None,
@@ -123,7 +124,11 @@ def _build(
 ) -> LoadAuthClaims:
     return LoadAuthClaims(
         verifier=FakeVerifier(
-            claims={"email": token_email} if token_email is not None else {},
+            claims=(
+                token_claims
+                if token_claims is not None
+                else ({"email": token_email} if token_email is not None else {})
+            ),
             raise_with=verifier_error,
         ),
         users=FakeUserRepo(users if users is not None else [_coach_user()]),
@@ -178,6 +183,31 @@ async def test_missing_email_raises() -> None:
     uc = _build(token_email=None)
     with pytest.raises(InvalidToken):
         await uc.execute("ok", resolved_academy_id="academy-court")
+
+
+@pytest.mark.asyncio
+async def test_password_provider_requires_verified_email() -> None:
+    uc = _build(
+        token_claims={
+            "email": "coach@example.com",
+            "email_verified": False,
+            "firebase": {"sign_in_provider": "password"},
+        }
+    )
+    with pytest.raises(InvalidToken):
+        await uc.execute("ok", resolved_academy_id="academy-court")
+
+
+@pytest.mark.asyncio
+async def test_social_provider_does_not_require_email_verified_claim() -> None:
+    uc = _build(
+        token_claims={
+            "email": "coach@example.com",
+            "firebase": {"sign_in_provider": "google.com"},
+        }
+    )
+    claims = await uc.execute("ok", resolved_academy_id="academy-court")
+    assert claims.user_id == "u-coach"
 
 
 @pytest.mark.asyncio
