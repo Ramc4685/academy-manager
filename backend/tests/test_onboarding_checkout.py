@@ -222,6 +222,30 @@ def _patch_stripe_checkout(mock_stripe: MagicMock):
     return patch("routers.onboarding_routes._configure_stripe", return_value=mock_stripe)
 
 
+def _patch_now_midmonth():
+    """Pin the checkout proration clock to the 2nd of the current month (noon UTC).
+
+    The first-month proration window runs from "now" to the end of the current
+    month, and ``_seed_session(with_schedule=True)`` seeds a Mon/Wed/Fri schedule
+    for the current month. When the suite runs late in the month there are no
+    remaining billable occurrences, so proration legitimately yields $0 (HTTP 422)
+    and the happy-path assertions fail. Pinning "now" to early in the month keeps
+    these tests deterministic regardless of the calendar date they run on.
+    """
+    import routers.onboarding_routes as _onboarding_routes
+
+    _real_datetime = _onboarding_routes.datetime
+
+    class _FixedDateTime(_real_datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            return _real_datetime.now(tz).replace(
+                day=2, hour=12, minute=0, second=0, microsecond=0
+            )
+
+    return patch("routers.onboarding_routes.datetime", _FixedDateTime)
+
+
 def _make_webhook_event(event_id: str, event_type: str, obj: dict) -> dict:
     return {"id": event_id, "type": event_type, "data": {"object": obj}}
 
@@ -405,7 +429,7 @@ class TestCheckoutCreation:
         stub_verify["claim"] = _stub_token(uid=parent["auth_uid"], email=parent["email"])
 
         mock_stripe = _make_stripe_mock(checkout_session_id="cs_happy001")
-        with _patch_stripe_checkout(mock_stripe):
+        with _patch_now_midmonth(), _patch_stripe_checkout(mock_stripe):
             r = client.post(
                 f"/api/onboarding/{draft['_id']}/checkout",
                 headers={"Authorization": "Bearer FAKE"},
@@ -439,7 +463,7 @@ class TestCheckoutCreation:
         stub_verify["claim"] = _stub_token(uid=parent["auth_uid"], email=parent["email"])
 
         mock_stripe = _make_stripe_mock()
-        with _patch_stripe_checkout(mock_stripe):
+        with _patch_now_midmonth(), _patch_stripe_checkout(mock_stripe):
             r = client.post(
                 f"/api/onboarding/{draft['_id']}/checkout",
                 headers={"Authorization": "Bearer FAKE"},
