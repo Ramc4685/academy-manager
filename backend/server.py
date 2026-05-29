@@ -91,10 +91,15 @@ _origins = [o.strip() for o in _origins_env.split(",") if o.strip() and o.strip(
 if _frontend and _frontend not in _origins:
     _origins.append(_frontend)
 # When using cookies cross-origin, allow_origin_regex covers preview subdomains
+_preview_origin_regex = (
+    None
+    if os.environ.get("APP_ENV", "").lower() in ("production", "prod")
+    else r"https://.*\.preview\.emergentagent\.com"
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
-    allow_origin_regex=r"https://.*\.preview\.emergentagent\.com",
+    allow_origin_regex=_preview_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
