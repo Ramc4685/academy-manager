@@ -1,6 +1,20 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@config "../tailwind.config.ts";
+
+/*
+ * Tailwind v4 compatibility: preserve the v3 default border color (gray-200).
+ * v4 changed the default border color to currentColor, which would otherwise
+ * alter every element that uses `border` without an explicit color.
+ */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
 
 :root {
   color-scheme: light dark;
