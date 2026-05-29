@@ -1570,3 +1570,8 @@ agent_communication:
       Multi-agent review found and this pass fixed missing v2 CORS, Firebase password-provider email verification, Firebase project env precedence, fail-closed Firebase Admin behavior in prod, fake Stripe production fail-open, rate-limit X-Forwarded-For spoofing/bucket growth, login_attempts string-date TTL cleanup, duplicate welcome events, and PII in welcome-email failure logs.
 
       Verification passed: backend focused hardening suite returned 61 passed; backend ruff check v2 and ruff format --check v2 passed; backend pytest v2/tests --override-ini="testpaths=v2/tests" -q returned 666 passed with 2 mongomock datetime warnings; import-linter kept all 4 contracts with PYTHONPATH set to repo root; pip-audit -r requirements.txt found no known vulnerabilities; bash -n passed for local stack and smoke scripts; git diff --check passed; frontend pnpm lint, pnpm build, and post-build pnpm typecheck passed. The required mypy command still fails before useful checking with the existing duplicate module mapping for v2.contexts.billing.application.use_cases.admin_payment_ops and backend.v2.contexts.billing.application.use_cases.admin_payment_ops.
+  - agent: "main"
+    message: |
+      PR #120 merge conflict resolution — 2026-05-29.
+
+      Resolved conflicts against origin/main after dependency-update PRs landed. Kept the v2-only deletion of backend/server.py and backend/tests/test_onboarding_checkout.py, accepted main's backend dependency bumps, and carried main's Tailwind 4/frontend dependency updates through the merge. Verification for this conflict-resolution commit is recorded in the final handoff.

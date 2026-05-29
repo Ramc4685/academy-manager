@@ -10,6 +10,21 @@ class UserNotFound(DomainError):
     status_code = 404
 
 
+class UserEmailAlreadyExists(DomainError):
+    code = "Identity.UserEmailAlreadyExists"
+    status_code = 409
+
+
+class UserEmailUpdateFailed(DomainError):
+    code = "Identity.UserEmailUpdateFailed"
+    status_code = 502
+
+
+class UserCreateFailed(DomainError):
+    code = "Identity.UserCreateFailed"
+    status_code = 502
+
+
 class UserInactive(DomainError):
     code = "Identity.UserInactive"
     status_code = 403
