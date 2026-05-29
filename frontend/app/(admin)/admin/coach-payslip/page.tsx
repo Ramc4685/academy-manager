@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import { listAdminSessions, listAdminUsers } from "@/lib/api/admin";
+import { listAdminUsers, listPayouts } from "@/lib/api/admin";
 import { Card } from "@/components/ds/card";
 import { Avatar } from "@/components/ds/avatar";
 import { BigNum } from "@/components/ds/typography";
@@ -17,26 +17,27 @@ export default function AdminCoachPayslipPage() {
     queryKey: ["admin", "users", "coach"],
     queryFn: () => listAdminUsers("coach"),
   });
-  const sessionsQuery = useQuery({
-    queryKey: ["admin", "sessions", "today", "payslip"],
-    queryFn: () => listAdminSessions(),
+  const payoutsQuery = useQuery({
+    queryKey: ["admin", "finance", "payouts", "coach-payslip"],
+    queryFn: listPayouts,
   });
 
   const coaches = coachesQuery.data?.users ?? [];
-  const sessions = sessionsQuery.data?.sessions ?? [];
+  const payouts = payoutsQuery.data?.payouts ?? [];
   const rows = coaches.map((coach) => {
-    const assigned = sessions.filter((session) => session.coach_id === coach.user_id);
-    const students = assigned.reduce((sum, session) => sum + session.enrolled_count, 0);
+    const payout = payouts.find((row) => row.coach_id === coach.user_id) ?? null;
     return {
       coach,
-      sessions: assigned.length,
-      students,
-      expectedCutCents: students * 2800,
+      payout,
+      sessions: payout?.sessions_count ?? 0,
+      students: payout?.students_count ?? 0,
+      expectedRevenueCents: payout?.expected_revenue_cents ?? 0,
+      netEarningsCents: payout?.amount_cents ?? 0,
     };
   });
 
-  const loading = coachesQuery.isLoading || sessionsQuery.isLoading;
-  const error = coachesQuery.isError || sessionsQuery.isError;
+  const loading = coachesQuery.isLoading || payoutsQuery.isLoading;
+  const error = coachesQuery.isError || payoutsQuery.isError;
 
   return (
     <section data-testid="admin-coach-payslip" className="space-y-5">
@@ -65,15 +66,18 @@ export default function AdminCoachPayslipPage() {
                   </div>
                 </div>
                 <div className="shrink-0 pl-2">
-                  <Chip variant="draft" label="TODAY" />
+                  <Chip variant={row.payout?.paid_at ? "paid" : "draft"} label={row.payout?.paid_at ? "PAID" : "DRAFT"} />
                 </div>
               </div>
 
               <div className="mt-2 flex-1">
                 <p className="text-xs font-medium uppercase tracking-wide text-neutral-500 mb-1">Net Earnings</p>
                 <BigNum size={32}>
-                  {money(row.expectedCutCents)}
+                  {money(row.netEarningsCents)}
                 </BigNum>
+                <p className="mt-1 text-xs text-neutral-500">
+                  {row.payout?.rule_label ?? "No payout rule"} · {money(row.expectedRevenueCents)} expected revenue
+                </p>
               </div>
 
               <div className="flex flex-col gap-1 border-t border-neutral-100 pt-3 dark:border-neutral-800 text-sm">

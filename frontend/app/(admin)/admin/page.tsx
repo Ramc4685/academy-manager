@@ -43,20 +43,24 @@ function formatCents(cents: number): string {
 
 const PAYMENT_CHIP: Record<PaymentStatus, ChipVariant> = {
   succeeded: "paid",
+  paid: "paid",
   pending: "pending",
   refunded: "refunded",
   partially_refunded: "partial",
   failed: "failed",
   expired: "expired",
+  waived: "waived",
 };
 
 const PAYMENT_LABEL: Record<PaymentStatus, string> = {
   succeeded: "PAID",
+  paid: "PAID",
   pending: "PENDING",
   refunded: "REFUNDED",
   partially_refunded: "PARTIAL",
   failed: "FAILED",
   expired: "EXPIRED",
+  waived: "WAIVED",
 };
 
 export default function AdminDashboardPage() {

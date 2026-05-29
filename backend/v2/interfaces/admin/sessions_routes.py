@@ -6,6 +6,9 @@ from datetime import UTC, date, datetime, time
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance import (
+    MarkCoachAttendanceCommand,
+)
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     CancelEnrollmentCommand,
     CancelSessionCommand,
@@ -18,6 +21,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
+    AdminCoachAttendanceView,
     AdminEnrollmentList,
     AdminEnrollmentView,
     AdminSessionList,
@@ -32,6 +36,7 @@ from backend.v2.interfaces.admin.views import (
     PauseEnrollmentRequest,
     RemoveEnrollmentRequest,
     TransferEnrollmentRequest,
+    UpdateOccurrenceCoachAttendanceRequest,
     UpdateSessionOccurrenceCoachRequest,
     WithdrawEnrollmentRequest,
 )
@@ -145,6 +150,35 @@ async def update_session_occurrence_coach(
     if row is None:
         raise HTTPException(status_code=404, detail="Occurrence not found")
     return AdminSessionOccurrenceView(**row)
+
+
+@router.patch(
+    "/session-occurrences/{occurrence_id}/coach-attendance",
+    response_model=AdminCoachAttendanceView,
+    summary="Mark coach payroll attendance for a dated occurrence",
+)
+async def update_occurrence_coach_attendance(
+    occurrence_id: str,
+    body: UpdateOccurrenceCoachAttendanceRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminCoachAttendanceView:
+    try:
+        row = await use_cases.mark_coach_attendance.execute(  # type: ignore[attr-defined]
+            MarkCoachAttendanceCommand(
+                occurrence_id=occurrence_id,
+                coach_id=body.coach_id,
+                status=body.status,
+                role=body.role,
+                source="admin",
+                rate_override_minor=body.rate_override_minor,
+                note=body.note,
+            ),
+            actor_id=claims.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return AdminCoachAttendanceView(**row.model_dump(exclude={"academy_id"}))
 
 
 @router.get(

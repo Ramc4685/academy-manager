@@ -7,8 +7,6 @@ glue.
 Run standalone::
 
     uvicorn backend.v2.main:app --reload --port 8001
-
-Mounted from legacy ``backend/server.py`` under ``/api/v2/*`` as well.
 """
 
 from __future__ import annotations
@@ -19,6 +17,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from motor.motor_asyncio import AsyncIOMotorClient
+from starlette.middleware.cors import CORSMiddleware
 
 from backend.v2.composition.admin import compose_admin
 from backend.v2.composition.coach import compose_coach
@@ -88,7 +87,7 @@ from backend.v2.migrations import run_pending_migrations
 from backend.v2.shared.auth.middleware import TenancyMiddleware
 from backend.v2.shared.config import Settings, get_settings
 from backend.v2.shared.events import EventDispatcher, MongoOutbox
-from backend.v2.shared.http import register_exception_handlers
+from backend.v2.shared.http import InMemoryRateLimitMiddleware, register_exception_handlers
 from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
 from backend.v2.shared.observability import configure_logging, configure_tracing
 from backend.v2.shared.tenancy.resolver import (
@@ -156,6 +155,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         verifier=verifier,
         users=users_repo,
         memberships=membership_repo if settings.saas_mode else None,
+        outbox=outbox,
         default_academy_id=settings.default_academy_id,
         saas_mode=settings.saas_mode,
     )
@@ -225,6 +225,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
+    get_settings()
     app = FastAPI(
         title="Academy Manager v2",
         version="2.0.0",
@@ -237,6 +238,8 @@ def create_app() -> FastAPI:
     # lifespan. We expose it via app.state and the middleware reads it
     # lazily on the first request.
     app.add_middleware(_LazyTenancyMiddleware)
+    app.add_middleware(InMemoryRateLimitMiddleware)
+    _add_cors_middleware(app, get_settings())
 
     @app.get("/api/v2/healthz")
     async def healthz() -> dict[str, str]:
@@ -254,6 +257,8 @@ def create_app() -> FastAPI:
 
 
 def _build_stripe(settings: Settings) -> StripeGateway:
+    if settings.env == "prod" and settings.stripe_use_fake_gateway:
+        raise RuntimeError("V2_STRIPE_USE_FAKE_GATEWAY must be false in production")
     if (
         settings.stripe_use_fake_gateway
         or not settings.stripe_api_key
@@ -265,6 +270,24 @@ def _build_stripe(settings: Settings) -> StripeGateway:
     return RealStripeGateway(
         api_key=settings.stripe_api_key,
         webhook_secret=settings.stripe_webhook_secret,
+    )
+
+
+def _add_cors_middleware(app: FastAPI, settings: Settings) -> None:
+    origins = settings.cors_allowed_origins()
+    if not origins:
+        return
+    if "*" in origins:
+        raise RuntimeError("Wildcard CORS origins are not allowed")
+    allow_headers = ["Authorization", "Content-Type", "Idempotency-Key", "Stripe-Signature"]
+    if settings.allowed_internal_tenant_header:
+        allow_headers.append(settings.allowed_internal_tenant_header)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=allow_headers,
     )
 
 

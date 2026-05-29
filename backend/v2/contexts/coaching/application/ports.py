@@ -7,13 +7,21 @@ from typing import Protocol
 
 from pydantic import BaseModel
 
-from backend.v2.contexts.coaching.domain.models import Attendance
+from backend.v2.contexts.coaching.domain.models import Attendance, CoachAttendance
 
 
 class AttendanceRepository(Protocol):
     async def save(self, attendance: Attendance) -> None: ...
     async def find_existing(self, occurrence_id: str, student_id: str) -> Attendance | None: ...
     async def find_by_attendance_id(self, attendance_id: str) -> Attendance | None: ...
+
+
+class CoachAttendanceRepository(Protocol):
+    async def upsert(self, row: CoachAttendance) -> CoachAttendance: ...
+    async def find_for_occurrence_coach(
+        self, occurrence_id: str, coach_id: str
+    ) -> CoachAttendance | None: ...
+    async def list_for_occurrences(self, occurrence_ids: list[str]) -> list[CoachAttendance]: ...
 
 
 class OccurrenceDetails(BaseModel):

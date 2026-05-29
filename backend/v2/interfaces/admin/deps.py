@@ -142,6 +142,7 @@ class AdminUseCases:
     list_admin_sessions: object  # callable
     list_session_occurrences: object  # async (session_id: str) -> list[dict]
     update_session_occurrence_coach: object  # async (...) -> dict | None
+    mark_coach_attendance: object  # MarkCoachAttendance
     list_admin_enrollments_for_session: object  # callable
     list_waitlist_for_session: object  # callable
     list_audit_logs: object  # callable

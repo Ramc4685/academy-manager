@@ -102,8 +102,22 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Address PR #103 review comments and verify the prior admin reports route-matrix flake fix."
+user_problem_statement: "Fix unusable admin create-session and fee settings UI with an industry-standard operator workflow."
 backend:
+  - task: "Worker C v2-only backend runtime wiring"
+    implemented: true
+    working: true
+    file: "backend/Dockerfile, backend/fly.toml, backend/pyproject.toml, backend/requirements.txt, backend/requirements-v2.txt, scripts/local_test_stack.sh, README.md, DEPLOYMENT.md, AGENTS.md, docs/agent/backend-api-rules.md, docs/agent/frontend-rules.md, docs/agent/testing-verification.md, docs/runbooks/saas-local-staging.md, docs/runbooks/blno-local-manual-test-checklist.md, docs/cutover-w1a-coach-today.md, frontend/lib/api/README.md, backend/v2/tests/structural/test_saas_production_wiring.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "main"
+        comment: "RED structural coverage first failed because backend/Dockerfile still launched backend.server:app and scripts/local_test_stack.sh still launched server:app plus /api/health."
+      - working: true
+        agent: "main"
+        comment: "Updated container/Fly/local runtime references to launch backend.v2.main:app directly, removed V2_ENABLED from assigned runtime docs/scripts/config, moved v2-only dependency pins into requirements.txt while leaving requirements-v2.txt as a CI compatibility stub, updated Stripe webhook docs to /api/v2/parent/webhooks/stripe, and added structural coverage proving runtime entrypoints and registered business routes are v2-only. Verification passed: focused structural pytest 10 passed, bash -n for local/dev scripts, rg sweep for removed legacy refs, and git diff --check."
   - task: "Issue #94 admin payout period backend slice"
     implemented: true
     working: true
@@ -160,6 +174,9 @@ backend:
       - working: true
         agent: "main"
         comment: "Added registration-assignment support for active waiver templates via application command and admin BFF route. Verification passed: waiver management focused tests returned 9 passed, full backend v2 suite returned 580 passed with 7 existing mongomock datetime warnings, Ruff check v2 passed, Ruff format --check v2 passed, frontend build passed. Backend mypy remains blocked by the existing duplicate module-name issue for admin_payment_ops.py."
+      - working: true
+        agent: "main"
+        comment: "Fixed BLNO local defect where /admin/waivers showed 'Could not load waiver templates' and creating a draft appeared to do nothing. Root cause was legacy/imported waiver_templates rows using older shapes: missing waiver_template_id, status='published', and text/body aliases. MongoWaiverTemplateRepository now normalizes those rows for admin template management. Verification passed: RED contract test first reproduced the KeyError/validation failure, focused waiver contract/interface suite returned 7 passed, Ruff check/format passed on touched files, and live Playwright against http://blno.localhost:3001/admin/waivers confirmed GET templates 200, POST create draft 201, and the new draft row rendered after reload."
   - task: "Issue #97 owner reports dashboard first slice"
     implemented: true
     working: true
@@ -559,6 +576,37 @@ backend:
         agent: "testing"
         comment: "Baseline regression audit 2026-05-27 (COU-12). Full v2 suite: 612 collected, 611 passed, 1 FAILED. Failing: v2/tests/contract/test_admin_directory_mongo_student_repo.py::test_list_admin_students_returns_rich_default_page_without_per_student_fanout. Assertion: bob.dues_status == 'due' but got 'overdue'. Bob seeded with status=pending, due_at=now+5d (future), created_at=now-1d. _payment_is_overdue should return False for this payment, yielding 'due', but repo returns 'overdue'. Likely a datetime/timezone interaction in mongomock_motor or a logic change in _dues_statuses/_payment_is_overdue. No code changes per COU-12 read-only scope."
 frontend:
+  - task: "Admin dashboard command center with monthly profit"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/admin/page.tsx, frontend/e2e/specs/admin-shell.spec.ts, docs/plans/2026-05-28-admin-dashboard-command-center.md"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "main"
+        comment: "RED coverage added for /admin current-month money snapshot. Focused Playwright first failed correctly because the existing dashboard did not render Month profit, Cash collected, or Outstanding dues from /admin/reports/dashboard."
+      - working: true
+        agent: "main"
+        comment: "Rebuilt /admin as an operator command center: current-month profit/cash/dues/payroll snapshot, today sessions, prioritized action queue, intake/capacity summary, and recent payments. Verification passed: focused Playwright profit test green, full admin-shell Chromium-mobile spec 27 passed, frontend pnpm typecheck, frontend pnpm lint, git diff --check, and Playwright-rendered desktop/mobile screenshots with BFF stubs confirmed dashboard content and no console errors. In-app Browser reached local BLNO login but authenticated QA was blocked by Firebase auth/network-request-failed, so rendered QA used Playwright fallback."
+      - working: true
+        agent: "main"
+        comment: "Post-review fixes landed: pending_approval registration statuses now count in intake/action items, partially_paid payments render as PARTIAL and are treated as payment exceptions, and failed dashboard action sources show an explicit unavailable state with query retries disabled for dashboard reads. Verification passed: focused review regression Playwright 2 passed, full admin-shell Chromium-mobile spec 28 passed, frontend pnpm typecheck, frontend pnpm lint, and git diff --check."
+  - task: "Admin create-session and fee settings usability defect"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/admin/sessions/page.tsx, frontend/components/admin/settings/fees-panel.tsx, frontend/e2e/specs/admin-session-creation-ui.spec.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Redesigned the create-session dialog into a wider sectioned scheduling workflow with separate date/time controls, coach/title/location guidance, live review summary, and end-after-start client validation. Updated fee settings to show operator-facing dollar/day fields instead of raw cents labels. Verification in progress; pnpm typecheck already passed."
+      - working: true
+        agent: "main"
+        comment: "Verification passed: frontend pnpm typecheck, frontend pnpm lint, git diff --check, and focused Playwright browser regression PLAYWRIGHT_PORT=3126 pnpm exec playwright test e2e/specs/admin-session-creation-ui.spec.ts --project=chromium-mobile --workers=1 --trace=off --output=/tmp/academy-session-ui-pw-results returned 2 passed. pnpm build was attempted and remains blocked by unrelated dirty admin parents/coaches route work plus existing dynamic route page-data collection errors; this defect's focused checks are green."
   - task: "parent registration Google-first UI"
     implemented: true
     working: true
@@ -969,10 +1017,13 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 34
+  test_sequence: 40
   run_ui: true
 test_plan:
   current_focus:
+    - "Worker C v2-only backend runtime wiring"
+    - "Admin dashboard command center with monthly profit"
+    - "Admin create-session and fee settings usability defect"
     - "PR CI failure feedback loop"
     - "CourtMastr QA walkthrough defect batch"
     - "parent registration Google-first UI"
@@ -990,6 +1041,18 @@ test_plan:
   test_priority: "high_first"
 agent_communication:
   - agent: "main"
+    message: "Worker C v2-only backend runtime wiring complete. Backend container/local docs now point at backend.v2.main:app and /api/v2/healthz, V2_ENABLED was removed from assigned runtime docs/scripts/config, Stripe webhook docs now use /api/v2/parent/webhooks/stripe, requirements-v2.txt is retained only as a CI compatibility stub after consolidating pins into requirements.txt, and structural tests prove registered business routes are /api/v2 only. Verification passed: focused structural pytest 10 passed, bash -n on local/dev scripts, assigned-scope rg sweep, and git diff --check."
+  - agent: "main"
+    message: "Admin dashboard command center built. /admin now shows current-month profit first, plus cash collected, outstanding dues, unpaid payroll, today sessions, prioritized action cards, intake/capacity, and recent payments. Added a plan doc and RED Playwright coverage for monthly profit before implementation. Verification passed: focused profit test, full admin-shell Chromium-mobile 27 passed, frontend typecheck/lint, git diff --check, and Playwright-rendered desktop/mobile screenshot QA with no console errors. In-app Browser authenticated BLNO QA was attempted but blocked at login by Firebase auth/network-request-failed."
+  - agent: "main"
+    message: "Post-review admin dashboard corrections complete. Fixed PENDING_APPROVAL registration filtering, partially_paid payment labeling/action handling, and action-source error visibility. Verification passed: focused review Playwright regressions 2 passed, full admin-shell Chromium-mobile 28 passed, frontend typecheck/lint, and diff-check."
+  - agent: "main"
+    message: "Local app startup defect fixed. User reported the local app was not working; root cause was twofold: scripts/local_test_stack.sh preferred an invalid non-empty NEXT_PUBLIC_FIREBASE_API_KEY over the valid legacy REACT_APP_FIREBASE_API_KEY in frontend/.env, causing Firebase auth/invalid-api-key, and detached frontend startup needed a pseudo-terminal to stay alive in this environment. Updated local_test_stack.sh to validate Firebase keys and fall back to REACT_APP, and to use a screen-backed frontend process when screen is available. Verification passed: bash -n scripts/local_test_stack.sh, scripts/local_test_stack.sh smoke, and Playwright loaded http://blno.localhost:3001/admin/waivers with /api/v2/me, admin academy, waivers, and templates all 200 and no browser warnings/errors."
+  - agent: "main"
+    message: "Admin session creation and settings fees usability defect is implemented and verified. Retested /admin/sessions create dialog with BFF stubs for layout sections, date/time validation, coach selection/manual fallback path coverage through the same control, payload compatibility, and mobile Chromium fit. Retested /admin/settings?panel=fees for dollar-based tuition/late-fee inputs and days-based grace-period input, including PATCH conversion back to cents. Verification passed: pnpm typecheck, pnpm lint, git diff --check, and focused Playwright 2 passed. pnpm build was attempted but is blocked outside this change by unrelated dirty admin route work and dynamic route page-data collection errors."
+  - agent: "main"
+    message: "BLNO waiver draft defect fixed locally. User reported creating a new waiver did nothing; live browser/network reproduced GET /api/v2/admin/waivers/templates returning 500. Root cause was legacy/imported waiver_templates rows with older field/status shapes that the admin template-management repo did not normalize. Added regression coverage and fixed MongoWaiverTemplateRepository aliases for id/body/status. Verification passed: focused waiver pytest 7 passed, Ruff check/format passed, live local Playwright saw templates GET 200, create POST 201, and 'Codex verification waiver' rendered in the template table after reload. Single-file mypy remains blocked by the repo's existing duplicate module-name configuration issue."
+  - agent: "main"
     message: "PR #108 CI failure feedback loop complete locally. Run 26512428900 failed before tests at Frontend / Dependency vulnerability scan: pnpm audit --audit-level=high reported tmp <0.2.6 via @lhci/cli@0.14.0. Added scripts/ci/pr_failure_feedback.py and updated agent/pre-push docs so future agents inspect run logs, reproduce the exact failed command locally, record the cause in test_result.md, and add missing local checks before pushing. Dependency remediation updates @lhci/cli and forces tmp 0.2.6 through pnpm overrides. Verification passed: pr_failure_feedback script, py_compile, pnpm 9 frozen install, audit high gate, typecheck, lint, build, serialized QA Playwright 8 passed, and git diff --check. Note: the first parallel QA Playwright rerun had one Chromium wrong-role redirect flake that passed on focused rerun and in the serialized full rerun."
   - agent: "main"
     message: "Live authenticated QA coverage added for the first CourtMastr defect batch. New opt-in suite frontend/e2e/specs/local-auth-qa.spec.ts logs in as seeded parent/admin/coach against scripts/local_test_stack.sh services without route-stubbing protected app APIs. Verified with an isolated seeded stack: Mongo 27018, Firebase Auth 9109, backend 8011, frontend 3011; LOCAL_AUTH_E2E=1 LOCAL_AUTH_BASE_URL=http://localhost:3011 pnpm e2e:local-auth returned 3 passed. Default pnpm e2e:local-auth returned 3 skipped for environments without a seeded stack."
@@ -997,6 +1060,8 @@ agent_communication:
     message: "CourtMastr QA walkthrough first defect batch implemented on feat/qa-defect-triage. Separate defects are recorded in docs/qa/2026-05-26-courtmastr-qa-defects.md. Fixed onboarding child DOB/native picker and skill select interaction, billing portal silent failure, and wrong-role admin/coach persona redirect messaging. Verification passed: Playwright QA defect spec 8/8 across chromium-mobile and webkit-mobile, frontend typecheck/lint/build, git diff --check, and Browser landing-page smoke with no console warnings/errors. Remaining open QA defects: owner/admin signup path, forgot-password UX, parent loading skeletons, and broader landing copy/pricing improvements."
   - agent: "main"
     message: "Main CI run 26452572015 investigation: PR run 26451589552 passed the PR code, and the post-merge main push failed on a different existing flaky test: frontend/e2e/specs/admin-shell.spec.ts settings defaults to academy and each panel tab updates the URL on webkit-mobile. The failing attempt expected panel=fees but remained on panel=academy; retry passed, so CI failed due failOnFlakyTests. Stabilized the test by skipping the already-verified academy no-op tab click and exercising only real tab transitions. Verification passed: focused WebKit repeat-each=5, CI-shaped focused settings spec across chromium-mobile/webkit-mobile, frontend typecheck, frontend lint, and git diff --check."
+  - agent: "main"
+    message: "BLNO active-student waiver workflow implemented and verified locally. Added admin reminder dispatch for pending/outdated waiver rows, parent current-waiver retrieval and digital acceptance for all active children, student-directory waiver status, parent dashboard link, admin reminder panel, and legacy/bootstrap waiver assignment compatibility. The original Require action failure was caused by imported waiver_templates rows using Mongo _id/status=published instead of waiver_template_id/status=active; MongoWaiverTemplateRepository now resolves modern and legacy identities and normalizes assigned bootstrap rows to active. Verification passed: focused backend waiver/admin-directory suite returned 17 passed; backend Ruff check and format check passed on touched waiver files; frontend pnpm typecheck and pnpm lint passed; Browser authenticated BLNO QA clicked Require for BLNO Liability Waiver successfully, saw Required for registration, saw 45 attention rows on /admin/waivers, and saw /admin/students Waiver column mark active students OUTDATED while inactive/paused students are NOT REQUIRED. Production was not touched; authenticated parent manual acceptance was covered by backend route tests, not a separate parent-browser login."
   - agent: "main"
     message: "PR #106 CI failure follow-up: GitHub run 26450747515 failed in Frontend Playwright E2E because register-email-verification.spec.ts was flaky on webkit-mobile. Root cause was a hydration race in the test: it filled email before the controlled form completed hydration, then submit saw an empty required email field. Fixed the test to wait for hydrated/enabled submit and assert both field values before submit. Local verification passed with WebKit-only and CI-mode focused Playwright runs, plus typecheck/lint/diff-check."
   - agent: "main"
@@ -1438,3 +1503,75 @@ agent_communication:
       Frontend: pnpm build passes (regenerated .next/types for new /admin/registrations routes added in #103); pnpm typecheck exits 0 after build.
 
       git status: clean (working tree).
+  - agent: "main"
+    message: |
+      BLNO local Mongo import script and local data apply — 2026-05-27.
+
+      Added backend/scripts/apply_blno_mongo.py to apply a reviewed BLNO Mongo document bundle in dry-run by default, with explicit --apply for writes and --target production --confirm-production for production writes. Added backend/tests/test_apply_blno_mongo.py coverage for upsert identity filters, production/local safety gates, bundle loading, and local academy_id override.
+
+      Generated Mongo-ready BLNO bundle under .local/blno/mongo_documents from /Users/ramc/Downloads/BLno-Badmintion-Training (1).xlsx and applied it locally to DB academy_manager_local with --academy-id-override default-academy. Local counts verified: users 45, academy_memberships 45, platform_roles 1, sessions 4, students 47, enrollments 47, payments 80, payment_events 13, attendance 8, move_log 5, expenses 3, payout_rules 2, coach_rates 2, waiver_versions 1, waiver_templates 1, waiver_acceptances 47, dues_snapshots 41. Local Firebase emulator users were seeded for 45 imported users with Admin@12345 / Coach@12345 / Parent@12345 passwords and emailVerified=true. Production data was not touched.
+  - agent: "main"
+    message: |
+      BLNO session visibility fix — 2026-05-27.
+
+      User reported the admin Sessions page showed "No sessions on 2026-05-27." Root cause: the generated BLNO session docs had start_at on 2026-05-01, while the admin sessions route filters by exact requested date. Corrected .local/blno/mongo_documents session and session_occurrence start/end datetimes so Wednesday sessions start on 2026-05-27 and Thursday sessions start on 2026-05-28, then reapplied the local bundle with python scripts/apply_blno_mongo.py --apply --academy-id-override default-academy. Verification: direct Mongo query for 2026-05-27 returned two Wednesday sessions with active roster counts 10 and 11.
+  - agent: "main"
+    message: |
+      BLNO admin UI manual-pass fixes — 2026-05-27.
+
+      User reported four local admin issues: Sessions should show academy sessions instead of only today's date-filtered view; session detail needs roster metrics, student levels, and fee-due highlighting; /admin/payments crashed on unmapped payment statuses; /admin/finance/revenue returned 500. Implemented upcoming-session list/detail lookup, roster metrics plus inline level 1-10 editing and dues chips, defensive payment status chips for legacy paid/waived rows, and backend support for waived payment rows as non-revenue payments.
+
+      Verification: backend focused pytest for Mongo payments, admin billing, and admin sessions returned 38 passed; backend ruff check and ruff format --check passed on touched v2 backend files; frontend pnpm typecheck passed; frontend pnpm lint passed; Playwright admin-shell checks for /admin/sessions, /admin/payments, session detail, and legacy paid/waived payment statuses returned 4 passed on chromium-mobile. In-app Browser authenticated local QA was blocked because the running local frontend reports Firebase auth/invalid-api-key at login; no production deploy was run.
+  - agent: "main"
+    message: |
+      BLNO coach payout/payslip defect fix — 2026-05-27.
+
+      User reported Coach payouts showed "No payouts yet" and Coach payslip showed incorrect hardcoded earnings. Root cause: /admin/payouts read only the legacy payouts collection, while BLNO import populated payout_rules/payments but no payout rows; /admin/coach-payslip derived earnings in the frontend as students * $28 instead of using BLNO's 30% expected-revenue payout rule.
+
+      Implemented MongoPayoutRepository fallback derivation from payment expected revenue, sessions, and active revenue_percentage payout_rules when no persisted payout rows exist. Added payout metadata fields for expected revenue, student count, session count, and rule label. Updated Coach payouts and Coach payslip frontend pages to use the same backend payout data. Local BLNO browser verification now shows May payouts: Gowtham $414.00 from $1,380.00 expected revenue and Kishore $354.00 from $1,180.00 expected revenue.
+  - agent: "main"
+    message: |
+      BLNO coach attendance payroll correction — 2026-05-27.
+
+      User clarified that coach pay must be based on coach presence per session, not revenue percentage. Added coach_attendance domain rows, Mongo persistence, admin API, and admin session-detail UI to mark coach present/absent per occurrence with lead/assistant role, optional per-session pay override, and note. ComputeCoachPayout now uses coach_attendance rows when present, including assistant overrides; the old /admin/finance/payouts empty-state fallback now derives from marked coach attendance and coach_rates instead of expected revenue.
+
+      Verification passed: backend focused suite returned 50 passed for coach attendance, payout, payable occurrence query, admin sessions, and finance repos; backend ruff check and ruff format --check passed on touched v2 files; frontend pnpm typecheck and pnpm lint passed. Local Browser QA on http://blno.localhost:3001 marked Kishore present for the May 27 BLNO session, then verified /admin/coach-payslip showed Kishore $25.00, 1 session, 8 students, and /admin/payouts showed the same Coach attendance payout. Local stack status showed MongoDB, Firebase Auth/UI, Backend API, and Frontend running. Production was not touched.
+  - agent: "main"
+    message: |
+      BLNO admin defects follow-up — 2026-05-28.
+
+      User reported: Expenses not loading, Sessions only showing 2, Student detail needs a one-stop operational view, and coach/parent email/phone editing plus coach/parent separation. Used subagent investigations for expenses, sessions, student detail, and user directory root causes.
+
+      Changes: corrected malformed BLNO imported expense dates in .local bundle/source data and current local Mongo rows; made the BLNO import script fail fast on invalid datetime strings; added admin sessions window=all and switched /admin/sessions to show all academy sessions; added phone to AdminUserView list responses; added admin email editing through Firebase Admin plus Mongo normalized_email update; split admin directory nav/routes into /admin/coaches and /admin/parents while preserving /admin/users; expanded admin student detail with sessions/enrollments, payment history, recent attendance, coach notes, and totals.
+
+      Verification passed: backend focused pytest for admin directory/sessions/student-user routes/admin user edit/admin expense edit returned 37 passed, plus focused user-directory rerun returned 16 passed after role-filter tightening; post-review focused contract/interface/application suite returned 50 passed after fixing global email duplicate safety, coach-parent role visibility, and legacy paid-row totals; backend ruff check and ruff format --check passed on touched v2 backend files; frontend pnpm typecheck and pnpm lint passed; BLNO import dry-run passed; authenticated local API checks returned expenses=3, sessions window=all=4, coaches only role=coach, parents only role=parent, and student detail returned sessions=1/payments=1 with paid_amount_cents=6000/totals; frontend route smoke returned 200 for /admin/expenses, /admin/sessions, /admin/students/stu_8363b40f6223cf6ecac3, /admin/coaches, /admin/parents, and /admin/users/user_ca90a2b95efbf0205fa0. Local frontend was restarted on port 3001 after a stale Next dev-server chunk error. Playwright browser was blocked by an existing MCP browser profile lock; production was not touched.
+  - agent: "main"
+    message: |
+      BLNO local Firebase login failure diagnosis — 2026-05-28.
+
+      User reported frequent login failure showing Firebase Error (auth/network-request-failed) on http://blno.localhost:3001/login. Root cause: local frontend env pointed NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST at http://127.0.0.1:9101, but scripts/local_test_stack.sh starts the Firebase Auth emulator on 127.0.0.1:9099. Port 9099 responded; port 9101 had no listener. Because Next.js embeds NEXT_PUBLIC_* values at dev-server startup, the stale value persisted until the frontend was restarted.
+
+      Changes: corrected local frontend/.env to http://127.0.0.1:9099 and updated tracked frontend/.env.example to include the protocol in the emulator URL. Restarted the local frontend with scripts/local_test_stack.sh app.
+
+      Verification passed: local stack status showed Firebase Auth on 9099 and frontend on 3001; Playwright CLI login through http://blno.localhost:3001/login as the local admin reached /admin; network requests showed Firebase signInWithPassword and account lookup going to http://127.0.0.1:9099 with 200 responses, and /api/v2/me returned 200; browser console had 0 errors and 0 warnings.
+  - agent: "main"
+    message: |
+      BLNO manual coach/parent/student creation — 2026-05-28.
+
+      User asked to be able to manually add coaches, parents, and students, with coaches and parents separated. Added admin v2 create-user and create-student use cases, Mongo repository persistence, admin API routes, frontend API clients, and admin UI dialogs for /admin/coaches, /admin/parents, /admin/users, and /admin/students. Manual users are created with Firebase Auth, global users, and active academy memberships. Manual students are created under a selected active parent.
+
+      Verification passed: backend focused pytest for admin student/user interface and contract repositories returned 26 passed; backend ruff check and ruff format --check passed on touched backend files; frontend pnpm typecheck and pnpm lint passed. Authenticated Playwright CLI smoke on http://blno.localhost:3001 created Coach Manual Codex, Parent Manual Codex, and Student Manual Codex linked to Parent Manual Codex; the students table search showed the new student with parent email parent.manual.codex@example.com, active status, current dues, and 0 sessions. Browser console had 0 errors during the smoke, with only dev-mode warnings.
+  - agent: "main"
+    message: |
+      V2-only legacy removal and hardening — 2026-05-29.
+
+      Implemented the v2-only backend cutover: backend runtime entrypoints, Fly health checks, local stack scripts, smoke scripts, CI, docs, and structural tests now target backend.v2.main:app and /api/v2/healthz. Removed legacy runtime files (backend/server.py, backend/auth.py, backend/db.py, backend/models.py, backend/routers, backend/services, backend/tests) plus requirements-v2.txt and the SaaS legacy 410 route guard. Added v2-native Firebase Admin adapter usage, CORS middleware, app-level public write rate limiting, production settings validation, login_attempts TTL migration with legacy string-date normalization, strict DOB validation, and welcome-email outbox/audit logging for new parent registrations.
+
+      Multi-agent review found and this pass fixed missing v2 CORS, Firebase password-provider email verification, Firebase project env precedence, fail-closed Firebase Admin behavior in prod, fake Stripe production fail-open, rate-limit X-Forwarded-For spoofing/bucket growth, login_attempts string-date TTL cleanup, duplicate welcome events, and PII in welcome-email failure logs.
+
+      Verification passed: backend focused hardening suite returned 61 passed; backend ruff check v2 and ruff format --check v2 passed; backend pytest v2/tests --override-ini="testpaths=v2/tests" -q returned 666 passed with 2 mongomock datetime warnings; import-linter kept all 4 contracts with PYTHONPATH set to repo root; pip-audit -r requirements.txt found no known vulnerabilities; bash -n passed for local stack and smoke scripts; git diff --check passed; frontend pnpm lint, pnpm build, and post-build pnpm typecheck passed. The required mypy command still fails before useful checking with the existing duplicate module mapping for v2.contexts.billing.application.use_cases.admin_payment_ops and backend.v2.contexts.billing.application.use_cases.admin_payment_ops.
+  - agent: "main"
+    message: |
+      PR #120 merge conflict resolution — 2026-05-29.
+
+      Resolved conflicts against origin/main after dependency-update PRs landed. Kept the v2-only deletion of backend/server.py and backend/tests/test_onboarding_checkout.py, accepted main's backend dependency bumps, and carried main's Tailwind 4/frontend dependency updates through the merge. Verification for this conflict-resolution commit is recorded in the final handoff.

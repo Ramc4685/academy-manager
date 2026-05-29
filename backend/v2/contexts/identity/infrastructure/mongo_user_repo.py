@@ -18,9 +18,19 @@ from pymongo import ReturnDocument
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserDetail,
     AdminUserSummary,
+    CreateAdminUserCommand,
     UpdateAdminUserCommand,
 )
-from backend.v2.contexts.identity.domain.models import Role, User
+from backend.v2.contexts.identity.domain.errors import (
+    UserCreateFailed,
+    UserEmailAlreadyExists,
+    UserEmailUpdateFailed,
+)
+from backend.v2.contexts.identity.domain.models import Role, User, normalize_email
+from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
+    get_firebase_admin_adapter,
+)
+from backend.v2.shared.ids import new_ulid
 
 
 class MongoUserRepository:
@@ -146,7 +156,19 @@ class MongoUserRepository:
 
     @staticmethod
     def _role_filter(role: Role) -> dict[str, object]:
-        return {"$or": [{"role": role}, {"roles": role}, {"roles": {"$in": [role]}}]}
+        secondary_role_filter: dict[str, object] = {
+            "role": {"$ne": "admin"},
+            "roles": {"$in": [role]},
+        }
+        if role == "admin":
+            secondary_role_filter = {"role": {"$exists": False}, "roles": {"$in": [role]}}
+        return {
+            "$or": [
+                {"role": role},
+                {"role": {"$exists": False}, "roles": role},
+                secondary_role_filter,
+            ]
+        }
 
     def _to_admin_summary(self, doc: dict[str, object]) -> AdminUserSummary:
         user = self._to_domain(doc)
@@ -220,6 +242,92 @@ class MongoUserRepository:
         )
         return self._to_admin_detail(doc, linked_student_count=linked_student_count)
 
+    async def create_admin_user(
+        self,
+        command: CreateAdminUserCommand,
+        *,
+        academy_id: str,
+    ) -> AdminUserDetail:
+        now = datetime.now(UTC)
+        email = normalize_email(str(command.email))
+        display_name = " ".join(command.display_name.split())
+        await self._ensure_email_available(email, exclude_user_id=None)
+
+        uid = f"user_{new_ulid().lower()}"
+        firebase_uid = await type(self)._create_firebase_user(
+            uid=uid,
+            email=email,
+            display_name=display_name,
+        )
+        doc = {
+            "user_id": firebase_uid,
+            "auth_uid": firebase_uid,
+            "firebase_uid": firebase_uid,
+            "auth_provider": "firebase",
+            "email": email,
+            "normalized_email": email,
+            "display_name": display_name,
+            "phone": command.phone.strip() if command.phone else None,
+            "role": command.role,
+            "roles": [command.role],
+            "status": "active",
+            "is_active": True,
+            "academy_id": academy_id,
+            "created_at": now,
+            "updated_at": now,
+        }
+        try:
+            result = await self.collection.insert_one(doc)
+            doc["_id"] = result.inserted_id
+            await self._db["academy_memberships"].update_one(
+                {"academy_id": academy_id, "user_id": firebase_uid},
+                {
+                    "$set": {
+                        "roles": [command.role],
+                        "status": "active",
+                        "updated_at": now,
+                    },
+                    "$setOnInsert": {
+                        "membership_id": str(new_ulid()),
+                        "academy_id": academy_id,
+                        "user_id": firebase_uid,
+                        "invited_by": command.actor_id,
+                        "invited_at": now,
+                        "accepted_at": now,
+                        "created_at": now,
+                    },
+                },
+                upsert=True,
+            )
+            await self._write_audit(
+                academy_id=academy_id,
+                actor_id=command.actor_id,
+                action="user.created",
+                entity_id=firebase_uid,
+                reason=command.reason,
+                changed_keys=[
+                    "email",
+                    "display_name",
+                    "phone",
+                    "role",
+                    "roles",
+                    "status",
+                ],
+                before={},
+                after=doc,
+            )
+        except Exception:
+            await self.collection.delete_one({"user_id": firebase_uid})
+            await self._db["academy_memberships"].delete_one(
+                {"academy_id": academy_id, "user_id": firebase_uid}
+            )
+            await type(self)._delete_firebase_user(firebase_uid)
+            raise
+        created = await self.get_admin_user(firebase_uid, academy_id=academy_id)
+        if created is None:
+            raise UserCreateFailed("created user could not be loaded")
+        return created
+
     async def update_admin_user(
         self,
         user_id: str,
@@ -233,6 +341,15 @@ class MongoUserRepository:
         if before is None:
             return None
         set_doc: dict[str, object] = {"updated_at": datetime.now(UTC)}
+        email_change: tuple[str, str] | None = None
+        if command.email is not None:
+            email = normalize_email(str(command.email))
+            await self._ensure_email_available(email, exclude_user_id=user_id)
+            auth_uid = self._firebase_uid(before)
+            if auth_uid:
+                email_change = (auth_uid, email)
+            set_doc["email"] = email
+            set_doc["normalized_email"] = email
         if command.display_name is not None:
             set_doc["display_name"] = " ".join(command.display_name.split())
         if command.phone is not None:
@@ -252,6 +369,22 @@ class MongoUserRepository:
         )
         if doc is None:
             return None
+        if email_change is not None:
+            try:
+                await self._update_firebase_email(*email_change)
+            except Exception:
+                await self.collection.update_one(
+                    {"_id": before["_id"]},
+                    {
+                        "$set": {
+                            "email": before.get("email"),
+                            "normalized_email": before.get("normalized_email")
+                            or normalize_email(str(before.get("email") or "")),
+                            "updated_at": before.get("updated_at", datetime.now(UTC)),
+                        }
+                    },
+                )
+                raise
         if changed:
             await self._write_audit(
                 academy_id=academy_id,
@@ -264,6 +397,57 @@ class MongoUserRepository:
                 after=doc,
             )
         return await self.get_admin_user(self._to_domain(doc).user_id, academy_id=academy_id)
+
+    async def _ensure_email_available(
+        self,
+        email: str,
+        *,
+        exclude_user_id: str | None,
+    ) -> None:
+        query: dict[str, object] = {
+            "$or": [
+                {"normalized_email": email},
+                {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}},
+            ]
+        }
+        if exclude_user_id is not None:
+            query["$nor"] = [self._id_filter(exclude_user_id)]
+        existing = await self.collection.find_one(query)
+        if existing is not None:
+            raise UserEmailAlreadyExists("email already belongs to another user", email=email)
+
+    @staticmethod
+    def _firebase_uid(doc: dict[str, object]) -> str | None:
+        for key in ("auth_uid", "firebase_uid", "user_id"):
+            value = doc.get(key)
+            if value:
+                return str(value)
+        return None
+
+    @staticmethod
+    async def _create_firebase_user(*, uid: str, email: str, display_name: str) -> str:
+        try:
+            return await get_firebase_admin_adapter().create_user(
+                uid=uid,
+                email=email,
+                display_name=display_name,
+            )
+        except Exception as exc:
+            raise UserCreateFailed("could not create Firebase user") from exc
+
+    @staticmethod
+    async def _delete_firebase_user(uid: str) -> None:
+        try:
+            await get_firebase_admin_adapter().delete_user(uid)
+        except Exception:
+            return
+
+    @staticmethod
+    async def _update_firebase_email(auth_uid: str, email: str) -> None:
+        try:
+            await get_firebase_admin_adapter().update_user_email(auth_uid, email)
+        except Exception as exc:
+            raise UserEmailUpdateFailed("could not update Firebase email") from exc
 
     async def change_role(
         self,

@@ -10,7 +10,7 @@ import os
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -67,6 +67,16 @@ class Settings(BaseSettings):
     stripe_api_key: str | None = Field(default=None)
     stripe_webhook_secret: str | None = Field(default=None)
     stripe_use_fake_gateway: bool = Field(default=True)
+    firebase_project_id: str | None = Field(default=None)
+    cors_origins: str = Field(default="")
+    frontend_url: str | None = Field(default=None)
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _normalize_cors_origins(cls, value: object) -> str:
+        if isinstance(value, list | tuple):
+            return ",".join(str(item) for item in value)
+        return str(value or "")
 
     @model_validator(mode="after")
     def apply_legacy_deploy_fallbacks(self) -> Settings:
@@ -97,7 +107,60 @@ class Settings(BaseSettings):
             self.stripe_webhook_secret = os.environ.get(
                 "STRIPE_WEBHOOK_SECRET", self.stripe_webhook_secret
             )
+        if "V2_FIREBASE_PROJECT_ID" not in os.environ:
+            self.firebase_project_id = os.environ.get(
+                "FIREBASE_PROJECT_ID", self.firebase_project_id
+            )
+        if "V2_CORS_ORIGINS" not in os.environ:
+            self.cors_origins = os.environ.get("CORS_ORIGINS", self.cors_origins)
+        if "V2_FRONTEND_URL" not in os.environ:
+            self.frontend_url = os.environ.get("FRONTEND_URL", self.frontend_url)
+        self._validate_production_settings()
         return self
+
+    def cors_allowed_origins(self) -> list[str]:
+        values = [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        if self.frontend_url:
+            values.append(self.frontend_url.strip())
+        unique: list[str] = []
+        seen: set[str] = set()
+        for origin in values:
+            if origin not in seen:
+                unique.append(origin)
+                seen.add(origin)
+        return unique
+
+    def _validate_production_settings(self) -> None:
+        if self.env != "prod":
+            return
+
+        missing: list[str] = []
+        if not _explicit_env_value("V2_MONGO_URL", "MONGO_URL"):
+            missing.append("mongo_url")
+        if not _explicit_env_value("V2_MONGO_DB", "DB_NAME"):
+            missing.append("mongo_db")
+        if not _explicit_env_value("V2_FIREBASE_PROJECT_ID", "FIREBASE_PROJECT_ID"):
+            missing.append("firebase_project_id")
+        if self.stripe_use_fake_gateway:
+            missing.append("stripe_use_fake_gateway=false")
+        if not _explicit_env_value("V2_STRIPE_API_KEY", "STRIPE_API_KEY"):
+            missing.append("stripe_api_key")
+        if not _explicit_env_value("V2_STRIPE_WEBHOOK_SECRET", "STRIPE_WEBHOOK_SECRET"):
+            missing.append("stripe_webhook_secret")
+        if "*" in self.cors_allowed_origins():
+            missing.append("cors_origins_without_wildcard")
+
+        if missing:
+            missing_text = ", ".join(missing)
+            raise ValueError(f"Missing required production v2 settings: {missing_text}")
+
+
+def _explicit_env_value(*names: str) -> str | None:
+    for name in names:
+        value = os.environ.get(name)
+        if value is not None and value.strip():
+            return value
+    return None
 
 
 @lru_cache(maxsize=1)

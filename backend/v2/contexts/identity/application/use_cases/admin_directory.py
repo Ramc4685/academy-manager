@@ -27,9 +27,21 @@ class AdminUserDetail(AdminUserSummary):
     linked_student_count: int = 0
 
 
+class CreateAdminUserCommand(BaseModel):
+    model_config = {"frozen": True}
+
+    role: Role
+    email: EmailStr
+    display_name: str = Field(min_length=1, max_length=120)
+    phone: str | None = Field(default=None, max_length=40)
+    actor_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1, max_length=500)
+
+
 class UpdateAdminUserCommand(BaseModel):
     model_config = {"frozen": True}
 
+    email: EmailStr | None = None
     display_name: str | None = Field(default=None, min_length=1, max_length=120)
     phone: str | None = Field(default=None, max_length=40)
     status: str | None = Field(default=None, max_length=32)
@@ -57,6 +69,15 @@ class AdminUserWriter(Protocol):
     ) -> AdminUserDetail | None: ...
 
 
+class AdminUserCreator(Protocol):
+    async def create_admin_user(
+        self,
+        command: CreateAdminUserCommand,
+        *,
+        academy_id: str,
+    ) -> AdminUserDetail: ...
+
+
 class ListAdminUsers:
     def __init__(self, users: AdminUserDirectoryQuery) -> None:
         self._users = users
@@ -80,6 +101,19 @@ class GetAdminUser:
         if user is None:
             raise UserNotFound("user not found")
         return user
+
+
+class CreateAdminUser:
+    def __init__(self, users: AdminUserCreator) -> None:
+        self._users = users
+
+    async def execute(
+        self,
+        command: CreateAdminUserCommand,
+        *,
+        academy_id: str,
+    ) -> AdminUserDetail:
+        return await self._users.create_admin_user(command, academy_id=academy_id)
 
 
 class UpdateAdminUser:

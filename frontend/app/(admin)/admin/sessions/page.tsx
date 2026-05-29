@@ -40,10 +40,6 @@ const AdminCalendarView = dynamic(() => import("@/components/admin/AdminCalendar
   loading: () => <div className="h-96 animate-pulse rounded-xl bg-rally-line/40" />,
 });
 
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 function formatTimeRange(start: string, end: string): string {
   const fmt = (s: string) =>
     new Date(s).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
@@ -63,21 +59,20 @@ function fillChip(enrolled: number, capacity: number): { variant: ChipVariant; l
 }
 
 export default function AdminSessionsPage() {
-  const [date, setDate] = useState<string>(todayISO());
   const [view, setView] = useState<"table" | "calendar">("table");
   const [createOpen, setCreateOpen] = useState(false);
   const [editSession, setEditSession] = useState<AdminSessionView | null>(null);
   const queryClient = useQueryClient();
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: queryKeys.admin.sessions(date),
-    queryFn: () => listAdminSessions(date),
+    queryKey: queryKeys.admin.sessions("upcoming"),
+    queryFn: () => listAdminSessions(undefined, { window: "upcoming" }),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteAdminSession(id),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions(date) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
     },
   });
 
@@ -87,9 +82,11 @@ export default function AdminSessionsPage() {
     <section data-testid="admin-sessions" className="space-y-4">
       {/* Controls strip */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-3">
           <ViewToggle view={view} onChange={setView} />
-          {view === "table" && <DateInput value={date} onChange={setDate} />}
+          <span className="font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+            Upcoming academy sessions
+          </span>
         </div>
         <Button
           variant="primary"
@@ -122,7 +119,7 @@ export default function AdminSessionsPage() {
       ) : sessions.length === 0 ? (
         <Card p={32}>
           <p className="text-center text-sm text-rally-subtle" data-testid="sessions-empty">
-            No sessions on {date}.
+            No upcoming sessions found.
           </p>
         </Card>
       ) : (
@@ -142,7 +139,7 @@ export default function AdminSessionsPage() {
         onOpenChange={setCreateOpen}
         onCreated={() => {
           setCreateOpen(false);
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions(date) });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
         }}
       />
       <EditSessionDialog
@@ -152,7 +149,7 @@ export default function AdminSessionsPage() {
         }}
         onSaved={() => {
           setEditSession(null);
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions(date) });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
         }}
       />
     </section>
@@ -205,22 +202,6 @@ function PillButton({
     >
       {children}
     </button>
-  );
-}
-
-function DateInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <label className="inline-flex items-center gap-2">
-      <span className="font-mono text-[10px] font-bold tracking-overline uppercase text-rally-muted">
-        Date
-      </span>
-      <input
-        type="date"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="rounded-md border border-rally-line bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30"
-      />
-    </label>
   );
 }
 

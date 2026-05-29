@@ -41,16 +41,38 @@ export interface AdminSessionOccurrenceView {
   attendance_marked_count: number;
   attendance_marked_by: string[];
   attendance_last_marked_at: string | null;
+  coach_attendance: AdminCoachAttendanceView[];
 }
 
 export interface AdminSessionOccurrenceList {
   occurrences: AdminSessionOccurrenceView[];
 }
 
+export interface AdminCoachAttendanceView {
+  attendance_id: string;
+  occurrence_id: string;
+  coach_id: string;
+  status: "present" | "absent";
+  role: "lead" | "assistant";
+  source: "coach_self" | "admin";
+  marked_by: string;
+  marked_at: string;
+  rate_override_minor: number | null;
+  note: string;
+}
+
 export interface UpdateSessionOccurrenceCoachRequest {
   actual_coach_id?: string | null;
   substitute_coach_id?: string | null;
   reason: string;
+}
+
+export interface UpdateOccurrenceCoachAttendanceRequest {
+  coach_id: string;
+  status: "present" | "absent";
+  role: "lead" | "assistant";
+  rate_override_minor?: number | null;
+  note?: string;
 }
 
 export interface CreateSessionRequest {
@@ -82,6 +104,8 @@ export interface AdminEnrollmentView {
   full_name: string;
   status: EnrollmentStatus;
   enrolled_at: string;
+  level?: string | null;
+  dues_status?: "current" | "due" | "overdue";
 }
 
 export interface AdminEnrollmentList {
@@ -173,11 +197,13 @@ export interface PromoteWaitlistResponse {
 
 export type PaymentStatus =
   | "succeeded"
+  | "paid"
   | "pending"
   | "refunded"
   | "partially_refunded"
   | "failed"
-  | "expired";
+  | "expired"
+  | "waived";
 
 export type AdminPaymentStatus = PaymentStatus | "partially_paid";
 
@@ -319,6 +345,10 @@ export interface AdminPayoutView {
   period_start: string;
   period_end: string;
   paid_at: string | null;
+  expected_revenue_cents?: number | null;
+  students_count?: number | null;
+  sessions_count?: number | null;
+  rule_label?: string | null;
 }
 
 export interface AdminPayoutList {
@@ -907,6 +937,19 @@ export function updateSessionOccurrenceCoach(
 ): Promise<AdminSessionOccurrenceView> {
   return apiFetch<AdminSessionOccurrenceView>(
     `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/coach`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export function updateOccurrenceCoachAttendance(
+  occurrenceId: string,
+  payload: UpdateOccurrenceCoachAttendanceRequest
+): Promise<AdminCoachAttendanceView> {
+  return apiFetch<AdminCoachAttendanceView>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/coach-attendance`,
     {
       method: "PATCH",
       body: JSON.stringify(payload),

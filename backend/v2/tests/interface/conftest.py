@@ -17,12 +17,16 @@ from fastapi.testclient import TestClient
 
 from backend.v2.contexts.coaching.application.ports import OccurrenceDetails
 from backend.v2.contexts.coaching.application.use_cases.mark_attendance import MarkAttendance
+from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance import (
+    MarkCoachAttendance,
+)
 from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     CreateLessonPlan,
     CreateProgressNote,
     ListLessonPlans,
     ListProgressNotes,
 )
+from backend.v2.contexts.coaching.domain.models import CoachAttendance
 from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
     GetSessionRoster,
 )
@@ -598,6 +602,9 @@ class FakeAdminOccurrenceRepo:
             if occurrence.session_id == session_id or occurrence.template_session_id == session_id
         ]
 
+    async def get(self, occurrence_id: str) -> SessionOccurrence | None:
+        return self.rows.get(occurrence_id)
+
     async def update_coach_assignment(
         self,
         *,
@@ -617,6 +624,23 @@ class FakeAdminOccurrenceRepo:
             update["substitute_coach_id"] = substitute_coach_id
         self.rows[occurrence_id] = occurrence.model_copy(update=update)
         return self.rows[occurrence_id]
+
+
+@dataclass
+class FakeAdminCoachAttendanceRepo:
+    rows: dict[tuple[str, str], CoachAttendance] = field(default_factory=dict)
+
+    async def upsert(self, row: CoachAttendance) -> CoachAttendance:
+        self.rows[(row.occurrence_id, row.coach_id)] = row
+        return row
+
+    async def find_for_occurrence_coach(
+        self, occurrence_id: str, coach_id: str
+    ) -> CoachAttendance | None:
+        return self.rows.get((occurrence_id, coach_id))
+
+    async def list_for_occurrences(self, occurrence_ids: list[str]) -> list[CoachAttendance]:
+        return [row for row in self.rows.values() if row.occurrence_id in occurrence_ids]
 
 
 @dataclass
@@ -704,6 +728,7 @@ class _AdminFakeEnrollmentQuery:
 class FakeStudentWriter:
     students: dict[str, Any] = field(default_factory=dict)
     admin_status: dict[str, str] = field(default_factory=dict)
+    admin_levels: dict[str, str | None] = field(default_factory=dict)
 
     async def upsert(self, student):
         self.students[student.student_id] = student
@@ -1080,6 +1105,7 @@ def admin_seed():
     sessions = FakeSessionWriter()
     enrollments = FakeEnrollmentWriter()
     occurrences = FakeAdminOccurrenceRepo()
+    coach_attendance = FakeAdminCoachAttendanceRepo()
     sessions.sessions["sess-1"] = Session(
         session_id="sess-1",
         academy_id="acad",
@@ -1103,6 +1129,7 @@ def admin_seed():
     return {
         "sessions": sessions,
         "occurrences": occurrences,
+        "coach_attendance": coach_attendance,
         "enrollments": enrollments,
         "enrollment_query": enrollments,
         "enrollment_events": FakeEnrollmentEvents(),
@@ -1125,6 +1152,7 @@ def admin_seed():
 def _build_admin_use_cases(seed) -> AdminUseCases:
     sessions = seed["sessions"]
     occurrences = seed["occurrences"]
+    coach_attendance = seed["coach_attendance"]
     enrollments_w = seed["enrollments"]
     enrollments_q = seed["enrollment_query"]
     enrollment_events = seed["enrollment_events"]
@@ -1238,8 +1266,11 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                     "session_id": e.session_id,
                     "student_id": e.student_id,
                     "student_name": st.full_name if st else "(unknown)",
+                    "full_name": st.full_name if st else "(unknown)",
                     "parent_id": st.parent_id if st else "",
                     "status": e.status,
+                    "level": students.admin_levels.get(e.student_id),
+                    "dues_status": students.admin_status.get(e.student_id, "current"),
                 }
             )
         return out
@@ -1257,6 +1288,10 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             "attendance_marked_count": 0,
             "attendance_marked_by": [],
             "attendance_last_marked_at": None,
+            "coach_attendance": [
+                row.model_dump(exclude={"academy_id"})
+                for row in await coach_attendance.list_for_occurrences([occurrence.occurrence_id])
+            ],
         }
 
     async def list_session_occurrences(session_id):
@@ -1278,6 +1313,29 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             substitute_coach_id=substitute_coach_id,
         )
         return None if row is None else await _occurrence_row(row)
+
+    class _AdminOccurrenceLookup:
+        async def get(self, occurrence_id: str):
+            occurrence = await occurrences.get(occurrence_id)
+            if occurrence is None:
+                return None
+            return OccurrenceDetails(
+                occurrence_id=occurrence.occurrence_id,
+                session_id=occurrence.session_id,
+                starts_at=occurrence.start_at,
+                status=occurrence.status,
+                scheduled_coach_id=occurrence.scheduled_coach_id,
+                actual_coach_id=occurrence.actual_coach_id,
+                substitute_coach_id=occurrence.substitute_coach_id,
+                template_session_id=occurrence.template_session_id,
+            )
+
+    mark_coach_attendance = MarkCoachAttendance(
+        coach_attendance=coach_attendance,
+        occurrence_lookup=_AdminOccurrenceLookup(),
+        academy_id="acad",
+        clock=lambda: datetime(2026, 5, 16, 10, 35, tzinfo=UTC),
+    )
 
     async def list_waitlist_for_session(session_id):
         return [e for e in waitlist.entries.values() if e.session_id == session_id]
@@ -1461,6 +1519,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         list_admin_sessions=list_admin_sessions,
         list_session_occurrences=list_session_occurrences,
         update_session_occurrence_coach=update_session_occurrence_coach,
+        mark_coach_attendance=mark_coach_attendance,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
         list_audit_logs=list_audit_logs,

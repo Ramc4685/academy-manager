@@ -135,7 +135,7 @@ Backend:
 cd backend
 source .venv/bin/activate
 pytest
-uvicorn server:app --host 127.0.0.1 --port 8001 --reload
+uvicorn backend.v2.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
 Frontend:
@@ -167,11 +167,30 @@ script. The frontend still needs a real public Firebase web API key in
 `frontend/.env.local`, `frontend/.env`, or the environment; do not fall back to
 `dummy` for Firebase Auth testing.
 
+Local Firebase/Auth testing guardrails:
+
+- Prefer `scripts/local_test_stack.sh all` or `scripts/local_test_stack.sh app`
+  over ad hoc `pnpm dev` restarts. The helper maps the local Firebase key into
+  the Next.js environment.
+- Next.js client code reads `NEXT_PUBLIC_FIREBASE_*`. Older
+  `REACT_APP_FIREBASE_*` values do not reach the browser unless they are
+  explicitly bridged. Before manual frontend restarts, verify
+  `NEXT_PUBLIC_FIREBASE_API_KEY` is non-empty and is not `dummy`.
+- Frontend Auth emulator URL must include a protocol, for example
+  `NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST=http://127.0.0.1:9101`. Backend
+  Admin SDK emulator config uses host:port only, for example
+  `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9101`.
+- Health checks are not enough for auth regressions. After restarting the
+  frontend for local testing, use a browser to sign in and confirm Firebase
+  calls go to the Auth emulator without `auth/invalid-api-key`.
+- For BLNO tenant testing, use the tenant host (`http://blno.localhost:3001`)
+  when verifying login and admin pages, not only `http://localhost:3001`.
+
 Container smoke:
 
 ```bash
 docker compose up --build
-curl http://127.0.0.1:8001/api/health
+curl http://127.0.0.1:8001/api/v2/healthz
 ```
 
 ---

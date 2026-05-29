@@ -73,3 +73,73 @@ def test_fly_health_check_uses_v2_health_endpoint() -> None:
 
     assert 'path = "/api/v2/healthz"' in fly_toml
     assert 'path = "/api/health"' not in fly_toml
+
+
+def test_backend_runtime_entrypoints_start_v2_app_directly() -> None:
+    dockerfile = (REPO_ROOT / "backend/Dockerfile").read_text(encoding="utf-8")
+    fly_toml = (REPO_ROOT / "backend/fly.toml").read_text(encoding="utf-8")
+
+    assert "backend.v2.main:app" in dockerfile
+    assert "backend.server:app" not in dockerfile
+    assert "server:app" not in dockerfile
+    assert "V2_ENABLED" not in fly_toml
+
+
+def test_local_test_stack_uses_v2_app_and_health_endpoint() -> None:
+    script = (REPO_ROOT / "scripts/local_test_stack.sh").read_text(encoding="utf-8")
+
+    assert "backend.v2.main:app" in script
+    assert "uvicorn server:app" not in script
+    assert "V2_ENABLED" not in script
+    assert "/api/v2/healthz" in script
+    assert "/api/health" not in script
+
+
+def test_ci_installs_single_backend_requirements_file() -> None:
+    workflow = (REPO_ROOT / ".github/workflows/production.yml").read_text(encoding="utf-8")
+
+    assert "backend/requirements.txt" in workflow
+    assert "requirements-v2.txt" not in workflow
+    assert "Legacy backend tests" not in workflow
+
+
+def test_v2_app_configures_cors_for_frontend_origin(monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from backend.v2.main import create_app
+    from backend.v2.shared.config import get_settings
+
+    monkeypatch.setenv("V2_CORS_ORIGINS", "https://academy.courtmastr.com")
+    get_settings.cache_clear()
+
+    client = TestClient(create_app())
+    response = client.options(
+        "/api/v2/me",
+        headers={
+            "Origin": "https://academy.courtmastr.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://academy.courtmastr.com"
+
+
+def test_registered_business_routes_are_v2_only() -> None:
+    from backend.v2.main import create_app
+
+    app = create_app()
+    framework_paths = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
+    route_paths = {
+        getattr(route, "path", "")
+        for route in app.routes
+        if getattr(route, "path", "").startswith("/")
+    }
+    business_paths = route_paths - framework_paths
+
+    assert "/api/v2/healthz" in business_paths
+    assert "/api/v2/parent/webhooks/stripe" in business_paths
+    assert business_paths
+    assert all(path.startswith("/api/v2/") or path == "/api/v2/me" for path in business_paths)
+    assert "/api/health" not in route_paths
+    assert "/api/webhook/stripe" not in route_paths

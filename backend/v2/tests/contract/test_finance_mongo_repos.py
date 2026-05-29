@@ -23,6 +23,7 @@ from decimal import Decimal
 
 import pytest
 
+from backend.v2.contexts.billing.application.use_cases.finance import MongoPayoutRepository
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
     PersistedPayoutLine,
@@ -104,6 +105,110 @@ def _make_period(
 # ---------------------------------------------------------------------------
 # PayoutPeriod repo
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_payout_repo_derives_attendance_payouts_when_no_periods_exist(db, acad) -> None:
+    repo = MongoPayoutRepository(db)
+    await db["session_occurrences"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "occurrence_id": "occ-1",
+                "session_id": "sess-1",
+                "start_at": _dt("2026-05-27T18:00:00"),
+                "end_at": _dt("2026-05-27T19:00:00"),
+                "status": "scheduled",
+                "scheduled_coach_id": "coach-blno",
+                "is_payable": True,
+            },
+            {
+                "academy_id": acad,
+                "occurrence_id": "occ-2",
+                "session_id": "sess-2",
+                "start_at": _dt("2026-05-28T18:00:00"),
+                "end_at": _dt("2026-05-28T19:00:00"),
+                "status": "scheduled",
+                "scheduled_coach_id": "coach-blno",
+                "is_payable": True,
+            },
+        ]
+    )
+    await db["coach_rates"].insert_one(
+        {
+            "academy_id": acad,
+            "coach_id": "coach-blno",
+            "rate_id": "rate-1",
+            "billing_unit": "per_session",
+            "amount_minor": 2500,
+            "currency": "USD",
+            "effective_from": _dt("2026-01-01T00:00:00"),
+            "status": "active",
+        }
+    )
+    await db["coach_attendance"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "attendance_id": "coach-att-1",
+                "occurrence_id": "occ-1",
+                "coach_id": "coach-blno",
+                "status": "present",
+                "role": "lead",
+                "source": "admin",
+                "marked_by": "admin-1",
+                "marked_at": _dt("2026-05-27T19:05:00"),
+                "rate_override_minor": None,
+            },
+            {
+                "academy_id": acad,
+                "attendance_id": "coach-att-2",
+                "occurrence_id": "occ-2",
+                "coach_id": "coach-blno",
+                "status": "present",
+                "role": "assistant",
+                "source": "admin",
+                "marked_by": "admin-1",
+                "marked_at": _dt("2026-05-28T19:05:00"),
+                "rate_override_minor": 1500,
+            },
+        ]
+    )
+    await db["attendance"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "attendance_id": "att-1",
+                "occurrence_id": "occ-1",
+                "session_id": "sess-1",
+                "student_id": "student-1",
+                "marked_by": "coach-blno",
+                "marked_at": _dt("2026-05-27T19:00:00"),
+                "status": "present",
+            },
+            {
+                "academy_id": acad,
+                "attendance_id": "att-2",
+                "occurrence_id": "occ-2",
+                "session_id": "sess-2",
+                "student_id": "student-2",
+                "marked_by": "coach-blno",
+                "marked_at": _dt("2026-05-28T19:00:00"),
+                "status": "late",
+            },
+        ]
+    )
+
+    rows = await repo.list_all()
+
+    assert len(rows) == 1
+    payout = rows[0]
+    assert payout.coach_id == "coach-blno"
+    assert payout.amount_cents == 4000
+    assert payout.expected_revenue_cents is None
+    assert payout.students_count == 2
+    assert payout.sessions_count == 2
+    assert payout.rule_label == "Coach attendance"
 
 
 @pytest.mark.asyncio

@@ -241,3 +241,25 @@ async def test_latest_paid_payment_for_enrollment_fallback_via_session_when_enro
 
     assert payment is not None
     assert payment.payment_id == "orphan-pay-1"
+
+
+@pytest.mark.asyncio
+async def test_list_all_tolerates_legacy_waived_payments(db, acad) -> None:
+    repo = MongoPaymentRepository(db)
+    await db["payments"].insert_one(
+        {
+            "academy_id": acad,
+            "payment_id": "waived-pay-1",
+            "parent_id": "parent-waived-1",
+            "session_id": "sess-waived-1",
+            "status": "waived",
+            "amount_cents": 4000,
+            "created_at": datetime(2026, 5, 1, tzinfo=UTC),
+            "updated_at": datetime(2026, 5, 1, tzinfo=UTC),
+        }
+    )
+
+    payments = await repo.list_all()
+
+    assert [payment.payment_id for payment in payments] == ["waived-pay-1"]
+    assert payments[0].status == "waived"

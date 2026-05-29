@@ -36,6 +36,9 @@ from backend.v2.contexts.enrollment.domain.events import (
 from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentCancelled,
 )
+from backend.v2.contexts.identity.application.use_cases.register_public_parent import (
+    WelcomeEmailRequested,
+)
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     TransitionApplication,
 )
@@ -130,3 +133,14 @@ async def on_enrollment_cancelled(event: EnrollmentCancelled) -> None:
     deps = _require_deps()
     with tenant_scope(event.academy_id):
         await deps.promote_from_waitlist.execute(event.payload.session_id)
+
+
+@handler(event=WelcomeEmailRequested, schema_version=1)
+async def on_welcome_email_requested(event: WelcomeEmailRequested) -> None:
+    log.info(
+        "welcome_email_requested",
+        extra={
+            "user_id": event.payload.user_id,
+            "academy_id": event.academy_id,
+        },
+    )

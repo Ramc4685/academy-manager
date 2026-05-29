@@ -54,7 +54,17 @@ from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
 from backend.v2.contexts.coaching.application.use_cases.compute_payout import (
     ComputeCoachPayout,
 )
-from backend.v2.contexts.coaching.domain.payout import CoachRate, PayableOccurrence
+from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance import (
+    MarkCoachAttendance,
+)
+from backend.v2.contexts.coaching.domain.payout import (
+    CoachAttendanceForPayout,
+    CoachRate,
+    PayableOccurrence,
+)
+from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
+    MongoCoachAttendanceRepository,
+)
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     ChangeAdminStudentParent,
     GetAdminStudent,
@@ -637,6 +647,34 @@ class _MongoPayableOccurrenceQuery:
             },
             sort=[("start_at", 1)],
         )
+        docs = [doc async for doc in cursor]
+        occurrence_ids = [str(doc["occurrence_id"]) for doc in docs]
+        attendance_by_occurrence: dict[str, list[CoachAttendanceForPayout]] = {
+            occurrence_id: [] for occurrence_id in occurrence_ids
+        }
+        if occurrence_ids:
+            attendance_cursor = self._db["coach_attendance"].find(
+                {
+                    "academy_id": academy_id,
+                    "occurrence_id": {"$in": occurrence_ids},
+                },
+                sort=[("marked_at", 1)],
+            )
+            async for row in attendance_cursor:
+                occurrence_id = str(row["occurrence_id"])
+                attendance_by_occurrence.setdefault(occurrence_id, []).append(
+                    CoachAttendanceForPayout(
+                        coach_id=str(row["coach_id"]),
+                        status=row.get("status", "absent"),
+                        role=row.get("role", "lead"),
+                        rate_override_minor=(
+                            None
+                            if row.get("rate_override_minor") is None
+                            else int(row["rate_override_minor"])
+                        ),
+                    )
+                )
+
         return [
             PayableOccurrence(
                 occurrence_id=str(doc["occurrence_id"]),
@@ -648,8 +686,9 @@ class _MongoPayableOccurrenceQuery:
                 actual_coach_id=_optional_str(doc.get("actual_coach_id")),
                 substitute_coach_id=_optional_str(doc.get("substitute_coach_id")),
                 is_payable=bool(doc.get("is_payable", True)),
+                coach_attendance=attendance_by_occurrence.get(str(doc["occurrence_id"]), []),
             )
-            async for doc in cursor
+            for doc in docs
         ]
 
 
@@ -743,6 +782,7 @@ def compose_admin(
     sessions_w = MongoSessionWriter(db)
     sessions_r = MongoSessionRepository(db)
     occurrences_r = MongoSessionOccurrenceRepository(db)
+    coach_attendance_repo = MongoCoachAttendanceRepository(db)
     enrollments_w = MongoEnrollmentWriter(db)
     enrollments_r = MongoEnrollmentRepository(db)
     enrollment_events = MongoEnrollmentEventRepository(db)
@@ -1043,8 +1083,18 @@ def compose_admin(
         if not enrollment_docs:
             return []
         active = [enrollments_r._to_domain(doc) for doc in enrollment_docs]  # type: ignore[attr-defined]
-        students = await students_r.by_ids([e.student_id for e in active])
+        student_ids = [e.student_id for e in active]
+        students = await students_r.by_ids(student_ids)
         by_id = {s.student_id: s for s in students}
+        student_detail_by_id: dict[str, dict[str, Any]] = {}
+        if student_ids:
+            async for student_doc in db["students"].find(
+                {"academy_id": academy_id, "student_id": {"$in": student_ids}}
+            ):
+                student_detail_by_id[str(student_doc.get("student_id"))] = student_doc
+        dues_status_by_id: dict[str, str] = {}
+        if hasattr(students_r, "_dues_statuses"):
+            dues_status_by_id = await students_r._dues_statuses(academy_id, student_ids)  # type: ignore[attr-defined]
         out: list[dict] = []
         by_enrollment_id = {
             str(doc["enrollment_id"]): doc for doc in enrollment_docs if "enrollment_id" in doc
@@ -1053,6 +1103,7 @@ def compose_admin(
             doc = by_enrollment_id.get(e.enrollment_id, {})
             s = by_id.get(e.student_id)
             full_name = s.full_name if s else "(unknown)"
+            student_doc = student_detail_by_id.get(e.student_id, {})
             out.append(
                 {
                     "enrollment_id": e.enrollment_id,
@@ -1065,6 +1116,8 @@ def compose_admin(
                     # Prefer the semantic enrolled_at field (v2/seed); fall back
                     # to created_at for any legacy docs that only have that.
                     "enrolled_at": doc.get("enrolled_at") or doc.get("created_at"),
+                    "level": student_doc.get("level"),
+                    "dues_status": dues_status_by_id.get(e.student_id, "current"),
                 }
             )
         return out
@@ -1084,6 +1137,9 @@ def compose_admin(
             marker = attendance.get("marked_by")
             if marker:
                 marked_by.add(str(marker))
+        coach_attendance_rows = await coach_attendance_repo.list_for_occurrences(
+            [occurrence.occurrence_id]
+        )
         return {
             "occurrence_id": occurrence.occurrence_id,
             "session_id": occurrence.template_session_id or occurrence.session_id,
@@ -1096,6 +1152,9 @@ def compose_admin(
             "attendance_marked_count": count,
             "attendance_marked_by": sorted(marked_by),
             "attendance_last_marked_at": last_marked_at,
+            "coach_attendance": [
+                row.model_dump(exclude={"academy_id"}) for row in coach_attendance_rows
+            ],
         }
 
     async def list_session_occurrences(session_id: str) -> list[dict[str, Any]]:
@@ -1118,6 +1177,30 @@ def compose_admin(
             assignment_reason=reason,
         )
         return None if occurrence is None else await _occurrence_row(occurrence)
+
+    class _AdminOccurrenceLookup:
+        async def get(self, occurrence_id: str):
+            occurrence = await occurrences_r.get(occurrence_id)
+            if occurrence is None:
+                return None
+            from backend.v2.contexts.coaching.application.ports import OccurrenceDetails
+
+            return OccurrenceDetails(
+                occurrence_id=occurrence.occurrence_id,
+                session_id=occurrence.template_session_id or occurrence.session_id,
+                starts_at=occurrence.start_at,
+                status=occurrence.status,
+                scheduled_coach_id=occurrence.scheduled_coach_id,
+                actual_coach_id=occurrence.actual_coach_id,
+                substitute_coach_id=occurrence.substitute_coach_id,
+                template_session_id=occurrence.template_session_id,
+            )
+
+    mark_coach_attendance = MarkCoachAttendance(
+        coach_attendance=coach_attendance_repo,
+        occurrence_lookup=_AdminOccurrenceLookup(),
+        academy_id=academy_id,
+    )
 
     async def list_waitlist_for_session(session_id: str):
         cursor = waitlist._find_many(  # type: ignore[attr-defined]
@@ -1503,6 +1586,7 @@ def compose_admin(
         list_admin_sessions=list_admin_sessions,
         list_session_occurrences=list_session_occurrences,
         update_session_occurrence_coach=update_session_occurrence_coach,
+        mark_coach_attendance=mark_coach_attendance,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
         list_audit_logs=list_audit_logs,

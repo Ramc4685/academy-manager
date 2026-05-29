@@ -50,6 +50,7 @@ def test_list_session_occurrences_shows_assignment_state(admin_client):
             "attendance_marked_count": 0,
             "attendance_marked_by": [],
             "attendance_last_marked_at": None,
+            "coach_attendance": [],
         }
     ]
 
@@ -71,6 +72,31 @@ def test_update_session_occurrence_actual_coach(admin_client):
     assert body["substitute_coach_id"] == "coach-3"
     assert admin_client.seed["occurrences"].rows["occ-admin-1"].actual_coach_id == "coach-2"
     assert admin_client.seed["occurrences"].rows["occ-admin-1"].substitute_coach_id == "coach-3"
+
+
+def test_admin_can_mark_occurrence_coach_attendance(admin_client):
+    r = admin_client.patch(
+        "/api/v2/admin/session-occurrences/occ-admin-1/coach-attendance",
+        json={
+            "coach_id": "coach-2",
+            "status": "present",
+            "role": "assistant",
+            "rate_override_minor": 1500,
+            "note": "Helped with beginner court",
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["occurrence_id"] == "occ-admin-1"
+    assert body["coach_id"] == "coach-2"
+    assert body["status"] == "present"
+    assert body["role"] == "assistant"
+    assert body["rate_override_minor"] == 1500
+    assert body["note"] == "Helped with beginner court"
+
+    listing = admin_client.get("/api/v2/admin/sessions/sess-1/occurrences").json()
+    assert listing["occurrences"][0]["coach_attendance"][0]["coach_id"] == "coach-2"
 
 
 def test_list_session_occurrences_wrong_persona_returns_404(coach_on_admin_client):
@@ -139,6 +165,29 @@ def test_add_to_roster_then_list_enrollments(admin_client):
     listing = admin_client.get("/api/v2/admin/sessions/sess-1/enrollments").json()
     assert any(e["enrollment_id"] == enrollment_id for e in listing["enrollments"])
     assert any(e["student_name"] == "Alice" for e in listing["enrollments"])
+
+
+def test_list_enrollments_includes_level_and_dues_status(admin_client):
+    r = admin_client.post(
+        "/api/v2/admin/enrollments",
+        json={
+            "session_id": "sess-1",
+            "student_id": "st-1",
+            "parent_id": "p-1",
+            "full_name": "Alice",
+        },
+    )
+    assert r.status_code == 200, r.text
+    admin_client.seed["enrollment_query"].rows = dict(admin_client.seed["enrollments"].rows)
+    admin_client.seed["students"].admin_levels["st-1"] = "7"
+    admin_client.seed["students"].admin_status["st-1"] = "overdue"
+
+    listing = admin_client.get("/api/v2/admin/sessions/sess-1/enrollments")
+
+    assert listing.status_code == 200, listing.text
+    [row] = listing.json()["enrollments"]
+    assert row["level"] == "7"
+    assert row["dues_status"] == "overdue"
 
 
 def test_add_to_roster_wrong_persona_404(parent_on_admin_client):

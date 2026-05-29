@@ -6,9 +6,9 @@ FRONTEND_URL="${FRONTEND_URL:-https://academy.courtmastr.com}"
 EXPECTED_FIREBASE_PROJECT_ID="${EXPECTED_FIREBASE_PROJECT_ID:-academy-courtmastr}"
 
 echo "Checking API health..."
-health_body="$(curl -fsS "${API_URL}/api/health")"
-if ! grep -q '"ok"[[:space:]]*:[[:space:]]*true' <<<"${health_body}"; then
-  echo "API health check failed: expected \"ok\":true from ${API_URL}/api/health" >&2
+health_body="$(curl -fsS "${API_URL}/api/v2/healthz")"
+if ! grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"${health_body}"; then
+  echo "API health check failed: expected \"status\":\"ok\" from ${API_URL}/api/v2/healthz" >&2
   exit 1
 fi
 
@@ -30,13 +30,6 @@ frontend_url_lower="$(printf '%s' "${FRONTEND_URL}" | tr '[:upper:]' '[:lower:]'
 
 if [[ "${allow_origin_lower}" != "${frontend_url_lower}" ]]; then
   echo "CORS preflight failed: expected access-control-allow-origin ${FRONTEND_URL}, got ${allow_origin:-<missing>}" >&2
-  exit 1
-fi
-
-echo "Checking v2 API health..."
-v2_health_body="$(curl -fsS "${API_URL}/api/v2/healthz")"
-if ! grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"${v2_health_body}"; then
-  echo "v2 API health check failed: expected \"status\":\"ok\" from ${API_URL}/api/v2/healthz" >&2
   exit 1
 fi
 
@@ -94,7 +87,7 @@ webhook_status="$(curl -s -o /dev/null -w '%{http_code}' \
   -H 'Content-Type: application/json' \
   -H 'Stripe-Signature: t=0,v1=invalid' \
   -d '{}' \
-  "${API_URL}/api/webhook/stripe")"
+  "${API_URL}/api/v2/parent/webhooks/stripe")"
 if [[ "${webhook_status}" != "400" ]]; then
   echo "Stripe webhook signature check failed: expected 400 for invalid signature, got ${webhook_status}" >&2
   exit 1

@@ -350,6 +350,10 @@ async def list_payouts(
                 period_start=p.period_start,
                 period_end=p.period_end,
                 paid_at=p.paid_at,
+                expected_revenue_cents=p.expected_revenue_cents,
+                students_count=p.students_count,
+                sessions_count=p.sessions_count,
+                rule_label=p.rule_label,
             )
             for p in payouts
         ]

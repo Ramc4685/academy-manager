@@ -28,6 +28,11 @@ the resolved tenant in SaaS mode).
 
 from __future__ import annotations
 
+import logging
+from typing import Literal
+
+from pydantic import BaseModel
+
 from backend.v2.contexts.identity.application.ports import (
     MembershipRepository,
     PublicParentRegistrationRepository,
@@ -35,7 +40,22 @@ from backend.v2.contexts.identity.application.ports import (
 )
 from backend.v2.contexts.identity.domain.errors import InvalidToken, UserInactive
 from backend.v2.contexts.identity.domain.models import AcademyMembership, User
+from backend.v2.shared.events import DomainEvent, Outbox
 from backend.v2.shared.ids import new_ulid
+
+log = logging.getLogger(__name__)
+
+
+class WelcomeEmailRequestedPayload(BaseModel):
+    user_id: str
+    email: str
+    display_name: str
+
+
+class WelcomeEmailRequested(DomainEvent):
+    name: Literal["Identity.WelcomeEmailRequested"] = "Identity.WelcomeEmailRequested"
+    schema_version: Literal[1] = 1
+    payload: WelcomeEmailRequestedPayload
 
 
 class RegisterPublicParent:
@@ -45,6 +65,7 @@ class RegisterPublicParent:
         verifier: TokenVerifier,
         users: PublicParentRegistrationRepository,
         memberships: MembershipRepository | None = None,
+        outbox: Outbox | None = None,
         default_academy_id: str = "default-academy",
         saas_mode: bool = False,
     ) -> None:
@@ -55,6 +76,7 @@ class RegisterPublicParent:
         self._verifier = verifier
         self._users = users
         self._memberships = memberships
+        self._outbox = outbox
         self._default_academy_id = default_academy_id
         self._saas_mode = saas_mode
 
@@ -67,6 +89,7 @@ class RegisterPublicParent:
         email = token_claims.get("email")
         if not isinstance(email, str) or not email:
             raise InvalidToken("token missing email")
+        _require_verified_password_provider_email(token_claims)
 
         uid = token_claims.get("uid") or token_claims.get("sub")
         if not isinstance(uid, str) or not uid:
@@ -109,4 +132,35 @@ class RegisterPublicParent:
                 )
             )
 
+        if existing is None and self._outbox is not None:
+            try:
+                await self._outbox.append(
+                    WelcomeEmailRequested(
+                        aggregate_id=user.user_id,
+                        academy_id=target_academy_id,
+                        payload=WelcomeEmailRequestedPayload(
+                            user_id=user.user_id,
+                            email=str(user.email),
+                            display_name=user.display_name,
+                        ),
+                    )
+                )
+            except Exception:
+                log.exception(
+                    "welcome_email_request_failed",
+                    extra={
+                        "user_id": user.user_id,
+                        "academy_id": target_academy_id,
+                    },
+                )
+
         return user
+
+
+def _require_verified_password_provider_email(token_claims: dict[str, object]) -> None:
+    firebase_claims = token_claims.get("firebase")
+    provider = None
+    if isinstance(firebase_claims, dict):
+        provider = firebase_claims.get("sign_in_provider")
+    if provider == "password" and token_claims.get("email_verified") is not True:
+        raise InvalidToken("email must be verified")

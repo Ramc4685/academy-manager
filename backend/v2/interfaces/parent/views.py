@@ -6,10 +6,10 @@ or admin-only fields. Per docs/security-matrix.md.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 # --- Onboarding ---
 
@@ -26,6 +26,17 @@ class ChildProfileView(BaseModel):
     last_name: str = ""
     date_of_birth: str = ""
     skill_level: Literal["beginner", "intermediate", "advanced", ""] = ""
+
+    @field_validator("date_of_birth")
+    @classmethod
+    def validate_date_of_birth(cls, value: str) -> str:
+        if value == "":
+            return value
+        try:
+            date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("date_of_birth must be a valid ISO date") from exc
+        return value
 
 
 class WaiverView(BaseModel):
@@ -223,6 +234,30 @@ class ParentProgressNoteView(BaseModel):
 
 class ParentProgressResponse(BaseModel):
     notes: list[ParentProgressNoteView]
+
+
+# --- Waivers ---
+
+
+class ParentWaiverStudentView(BaseModel):
+    student_id: str
+    student_name: str
+    status: Literal["signed", "pending", "outdated", "not_required"]
+    signed_at: datetime | None = None
+    waiver_version: str | None = None
+
+
+class ParentWaiverCurrentView(BaseModel):
+    required: bool
+    waiver_template_id: str | None = None
+    title: str | None = None
+    version: str | None = None
+    body: str | None = None
+    students: list[ParentWaiverStudentView] = []
+
+
+class ParentWaiverAcceptRequest(BaseModel):
+    signer_name: str | None = None
 
 
 # --- Sessions ---

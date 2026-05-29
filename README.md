@@ -42,7 +42,7 @@ system for owners, coaches, and parents.
 
 - **Web app:** <https://academy.courtmastr.com>
 - **API:** <https://api.academy.courtmastr.com>
-- **Status / health:** `GET https://api.academy.courtmastr.com/api/health`
+- **Status / health:** `GET https://api.academy.courtmastr.com/api/v2/healthz`
 
 ---
 
@@ -75,7 +75,7 @@ intended for self-hosting.
 | API | FastAPI + Uvicorn (Python 3.12) | Fly.io app `courtmastr-academy-api` (region `ord`) |
 | Database | MongoDB (Atlas) | Managed |
 | Auth / identity | Firebase Authentication | Project `academy-courtmastr` |
-| Payments | Stripe (live mode) | Webhook at `/api/webhook/stripe` |
+| Payments | Stripe (live mode) | Webhook at `/api/v2/parent/webhooks/stripe` |
 | Transactional email | Resend | Verified `courtmastr.com` sender domain |
 | Scheduler timezone | `America/Chicago` | Set on backend |
 

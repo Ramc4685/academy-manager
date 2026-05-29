@@ -65,7 +65,7 @@ function isLegacyApiPath(url: string): boolean {
     const path = u.pathname;
     if (!path.startsWith("/api/")) return false;
     if (path.startsWith("/api/v2/")) return false;
-    // /api/health is a legacy smoke route — also forbidden in SaaS specs.
+    // /api/health was a legacy smoke route and must stay unavailable.
     return true;
   } catch {
     return false;

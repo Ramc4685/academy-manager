@@ -83,6 +83,17 @@ def _compute_line_amount_minor(rate: CoachRate, minutes: Decimal) -> int:
     raise ValueError(f"Unknown billing_unit: {rate.billing_unit!r}")
 
 
+def _ensure_statement_currency(current: str | None, incoming: str, *, coach_id: str) -> str:
+    if current is None:
+        return incoming
+    if current != incoming:
+        raise ValueError(
+            f"Currency mismatch for coach {coach_id!r}: statement "
+            f"started in {current!r} but next line is {incoming!r}"
+        )
+    return current
+
+
 class ComputeCoachPayout:
     """Returns the ``PayoutStatement`` for one coach over a period."""
 
@@ -112,9 +123,55 @@ class ComputeCoachPayout:
         currency: str | None = None
 
         for occ in occs:
-            if occ.status != "completed":
-                continue
             if not occ.is_payable:
+                continue
+
+            if occ.coach_attendance:
+                for attendance in occ.coach_attendance:
+                    if attendance.coach_id != coach_id or attendance.status != "present":
+                        continue
+
+                    minutes = _occurrence_minutes(occ)
+                    if attendance.rate_override_minor is not None:
+                        line_currency = currency or "USD"
+                        currency = _ensure_statement_currency(
+                            currency, line_currency, coach_id=coach_id
+                        )
+                        lines.append(
+                            PayoutLine(
+                                occurrence_id=occ.occurrence_id,
+                                coach_id=coach_id,
+                                basis=attendance.role,
+                                minutes=minutes,
+                                amount_minor=attendance.rate_override_minor,
+                                currency=line_currency,
+                                rate_id=f"override:{occ.occurrence_id}:{coach_id}",
+                            )
+                        )
+                        continue
+
+                    rate = await self._rates.find_for_coach_at(coach_id, occ.start_at)
+                    if rate is None:
+                        unpaid.append(occ.occurrence_id)
+                        continue
+
+                    currency = _ensure_statement_currency(
+                        currency, rate.currency, coach_id=coach_id
+                    )
+                    lines.append(
+                        PayoutLine(
+                            occurrence_id=occ.occurrence_id,
+                            coach_id=coach_id,
+                            basis=attendance.role,
+                            minutes=minutes,
+                            amount_minor=_compute_line_amount_minor(rate, minutes),
+                            currency=rate.currency,
+                            rate_id=rate.rate_id,
+                        )
+                    )
+                continue
+
+            if occ.status != "completed":
                 continue
 
             paying_coach, basis = _paying_coach(occ)
@@ -126,17 +183,7 @@ class ComputeCoachPayout:
                 unpaid.append(occ.occurrence_id)
                 continue
 
-            if currency is None:
-                currency = rate.currency
-            elif currency != rate.currency:
-                # A coach's rate sheet should not change currency within a
-                # single statement; if it does that's a data bug worth
-                # surfacing rather than silently mixing.
-                raise ValueError(
-                    f"Currency mismatch for coach {coach_id!r}: statement "
-                    f"started in {currency!r} but rate {rate.rate_id!r} is "
-                    f"{rate.currency!r}"
-                )
+            currency = _ensure_statement_currency(currency, rate.currency, coach_id=coach_id)
 
             minutes = _occurrence_minutes(occ)
             amount_minor = _compute_line_amount_minor(rate, minutes)

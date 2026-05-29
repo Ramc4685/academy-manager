@@ -19,8 +19,8 @@ Scope:
 
 ## Readiness Command
 
-Use this command against a local or prod-like environment started with
-`V2_ENABLED=1` and `V2_SAAS_MODE=true`:
+Use this command against a local or prod-like environment started from
+`backend.v2.main:app` with `V2_SAAS_MODE=true`:
 
 ```bash
 scripts/smoke/saas_readiness_smoke.sh
@@ -48,7 +48,7 @@ paste production Firebase tokens into shell history.
 | Area | Status | Gate |
 | --- | --- | --- |
 | SaaS mode config | PASS | `V2_SAAS_MODE`, `V2_ALLOWED_INTERNAL_TENANT_HEADER`, v2 Mongo/Firebase/Stripe fallbacks, and frontend `/api/v2` base are documented and test-covered. |
-| v2-only route enforcement | PASS | `SaasLegacyRouteGuard` returns 410 for legacy `/api/*` in SaaS mode; frontend SaaS source check fails legacy calls. |
+| v2-only route enforcement | PASS | The backend starts `backend.v2.main:app` directly; legacy `/api/*` routes are not mounted and frontend SaaS source checks fail legacy calls. |
 | Tenant routing | TODO | Resolver exists for subdomain, custom domain, and approved internal header. Launch still needs real beta tenant/domain records and suspended-tenant smoke in a prod-like SaaS environment. |
 | Auth readiness | PASS | Membership claims, active/inactive membership rejection tests, and real Mongo membership/platform-role repository wiring are present for SaaS mode. |
 | Billing/payment safety | BACKEND VERIFIED, SMOKE PENDING | Parent billing idempotency, platform billing, Wave 11 payment correctness, and full backend v2 tests passed. Launch still needs Stripe test/live runbook signoff and prod-like HTTP smoke. |
@@ -79,11 +79,9 @@ Wave 12 launch-candidate addendum:
 
 Current production config note:
 
-- `backend/fly.toml` enables `V2_ENABLED=1` but does not enable
-  `V2_SAAS_MODE`. That is correct until the remaining platform billing and
-  governance blockers are cleared.
+- `backend/fly.toml` starts `backend.v2.main:app` directly.
 - `backend/fly.toml` health-checks `/api/v2/healthz`, so enabling SaaS mode
-  will not break Fly health checks through the legacy route guard.
+  will not break Fly health checks.
 
 ## Configuration Gates
 
@@ -91,7 +89,6 @@ Backend production or prod-like SaaS env must set:
 
 ```bash
 APP_ENV=production
-V2_ENABLED=1
 V2_SAAS_MODE=true
 V2_MONGO_URL=mongodb+srv://...
 V2_MONGO_DB=academy_manager
@@ -136,21 +133,20 @@ NEXT_PUBLIC_FIREBASE_PROJECT_ID=academy-courtmastr
 
 Automated checks:
 
-- `backend/v2/tests/interface/test_saas_routing.py`
+- `backend/v2/tests/structural/test_saas_production_wiring.py`
 - `scripts/smoke/saas_readiness_smoke.sh --static-only`
 - `frontend/e2e/fixtures/tenant-isolation.ts`
 
 Launch gate:
 
 - `/api/v2/*` responds through the v2 app.
-- Legacy `/api/*` returns 410 with `V2_SAAS_MODE=true`.
+- Legacy `/api/*` is not mounted and returns normal 404.
 - Canonical SaaS frontend pages do not call legacy `/api/*`.
 
 Operational exception:
 
-- Existing non-SaaS production smoke still checks legacy `/api/health` and the
-  current legacy Stripe webhook path. SaaS launch must either update that smoke
-  profile or keep those checks explicitly outside the SaaS-mode gate.
+- Production smoke checks `/api/v2/healthz` and the canonical
+  `/api/v2/parent/webhooks/stripe` webhook path.
 
 ## Tenant Routing
 

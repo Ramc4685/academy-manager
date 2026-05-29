@@ -19,9 +19,9 @@ You need a local backend running so the coach today route resolves.
 ```bash
 # Terminal 1 — backend
 cd backend
-V2_ENABLED=1 V2_RUN_MIGRATIONS_ON_BOOT=1 V2_MONGO_URL=mongodb://localhost:27017 \
+V2_RUN_MIGRATIONS_ON_BOOT=1 V2_MONGO_URL=mongodb://localhost:27017 \
   V2_DEFAULT_ACADEMY_ID=baseline-academy \
-  uvicorn server:app --reload --port 8001
+  uvicorn backend.v2.main:app --reload --port 8001
 
 # Seed: insert one coach user, two sessions for today, four enrollments,
 # four students into the `baseline-academy` tenant.

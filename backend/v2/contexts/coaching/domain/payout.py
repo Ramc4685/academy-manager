@@ -26,8 +26,19 @@ from pydantic import BaseModel, Field, model_validator
 
 CoachRateBillingUnit = Literal["per_session", "per_hour"]
 CoachRateStatus = Literal["active", "superseded"]
-PayoutBasis = Literal["scheduled", "substitute", "actual"]
+PayoutBasis = Literal["scheduled", "substitute", "actual", "lead", "assistant"]
 PayableOccurrenceStatus = Literal["scheduled", "cancelled", "completed"]
+
+
+class CoachAttendanceForPayout(BaseModel):
+    """Payroll attendance projection attached to a payable occurrence."""
+
+    model_config = {"frozen": True}
+
+    coach_id: str
+    status: Literal["present", "absent"]
+    role: Literal["lead", "assistant"] = "lead"
+    rate_override_minor: int | None = Field(default=None, ge=0)
 
 
 class PayableOccurrence(BaseModel):
@@ -50,6 +61,7 @@ class PayableOccurrence(BaseModel):
     actual_coach_id: str | None = None
     substitute_coach_id: str | None = None
     is_payable: bool = True
+    coach_attendance: list[CoachAttendanceForPayout] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _end_after_start(self) -> PayableOccurrence:

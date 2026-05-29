@@ -80,6 +80,25 @@ class FakeMemberships:
         return platform_role
 
 
+class FakeOutbox:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.events: list[object] = []
+
+    async def append(self, event, *, session=None) -> None:
+        _ = session
+        if self.fail:
+            raise RuntimeError("outbox unavailable")
+        self.events.append(event)
+
+    async def pull_unprocessed(self, limit: int = 100):  # pragma: no cover
+        _ = limit
+        return []
+
+    async def mark_processed(self, event_id: str) -> None:  # pragma: no cover
+        _ = event_id
+
+
 # ---------------------------------------------------------------------------
 # Legacy single-tenant fallback (no academy_id passed; default used)
 # ---------------------------------------------------------------------------
@@ -119,6 +138,24 @@ async def test_register_public_parent_bootstraps_parent_role_legacy() -> None:
 async def test_register_public_parent_requires_email_and_uid() -> None:
     use_case = RegisterPublicParent(
         verifier=FakeVerifier({"email": "parent@example.com"}),
+        users=FakeUsers(),
+    )
+
+    with pytest.raises(InvalidToken):
+        await use_case.execute("firebase-token")
+
+
+@pytest.mark.asyncio
+async def test_register_public_parent_rejects_unverified_password_provider_email() -> None:
+    use_case = RegisterPublicParent(
+        verifier=FakeVerifier(
+            {
+                "email": "parent@example.com",
+                "uid": "firebase-parent-1",
+                "email_verified": False,
+                "firebase": {"sign_in_provider": "password"},
+            }
+        ),
         users=FakeUsers(),
     )
 
@@ -214,3 +251,80 @@ def test_register_public_parent_saas_construction_requires_memberships() -> None
             users=FakeUsers(),
             saas_mode=True,
         )
+
+
+@pytest.mark.asyncio
+async def test_register_public_parent_emits_welcome_email_outbox_event() -> None:
+    outbox = FakeOutbox()
+    use_case = RegisterPublicParent(
+        verifier=FakeVerifier(
+            {
+                "email": "new.parent@example.com",
+                "uid": "firebase-parent-1",
+                "name": "New Parent",
+            }
+        ),
+        users=FakeUsers(),
+        outbox=outbox,
+        default_academy_id="academy-a",
+    )
+
+    await use_case.execute("firebase-token")
+
+    assert len(outbox.events) == 1
+    event = outbox.events[0]
+    assert event.name == "Identity.WelcomeEmailRequested"
+    assert event.aggregate_id == "firebase-parent-1"
+    assert event.academy_id == "academy-a"
+    assert event.payload.email == "new.parent@example.com"
+
+
+@pytest.mark.asyncio
+async def test_register_public_parent_logs_welcome_email_outbox_failure(caplog) -> None:
+    use_case = RegisterPublicParent(
+        verifier=FakeVerifier(
+            {
+                "email": "new.parent@example.com",
+                "uid": "firebase-parent-1",
+                "name": "New Parent",
+            }
+        ),
+        users=FakeUsers(),
+        outbox=FakeOutbox(fail=True),
+        default_academy_id="academy-a",
+    )
+
+    user = await use_case.execute("firebase-token")
+
+    assert user.user_id == "firebase-parent-1"
+    assert "welcome_email_request_failed" in caplog.text
+    assert "new.parent@example.com" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_register_public_parent_does_not_emit_duplicate_welcome_for_existing_user() -> None:
+    existing = User(
+        user_id="firebase-parent-1",
+        email="new.parent@example.com",
+        display_name="New Parent",
+        roles=("parent",),
+        is_active=True,
+        academy_id="academy-a",
+    )
+    outbox = FakeOutbox()
+    use_case = RegisterPublicParent(
+        verifier=FakeVerifier(
+            {
+                "email": "new.parent@example.com",
+                "uid": "firebase-parent-1",
+                "name": "New Parent",
+            }
+        ),
+        users=FakeUsers(existing),
+        outbox=outbox,
+        default_academy_id="academy-a",
+    )
+
+    await use_case.execute("firebase-token")
+
+    assert outbox.events == []
