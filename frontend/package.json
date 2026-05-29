@@ -33,7 +33,7 @@
     "react-dom": "19.0.0",
     "serwist": "9.5.11",
     "tailwind-merge": "3.6.0",
-    "ulid": "2.3.0",
+    "ulid": "3.0.2",
     "web-vitals": "4.2.4"
   },
   "devDependencies": {
