@@ -29,6 +29,9 @@ from backend.v2.contexts.billing.application.use_cases.start_checkout import (
     StartCheckout,
     StartCheckoutCommand,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
+    MongoBillingLedgerRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
     MongoCreditLedgerRepository,
 )
@@ -37,6 +40,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
 )
 from backend.v2.contexts.billing.infrastructure.mongo_stripe_dedup import (
     MongoStripeEventDedup,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_student_billing_enrollment_repo import (
+    MongoStudentBillingEnrollmentRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
     MongoSubscriptionRepository,
@@ -134,8 +140,10 @@ def compose_parent(
 
     # Billing
     credits_repo = MongoCreditLedgerRepository(db)
+    billing_ledger_repo = MongoBillingLedgerRepository(db)
     payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
     subscriptions_repo = MongoSubscriptionRepository(db)
+    student_billing_enrollments = MongoStudentBillingEnrollmentRepository(db)
     dedup = MongoStripeEventDedup(db)
 
     start_checkout = StartCheckout(
@@ -161,6 +169,8 @@ def compose_parent(
         dedup=dedup,
         payments=payments_repo,
         subscriptions=subscriptions_repo,
+        billing_enrollments=student_billing_enrollments,
+        billing_ledger=billing_ledger_repo,
         outbox=outbox,
         academy_id=academy_id,
     )

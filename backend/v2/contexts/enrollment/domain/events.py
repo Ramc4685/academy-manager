@@ -101,3 +101,22 @@ class CapacityExceeded(DomainEvent):
     name: Literal["Enrollment.CapacityExceeded"] = "Enrollment.CapacityExceeded"  # type: ignore[assignment]
     schema_version: Literal[1] = 1  # type: ignore[assignment]
     payload: CapacityExceededPayload  # type: ignore[assignment]
+
+
+class StudentSessionTypeChangedPayload(BaseModel):
+    model_config = {"frozen": True}
+
+    enrollment_id: str
+    student_id: str
+    parent_id: str
+    from_session_type_id: str | None
+    to_session_type_id: str
+    net_cents: int
+    actor_id: str
+    reason: str | None = None
+
+
+class StudentSessionTypeChanged(DomainEvent):
+    name: Literal["Enrollment.SessionTypeChanged"] = "Enrollment.SessionTypeChanged"  # type: ignore[assignment]
+    schema_version: Literal[1] = 1  # type: ignore[assignment]
+    payload: StudentSessionTypeChangedPayload  # type: ignore[assignment]

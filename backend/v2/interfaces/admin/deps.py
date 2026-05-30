@@ -25,6 +25,15 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
     RecordExpense,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
+from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
+    CreateSessionType,
+    ListSessionTypes,
+    ListStudentBillingEnrollments,
+    MoveStudentSessionType,
+    OverrideStudentPrice,
+    SoftDeleteSessionType,
+    UpdateSessionType,
+)
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
     ApproveWithdrawalCredit,
     PreviewWithdrawalCredit,
@@ -175,6 +184,13 @@ class AdminUseCases:
     generate_payout_period: GeneratePayoutPeriod | None = None
     approve_payout_period: ApprovePayoutPeriod | None = None
     mark_payout_paid: MarkPayoutPaid | None = None
+    create_session_type: CreateSessionType | None = None
+    list_session_types: ListSessionTypes | None = None
+    update_session_type: UpdateSessionType | None = None
+    soft_delete_session_type: SoftDeleteSessionType | None = None
+    list_student_billing_enrollments: ListStudentBillingEnrollments | None = None
+    move_student_session_type: MoveStudentSessionType | None = None
+    override_student_price: OverrideStudentPrice | None = None
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:

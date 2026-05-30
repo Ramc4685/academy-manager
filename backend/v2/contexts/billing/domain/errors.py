@@ -38,3 +38,13 @@ class CheckoutCreationFailed(DomainError):
 class PaymentOperationNotAllowed(DomainError):
     code = "Billing.PaymentOperationNotAllowed"
     status_code = 400
+
+
+class SessionTypeNotFound(DomainError):
+    code = "Billing.SessionTypeNotFound"
+    status_code = 404
+
+
+class StudentBillingEnrollmentNotFound(DomainError):
+    code = "Billing.StudentBillingEnrollmentNotFound"
+    status_code = 404

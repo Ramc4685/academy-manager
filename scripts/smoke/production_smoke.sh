@@ -4,16 +4,40 @@ set -euo pipefail
 API_URL="${API_URL:-https://api.academy.courtmastr.com}"
 FRONTEND_URL="${FRONTEND_URL:-https://academy.courtmastr.com}"
 EXPECTED_FIREBASE_PROJECT_ID="${EXPECTED_FIREBASE_PROJECT_ID:-academy-courtmastr}"
+CURL_RETRY_ATTEMPTS="${CURL_RETRY_ATTEMPTS:-6}"
+CURL_RETRY_DELAY_SECONDS="${CURL_RETRY_DELAY_SECONDS:-5}"
+CURL_CONNECT_TIMEOUT_SECONDS="${CURL_CONNECT_TIMEOUT_SECONDS:-10}"
+CURL_MAX_TIME_SECONDS="${CURL_MAX_TIME_SECONDS:-60}"
+
+curl_smoke() {
+  curl -fsS \
+    --retry "${CURL_RETRY_ATTEMPTS}" \
+    --retry-delay "${CURL_RETRY_DELAY_SECONDS}" \
+    --retry-all-errors \
+    --connect-timeout "${CURL_CONNECT_TIMEOUT_SECONDS}" \
+    --max-time "${CURL_MAX_TIME_SECONDS}" \
+    "$@"
+}
+
+curl_smoke_status() {
+  curl -sS \
+    --retry "${CURL_RETRY_ATTEMPTS}" \
+    --retry-delay "${CURL_RETRY_DELAY_SECONDS}" \
+    --retry-all-errors \
+    --connect-timeout "${CURL_CONNECT_TIMEOUT_SECONDS}" \
+    --max-time "${CURL_MAX_TIME_SECONDS}" \
+    "$@"
+}
 
 echo "Checking API health..."
-health_body="$(curl -fsS "${API_URL}/api/v2/healthz")"
+health_body="$(curl_smoke "${API_URL}/api/v2/healthz")"
 if ! grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"${health_body}"; then
   echo "API health check failed: expected \"status\":\"ok\" from ${API_URL}/api/v2/healthz" >&2
   exit 1
 fi
 
 echo "Checking API CORS preflight..."
-cors_headers="$(curl -fsS -D - -o /dev/null -X OPTIONS \
+cors_headers="$(curl_smoke -D - -o /dev/null -X OPTIONS \
   -H "Origin: ${FRONTEND_URL}" \
   -H "Access-Control-Request-Method: GET" \
   "${API_URL}/api/v2/me")"
@@ -34,26 +58,26 @@ if [[ "${allow_origin_lower}" != "${frontend_url_lower}" ]]; then
 fi
 
 echo "Checking frontend..."
-frontend_headers="$(curl -fsSI "${FRONTEND_URL}")"
+frontend_headers="$(curl_smoke -I "${FRONTEND_URL}")"
 if ! grep -qi '^content-type:.*text/html' <<<"${frontend_headers}"; then
   echo "Frontend check failed: expected HTML response from ${FRONTEND_URL}" >&2
   exit 1
 fi
 
-frontend_html="$(curl -fsS "${FRONTEND_URL}")"
+frontend_html="$(curl_smoke "${FRONTEND_URL}")"
 if ! grep -qiE 'CourtMastr|Academy Manager|badminton|Run your' <<<"${frontend_html}"; then
   echo "Frontend check failed: expected CourtMastr/Academy content from ${FRONTEND_URL}" >&2
   exit 1
 fi
 
 echo "Checking frontend BFF proxy..."
-frontend_v2_health_body="$(curl -fsS "${FRONTEND_URL}/api/v2/healthz")"
+frontend_v2_health_body="$(curl_smoke "${FRONTEND_URL}/api/v2/healthz")"
 if ! grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"${frontend_v2_health_body}"; then
   echo "Frontend BFF proxy check failed: expected \"status\":\"ok\" from ${FRONTEND_URL}/api/v2/healthz" >&2
   exit 1
 fi
 
-login_html="$(curl -fsS "${FRONTEND_URL}/login")"
+login_html="$(curl_smoke "${FRONTEND_URL}/login")"
 next_scripts="$(grep -Eo 'src="[^"]*_next/static/[^"]+\.js"' <<<"${login_html}" |
   sed -E 's/^src="([^"]+)"/\1/' |
   sort -u || true)"
@@ -70,7 +94,7 @@ while IFS= read -r script_path; do
   else
     script_url="${FRONTEND_URL%/}${script_path}"
   fi
-  if curl -fsS "${script_url}" | grep -qF "${EXPECTED_FIREBASE_PROJECT_ID}"; then
+  if curl_smoke "${script_url}" | grep -qF "${EXPECTED_FIREBASE_PROJECT_ID}"; then
     firebase_config_found=1
     break
   fi
@@ -82,7 +106,7 @@ if [[ "${firebase_config_found}" != "1" ]]; then
 fi
 
 echo "Checking Stripe webhook signature rejection..."
-webhook_status="$(curl -s -o /dev/null -w '%{http_code}' \
+webhook_status="$(curl_smoke_status -o /dev/null -w '%{http_code}' \
   -X POST \
   -H 'Content-Type: application/json' \
   -H 'Stripe-Signature: t=0,v1=invalid' \

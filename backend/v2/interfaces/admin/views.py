@@ -99,6 +99,89 @@ class UpdateAdminUserRoleRequest(BaseModel):
     reason: str = Field(default="admin role change", min_length=1, max_length=500)
 
 
+# --- Session Type Billing ---
+
+
+class SessionTypeView(BaseModel):
+    session_type_id: str
+    name: str
+    description: str | None = None
+    price_cents: int
+    billing_period: Literal["monthly", "per_session"]
+    overage_rate_cents: int | None = None
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class SessionTypeList(BaseModel):
+    session_types: list[SessionTypeView]
+
+
+class CreateSessionTypeRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
+    price_cents: int = Field(ge=0)
+    billing_period: Literal["monthly", "per_session"] = "monthly"
+    overage_rate_cents: int | None = Field(default=None, ge=0)
+
+
+class UpdateSessionTypeRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
+    price_cents: int | None = Field(default=None, ge=0)
+    billing_period: Literal["monthly", "per_session"] | None = None
+    overage_rate_cents: int | None = Field(default=None, ge=0)
+    is_active: bool | None = None
+
+
+class StudentBillingEnrollmentView(BaseModel):
+    enrollment_id: str
+    student_id: str
+    parent_id: str
+    session_type_id: str
+    stripe_subscription_id: str | None = None
+    billing_start_date: datetime
+    status: Literal["active", "paused", "cancelled", "transferred_out"]
+    override_price_cents: int | None = None
+    enrolled_at: datetime
+    updated_at: datetime
+
+
+class StudentBillingEnrollmentList(BaseModel):
+    enrollments: list[StudentBillingEnrollmentView]
+
+
+class MoveBillingEnrollmentRequest(BaseModel):
+    to_session_type_id: str = Field(min_length=1)
+    move_date: datetime
+    period_start: datetime
+    period_end: datetime
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class SessionTypeProrationView(BaseModel):
+    credit_cents: int
+    charge_cents: int
+    net_cents: int
+    remaining_days: int
+    total_days: int
+    proration_ratio: str
+    from_session_type_id: str | None
+    to_session_type_id: str
+    policy_version: str
+
+
+class MoveBillingEnrollmentResponse(BaseModel):
+    enrollment: StudentBillingEnrollmentView
+    proration: SessionTypeProrationView
+    stripe_invoice_id: str | None = None
+
+
+class OverrideStudentPriceRequest(BaseModel):
+    override_price_cents: int | None = Field(default=None, ge=0)
+
+
 # --- Sessions ---
 
 

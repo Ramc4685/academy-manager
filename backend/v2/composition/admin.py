@@ -35,6 +35,15 @@ from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
     QuoteEnrollmentCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
+    CreateSessionType,
+    ListSessionTypes,
+    ListStudentBillingEnrollments,
+    MoveStudentSessionType,
+    OverrideStudentPrice,
+    SoftDeleteSessionType,
+    UpdateSessionType,
+)
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
     ApproveWithdrawalCredit,
     PreviewWithdrawalCredit,
@@ -47,6 +56,12 @@ from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import 
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_session_type_repo import (
+    MongoSessionTypeRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_student_billing_enrollment_repo import (
+    MongoStudentBillingEnrollmentRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
     MongoSubscriptionRepository,
@@ -93,7 +108,11 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
-from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
+from backend.v2.contexts.enrollment.domain.events import (
+    EnrollmentLifecycleEvent,
+    StudentSessionTypeChanged,
+    StudentSessionTypeChangedPayload,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_event_repo import (
     MongoEnrollmentEventRepository,
 )
@@ -860,6 +879,25 @@ def compose_admin(
     credits_repo = MongoCreditLedgerRepository(db)
     payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
     subscriptions_repo = MongoSubscriptionRepository(db)
+    session_type_repo = MongoSessionTypeRepository(db)
+    student_billing_enrollment_repo = MongoStudentBillingEnrollmentRepository(db)
+    create_session_type = CreateSessionType(
+        session_types=session_type_repo,
+        academy_id=academy_id,
+    )
+    list_session_types = ListSessionTypes(session_types=session_type_repo)
+    update_session_type = UpdateSessionType(session_types=session_type_repo)
+    soft_delete_session_type = SoftDeleteSessionType(session_types=session_type_repo)
+    list_student_billing_enrollments = ListStudentBillingEnrollments(
+        enrollments=student_billing_enrollment_repo
+    )
+    move_student_session_type = MoveStudentSessionType(
+        enrollments=student_billing_enrollment_repo,
+        session_types=session_type_repo,
+        stripe=stripe,
+        event_sink=_SessionTypeChangedEventSink(outbox),
+    )
+    override_student_price = OverrideStudentPrice(enrollments=student_billing_enrollment_repo)
     issue_refund = IssueRefund(
         payment_repo=payments_repo,
         stripe=stripe,
@@ -1612,6 +1650,13 @@ def compose_admin(
         get_admin_student=get_admin_student,
         update_admin_student=update_admin_student,
         change_admin_student_parent=change_admin_student_parent,
+        create_session_type=create_session_type,
+        list_session_types=list_session_types,
+        update_session_type=update_session_type,
+        soft_delete_session_type=soft_delete_session_type,
+        list_student_billing_enrollments=list_student_billing_enrollments,
+        move_student_session_type=move_student_session_type,
+        override_student_price=override_student_price,
     )
     admin.get_reports_dashboard = _make_reports_dashboard(db)  # type: ignore[attr-defined]
     return admin
@@ -1651,6 +1696,41 @@ class _EnrollmentLifecycleEventSink:
                 billing_policy=billing_policy,
                 billing_result=billing_result,
                 credit_id=credit_id,
+            )
+        )
+
+
+class _SessionTypeChangedEventSink:
+    def __init__(self, outbox: Outbox) -> None:
+        self._outbox = outbox
+
+    async def record_session_type_changed(
+        self,
+        *,
+        academy_id: str,
+        enrollment_id: str,
+        student_id: str,
+        parent_id: str,
+        from_session_type_id: str | None,
+        to_session_type_id: str,
+        net_cents: int,
+        actor_id: str,
+        reason: str | None,
+    ) -> None:
+        await self._outbox.append(
+            StudentSessionTypeChanged(
+                aggregate_id=enrollment_id,
+                academy_id=academy_id,
+                payload=StudentSessionTypeChangedPayload(
+                    enrollment_id=enrollment_id,
+                    student_id=student_id,
+                    parent_id=parent_id,
+                    from_session_type_id=from_session_type_id,
+                    to_session_type_id=to_session_type_id,
+                    net_cents=net_cents,
+                    actor_id=actor_id,
+                    reason=reason,
+                ),
             )
         )
 

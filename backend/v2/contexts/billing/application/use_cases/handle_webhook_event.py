@@ -13,19 +13,23 @@ each case in isolation.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from backend.v2.contexts.billing.application.ports import (
     PaymentRepository,
     StripeEventDedup,
     StripeGateway,
+    StudentBillingEnrollmentRepository,
     SubscriptionRepository,
 )
 from backend.v2.contexts.billing.domain.errors import InvalidWebhookSignature
 from backend.v2.contexts.billing.domain.events import (
     CheckoutExpired,
     CheckoutExpiredPayload,
+    InvoiceFailed,
+    InvoiceLifecyclePayload,
+    InvoicePaid,
     PaymentFailed,
     PaymentFailedPayload,
     PaymentRefunded,
@@ -34,6 +38,11 @@ from backend.v2.contexts.billing.domain.events import (
     PaymentSucceededPayload,
     SubscriptionUpdated,
     SubscriptionUpdatedPayload,
+)
+from backend.v2.contexts.billing.domain.ledger import (
+    InvoiceLine,
+    LedgerInvoice,
+    LedgerPayment,
 )
 from backend.v2.contexts.billing.domain.models import Payment
 from backend.v2.shared.events import Outbox
@@ -53,12 +62,16 @@ class HandleWebhookEvent:
         subscriptions: SubscriptionRepository,
         outbox: Outbox,
         academy_id: str,
+        billing_enrollments: StudentBillingEnrollmentRepository | None = None,
+        billing_ledger: Any | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._stripe = stripe
         self._dedup = dedup
         self._payments = payments
         self._subscriptions = subscriptions
+        self._billing_enrollments = billing_enrollments
+        self._billing_ledger = billing_ledger
         self._outbox = outbox
         self._academy_id = academy_id
         self._now = clock
@@ -184,6 +197,8 @@ class HandleWebhookEvent:
 
     async def _on_invoice_paid(self, event: dict[str, Any]) -> None:
         invoice = event["data"]["object"]
+        if await self._handle_session_type_invoice(invoice, paid=True):
+            return
         payment = await self._payment_from_invoice(invoice, status="succeeded")
         if payment is None:
             return
@@ -205,6 +220,8 @@ class HandleWebhookEvent:
 
     async def _on_invoice_payment_failed(self, event: dict[str, Any]) -> None:
         invoice = event["data"]["object"]
+        if await self._handle_session_type_invoice(invoice, paid=False):
+            return
         payment = await self._payment_from_invoice(invoice, status="failed")
         if payment is None:
             return
@@ -263,6 +280,10 @@ class HandleWebhookEvent:
     async def _on_subscription_changed(self, event: dict[str, Any]) -> None:
         sub = event["data"]["object"]
         stripe_sub_id = sub["id"]
+        if event.get("type") == "customer.subscription.deleted":
+            handled = await self._cancel_student_billing_enrollment(stripe_sub_id)
+            if handled:
+                return
         existing = await self._subscriptions.get_by_stripe_sub(stripe_sub_id)
         if existing is None:
             return
@@ -293,6 +314,168 @@ class HandleWebhookEvent:
             "incomplete_expired": "cancelled",
         }
         return mapping.get(stripe_status, "incomplete")
+
+    async def _cancel_student_billing_enrollment(self, stripe_sub_id: str) -> bool:
+        if self._billing_enrollments is None:
+            return False
+        enrollment = await self._billing_enrollments.get_by_stripe_subscription(stripe_sub_id)
+        if enrollment is None:
+            return False
+        if enrollment.status == "cancelled":
+            return True
+        await self._billing_enrollments.save(
+            enrollment.model_copy(update={"status": "cancelled", "updated_at": self._now()})
+        )
+        return True
+
+    async def _handle_session_type_invoice(self, invoice: dict[str, Any], *, paid: bool) -> bool:
+        if self._billing_enrollments is None or self._billing_ledger is None:
+            return False
+        stripe_sub_id = self._stripe_subscription_id_from_invoice(invoice)
+        if not stripe_sub_id:
+            return False
+        enrollment = await self._billing_enrollments.get_by_stripe_subscription(stripe_sub_id)
+        if enrollment is None:
+            return False
+
+        now = self._now()
+        invoice_id = self._ledger_invoice_id(invoice)
+        amount_cents = int(
+            invoice.get("amount_paid" if paid else "amount_due") or invoice.get("amount_due") or 0
+        )
+        period_label = self._invoice_period_label(invoice, now)
+        ledger_invoice = await self._billing_ledger.create_invoice(
+            LedgerInvoice(
+                invoice_id=invoice_id,
+                academy_id=enrollment.academy_id,
+                parent_id=enrollment.parent_id,
+                student_id=enrollment.student_id,
+                enrollment_id=enrollment.enrollment_id,
+                period=period_label,
+                status="open",
+                subtotal_cents=amount_cents,
+                discount_cents=0,
+                total_cents=amount_cents,
+                balance_due_cents=amount_cents,
+                currency=str(invoice.get("currency") or "usd").lower(),
+                due_date=self._invoice_due_date(invoice, now),
+                created_at=now,
+                updated_at=now,
+            ),
+            lines=[
+                InvoiceLine(
+                    line_id=f"line-{invoice_id}",
+                    academy_id=enrollment.academy_id,
+                    invoice_id=invoice_id,
+                    line_type="tuition",
+                    description=f"Session type tuition {period_label}",
+                    quantity=1,
+                    unit_amount_cents=amount_cents,
+                    amount_cents=amount_cents,
+                    source_type="session_type",
+                    source_id=enrollment.session_type_id,
+                    created_at=now,
+                )
+            ],
+            idempotency_key=f"stripe-invoice:{invoice.get('id')}",
+        )
+        event_cls = InvoicePaid if paid else InvoiceFailed
+        if paid and amount_cents > 0:
+            stripe_pi = str(invoice.get("payment_intent") or invoice.get("id"))
+            payment = await self._billing_ledger.record_payment(
+                LedgerPayment(
+                    payment_id=f"ledger-pay-{invoice.get('id')}",
+                    academy_id=enrollment.academy_id,
+                    parent_id=enrollment.parent_id,
+                    amount_cents=amount_cents,
+                    unapplied_amount_cents=amount_cents,
+                    currency=str(invoice.get("currency") or "usd").lower(),
+                    status="succeeded",
+                    payment_method="stripe",
+                    stripe_payment_intent_id=stripe_pi,
+                    paid_at=now,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                idempotency_key=f"stripe-invoice-payment:{invoice.get('id')}",
+            )
+            allocation = await self._billing_ledger.allocate_payment(
+                payment_id=payment.payment_id,
+                invoice_id=ledger_invoice.invoice_id,
+                amount_cents=amount_cents,
+                idempotency_key=f"stripe-invoice-allocation:{invoice.get('id')}",
+            )
+            if allocation is not None:
+                ledger_invoice = allocation.invoice
+        await self._outbox.append(
+            event_cls(
+                aggregate_id=ledger_invoice.invoice_id,
+                academy_id=ledger_invoice.academy_id,
+                payload=self._invoice_payload(
+                    ledger_invoice,
+                    enrollment.student_id,
+                    enrollment.session_type_id,
+                    invoice,
+                ),
+            )
+        )
+        return True
+
+    @staticmethod
+    def _stripe_subscription_id_from_invoice(invoice: dict[str, Any]) -> str | None:
+        direct = invoice.get("subscription")
+        if direct:
+            return str(direct)
+        parent = invoice.get("parent")
+        if isinstance(parent, dict):
+            details = parent.get("subscription_details")
+            if isinstance(details, dict) and details.get("subscription"):
+                return str(details["subscription"])
+        return None
+
+    @staticmethod
+    def _ledger_invoice_id(invoice: dict[str, Any]) -> str:
+        metadata = invoice.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("ledger_invoice_id"):
+            return str(metadata["ledger_invoice_id"])
+        return f"ledger-{invoice.get('id')}"
+
+    @staticmethod
+    def _invoice_period_label(invoice: dict[str, Any], now: datetime) -> str:
+        period_start = invoice.get("period_start")
+        if period_start is not None:
+            try:
+                return datetime.fromtimestamp(int(period_start), tz=UTC).strftime("%Y-%m")
+            except (TypeError, ValueError, OSError):
+                pass
+        return now.strftime("%Y-%m")
+
+    @staticmethod
+    def _invoice_due_date(invoice: dict[str, Any], now: datetime) -> date:
+        due_timestamp = invoice.get("due_date")
+        if due_timestamp is not None:
+            try:
+                return datetime.fromtimestamp(int(due_timestamp), tz=UTC).date()
+            except (TypeError, ValueError, OSError):
+                pass
+        return (now + timedelta(days=30)).date()
+
+    @staticmethod
+    def _invoice_payload(
+        invoice: LedgerInvoice,
+        student_id: str | None,
+        session_type_id: str | None,
+        stripe_invoice: dict[str, Any],
+    ) -> InvoiceLifecyclePayload:
+        return InvoiceLifecyclePayload(
+            invoice_id=invoice.invoice_id,
+            parent_id=invoice.parent_id,
+            student_id=student_id,
+            session_type_id=session_type_id,
+            billing_period_label=invoice.period,
+            total_cents=invoice.total_cents,
+            stripe_invoice_id=str(stripe_invoice.get("id")) if stripe_invoice.get("id") else None,
+        )
 
     async def _payment_from_invoice(
         self, invoice: dict[str, Any], *, status: str

@@ -104,6 +104,23 @@
 
 user_problem_statement: "Fix unusable admin create-session and fee settings UI with an industry-standard operator workflow."
 backend:
+  - task: "Phase 0 session-type billing completion"
+    implemented: true
+    working: true
+    file: "backend/v2/contexts/billing/application/use_cases/session_type_ops.py, backend/v2/contexts/billing/application/use_cases/handle_webhook_event.py, backend/v2/interfaces/admin/session_type_routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Completing pending Phase 0 session-type billing slice: Stripe fake/real proration implementation, session type admin use cases/routes, Mongo repo tenant-isolation coverage, session-type webhook ledger path that skips legacy Payment double-counting, and migration/plan cleanup. Focused RED tests were added first and now pass locally; broader verification pending."
+      - working: true
+        agent: "main"
+        comment: "Verification passed: focused session-type application/webhook/interface/contract suite returned 11 passed; existing webhook replay suite returned 18 passed; impacted admin interface tests returned 20 passed; full backend v2 suite returned 681 passed with 2 mongomock deprecation warnings; ruff check v2 passed; ruff format --check v2 passed; PYTHONPATH=.. lint-imports --config pyproject.toml passed; scratch migration runner applied 0111_session_type_billing and verified expected indexes. Also fixed a date-sensitive login-attempt migration test fixture so the contract suite is stable after May 30, 2026."
+      - working: false
+        agent: "main"
+        comment: "Pre-push backend rerun on May 30, 2026 for PR #121 after rebasing onto origin/main: ruff check v2 passed; ruff format --check v2 passed; pytest v2/tests --override-ini='testpaths=v2/tests' -q returned 665 passed with 2 mongomock datetime warnings. Required mypy --config-file pyproject.toml v2 remains blocked before type checking by the existing duplicate module mapping for v2/contexts/billing/application/use_cases/admin_payment_ops.py as both v2.* and backend.v2.*."
   - task: "Worker C v2-only backend runtime wiring"
     implemented: true
     working: true
@@ -1575,3 +1592,12 @@ agent_communication:
       PR #120 merge conflict resolution — 2026-05-29.
 
       Resolved conflicts against origin/main after dependency-update PRs landed. Kept the v2-only deletion of backend/server.py and backend/tests/test_onboarding_checkout.py, accepted main's backend dependency bumps, and carried main's Tailwind 4/frontend dependency updates through the merge. Verification for this conflict-resolution commit is recorded in the final handoff.
+  - agent: "main"
+    message: |
+      Production smoke CI hardening — 2026-05-30.
+
+      User asked to fix GitHub Actions run 26654055581. Root cause from the run log: the Production Smoke job failed after deploy when the API CORS preflight curl hit a transient transport failure, `curl: (35) Recv failure: Connection reset by peer`, immediately after a slow post-deploy health check. Live production API CORS and the existing smoke script passed locally afterward, so this was a brittle readiness/probe issue rather than a deterministic CORS regression.
+
+      Change: scripts/smoke/production_smoke.sh now uses bounded curl retry, connect-timeout, and max-time defaults for smoke HTTP probes, with a separate status-code helper for the intentional Stripe invalid-signature 400 check.
+
+      Verification passed: bash -n scripts/smoke/production_smoke.sh; scripts/smoke/production_smoke.sh against production.
