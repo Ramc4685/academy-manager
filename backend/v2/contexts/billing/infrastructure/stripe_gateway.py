@@ -7,6 +7,7 @@ Tests fake this entirely via the StripeGateway Protocol.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from typing import Any
 
 from backend.v2.contexts.billing.application.ports import StripeGateway
@@ -139,3 +140,42 @@ class RealStripeGateway(StripeGateway):
                 self._stripe.Subscription.delete(stripe_subscription_id)
 
         await asyncio.to_thread(_cancel)
+
+    async def update_subscription_proration(
+        self,
+        stripe_subscription_id: str,
+        *,
+        new_price_cents: int,
+        billing_period_start: datetime,
+        billing_period_end: datetime,
+    ) -> str:
+        def _update() -> str:
+            subscription = self._stripe.Subscription.retrieve(stripe_subscription_id)
+            item_id = subscription["items"]["data"][0]["id"]
+            self._stripe.Subscription.modify(
+                stripe_subscription_id,
+                items=[
+                    {
+                        "id": item_id,
+                        "price_data": {
+                            "currency": "usd",
+                            "product_data": {"name": "Academy session type"},
+                            "unit_amount": new_price_cents,
+                            "recurring": {"interval": "month"},
+                        },
+                    }
+                ],
+                proration_behavior="create_prorations",
+                proration_date=int(billing_period_start.timestamp()),
+            )
+            invoice = self._stripe.Invoice.create(
+                subscription=stripe_subscription_id,
+                metadata={
+                    "billing_period_start": billing_period_start.isoformat(),
+                    "billing_period_end": billing_period_end.isoformat(),
+                },
+            )
+            finalized = self._stripe.Invoice.finalize_invoice(invoice["id"])
+            return str(finalized["id"])
+
+        return await asyncio.to_thread(_update)

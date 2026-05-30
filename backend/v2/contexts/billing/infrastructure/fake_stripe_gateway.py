@@ -6,6 +6,7 @@ Records calls; returns deterministic IDs. Real Stripe stays out of CI.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 
 from backend.v2.contexts.billing.application.ports import StripeGateway
@@ -19,6 +20,7 @@ class FakeStripeGateway(StripeGateway):
         self.portal_sessions: list[dict[str, Any]] = []
         self.refunds: list[dict[str, Any]] = []
         self.cancelled_subscriptions: list[dict[str, Any]] = []
+        self.subscription_prorations: list[dict[str, Any]] = []
 
     async def create_checkout_session(
         self,
@@ -115,3 +117,21 @@ class FakeStripeGateway(StripeGateway):
                 "at_period_end": at_period_end,
             }
         )
+
+    async def update_subscription_proration(
+        self,
+        stripe_subscription_id: str,
+        *,
+        new_price_cents: int,
+        billing_period_start: datetime,
+        billing_period_end: datetime,
+    ) -> str:
+        self.subscription_prorations.append(
+            {
+                "stripe_subscription_id": stripe_subscription_id,
+                "new_price_cents": new_price_cents,
+                "billing_period_start": billing_period_start,
+                "billing_period_end": billing_period_end,
+            }
+        )
+        return f"in_proration_{new_ulid()}"

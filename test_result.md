@@ -104,6 +104,23 @@
 
 user_problem_statement: "Fix unusable admin create-session and fee settings UI with an industry-standard operator workflow."
 backend:
+  - task: "Phase 0 session-type billing completion"
+    implemented: true
+    working: true
+    file: "backend/v2/contexts/billing/application/use_cases/session_type_ops.py, backend/v2/contexts/billing/application/use_cases/handle_webhook_event.py, backend/v2/interfaces/admin/session_type_routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Completing pending Phase 0 session-type billing slice: Stripe fake/real proration implementation, session type admin use cases/routes, Mongo repo tenant-isolation coverage, session-type webhook ledger path that skips legacy Payment double-counting, and migration/plan cleanup. Focused RED tests were added first and now pass locally; broader verification pending."
+      - working: true
+        agent: "main"
+        comment: "Verification passed: focused session-type application/webhook/interface/contract suite returned 11 passed; existing webhook replay suite returned 18 passed; impacted admin interface tests returned 20 passed; full backend v2 suite returned 681 passed with 2 mongomock deprecation warnings; ruff check v2 passed; ruff format --check v2 passed; PYTHONPATH=.. lint-imports --config pyproject.toml passed; scratch migration runner applied 0111_session_type_billing and verified expected indexes. Also fixed a date-sensitive login-attempt migration test fixture so the contract suite is stable after May 30, 2026."
+      - working: false
+        agent: "main"
+        comment: "Pre-push backend rerun on May 30, 2026: ruff check v2 initially found one import-order issue in backend/v2/composition/parent.py, which was fixed by ruff; ruff check v2 and ruff format --check v2 now pass; pytest v2/tests --override-ini='testpaths=v2/tests' -q returned 665 passed with 2 mongomock datetime warnings. Required mypy --config-file pyproject.toml v2 remains blocked before type checking by the existing duplicate module mapping for v2/contexts/billing/application/use_cases/admin_payment_ops.py as both v2.* and backend.v2.*; branch was not pushed."
   - task: "Worker C v2-only backend runtime wiring"
     implemented: true
     working: true

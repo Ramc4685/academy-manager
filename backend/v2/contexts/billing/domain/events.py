@@ -83,3 +83,33 @@ class SubscriptionUpdated(DomainEvent):
     name: Literal["Billing.SubscriptionUpdated"] = "Billing.SubscriptionUpdated"  # type: ignore[assignment]
     schema_version: Literal[1] = 1  # type: ignore[assignment]
     payload: SubscriptionUpdatedPayload  # type: ignore[assignment]
+
+
+class InvoiceLifecyclePayload(BaseModel):
+    model_config = {"frozen": True}
+
+    invoice_id: str
+    parent_id: str
+    student_id: str | None
+    session_type_id: str | None
+    billing_period_label: str
+    total_cents: int
+    stripe_invoice_id: str | None = None
+
+
+class InvoiceIssued(DomainEvent):
+    name: Literal["Billing.InvoiceIssued"] = "Billing.InvoiceIssued"  # type: ignore[assignment]
+    schema_version: Literal[1] = 1  # type: ignore[assignment]
+    payload: InvoiceLifecyclePayload  # type: ignore[assignment]
+
+
+class InvoicePaid(DomainEvent):
+    name: Literal["Billing.InvoicePaid"] = "Billing.InvoicePaid"  # type: ignore[assignment]
+    schema_version: Literal[1] = 1  # type: ignore[assignment]
+    payload: InvoiceLifecyclePayload  # type: ignore[assignment]
+
+
+class InvoiceFailed(DomainEvent):
+    name: Literal["Billing.InvoiceFailed"] = "Billing.InvoiceFailed"  # type: ignore[assignment]
+    schema_version: Literal[1] = 1  # type: ignore[assignment]
+    payload: InvoiceLifecyclePayload  # type: ignore[assignment]

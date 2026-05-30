@@ -11,6 +11,10 @@ from backend.v2.contexts.billing.domain.proration import (
     BillingPeriod,
     ClassOccurrence,
 )
+from backend.v2.contexts.billing.domain.session_type import (
+    SessionType,
+    StudentBillingEnrollment,
+)
 
 
 class PaymentRepository(Protocol):
@@ -96,6 +100,20 @@ class StripeGateway(Protocol):
     ) -> None:
         """Cancel a Stripe subscription now or at period end."""
 
+    async def update_subscription_proration(
+        self,
+        stripe_subscription_id: str,
+        *,
+        new_price_cents: int,
+        billing_period_start: datetime,
+        billing_period_end: datetime,
+    ) -> str:
+        """Update a subscription item's price with Stripe proration.
+
+        Uses ``proration_behavior="create_prorations"`` so Stripe generates the
+        proration invoice. Returns the resulting Stripe invoice id.
+        """
+
 
 class CapacityReservation(Protocol):
     """Cross-context port: Billing uses this to ask Enrollment whether a
@@ -168,3 +186,25 @@ class SnapshotWriter(Protocol):
     ) -> str:
         """Store a CONSUMED monthly-tuition snapshot; return snapshot_id."""
         ...
+
+
+# ---------------------------------------------------------------------------
+# Ports for session-type-driven billing
+# ---------------------------------------------------------------------------
+
+
+class SessionTypeRepository(Protocol):
+    async def save(self, session_type: SessionType) -> None: ...
+    async def get(self, session_type_id: str) -> SessionType | None: ...
+    async def list_active(self) -> list[SessionType]: ...
+    async def soft_delete(self, session_type_id: str) -> None: ...
+
+
+class StudentBillingEnrollmentRepository(Protocol):
+    async def save(self, enrollment: StudentBillingEnrollment) -> None: ...
+    async def get(self, enrollment_id: str) -> StudentBillingEnrollment | None: ...
+    async def list_for_student(self, student_id: str) -> list[StudentBillingEnrollment]: ...
+    async def list_for_parent(self, parent_id: str) -> list[StudentBillingEnrollment]: ...
+    async def get_by_stripe_subscription(
+        self, stripe_subscription_id: str
+    ) -> StudentBillingEnrollment | None: ...

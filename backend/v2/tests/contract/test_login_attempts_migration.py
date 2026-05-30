@@ -19,7 +19,7 @@ async def test_login_attempts_migration_creates_updated_at_ttl_index(db) -> None
 async def test_login_attempts_migration_converts_legacy_string_updated_at(db) -> None:
     migration = importlib.import_module("backend.v2.migrations.0110_login_attempts_ttl")
     await db["login_attempts"].insert_one(
-        {"identifier": "parent@example.com", "updated_at": "2026-05-29T12:00:00+00:00"}
+        {"identifier": "parent@example.com", "updated_at": "2099-05-29T12:00:00+00:00"}
     )
 
     await migration.up(db)

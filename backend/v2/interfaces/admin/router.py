@@ -15,6 +15,7 @@ from .pause_routes import router as pause_router
 from .payout_period_routes import router as payout_period_router
 from .registration_routes import router as registration_router
 from .reports_routes import router as reports_router
+from .session_type_routes import router as session_type_router
 from .sessions_routes import router as sessions_router
 from .waitlist_routes import router as waitlist_router
 from .waiver_routes import router as waiver_router
@@ -28,6 +29,7 @@ router.include_router(registration_router)
 router.include_router(dues_router)
 router.include_router(reports_router)
 router.include_router(sessions_router)
+router.include_router(session_type_router)
 router.include_router(waitlist_router)
 router.include_router(billing_router)
 router.include_router(payout_period_router)
