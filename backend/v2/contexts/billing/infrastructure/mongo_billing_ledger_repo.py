@@ -215,6 +215,16 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             invoices.append({"invoice": inv_doc, "lines": lines})
         return invoices
 
+    async def list_invoices_for_parent(
+        self, parent_id: str, *, limit: int = 100
+    ) -> list[LedgerInvoice]:
+        cursor = self._find_many(
+            {"parent_id": parent_id},
+            sort=[("created_at", -1)],
+            limit=limit,
+        )
+        return [self._invoice_from_doc(doc) async for doc in cursor]
+
     async def _existing_allocation_result(
         self, allocation_doc: dict[str, object]
     ) -> LedgerAllocationResult:

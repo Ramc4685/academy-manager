@@ -29,6 +29,7 @@ from backend.v2.contexts.billing.application.use_cases.start_checkout import (
     StartCheckout,
     StartCheckoutCommand,
 )
+from backend.v2.contexts.billing.domain.ledger import InvoiceLine
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
 )
@@ -127,6 +128,8 @@ class ParentComposition:
     list_parent_pause_requests: ListParentPauseRequests
     list_attendance_for_parent: object
     list_progress_for_parent: object
+    list_invoices_for_parent: object
+    get_invoice_for_parent: object
 
 
 def compose_parent(
@@ -372,6 +375,19 @@ def compose_parent(
             )
         return rows
 
+    async def list_invoices_for_parent(parent_id: str):
+        return await billing_ledger_repo.list_invoices_for_parent(parent_id)
+
+    async def get_invoice_for_parent(*, parent_id: str, invoice_id: str):
+        invoice = await billing_ledger_repo.get_invoice(invoice_id)
+        if invoice is None or invoice.parent_id != parent_id:
+            return None
+        lines_cursor = db["invoice_lines"].find(
+            {"academy_id": academy_id, "invoice_id": invoice_id}
+        )
+        lines = [InvoiceLine(**doc) async for doc in lines_cursor]
+        return {"invoice": invoice, "lines": lines}
+
     async def quote_enrollment(
         *,
         parent_id: str,
@@ -534,6 +550,8 @@ def compose_parent(
         list_parent_pause_requests=list_parent_pause_requests,
         list_attendance_for_parent=list_attendance_for_parent,
         list_progress_for_parent=list_progress_for_parent,
+        list_invoices_for_parent=list_invoices_for_parent,
+        get_invoice_for_parent=get_invoice_for_parent,
     )
 
 
