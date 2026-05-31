@@ -20,6 +20,7 @@ class MongoTenantLifecycleRepository:
 
     def __init__(self, db: Any) -> None:
         self._collection = db["academies"]
+        self._domains = db["academy_domains"]
 
     async def get_by_id(self, academy_id: str) -> Tenant | None:
         doc = await self._collection.find_one({"academy_id": academy_id})
@@ -36,7 +37,22 @@ class MongoTenantLifecycleRepository:
         return self._to_tenant(doc) if doc else None
 
     async def create(self, tenant: Tenant) -> Tenant:
+        now = datetime.now(UTC)
         await self._collection.insert_one(self._to_doc(tenant))
+        if tenant.primary_domain:
+            await self._domains.update_one(
+                {"domain": tenant.primary_domain},
+                {
+                    "$set": {
+                        "academy_id": tenant.academy_id,
+                        "slug": tenant.slug,
+                        "status": "verified",
+                        "kind": "tenant_subdomain",
+                        "created_at": now,
+                    }
+                },
+                upsert=True,
+            )
         return tenant
 
     async def save(self, tenant: Tenant) -> Tenant:
