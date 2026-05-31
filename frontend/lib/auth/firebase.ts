@@ -21,6 +21,7 @@ import {
   signOut,
   type User,
 } from "firebase/auth";
+import { getReadyIdToken } from "@/lib/auth/token-readiness";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -73,9 +74,10 @@ function fakeE2EUser(email: string): User {
 export async function getIdToken(): Promise<string | null> {
   if (typeof window === "undefined") return null;
   if (E2E_BYPASS) return "e2e-fake-token";
-  const user = auth().currentUser;
-  if (!user) return null;
-  return user.getIdToken();
+  const firebaseAuth = auth();
+  return getReadyIdToken(firebaseAuth, (callback) =>
+    onAuthStateChanged(firebaseAuth, callback)
+  );
 }
 
 export async function signInWithEmail(email: string, password: string): Promise<User> {

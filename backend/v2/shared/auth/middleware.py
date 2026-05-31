@@ -36,6 +36,9 @@ from backend.v2.shared.tenancy.context import _current as _tenant_var
 
 log = logging.getLogger(__name__)
 
+BFF_AUTH_HEADER = "x-courtmastr-auth"
+BFF_IDENTITY_HEADER = "x-courtmastr-identity"
+
 
 # Type aliases for the injected callables.
 LoadAuthClaimsCallable = Callable[..., Awaitable[AuthClaims]]
@@ -154,7 +157,14 @@ class TenancyMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     def _extract_bearer(request: Request) -> str | None:
-        header = request.headers.get("authorization")
+        for header_name in ("authorization", BFF_AUTH_HEADER, BFF_IDENTITY_HEADER):
+            token = TenancyMiddleware._parse_bearer(request.headers.get(header_name))
+            if token:
+                return token
+        return None
+
+    @staticmethod
+    def _parse_bearer(header: str | None) -> str | None:
         if not header:
             return None
         parts = header.split(" ", 1)
