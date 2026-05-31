@@ -1,44 +1,13 @@
 import type { NextRequest } from "next/server";
+import { buildProxyHeaders, buildProxyResponseHeaders } from "@/lib/api/proxy-headers";
 
-const BFF_API_ORIGIN = process.env.BFF_API_ORIGIN ?? "http://127.0.0.1:8001";
+const BFF_API_ORIGIN = process.env.BFF_API_ORIGIN ?? "https://api.academy.courtmastr.com";
 
 type RouteContext = {
   params: Promise<{
     path: string[];
   }>;
 };
-
-const HOP_BY_HOP_HEADERS = new Set([
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailer",
-  "transfer-encoding",
-  "upgrade",
-]);
-
-function proxyHeaders(request: NextRequest): Headers {
-  const headers = new Headers(request.headers);
-  const host = request.headers.get("host");
-  if (host && !headers.has("x-forwarded-host")) {
-    headers.set("x-forwarded-host", host);
-  }
-  if (!headers.has("x-forwarded-proto")) {
-    headers.set("x-forwarded-proto", request.nextUrl.protocol.replace(":", ""));
-  }
-  headers.delete("host");
-  return headers;
-}
-
-function responseHeaders(upstream: Response): Headers {
-  const headers = new Headers(upstream.headers);
-  for (const header of HOP_BY_HOP_HEADERS) {
-    headers.delete(header);
-  }
-  return headers;
-}
 
 async function proxy(request: NextRequest, context: RouteContext): Promise<Response> {
   const { path } = await context.params;
@@ -48,7 +17,7 @@ async function proxy(request: NextRequest, context: RouteContext): Promise<Respo
   const method = request.method.toUpperCase();
   const init: RequestInit = {
     method,
-    headers: proxyHeaders(request),
+    headers: buildProxyHeaders(request.headers, request.nextUrl.protocol),
     redirect: "manual",
   };
   if (method !== "GET" && method !== "HEAD") {
@@ -59,7 +28,7 @@ async function proxy(request: NextRequest, context: RouteContext): Promise<Respo
   return new Response(upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,
-    headers: responseHeaders(upstream),
+    headers: buildProxyResponseHeaders(upstream.headers),
   });
 }
 

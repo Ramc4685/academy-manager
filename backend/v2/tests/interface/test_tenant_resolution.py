@@ -327,6 +327,43 @@ def test_middleware_resolves_tenant_then_builds_claims() -> None:
     assert loader.calls == [{"id_token": "u-coach", "resolved_academy_id": "academy-court"}]
 
 
+def test_middleware_accepts_bff_auth_bridge_header() -> None:
+    """The Cloudflare BFF may forward Firebase tokens outside Authorization."""
+    loader = _RecordingLoader(
+        memberships={
+            ("u-coach", "academy-court"): {
+                "membership_id": "m-coach-court",
+                "roles": ("coach",),
+            }
+        },
+    )
+    app = _make_middleware_app(loader=loader)
+    client = TestClient(app, base_url="http://courtmastr.app.example.com")
+    r = client.get("/whoami", headers={"X-CourtMastr-Auth": "Bearer u-coach"})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["user_id"] == "u-coach"
+    assert loader.calls == [{"id_token": "u-coach", "resolved_academy_id": "academy-court"}]
+
+
+def test_middleware_accepts_bff_identity_bridge_header() -> None:
+    loader = _RecordingLoader(
+        memberships={
+            ("u-coach", "academy-court"): {
+                "membership_id": "m-coach-court",
+                "roles": ("coach",),
+            }
+        },
+    )
+    app = _make_middleware_app(loader=loader)
+    client = TestClient(app, base_url="http://courtmastr.app.example.com")
+    r = client.get("/whoami", headers={"X-CourtMastr-Identity": "Bearer u-coach"})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["user_id"] == "u-coach"
+    assert loader.calls == [{"id_token": "u-coach", "resolved_academy_id": "academy-court"}]
+
+
 def test_middleware_includes_platform_roles_separately() -> None:
     loader = _RecordingLoader(
         memberships={
