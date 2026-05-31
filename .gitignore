@@ -158,3 +158,4 @@ credentials.json
 .playwright-mcp
 rally-admin.png
 .mypy_cache
+graphify-out/
