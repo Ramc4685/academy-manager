@@ -2,12 +2,12 @@ import { expect, test, type Page } from "@playwright/test";
 
 const LOCAL_AUTH_ENABLED = process.env.LOCAL_AUTH_E2E === "1";
 
-const PARENT_EMAIL = process.env.LOCAL_AUTH_PARENT_EMAIL ?? "manojedward.btech@gmail.com";
-const PARENT_PASSWORD = process.env.LOCAL_AUTH_PARENT_PASSWORD ?? "Parent@12345";
-const ADMIN_EMAIL = process.env.LOCAL_AUTH_ADMIN_EMAIL ?? "ramchand4685@gmail.com";
-const ADMIN_PASSWORD = process.env.LOCAL_AUTH_ADMIN_PASSWORD ?? "Admin@12345";
-const COACH_EMAIL = process.env.LOCAL_AUTH_COACH_EMAIL ?? "gowtham@blno.academy";
-const COACH_PASSWORD = process.env.LOCAL_AUTH_COACH_PASSWORD ?? "Coach@12345";
+const PARENT_EMAIL = process.env.LOCAL_AUTH_PARENT_EMAIL ?? "";
+const PARENT_PASSWORD = process.env.LOCAL_AUTH_PARENT_PASSWORD ?? "";
+const ADMIN_EMAIL = process.env.LOCAL_AUTH_ADMIN_EMAIL ?? "";
+const ADMIN_PASSWORD = process.env.LOCAL_AUTH_ADMIN_PASSWORD ?? "";
+const COACH_EMAIL = process.env.LOCAL_AUTH_COACH_EMAIL ?? "";
+const COACH_PASSWORD = process.env.LOCAL_AUTH_COACH_PASSWORD ?? "";
 
 test.describe("local authenticated QA defect coverage", () => {
   test.skip(
