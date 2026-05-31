@@ -15,7 +15,9 @@ def _now() -> datetime:
     return datetime(2026, 5, 16, 9, 0, tzinfo=UTC)
 
 
-def _invoice(*, invoice_id: str, parent_id: str, academy_id: str, created_at: datetime) -> LedgerInvoice:
+def _invoice(
+    *, invoice_id: str, parent_id: str, academy_id: str, created_at: datetime
+) -> LedgerInvoice:
     return LedgerInvoice(
         invoice_id=invoice_id,
         academy_id=academy_id,
