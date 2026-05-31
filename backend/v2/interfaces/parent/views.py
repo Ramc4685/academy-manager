@@ -156,6 +156,36 @@ class ParentCreditBalanceResponse(BaseModel):
     credits: list[ParentCreditView]
 
 
+# --- Invoices ---
+
+
+class ParentInvoiceView(BaseModel):
+    invoice_id: str
+    period: str
+    status: str
+    total_cents: int
+    balance_due_cents: int
+    currency: str
+    due_date: date
+    pdf_url: str | None = None
+    created_at: datetime
+
+
+class ParentInvoicesResponse(BaseModel):
+    invoices: list[ParentInvoiceView]
+
+
+class ParentInvoiceLineView(BaseModel):
+    description: str
+    quantity: int
+    unit_amount_cents: int
+    amount_cents: int
+
+
+class ParentInvoiceDetailView(ParentInvoiceView):
+    lines: list[ParentInvoiceLineView]
+
+
 # --- Children / attendance / progress ---
 
 

@@ -47,6 +47,8 @@ class ParentUseCases:
     list_parent_pause_requests: ListParentPauseRequests
     list_attendance_for_parent: object  # callable
     list_progress_for_parent: object  # callable
+    list_invoices_for_parent: object  # callable
+    get_invoice_for_parent: object  # callable
 
 
 def get_parent_use_cases(request: Request) -> ParentUseCases:
