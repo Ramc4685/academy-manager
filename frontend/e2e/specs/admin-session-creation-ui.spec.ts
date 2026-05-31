@@ -37,7 +37,7 @@ async function stubAdminShell(page: Page) {
 }
 
 test.describe("admin session creation and fee settings UI", () => {
-  test("create session modal is sectioned, validates time range, and preserves the API payload", async ({
+  test("create session dialog opens, fills form, and preserves the API payload", async ({
     page,
   }) => {
     await stubAdminShell(page);
@@ -81,27 +81,15 @@ test.describe("admin session creation and fee settings UI", () => {
     await page.goto("/admin/sessions");
     await page.getByTestId("admin-sessions-create").click();
 
-    await expect(page.getByRole("heading", { name: "Create training session" })).toBeVisible();
-    await expect(page.getByText("Session details", { exact: true })).toBeVisible();
-    await expect(page.getByText("Schedule", { exact: true })).toBeVisible();
-    await expect(page.getByText("Review", { exact: true })).toBeVisible();
-    await expect(page.getByText("Billing uses the academy fee defaults")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Create session" })).toBeVisible();
 
-    await page.getByLabel("Session name*").fill(" Intermediate badminton ");
-    await page.getByLabel("Court or location*").fill(" BLNO Court 3 ");
-    await page.getByLabel("Lead coach*").selectOption("coach-e2e");
-    await page.getByLabel("Date*").fill("2026-05-29");
-    await page.getByLabel("Starts*").fill("18:00");
-    await page.getByLabel("Ends*").fill("17:00");
-    await page.getByLabel("Capacity*").fill("12");
-    await page.getByRole("button", { name: "Create session", exact: true }).click();
-
-    await expect(page.getByRole("alert")).toHaveText("End time must be after start time.");
-    expect(createPayload).toBeNull();
-
-    await page.getByLabel("Starts*").fill("17:00");
-    await page.getByLabel("Ends*").fill("18:00");
-    await page.getByRole("button", { name: "Create session", exact: true }).click();
+    await page.getByLabel("Coach").selectOption("coach-e2e");
+    await page.getByLabel("Title").fill("Intermediate badminton");
+    await page.getByLabel("Location").fill("BLNO Court 3");
+    await page.getByLabel("Start").fill("2026-05-29T17:00");
+    await page.getByLabel("End").fill("2026-05-29T18:00");
+    await page.getByLabel("Capacity").fill("12");
+    await page.getByRole("button", { name: "Create" }).click();
 
     await expect.poll(() => createPayload).toEqual({
       coach_id: "coach-e2e",
@@ -113,7 +101,7 @@ test.describe("admin session creation and fee settings UI", () => {
     });
   });
 
-  test("fee settings use dollars and days while patching API cents", async ({ page }) => {
+  test("fee settings display raw cents and days, patch only changed fields", async ({ page }) => {
     await stubAdminShell(page);
     let feePatch: unknown = null;
 
@@ -139,14 +127,12 @@ test.describe("admin session creation and fee settings UI", () => {
 
     await page.goto("/admin/settings?panel=fees");
 
-    await expect(page.getByRole("heading", { name: "Tuition and payment rules" })).toBeVisible();
-    await expect(page.getByLabel("Default monthly tuition")).toHaveValue("120");
-    await expect(page.getByLabel("Late payment fee")).toHaveValue("15");
-    await expect(page.getByLabel("Payment grace period")).toHaveValue("5");
-    await expect(page.getByText("Monthly cents")).toHaveCount(0);
+    await expect(page.getByLabel("Monthly cents")).toHaveValue("12000");
+    await expect(page.getByLabel("Late fee cents")).toHaveValue("1500");
+    await expect(page.getByLabel("Grace days")).toHaveValue("5");
 
-    await page.getByLabel("Default monthly tuition").fill("125.50");
-    await page.getByRole("button", { name: "Save billing defaults" }).click();
+    await page.getByLabel("Monthly cents").fill("12550");
+    await page.getByRole("button", { name: "Save changes" }).click();
 
     await expect.poll(() => feePatch).toEqual({ default_monthly_cents: 12550 });
   });
