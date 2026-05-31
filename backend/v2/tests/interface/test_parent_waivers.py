@@ -10,6 +10,10 @@ from datetime import UTC, datetime
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers import (
+    ParentWaiverRequirement,
+    ParentWaiverStudentStatus,
+)
 from backend.v2.interfaces.parent.deps import get_parent_use_cases
 from backend.v2.interfaces.parent.router import router as parent_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
@@ -25,15 +29,29 @@ def _claims(role: str = "parent") -> AuthClaims:
     )
 
 
+class _FakeExecutor:
+    """Wraps a coroutine function as a use-case object with .execute()."""
+
+    def __init__(self, fn):  # type: ignore[type-arg]
+        self._fn = fn
+
+    async def execute(self, **kwargs):  # type: ignore[override]
+        return await self._fn(**kwargs)
+
+
 @dataclass
 class _ParentWaiverUseCases:
     signed_student_ids: set[str] = field(default_factory=set)
 
-    async def get_parent_waiver_requirement(self, *, parent_id: str) -> dict[str, object]:
+    def __post_init__(self) -> None:
+        self.get_parent_waiver_requirement = _FakeExecutor(self._get_requirement)
+        self.accept_parent_waiver = _FakeExecutor(self._accept)
+
+    async def _get_requirement(self, *, parent_id: str) -> ParentWaiverRequirement:
         _ = parent_id
         return self._payload()
 
-    async def accept_parent_waiver(
+    async def _accept(
         self,
         *,
         parent_id: str,
@@ -41,32 +59,32 @@ class _ParentWaiverUseCases:
         signer_email: str,
         ip_address: str | None,
         user_agent: str | None,
-    ) -> dict[str, object]:
+    ) -> ParentWaiverRequirement:
         _ = (parent_id, signer_name, signer_email, ip_address, user_agent)
         self.signed_student_ids.update({"st-1", "st-2"})
         return self._payload()
 
-    def _payload(self) -> dict[str, object]:
-        rows = []
-        for student_id, name in (("st-1", "Asha Rao"), ("st-2", "Dev Rao")):
-            signed = student_id in self.signed_student_ids
-            rows.append(
-                {
-                    "student_id": student_id,
-                    "student_name": name,
-                    "status": "signed" if signed else "pending",
-                    "signed_at": datetime(2026, 5, 28, 12, tzinfo=UTC) if signed else None,
-                    "waiver_version": "2026.1" if signed else None,
-                }
+    def _payload(self) -> ParentWaiverRequirement:
+        students = [
+            ParentWaiverStudentStatus(
+                student_id=sid,
+                student_name=name,
+                status="signed" if sid in self.signed_student_ids else "pending",
+                signed_at=datetime(2026, 5, 28, 12, tzinfo=UTC)
+                if sid in self.signed_student_ids
+                else None,
+                waiver_version="2026.1" if sid in self.signed_student_ids else None,
             )
-        return {
-            "required": True,
-            "waiver_template_id": "wt-1",
-            "title": "Annual waiver",
-            "version": "2026.1",
-            "body": "Waiver body",
-            "students": rows,
-        }
+            for sid, name in (("st-1", "Asha Rao"), ("st-2", "Dev Rao"))
+        ]
+        return ParentWaiverRequirement(
+            required=True,
+            waiver_template_id="wt-1",
+            title="Annual waiver",
+            version="2026.1",
+            body="Waiver body",
+            students=students,
+        )
 
 
 @contextmanager

@@ -92,9 +92,16 @@ from backend.v2.contexts.onboarding.application.use_cases.manage_application imp
     StartApplication,
     TransitionApplication,
 )
+from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers import (
+    AcceptParentWaiver,
+    GetParentWaiverRequirement,
+)
 from backend.v2.contexts.onboarding.domain.errors import MissingSelectedSession
 from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import (
     MongoApplicationRepository,
+)
+from backend.v2.contexts.onboarding.infrastructure.mongo_parent_waiver_repo import (
+    MongoParentWaiverRepository,
 )
 from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_repo import (
     MongoWaiverRepository,
@@ -130,6 +137,8 @@ class ParentComposition:
     list_progress_for_parent: object
     list_invoices_for_parent: object
     get_invoice_for_parent: object
+    get_parent_waiver_requirement: GetParentWaiverRequirement
+    accept_parent_waiver: AcceptParentWaiver
 
 
 def compose_parent(
@@ -215,6 +224,9 @@ def compose_parent(
     # Onboarding
     apps_repo = MongoApplicationRepository(db)
     waivers_repo = MongoWaiverRepository(db)
+    parent_waivers_repo = MongoParentWaiverRepository(db)
+    get_waiver_req = GetParentWaiverRequirement(waivers=parent_waivers_repo)
+    accept_waiver = AcceptParentWaiver(waivers=parent_waivers_repo, academy_id=academy_id)
     start_app = StartApplication(apps=apps_repo, academy_id=academy_id)
     patch_app = PatchApplication(apps=apps_repo, waivers=waivers_repo)
     get_status = GetApplicationStatus(apps=apps_repo)
@@ -552,6 +564,8 @@ def compose_parent(
         list_progress_for_parent=list_progress_for_parent,
         list_invoices_for_parent=list_invoices_for_parent,
         get_invoice_for_parent=get_invoice_for_parent,
+        get_parent_waiver_requirement=get_waiver_req,
+        accept_parent_waiver=accept_waiver,
     )
 
 

@@ -23,6 +23,10 @@ from backend.v2.contexts.onboarding.application.use_cases.manage_application imp
     StartApplication,
     TransitionApplication,
 )
+from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers import (
+    AcceptParentWaiver,
+    GetParentWaiverRequirement,
+)
 
 
 @dataclass
@@ -49,6 +53,8 @@ class ParentUseCases:
     list_progress_for_parent: object  # callable
     list_invoices_for_parent: object  # callable
     get_invoice_for_parent: object  # callable
+    get_parent_waiver_requirement: GetParentWaiverRequirement
+    accept_parent_waiver: AcceptParentWaiver
 
 
 def get_parent_use_cases(request: Request) -> ParentUseCases:
