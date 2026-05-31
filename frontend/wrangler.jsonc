@@ -19,6 +19,10 @@
     {
       "pattern": "academy.courtmastr.com/*",
       "zone_name": "courtmastr.com"
+    },
+    {
+      "pattern": "*.courtmastr.com/*",
+      "zone_name": "courtmastr.com"
     }
   ],
   "observability": {

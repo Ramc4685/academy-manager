@@ -593,6 +593,20 @@ backend:
         agent: "testing"
         comment: "Baseline regression audit 2026-05-27 (COU-12). Full v2 suite: 612 collected, 611 passed, 1 FAILED. Failing: v2/tests/contract/test_admin_directory_mongo_student_repo.py::test_list_admin_students_returns_rich_default_page_without_per_student_fanout. Assertion: bob.dues_status == 'due' but got 'overdue'. Bob seeded with status=pending, due_at=now+5d (future), created_at=now-1d. _payment_is_overdue should return False for this payment, yielding 'due', but repo returns 'overdue'. Likely a datetime/timezone interaction in mongomock_motor or a logic change in _dues_statuses/_payment_is_overdue. No code changes per COU-12 read-only scope."
 frontend:
+  - task: "Production SaaS tenant auth bridge"
+    implemented: true
+    working: true
+    file: "frontend/app/api/v2/[...path]/route.ts, frontend/lib/api/client.ts, frontend/lib/api/proxy-headers.ts, frontend/next.config.ts, frontend/wrangler.jsonc, backend/v2/shared/auth/middleware.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "main"
+        comment: "Prod BLNO tenant Google login redirected to /login because /api/v2/me returned 401. Investigation showed Mongo user and membership existed, but same-origin tenant API calls were bypassing the Next BFF via next.config rewrites and auth headers were not consistently available on the Cloudflare/Next path."
+      - working: true
+        agent: "main"
+        comment: "Implemented and deployed the SaaS BFF auth bridge: removed the /api/v2 external rewrite so app/api/v2/[...path] runs, preserved tenant host forwarding, added a short-lived same-origin __cm_identity bridge cookie that the BFF converts to backend X-CourtMastr-Auth while stripping the cookie before the backend request, added backend support for BFF auth/identity headers, made non-coach /api service-worker traffic network-only, and kept wildcard Worker routing. Verification passed locally: frontend focused node auth/proxy tests 6 passed, frontend typecheck/lint/build passed from a clean deploy copy, backend tenant middleware tests 20 passed, backend ruff check passed. Production deploys completed: Fly backend healthy; Cloudflare Worker version 3a560573-08a9-41a0-b8e5-30c9c6175bcc with academy.courtmastr.com/* and *.courtmastr.com/* routes. Live smoke passed: https://blno-academy.courtmastr.com/api/v2/healthz returned 200, and /api/v2/me with __cm_identity=definitely-invalid-token returned 401 while Fly logs recorded auth_failed: Identity.InvalidToken, proving the tenant BFF route now reaches backend token verification. Full valid-token smoke was skipped because macOS denied Codex access to the service-account JSON in Downloads."
   - task: "Admin dashboard command center with monthly profit"
     implemented: true
     working: true
@@ -1034,10 +1048,11 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 40
+  test_sequence: 41
   run_ui: true
 test_plan:
   current_focus:
+    - "Production SaaS tenant auth bridge"
     - "Worker C v2-only backend runtime wiring"
     - "Admin dashboard command center with monthly profit"
     - "Admin create-session and fee settings usability defect"
@@ -1057,6 +1072,8 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "Production SaaS tenant auth bridge deployed. Root cause was /api/v2 rewrites bypassing the Next BFF plus unreliable auth-header availability on the tenant Worker path. Removed the rewrite so app/api/v2/[...path] owns same-origin API calls, added the BFF identity cookie-to-backend-header bridge, added backend BFF header extraction, kept wildcard Cloudflare routes, and deployed backend + frontend. Verification passed: focused frontend node tests 6 passed, clean frontend typecheck/lint/build passed, backend tenant middleware tests 20 passed, backend ruff check passed, Fly health passed, Cloudflare Worker deployed version 3a560573-08a9-41a0-b8e5-30c9c6175bcc, tenant healthz returned 200, and invalid __cm_identity smoke hit backend Firebase verification as auth_failed: Identity.InvalidToken. Valid-token smoke was skipped because macOS denied access to the service-account JSON under Downloads."
   - agent: "main"
     message: "Worker C v2-only backend runtime wiring complete. Backend container/local docs now point at backend.v2.main:app and /api/v2/healthz, V2_ENABLED was removed from assigned runtime docs/scripts/config, Stripe webhook docs now use /api/v2/parent/webhooks/stripe, requirements-v2.txt is retained only as a CI compatibility stub after consolidating pins into requirements.txt, and structural tests prove registered business routes are /api/v2 only. Verification passed: focused structural pytest 10 passed, bash -n on local/dev scripts, assigned-scope rg sweep, and git diff --check."
   - agent: "main"
@@ -1601,3 +1618,12 @@ agent_communication:
       Change: scripts/smoke/production_smoke.sh now uses bounded curl retry, connect-timeout, and max-time defaults for smoke HTTP probes, with a separate status-code helper for the intentional Stripe invalid-signature 400 check.
 
       Verification passed: bash -n scripts/smoke/production_smoke.sh; scripts/smoke/production_smoke.sh against production.
+  - agent: "main"
+    message: |
+      SaaS same-origin BFF auth bridge fix — 2026-05-30.
+
+      User asked for a good SaaS fix instead of direct API workaround. Evidence: Google popup completes, prod Mongo has active user and BLNO membership for ramchand4685@gmail.com, direct backend requests with a fake Bearer token log Identity.InvalidToken, but the same fake Bearer through blno-academy.courtmastr.com/api/v2/me does not reach backend auth. This isolates the issue to the tenant-host Worker/BFF path, not Google login or Mongo.
+
+      Change prepared: keep canonical same-origin tenant API path /api/v2/*, add BFF-owned X-CourtMastr-Auth bridge header from the browser only for same-origin BFF requests, and have the Next BFF route map that header back to backend Authorization while stripping it before upstream. Also keeps the direct post-login user.getIdToken path and service-worker NetworkOnly rule for non-coach /api/* requests.
+
+      Verification passed in a clean temporary frontend copy: node --test frontend/lib/api/proxy-headers.node-test.mjs frontend/lib/api/auth-token.node-test.mjs frontend/lib/auth/token-readiness.node-test.mjs; pnpm typecheck; pnpm lint; pnpm build with BFF_API_ORIGIN=https://api.academy.courtmastr.com, NEXT_PUBLIC_API_BASE=/api/v2, and Firebase emulator host cleared. Root worktree pnpm typecheck remains blocked by unrelated dirty/untracked parent waiver/admin directory files.

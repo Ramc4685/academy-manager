@@ -7,8 +7,11 @@
  */
 
 import { getIdToken } from "@/lib/auth/firebase";
+import { resolveApiAuthToken } from "@/lib/api/auth-token";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/api/v2";
+const BFF_IDENTITY_HEADER = "X-CourtMastr-Identity";
+const BFF_IDENTITY_COOKIE = "__cm_identity";
 
 const inflight = new Map<string, Promise<Response>>();
 
@@ -59,12 +62,20 @@ function makeError(status: number, body: unknown): ApiError {
 
 export async function apiFetch<T>(
   path: string,
-  init: RequestInit & { dedup?: boolean } = {}
+  init: RequestInit & { dedup?: boolean; authToken?: string | null } = {}
 ): Promise<T> {
+  const usesSameOriginBff = !path.startsWith("http");
   const url = path.startsWith("http") ? path : `${API_BASE}${path}`;
-  const token = await getIdToken();
+  const { authToken, dedup, ...requestInit } = init;
+  const token = await resolveApiAuthToken(authToken, getIdToken);
   const headers = new Headers(init.headers);
-  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+    if (usesSameOriginBff) {
+      headers.set(BFF_IDENTITY_HEADER, token);
+      setBffIdentityCookie(token);
+    }
+  }
   headers.set("Accept", "application/json");
   if (init.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
@@ -75,15 +86,15 @@ export async function apiFetch<T>(
   }
 
   // Dedup identical in-flight GETs (or anything else if explicitly requested).
-  const isReadable = init.method === "GET" || init.method === undefined;
-  const shouldDedup = init.dedup ?? isReadable;
-  const dedupKey = shouldDedup ? `${init.method ?? "GET"} ${url}` : null;
+  const isReadable = requestInit.method === "GET" || requestInit.method === undefined;
+  const shouldDedup = dedup ?? isReadable;
+  const dedupKey = shouldDedup ? `${requestInit.method ?? "GET"} ${url}` : null;
   if (dedupKey && inflight.has(dedupKey)) {
     const r = await inflight.get(dedupKey)!;
     return parseResponse<T>(r.clone());
   }
 
-  const promise = fetch(url, { ...init, headers });
+  const promise = fetch(url, { ...requestInit, headers });
   if (dedupKey) inflight.set(dedupKey, promise);
   try {
     const res = await promise;
@@ -91,6 +102,14 @@ export async function apiFetch<T>(
   } finally {
     if (dedupKey) inflight.delete(dedupKey);
   }
+}
+
+function setBffIdentityCookie(token: string): void {
+  if (typeof document === "undefined") return;
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `${BFF_IDENTITY_COOKIE}=${encodeURIComponent(
+    token
+  )}; Path=/; SameSite=Strict; Max-Age=3600${secure}`;
 }
 
 async function parseResponse<T>(res: Response): Promise<T> {
