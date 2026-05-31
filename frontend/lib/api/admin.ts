@@ -1403,3 +1403,18 @@ export function updateAdminNotifications(
 export function getAdminGateway(): Promise<AdminGatewayView> {
   return apiFetch<AdminGatewayView>("/admin/academy/gateway", { method: "GET" });
 }
+
+export interface CreateAdminUserRequest {
+  role: AdminUserRole;
+  display_name: string;
+  email: string;
+  phone: string | null;
+  reason: string;
+}
+
+export function createAdminUser(payload: CreateAdminUserRequest): Promise<AdminUserDetail> {
+  return apiFetch<AdminUserDetail>("/admin/users", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}

@@ -251,3 +251,37 @@ export function createParentPauseRequest(payload: {
     body: JSON.stringify(payload),
   });
 }
+
+// --- Waivers ---
+
+export type ParentWaiverStatus = "signed" | "pending" | "outdated" | "not_required";
+
+export interface ParentWaiverStudentView {
+  student_id: string;
+  student_name: string;
+  status: ParentWaiverStatus;
+  signed_at: string | null;
+  waiver_version: string | null;
+}
+
+export interface ParentWaiverCurrentView {
+  required: boolean;
+  waiver_template_id: string | null;
+  title: string | null;
+  version: string | null;
+  body: string | null;
+  students: ParentWaiverStudentView[];
+}
+
+export function getParentCurrentWaiver(): Promise<ParentWaiverCurrentView> {
+  return apiFetch("/parent/waivers/current", { method: "GET" });
+}
+
+export function acceptParentWaiver(payload: {
+  signer_name: string | null;
+}): Promise<ParentWaiverCurrentView> {
+  return apiFetch("/parent/waivers/accept", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}

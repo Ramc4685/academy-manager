@@ -47,7 +47,7 @@ Current production app:
 - Frontend: Next.js 15 App Router, React 19, Tailwind, Firebase Web SDK, PWA.
 - Auth: Firebase Authentication in production; legacy password auth can be disabled with `FIREBASE_AUTH_ENABLED=true`.
 - Deployment: Fly.io backend app `courtmastr-academy-api`; Cloudflare Worker frontend `academy-next`.
-- Local services: backend `http://127.0.0.1:8001/api`, frontend `http://localhost:3001`, MongoDB `mongodb://127.0.0.1:27017`.
+- Local services: backend `http://127.0.0.1:8001/api`, frontend `http://localhost:3000`, MongoDB `mongodb://127.0.0.1:27017` (all via Docker — see `docs/local-infra.md`).
 
 Migration direction:
 
@@ -149,6 +149,34 @@ pnpm build
 pnpm generate:api
 ```
 
+Pre-push checks (run before every `git push`):
+
+```bash
+# Install once after cloning — git will run checks automatically on every push
+scripts/dev/install-hooks.sh
+
+# Run manually at any time
+scripts/dev/pre-push-checks.sh          # skips E2E unless e2e/ files changed
+scripts/dev/pre-push-checks.sh --full   # always runs E2E
+```
+
+What the script checks (mirrors CI exactly):
+
+| Check | Command |
+| --- | --- |
+| Backend format | `ruff format --check v2` (must use `.venv` — system ruff differs) |
+| Backend lint | `ruff check v2` |
+| Backend tests | `pytest v2/tests -q` |
+| Frontend unit | `node --no-warnings --test lib/api/*.node-test.mjs lib/auth/*.node-test.mjs` |
+| Frontend types | `pnpm typecheck` |
+| Frontend lint | `pnpm lint` |
+| E2E | `pnpm e2e` (auto-skipped unless `e2e/` files changed; `--full` forces it) |
+
+**Always activate the backend `.venv` before running ruff manually.** The system ruff
+version differs from CI's and will produce false "already formatted" results.
+
+**Never push without running this first. If it fails locally, fix it — do not push to unblock CI.**
+
 Local testing stack:
 
 ```bash
@@ -217,36 +245,6 @@ rm -rf
 git reset --hard
 git clean -fd
 ```
-
----
-
-## Pre-Push CI Checks
-
-Run these locally before every push. CI will fail the same way if you skip them.
-
-Backend (from `backend/` with `.venv` active):
-
-```bash
-source .venv/bin/activate   # REQUIRED — CI uses ruff 0.6.9; system ruff differs
-ruff check v2
-ruff format --check v2
-mypy --config-file pyproject.toml v2
-pytest v2/tests --override-ini="testpaths=v2/tests" -q
-```
-
-Always activate the venv before running ruff. The system ruff version will produce different formatting and cause CI failures even when local shows "already formatted".
-
-Frontend (from `frontend/`):
-
-```bash
-pnpm install --frozen-lockfile
-pnpm audit --audit-level=high
-pnpm typecheck
-pnpm lint
-pnpm build
-```
-
-If any command fails locally, fix it before pushing. Do not push to unblock CI — that just shifts the problem.
 
 ---
 

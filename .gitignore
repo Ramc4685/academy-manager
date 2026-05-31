@@ -1,16 +1,32 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-# Local dev-only generated credentials (SaaS staging emulator passwords,
-# JWT secrets, etc). Never commit.
+# ── Environment & credentials ──────────────────────────────────────────────────
+.env
+.env.*
+*.env
+!.env.example
+!backend/.env.example
+!frontend/.env.example
+credentials.json
+*credentials.json*
+*token.json*
+*.pem
+*.key
+.credentials
 .local/
 
-# IDE and editors
-.idea/
-.vscode/
+# ── Python ─────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+.mypy_cache/
+backend/.coverage
+backend/uv.lock
 
-# Dependencies
+# ── Node / JS ──────────────────────────────────────────────────────────────────
 node_modules/
-/node_modules
 /.pnp
 .pnp.js
 .yarn/install-state.gz
@@ -20,26 +36,21 @@ node_modules/
 !.yarn/releases
 !.yarn/versions
 
-# Testing
-/coverage
-
-# Next.js
-/.next/
+# ── Next.js ────────────────────────────────────────────────────────────────────
+.next/
 /out/
 next-env.d.ts
 *.tsbuildinfo
 
-# Production builds
+# ── Builds & dist ──────────────────────────────────────────────────────────────
 /build
 dist/
-dist
+.open-next/
 
-# Environment files (comprehensive coverage)
+# ── Testing ────────────────────────────────────────────────────────────────────
+/coverage
 
-*token.json*
-*credentials.json*
-
-# Logs and debug files
+# ── Logs ───────────────────────────────────────────────────────────────────────
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -49,37 +60,15 @@ firebase-debug.log
 firebase-debug.*.log
 .firebase/
 
-# Playwright MCP capture directory + ad-hoc verification screenshots from
-# the manual browser tests during the Rally admin foundation work. Not
-# part of the test suite; the canonical Playwright outputs live under
-# frontend/test-results/ and are already covered by .next/coverage etc.
-.playwright-mcp/
-rally-*.png
-
-# System files
-.DS_Store
-*.pem
-
-# Python
-__pycache__/
-*pyc*
-venv/
-.venv/
-
-# Development tools
-chainlit.md
-.chainlit
-.ipynb_checkpoints/
-.ac
-
-# Deployment
+# ── Deployment ─────────────────────────────────────────────────────────────────
 .vercel
 .wrangler/
 
-# Data and databases
-agenthub/agents/youtube/db
+# ── Caches ─────────────────────────────────────────────────────────────────────
+.cache/
+frontend/node_modules/.cache/
 
-# Archive files and large assets
+# ── Archives & large assets ────────────────────────────────────────────────────
 **/*.zip
 **/*.tar.gz
 **/*.tar
@@ -88,73 +77,21 @@ agenthub/agents/youtube/db
 *.deb
 *.dylib
 
-# Build caches
-.cache/
+# ── System ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
 
+# ── Dev tools ──────────────────────────────────────────────────────────────────
+chainlit.md
+.chainlit/
+.ipynb_checkpoints/
+.playwright-mcp/
+rally-*.png
+
+# ── Knowledge graph ────────────────────────────────────────────────────────────
+graphify-out/
+
+# ── Misc ───────────────────────────────────────────────────────────────────────
 memory/test_credentials.md
-
-# Mobile development
-android-sdk/frontend/node_modules/.cache/default-development/5.pack
-frontend/node_modules/.cache/default-development/8.pack
-frontend/node_modules/.cache/default-development/8.pack
--e 
-# Environment and credential files
-.env
-.env.*
-*.env
-!.env.example
-!backend/.env.example
-!frontend/.env.example
-credentials.json
-*.pem
-*.key
-.credentials
-frontend/node_modules/.cache/default-development/10.pack
-frontend/node_modules/.cache/default-development/2.pack
-frontend/node_modules/.cache/default-development/2.pack
--e 
-# Environment and credential files
-.env
-.env.*
-*.env
-!.env.example
-!backend/.env.example
-!frontend/.env.example
-credentials.json
-*.pem
-*.key
-.credentials
--e 
-# Environment and credential files
-.env
-.env.*
-*.env
-!.env.example
-!backend/.env.example
-!frontend/.env.example
-credentials.json
-*.pem
-*.key
-.credentials
-frontend/node_modules/.cache/default-development/0.pack
--e 
-# Environment and credential files
-.env
-.env.*
-*.env
-credentials.json
-*.pem
-*.key
-.credentials
--e 
-# Environment and credential files
-.env
-.env.*
-*.env
-credentials.json
-*.pem
-*.key
-.credentials
-.playwright-mcp
-rally-admin.png
-.mypy_cache
+agenthub/agents/youtube/db

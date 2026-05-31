@@ -90,6 +90,7 @@ from backend.v2.contexts.identity.application.update_academy_notifications_use_c
 )
 from backend.v2.contexts.identity.application.update_academy_use_case import UpdateAcademyUseCase
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+    CreateAdminUser,
     GetAdminUser,
     ListAdminUsers,
     UpdateAdminUser,
@@ -175,6 +176,7 @@ class AdminUseCases:
     change_user_role: ChangeUserRole
     get_admin_user: GetAdminUser | None = None
     update_admin_user: UpdateAdminUser | None = None
+    create_admin_user: CreateAdminUser | None = None
     get_admin_student: GetAdminStudent | None = None
     update_admin_student: UpdateAdminStudent | None = None
     change_admin_student_parent: ChangeAdminStudentParent | None = None
