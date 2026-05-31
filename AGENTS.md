@@ -47,7 +47,7 @@ Current production app:
 - Frontend: Next.js 15 App Router, React 19, Tailwind, Firebase Web SDK, PWA.
 - Auth: Firebase Authentication in production; legacy password auth can be disabled with `FIREBASE_AUTH_ENABLED=true`.
 - Deployment: Fly.io backend app `courtmastr-academy-api`; Cloudflare Worker frontend `academy-next`.
-- Local services: backend `http://127.0.0.1:8001/api`, frontend `http://localhost:3001`, MongoDB `mongodb://127.0.0.1:27017`.
+- Local services: backend `http://127.0.0.1:8001/api`, frontend `http://localhost:3000`, MongoDB `mongodb://127.0.0.1:27017` (all via Docker — see `docs/local-infra.md`).
 
 Migration direction:
 
@@ -148,6 +148,21 @@ pnpm typecheck
 pnpm build
 pnpm generate:api
 ```
+
+Pre-push checks (run before every `git push`):
+
+```bash
+# Install once after cloning — wires git to run checks automatically on push
+scripts/dev/install-hooks.sh
+
+# Or run manually at any time
+scripts/dev/pre-push-checks.sh          # skips E2E unless e2e/ files changed
+scripts/dev/pre-push-checks.sh --full   # always runs E2E
+```
+
+The script runs the same checks CI runs: `ruff format`, `ruff check`, `pytest v2/tests`,
+node unit tests, `pnpm typecheck`, `pnpm lint`, and E2E when needed.
+**Never push without running this first.**
 
 Local testing stack:
 
