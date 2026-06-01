@@ -34,7 +34,7 @@ header() { echo -e "\n${BOLD}$*${RESET}"; }
 # ── Detect whether E2E should run ─────────────────────────────────────────────
 FULL="${1:-}"
 CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
-E2E_CHANGED=$(echo "$CHANGED" | grep -c "^frontend/e2e/" 2>/dev/null || echo 0)
+E2E_CHANGED=$(echo "$CHANGED" | grep -c "^frontend/e2e/" 2>/dev/null || true)
 RUN_E2E=false
 if [ "$FULL" = "--full" ] || [ "$E2E_CHANGED" -gt 0 ]; then
   RUN_E2E=true
