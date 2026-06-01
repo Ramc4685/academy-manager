@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.v2.contexts.finance.application.ports import ApplicationFunnelReader
 
@@ -35,10 +35,10 @@ from backend.v2.contexts.finance.application.ports import ApplicationFunnelReade
 # Status bucket mappings (using onboarding's SCREAMING_SNAKE vocabulary)
 # ---------------------------------------------------------------------------
 
-_LEADS = frozenset({"DRAFT", "CHECKOUT_PENDING", "lead", "inquiry"})
-_APPLIED = frozenset({"CHECKOUT_EXPIRED", "PENDING_APPROVAL", "applied", "pending_review"})
-_ASSESSED = frozenset({"WAITLISTED", "assessment_scheduled", "assessed"})
-_CONFIRMED = frozenset({"APPROVED", "confirmed", "active", "enrolled"})
+_LEADS = frozenset({"DRAFT", "CHECKOUT_PENDING"})
+_APPLIED = frozenset({"CHECKOUT_EXPIRED", "PENDING_APPROVAL"})
+_ASSESSED = frozenset({"WAITLISTED"})
+_CONFIRMED = frozenset({"APPROVED"})
 _DROPPED = frozenset(
     {
         "DECLINED",
@@ -46,9 +46,6 @@ _DROPPED = frozenset(
         "CAPACITY_FAILED_REFUNDING",
         "CAPACITY_FAILED_REFUND_FAILED",
         "ABANDONED",
-        "withdrawn",
-        "rejected",
-        "cancelled",
     }
 )
 
@@ -67,7 +64,9 @@ class EnrollmentFunnelResult(BaseModel):
     confirmed: int
     dropped: int
     total_applications: int
-    conversion_rate: Decimal
+    conversion_rate: Decimal = Field(
+        description="confirmed / total_applications (denominator includes all statuses including dropped)"
+    )
     period: str | None
 
 

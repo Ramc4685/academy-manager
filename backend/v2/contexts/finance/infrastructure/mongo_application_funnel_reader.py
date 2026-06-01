@@ -18,8 +18,10 @@ No domain objects are constructed; the result is a plain
 
 from __future__ import annotations
 
-import calendar
+import re
 from datetime import UTC, datetime
+
+_PERIOD_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
 class MongoApplicationFunnelReader:
@@ -51,13 +53,15 @@ class MongoApplicationFunnelReader:
         match_stage: dict[str, object] = {"academy_id": academy_id}
 
         if period is not None:
-            year_str, month_str = period.split("-")
-            year = int(year_str)
-            month = int(month_str)
-            _, last_day = calendar.monthrange(year, month)
+            if not _PERIOD_RE.fullmatch(period):
+                raise ValueError(f"period must be YYYY-MM, got {period!r}")
+            year, month = int(period[:4]), int(period[5:])
             start = datetime(year, month, 1, tzinfo=UTC)
-            end = datetime(year, month, last_day, 23, 59, 59, 999999, tzinfo=UTC)
-            match_stage["created_at"] = {"$gte": start, "$lte": end}
+            if month == 12:
+                end = datetime(year + 1, 1, 1, tzinfo=UTC)
+            else:
+                end = datetime(year, month + 1, 1, tzinfo=UTC)
+            match_stage["created_at"] = {"$gte": start, "$lt": end}
 
         pipeline = [
             {"$match": match_stage},

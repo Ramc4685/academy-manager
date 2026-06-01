@@ -97,3 +97,23 @@ async def test_funnel_empty_returns_empty_dict(db):
     reader = MongoApplicationFunnelReader(db)
     counts = await reader.get_funnel_counts("nonexistent-academy", None)
     assert counts == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_period",
+    [
+        "2026-13",  # month 13 is invalid
+        "2026-00",  # month 00 is invalid
+        "26-05",  # two-digit year
+        "2026/05",  # wrong separator
+        "2026-5",  # single-digit month without leading zero
+        "not-a-date",
+        "",
+    ],
+)
+async def test_funnel_invalid_period_raises_value_error(db, bad_period):
+    """A malformed period string must raise ValueError before hitting Mongo."""
+    reader = MongoApplicationFunnelReader(db)
+    with pytest.raises(ValueError, match="period must be YYYY-MM"):
+        await reader.get_funnel_counts("acad-1", bad_period)
