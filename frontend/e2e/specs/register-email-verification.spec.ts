@@ -99,6 +99,7 @@ test.describe("parent email registration verification", () => {
     ).toBeHidden();
 
     await page.goto("/login");
+    await expect(page.getByTestId("login-submit")).toBeEnabled();
     await page.getByTestId("login-email").fill("parent@example.com");
     await page.getByTestId("login-password").fill("correct-horse-1");
     await page.getByTestId("login-submit").click();
