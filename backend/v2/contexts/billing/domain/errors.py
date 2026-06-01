@@ -48,3 +48,8 @@ class SessionTypeNotFound(DomainError):
 class StudentBillingEnrollmentNotFound(DomainError):
     code = "Billing.StudentBillingEnrollmentNotFound"
     status_code = 404
+
+
+class SessionTypeInactive(DomainError):
+    code = "Billing.SessionTypeInactive"
+    status_code = 400

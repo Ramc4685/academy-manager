@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from .activity_routes import router as activity_router
+from .enrollment_routes import router as enrollment_router
 from .invoice_routes import router as invoice_router
 from .onboarding_routes import router as onboarding_router
 from .pause_routes import router as pause_router
@@ -15,6 +16,7 @@ from .webhook_routes import router as webhook_router
 
 router = APIRouter(prefix="/parent")
 router.include_router(activity_router)
+router.include_router(enrollment_router)
 router.include_router(invoice_router)
 router.include_router(onboarding_router)
 router.include_router(pause_router)

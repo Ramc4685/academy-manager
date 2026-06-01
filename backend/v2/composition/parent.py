@@ -10,6 +10,10 @@ from zoneinfo import ZoneInfo
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from backend.v2.contexts.billing.application.ports import StripeGateway
+from backend.v2.contexts.billing.application.use_cases.enroll_child_in_session_type import (
+    CancelBillingEnrollment,
+    EnrollChildInSessionType,
+)
 from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
     HandleWebhookEvent,
 )
@@ -41,6 +45,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
 )
 from backend.v2.contexts.billing.infrastructure.mongo_stripe_dedup import (
     MongoStripeEventDedup,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_session_type_repo import (
+    MongoSessionTypeRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_student_billing_enrollment_repo import (
     MongoStudentBillingEnrollmentRepository,
@@ -140,6 +147,8 @@ class ParentComposition:
     list_invoices_for_parent: object
     get_invoice_for_parent: object
     get_child_schedule: object
+    enroll_child: object
+    cancel_billing_enrollment: object
 
 
 def compose_parent(
@@ -157,6 +166,7 @@ def compose_parent(
     payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
     subscriptions_repo = MongoSubscriptionRepository(db)
     student_billing_enrollments = MongoStudentBillingEnrollmentRepository(db)
+    session_types_repo = MongoSessionTypeRepository(db)
     dedup = MongoStripeEventDedup(db)
 
     start_checkout = StartCheckout(
@@ -629,6 +639,30 @@ def compose_parent(
             offset=offset,
         )
 
+    # Session-type billing enrollment
+    class _StudentOwnerLookup:
+        async def is_owned(self, parent_id: str, student_id: str) -> bool:
+            doc = await db["students"].find_one(
+                {
+                    "academy_id": academy_id,
+                    "student_id": student_id,
+                    "$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}],
+                }
+            )
+            return doc is not None
+
+    enroll_child_uc = EnrollChildInSessionType(
+        enrollments=student_billing_enrollments,
+        session_types=session_types_repo,
+        stripe=stripe,
+        student_owner_lookup=_StudentOwnerLookup(),
+        academy_id=academy_id,
+    )
+    cancel_billing_enrollment_uc = CancelBillingEnrollment(
+        enrollments=student_billing_enrollments,
+        stripe=stripe,
+    )
+
     return ParentComposition(
         start_application=start_app,
         patch_application=patch_app,
@@ -653,6 +687,8 @@ def compose_parent(
         list_invoices_for_parent=list_invoices_for_parent,
         get_invoice_for_parent=get_invoice_for_parent,
         get_child_schedule=get_child_schedule,
+        enroll_child=enroll_child_uc.execute,
+        cancel_billing_enrollment=cancel_billing_enrollment_uc.execute,
     )
 
 

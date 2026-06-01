@@ -50,6 +50,8 @@ class ParentUseCases:
     list_invoices_for_parent: object  # callable
     get_invoice_for_parent: object  # callable
     get_child_schedule: object  # callable
+    enroll_child: object  # callable — EnrollChildInSessionType.execute
+    cancel_billing_enrollment: object  # callable — CancelBillingEnrollment.execute
 
 
 def get_parent_use_cases(request: Request) -> ParentUseCases:

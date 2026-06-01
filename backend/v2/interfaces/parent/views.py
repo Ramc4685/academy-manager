@@ -320,6 +320,35 @@ class ParentScheduleResponse(BaseModel):
     offset: int
 
 
+# --- Billing Enrollments ---
+
+
+class EnrollChildRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    student_id: str
+    session_type_id: str
+    success_url: str
+    cancel_url: str
+
+
+class BillingEnrollmentResponse(BaseModel):
+    enrollment_id: str
+    student_id: str
+    parent_id: str
+    session_type_id: str
+    status: str
+    redirect_url: str | None = None
+    stripe_subscription_id: str | None = None
+    billing_start_date: datetime
+    enrolled_at: datetime
+
+
+class CancelBillingEnrollmentResponse(BaseModel):
+    enrollment_id: str
+    status: str
+
+
 # --- Sessions ---
 
 
