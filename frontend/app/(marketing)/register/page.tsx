@@ -38,7 +38,9 @@ export default function RegisterPage() {
       .then(async (user) => {
         if (!cancelled && user) {
           await registerPublicParent();
-          router.push("/parent/onboarding");
+          if (!cancelled) {
+            router.push("/parent/onboarding");
+          }
         }
       })
       .catch((err) => {
