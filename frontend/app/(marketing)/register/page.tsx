@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { registerPublicParent } from "@/lib/api/registration";
+import { rememberPendingParentRegistration } from "@/lib/auth/parent-registration-continuation";
 import {
   completeGoogleRedirectSignIn,
   registerWithEmail,
@@ -81,8 +82,9 @@ export default function RegisterPage() {
     setNotice(null);
     setPendingVerificationUser(null);
     try {
-      const user = await registerWithEmail(email.trim(), password);
-      await registerPublicParent();
+      const trimmedEmail = email.trim();
+      const user = await registerWithEmail(trimmedEmail, password);
+      rememberPendingParentRegistration(trimmedEmail);
       setPassword("");
       await sendVerificationAndSignOut(user);
     } catch (err) {
