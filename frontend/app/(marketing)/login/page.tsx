@@ -9,7 +9,13 @@ import {
   sendPasswordReset,
   signInWithEmail,
   signInWithGoogle,
+  signOutCurrent,
 } from "@/lib/auth/firebase";
+import { registerPublicParent } from "@/lib/api/registration";
+import {
+  clearPendingParentRegistration,
+  consumePendingParentRegistration,
+} from "@/lib/auth/parent-registration-continuation";
 
 const HERO_IMAGE =
   "https://static.prod-images.emergentagent.com/jobs/c735a2b3-2fb1-4fa5-a75c-2007226ca62e/images/1d1cfafe28a9d8df9f22f211189ef097f1bb5d348846857bdee5ba711ec35327.png";
@@ -54,7 +60,18 @@ export default function LoginPage() {
     setError(null);
     setNotice(null);
     try {
-      await signInWithEmail(email, password);
+      const user = await signInWithEmail(email, password);
+      if (consumePendingParentRegistration(user.email)) {
+        if (!user.emailVerified) {
+          await signOutCurrent();
+          setError("Verify your email, then sign in again to continue registration.");
+          return;
+        }
+        await registerPublicParent();
+        clearPendingParentRegistration();
+        router.push("/parent/onboarding");
+        return;
+      }
       router.push("/post-login");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Sign-in failed. Please try again.";

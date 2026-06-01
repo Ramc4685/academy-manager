@@ -212,4 +212,97 @@ test.describe("admin students", () => {
     await page.goto("/admin/students");
     await expect(page.getByTestId("admin-students-error")).toContainText("Could not load students.");
   });
+
+  test("renders the student profile with enrolled sessions and payment history", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubMe(page);
+    await stubAdminAcademy(page);
+    await page.route("**/api/v2/admin/users?role=parent", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        users: [
+          {
+            user_id: "parent-1",
+            email: "rohan@example.com",
+            display_name: "Rohan Rao",
+            role: "parent",
+            status: "active",
+            phone: "555-0101",
+          },
+        ],
+      });
+    });
+    await page.route("**/api/v2/admin/students/student-1", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        student_id: "student-1",
+        full_name: "Amit Rao",
+        parent_id: "parent-1",
+        parent_name: "Rohan Rao",
+        parent_email: "rohan@example.com",
+        parent_phone: "555-0101",
+        status: "active",
+        active_session_count: 1,
+        last_seen_at: "2026-05-18T15:00:00Z",
+        attendance_rate: 0.91,
+        dues_status: "due",
+        date_of_birth: "2015-04-10",
+        level: "intermediate",
+        notes: "Prefers evening sessions",
+        parent_details: null,
+        enrolled_sessions: [
+          {
+            enrollment_id: "enr-1",
+            session_id: "sess-1",
+            session_title: "Advanced Footwork",
+            location: "Court 1",
+            start_at: "2026-06-02T21:00:00Z",
+            end_at: "2026-06-02T22:00:00Z",
+            status: "active",
+            payment_mode: "monthly",
+            subscription_status: "active",
+            amount_cents: 15000,
+          },
+        ],
+        payment_history: [
+          {
+            payment_id: "pay-1",
+            session_id: "sess-1",
+            period: "2026-06",
+            amount_cents: 15000,
+            paid_amount_cents: 4000,
+            balance_due_cents: 11000,
+            status: "partially_paid",
+            payment_method: "cash",
+            created_at: "2026-06-01T15:00:00Z",
+          },
+        ],
+        current_payment: {
+          amount_cents: 11000,
+          source: "invoice",
+          status: "partially_paid",
+          period: "2026-06",
+          payment_id: "pay-1",
+          session_id: "sess-1",
+        },
+      });
+    });
+
+    await page.goto("/admin/students/student-1");
+    await expect(page.getByTestId("admin-student-detail")).toContainText("Amit Rao");
+    await expect(page.getByTestId("admin-student-current-payment")).toContainText("$110");
+    await expect(page.getByTestId("admin-student-current-payment")).toContainText(
+      "Invoice balance",
+    );
+    await expect(page.getByTestId("admin-student-enrolled-sessions")).toContainText(
+      "Advanced Footwork",
+    );
+    await expect(page.getByTestId("admin-student-enrolled-sessions")).toContainText("$150");
+    await expect(page.getByTestId("admin-student-payment-history")).toContainText("2026-06");
+    await expect(page.getByTestId("admin-student-payment-history")).toContainText("$40");
+    await expect(page.getByTestId("admin-student-payment-history")).toContainText("$110");
+    expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
+  });
 });

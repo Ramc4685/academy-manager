@@ -14,12 +14,333 @@ Routes covered:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
+
+import backend.v2.composition.admin as admin_composition
+from backend.v2.composition.admin import compose_admin
+from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
+from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import MongoSessionRepository
+from backend.v2.contexts.enrollment.infrastructure.mongo_session_writer import MongoSessionWriter
+from backend.v2.interfaces.admin.router import router as admin_router
+from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
+from backend.v2.shared.tenancy.context import set_academy_id, tenant_scope
+
+
+class _FakeOutbox:
+    async def append(self, event, *, session=None) -> None:
+        pass
+
+    async def pull_unprocessed(self, limit: int = 100) -> list[object]:
+        return []
+
+    async def mark_processed(self, event_id: str) -> None:
+        pass
+
+
+class _FakeIdempotencyStore:
+    async def get(self, key: str):
+        return None
+
+    async def put(self, key: str, value) -> None:
+        pass
+
+
+class _FrozenAdminDateTime(datetime):
+    _now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+
+    @classmethod
+    def now(cls, tz=None):
+        if tz is None:
+            return cls._now.replace(tzinfo=None)
+        return cls._now.astimezone(tz)
+
 
 def test_list_sessions_returns_seeded_session(admin_client):
     r = admin_client.get("/api/v2/admin/sessions?date=2026-05-16")
     assert r.status_code == 200, r.text
     body = r.json()
     assert any(s["session_id"] == "sess-1" for s in body["sessions"])
+
+
+@pytest.mark.asyncio
+async def test_admin_upcoming_sessions_include_recurring_templates_within_30_days(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-upcoming-recurring"]
+    concrete_start = datetime(2026, 6, 3, 15, 0, tzinfo=UTC)
+    await db.sessions.insert_many(
+        [
+            {
+                "academy_id": "academy-b",
+                "session_id": "sess-concrete",
+                "title": "Concrete Junior",
+                "location": "Court 1",
+                "coach_id": "coach-1",
+                "capacity": 8,
+                "status": "scheduled",
+                "start_at": concrete_start,
+                "end_at": concrete_start + timedelta(hours=1),
+            },
+            {
+                "academy_id": "academy-b",
+                "session_id": "tpl-upcoming",
+                "name": "Recurring Junior",
+                "location": "Court 2",
+                "coach_id": "coach-2",
+                "max_students": 10,
+                "status": "active",
+                "days_of_week": ["Mon", "Wed"],
+                "start_time": "09:15",
+                "end_time": "10:15",
+                "timezone": "America/Chicago",
+                "start_date": "2026-06-01",
+                "end_date": "2026-06-30",
+            },
+            {
+                "academy_id": "academy-b",
+                "session_id": "tpl-open-upcoming",
+                "name": "Open Recurring Junior",
+                "max_students": 9,
+                "status": "open",
+                "days_of_week": ["Mon"],
+                "start_time": "10:30",
+                "end_time": "11:30",
+                "timezone": "America/Chicago",
+                "start_date": "2026-06-01",
+                "end_date": "2026-06-30",
+            },
+            {
+                "academy_id": "academy-b",
+                "session_id": "tpl-late-local",
+                "name": "Late Local Session",
+                "max_students": 6,
+                "status": "open",
+                "days_of_week": ["Mon"],
+                "start_time": "23:30",
+                "end_time": "23:59",
+                "timezone": "America/Chicago",
+                "start_date": "2026-06-01",
+                "end_date": "2026-06-30",
+            },
+            {
+                "academy_id": "academy-b",
+                "session_id": "tpl-expired",
+                "name": "Expired Template",
+                "max_students": 10,
+                "status": "active",
+                "days_of_week": ["Mon"],
+                "start_time": "09:15",
+                "end_time": "10:15",
+                "timezone": "America/Chicago",
+                "start_date": "2026-05-01",
+                "end_date": "2026-05-31",
+            },
+            {
+                "academy_id": "academy-b",
+                "session_id": "sess-day-30-late",
+                "title": "Day 30 Late",
+                "location": "Court 3",
+                "coach_id": "coach-3",
+                "capacity": 8,
+                "status": "scheduled",
+                "start_at": datetime(2026, 7, 1, 23, 30, tzinfo=UTC),
+                "end_at": datetime(2026, 7, 2, 0, 30, tzinfo=UTC),
+            },
+            {
+                "academy_id": "other-academy",
+                "session_id": "tpl-other-tenant",
+                "name": "Other Tenant",
+                "days_of_week": ["Mon"],
+                "start_time": "09:15",
+                "end_time": "10:15",
+            },
+        ]
+    )
+    await db.enrollments.insert_many(
+        [
+            {
+                "academy_id": "academy-b",
+                "session_id": "tpl-upcoming",
+                "enrollment_id": "enr-request-tenant",
+                "student_id": "st-1",
+                "status": "active",
+            },
+            {
+                "academy_id": "default-academy",
+                "session_id": "tpl-upcoming",
+                "enrollment_id": "enr-default-tenant",
+                "student_id": "st-2",
+                "status": "active",
+            },
+        ]
+    )
+    await db.waitlist.insert_one(
+        {
+            "academy_id": "academy-b",
+            "session_id": "tpl-upcoming",
+            "waitlist_id": "wait-request-tenant",
+            "student_id": "st-3",
+            "status": "waiting",
+        }
+    )
+
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def _tenant_scope(request: Request, call_next):
+        token = set_academy_id("academy-b")
+        try:
+            return await call_next(request)
+        finally:
+            from backend.v2.shared.tenancy.context import _current as _tenant_var
+
+            _tenant_var.reset(token)
+
+    app.include_router(admin_router, prefix="/api/v2")
+    app.state.admin = compose_admin(
+        db,
+        _FakeOutbox(),
+        _FakeIdempotencyStore(),
+        FakeStripeGateway(),
+    )
+    app.dependency_overrides[get_auth_claims] = lambda: AuthClaims(
+        user_id="admin-1",
+        email="admin@example.com",
+        academy_id="academy-b",
+        roles=("admin",),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/v2/admin/sessions?window=upcoming")
+
+    assert response.status_code == 200, response.text
+    sessions = response.json()["sessions"]
+    session_ids = [session["session_id"] for session in sessions]
+    assert "sess-concrete" in session_ids
+    assert "tpl-upcoming" in session_ids
+    assert session_ids.count("tpl-upcoming") == 1
+    assert "tpl-open-upcoming" in session_ids
+    assert "sess-day-30-late" in session_ids
+    assert "tpl-expired" not in session_ids
+    assert "tpl-other-tenant" not in session_ids
+    recurring = next(session for session in sessions if session["session_id"] == "tpl-upcoming")
+    assert recurring["title"] == "Recurring Junior"
+    assert recurring["capacity"] == 10
+    assert recurring["status"] == "scheduled"
+    assert recurring["start_at"] == "2026-06-01T14:15:00Z"
+    assert recurring["enrolled_count"] == 1
+    assert recurring["waitlist_count"] == 1
+    open_recurring = next(
+        session for session in sessions if session["session_id"] == "tpl-open-upcoming"
+    )
+    assert open_recurring["status"] == "scheduled"
+    assert open_recurring["capacity"] == 9
+
+    with tenant_scope("academy-b"):
+        assert await MongoSessionWriter(db).try_reserve_seat("tpl-upcoming") is True
+    stored = await db.sessions.find_one({"academy_id": "academy-b", "session_id": "tpl-upcoming"})
+    assert stored["reserved_seats"] == 1
+
+    with TestClient(app) as client:
+        date_response = client.get("/api/v2/admin/sessions?date=2026-06-01")
+
+    assert date_response.status_code == 200, date_response.text
+    date_sessions = date_response.json()["sessions"]
+    late_local = next(
+        session for session in date_sessions if session["session_id"] == "tpl-late-local"
+    )
+    assert late_local["status"] == "scheduled"
+    assert late_local["start_at"] == "2026-06-02T04:30:00Z"
+
+
+@pytest.mark.parametrize("legacy_status", ["active", "open"])
+@pytest.mark.asyncio
+async def test_legacy_template_session_writer_get_normalizes_domain_for_registration_paths(
+    legacy_status: str,
+) -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()[
+        f"admin-template-writer-normalization-{legacy_status}"
+    ]
+    await db.sessions.insert_one(
+        {
+            "academy_id": "academy-b",
+            "session_id": f"tpl-registration-target-{legacy_status}",
+            "name": "Registration Template",
+            "location": "Court 4",
+            "coach_id": "coach-4",
+            "max_students": 7,
+            "reserved_seats": 0,
+            "status": legacy_status,
+            "days_of_week": ["Mon"],
+            "start_time": "17:00",
+            "end_time": "18:00",
+            "timezone": "America/Chicago",
+        }
+    )
+
+    with tenant_scope("academy-b"):
+        writer = MongoSessionWriter(db)
+        session = await writer.get(f"tpl-registration-target-{legacy_status}")
+        reserved = await writer.try_reserve_seat(f"tpl-registration-target-{legacy_status}")
+
+    assert session is not None
+    assert session.status == "scheduled"
+    assert session.capacity == 7
+    assert reserved is True
+    stored = await db.sessions.find_one(
+        {"academy_id": "academy-b", "session_id": f"tpl-registration-target-{legacy_status}"}
+    )
+    assert stored["reserved_seats"] == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_template_writer_reserves_by_object_id_when_session_id_missing() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-template-writer-object-id"]
+    result = await db.sessions.insert_one(
+        {
+            "academy_id": "academy-b",
+            "name": "ObjectId Registration Template",
+            "location": "Court 5",
+            "coach_id": "coach-5",
+            "max_students": 4,
+            "reserved_seats": 0,
+            "status": "open",
+            "days_of_week": ["Mon"],
+            "start_time": "17:00",
+            "end_time": "18:00",
+            "timezone": "America/Chicago",
+        }
+    )
+    listed_id = str(result.inserted_id)
+
+    with tenant_scope("academy-b"):
+        writer = MongoSessionWriter(db)
+        repo = MongoSessionRepository(db)
+        session = await writer.get(listed_id)
+        session_via_repo = await repo.get(listed_id)
+        [session_via_get_many] = await repo.get_many([listed_id])
+        reserved = await writer.try_reserve_seat(listed_id)
+        await writer.release_seat(listed_id)
+        await writer.update_status(listed_id, "cancelled")
+
+    assert session is not None
+    assert session.session_id == listed_id
+    assert session.status == "scheduled"
+    assert session_via_repo is not None
+    assert session_via_repo.session_id == listed_id
+    assert session_via_get_many.session_id == listed_id
+    assert reserved is True
+    stored = await db.sessions.find_one({"_id": result.inserted_id})
+    assert stored["reserved_seats"] == 0
+    assert stored["status"] == "cancelled"
 
 
 def test_list_sessions_coach_persona_returns_404(coach_on_admin_client):

@@ -130,6 +130,8 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_pause_request_repo impo
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
+    session_start_sort_key,
+    synthesize_recurring_session_docs,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_writer import (
     MongoSessionWriter,
@@ -999,24 +1001,23 @@ def compose_admin(
     update_admin_student = UpdateAdminStudent(students_r)
     change_admin_student_parent = ChangeAdminStudentParent(students_r)
 
-    # Closures for the BFF deps that need composed reads.
-    # Day-of-week abbreviations used by the legacy seed schema.
-    _DOW_MAP = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
-
     async def _build_admin_session_rows(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        request_academy_id = current_academy_id()
         rows: list[dict[str, Any]] = []
         for doc in docs:
             session_id = str(doc.get("session_id") or doc.get("_id"))
             enrolled_count = await enrollments_r.collection.count_documents(
                 {
-                    "academy_id": academy_id,
+                    "academy_id": request_academy_id,
                     "session_id": session_id,
                     "status": "active",
                 }
             )
             waitlist_count = await waitlist.collection.count_documents(
                 {
-                    "academy_id": academy_id,
+                    "academy_id": request_academy_id,
                     "session_id": session_id,
                     "status": "waiting",
                 }
@@ -1030,7 +1031,7 @@ def compose_admin(
                     "end_at": doc["end_at"],
                     "capacity": int(doc.get("capacity") or doc.get("max_students") or 15),
                     "status": "scheduled"
-                    if str(doc.get("status") or "scheduled") == "active"
+                    if str(doc.get("status") or "scheduled") in {"active", "open"}
                     else str(doc.get("status") or "scheduled"),
                     "coach_id": str(doc.get("coach_id") or ""),
                     "enrolled_count": enrolled_count,
@@ -1076,14 +1077,31 @@ def compose_admin(
         if window == "upcoming":
             now = datetime.now(UTC)
             start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            end = start + timedelta(days=30)
+            end = start + timedelta(
+                days=30,
+                hours=23,
+                minutes=59,
+                seconds=59,
+                microseconds=999999,
+            )
             v2_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
                 {"start_at": {"$gte": start, "$lte": end}},
                 sort=[("start_at", 1)],
             )
             upcoming_docs = [doc async for doc in v2_cursor]
-            # Legacy synthesis intentionally skipped — only relevant when a
-            # single date is queried. Fresh seeds emit dated v2 instances.
+            template_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
+                {"days_of_week": {"$exists": True}, "start_at": {"$exists": False}},
+            )
+            template_docs = [doc async for doc in template_cursor]
+            upcoming_docs.extend(
+                synthesize_recurring_session_docs(
+                    template_docs,
+                    range_start=start,
+                    range_end=end,
+                    first_per_template=True,
+                )
+            )
+            upcoming_docs.sort(key=session_start_sort_key)
             return await _build_admin_session_rows(upcoming_docs)
 
         if on_date is None:
@@ -1103,32 +1121,21 @@ def compose_admin(
         async for doc in v2_cursor:
             all_docs.append(doc)
 
-        # Legacy schema: recurring templates with days_of_week + start_time/end_time
-        today_dow = on_date.weekday()  # Mon=0 … Sun=6
         legacy_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
             {"days_of_week": {"$exists": True}, "start_at": {"$exists": False}},
         )
-        async for doc in legacy_cursor:
-            dow_strs: list[str] = list(doc.get("days_of_week") or [])
-            dow_ints = [_DOW_MAP[d] for d in dow_strs if d in _DOW_MAP]
-            if today_dow not in dow_ints:
-                continue
-            # Synthetic start_at/end_at for the queried date
-            st_str = str(doc.get("start_time") or "00:00")
-            et_str = str(doc.get("end_time") or "00:00")
-            sh, sm = int(st_str[:2]), int(st_str[3:5])
-            eh, em = int(et_str[:2]), int(et_str[3:5])
-            doc = dict(doc)
-            doc["start_at"] = datetime.combine(on_date, time(sh, sm), tzinfo=UTC)
-            doc["end_at"] = datetime.combine(on_date, time(eh, em), tzinfo=UTC)
-            # Normalise to v2 field names so _build_row works uniformly
-            if "session_id" not in doc:
-                doc["session_id"] = str(doc["_id"])
-            if "title" not in doc:
-                doc["title"] = str(doc.get("name") or "Session")
-            if "capacity" not in doc:
-                doc["capacity"] = doc.get("max_students", 15)
-            all_docs.append(doc)
+        template_docs = [doc async for doc in legacy_cursor]
+        all_docs.extend(
+            synthesize_recurring_session_docs(
+                template_docs,
+                range_start=start,
+                range_end=end,
+                local_start_date=on_date,
+                local_end_date=on_date,
+                filter_by_utc_range=False,
+            )
+        )
+        all_docs.sort(key=session_start_sort_key)
 
         return await _build_admin_session_rows(all_docs)
 

@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    AdminStudentCurrentPaymentSummary,
     AdminStudentDetail,
     AdminStudentParentChangeResult,
     AdminStudentParentSummary,
+    AdminStudentPaymentSummary,
+    AdminStudentSessionSummary,
 )
 from backend.v2.contexts.enrollment.domain.errors import StudentParentInvalidRole
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
@@ -49,6 +54,41 @@ class StudentDetailStub:
             dues_status="current",
             level="beginner",
             notes="Bring water",
+            enrolled_sessions=[
+                AdminStudentSessionSummary(
+                    enrollment_id="enr-1",
+                    session_id="sess-1",
+                    session_title="Advanced Footwork",
+                    location="Court 1",
+                    start_at=datetime(2026, 6, 2, 21, 0, tzinfo=UTC),
+                    end_at=datetime(2026, 6, 2, 22, 0, tzinfo=UTC),
+                    status="active",
+                    payment_mode="monthly",
+                    subscription_status="active",
+                    amount_cents=15_000,
+                )
+            ],
+            payment_history=[
+                AdminStudentPaymentSummary(
+                    payment_id="pay-1",
+                    session_id="sess-1",
+                    period="2026-06",
+                    amount_cents=15_000,
+                    paid_amount_cents=4_000,
+                    balance_due_cents=11_000,
+                    status="partially_paid",
+                    payment_method="cash",
+                    created_at=datetime(2026, 6, 1, 15, 0, tzinfo=UTC),
+                )
+            ],
+            current_payment=AdminStudentCurrentPaymentSummary(
+                amount_cents=11_000,
+                source="invoice",
+                status="partially_paid",
+                period="2026-06",
+                payment_id="pay-1",
+                session_id="sess-1",
+            ),
         )
 
 
@@ -137,7 +177,31 @@ def test_admin_can_get_and_update_student_detail(admin_client):
 
     detail = admin_client.get("/api/v2/admin/students/st-1")
     assert detail.status_code == 200, detail.text
-    assert detail.json()["parent_phone"] == "555-0101"
+    detail_body = detail.json()
+    assert detail_body["parent_phone"] == "555-0101"
+    assert detail_body["enrolled_sessions"] == [
+        {
+            "enrollment_id": "enr-1",
+            "session_id": "sess-1",
+            "session_title": "Advanced Footwork",
+            "location": "Court 1",
+            "start_at": "2026-06-02T21:00:00Z",
+            "end_at": "2026-06-02T22:00:00Z",
+            "status": "active",
+            "payment_mode": "monthly",
+            "subscription_status": "active",
+            "amount_cents": 15000,
+        }
+    ]
+    assert detail_body["payment_history"][0]["balance_due_cents"] == 11000
+    assert detail_body["current_payment"] == {
+        "amount_cents": 11000,
+        "source": "invoice",
+        "status": "partially_paid",
+        "period": "2026-06",
+        "payment_id": "pay-1",
+        "session_id": "sess-1",
+    }
 
     updated = admin_client.patch(
         "/api/v2/admin/students/st-1",
