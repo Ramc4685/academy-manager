@@ -27,6 +27,10 @@ from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     ListProgressNotes,
 )
 from backend.v2.contexts.coaching.domain.models import CoachAttendance
+from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes import (
+    CoachAddStudentToRoster,
+    CoachRemoveStudentFromRoster,
+)
 from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
     GetSessionRoster,
 )
@@ -179,6 +183,96 @@ class FakeIdempotencyStore:
 
     async def put(self, key: str, value) -> None:
         self.data[key] = value
+
+
+class FakeCoachEnrollmentWriter:
+    """Combined EnrollmentWriter + minimal SessionWriter for coach roster tests."""
+
+    def __init__(self, enrollments: list[Enrollment], sessions: list[Session]) -> None:
+        self._enrollments: dict[str, Enrollment] = {e.enrollment_id: e for e in enrollments}
+        self._sessions: dict[str, Session] = {s.session_id: s for s in sessions}
+        self._reserved: dict[str, int] = {}
+
+    # --- SessionWriter ---
+    async def get(self, session_id: str) -> Session | None:
+        return self._sessions.get(session_id)
+
+    async def try_reserve_seat(self, session_id: str) -> bool:
+        s = self._sessions.get(session_id)
+        if s is None or s.status != "scheduled":
+            return False
+        taken = self._reserved.get(session_id, 0)
+        if taken >= s.capacity:
+            return False
+        self._reserved[session_id] = taken + 1
+        return True
+
+    async def release_seat(self, session_id: str) -> None:
+        self._reserved[session_id] = max(0, self._reserved.get(session_id, 0) - 1)
+
+    async def update_status(self, session_id: str, status: str) -> None:
+        s = self._sessions.get(session_id)
+        if s is not None:
+            self._sessions[session_id] = s.model_copy(update={"status": status})
+
+    async def create(self, session: Session) -> None:
+        self._sessions[session.session_id] = session
+
+    async def update(self, session: Session) -> None:
+        self._sessions[session.session_id] = session
+
+    # --- EnrollmentWriter ---
+    async def create_enrollment(self, enrollment: Enrollment) -> None:
+        self._enrollments[enrollment.enrollment_id] = enrollment
+
+    async def update_enrollment_status(self, enrollment_id: str, status: str) -> None:
+        e = self._enrollments.get(enrollment_id)
+        if e is not None:
+            self._enrollments[enrollment_id] = e.model_copy(update={"status": status})
+
+    async def find_for_session_student(
+        self, session_id: str, student_id: str
+    ) -> Enrollment | None:
+        return next(
+            (
+                e
+                for e in self._enrollments.values()
+                if e.session_id == session_id and e.student_id == student_id
+            ),
+            None,
+        )
+
+
+class _EnrollmentWriterAdapter:
+    """Adapts FakeCoachEnrollmentWriter to the EnrollmentWriter protocol."""
+
+    def __init__(self, store: FakeCoachEnrollmentWriter) -> None:
+        self._store = store
+
+    async def create(self, enrollment: Enrollment) -> None:
+        await self._store.create_enrollment(enrollment)
+
+    async def update_status(self, enrollment_id: str, status: str) -> None:
+        await self._store.update_enrollment_status(enrollment_id, status)
+
+    async def update_session(self, enrollment_id: str, session_id: str) -> None:
+        pass
+
+    async def get(self, enrollment_id: str) -> Enrollment | None:
+        return self._store._enrollments.get(enrollment_id)
+
+    async def find_for_session_student(
+        self, session_id: str, student_id: str
+    ) -> Enrollment | None:
+        return await self._store.find_for_session_student(session_id, student_id)
+
+
+class FakeCoachStudentWriter:
+    def __init__(self) -> None:
+        self._students: dict[str, Student] = {}
+
+    async def upsert(self, student: Student) -> None:
+        self._students[student.student_id] = student
 
 
 # --- seed data ---
@@ -366,6 +460,9 @@ def _build_use_cases(seed_data) -> CoachUseCases:
 
     notes = FakeCoachingNotesRepo()
     session_lookup = _SL()
+    rw_store = FakeCoachEnrollmentWriter(seed_data["enrollments"], seed_data["sessions"])
+    enrollment_writer = _EnrollmentWriterAdapter(rw_store)
+    student_writer = FakeCoachStudentWriter()
     return CoachUseCases(
         list_today=ListCoachOccurrencesForDate(occurrences=occurrences, sessions=sessions),
         get_roster=GetSessionRoster(enrollments=enrollments, students=students),
@@ -387,6 +484,18 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             enrollments=enrollments,
         ),
         list_progress_notes=ListProgressNotes(notes=notes, sessions=session_lookup),
+        assigned_sessions=session_lookup,
+        add_student_to_roster=CoachAddStudentToRoster(
+            sessions=rw_store,
+            enrollments=enrollment_writer,
+            students=student_writer,
+            assigned_sessions=session_lookup,
+            academy_id="test-academy",
+        ),
+        remove_student_from_roster=CoachRemoveStudentFromRoster(
+            enrollments=enrollment_writer,
+            assigned_sessions=session_lookup,
+        ),
     )
 
 

@@ -21,6 +21,10 @@ from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
 from backend.v2.contexts.coaching.infrastructure.mongo_session_notes_repo import (
     MongoCoachingNotesRepository,
 )
+from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes import (
+    CoachAddStudentToRoster,
+    CoachRemoveStudentFromRoster,
+)
 from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
     GetSessionRoster,
 )
@@ -59,6 +63,9 @@ class CoachComposition:
     list_lesson_plans: ListLessonPlans
     create_progress_note: CreateProgressNote
     list_progress_notes: ListProgressNotes
+    assigned_sessions: CoachAssignedSessionLookup
+    add_student_to_roster: CoachAddStudentToRoster
+    remove_student_from_roster: CoachRemoveStudentFromRoster
 
 
 class CoachAssignedSessionLookup:
@@ -146,4 +153,16 @@ def compose_coach(
             enrollments=enrollments_repo,
         ),
         list_progress_notes=ListProgressNotes(notes=notes_repo, sessions=assigned_sessions),
+        assigned_sessions=assigned_sessions,
+        add_student_to_roster=CoachAddStudentToRoster(
+            sessions=sessions_repo,
+            enrollments=enrollments_repo,
+            students=students_repo,
+            assigned_sessions=assigned_sessions,
+            academy_id=settings.default_academy_id,
+        ),
+        remove_student_from_roster=CoachRemoveStudentFromRoster(
+            enrollments=enrollments_repo,
+            assigned_sessions=assigned_sessions,
+        ),
     )

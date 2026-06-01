@@ -94,3 +94,27 @@ class ProgressNoteList(BaseModel):
 class CreateProgressNoteRequest(BaseModel):
     student_id: str
     body: str
+
+
+class RosterEntryView(BaseModel):
+    enrollment_id: str
+    student_id: str
+    full_name: str
+    enrollment_status: str
+
+
+class RosterResponse(BaseModel):
+    roster: list[RosterEntryView]
+
+
+class AddStudentToRosterRequest(BaseModel):
+    student_id: str
+    parent_id: str
+    full_name: str
+
+
+class AddStudentToRosterResponse(BaseModel):
+    enrollment_id: str
+    session_id: str
+    student_id: str
+    status: str

@@ -18,6 +18,10 @@ from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     ListLessonPlans,
     ListProgressNotes,
 )
+from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes import (
+    CoachAddStudentToRoster,
+    CoachRemoveStudentFromRoster,
+)
 from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
     GetSessionRoster,
 )
@@ -36,6 +40,9 @@ class CoachUseCases:
     list_lesson_plans: ListLessonPlans
     create_progress_note: CreateProgressNote
     list_progress_notes: ListProgressNotes
+    assigned_sessions: object  # CoachAssignedSessionLookup (any with is_coach_assigned)
+    add_student_to_roster: CoachAddStudentToRoster
+    remove_student_from_roster: CoachRemoveStudentFromRoster
 
 
 def get_coach_use_cases(request: Request) -> CoachUseCases:
