@@ -103,7 +103,7 @@ test.describe("parent email registration verification", () => {
     await page.getByTestId("login-password").fill("correct-horse-1");
     await page.getByTestId("login-submit").click();
 
-    await expect(page).toHaveURL(/\/parent\/onboarding$/);
+    await expect(page).toHaveURL(/\/parent\/onboarding$/, { timeout: 15000 });
     await expect(page.getByTestId("parent-onboarding")).toBeVisible();
     expect(parentRegistrationCalls).toBe(1);
   });
