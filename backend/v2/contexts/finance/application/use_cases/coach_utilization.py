@@ -26,7 +26,7 @@ from backend.v2.contexts.finance.application.ports import CoachPayoutSnapshotRea
 # ---------------------------------------------------------------------------
 
 _FOUR_DP = Decimal("0.0001")
-_ONE = Decimal("1.0")
+_ONE = Decimal("1.0000")
 
 
 class CoachUtilizationPoint(BaseModel):
