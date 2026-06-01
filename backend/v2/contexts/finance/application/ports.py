@@ -183,8 +183,25 @@ class SessionOccurrenceCounts(Protocol):
     def no_show_count(self) -> int: ...
 
 
+class ApplicationFunnelReader(Protocol):
+    """Read application funnel counts from the onboarding store.
+
+    The implementor queries the ``onboarding_applications`` collection
+    and groups raw documents by their ``status`` field.  The finance
+    context never imports from the onboarding context directly — this
+    port is the boundary.
+
+    Returns a mapping of ``{status: count}`` for all statuses that have
+    at least one document matching the query.  An empty collection
+    returns an empty dict.
+    """
+
+    async def get_funnel_counts(self, academy_id: str, period: str | None) -> dict[str, int]: ...
+
+
 __all__ = [
     "AcademyRevenueSnapshotRepository",
+    "ApplicationFunnelReader",
     "BillingLedgerReader",
     "BillingPeriodTotals",
     "CoachPayoutSnapshotRepository",
