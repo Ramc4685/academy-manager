@@ -31,3 +31,10 @@ class MongoEnrollmentRepository(TenantScopedRepository):
             {"session_id": session_id, "student_id": student_id, "status": "active"}
         )
         return doc is not None
+
+    async def active_for_student(self, student_id: str) -> list[Enrollment]:
+        cursor = self._find_many(
+            {"student_id": student_id, "status": "active"},
+            sort=[("enrollment_id", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]

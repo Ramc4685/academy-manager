@@ -32,3 +32,17 @@ class ConflictAttendanceExists(DomainError):
 
     code = "Coaching.ConflictAttendanceExists"
     status_code = 409
+
+
+class BulkSessionNotAssigned(DomainError):
+    """Bulk attendance rejected because the coach is not assigned to this occurrence."""
+
+    code = "Coaching.BulkSessionNotAssigned"
+    status_code = 403
+
+
+class BulkStudentNotEnrolled(DomainError):
+    """Bulk attendance rejected because a student is not enrolled (whole batch fails)."""
+
+    code = "Coaching.BulkStudentNotEnrolled"
+    status_code = 422

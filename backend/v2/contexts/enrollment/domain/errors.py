@@ -19,7 +19,7 @@ class SessionNotAssigned(DomainError):
     """The session exists but is not assigned to the requesting coach for the requested date."""
 
     code = "Enrollment.SessionNotAssigned"
-    status_code = 409
+    status_code = 403
 
 
 class StudentNotEnrolled(DomainError):

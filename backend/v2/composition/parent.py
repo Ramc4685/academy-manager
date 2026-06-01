@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, time
+from datetime import UTC, date, datetime, time
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from backend.v2.contexts.billing.application.ports import StripeGateway
+from backend.v2.contexts.billing.application.use_cases.enroll_child_in_session_type import (
+    CancelBillingEnrollment,
+    EnrollChildInSessionType,
+)
 from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
     HandleWebhookEvent,
 )
@@ -39,6 +43,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import 
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_session_type_repo import (
+    MongoSessionTypeRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_stripe_dedup import (
     MongoStripeEventDedup,
 )
@@ -50,6 +57,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
 )
 from backend.v2.contexts.enrollment.application.use_cases.confirm_enrollment import (
     ConfirmEnrollment,
+)
+from backend.v2.contexts.enrollment.application.use_cases.get_child_schedule import (
+    GetChildSchedule,
 )
 from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_sessions import (
     ListParentAvailableSessions,
@@ -71,6 +81,9 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import 
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_writer import (
     MongoEnrollmentWriter,
 )
+from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import (
+    MongoSessionOccurrenceRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_pause_request_repo import (
     MongoPauseRequestRepository,
 )
@@ -79,6 +92,9 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_writer import (
     MongoSessionWriter,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
+    MongoStudentRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_student_writer import (
     MongoStudentWriter,
@@ -137,6 +153,9 @@ class ParentComposition:
     list_progress_for_parent: object
     list_invoices_for_parent: object
     get_invoice_for_parent: object
+    get_child_schedule: object
+    enroll_child: object
+    cancel_billing_enrollment: object
     get_parent_waiver_requirement: GetParentWaiverRequirement
     accept_parent_waiver: AcceptParentWaiver
 
@@ -156,6 +175,7 @@ def compose_parent(
     payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
     subscriptions_repo = MongoSubscriptionRepository(db)
     student_billing_enrollments = MongoStudentBillingEnrollmentRepository(db)
+    session_types_repo = MongoSessionTypeRepository(db)
     dedup = MongoStripeEventDedup(db)
 
     start_checkout = StartCheckout(
@@ -199,8 +219,17 @@ def compose_parent(
     enrollments_query = MongoEnrollmentRepository(db)
     enrollment_events = MongoEnrollmentEventRepository(db)
     students_writer = MongoStudentWriter(db)
+    students_query = MongoStudentRepository(db)
+    occurrences_query = MongoSessionOccurrenceRepository(db)
     waitlist = MongoWaitlistRepository(db)
     pause_requests = MongoPauseRequestRepository(db)
+
+    get_child_schedule_uc = GetChildSchedule(
+        enrollments=enrollments_query,
+        occurrences=occurrences_query,
+        sessions=sessions_query,
+        students=students_query,
+    )
 
     confirm_enrollment = ConfirmEnrollment(
         sessions=sessions_writer,
@@ -331,61 +360,161 @@ def compose_parent(
             )
         return rows
 
-    async def list_attendance_for_parent(parent_id: str) -> list[dict[str, Any]]:
+    async def _resolve_coach_name(coach_id: str | None) -> str | None:
+        if not coach_id:
+            return None
+        user = await db["users"].find_one(
+            {"academy_id": academy_id, "$or": [{"user_id": coach_id}, {"firebase_uid": coach_id}]}
+        )
+        if user and user.get("full_name"):
+            return str(user["full_name"])
+        if user:
+            first = str(user.get("first_name") or "")
+            last = str(user.get("last_name") or "")
+            name = f"{first} {last}".strip()
+            if name:
+                return name
+        return None
+
+    async def list_attendance_for_parent(
+        parent_id: str, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[dict[str, Any]], int]:
         students = await _parent_students(parent_id)
         by_id = {str(s.get("student_id") or s["_id"]): s for s in students}
         if not by_id:
-            return []
-        cursor = (
-            db["attendance"]
-            .find({"academy_id": academy_id, "student_id": {"$in": list(by_id)}})
-            .sort([("marked_at", -1)])
-            .limit(100)
+            return [], 0
+        query = {"academy_id": academy_id, "student_id": {"$in": list(by_id)}}
+        total = await db["attendance"].count_documents(query)
+        cursor = db["attendance"].find(query).sort([("marked_at", -1)]).skip(offset).limit(limit)
+        attendance_rows = [doc async for doc in cursor]
+
+        # Batch-fetch all sessions referenced in this page
+        session_ids = list(
+            {str(row["session_id"]) for row in attendance_rows if row.get("session_id")}
         )
+        sessions_map: dict[str, Any] = {}
+        if session_ids:
+            async for sdoc in db["sessions"].find(
+                {"academy_id": academy_id, "session_id": {"$in": session_ids}}
+            ):
+                sessions_map[str(sdoc.get("session_id") or sdoc["_id"])] = sdoc
+
+        coach_cache: dict[str, str | None] = {}
         rows: list[dict[str, Any]] = []
-        async for attendance in cursor:
+        for attendance in attendance_rows:
             student_id = str(attendance["student_id"])
-            session = await db["sessions"].find_one(
-                {"academy_id": academy_id, "session_id": attendance["session_id"]}
-            )
+            session = sessions_map.get(str(attendance["session_id"]))
+            coach_id = attendance.get("marked_by") or attendance.get("coach_id")
+            if coach_id not in coach_cache:
+                coach_cache[coach_id] = await _resolve_coach_name(coach_id)
+            coach_name = coach_cache[coach_id]
             rows.append(
                 {
                     "attendance_id": str(attendance["attendance_id"]),
                     "student_id": student_id,
-                    "student_name": str(by_id[student_id].get("full_name") or "Unnamed student"),
+                    "student_name": str(
+                        by_id.get(student_id, {}).get("full_name") or "Unnamed student"
+                    ),
                     "session_id": str(attendance["session_id"]),
-                    "session_title": str(session.get("title") if session else "Session"),
+                    "session_title": str((session or {}).get("title") or "Session"),
                     "status": str(attendance["status"]),
                     "marked_at": attendance["marked_at"],
+                    "coach_name": coach_name,
                 }
             )
-        return rows
+        return rows, total
 
-    async def list_progress_for_parent(parent_id: str) -> list[dict[str, Any]]:
+    async def list_progress_for_parent(
+        parent_id: str, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[dict[str, Any]], int]:
         students = await _parent_students(parent_id)
         by_id = {str(s.get("student_id") or s["_id"]): s for s in students}
         if not by_id:
-            return []
-        cursor = (
-            db["progress_notes"]
-            .find({"academy_id": academy_id, "student_id": {"$in": list(by_id)}})
-            .sort([("created_at", -1)])
-            .limit(100)
+            return [], 0
+        query = {"academy_id": academy_id, "student_id": {"$in": list(by_id)}}
+        total_notes = await db["progress_notes"].count_documents(query)
+        total_feedback = await db["session_feedback"].count_documents(query)
+        total = total_notes + total_feedback
+        # Fetch ALL matching rows from both collections (no skip/limit on DB queries)
+        # so we can merge and slice correctly — avoids page 2 repeating feedback items.
+        note_rows = [
+            doc async for doc in db["progress_notes"].find(query).sort([("created_at", -1)])
+        ]
+        feedback_rows = [
+            doc async for doc in db["session_feedback"].find(query).sort([("created_at", -1)])
+        ]
+
+        # Batch-fetch all sessions referenced in this page
+        all_session_ids = list(
+            {str(n["session_id"]) for n in note_rows + feedback_rows if n.get("session_id")}
         )
+        sessions_map: dict[str, Any] = {}
+        if all_session_ids:
+            async for sdoc in db["sessions"].find(
+                {"academy_id": academy_id, "session_id": {"$in": all_session_ids}}
+            ):
+                sessions_map[str(sdoc.get("session_id") or sdoc["_id"])] = sdoc
+
+        coach_cache: dict[str, str | None] = {}
         rows: list[dict[str, Any]] = []
-        async for note in cursor:
+
+        for note in note_rows:
             student_id = str(note["student_id"])
+            coach_id = note.get("coach_id")
+            if coach_id not in coach_cache:
+                coach_cache[coach_id] = await _resolve_coach_name(coach_id)
+            coach_name = coach_cache[coach_id]
+            session_id = note.get("session_id")
+            session = sessions_map.get(str(session_id)) if session_id else None
+            session_title: str | None = str(session.get("title") or "Session") if session else None
             rows.append(
                 {
                     "note_id": str(note.get("note_id") or note["_id"]),
                     "student_id": student_id,
-                    "student_name": str(by_id[student_id].get("full_name") or "Unnamed student"),
-                    "coach_id": note.get("coach_id"),
+                    "student_name": str(
+                        by_id.get(student_id, {}).get("full_name") or "Unnamed student"
+                    ),
+                    "session_id": str(session_id) if session_id else None,
+                    "session_title": session_title,
+                    "coach_id": coach_id,
+                    "coach_name": coach_name,
                     "body": str(note.get("body") or note.get("note") or ""),
                     "created_at": note.get("created_at") or datetime.now(UTC),
+                    "note_type": "progress_note",
                 }
             )
-        return rows
+
+        for fb in feedback_rows:
+            student_id = str(fb["student_id"])
+            coach_id = fb.get("coach_id")
+            if coach_id not in coach_cache:
+                coach_cache[coach_id] = await _resolve_coach_name(coach_id)
+            coach_name = coach_cache[coach_id]
+            session_id = fb.get("session_id")
+            session = sessions_map.get(str(session_id)) if session_id else None
+            session_title = str(session.get("title") or "Session") if session else None
+            rows.append(
+                {
+                    "note_id": str(fb.get("feedback_id") or fb["_id"]),
+                    "student_id": student_id,
+                    "student_name": str(
+                        by_id.get(student_id, {}).get("full_name") or "Unnamed student"
+                    ),
+                    "session_id": str(session_id) if session_id else None,
+                    "session_title": session_title,
+                    "coach_id": coach_id,
+                    "coach_name": coach_name,
+                    "body": str(fb.get("body") or ""),
+                    "created_at": fb.get("created_at") or datetime.now(UTC),
+                    "note_type": "feedback",
+                    "rating": fb.get("rating"),
+                }
+            )
+
+        # Re-sort blended results by created_at descending, then slice for the requested page
+        rows.sort(key=lambda r: r["created_at"], reverse=True)
+        page = rows[offset : offset + limit]
+        return page, total
 
     async def list_invoices_for_parent(parent_id: str):
         return await billing_ledger_repo.list_invoices_for_parent(parent_id)
@@ -541,6 +670,48 @@ def compose_parent(
         result = await checkout_status.execute(checkout_session_id, parent_id=parent_id)
         return result.model_dump()
 
+    async def get_child_schedule(
+        *,
+        parent_id: str,
+        student_id: str,
+        frm: date | None = None,
+        to: date | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ):
+        return await get_child_schedule_uc.execute(
+            parent_id,
+            student_id,
+            frm=frm,
+            to=to,
+            limit=limit,
+            offset=offset,
+        )
+
+    # Session-type billing enrollment
+    class _StudentOwnerLookup:
+        async def is_owned(self, parent_id: str, student_id: str) -> bool:
+            doc = await db["students"].find_one(
+                {
+                    "academy_id": academy_id,
+                    "student_id": student_id,
+                    "$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}],
+                }
+            )
+            return doc is not None
+
+    enroll_child_uc = EnrollChildInSessionType(
+        enrollments=student_billing_enrollments,
+        session_types=session_types_repo,
+        stripe=stripe,
+        student_owner_lookup=_StudentOwnerLookup(),
+        academy_id=academy_id,
+    )
+    cancel_billing_enrollment_uc = CancelBillingEnrollment(
+        enrollments=student_billing_enrollments,
+        stripe=stripe,
+    )
+
     return ParentComposition(
         start_application=start_app,
         patch_application=patch_app,
@@ -564,6 +735,9 @@ def compose_parent(
         list_progress_for_parent=list_progress_for_parent,
         list_invoices_for_parent=list_invoices_for_parent,
         get_invoice_for_parent=get_invoice_for_parent,
+        get_child_schedule=get_child_schedule,
+        enroll_child=enroll_child_uc.execute,
+        cancel_billing_enrollment=cancel_billing_enrollment_uc.execute,
         get_parent_waiver_requirement=get_waiver_req,
         accept_parent_waiver=accept_waiver,
     )

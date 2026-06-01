@@ -1,9 +1,9 @@
 # Phase 1 — Parent + Coach Portal Enrichment (detailed plan)
 
-Derived from `~/.claude/plans/can-you-build-a-sharded-castle.md` (P1 outline), grounded against the
+Derived from `docs/plans/saas-v2-roadmap.md (P1 outline)`, grounded against the
 **committed** baseline at `f8d11a8` (Phase 0 complete). Verified symbol inventory below.
 
-Worktree: `~/.config/superpowers/worktrees/academy-manager/phase1-portal-enrichment`
+Worktree: `<worktree>`
 Branch: `feat/phase1-portal-enrichment`
 Baseline: `1387 passed, 7 skipped` (unit+contract+interface).
 

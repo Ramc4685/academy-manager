@@ -94,3 +94,70 @@ class ProgressNoteList(BaseModel):
 class CreateProgressNoteRequest(BaseModel):
     student_id: str
     body: str
+
+
+class RosterEntryView(BaseModel):
+    enrollment_id: str
+    student_id: str
+    full_name: str
+    enrollment_status: str
+
+
+class RosterResponse(BaseModel):
+    roster: list[RosterEntryView]
+
+
+class AddStudentToRosterRequest(BaseModel):
+    student_id: str
+    parent_id: str
+    full_name: str
+
+
+class AddStudentToRosterResponse(BaseModel):
+    enrollment_id: str
+    session_id: str
+    student_id: str
+    status: str
+
+
+class BulkAttendanceEntryRequest(BaseModel):
+    student_id: str
+    status: Literal["present", "absent", "late"]
+
+
+class BulkMarkAttendanceRequest(BaseModel):
+    mutation_id: str
+    session_id: str
+    entries: list[BulkAttendanceEntryRequest]
+
+
+class BulkAttendanceEntryResponse(BaseModel):
+    student_id: str
+    status: Literal["present", "absent", "late"]
+    attendance_id: str
+
+
+class BulkMarkAttendanceResponse(BaseModel):
+    results: list[BulkAttendanceEntryResponse]
+
+
+class CreateFeedbackRequest(BaseModel):
+    student_id: str
+    occurrence_id: str | None = None
+    body: str
+    rating: int | None = None
+
+
+class FeedbackView(BaseModel):
+    feedback_id: str
+    session_id: str
+    occurrence_id: str | None = None
+    coach_id: str
+    student_id: str
+    body: str
+    rating: int | None = None
+    created_at: datetime
+
+
+class FeedbackListResponse(BaseModel):
+    feedback: list[FeedbackView]

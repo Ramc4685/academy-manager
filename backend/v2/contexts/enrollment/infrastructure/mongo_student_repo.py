@@ -47,6 +47,18 @@ class MongoStudentRepository(TenantScopedRepository):
         cursor = self._find_many({"student_id": {"$in": student_ids}})
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def get_for_parent(self, parent_id: str, student_id: str) -> Student | None:
+        # legacy docs use parent_user_id; newer docs use parent_id — query both during migration
+        doc = await self._find_one(
+            {
+                "student_id": student_id,
+                "$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}],
+            }
+        )
+        if doc and "parent_id" not in doc and "parent_user_id" in doc:
+            doc = {**doc, "parent_id": doc["parent_user_id"]}
+        return self._to_domain(doc) if doc else None
+
     @staticmethod
     def _summary_id(doc: dict[str, object]) -> str:
         return str(doc.get("student_id") or doc.get("_id"))

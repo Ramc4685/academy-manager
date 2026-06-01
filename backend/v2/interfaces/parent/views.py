@@ -247,23 +247,33 @@ class ParentAttendanceRecordView(BaseModel):
     session_title: str
     status: str
     marked_at: datetime
+    coach_name: str | None = None
 
 
 class ParentAttendanceResponse(BaseModel):
     records: list[ParentAttendanceRecordView]
+    total: int
+    limit: int
+    offset: int
 
 
 class ParentProgressNoteView(BaseModel):
     note_id: str
     student_id: str
     student_name: str
+    session_id: str | None = None
+    session_title: str | None = None
     coach_id: str | None = None
+    coach_name: str | None = None
     body: str
     created_at: datetime
 
 
 class ParentProgressResponse(BaseModel):
     notes: list[ParentProgressNoteView]
+    total: int
+    limit: int
+    offset: int
 
 
 # --- Waivers ---
@@ -288,6 +298,55 @@ class ParentWaiverCurrentView(BaseModel):
 
 class ParentWaiverAcceptRequest(BaseModel):
     signer_name: str | None = None
+
+
+# --- Child schedule ---
+
+
+class ParentScheduleEntryView(BaseModel):
+    occurrence_id: str
+    session_id: str
+    session_title: str
+    start_at: datetime
+    end_at: datetime
+    status: str
+    coach_name: str | None = None
+
+
+class ParentScheduleResponse(BaseModel):
+    entries: list[ParentScheduleEntryView]
+    total: int
+    limit: int
+    offset: int
+
+
+# --- Billing Enrollments ---
+
+
+class EnrollChildRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    student_id: str
+    session_type_id: str
+    success_url: str
+    cancel_url: str
+
+
+class BillingEnrollmentResponse(BaseModel):
+    enrollment_id: str
+    student_id: str
+    parent_id: str
+    session_type_id: str
+    status: str
+    redirect_url: str | None = None
+    stripe_subscription_id: str | None = None
+    billing_start_date: datetime
+    enrolled_at: datetime
+
+
+class CancelBillingEnrollmentResponse(BaseModel):
+    enrollment_id: str
+    status: str
 
 
 # --- Sessions ---

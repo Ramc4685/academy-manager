@@ -8,7 +8,14 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import (
+    BulkMarkAttendance,
+)
 from backend.v2.contexts.coaching.application.use_cases.mark_attendance import MarkAttendance
+from backend.v2.contexts.coaching.application.use_cases.session_feedback import (
+    CreateSessionFeedback,
+    ListSessionFeedback,
+)
 from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     CreateLessonPlan,
     CreateProgressNote,
@@ -18,8 +25,15 @@ from backend.v2.contexts.coaching.application.use_cases.session_notes import (
 from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
     MongoAttendanceRepository,
 )
+from backend.v2.contexts.coaching.infrastructure.mongo_session_feedback_repo import (
+    MongoSessionFeedbackRepository,
+)
 from backend.v2.contexts.coaching.infrastructure.mongo_session_notes_repo import (
     MongoCoachingNotesRepository,
+)
+from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes import (
+    CoachAddStudentToRoster,
+    CoachRemoveStudentFromRoster,
 )
 from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
     GetSessionRoster,
@@ -54,11 +68,17 @@ class CoachComposition:
     list_today: ListCoachOccurrencesForDate
     get_roster: GetSessionRoster
     mark_attendance: MarkAttendance
+    bulk_mark_attendance: BulkMarkAttendance
     get_dashboard_metrics: object
     create_lesson_plan: CreateLessonPlan
     list_lesson_plans: ListLessonPlans
     create_progress_note: CreateProgressNote
     list_progress_notes: ListProgressNotes
+    assigned_sessions: CoachAssignedSessionLookup
+    add_student_to_roster: CoachAddStudentToRoster
+    remove_student_from_roster: CoachRemoveStudentFromRoster
+    create_feedback: CreateSessionFeedback
+    list_feedback: ListSessionFeedback
 
 
 class CoachAssignedSessionLookup:
@@ -82,6 +102,7 @@ def compose_coach(
     attendance_repo = MongoAttendanceRepository(db)
     occurrences_repo = MongoSessionOccurrenceRepository(db)
     notes_repo = MongoCoachingNotesRepository(db)
+    feedback_repo = MongoSessionFeedbackRepository(db)
     assigned_sessions = CoachAssignedSessionLookup(sessions_repo)
 
     async def get_dashboard_metrics(coach_id: str) -> dict[str, int | float]:
@@ -137,6 +158,14 @@ def compose_coach(
             idempotency_store=idempotency_store,
             academy_id=settings.default_academy_id,
         ),
+        bulk_mark_attendance=BulkMarkAttendance(
+            attendance_repo=attendance_repo,
+            occurrence_lookup=EnrollmentOccurrenceLookup(occurrences_repo),
+            enrollment_lookup=EnrollmentLookupAdapter(enrollments_repo),
+            outbox=outbox,
+            idempotency_store=idempotency_store,
+            academy_id=settings.default_academy_id,
+        ),
         get_dashboard_metrics=get_dashboard_metrics,
         create_lesson_plan=CreateLessonPlan(notes=notes_repo, sessions=assigned_sessions),
         list_lesson_plans=ListLessonPlans(notes=notes_repo, sessions=assigned_sessions),
@@ -146,4 +175,25 @@ def compose_coach(
             enrollments=enrollments_repo,
         ),
         list_progress_notes=ListProgressNotes(notes=notes_repo, sessions=assigned_sessions),
+        assigned_sessions=assigned_sessions,
+        # TODO: academy_id is baked in at startup from default_academy_id.
+        # This must be replaced with per-request tenant resolution before multi-tenant rollout.
+        # See SaaS migration work: interfaces should derive academy_id from the authenticated user's membership.
+        add_student_to_roster=CoachAddStudentToRoster(
+            sessions=sessions_repo,
+            enrollments=enrollments_repo,
+            students=students_repo,
+            assigned_sessions=assigned_sessions,
+            academy_id=settings.default_academy_id,
+        ),
+        remove_student_from_roster=CoachRemoveStudentFromRoster(
+            enrollments=enrollments_repo,
+            assigned_sessions=assigned_sessions,
+        ),
+        create_feedback=CreateSessionFeedback(
+            feedback_repo=feedback_repo,
+            assignment_lookup=assigned_sessions,
+            outbox=outbox,
+        ),
+        list_feedback=ListSessionFeedback(feedback_repo=feedback_repo),
     )

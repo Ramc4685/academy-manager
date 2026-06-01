@@ -52,6 +52,12 @@ class MongoSessionRepository(TenantScopedRepository):
         doc = await self._find_one({"session_id": session_id})
         return self._to_domain(doc) if doc else None
 
+    async def get_many(self, session_ids: list[str]) -> list[Session]:
+        if not session_ids:
+            return []
+        cursor = self._find_many({"session_id": {"$in": session_ids}})
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def available_for_parent_catalog(self) -> list[ParentAvailableSession]:
         now = datetime.now(UTC)
         cursor = self._find_many(
