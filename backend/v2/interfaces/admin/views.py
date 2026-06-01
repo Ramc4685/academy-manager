@@ -44,12 +44,49 @@ class AdminStudentView(BaseModel):
     dues_status: Literal["current", "due", "overdue"] = "current"
 
 
+class AdminStudentSessionSummaryView(BaseModel):
+    enrollment_id: str
+    session_id: str
+    session_title: str
+    location: str | None = None
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+    status: str
+    payment_mode: str | None = None
+    subscription_status: str | None = None
+    amount_cents: int | None = None
+
+
+class AdminStudentPaymentSummaryView(BaseModel):
+    payment_id: str
+    session_id: str | None = None
+    period: str | None = None
+    amount_cents: int
+    paid_amount_cents: int
+    balance_due_cents: int
+    status: str
+    payment_method: str | None = None
+    created_at: datetime
+
+
+class AdminStudentCurrentPaymentSummaryView(BaseModel):
+    amount_cents: int
+    source: Literal["invoice", "session_price"]
+    status: str
+    period: str | None = None
+    payment_id: str | None = None
+    session_id: str | None = None
+
+
 class AdminStudentDetailView(AdminStudentView):
     date_of_birth: date | None = None
     level: str | None = None
     notes: str | None = None
     parent_phone: str | None = None
     parent_details: str | None = None
+    enrolled_sessions: list[AdminStudentSessionSummaryView] = Field(default_factory=list)
+    payment_history: list[AdminStudentPaymentSummaryView] = Field(default_factory=list)
+    current_payment: AdminStudentCurrentPaymentSummaryView | None = None
 
 
 class AdminStudentList(BaseModel):

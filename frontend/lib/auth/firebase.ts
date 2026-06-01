@@ -65,11 +65,11 @@ declare global {
   }
 }
 
-function fakeE2EUser(email: string): User {
+function fakeE2EUser(email: string, emailVerified = false): User {
   return {
     uid: "e2e-parent",
     email,
-    emailVerified: false,
+    emailVerified,
     getIdToken: async () => "e2e-fake-token",
   } as unknown as User;
 }
@@ -84,6 +84,7 @@ export async function getIdToken(): Promise<string | null> {
 }
 
 export async function signInWithEmail(email: string, password: string): Promise<User> {
+  if (E2E_BYPASS) return fakeE2EUser(email, true);
   const { user } = await signInWithEmailAndPassword(auth(), email, password);
   return user;
 }

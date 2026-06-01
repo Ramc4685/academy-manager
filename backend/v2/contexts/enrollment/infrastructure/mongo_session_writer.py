@@ -22,15 +22,16 @@ class MongoSessionWriter(TenantScopedRepository):
         return MongoSessionRepository._to_domain(doc) if doc else None
 
     async def try_reserve_seat(self, session_id: str) -> bool:
+        session_filter = _session_filter(session_id)
         result = await self.collection.update_one(
             self._scoped(
                 {
-                    "session_id": session_id,
-                    "status": "scheduled",
+                    **session_filter,
+                    "status": {"$in": ["scheduled", "active", "open"]},
                     "$expr": {
                         "$lt": [
                             {"$ifNull": ["$reserved_seats", 0]},
-                            "$capacity",
+                            {"$ifNull": ["$capacity", "$max_students"]},
                         ]
                     },
                 }
@@ -43,7 +44,7 @@ class MongoSessionWriter(TenantScopedRepository):
         await self.collection.update_one(
             self._scoped(
                 {
-                    "session_id": session_id,
+                    **_session_filter(session_id),
                     "$expr": {"$gt": [{"$ifNull": ["$reserved_seats", 0]}, 0]},
                 }
             ),
@@ -51,7 +52,7 @@ class MongoSessionWriter(TenantScopedRepository):
         )
 
     async def update_status(self, session_id: str, status: str) -> None:
-        await self._update_one({"session_id": session_id}, {"$set": {"status": status}})
+        await self._update_one(_session_filter(session_id), {"$set": {"status": status}})
 
     async def create(self, session: Session) -> None:
         doc = session.model_dump(mode="python")

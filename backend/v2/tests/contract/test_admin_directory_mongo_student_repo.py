@@ -245,6 +245,315 @@ async def test_list_admin_students_cursor_returns_next_page_and_opaque_next_curs
     assert second.next_cursor is None
 
 
+@pytest.mark.asyncio
+async def test_get_admin_student_enriches_sessions_payments_and_current_invoice(db, acad) -> None:
+    now = datetime.now(UTC)
+    await db["students"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "student_id": "st-alice",
+                "full_name": "Alice Chen",
+                "parent_id": "parent-1",
+                "status": "active",
+            },
+            {
+                "academy_id": acad,
+                "student_id": "st-bob",
+                "full_name": "Bob Rao",
+                "parent_id": "parent-2",
+                "status": "active",
+            },
+            {
+                "academy_id": "other-academy",
+                "student_id": "st-alice",
+                "full_name": "Other Alice",
+                "parent_id": "parent-other",
+                "status": "active",
+            },
+        ]
+    )
+    await db["sessions"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "session_id": "sess-active",
+                "title": "Advanced Footwork",
+                "location": "Court 1",
+                "coach_id": "coach-1",
+                "start_at": now + timedelta(days=2),
+                "end_at": now + timedelta(days=2, hours=1),
+                "capacity": 8,
+                "status": "scheduled",
+                "amount_cents": 15_000,
+            },
+            {
+                "academy_id": "other-academy",
+                "session_id": "sess-other",
+                "title": "Other Tenant Session",
+                "location": "Court X",
+                "start_at": now + timedelta(days=3),
+                "end_at": now + timedelta(days=3, hours=1),
+                "status": "scheduled",
+                "amount_cents": 99_000,
+            },
+        ]
+    )
+    await db["enrollments"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "enrollment_id": "enr-active",
+                "student_id": "st-alice",
+                "session_id": "sess-active",
+                "status": "active",
+                "payment_mode": "monthly",
+                "subscription_status": "active",
+            },
+            {
+                "academy_id": acad,
+                "enrollment_id": "enr-other-student",
+                "student_id": "st-bob",
+                "session_id": "sess-active",
+                "status": "active",
+            },
+            {
+                "academy_id": "other-academy",
+                "enrollment_id": "enr-other-tenant",
+                "student_id": "st-alice",
+                "session_id": "sess-other",
+                "status": "active",
+            },
+        ]
+    )
+    await db["payments"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "payment_id": "pay-paid",
+                "student_id": "st-alice",
+                "session_id": "sess-active",
+                "period": "2026-05",
+                "amount_cents": 15_000,
+                "paid_amount_cents": 15_000,
+                "balance_due_cents": 0,
+                "status": "paid",
+                "payment_method": "card",
+                "created_at": now - timedelta(days=10),
+            },
+            {
+                "academy_id": acad,
+                "payment_id": "pay-open",
+                "student_id": "st-alice",
+                "session_id": "sess-active",
+                "period": "2026-06",
+                "amount_cents": 15_000,
+                "paid_amount_cents": 4_000,
+                "balance_due_cents": 11_000,
+                "status": "partially_paid",
+                "payment_method": "cash",
+                "created_at": now - timedelta(days=1),
+            },
+            {
+                "academy_id": acad,
+                "payment_id": "pay-other-student",
+                "student_id": "st-bob",
+                "session_id": "sess-active",
+                "period": "2026-06",
+                "amount_cents": 99_000,
+                "status": "unpaid",
+                "created_at": now,
+            },
+            {
+                "academy_id": "other-academy",
+                "payment_id": "pay-other-tenant",
+                "student_id": "st-alice",
+                "session_id": "sess-other",
+                "period": "2026-06",
+                "amount_cents": 99_000,
+                "status": "unpaid",
+                "created_at": now,
+            },
+        ]
+    )
+
+    repo = MongoStudentRepository(db)
+    detail = await repo.get_admin_student("st-alice")
+
+    assert detail is not None
+    assert [row.enrollment_id for row in detail.enrolled_sessions] == ["enr-active"]
+    assert detail.enrolled_sessions[0].session_id == "sess-active"
+    assert detail.enrolled_sessions[0].session_title == "Advanced Footwork"
+    assert detail.enrolled_sessions[0].location == "Court 1"
+    assert detail.enrolled_sessions[0].status == "active"
+    assert detail.enrolled_sessions[0].payment_mode == "monthly"
+    assert detail.enrolled_sessions[0].subscription_status == "active"
+    assert detail.enrolled_sessions[0].amount_cents == 15_000
+    assert [row.payment_id for row in detail.payment_history] == ["pay-open", "pay-paid"]
+    assert detail.payment_history[0].balance_due_cents == 11_000
+    assert detail.payment_history[0].payment_method == "cash"
+    assert detail.current_payment is not None
+    assert detail.current_payment.payment_id == "pay-open"
+    assert detail.current_payment.session_id == "sess-active"
+    assert detail.current_payment.period == "2026-06"
+    assert detail.current_payment.amount_cents == 11_000
+    assert detail.current_payment.source == "invoice"
+    assert detail.current_payment.status == "partially_paid"
+
+
+@pytest.mark.asyncio
+async def test_get_admin_student_normalizes_legacy_payment_amounts(db, acad) -> None:
+    now = datetime.now(UTC)
+    await db["students"].insert_one(
+        {
+            "academy_id": acad,
+            "student_id": "st-alice",
+            "full_name": "Alice Chen",
+            "parent_id": "parent-1",
+            "status": "active",
+        }
+    )
+    await db["payments"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "payment_id": "pay-succeeded-implicit",
+                "student_id": "st-alice",
+                "period": "2026-03",
+                "amount_cents": 10_000,
+                "balance_due_cents": 10_000,
+                "status": "succeeded",
+                "created_at": now - timedelta(days=4),
+            },
+            {
+                "academy_id": acad,
+                "payment_id": "pay-paid-stale-balance",
+                "student_id": "st-alice",
+                "period": "2026-03",
+                "amount_cents": 9_000,
+                "balance_due_cents": 9_000,
+                "status": "paid",
+                "created_at": now - timedelta(days=5),
+            },
+            {
+                "academy_id": acad,
+                "payment_id": "pay-discounted",
+                "student_id": "st-alice",
+                "period": "2026-04",
+                "amount_cents": 15_000,
+                "discount_cents": 5_000,
+                "status": "unpaid",
+                "created_at": now - timedelta(days=3),
+            },
+            {
+                "academy_id": acad,
+                "payment_id": "pay-expired",
+                "student_id": "st-alice",
+                "period": "2026-05",
+                "amount_cents": 12_000,
+                "status": "expired",
+                "created_at": now - timedelta(days=2),
+            },
+            {
+                "academy_id": acad,
+                "payment_id": "pay-failed-final",
+                "student_id": "st-alice",
+                "period": "2026-06",
+                "amount_cents": 20_000,
+                "final_amount_cents": 8_000,
+                "amount_received_cents": 3_000,
+                "status": "failed",
+                "created_at": now - timedelta(days=1),
+            },
+        ]
+    )
+
+    repo = MongoStudentRepository(db)
+    detail = await repo.get_admin_student("st-alice")
+
+    assert detail is not None
+    payments = {row.payment_id: row for row in detail.payment_history}
+    assert payments["pay-succeeded-implicit"].amount_cents == 10_000
+    assert payments["pay-succeeded-implicit"].paid_amount_cents == 10_000
+    assert payments["pay-succeeded-implicit"].balance_due_cents == 0
+    assert payments["pay-paid-stale-balance"].amount_cents == 9_000
+    assert payments["pay-paid-stale-balance"].paid_amount_cents == 9_000
+    assert payments["pay-paid-stale-balance"].balance_due_cents == 0
+    assert payments["pay-discounted"].amount_cents == 10_000
+    assert payments["pay-discounted"].paid_amount_cents == 0
+    assert payments["pay-discounted"].balance_due_cents == 10_000
+    assert payments["pay-expired"].balance_due_cents == 12_000
+    assert payments["pay-failed-final"].amount_cents == 8_000
+    assert payments["pay-failed-final"].paid_amount_cents == 3_000
+    assert payments["pay-failed-final"].balance_due_cents == 5_000
+    assert detail.current_payment is not None
+    assert detail.current_payment.payment_id == "pay-failed-final"
+    assert detail.current_payment.amount_cents == 5_000
+    assert detail.current_payment.status == "failed"
+    assert detail.current_payment.source == "invoice"
+
+
+@pytest.mark.asyncio
+async def test_get_admin_student_current_payment_falls_back_to_active_session_price(
+    db, acad
+) -> None:
+    now = datetime.now(UTC)
+    await db["students"].insert_one(
+        {
+            "academy_id": acad,
+            "student_id": "st-alice",
+            "full_name": "Alice Chen",
+            "parent_id": "parent-1",
+            "status": "active",
+        }
+    )
+    await db["sessions"].insert_one(
+        {
+            "academy_id": acad,
+            "session_id": "sess-active",
+            "title": "Beginner Group",
+            "location": "Court 2",
+            "start_at": now + timedelta(days=5),
+            "end_at": now + timedelta(days=5, hours=1),
+            "status": "scheduled",
+            "monthly_price_cents": 12_500,
+        }
+    )
+    await db["enrollments"].insert_one(
+        {
+            "academy_id": acad,
+            "enrollment_id": "enr-active",
+            "student_id": "st-alice",
+            "session_id": "sess-active",
+            "status": "active",
+        }
+    )
+    await db["payments"].insert_one(
+        {
+            "academy_id": acad,
+            "payment_id": "pay-paid",
+            "student_id": "st-alice",
+            "session_id": "sess-active",
+            "period": "2026-05",
+            "amount_cents": 12_500,
+            "paid_amount_cents": 12_500,
+            "status": "paid",
+            "created_at": now - timedelta(days=20),
+        }
+    )
+
+    repo = MongoStudentRepository(db)
+    detail = await repo.get_admin_student("st-alice")
+
+    assert detail is not None
+    assert detail.current_payment is not None
+    assert detail.current_payment.amount_cents == 12_500
+    assert detail.current_payment.source == "session_price"
+    assert detail.current_payment.status == "active"
+    assert detail.current_payment.payment_id is None
+    assert detail.current_payment.session_id == "sess-active"
+
+
 async def _seed_parent_change(db, academy_id: str) -> None:
     await db["students"].insert_one(
         {

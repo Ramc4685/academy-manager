@@ -9,10 +9,13 @@ from bson import ObjectId as BsonObjectId
 from pymongo import ReturnDocument
 
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    AdminStudentCurrentPaymentSummary,
     AdminStudentDetail,
     AdminStudentPage,
     AdminStudentParentChangeResult,
     AdminStudentParentSummary,
+    AdminStudentPaymentSummary,
+    AdminStudentSessionSummary,
     AdminStudentSummary,
     ChangeAdminStudentParentCommand,
     UpdateAdminStudentCommand,
@@ -110,6 +113,9 @@ class MongoStudentRepository(TenantScopedRepository):
         parent_name: str | None = None,
         parent_email: str | None = None,
         parent_phone: str | None = None,
+        enrolled_sessions: list[AdminStudentSessionSummary] | None = None,
+        payment_history: list[AdminStudentPaymentSummary] | None = None,
+        current_payment: AdminStudentCurrentPaymentSummary | None = None,
     ) -> AdminStudentDetail:
         summary = cls._to_admin_summary(
             doc,
@@ -135,6 +141,9 @@ class MongoStudentRepository(TenantScopedRepository):
             notes=str(doc.get("notes")) if doc.get("notes") is not None else None,
             parent_phone=parent_phone,
             parent_details=None,
+            enrolled_sessions=enrolled_sessions or [],
+            payment_history=payment_history or [],
+            current_payment=current_payment,
         )
 
     async def get_admin_student(self, student_id: str) -> AdminStudentDetail | None:
@@ -149,6 +158,18 @@ class MongoStudentRepository(TenantScopedRepository):
         active_counts = await self._active_session_counts(academy_id, [resolved_id])
         attendance = await self._attendance_summaries(academy_id, [resolved_id])
         dues = await self._dues_statuses(academy_id, [resolved_id])
+        enrolled_sessions = await self._admin_student_enrolled_sessions(
+            academy_id=academy_id,
+            student_id=resolved_id,
+        )
+        payment_history = await self._admin_student_payment_history(
+            academy_id=academy_id,
+            student_id=resolved_id,
+        )
+        current_payment = self._admin_student_current_payment(
+            payment_history=payment_history,
+            enrolled_sessions=enrolled_sessions,
+        )
         att = attendance.get(resolved_id, {})
         return self._to_admin_detail(
             doc,
@@ -159,6 +180,9 @@ class MongoStudentRepository(TenantScopedRepository):
             parent_name=parent_info.get("name"),
             parent_email=parent_info.get("email"),
             parent_phone=parent_info.get("phone"),
+            enrolled_sessions=enrolled_sessions,
+            payment_history=payment_history,
+            current_payment=current_payment,
         )
 
     async def update_admin_student(
@@ -413,6 +437,265 @@ class MongoStudentRepository(TenantScopedRepository):
                 str(last["student_id"]),
             )
         return AdminStudentPage(students=students, next_cursor=next_cursor)
+
+    async def _admin_student_enrolled_sessions(
+        self,
+        *,
+        academy_id: str,
+        student_id: str,
+    ) -> list[AdminStudentSessionSummary]:
+        enrollments = [
+            doc
+            async for doc in self._db["enrollments"]
+            .find(
+                {
+                    "academy_id": academy_id,
+                    "student_id": student_id,
+                    "status": "active",
+                    "is_deleted": {"$ne": True},
+                }
+            )
+            .sort([("enrolled_at", 1), ("created_at", 1), ("enrollment_id", 1)])
+        ]
+        session_ids = [
+            str(doc.get("session_id")) for doc in enrollments if doc.get("session_id") is not None
+        ]
+        sessions_by_id = await self._sessions_by_id(academy_id, session_ids)
+        rows: list[AdminStudentSessionSummary] = []
+        for enrollment in enrollments:
+            session_id = str(enrollment.get("session_id") or "")
+            session = sessions_by_id.get(session_id) or {}
+            rows.append(
+                AdminStudentSessionSummary(
+                    enrollment_id=str(enrollment.get("enrollment_id") or enrollment.get("_id")),
+                    session_id=session_id,
+                    session_title=str(
+                        session.get("title") or session.get("name") or "Academy session"
+                    ),
+                    location=str(session.get("location") or "") or None,
+                    start_at=self._coerce_datetime(session.get("start_at")),
+                    end_at=self._coerce_datetime(session.get("end_at")),
+                    status=str(enrollment.get("status") or "active"),
+                    payment_mode=self._optional_str(enrollment.get("payment_mode")),
+                    subscription_status=self._optional_str(
+                        enrollment.get("subscription_status")
+                        or enrollment.get("billing_status")
+                        or enrollment.get("stripe_subscription_status")
+                    ),
+                    amount_cents=self._enrollment_session_amount_cents(enrollment, session),
+                )
+            )
+        rows.sort(
+            key=lambda row: (row.start_at or datetime.max.replace(tzinfo=UTC), row.session_id)
+        )
+        return rows
+
+    async def _sessions_by_id(
+        self,
+        academy_id: str,
+        session_ids: list[str],
+    ) -> dict[str, dict[str, object]]:
+        if not session_ids:
+            return {}
+        object_ids = [
+            BsonObjectId(session_id)
+            for session_id in session_ids
+            if BsonObjectId.is_valid(session_id)
+        ]
+        filters: list[dict[str, object]] = [{"session_id": {"$in": session_ids}}]
+        if object_ids:
+            filters.append({"_id": {"$in": object_ids}})
+        cursor = self._db["sessions"].find({"academy_id": academy_id, "$or": filters})
+        sessions: dict[str, dict[str, object]] = {}
+        async for session in cursor:
+            for key in (session.get("session_id"), session.get("_id")):
+                if key is not None:
+                    sessions[str(key)] = session
+        return sessions
+
+    async def _admin_student_payment_history(
+        self,
+        *,
+        academy_id: str,
+        student_id: str,
+    ) -> list[AdminStudentPaymentSummary]:
+        cursor = self._db["payments"].aggregate(
+            [
+                {
+                    "$match": {
+                        "academy_id": academy_id,
+                        "student_id": student_id,
+                        "is_deleted": {"$ne": True},
+                    }
+                },
+                {
+                    "$addFields": {
+                        "_admin_sort_at": {"$ifNull": ["$created_at", "$invoice_created_at"]},
+                        "_admin_sort_payment_id": {"$ifNull": ["$payment_id", ""]},
+                    }
+                },
+                {
+                    "$sort": {
+                        "_admin_sort_at": -1,
+                        "_admin_sort_payment_id": -1,
+                        "_id": -1,
+                    }
+                },
+                {"$limit": 200},
+                {"$project": {"_admin_sort_at": 0, "_admin_sort_payment_id": 0}},
+            ]
+        )
+        docs = [doc async for doc in cursor]
+        docs.sort(
+            key=lambda doc: (
+                self._coerce_datetime(doc.get("created_at") or doc.get("invoice_created_at"))
+                or datetime.min.replace(tzinfo=UTC),
+                str(doc.get("payment_id") or doc.get("_id") or ""),
+            ),
+            reverse=True,
+        )
+        return [self._to_admin_student_payment_summary(doc) for doc in docs]
+
+    @classmethod
+    def _to_admin_student_payment_summary(
+        cls,
+        doc: dict[str, object],
+    ) -> AdminStudentPaymentSummary:
+        amount_cents = cls._amount_cents(doc)
+        paid_amount_cents = cls._paid_amount_cents(doc, amount_cents)
+        balance_due_cents = cls._balance_due_cents(doc, amount_cents, paid_amount_cents)
+        created_at = cls._coerce_datetime(doc.get("created_at") or doc.get("invoice_created_at"))
+        return AdminStudentPaymentSummary(
+            payment_id=str(doc.get("payment_id") or doc.get("_id")),
+            session_id=cls._optional_str(doc.get("session_id")),
+            period=cls._optional_str(doc.get("period") or doc.get("billing_period")),
+            amount_cents=amount_cents,
+            paid_amount_cents=paid_amount_cents,
+            balance_due_cents=balance_due_cents,
+            status=str(doc.get("status") or "pending"),
+            payment_method=cls._optional_str(doc.get("payment_method")),
+            created_at=created_at or datetime.now(UTC),
+        )
+
+    @staticmethod
+    def _admin_student_current_payment(
+        *,
+        payment_history: list[AdminStudentPaymentSummary],
+        enrolled_sessions: list[AdminStudentSessionSummary],
+    ) -> AdminStudentCurrentPaymentSummary | None:
+        open_statuses = {
+            "open",
+            "unpaid",
+            "partially_paid",
+            "partial",
+            "pending",
+            "failed",
+            "expired",
+        }
+        for payment in payment_history:
+            if payment.status in open_statuses and payment.balance_due_cents > 0:
+                return AdminStudentCurrentPaymentSummary(
+                    amount_cents=payment.balance_due_cents,
+                    source="invoice",
+                    status=payment.status,
+                    period=payment.period,
+                    payment_id=payment.payment_id,
+                    session_id=payment.session_id,
+                )
+        for enrollment in enrolled_sessions:
+            if enrollment.status == "active" and enrollment.amount_cents:
+                return AdminStudentCurrentPaymentSummary(
+                    amount_cents=enrollment.amount_cents,
+                    source="session_price",
+                    status=enrollment.status,
+                    session_id=enrollment.session_id,
+                )
+        return None
+
+    @classmethod
+    def _enrollment_session_amount_cents(
+        cls,
+        enrollment: dict[str, object],
+        session: dict[str, object],
+    ) -> int | None:
+        for doc in (enrollment, session):
+            amount = cls._amount_cents(doc)
+            if amount > 0:
+                return amount
+        return None
+
+    @staticmethod
+    def _optional_str(value: object | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value)
+        return text or None
+
+    @classmethod
+    def _amount_cents(cls, doc: dict[str, object]) -> int:
+        final_amount = cls._cents_value(doc, ("final_amount_cents",), ("final_amount",))
+        if final_amount is not None:
+            return max(final_amount, 0)
+        amount = cls._cents_value(
+            doc,
+            ("amount_cents", "gross_amount_cents", "monthly_price_cents", "price_cents"),
+            ("amount", "gross_amount", "monthly_price", "price"),
+        )
+        if amount is None:
+            return 0
+        return max(amount - cls._discount_cents(doc), 0)
+
+    @classmethod
+    def _paid_amount_cents(cls, doc: dict[str, object], amount_cents: int) -> int:
+        for key in ("paid_amount_cents", "amount_received_cents"):
+            if doc.get(key) is not None:
+                return max(int(doc[key]), 0)  # type: ignore[arg-type]
+        if str(doc.get("status") or "") in {"paid", "succeeded"}:
+            return max(amount_cents - cls._refunded_cents(doc), 0)
+        return 0
+
+    @staticmethod
+    def _balance_due_cents(
+        doc: dict[str, object],
+        amount_cents: int,
+        paid_amount_cents: int,
+    ) -> int:
+        if str(doc.get("status") or "") in {"paid", "succeeded"}:
+            return 0
+        if doc.get("balance_due_cents") is not None:
+            return max(int(doc["balance_due_cents"]), 0)  # type: ignore[arg-type]
+        return max(amount_cents - paid_amount_cents, 0)
+
+    @staticmethod
+    def _cents_value(
+        doc: dict[str, object],
+        cents_keys: tuple[str, ...],
+        decimal_keys: tuple[str, ...],
+    ) -> int | None:
+        for key in cents_keys:
+            if doc.get(key) is not None:
+                return int(doc[key])  # type: ignore[arg-type]
+        for key in decimal_keys:
+            if doc.get(key) is not None:
+                return round(float(doc[key]) * 100)  # type: ignore[arg-type]
+        return None
+
+    @classmethod
+    def _discount_cents(cls, doc: dict[str, object]) -> int:
+        return max(cls._cents_value(doc, ("discount_cents",), ("discount",)) or 0, 0)
+
+    @classmethod
+    def _refunded_cents(cls, doc: dict[str, object]) -> int:
+        return max(cls._cents_value(doc, ("refunded_cents",), ("refunded",)) or 0, 0)
+
+    @staticmethod
+    def _coerce_datetime(value: object | None) -> datetime | None:
+        if isinstance(value, datetime):
+            return MongoStudentRepository._as_utc(value)
+        if isinstance(value, str) and value:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return MongoStudentRepository._as_utc(parsed)
+        return None
 
     async def _parent_info(self, academy_id: str, parent_id: str) -> dict[str, str | None]:
         if not parent_id:
