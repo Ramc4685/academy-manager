@@ -370,21 +370,33 @@ def compose_parent(
             .skip(offset)
             .limit(limit)
         )
+        attendance_rows = [doc async for doc in cursor]
+
+        # Batch-fetch all sessions referenced in this page
+        session_ids = list({str(row["session_id"]) for row in attendance_rows if row.get("session_id")})
+        sessions_map: dict[str, Any] = {}
+        if session_ids:
+            async for sdoc in db["sessions"].find(
+                {"academy_id": academy_id, "session_id": {"$in": session_ids}}
+            ):
+                sessions_map[str(sdoc.get("session_id") or sdoc["_id"])] = sdoc
+
+        coach_cache: dict[str, str | None] = {}
         rows: list[dict[str, Any]] = []
-        async for attendance in cursor:
+        for attendance in attendance_rows:
             student_id = str(attendance["student_id"])
-            session = await db["sessions"].find_one(
-                {"academy_id": academy_id, "session_id": attendance["session_id"]}
-            )
+            session = sessions_map.get(str(attendance["session_id"]))
             coach_id = attendance.get("coach_id")
-            coach_name = await _resolve_coach_name(coach_id)
+            if coach_id not in coach_cache:
+                coach_cache[coach_id] = await _resolve_coach_name(coach_id)
+            coach_name = coach_cache[coach_id]
             rows.append(
                 {
                     "attendance_id": str(attendance["attendance_id"]),
                     "student_id": student_id,
-                    "student_name": str(by_id[student_id].get("full_name") or "Unnamed student"),
+                    "student_name": str(by_id.get(student_id, {}).get("full_name") or "Unnamed student"),
                     "session_id": str(attendance["session_id"]),
-                    "session_title": str(session.get("title") if session else "Session"),
+                    "session_title": str((session or {}).get("title") or "Session"),
                     "status": str(attendance["status"]),
                     "marked_at": attendance["marked_at"],
                     "coach_name": coach_name,
@@ -408,24 +420,33 @@ def compose_parent(
             .skip(offset)
             .limit(limit)
         )
+        note_rows = [doc async for doc in cursor]
+
+        # Batch-fetch all sessions referenced in this page
+        session_ids = list({str(n["session_id"]) for n in note_rows if n.get("session_id")})
+        sessions_map: dict[str, Any] = {}
+        if session_ids:
+            async for sdoc in db["sessions"].find(
+                {"academy_id": academy_id, "session_id": {"$in": session_ids}}
+            ):
+                sessions_map[str(sdoc.get("session_id") or sdoc["_id"])] = sdoc
+
+        coach_cache: dict[str, str | None] = {}
         rows: list[dict[str, Any]] = []
-        async for note in cursor:
+        for note in note_rows:
             student_id = str(note["student_id"])
             coach_id = note.get("coach_id")
-            coach_name = await _resolve_coach_name(coach_id)
+            if coach_id not in coach_cache:
+                coach_cache[coach_id] = await _resolve_coach_name(coach_id)
+            coach_name = coach_cache[coach_id]
             session_id = note.get("session_id")
-            session_title: str | None = None
-            if session_id:
-                session = await db["sessions"].find_one(
-                    {"academy_id": academy_id, "session_id": session_id}
-                )
-                if session:
-                    session_title = str(session.get("title") or "Session")
+            session = sessions_map.get(str(session_id)) if session_id else None
+            session_title: str | None = str(session.get("title") or "Session") if session else None
             rows.append(
                 {
                     "note_id": str(note.get("note_id") or note["_id"]),
                     "student_id": student_id,
-                    "student_name": str(by_id[student_id].get("full_name") or "Unnamed student"),
+                    "student_name": str(by_id.get(student_id, {}).get("full_name") or "Unnamed student"),
                     "session_id": str(session_id) if session_id else None,
                     "session_title": session_title,
                     "coach_id": coach_id,
