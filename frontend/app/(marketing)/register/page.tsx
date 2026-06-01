@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 
 import { registerPublicParent } from "@/lib/api/registration";
 import {
+  completeGoogleRedirectSignIn,
   registerWithEmail,
   sendVerificationEmail,
   signInWithGoogle,
@@ -31,7 +32,25 @@ export default function RegisterPage() {
 
   useEffect(() => {
     setHydrated(true);
-  }, []);
+    let cancelled = false;
+
+    completeGoogleRedirectSignIn()
+      .then(async (user) => {
+        if (!cancelled && user) {
+          await registerPublicParent();
+          router.push("/parent/onboarding");
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Google registration failed.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   async function finishParentRegistration() {
     await registerPublicParent();
@@ -44,8 +63,8 @@ export default function RegisterPage() {
     setNotice(null);
     setPendingVerificationUser(null);
     try {
-      await signInWithGoogle();
-      await finishParentRegistration();
+      const user = await signInWithGoogle();
+      if (user) await finishParentRegistration();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Google registration failed.");
     } finally {

@@ -102,7 +102,7 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Fix unusable admin create-session and fee settings UI with an industry-standard operator workflow."
+user_problem_statement: "Production bug: Google login on phone/mobile Safari and Chrome asks for a popup, then errors after the user allows it."
 backend:
   - task: "Phase 0 session-type billing completion"
     implemented: true
@@ -593,6 +593,20 @@ backend:
         agent: "testing"
         comment: "Baseline regression audit 2026-05-27 (COU-12). Full v2 suite: 612 collected, 611 passed, 1 FAILED. Failing: v2/tests/contract/test_admin_directory_mongo_student_repo.py::test_list_admin_students_returns_rich_default_page_without_per_student_fanout. Assertion: bob.dues_status == 'due' but got 'overdue'. Bob seeded with status=pending, due_at=now+5d (future), created_at=now-1d. _payment_is_overdue should return False for this payment, yielding 'due', but repo returns 'overdue'. Likely a datetime/timezone interaction in mongomock_motor or a logic change in _dues_statuses/_payment_is_overdue. No code changes per COU-12 read-only scope."
 frontend:
+  - task: "Mobile Google sign-in redirect flow"
+    implemented: true
+    working: "NA"
+    file: "frontend/lib/auth/firebase.ts, frontend/lib/auth/google-sign-in-mode.ts, frontend/app/(marketing)/login/page.tsx, frontend/app/(marketing)/register/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: false
+        agent: "user"
+        comment: "Production user report on 2026-06-01: Google login on phone/mobile Safari and Chrome asks to open a popup; after allowing the popup, sign-in errors."
+      - working: "NA"
+        agent: "main"
+        comment: "Root cause found in frontend auth path: Google sign-in always used Firebase signInWithPopup(), including mobile Safari/Chrome. Firebase docs support signInWithRedirect() plus getRedirectResult() for full-page redirect flows. Implemented mobile/touch redirect selection for iPhone Safari, iOS Chrome, and iPadOS desktop-style user agents while preserving desktop popup. Login and registration pages now consume getRedirectResult() on return; registration resumes parent bootstrap after redirect. Also fixed a stale frontend unit-test import in lib/api/token-readiness.node-test.mjs so the documented frontend unit command runs. Verification passed locally: RED mobile-mode test failed before implementation, focused auth test 4 passed, frontend unit command 12 passed, pnpm typecheck passed, pnpm lint passed, pnpm build passed, and Playwright rendered /login at 390x844 with no console warnings/errors. Needs real-device or BrowserStack-style production retest on iPhone Safari and iOS Chrome because local automated tests cannot complete a real Google OAuth redirect."
   - task: "Production SaaS tenant auth bridge"
     implemented: true
     working: true
@@ -1048,10 +1062,11 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 41
+  test_sequence: 42
   run_ui: true
 test_plan:
   current_focus:
+    - "Mobile Google sign-in redirect flow"
     - "Production SaaS tenant auth bridge"
     - "Worker C v2-only backend runtime wiring"
     - "Admin dashboard command center with monthly profit"
@@ -1072,6 +1087,8 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 agent_communication:
+  - agent: "main"
+    message: "Mobile Google sign-in redirect flow implemented for the 2026-06-01 production bug report. Evidence: frontend Google auth used signInWithPopup() unconditionally, which matches the reported mobile popup prompt/failure path. Change: mobile/touch browsers use Firebase signInWithRedirect(), login/register complete getRedirectResult() on return, register resumes parent bootstrap after redirect, and desktop keeps popup. Added focused mobile-mode unit coverage and fixed the stale lib/api token-readiness test import that blocked the documented frontend unit command. Verification passed: focused auth test 4 passed, node --no-warnings --test lib/api/*.node-test.mjs lib/auth/*.node-test.mjs passed 12, pnpm typecheck passed, pnpm lint passed, pnpm build passed, and Playwright rendered /login at 390x844 with no console warnings/errors. Manual real-device production retest is still needed for iPhone Safari and iOS Chrome with an actual Google account."
   - agent: "main"
     message: "Production SaaS tenant auth bridge deployed. Root cause was /api/v2 rewrites bypassing the Next BFF plus unreliable auth-header availability on the tenant Worker path. Removed the rewrite so app/api/v2/[...path] owns same-origin API calls, added the BFF identity cookie-to-backend-header bridge, added backend BFF header extraction, kept wildcard Cloudflare routes, and deployed backend + frontend. Verification passed: focused frontend node tests 6 passed, clean frontend typecheck/lint/build passed, backend tenant middleware tests 20 passed, backend ruff check passed, Fly health passed, Cloudflare Worker deployed version 3a560573-08a9-41a0-b8e5-30c9c6175bcc, tenant healthz returned 200, and invalid __cm_identity smoke hit backend Firebase verification as auth_failed: Identity.InvalidToken. Valid-token smoke was skipped because macOS denied access to the service-account JSON under Downloads."
   - agent: "main"

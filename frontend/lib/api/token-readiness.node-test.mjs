@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { getReadyIdToken } from "./token-readiness.ts";
+import { getReadyIdToken } from "../auth/token-readiness.ts";
 
 test("waits for Firebase auth state before returning no token", async () => {
   const user = {

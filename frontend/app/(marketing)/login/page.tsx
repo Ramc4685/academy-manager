@@ -4,7 +4,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { sendPasswordReset, signInWithEmail, signInWithGoogle } from "@/lib/auth/firebase";
+import {
+  completeGoogleRedirectSignIn,
+  sendPasswordReset,
+  signInWithEmail,
+  signInWithGoogle,
+} from "@/lib/auth/firebase";
 
 const HERO_IMAGE =
   "https://static.prod-images.emergentagent.com/jobs/c735a2b3-2fb1-4fa5-a75c-2007226ca62e/images/1d1cfafe28a9d8df9f22f211189ef097f1bb5d348846857bdee5ba711ec35327.png";
@@ -22,7 +27,26 @@ export default function LoginPage() {
 
   useEffect(() => {
     setHydrated(true);
-  }, []);
+    let cancelled = false;
+
+    completeGoogleRedirectSignIn()
+      .then((user) => {
+        if (!cancelled && user) {
+          router.push("/post-login");
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          const msg =
+            err instanceof Error ? err.message : "Google sign-in failed. Please try again.";
+          setError(msg);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   async function handleEmailSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -45,8 +69,8 @@ export default function LoginPage() {
     setError(null);
     setNotice(null);
     try {
-      await signInWithGoogle();
-      router.push("/post-login");
+      const user = await signInWithGoogle();
+      if (user) router.push("/post-login");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Google sign-in failed. Please try again.";
       setError(msg);
