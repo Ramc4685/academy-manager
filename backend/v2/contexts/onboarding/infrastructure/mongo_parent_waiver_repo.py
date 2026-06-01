@@ -1,0 +1,158 @@
+"""Mongo-backed parent waiver repository."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any
+
+from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers import (
+    ParentWaiverSignature,
+    ParentWaiverStudent,
+)
+from backend.v2.contexts.onboarding.domain.models import WaiverSignature
+from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_template_repo import (
+    MongoWaiverTemplateRepository,
+)
+from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
+
+
+class MongoParentWaiverRepository(TenantScopedRepository):
+    collection_name = "waiver_signatures"
+
+    @staticmethod
+    def _as_datetime(value: object) -> datetime | None:
+        if isinstance(value, datetime):
+            return value if value.tzinfo else value.replace(tzinfo=UTC)
+        if isinstance(value, str) and value:
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+            except ValueError:
+                return None
+        return None
+
+    async def get_required_template(self):
+        academy_id = current_academy_id()
+        cursor = self._db["waiver_templates"].find(
+            {
+                "academy_id": academy_id,
+                "status": "active",
+                "assigned_to_registration": True,
+            },
+            sort=[("assigned_at", -1), ("effective_from", -1)],
+            limit=1,
+        )
+        async for doc in cursor:
+            return MongoWaiverTemplateRepository._to_record(doc)
+        return None
+
+    async def list_active_students_for_parent(self, parent_id: str) -> list[ParentWaiverStudent]:
+        academy_id = current_academy_id()
+        cursor = self._db["students"].find(
+            {
+                "academy_id": academy_id,
+                "$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}],
+                "is_deleted": {"$ne": True},
+                "status": "active",
+            },
+            sort=[("full_name", 1)],
+        )
+        return [
+            ParentWaiverStudent(
+                student_id=str(doc.get("student_id") or doc.get("_id")),
+                student_name=self._student_name(doc),
+            )
+            async for doc in cursor
+        ]
+
+    async def latest_signatures_for_students(
+        self, student_ids: list[str]
+    ) -> dict[str, ParentWaiverSignature]:
+        if not student_ids:
+            return {}
+        academy_id = current_academy_id()
+        out: dict[str, ParentWaiverSignature] = {}
+        signature_docs = [
+            doc
+            async for doc in self._db["waiver_signatures"].find(
+                {
+                    "academy_id": academy_id,
+                    "student_id": {"$in": student_ids},
+                    "is_deleted": {"$ne": True},
+                }
+            )
+        ]
+        signature_docs.sort(
+            key=lambda doc: self._as_datetime(doc.get("signed_at"))
+            or datetime.min.replace(tzinfo=UTC),
+            reverse=True,
+        )
+        for doc in signature_docs:
+            student_id = str(doc.get("student_id") or "")
+            if student_id and student_id not in out:
+                out[student_id] = ParentWaiverSignature(
+                    student_id=student_id,
+                    waiver_template_id=str(doc.get("waiver_template_id") or "") or None,
+                    content_hash=str(doc.get("content_hash") or "") or None,
+                    signed_at=self._as_datetime(doc.get("signed_at")),
+                )
+
+        legacy_docs = [
+            doc
+            async for doc in self._db["waiver_acceptances"].find(
+                {
+                    "student_id": {"$in": student_ids},
+                    "is_deleted": {"$ne": True},
+                    "$or": [
+                        {"academy_id": academy_id},
+                        {"academy_id": {"$exists": False}},
+                        {"academy_id": None},
+                    ],
+                }
+            )
+        ]
+        legacy_docs.sort(
+            key=lambda doc: self._as_datetime(doc.get("accepted_at"))
+            or datetime.min.replace(tzinfo=UTC),
+            reverse=True,
+        )
+        for doc in legacy_docs:
+            student_id = str(doc.get("student_id") or "")
+            if student_id and student_id not in out:
+                out[student_id] = ParentWaiverSignature(
+                    student_id=student_id,
+                    waiver_template_id=str(doc.get("waiver_template_id") or "") or None,
+                    waiver_version=str(doc.get("waiver_version") or "") or None,
+                    content_hash=str(doc.get("content_hash") or doc.get("waiver_text_hash") or "")
+                    or None,
+                    signed_at=self._as_datetime(doc.get("accepted_at")),
+                )
+        return out
+
+    async def save_signature(self, signature: WaiverSignature) -> None:
+        await self._update_one(
+            {"waiver_signature_id": signature.waiver_signature_id},
+            {
+                "$set": {
+                    "waiver_signature_id": signature.waiver_signature_id,
+                    "waiver_template_id": signature.waiver_template_id,
+                    "student_id": signature.student_id,
+                    "parent_user_id": signature.parent_user_id,
+                    "signed_at": signature.signed_at,
+                    "signer_name": signature.signer_name,
+                    "signer_email": str(signature.signer_email),
+                    "content_hash": signature.content_hash,
+                    "ip_address": signature.ip_address,
+                    "user_agent": signature.user_agent,
+                    "artifact_id": signature.artifact_id,
+                    "expires_at": signature.expires_at,
+                }
+            },
+            upsert=True,
+        )
+
+    @staticmethod
+    def _student_name(doc: dict[str, Any]) -> str:
+        first = str(doc.get("first_name") or "").strip()
+        last = str(doc.get("last_name") or "").strip()
+        return str(doc.get("full_name") or f"{first} {last}".strip() or "Unnamed student")

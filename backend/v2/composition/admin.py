@@ -171,6 +171,7 @@ from backend.v2.contexts.identity.application.update_academy_notifications_use_c
 )
 from backend.v2.contexts.identity.application.update_academy_use_case import UpdateAcademyUseCase
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+    CreateAdminUser,
     GetAdminUser,
     ListAdminUsers,
     UpdateAdminUser,
@@ -974,6 +975,7 @@ def compose_admin(
     list_admin_users = ListAdminUsers(users_r)
     get_admin_user = GetAdminUser(users_r)
     update_admin_user = UpdateAdminUser(users_r)
+    create_admin_user = CreateAdminUser(users_r)
     list_admin_students = ListAdminStudents(students_r)
     get_admin_student = GetAdminStudent(students_r)
     update_admin_student = UpdateAdminStudent(students_r)
@@ -1647,6 +1649,7 @@ def compose_admin(
         change_user_role=change_user_role,
         get_admin_user=get_admin_user,
         update_admin_user=update_admin_user,
+        create_admin_user=create_admin_user,
         get_admin_student=get_admin_student,
         update_admin_student=update_admin_student,
         change_admin_student_parent=change_admin_student_parent,

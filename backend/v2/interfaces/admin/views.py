@@ -99,6 +99,14 @@ class UpdateAdminUserRoleRequest(BaseModel):
     reason: str = Field(default="admin role change", min_length=1, max_length=500)
 
 
+class CreateAdminUserRequest(BaseModel):
+    role: Literal["admin", "coach", "parent"]
+    display_name: str = Field(min_length=1, max_length=120)
+    email: str = Field(min_length=1, max_length=254)
+    phone: str | None = Field(default=None, max_length=40)
+    reason: str = Field(default="manual user creation", min_length=1, max_length=500)
+
+
 # --- Session Type Billing ---
 
 

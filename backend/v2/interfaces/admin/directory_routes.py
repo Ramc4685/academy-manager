@@ -15,6 +15,7 @@ from backend.v2.contexts.identity.application.change_user_role_use_case import (
     ChangeUserRoleCommand,
 )
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+    CreateAdminUserCommand,
     UpdateAdminUserCommand,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
@@ -27,6 +28,7 @@ from backend.v2.interfaces.admin.views import (
     AdminUserList,
     AdminUserView,
     ChangeAdminStudentParentRequest,
+    CreateAdminUserRequest,
     UpdateAdminStudentRequest,
     UpdateAdminUserRequest,
     UpdateAdminUserRoleRequest,
@@ -57,6 +59,29 @@ async def get_user(
     if use_case is None:
         raise HTTPException(status_code=503, detail="Admin user detail is not configured")
     user = await use_case.execute(user_id, academy_id=claims.academy_id)
+    return AdminUserDetailView(**user.model_dump())
+
+
+@router.post("/users", response_model=AdminUserDetailView, status_code=201)
+async def create_user(
+    payload: CreateAdminUserRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminUserDetailView:
+    use_case = use_cases.create_admin_user
+    if use_case is None:
+        raise HTTPException(status_code=503, detail="Admin user creation is not configured")
+    user = await use_case.execute(
+        CreateAdminUserCommand(
+            role=payload.role,
+            email=payload.email,
+            display_name=payload.display_name,
+            phone=payload.phone,
+            actor_id=claims.user_id,
+            reason=payload.reason,
+        ),
+        academy_id=claims.academy_id,
+    )
     return AdminUserDetailView(**user.model_dump())
 
 

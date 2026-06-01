@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { onAuthChange } from "@/lib/auth/firebase";
-import { getCurrentUser, homeForRoles } from "@/lib/api/me";
+import { getCurrentUserWithToken, homeForRoles } from "@/lib/api/me";
 
 export default function PostLoginPage() {
   const router = useRouter();
@@ -16,7 +16,9 @@ export default function PostLoginPage() {
           return;
         }
 
-        void getCurrentUser()
+        void user
+          .getIdToken()
+          .then((idToken) => getCurrentUserWithToken(idToken))
           .then((currentUser) => {
             router.replace(homeForRoles(currentUser.roles));
           })

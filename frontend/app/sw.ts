@@ -5,6 +5,7 @@
  * Wave 1A cache strategies:
  * - `GET /api/v2/coach/today*` → stale-while-revalidate (24h)
  * - `POST /api/v2/coach/attendance` → network-only (Wave 1A: no queueing)
+ * - other `/api/*` calls → network-only; auth-scoped responses must not be cached
  * - static / icons / manifest → cache-first
  * - everything else → defaults from @serwist/next
  *
@@ -60,6 +61,10 @@ const serwist = new Serwist({
       // here. Wave 1B replaces this with a BackgroundSync queue.
       matcher: ({ request, url }) =>
         request.method === "POST" && COACH_WRITE.test(url.pathname),
+      handler: new NetworkOnly(),
+    },
+    {
+      matcher: ({ url }) => url.pathname.startsWith("/api/"),
       handler: new NetworkOnly(),
     },
     {

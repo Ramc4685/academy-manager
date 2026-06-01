@@ -12,6 +12,7 @@ from .pause_routes import router as pause_router
 from .payment_routes import router as payment_router
 from .schedule_routes import router as schedule_router
 from .session_routes import router as session_router
+from .waiver_routes import router as waiver_router
 from .webhook_routes import router as webhook_router
 
 router = APIRouter(prefix="/parent")
@@ -23,4 +24,5 @@ router.include_router(pause_router)
 router.include_router(payment_router)
 router.include_router(schedule_router)
 router.include_router(session_router)
+router.include_router(waiver_router)
 router.include_router(webhook_router)

@@ -15,6 +15,10 @@ export function getCurrentUser(): Promise<CurrentUser> {
   return apiFetch<CurrentUser>("/me", { method: "GET", dedup: false });
 }
 
+export function getCurrentUserWithToken(authToken: string): Promise<CurrentUser> {
+  return apiFetch<CurrentUser>("/me", { method: "GET", dedup: false, authToken });
+}
+
 export function homeForRoles(roles: UserRole[]): RoleHome {
   if (roles.includes("admin")) return "/admin";
   if (roles.includes("coach")) return "/coach/today";
