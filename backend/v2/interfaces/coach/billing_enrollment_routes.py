@@ -65,6 +65,30 @@ def _default_period(move_date: datetime) -> tuple[datetime, datetime]:
     return start, end
 
 
+def _ensure_utc(dt: datetime) -> datetime:
+    """Attach UTC timezone to a naive datetime; leave timezone-aware datetimes unchanged."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt
+
+
+async def _verify_coach_owns_enrollment(
+    enrollment,
+    coach_id: str,
+    assigned_sessions,
+    get_active_session_enrollments_for_student,
+) -> None:
+    """Raise 403 if the coach is not assigned to any session the student is enrolled in."""
+    session_enrollments = await get_active_session_enrollments_for_student(enrollment.student_id)
+    for se in session_enrollments:
+        if await assigned_sessions.is_coach_assigned(coach_id, se.session_id):
+            return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="enrollment not accessible to this coach",
+    )
+
+
 # ---------------------------------------------------------------------------
 # GET /coach/billing-enrollments
 # ---------------------------------------------------------------------------
@@ -76,28 +100,18 @@ def _default_period(move_date: datetime) -> tuple[datetime, datetime]:
     summary="List billing enrollments for students in the coach's sessions",
 )
 async def list_billing_enrollments(
-    session_id: str | None = Query(default=None),
+    session_id: str = Query(...),
     claims: AuthClaims = Depends(require_persona("coach")),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> list[CoachBillingEnrollmentView]:
-    # Collect student_ids from coach's assigned sessions via the roster use case.
-    # If session_id filter is provided, use only that session.
-    student_ids: set[str] = set()
-
-    if session_id is not None:
-        # Verify coach is assigned to the session before returning data.
-        if not await use_cases.assigned_sessions.is_coach_assigned(claims.user_id, session_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="session not assigned to coach",
-            )
-        roster = await use_cases.get_roster.execute(session_id)
-        student_ids = {e.student_id for e in roster}
-    else:
-        # No filter — nothing to enumerate without full session list.
-        # Return empty list; coach must specify session_id for non-trivial results
-        # unless the use case supports listing all coach sessions (it currently doesn't).
-        return []
+    # Verify coach is assigned to the session before returning data.
+    if not await use_cases.assigned_sessions.is_coach_assigned(claims.user_id, session_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="session not assigned to coach",
+        )
+    roster = await use_cases.get_roster.execute(session_id)
+    student_ids = {e.student_id for e in roster}
 
     if not student_ids:
         return []
@@ -148,7 +162,14 @@ async def move_preview(
     if enrollment is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="enrollment not found")
 
-    effective_move_date = move_date or datetime.now(UTC)
+    await _verify_coach_owns_enrollment(
+        enrollment,
+        claims.user_id,
+        use_cases.assigned_sessions,
+        use_cases.get_active_session_enrollments_for_student,
+    )
+
+    effective_move_date = _ensure_utc(move_date or datetime.now(UTC))
 
     # Fetch from/to session types
     session_types = await use_cases.list_session_types.execute()
@@ -196,11 +217,22 @@ async def move_enrollment(
     claims: AuthClaims = Depends(require_persona("coach")),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> MoveEnrollmentResponse:
-    effective_move_date = body.move_date or datetime.now(UTC)
+    enrollment = await use_cases.get_billing_enrollment(enrollment_id)
+    if enrollment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="enrollment not found")
+
+    await _verify_coach_owns_enrollment(
+        enrollment,
+        claims.user_id,
+        use_cases.assigned_sessions,
+        use_cases.get_active_session_enrollments_for_student,
+    )
+
+    effective_move_date = _ensure_utc(body.move_date or datetime.now(UTC))
 
     if body.period_start is not None and body.period_end is not None:
-        period_start = body.period_start
-        period_end = body.period_end
+        period_start = _ensure_utc(body.period_start)
+        period_end = _ensure_utc(body.period_end)
     else:
         period_start, period_end = _default_period(effective_move_date)
 

@@ -99,8 +99,9 @@ class CoachComposition:
     list_billing_enrollments: ListStudentBillingEnrollments
     move_student_session_type: MoveStudentSessionType
     list_session_types: ListSessionTypes
-    get_billing_enrollment: (
-        object  # async callable: (enrollment_id: str) -> StudentBillingEnrollment | None
+    get_billing_enrollment: object  # Callable[[str], Awaitable[StudentBillingEnrollment | None]]
+    get_active_session_enrollments_for_student: (
+        object  # Callable[[str], Awaitable[list[Enrollment]]]
     )
 
 
@@ -268,4 +269,5 @@ def compose_coach(
         ),
         list_session_types=ListSessionTypes(session_types=session_type_repo),
         get_billing_enrollment=billing_enrollment_repo.get,
+        get_active_session_enrollments_for_student=enrollments_repo.active_for_student,
     )

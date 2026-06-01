@@ -67,6 +67,22 @@ class _FakeBillingEnrollmentRepo:
 
 
 @dataclass
+class _FakeSessionEnrollmentRepo:
+    """Fake enrollment repo for the session-ownership guard (active_for_student)."""
+
+    # student_id -> list of (session_id, status)
+    entries: dict[str, list[str]] = field(default_factory=dict)
+
+    async def active_for_student(self, student_id: str) -> list[_SessionEnrollmentStub]:
+        return [_SessionEnrollmentStub(sid) for sid in self.entries.get(student_id, [])]
+
+
+class _SessionEnrollmentStub:
+    def __init__(self, session_id: str) -> None:
+        self.session_id = session_id
+
+
+@dataclass
 class _FakeSessionTypeRepo:
     rows: dict[str, SessionType] = field(default_factory=dict)
 
@@ -173,9 +189,16 @@ def _build_use_cases(
     session_types: _FakeSessionTypeRepo,
     event_sink: _FakeEventSink,
     stripe: FakeStripeGateway,
+    session_enrollment_repo: _FakeSessionEnrollmentRepo | None = None,
 ) -> CoachUseCases:
     assigned = _FakeAssignedSessions({"coach-1": {_COACH_SESSION_ID}})
     roster = _FakeRosterQuery({_COACH_SESSION_ID: [_STUDENT_ID]})
+
+    if session_enrollment_repo is None:
+        # Default: student is enrolled in the coach's session
+        session_enrollment_repo = _FakeSessionEnrollmentRepo(
+            entries={_STUDENT_ID: [_COACH_SESSION_ID]}
+        )
 
     list_billing_uc = ListStudentBillingEnrollments(enrollments=billing_enrollments)
     list_session_types_uc = ListSessionTypes(session_types=session_types)
@@ -206,6 +229,7 @@ def _build_use_cases(
         move_student_session_type=move_uc,
         list_session_types=list_session_types_uc,
         get_billing_enrollment=billing_enrollments.get,
+        get_active_session_enrollments_for_student=session_enrollment_repo.active_for_student,
     )
 
 
@@ -310,10 +334,9 @@ def test_list_billing_enrollments_returns_enrollments(coach_client):
     assert entry["status"] == "active"
 
 
-def test_list_billing_enrollments_without_session_id_returns_empty(coach_client):
+def test_list_billing_enrollments_without_session_id_returns_422(coach_client):
     resp = coach_client.get("/api/v2/coach/billing-enrollments")
-    assert resp.status_code == 200, resp.text
-    assert resp.json() == []
+    assert resp.status_code == 422, resp.text
 
 
 def test_list_billing_enrollments_unassigned_session_returns_403(coach_client):
@@ -408,3 +431,65 @@ def test_non_coach_persona_gets_404(setup):
     with TestClient(app) as c:
         resp = c.get(f"/api/v2/coach/billing-enrollments?session_id={_COACH_SESSION_ID}")
     assert resp.status_code == 404, resp.text
+
+
+def test_move_preview_returns_403_when_student_not_in_coach_session(setup):
+    """A coach cannot preview a move for a student enrolled in another coach's session."""
+    # Rebuild use cases with a session enrollment repo that maps the student to a different session.
+    unowned_session_enrollment_repo = _FakeSessionEnrollmentRepo(
+        entries={_STUDENT_ID: ["other-sess-99"]}
+    )
+    use_cases = _build_use_cases(
+        setup["billing_enrollments"],
+        setup["session_types"],
+        setup["event_sink"],
+        setup["stripe"],
+        session_enrollment_repo=unowned_session_enrollment_repo,
+    )
+    app = _build_app(_coach_claims(), use_cases)
+    with TestClient(app, raise_server_exceptions=True) as c:
+        resp = c.get(
+            f"/api/v2/coach/billing-enrollments/{_ENROLLMENT_ID}/move/preview"
+            f"?to_session_type_id={_ST_TO_ID}"
+        )
+    assert resp.status_code == 403, resp.text
+
+
+def test_move_returns_403_when_student_not_in_coach_session(setup):
+    """A coach cannot apply a move for a student enrolled in another coach's session."""
+    unowned_session_enrollment_repo = _FakeSessionEnrollmentRepo(
+        entries={_STUDENT_ID: ["other-sess-99"]}
+    )
+    use_cases = _build_use_cases(
+        setup["billing_enrollments"],
+        setup["session_types"],
+        setup["event_sink"],
+        setup["stripe"],
+        session_enrollment_repo=unowned_session_enrollment_repo,
+    )
+    app = _build_app(_coach_claims(), use_cases)
+    with TestClient(app, raise_server_exceptions=True) as c:
+        resp = c.post(
+            f"/api/v2/coach/billing-enrollments/{_ENROLLMENT_ID}/move",
+            json={"to_session_type_id": _ST_TO_ID},
+        )
+    assert resp.status_code == 403, resp.text
+
+
+def test_move_returns_403_when_student_has_no_session_enrollments(setup):
+    """A coach cannot move a billing enrollment for a student with no active session."""
+    empty_session_enrollment_repo = _FakeSessionEnrollmentRepo(entries={})
+    use_cases = _build_use_cases(
+        setup["billing_enrollments"],
+        setup["session_types"],
+        setup["event_sink"],
+        setup["stripe"],
+        session_enrollment_repo=empty_session_enrollment_repo,
+    )
+    app = _build_app(_coach_claims(), use_cases)
+    with TestClient(app, raise_server_exceptions=True) as c:
+        resp = c.post(
+            f"/api/v2/coach/billing-enrollments/{_ENROLLMENT_ID}/move",
+            json={"to_session_type_id": _ST_TO_ID},
+        )
+    assert resp.status_code == 403, resp.text

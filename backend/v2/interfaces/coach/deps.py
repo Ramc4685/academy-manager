@@ -7,6 +7,7 @@ never touch infrastructure directly.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from fastapi import Request
@@ -16,6 +17,7 @@ from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     ListStudentBillingEnrollments,
     MoveStudentSessionType,
 )
+from backend.v2.contexts.billing.domain.session_type import StudentBillingEnrollment
 from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import (
     BulkMarkAttendance,
 )
@@ -40,6 +42,7 @@ from backend.v2.contexts.enrollment.application.use_cases.get_session_roster imp
 from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences_for_date import (
     ListCoachOccurrencesForDate,
 )
+from backend.v2.contexts.enrollment.domain.models import Enrollment
 
 
 @dataclass
@@ -62,9 +65,8 @@ class CoachUseCases:
     list_billing_enrollments: ListStudentBillingEnrollments
     move_student_session_type: MoveStudentSessionType
     list_session_types: ListSessionTypes
-    get_billing_enrollment: (
-        object  # async callable: (enrollment_id: str) -> StudentBillingEnrollment | None
-    )
+    get_billing_enrollment: Callable[[str], Awaitable[StudentBillingEnrollment | None]]
+    get_active_session_enrollments_for_student: Callable[[str], Awaitable[list[Enrollment]]]
 
 
 def get_coach_use_cases(request: Request) -> CoachUseCases:

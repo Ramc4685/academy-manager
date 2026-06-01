@@ -522,6 +522,10 @@ def _build_use_cases(seed_data) -> CoachUseCases:
         async def soft_delete(self, stid):
             pass
 
+    class _StubSessionEnrollmentRepo:
+        async def active_for_student(self, student_id):
+            return []
+
     class _StubEventSink:
         async def record_session_type_changed(self, **kwargs):
             pass
@@ -532,6 +536,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
 
     _billing_enrollment_repo = _StubBillingEnrollmentRepo()
     _session_type_repo = _StubSessionTypeRepo()
+    _session_enrollment_repo = _StubSessionEnrollmentRepo()
     _list_billing_enrollments = ListStudentBillingEnrollments(enrollments=_billing_enrollment_repo)
     _list_session_types = ListSessionTypes(session_types=_session_type_repo)
     _move_student_session_type = MoveStudentSessionType(
@@ -593,6 +598,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
         move_student_session_type=_move_student_session_type,
         list_session_types=_list_session_types,
         get_billing_enrollment=_billing_enrollment_repo.get,
+        get_active_session_enrollments_for_student=_session_enrollment_repo.active_for_student,
     )
 
 
