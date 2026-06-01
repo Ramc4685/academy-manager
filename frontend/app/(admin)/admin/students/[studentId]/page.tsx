@@ -23,6 +23,8 @@ import {
   getAdminStudent,
   updateAdminStudent,
   type AdminStudentDetail,
+  type AdminStudentPaymentSummary,
+  type AdminStudentSessionSummary,
   type UpdateAdminStudentRequest,
 } from "@/lib/api/v2/students";
 import { queryKeys } from "@/lib/query/keys";
@@ -122,6 +124,8 @@ export default function AdminStudentDetailPage() {
             }}
           />
         </Card>
+        <CurrentPaymentPanel student={student} />
+        <SessionsPanel sessions={student.enrolled_sessions ?? []} />
         <Card p={20}>
           <Overline>Engagement</Overline>
           <DetailList
@@ -150,7 +154,8 @@ export default function AdminStudentDetailPage() {
             ]}
           />
         </Card>
-        <Card p={20} className="lg:col-start-3">
+        <PaymentHistoryPanel payments={student.payment_history ?? []} />
+        <Card p={20}>
           <Overline>Parent account</Overline>
           <ChangeParentPanel
             student={student}
@@ -168,6 +173,151 @@ export default function AdminStudentDetailPage() {
         </Card>
       </div>
     </section>
+  );
+}
+
+function CurrentPaymentPanel({ student }: { student: AdminStudentDetail }) {
+  const current = student.current_payment;
+  return (
+    <Card p={20}>
+      <Overline>Current payment</Overline>
+      {current ? (
+        <div className="mt-3 space-y-3" data-testid="admin-student-current-payment">
+          <div>
+            <div className="font-mono text-2xl font-semibold tabular-nums text-rally-ink">
+              {formatCurrencyCents(current.amount_cents)}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-rally-muted">
+              <StatusChip status={current.status} />
+              <span>{current.source === "invoice" ? "Invoice balance" : "Session price"}</span>
+            </div>
+          </div>
+          <DetailList
+            rows={[
+              { label: "Period", value: current.period ?? "—" },
+              { label: "Payment", value: current.payment_id ?? "—" },
+              { label: "Session", value: current.session_id ?? "—" },
+            ]}
+          />
+        </div>
+      ) : (
+        <p className="mt-3 text-sm text-rally-muted" data-testid="admin-student-no-current-payment">
+          No current balance.
+        </p>
+      )}
+    </Card>
+  );
+}
+
+function SessionsPanel({ sessions }: { sessions: AdminStudentSessionSummary[] }) {
+  return (
+    <Card p={20} className="lg:col-span-2">
+      <div className="flex items-center justify-between gap-3">
+        <Overline>Enrolled sessions</Overline>
+        <span className="font-mono text-xs text-rally-muted tabular-nums">
+          {sessions.length} active
+        </span>
+      </div>
+      {sessions.length === 0 ? (
+        <p className="mt-3 text-sm text-rally-muted" data-testid="admin-student-no-sessions">
+          No active session enrollments.
+        </p>
+      ) : (
+        <div className="mt-3 overflow-x-auto" data-testid="admin-student-enrolled-sessions">
+          <table className="min-w-full text-left text-sm">
+            <thead className="border-b border-neutral-200 text-xs uppercase tracking-overline text-rally-muted">
+              <tr>
+                <th className="py-2 pr-4 font-medium">Session</th>
+                <th className="py-2 pr-4 font-medium">Schedule</th>
+                <th className="py-2 pr-4 font-medium">Billing</th>
+                <th className="py-2 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-100">
+              {sessions.map((session) => (
+                <tr key={session.enrollment_id}>
+                  <td className="py-3 pr-4 align-top">
+                    <div className="font-medium text-rally-ink">{session.session_title}</div>
+                    <div className="text-xs text-rally-muted">
+                      {session.location ?? session.session_id}
+                    </div>
+                  </td>
+                  <td className="py-3 pr-4 align-top text-rally-muted">
+                    {formatDateTimeRange(session.start_at, session.end_at)}
+                  </td>
+                  <td className="py-3 pr-4 align-top">
+                    <div className="font-mono tabular-nums text-rally-ink">
+                      {session.amount_cents == null ? "—" : formatCurrencyCents(session.amount_cents)}
+                    </div>
+                    <div className="text-xs text-rally-muted">
+                      {session.payment_mode ?? session.subscription_status ?? "—"}
+                    </div>
+                  </td>
+                  <td className="py-3 align-top">
+                    <StatusChip status={session.subscription_status ?? session.status} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function PaymentHistoryPanel({ payments }: { payments: AdminStudentPaymentSummary[] }) {
+  return (
+    <Card p={20} className="lg:col-span-2">
+      <div className="flex items-center justify-between gap-3">
+        <Overline>Payment history</Overline>
+        <span className="font-mono text-xs text-rally-muted tabular-nums">
+          {payments.length} records
+        </span>
+      </div>
+      {payments.length === 0 ? (
+        <p className="mt-3 text-sm text-rally-muted" data-testid="admin-student-no-payments">
+          No payment records.
+        </p>
+      ) : (
+        <div className="mt-3 overflow-x-auto" data-testid="admin-student-payment-history">
+          <table className="min-w-full text-left text-sm">
+            <thead className="border-b border-neutral-200 text-xs uppercase tracking-overline text-rally-muted">
+              <tr>
+                <th className="py-2 pr-4 font-medium">Date</th>
+                <th className="py-2 pr-4 font-medium">Period</th>
+                <th className="py-2 pr-4 font-medium">Amount</th>
+                <th className="py-2 pr-4 font-medium">Paid</th>
+                <th className="py-2 pr-4 font-medium">Balance</th>
+                <th className="py-2 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-100">
+              {payments.map((payment) => (
+                <tr key={payment.payment_id}>
+                  <td className="py-3 pr-4 align-top text-rally-muted">
+                    {formatDate(payment.created_at)}
+                  </td>
+                  <td className="py-3 pr-4 align-top text-rally-ink">{payment.period ?? "—"}</td>
+                  <td className="py-3 pr-4 align-top font-mono tabular-nums text-rally-ink">
+                    {formatCurrencyCents(payment.amount_cents)}
+                  </td>
+                  <td className="py-3 pr-4 align-top font-mono tabular-nums text-rally-ink">
+                    {formatCurrencyCents(payment.paid_amount_cents)}
+                  </td>
+                  <td className="py-3 pr-4 align-top font-mono tabular-nums text-rally-ink">
+                    {formatCurrencyCents(payment.balance_due_cents)}
+                  </td>
+                  <td className="py-3 align-top">
+                    <StatusChip status={payment.status} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -225,8 +375,52 @@ function Header({ student }: { student: AdminStudentDetail }) {
 }
 
 function StatusChip({ status }: { status: string }) {
-  const variant = status === "active" ? "enrolled" : status === "paused" ? "paused" : "expired";
+  const normalized = status.toLowerCase();
+  const variant =
+    normalized === "active" || normalized === "succeeded"
+      ? "enrolled"
+      : normalized === "paid"
+        ? "paid"
+        : normalized === "paused"
+          ? "paused"
+          : normalized === "pending" || normalized === "unpaid" || normalized === "open"
+            ? "pending"
+            : normalized === "failed"
+              ? "failed"
+              : normalized === "partially_paid" || normalized === "partial"
+                ? "partial"
+                : "expired";
   return <Chip variant={variant} label={status.toUpperCase()} />;
+}
+
+function formatCurrencyCents(cents: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(cents / 100);
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return "—";
+  return new Date(value).toLocaleDateString();
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "—";
+  return new Date(value).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatDateTimeRange(startAt: string | null | undefined, endAt: string | null | undefined) {
+  if (!startAt && !endAt) return "—";
+  if (!endAt) return formatDateTime(startAt);
+  if (!startAt) return formatDateTime(endAt);
+  return `${formatDateTime(startAt)} - ${formatDateTime(endAt)}`;
 }
 
 function DetailList({
