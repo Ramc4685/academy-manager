@@ -13,8 +13,9 @@ Read before structural decisions:
 1. `README.md`
 2. `DEPLOYMENT.md`
 3. `test_result.md`
-4. `docs/tickets/README.md`, when present on the branch
-5. The active phase or wave ticket sheet, when present
+4. The relevant active ledger under `docs/test-results/active/`, if one exists
+5. `docs/tickets/README.md`, when present on the branch
+6. The active phase or wave ticket sheet, when present
 
 Architecture docs and accepted ADRs override this file.
 
@@ -38,7 +39,8 @@ docs/
   ci-cd.md                  Deployment/CI documentation
   agent/                    Agent guidance
 
-test_result.md              Main/testing agent feedback ledger
+test_result.md              Main/testing agent feedback index
+docs/test-results/          Task-scoped testing ledgers
 ```
 
 v2 layout, when present:
