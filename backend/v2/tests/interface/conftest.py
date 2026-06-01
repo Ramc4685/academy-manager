@@ -19,6 +19,7 @@ from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     ListSessionTypes,
     ListStudentBillingEnrollments,
     MoveStudentSessionType,
+    PreviewStudentSessionTypeMove,
 )
 from backend.v2.contexts.coaching.application.ports import OccurrenceDetails
 from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import (
@@ -539,6 +540,10 @@ def _build_use_cases(seed_data) -> CoachUseCases:
     _session_enrollment_repo = _StubSessionEnrollmentRepo()
     _list_billing_enrollments = ListStudentBillingEnrollments(enrollments=_billing_enrollment_repo)
     _list_session_types = ListSessionTypes(session_types=_session_type_repo)
+    _preview_student_session_type_move = PreviewStudentSessionTypeMove(
+        enrollments=_billing_enrollment_repo,
+        session_types=_session_type_repo,
+    )
     _move_student_session_type = MoveStudentSessionType(
         enrollments=_billing_enrollment_repo,
         session_types=_session_type_repo,
@@ -595,6 +600,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
         ),
         list_feedback=ListSessionFeedback(feedback_repo=_feedback_repo),
         list_billing_enrollments=_list_billing_enrollments,
+        preview_student_session_type_move=_preview_student_session_type_move,
         move_student_session_type=_move_student_session_type,
         list_session_types=_list_session_types,
         get_billing_enrollment=_billing_enrollment_repo.get,

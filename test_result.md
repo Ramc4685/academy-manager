@@ -1636,3 +1636,12 @@ agent_communication:
       Change: converted admin settings panel tabs to native Next links with replace + scroll=false, preserving active styling with aria-current="page"; updated the admin-shell E2E to assert link semantics.
 
       Verification passed: focused WebKit mobile settings spec repeated 5 times passed; full admin-shell.spec.ts passed on webkit-mobile with 26 passed; pnpm typecheck passed; pnpm lint passed; pnpm build passed. In-app Browser reached the local app but redirected to /login because that browser path cannot install the E2E BFF route stubs used by this spec, so rendered flow verification used the repository Playwright workflow that matches CI.
+  - agent: "main"
+    message: |
+      GitHub Actions backend import-linter fix — 2026-06-01.
+
+      User asked to fix failed Production run 26736654072 job 78791186257 for PR #126. Root cause from CI log and local reproduction: Backend failed at `lint-imports --config pyproject.toml` because `backend.v2.interfaces.coach.billing_enrollment_routes` imported `backend.v2.contexts.billing.domain.session_type_proration`, and `backend.v2.interfaces.coach.deps` imported billing/enrollment domain models directly.
+
+      Change: moved coach session-type move preview proration behind a billing application use case (`PreviewStudentSessionTypeMove`) and rewired coach route/dependency/composition/test fixtures so `interfaces/coach` imports application use cases only.
+
+      Verification passed in the PR worktree using the root backend virtualenv: `PYTHONPATH=.. lint-imports --config pyproject.toml` kept all 4 contracts; focused `pytest v2/tests/interface/test_coach_billing_enrollment_routes.py -q` returned 14 passed; `ruff check` passed on touched files; `python -m compileall` passed for the touched coach/application modules. Full backend suite was not run.

@@ -18,9 +18,7 @@ from pydantic import BaseModel
 
 from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     MoveStudentSessionTypeCommand,
-)
-from backend.v2.contexts.billing.domain.session_type_proration import (
-    SessionTypeMoveProrationPolicy,
+    PreviewStudentSessionTypeMoveCommand,
 )
 from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
 from backend.v2.interfaces.coach.views import (
@@ -32,8 +30,6 @@ from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
 router = APIRouter(tags=["coach.billing"])
-
-_proration_policy = SessionTypeMoveProrationPolicy()
 
 
 # ---------------------------------------------------------------------------
@@ -170,26 +166,15 @@ async def move_preview(
     )
 
     effective_move_date = _ensure_utc(move_date or datetime.now(UTC))
-
-    # Fetch from/to session types
-    session_types = await use_cases.list_session_types.execute()
-    st_map = {st.session_type_id: st for st in session_types}
-
-    from_type = st_map.get(enrollment.session_type_id)
-    to_type = st_map.get(to_session_type_id)
-    if to_type is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="target session type not found"
-        )
-
     period_start, period_end = _default_period(effective_move_date)
-
-    proration = _proration_policy.quote(
-        from_session_type=from_type,
-        to_session_type=to_type,
-        move_date=effective_move_date,
-        period_start=period_start,
-        period_end=period_end,
+    proration = await use_cases.preview_student_session_type_move.execute(
+        PreviewStudentSessionTypeMoveCommand(
+            enrollment_id=enrollment_id,
+            to_session_type_id=to_session_type_id,
+            move_date=effective_move_date,
+            period_start=period_start,
+            period_end=period_end,
+        )
     )
 
     return ProrationPreviewView(

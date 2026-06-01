@@ -13,6 +13,7 @@ from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     ListSessionTypes,
     ListStudentBillingEnrollments,
     MoveStudentSessionType,
+    PreviewStudentSessionTypeMove,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_session_type_repo import (
     MongoSessionTypeRepository,
@@ -97,6 +98,7 @@ class CoachComposition:
     list_feedback: ListSessionFeedback
     # Phase 2 — billing enrollment move surface
     list_billing_enrollments: ListStudentBillingEnrollments
+    preview_student_session_type_move: PreviewStudentSessionTypeMove
     move_student_session_type: MoveStudentSessionType
     list_session_types: ListSessionTypes
     get_billing_enrollment: object  # Callable[[str], Awaitable[StudentBillingEnrollment | None]]
@@ -261,6 +263,10 @@ def compose_coach(
         list_feedback=ListSessionFeedback(feedback_repo=feedback_repo),
         # Phase 2 — billing enrollment move surface
         list_billing_enrollments=ListStudentBillingEnrollments(enrollments=billing_enrollment_repo),
+        preview_student_session_type_move=PreviewStudentSessionTypeMove(
+            enrollments=billing_enrollment_repo,
+            session_types=session_type_repo,
+        ),
         move_student_session_type=MoveStudentSessionType(
             enrollments=billing_enrollment_repo,
             session_types=session_type_repo,

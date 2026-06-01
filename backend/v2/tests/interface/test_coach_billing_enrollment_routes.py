@@ -26,6 +26,7 @@ from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     ListSessionTypes,
     ListStudentBillingEnrollments,
     MoveStudentSessionType,
+    PreviewStudentSessionTypeMove,
 )
 from backend.v2.contexts.billing.domain.session_type import SessionType, StudentBillingEnrollment
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
@@ -202,6 +203,10 @@ def _build_use_cases(
 
     list_billing_uc = ListStudentBillingEnrollments(enrollments=billing_enrollments)
     list_session_types_uc = ListSessionTypes(session_types=session_types)
+    preview_uc = PreviewStudentSessionTypeMove(
+        enrollments=billing_enrollments,
+        session_types=session_types,
+    )
     move_uc = MoveStudentSessionType(
         enrollments=billing_enrollments,
         session_types=session_types,
@@ -226,6 +231,7 @@ def _build_use_cases(
         create_feedback=AsyncMock(),  # type: ignore[arg-type]
         list_feedback=AsyncMock(),  # type: ignore[arg-type]
         list_billing_enrollments=list_billing_uc,
+        preview_student_session_type_move=preview_uc,
         move_student_session_type=move_uc,
         list_session_types=list_session_types_uc,
         get_billing_enrollment=billing_enrollments.get,

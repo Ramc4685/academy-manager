@@ -78,6 +78,16 @@ class MoveStudentSessionTypeCommand(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
 
 
+class PreviewStudentSessionTypeMoveCommand(BaseModel):
+    model_config = {"frozen": True}
+
+    enrollment_id: str
+    to_session_type_id: str
+    move_date: datetime
+    period_start: datetime
+    period_end: datetime
+
+
 class MoveStudentSessionTypeResult(BaseModel):
     model_config = {"frozen": True}
 
@@ -200,6 +210,44 @@ class OverrideStudentPrice:
         )
         await self._enrollments.save(updated)
         return updated
+
+
+class PreviewStudentSessionTypeMove:
+    def __init__(
+        self,
+        *,
+        enrollments: StudentBillingEnrollmentRepository,
+        session_types: SessionTypeRepository,
+        proration_policy: SessionTypeMoveProrationPolicy | None = None,
+    ) -> None:
+        self._enrollments = enrollments
+        self._session_types = session_types
+        self._policy = proration_policy or SessionTypeMoveProrationPolicy()
+
+    async def execute(
+        self, cmd: PreviewStudentSessionTypeMoveCommand
+    ) -> SessionTypeMoveProrationResult:
+        existing = await self._enrollments.get(cmd.enrollment_id)
+        if existing is None:
+            raise StudentBillingEnrollmentNotFound(
+                "billing enrollment not found",
+                enrollment_id=cmd.enrollment_id,
+            )
+        from_type = await self._session_types.get(existing.session_type_id)
+        to_type = await self._session_types.get(cmd.to_session_type_id)
+        if to_type is None:
+            raise SessionTypeNotFound(
+                "target session type not found",
+                session_type_id=cmd.to_session_type_id,
+            )
+
+        return self._policy.quote(
+            from_session_type=from_type,
+            to_session_type=to_type,
+            move_date=cmd.move_date,
+            period_start=cmd.period_start,
+            period_end=cmd.period_end,
+        )
 
 
 class MoveStudentSessionType:
