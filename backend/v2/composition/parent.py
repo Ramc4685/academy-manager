@@ -338,16 +338,37 @@ def compose_parent(
             )
         return rows
 
-    async def list_attendance_for_parent(parent_id: str) -> list[dict[str, Any]]:
+    async def _resolve_coach_name(coach_id: str | None) -> str | None:
+        if not coach_id:
+            return None
+        user = await db["users"].find_one(
+            {"academy_id": academy_id, "$or": [{"user_id": coach_id}, {"firebase_uid": coach_id}]}
+        )
+        if user and user.get("full_name"):
+            return str(user["full_name"])
+        if user:
+            first = str(user.get("first_name") or "")
+            last = str(user.get("last_name") or "")
+            name = f"{first} {last}".strip()
+            if name:
+                return name
+        return None
+
+    async def list_attendance_for_parent(
+        parent_id: str, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[dict[str, Any]], int]:
         students = await _parent_students(parent_id)
         by_id = {str(s.get("student_id") or s["_id"]): s for s in students}
         if not by_id:
-            return []
+            return [], 0
+        query = {"academy_id": academy_id, "student_id": {"$in": list(by_id)}}
+        total = await db["attendance"].count_documents(query)
         cursor = (
             db["attendance"]
-            .find({"academy_id": academy_id, "student_id": {"$in": list(by_id)}})
+            .find(query)
             .sort([("marked_at", -1)])
-            .limit(100)
+            .skip(offset)
+            .limit(limit)
         )
         rows: list[dict[str, Any]] = []
         async for attendance in cursor:
@@ -355,6 +376,8 @@ def compose_parent(
             session = await db["sessions"].find_one(
                 {"academy_id": academy_id, "session_id": attendance["session_id"]}
             )
+            coach_id = attendance.get("coach_id")
+            coach_name = await _resolve_coach_name(coach_id)
             rows.append(
                 {
                     "attendance_id": str(attendance["attendance_id"]),
@@ -364,35 +387,54 @@ def compose_parent(
                     "session_title": str(session.get("title") if session else "Session"),
                     "status": str(attendance["status"]),
                     "marked_at": attendance["marked_at"],
+                    "coach_name": coach_name,
                 }
             )
-        return rows
+        return rows, total
 
-    async def list_progress_for_parent(parent_id: str) -> list[dict[str, Any]]:
+    async def list_progress_for_parent(
+        parent_id: str, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[dict[str, Any]], int]:
         students = await _parent_students(parent_id)
         by_id = {str(s.get("student_id") or s["_id"]): s for s in students}
         if not by_id:
-            return []
+            return [], 0
+        query = {"academy_id": academy_id, "student_id": {"$in": list(by_id)}}
+        total = await db["progress_notes"].count_documents(query)
         cursor = (
             db["progress_notes"]
-            .find({"academy_id": academy_id, "student_id": {"$in": list(by_id)}})
+            .find(query)
             .sort([("created_at", -1)])
-            .limit(100)
+            .skip(offset)
+            .limit(limit)
         )
         rows: list[dict[str, Any]] = []
         async for note in cursor:
             student_id = str(note["student_id"])
+            coach_id = note.get("coach_id")
+            coach_name = await _resolve_coach_name(coach_id)
+            session_id = note.get("session_id")
+            session_title: str | None = None
+            if session_id:
+                session = await db["sessions"].find_one(
+                    {"academy_id": academy_id, "session_id": session_id}
+                )
+                if session:
+                    session_title = str(session.get("title") or "Session")
             rows.append(
                 {
                     "note_id": str(note.get("note_id") or note["_id"]),
                     "student_id": student_id,
                     "student_name": str(by_id[student_id].get("full_name") or "Unnamed student"),
-                    "coach_id": note.get("coach_id"),
+                    "session_id": str(session_id) if session_id else None,
+                    "session_title": session_title,
+                    "coach_id": coach_id,
+                    "coach_name": coach_name,
                     "body": str(note.get("body") or note.get("note") or ""),
                     "created_at": note.get("created_at") or datetime.now(UTC),
                 }
             )
-        return rows
+        return rows, total
 
     async def list_invoices_for_parent(parent_id: str):
         return await billing_ledger_repo.list_invoices_for_parent(parent_id)

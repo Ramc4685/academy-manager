@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from backend.v2.interfaces.parent.deps import ParentUseCases, get_parent_use_cases
 from backend.v2.interfaces.parent.views import (
@@ -41,17 +41,35 @@ async def list_enrollments(
 
 @router.get("/attendance", response_model=ParentAttendanceResponse)
 async def list_attendance(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     claims: AuthClaims = Depends(require_persona("parent")),
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> ParentAttendanceResponse:
-    rows = await use_cases.list_attendance_for_parent(claims.user_id)  # type: ignore[operator]
-    return ParentAttendanceResponse(records=[ParentAttendanceRecordView(**row) for row in rows])
+    rows, total = await use_cases.list_attendance_for_parent(  # type: ignore[operator]
+        claims.user_id, limit=limit, offset=offset
+    )
+    return ParentAttendanceResponse(
+        records=[ParentAttendanceRecordView(**row) for row in rows],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/progress", response_model=ParentProgressResponse)
 async def list_progress(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     claims: AuthClaims = Depends(require_persona("parent")),
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> ParentProgressResponse:
-    rows = await use_cases.list_progress_for_parent(claims.user_id)  # type: ignore[operator]
-    return ParentProgressResponse(notes=[ParentProgressNoteView(**row) for row in rows])
+    rows, total = await use_cases.list_progress_for_parent(  # type: ignore[operator]
+        claims.user_id, limit=limit, offset=offset
+    )
+    return ParentProgressResponse(
+        notes=[ParentProgressNoteView(**row) for row in rows],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )

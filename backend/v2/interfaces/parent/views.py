@@ -247,23 +247,33 @@ class ParentAttendanceRecordView(BaseModel):
     session_title: str
     status: str
     marked_at: datetime
+    coach_name: str | None = None
 
 
 class ParentAttendanceResponse(BaseModel):
     records: list[ParentAttendanceRecordView]
+    total: int
+    limit: int
+    offset: int
 
 
 class ParentProgressNoteView(BaseModel):
     note_id: str
     student_id: str
     student_name: str
+    session_id: str | None = None
+    session_title: str | None = None
     coach_id: str | None = None
+    coach_name: str | None = None
     body: str
     created_at: datetime
 
 
 class ParentProgressResponse(BaseModel):
     notes: list[ParentProgressNoteView]
+    total: int
+    limit: int
+    offset: int
 
 
 # --- Waivers ---
