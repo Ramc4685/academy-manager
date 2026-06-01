@@ -23,6 +23,7 @@ from backend.v2.contexts.coaching.application.ports import (
 from backend.v2.contexts.coaching.domain.errors import (
     BulkSessionNotAssigned,
     BulkStudentNotEnrolled,
+    ConflictAttendanceExists,
     SessionCancelled,
 )
 from backend.v2.contexts.coaching.domain.events import (
