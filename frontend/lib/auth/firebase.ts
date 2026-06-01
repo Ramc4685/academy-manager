@@ -13,14 +13,17 @@ import {
   connectAuthEmulator,
   createUserWithEmailAndPassword,
   getAuth,
+  getRedirectResult,
   onAuthStateChanged,
   sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
   type User,
 } from "firebase/auth";
+import { shouldUseRedirectForGoogleSignIn } from "@/lib/auth/google-sign-in-mode";
 import { getReadyIdToken } from "@/lib/auth/token-readiness";
 
 const firebaseConfig = {
@@ -106,10 +109,36 @@ export async function sendVerificationEmail(user: User): Promise<void> {
   await sendEmailVerification(user);
 }
 
-export async function signInWithGoogle(): Promise<User> {
+function googleProvider(): GoogleAuthProvider {
   const provider = new GoogleAuthProvider();
+  provider.addScope("profile");
+  provider.addScope("email");
+  return provider;
+}
+
+function shouldUseGoogleRedirect(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return shouldUseRedirectForGoogleSignIn({
+    userAgent: navigator.userAgent,
+    maxTouchPoints: navigator.maxTouchPoints ?? 0,
+    platform: navigator.platform,
+  });
+}
+
+export async function signInWithGoogle(): Promise<User | null> {
+  const provider = googleProvider();
+  if (shouldUseGoogleRedirect()) {
+    await signInWithRedirect(auth(), provider);
+    return null;
+  }
   const { user } = await signInWithPopup(auth(), provider);
   return user;
+}
+
+export async function completeGoogleRedirectSignIn(): Promise<User | null> {
+  if (E2E_BYPASS) return null;
+  const result = await getRedirectResult(auth());
+  return result?.user ?? null;
 }
 
 export async function sendPasswordReset(email: string): Promise<void> {
