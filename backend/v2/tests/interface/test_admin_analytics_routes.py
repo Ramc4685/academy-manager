@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -74,7 +73,7 @@ def _make_client(
     *,
     roles: tuple[str, ...] = ("admin",),
     use_cases: object | None = None,
-) -> Iterator[TestClient]:
+) -> TestClient:
     uc = use_cases or SimpleNamespace(
         get_enrollment_funnel=AsyncMock(return_value=_FUNNEL_RESULT),
         get_attendance_trends=AsyncMock(return_value=_TRENDS_RESULT),

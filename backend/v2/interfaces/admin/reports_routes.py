@@ -46,20 +46,6 @@ async def get_reports_kpis(
     return ReportsKpiResponse(**result)
 
 
-@router.get("/reports/{report_name}.csv")
-async def export_report_csv(
-    report_name: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
-    use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> Response:
-    csv_text = await use_cases.export_report_csv(report_name)  # type: ignore[operator]
-    return Response(
-        content=csv_text,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{report_name}.csv"'},
-    )
-
-
 @router.get("/reports/enrollment-funnel", response_model=EnrollmentFunnelResponse)
 async def get_enrollment_funnel(
     period: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}$")] = None,
@@ -94,3 +80,17 @@ async def get_coach_utilization(
         raise HTTPException(status_code=422, detail=f"Invalid period format: {invalid}")
     result = await use_cases.get_coach_utilization(periods)  # type: ignore[operator]
     return CoachUtilizationResponse(**result.model_dump())
+
+
+@router.get("/reports/{report_name}.csv")
+async def export_report_csv(
+    report_name: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> Response:
+    csv_text = await use_cases.export_report_csv(report_name)  # type: ignore[operator]
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{report_name}.csv"'},
+    )
