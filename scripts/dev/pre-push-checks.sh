@@ -44,6 +44,10 @@ RUN_E2E=false
 if [ "$FULL" = "--full" ] || [ "$E2E_CHANGED" -gt 0 ]; then
   RUN_E2E=true
 fi
+# Allow SKIP_E2E=1 to bypass E2E when the local stack is not running.
+if [ "${SKIP_E2E:-}" = "1" ]; then
+  RUN_E2E=false
+fi
 
 # ── Backend ───────────────────────────────────────────────────────────────────
 header "Backend"
