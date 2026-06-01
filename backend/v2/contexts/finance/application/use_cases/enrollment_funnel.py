@@ -25,7 +25,7 @@ The mapping uses the ``onboarding_applications`` status vocabulary:
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from pydantic import BaseModel, Field
 
@@ -106,7 +106,9 @@ class GetEnrollmentFunnel:
         if total == 0:
             conversion_rate = Decimal("0")
         else:
-            conversion_rate = (Decimal(confirmed) / Decimal(total)).quantize(Decimal("0.0001"))
+            conversion_rate = (Decimal(confirmed) / Decimal(total)).quantize(
+                Decimal("0.0001"), rounding=ROUND_HALF_UP
+            )
 
         return EnrollmentFunnelResult(
             leads=leads,

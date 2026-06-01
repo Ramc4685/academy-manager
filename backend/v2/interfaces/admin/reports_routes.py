@@ -19,7 +19,7 @@ from backend.v2.interfaces.admin.views import (
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
-_PERIOD_RE = re.compile(r"^\d{4}-\d{2}$")
+_PERIOD_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 router = APIRouter(tags=["admin.reports"])
 

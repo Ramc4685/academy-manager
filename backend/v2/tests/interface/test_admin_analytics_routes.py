@@ -300,3 +300,8 @@ def test_attendance_trends_invalid_period_format_returns_422(
 ) -> None:
     resp = analytics_client.get("/api/v2/admin/reports/attendance-trends?periods=January-2026")
     assert resp.status_code == 422
+
+
+def test_attendance_trends_invalid_month_returns_422(analytics_client: TestClient) -> None:
+    resp = analytics_client.get("/api/v2/admin/reports/attendance-trends?periods=2026-13")
+    assert resp.status_code == 422
