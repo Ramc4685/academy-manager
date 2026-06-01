@@ -32,7 +32,7 @@ async def get_child_schedule(
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> ParentScheduleResponse:
     try:
-        entries = await use_cases.get_child_schedule(  # type: ignore[operator]
+        entries, total = await use_cases.get_child_schedule(  # type: ignore[operator]
             parent_id=claims.user_id,
             student_id=student_id,
             frm=frm,
@@ -56,7 +56,7 @@ async def get_child_schedule(
             )
             for e in entries
         ],
-        total=len(entries),
+        total=total,
         limit=limit,
         offset=offset,
     )

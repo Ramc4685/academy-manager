@@ -59,11 +59,12 @@ class _FakeParentUseCases:
         to,
         limit: int,
         offset: int,
-    ) -> list[ChildScheduleEntry]:
+    ) -> tuple[list[ChildScheduleEntry], int]:
         if student_id not in self._owned_ids:
             raise StudentNotOwnedByParent("not owned")
+        total = len(self._entries)
         sliced = self._entries[offset : offset + limit]
-        return sliced
+        return sliced, total
 
 
 @contextmanager

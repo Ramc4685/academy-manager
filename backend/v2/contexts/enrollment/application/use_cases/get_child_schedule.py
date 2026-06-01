@@ -57,7 +57,8 @@ class GetChildSchedule:
         to: date | None,
         limit: int,
         offset: int,
-    ) -> list[ChildScheduleEntry]:
+    ) -> tuple[list[ChildScheduleEntry], int]:
+        """Return (page_entries, total_count) where total_count is the unsliced size."""
         student = await self._students.get_for_parent(parent_id, student_id)
         if student is None:
             raise StudentNotOwnedByParent(
@@ -71,14 +72,18 @@ class GetChildSchedule:
             else now
         )
         end_dt: datetime = (
-            datetime(to.year, to.month, to.day, 23, 59, 59, tzinfo=UTC)
+            datetime(to.year, to.month, to.day, tzinfo=UTC) + timedelta(days=1)
             if to is not None
             else now + timedelta(days=30)
         )
 
         active_enrollments = await self._enrollments.active_for_student(student_id)
         if not active_enrollments:
-            return []
+            return [], 0
+
+        # Batch-fetch all sessions in a single round-trip instead of one per enrollment.
+        session_ids = [e.session_id for e in active_enrollments]
+        sessions_map = {s.session_id: s for s in await self._sessions.get_many(session_ids)}
 
         all_entries: list[ChildScheduleEntry] = []
 
@@ -88,7 +93,7 @@ class GetChildSchedule:
                 start_at=start_dt,
                 end_at=end_dt,
             )
-            session = await self._sessions.get(enrollment.session_id)
+            session = sessions_map.get(enrollment.session_id)
             session_title = session.title if session else "Session"
 
             for occ in session_occs:
@@ -105,4 +110,5 @@ class GetChildSchedule:
                 )
 
         all_entries.sort(key=lambda e: e.start_at)
-        return all_entries[offset : offset + limit]
+        total = len(all_entries)
+        return all_entries[offset : offset + limit], total

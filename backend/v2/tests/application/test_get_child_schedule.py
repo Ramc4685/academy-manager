@@ -7,7 +7,6 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 
 from backend.v2.contexts.enrollment.application.use_cases.get_child_schedule import (
-    ChildScheduleEntry,
     GetChildSchedule,
     StudentNotOwnedByParent,
 )
@@ -56,6 +55,9 @@ class FakeSessionQuery:
 
     async def get(self, session_id: str) -> Session | None:
         return self._by_id.get(session_id)
+
+    async def get_many(self, session_ids: list[str]) -> list[Session]:
+        return [self._by_id[sid] for sid in session_ids if sid in self._by_id]
 
 
 # --- Helpers ---
@@ -141,14 +143,15 @@ async def test_happy_path_returns_upcoming_occurrences_ordered_by_start_at() -> 
     occ_far = _occurrence("occ-2", "sess-1", _IN_10_DAYS)
 
     uc = _make_uc([student], [_enrollment("e1", "st-1", "sess-1")], [occ_near, occ_far], [session])
-    result = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=50, offset=0)
+    entries, total = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=50, offset=0)
 
-    assert len(result) == 2
-    assert result[0].occurrence_id == "occ-1"
-    assert result[1].occurrence_id == "occ-2"
-    assert result[0].session_title == "Morning Squad"
-    assert result[0].session_id == "sess-1"
-    assert result[0].status == "scheduled"
+    assert len(entries) == 2
+    assert total == 2
+    assert entries[0].occurrence_id == "occ-1"
+    assert entries[1].occurrence_id == "occ-2"
+    assert entries[0].session_title == "Morning Squad"
+    assert entries[0].session_id == "sess-1"
+    assert entries[0].status == "scheduled"
 
 
 @pytest.mark.asyncio
@@ -164,9 +167,9 @@ async def test_default_range_excludes_past_occurrences() -> None:
         [occ_past, occ_future],
         [session],
     )
-    result = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=50, offset=0)
+    entries, _ = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=50, offset=0)
 
-    occurrence_ids = [r.occurrence_id for r in result]
+    occurrence_ids = [r.occurrence_id for r in entries]
     assert "occ-past" not in occurrence_ids
     assert "occ-future" in occurrence_ids
 
@@ -184,9 +187,9 @@ async def test_default_range_excludes_occurrences_beyond_30_days() -> None:
         [occ_in_window, occ_out_of_window],
         [session],
     )
-    result = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=50, offset=0)
+    entries, _ = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=50, offset=0)
 
-    occurrence_ids = [r.occurrence_id for r in result]
+    occurrence_ids = [r.occurrence_id for r in entries]
     assert "occ-in" in occurrence_ids
     assert "occ-out" not in occurrence_ids
 
@@ -205,7 +208,7 @@ async def test_explicit_date_range_filter() -> None:
         [in_range, out_range],
         [session],
     )
-    result = await uc.execute(
+    entries, _ = await uc.execute(
         "parent-1",
         "st-1",
         frm=date(2026, 7, 1),
@@ -214,7 +217,7 @@ async def test_explicit_date_range_filter() -> None:
         offset=0,
     )
 
-    occurrence_ids = [r.occurrence_id for r in result]
+    occurrence_ids = [r.occurrence_id for r in entries]
     assert "occ-a" in occurrence_ids
     assert "occ-b" not in occurrence_ids
 
@@ -242,13 +245,15 @@ async def test_pagination_offset_and_limit() -> None:
     occs = [_occurrence(f"occ-{i}", "sess-1", _IN_2_DAYS + timedelta(hours=i)) for i in range(5)]
 
     uc = _make_uc([student], [_enrollment("e1", "st-1", "sess-1")], occs, [session])
-    page1 = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=2, offset=0)
-    page2 = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=2, offset=2)
+    page1_entries, page1_total = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=2, offset=0)
+    page2_entries, page2_total = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=2, offset=2)
 
-    assert len(page1) == 2
-    assert len(page2) == 2
-    assert page1[0].occurrence_id == "occ-0"
-    assert page2[0].occurrence_id == "occ-2"
+    assert len(page1_entries) == 2
+    assert page1_total == 5  # full collection size, not page size
+    assert len(page2_entries) == 2
+    assert page2_total == 5
+    assert page1_entries[0].occurrence_id == "occ-0"
+    assert page2_entries[0].occurrence_id == "occ-2"
 
 
 @pytest.mark.asyncio
@@ -259,10 +264,10 @@ async def test_coach_name_is_none_when_session_has_no_name_field() -> None:
     occ = _occurrence("occ-1", "sess-1", _IN_2_DAYS, scheduled_coach_id="coach-99")
 
     uc = _make_uc([student], [_enrollment("e1", "st-1", "sess-1")], [occ], [session])
-    result = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=50, offset=0)
+    entries, _ = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=50, offset=0)
 
     # coach_name is None because there's no user lookup in the use case
-    assert result[0].coach_name is None
+    assert entries[0].coach_name is None
 
 
 @pytest.mark.asyncio
@@ -273,10 +278,11 @@ async def test_cancelled_occurrences_are_included() -> None:
     occ = _occurrence("occ-1", "sess-1", _IN_2_DAYS, status="cancelled")
 
     uc = _make_uc([student], [_enrollment("e1", "st-1", "sess-1")], [occ], [session])
-    result = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=50, offset=0)
+    entries, total = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=50, offset=0)
 
-    assert len(result) == 1
-    assert result[0].status == "cancelled"
+    assert len(entries) == 1
+    assert total == 1
+    assert entries[0].status == "cancelled"
 
 
 @pytest.mark.asyncio
@@ -296,9 +302,9 @@ async def test_only_active_enrollments_are_included() -> None:
         [occ_active, occ_cancelled],
         [session_active, session_cancelled],
     )
-    result = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=50, offset=0)
+    entries, _ = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=50, offset=0)
 
-    occurrence_ids = [r.occurrence_id for r in result]
+    occurrence_ids = [r.occurrence_id for r in entries]
     assert "occ-active" in occurrence_ids
     assert "occ-cancelled" not in occurrence_ids
 
@@ -307,5 +313,6 @@ async def test_only_active_enrollments_are_included() -> None:
 async def test_no_enrollments_returns_empty() -> None:
     student = _student("st-1")
     uc = _make_uc([student], [], [], [])
-    result = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=50, offset=0)
-    assert result == []
+    entries, total = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=50, offset=0)
+    assert entries == []
+    assert total == 0

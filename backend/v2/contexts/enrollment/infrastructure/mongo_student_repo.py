@@ -48,6 +48,7 @@ class MongoStudentRepository(TenantScopedRepository):
         return [self._to_domain(doc) async for doc in cursor]
 
     async def get_for_parent(self, parent_id: str, student_id: str) -> Student | None:
+        # legacy docs use parent_user_id; newer docs use parent_id — query both during migration
         doc = await self._find_one(
             {
                 "student_id": student_id,
