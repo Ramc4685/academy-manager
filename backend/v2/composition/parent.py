@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, time
+from datetime import UTC, date, datetime, time
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
@@ -51,6 +51,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
 from backend.v2.contexts.enrollment.application.use_cases.confirm_enrollment import (
     ConfirmEnrollment,
 )
+from backend.v2.contexts.enrollment.application.use_cases.get_child_schedule import (
+    GetChildSchedule,
+)
 from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_sessions import (
     ListParentAvailableSessions,
 )
@@ -64,6 +67,12 @@ from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist 
 from backend.v2.contexts.enrollment.domain.errors import SessionNotFound
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_event_repo import (
     MongoEnrollmentEventRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import (
+    MongoSessionOccurrenceRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
+    MongoStudentRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
@@ -130,6 +139,7 @@ class ParentComposition:
     list_progress_for_parent: object
     list_invoices_for_parent: object
     get_invoice_for_parent: object
+    get_child_schedule: object
 
 
 def compose_parent(
@@ -190,8 +200,17 @@ def compose_parent(
     enrollments_query = MongoEnrollmentRepository(db)
     enrollment_events = MongoEnrollmentEventRepository(db)
     students_writer = MongoStudentWriter(db)
+    students_query = MongoStudentRepository(db)
+    occurrences_query = MongoSessionOccurrenceRepository(db)
     waitlist = MongoWaitlistRepository(db)
     pause_requests = MongoPauseRequestRepository(db)
+
+    get_child_schedule_uc = GetChildSchedule(
+        enrollments=enrollments_query,
+        occurrences=occurrences_query,
+        sessions=sessions_query,
+        students=students_query,
+    )
 
     confirm_enrollment = ConfirmEnrollment(
         sessions=sessions_writer,
@@ -529,6 +548,24 @@ def compose_parent(
         result = await checkout_status.execute(checkout_session_id, parent_id=parent_id)
         return result.model_dump()
 
+    async def get_child_schedule(
+        *,
+        parent_id: str,
+        student_id: str,
+        frm: date | None = None,
+        to: date | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ):
+        return await get_child_schedule_uc.execute(
+            parent_id,
+            student_id,
+            frm=frm,
+            to=to,
+            limit=limit,
+            offset=offset,
+        )
+
     return ParentComposition(
         start_application=start_app,
         patch_application=patch_app,
@@ -552,6 +589,7 @@ def compose_parent(
         list_progress_for_parent=list_progress_for_parent,
         list_invoices_for_parent=list_invoices_for_parent,
         get_invoice_for_parent=get_invoice_for_parent,
+        get_child_schedule=get_child_schedule,
     )
 
 

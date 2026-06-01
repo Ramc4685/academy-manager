@@ -290,6 +290,26 @@ class ParentWaiverAcceptRequest(BaseModel):
     signer_name: str | None = None
 
 
+# --- Child schedule ---
+
+
+class ParentScheduleEntryView(BaseModel):
+    occurrence_id: str
+    session_id: str
+    session_title: str
+    start_at: datetime
+    end_at: datetime
+    status: str
+    coach_name: str | None = None
+
+
+class ParentScheduleResponse(BaseModel):
+    entries: list[ParentScheduleEntryView]
+    total: int
+    limit: int
+    offset: int
+
+
 # --- Sessions ---
 
 
