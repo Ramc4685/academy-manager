@@ -23,7 +23,9 @@ router = APIRouter(tags=["parent.invoices"])
 
 
 def _pdf_url(invoice) -> str | None:
-    return invoice.pdf_artifact_id
+    # pdf_artifact_id is an internal store reference, not a public URL.
+    # Return None until a URL resolver is wired up.
+    return None
 
 
 def _invoice_view(invoice) -> ParentInvoiceView:

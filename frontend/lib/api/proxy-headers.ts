@@ -17,12 +17,11 @@ export function buildProxyHeaders(requestHeaders: Headers, protocol: string): He
   const headers = new Headers(requestHeaders);
   const host = requestHeaders.get("host");
 
-  if (host && !headers.has("x-forwarded-host")) {
+  if (host) {
     headers.set("x-forwarded-host", host);
   }
-  if (!headers.has("x-forwarded-proto")) {
-    headers.set("x-forwarded-proto", protocol.replace(":", ""));
-  }
+  // Always overwrite proto from server context — never trust inbound value.
+  headers.set("x-forwarded-proto", protocol.replace(":", ""));
 
   const bridgedAuth =
     headers.get(BFF_IDENTITY_HEADER) ??
@@ -60,7 +59,11 @@ function readCookie(cookieHeader: string | null, name: string): string | null {
   for (const part of cookieHeader.split(";")) {
     const [rawName, ...rawValue] = part.trim().split("=");
     if (rawName === name) {
-      return decodeURIComponent(rawValue.join("="));
+      try {
+        return decodeURIComponent(rawValue.join("="));
+      } catch {
+        return null;
+      }
     }
   }
   return null;

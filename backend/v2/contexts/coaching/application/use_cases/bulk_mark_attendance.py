@@ -139,6 +139,12 @@ class BulkMarkAttendance:
                     student_id=entry.student_id,
                 )
 
+        # 2b. Reject duplicate student_ids within the batch.
+        if len({e.student_id for e in cmd.entries}) != len(cmd.entries):
+            raise BulkStudentNotEnrolled(
+                "duplicate student_id entries in batch", session_id=cmd.session_id
+            )
+
         # 3. Persist attendance and emit events per entry.
         now = self._now()
         entry_results: list[BulkAttendanceEntryResult] = []

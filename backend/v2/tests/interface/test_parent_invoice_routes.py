@@ -138,7 +138,7 @@ def test_parent_lists_own_invoices_newest_first() -> None:
     assert first["total_cents"] == 12_000
     assert first["balance_due_cents"] == 12_000
     assert first["currency"] == "usd"
-    assert first["pdf_url"] == "artifact-1"
+    assert first["pdf_url"] is None  # artifact_id is internal; no public URL yet
 
 
 def test_parent_invoice_detail_includes_line_items() -> None:

@@ -71,12 +71,12 @@ class CreateSessionFeedback:
                 coach_id=coach_id,
             )
 
-        # 2. Build the feedback row (new ULID; academy_id from the saved doc
-        # is injected by the tenant-scoped repository, but the domain model
-        # carries it explicitly too — resolved via the outbox event below).
+        # 2. Build the feedback row (new ULID; academy_id resolved from the
+        # tenant ContextVar when available).
+        academy_id = _resolve_academy_id()
         feedback = SessionFeedback(
             feedback_id=new_ulid(),
-            academy_id="",  # placeholder; repo scopes the stored doc
+            academy_id=academy_id,
             session_id=cmd.session_id,
             occurrence_id=cmd.occurrence_id,
             coach_id=coach_id,

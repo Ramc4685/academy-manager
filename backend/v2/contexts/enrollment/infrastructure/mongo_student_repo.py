@@ -55,6 +55,8 @@ class MongoStudentRepository(TenantScopedRepository):
                 "$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}],
             }
         )
+        if doc and "parent_id" not in doc and "parent_user_id" in doc:
+            doc = {**doc, "parent_id": doc["parent_user_id"]}
         return self._to_domain(doc) if doc else None
 
     @staticmethod
