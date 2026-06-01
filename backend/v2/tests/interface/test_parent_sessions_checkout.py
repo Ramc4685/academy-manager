@@ -11,14 +11,17 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import backend.v2.contexts.enrollment.infrastructure.mongo_session_repo as session_repo_module
 from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_sessions import (
     ParentAvailableSession,
 )
+from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import MongoSessionRepository
 from backend.v2.contexts.onboarding.domain.errors import MissingSelectedSession
 from backend.v2.interfaces.parent.deps import get_parent_use_cases
 from backend.v2.interfaces.parent.router import router as parent_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
+from backend.v2.shared.tenancy.context import tenant_scope
 
 
 def _claims(role: str = "parent") -> AuthClaims:
@@ -28,6 +31,16 @@ def _claims(role: str = "parent") -> AuthClaims:
         academy_id="acad",
         roles=(role,),  # type: ignore[arg-type]
     )
+
+
+class _FrozenCatalogDateTime(datetime):
+    _now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+
+    @classmethod
+    def now(cls, tz=None):
+        if tz is None:
+            return cls._now.replace(tzinfo=None)
+        return cls._now.astimezone(tz)
 
 
 class _ListAvailableSessions:
@@ -263,3 +276,199 @@ def test_parent_reads_checkout_status() -> None:
     assert response.status_code == 200, response.text
     assert response.json()["checkout_session_id"] == "cs_status"
     assert response.json()["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_parent_available_catalog_includes_available_recurring_templates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(session_repo_module, "datetime", _FrozenCatalogDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-available-recurring"]
+    concrete_start = datetime(2026, 6, 2, 15, 0, tzinfo=UTC)
+    await db.sessions.insert_many(
+        [
+            {
+                "academy_id": "academy-a",
+                "session_id": "sess-concrete",
+                "title": "Concrete Session",
+                "location": "Court 1",
+                "capacity": 6,
+                "status": "scheduled",
+                "start_at": concrete_start,
+                "end_at": concrete_start + timedelta(hours=1),
+                "amount_cents": 3300,
+            },
+            {
+                "academy_id": "academy-a",
+                "session_id": "tpl-available",
+                "name": "Recurring Session",
+                "location": "Court 2",
+                "max_students": 5,
+                "status": "active",
+                "days_of_week": ["Mon", "Wed"],
+                "start_time": "16:30",
+                "end_time": "17:30",
+                "monthly_price": 99.5,
+                "timezone": "America/Chicago",
+                "start_date": "2026-06-01",
+                "end_date": "2026-06-30",
+            },
+            {
+                "academy_id": "academy-a",
+                "session_id": "tpl-expired",
+                "name": "Expired Recurring",
+                "max_students": 5,
+                "status": "active",
+                "days_of_week": ["Mon"],
+                "start_time": "16:30",
+                "end_time": "17:30",
+                "timezone": "America/Chicago",
+                "start_date": "2026-05-01",
+                "end_date": "2026-05-31",
+            },
+            {
+                "academy_id": "academy-a",
+                "session_id": "tpl-not-started",
+                "name": "Future Active Recurring",
+                "max_students": 5,
+                "status": "active",
+                "days_of_week": ["Mon"],
+                "start_time": "16:30",
+                "end_time": "17:30",
+                "timezone": "America/Chicago",
+                "start_date": "2026-06-15",
+                "end_date": "2026-07-31",
+            },
+            {
+                "academy_id": "academy-a",
+                "session_id": "tpl-full",
+                "name": "Full Recurring",
+                "max_students": 1,
+                "status": "active",
+                "days_of_week": ["Mon"],
+                "start_time": "18:00",
+                "end_time": "19:00",
+            },
+            {
+                "academy_id": "academy-a",
+                "session_id": "tpl-cancelled",
+                "name": "Cancelled Recurring",
+                "max_students": 5,
+                "status": "cancelled",
+                "days_of_week": ["Mon"],
+                "start_time": "19:00",
+                "end_time": "20:00",
+            },
+            {
+                "academy_id": "academy-a",
+                "session_id": "tpl-completed",
+                "name": "Completed Recurring",
+                "max_students": 5,
+                "status": "completed",
+                "days_of_week": ["Mon"],
+                "start_time": "20:00",
+                "end_time": "21:00",
+            },
+            {
+                "academy_id": "other-academy",
+                "session_id": "tpl-other-tenant",
+                "name": "Other Tenant Recurring",
+                "max_students": 5,
+                "status": "active",
+                "days_of_week": ["Mon"],
+                "start_time": "21:00",
+                "end_time": "22:00",
+            },
+        ]
+    )
+    await db.enrollments.insert_many(
+        [
+            {
+                "academy_id": "academy-a",
+                "enrollment_id": "enr-active",
+                "session_id": "tpl-available",
+                "student_id": "st-1",
+                "status": "active",
+            },
+            {
+                "academy_id": "academy-a",
+                "enrollment_id": "enr-full",
+                "session_id": "tpl-full",
+                "student_id": "st-2",
+                "status": "active",
+            },
+            {
+                "academy_id": "other-academy",
+                "enrollment_id": "enr-other",
+                "session_id": "tpl-available",
+                "student_id": "st-3",
+                "status": "active",
+            },
+        ]
+    )
+
+    with tenant_scope("academy-a"):
+        rows = await MongoSessionRepository(db).available_for_parent_catalog()
+
+    by_id = {row.session_id: row for row in rows}
+    assert set(by_id) == {"sess-concrete", "tpl-available", "tpl-not-started"}
+    assert by_id["tpl-available"].title == "Recurring Session"
+    assert by_id["tpl-available"].capacity == 5
+    assert by_id["tpl-available"].enrolled_count == 1
+    assert by_id["tpl-available"].available_seats == 4
+    assert by_id["tpl-available"].amount_cents == 9950
+    assert by_id["tpl-available"].start_at == datetime(2026, 6, 1, 21, 30, tzinfo=UTC)
+    assert by_id["tpl-not-started"].start_at == datetime(2026, 6, 15, 21, 30, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_parent_available_catalog_filters_full_sessions_before_capping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(session_repo_module, "datetime", _FrozenCatalogDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-available-cap-after-filter"]
+    full_sessions = [
+        {
+            "academy_id": "academy-a",
+            "session_id": f"full-{index}",
+            "title": f"Full {index}",
+            "capacity": 1,
+            "status": "scheduled",
+            "start_at": datetime(2026, 6, 2, 10, index % 60, tzinfo=UTC),
+            "end_at": datetime(2026, 6, 2, 11, index % 60, tzinfo=UTC),
+        }
+        for index in range(100)
+    ]
+    await db.sessions.insert_many(
+        [
+            *full_sessions,
+            {
+                "academy_id": "academy-a",
+                "session_id": "available-after-full",
+                "title": "Available After Full",
+                "capacity": 4,
+                "status": "scheduled",
+                "start_at": datetime(2026, 6, 3, 10, 0, tzinfo=UTC),
+                "end_at": datetime(2026, 6, 3, 11, 0, tzinfo=UTC),
+            },
+        ]
+    )
+    await db.enrollments.insert_many(
+        [
+            {
+                "academy_id": "academy-a",
+                "enrollment_id": f"enr-full-{index}",
+                "session_id": f"full-{index}",
+                "student_id": f"st-{index}",
+                "status": "active",
+            }
+            for index in range(100)
+        ]
+    )
+
+    with tenant_scope("academy-a"):
+        rows = await MongoSessionRepository(db).available_for_parent_catalog()
+
+    assert [row.session_id for row in rows] == ["available-after-full"]
