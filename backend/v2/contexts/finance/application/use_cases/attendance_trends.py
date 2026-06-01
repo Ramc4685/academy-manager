@@ -12,7 +12,7 @@ is 0 rather than a ZeroDivisionError.
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from pydantic import BaseModel
 
@@ -112,7 +112,9 @@ class GetAttendanceTrends:
             if sched == 0:
                 rate = Decimal("0")
             else:
-                rate = (Decimal(comp) / Decimal(sched)).quantize(Decimal("0.0001"))
+                rate = (Decimal(comp) / Decimal(sched)).quantize(
+                    Decimal("0.0001"), rounding=ROUND_HALF_UP
+                )
 
             period_points.append(
                 AttendancePeriodPoint(
@@ -130,7 +132,7 @@ class GetAttendanceTrends:
             overall_rate = Decimal("0")
         else:
             overall_rate = (Decimal(grand_completed) / Decimal(grand_scheduled)).quantize(
-                Decimal("0.0001")
+                Decimal("0.0001"), rounding=ROUND_HALF_UP
             )
 
         return AttendanceTrendsResult(

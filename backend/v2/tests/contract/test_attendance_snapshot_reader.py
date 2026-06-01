@@ -93,3 +93,10 @@ async def test_returns_empty_for_unknown_period(db):
     snapshots = await reader.list_snapshots_for_periods(academy_id="acad-1", periods=["2099-12"])
 
     assert snapshots == []
+
+
+@pytest.mark.asyncio
+async def test_returns_empty_list_when_periods_empty(db, acad):
+    reader = MongoAttendanceSnapshotReader(db)
+    result = await reader.list_snapshots_for_periods(academy_id=acad, periods=[])
+    assert result == []
