@@ -71,7 +71,7 @@ run_check "pnpm typecheck" pnpm typecheck
 run_check "pnpm lint"      pnpm lint
 
 if [ "$RUN_E2E" = true ]; then
-  run_check "pnpm e2e" pnpm e2e
+  run_check "pnpm e2e" env CI=1 pnpm e2e
 else
   info "E2E skipped (no e2e/ files changed) — use --full to force"
 fi

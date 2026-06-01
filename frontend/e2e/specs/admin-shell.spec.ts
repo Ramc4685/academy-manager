@@ -428,9 +428,13 @@ test.describe("Rally admin shell", () => {
 
     for (const panel of SETTINGS_PANELS.filter((panel) => panel.key !== "academy")) {
       const tab = page.getByRole("link", { name: panel.label, exact: true });
-      await tab.scrollIntoViewIfNeeded();
-      await tab.click();
-      await expect(page).toHaveURL(new RegExp(`panel=${panel.key}`));
+      await tab.evaluate((element) =>
+        element.scrollIntoView({ block: "nearest", inline: "center" })
+      );
+      await Promise.all([
+        page.waitForURL(new RegExp(`panel=${panel.key}`)),
+        tab.click(),
+      ]);
       await expect(tab).toHaveAttribute("aria-current", "page");
       await expect(page.getByTestId(panel.testid)).toBeVisible();
     }
