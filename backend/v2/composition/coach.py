@@ -8,6 +8,9 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import (
+    BulkMarkAttendance,
+)
 from backend.v2.contexts.coaching.application.use_cases.mark_attendance import MarkAttendance
 from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     CreateLessonPlan,
@@ -58,6 +61,7 @@ class CoachComposition:
     list_today: ListCoachOccurrencesForDate
     get_roster: GetSessionRoster
     mark_attendance: MarkAttendance
+    bulk_mark_attendance: BulkMarkAttendance
     get_dashboard_metrics: object
     create_lesson_plan: CreateLessonPlan
     list_lesson_plans: ListLessonPlans
@@ -144,6 +148,14 @@ def compose_coach(
             idempotency_store=idempotency_store,
             academy_id=settings.default_academy_id,
         ),
+        bulk_mark_attendance=BulkMarkAttendance(
+            attendance_repo=attendance_repo,
+            occurrence_lookup=EnrollmentOccurrenceLookup(occurrences_repo),
+            enrollment_lookup=EnrollmentLookupAdapter(enrollments_repo),
+            outbox=outbox,
+            idempotency_store=idempotency_store,
+            academy_id=settings.default_academy_id,
+        ),
         get_dashboard_metrics=get_dashboard_metrics,
         create_lesson_plan=CreateLessonPlan(notes=notes_repo, sessions=assigned_sessions),
         list_lesson_plans=ListLessonPlans(notes=notes_repo, sessions=assigned_sessions),
@@ -154,6 +166,9 @@ def compose_coach(
         ),
         list_progress_notes=ListProgressNotes(notes=notes_repo, sessions=assigned_sessions),
         assigned_sessions=assigned_sessions,
+        # TODO: academy_id is baked in at startup from default_academy_id.
+        # This must be replaced with per-request tenant resolution before multi-tenant rollout.
+        # See SaaS migration work: interfaces should derive academy_id from the authenticated user's membership.
         add_student_to_roster=CoachAddStudentToRoster(
             sessions=sessions_repo,
             enrollments=enrollments_repo,

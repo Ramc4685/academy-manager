@@ -11,6 +11,9 @@ from dataclasses import dataclass
 
 from fastapi import Request
 
+from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import (
+    BulkMarkAttendance,
+)
 from backend.v2.contexts.coaching.application.use_cases.mark_attendance import MarkAttendance
 from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     CreateLessonPlan,
@@ -35,6 +38,7 @@ class CoachUseCases:
     list_today: ListCoachOccurrencesForDate
     get_roster: GetSessionRoster
     mark_attendance: MarkAttendance
+    bulk_mark_attendance: BulkMarkAttendance
     get_dashboard_metrics: object  # callable
     create_lesson_plan: CreateLessonPlan
     list_lesson_plans: ListLessonPlans

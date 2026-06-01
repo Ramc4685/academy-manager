@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.v2.contexts.coaching.application.ports import OccurrenceDetails
+from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import BulkMarkAttendance
 from backend.v2.contexts.coaching.application.use_cases.mark_attendance import MarkAttendance
 from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance import (
     MarkCoachAttendance,
@@ -463,15 +464,29 @@ def _build_use_cases(seed_data) -> CoachUseCases:
     rw_store = FakeCoachEnrollmentWriter(seed_data["enrollments"], seed_data["sessions"])
     enrollment_writer = _EnrollmentWriterAdapter(rw_store)
     student_writer = FakeCoachStudentWriter()
+    _attendance_repo = FakeAttendanceRepo()
+    _occurrence_lookup = _OL()
+    _enrollment_lookup = _EL()
+    _outbox = FakeOutbox()
+    _idempotency_store = FakeIdempotencyStore()
     return CoachUseCases(
         list_today=ListCoachOccurrencesForDate(occurrences=occurrences, sessions=sessions),
         get_roster=GetSessionRoster(enrollments=enrollments, students=students),
         mark_attendance=MarkAttendance(
-            attendance_repo=FakeAttendanceRepo(),
-            occurrence_lookup=_OL(),
-            enrollment_lookup=_EL(),
-            outbox=FakeOutbox(),
-            idempotency_store=FakeIdempotencyStore(),
+            attendance_repo=_attendance_repo,
+            occurrence_lookup=_occurrence_lookup,
+            enrollment_lookup=_enrollment_lookup,
+            outbox=_outbox,
+            idempotency_store=_idempotency_store,
+            academy_id="test-academy",
+            clock=_now,
+        ),
+        bulk_mark_attendance=BulkMarkAttendance(
+            attendance_repo=_attendance_repo,
+            occurrence_lookup=_occurrence_lookup,
+            enrollment_lookup=_enrollment_lookup,
+            outbox=_outbox,
+            idempotency_store=_idempotency_store,
             academy_id="test-academy",
             clock=_now,
         ),

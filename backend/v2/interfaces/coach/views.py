@@ -118,3 +118,24 @@ class AddStudentToRosterResponse(BaseModel):
     session_id: str
     student_id: str
     status: str
+
+
+class BulkAttendanceEntryRequest(BaseModel):
+    student_id: str
+    status: Literal["present", "absent", "late"]
+
+
+class BulkMarkAttendanceRequest(BaseModel):
+    mutation_id: str
+    session_id: str
+    entries: list[BulkAttendanceEntryRequest]
+
+
+class BulkAttendanceEntryResponse(BaseModel):
+    student_id: str
+    status: Literal["present", "absent", "late"]
+    attendance_id: str
+
+
+class BulkMarkAttendanceResponse(BaseModel):
+    results: list[BulkAttendanceEntryResponse]

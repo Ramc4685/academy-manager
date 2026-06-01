@@ -12,11 +12,21 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, status
 
+from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import (
+    BulkAttendanceEntry,
+    BulkMarkAttendanceCommand,
+)
 from backend.v2.contexts.coaching.application.use_cases.mark_attendance import (
     MarkAttendanceCommand,
 )
 from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
-from backend.v2.interfaces.coach.views import MarkAttendanceRequest, MarkAttendanceResponse
+from backend.v2.interfaces.coach.views import (
+    BulkAttendanceEntryResponse,
+    BulkMarkAttendanceRequest,
+    BulkMarkAttendanceResponse,
+    MarkAttendanceRequest,
+    MarkAttendanceResponse,
+)
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
@@ -51,4 +61,38 @@ async def mark_attendance(
         student_id=result.student_id,
         status=result.status,
         marked_at=result.marked_at,
+    )
+
+
+@router.post(
+    "/occurrences/{occurrence_id}/attendance/bulk",
+    response_model=BulkMarkAttendanceResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Bulk mark attendance for all students in one occurrence (idempotent on mutation_id)",
+)
+async def bulk_mark_attendance(
+    occurrence_id: str,
+    body: BulkMarkAttendanceRequest,
+    claims: AuthClaims = Depends(require_persona("coach")),
+    use_cases: CoachUseCases = Depends(get_coach_use_cases),
+) -> BulkMarkAttendanceResponse:
+    cmd = BulkMarkAttendanceCommand(
+        mutation_id=body.mutation_id,
+        occurrence_id=occurrence_id,
+        session_id=body.session_id,
+        entries=[
+            BulkAttendanceEntry(student_id=e.student_id, status=e.status)
+            for e in body.entries
+        ],
+    )
+    result = await use_cases.bulk_mark_attendance.execute(cmd, coach_id=claims.user_id)
+    return BulkMarkAttendanceResponse(
+        results=[
+            BulkAttendanceEntryResponse(
+                student_id=r.student_id,
+                status=r.status,
+                attendance_id=r.attendance_id,
+            )
+            for r in result.results
+        ]
     )
