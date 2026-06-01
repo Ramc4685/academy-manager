@@ -422,27 +422,42 @@ def compose_parent(
         if not by_id:
             return [], 0
         query = {"academy_id": academy_id, "student_id": {"$in": list(by_id)}}
-        total = await db["progress_notes"].count_documents(query)
-        cursor = (
+        total_notes = await db["progress_notes"].count_documents(query)
+        total_feedback = await db["session_feedback"].count_documents(query)
+        total = total_notes + total_feedback
+        note_cursor = (
             db["progress_notes"]
             .find(query)
             .sort([("created_at", -1)])
             .skip(offset)
             .limit(limit)
         )
-        note_rows = [doc async for doc in cursor]
+        note_rows = [doc async for doc in note_cursor]
+
+        # Also fetch session feedback for the same students (un-paginated portion
+        # after notes are exhausted; blend by created_at desc within the page).
+        feedback_cursor = (
+            db["session_feedback"]
+            .find(query)
+            .sort([("created_at", -1)])
+            .limit(limit)
+        )
+        feedback_rows = [doc async for doc in feedback_cursor]
 
         # Batch-fetch all sessions referenced in this page
-        session_ids = list({str(n["session_id"]) for n in note_rows if n.get("session_id")})
+        all_session_ids = list(
+            {str(n["session_id"]) for n in note_rows + feedback_rows if n.get("session_id")}
+        )
         sessions_map: dict[str, Any] = {}
-        if session_ids:
+        if all_session_ids:
             async for sdoc in db["sessions"].find(
-                {"academy_id": academy_id, "session_id": {"$in": session_ids}}
+                {"academy_id": academy_id, "session_id": {"$in": all_session_ids}}
             ):
                 sessions_map[str(sdoc.get("session_id") or sdoc["_id"])] = sdoc
 
         coach_cache: dict[str, str | None] = {}
         rows: list[dict[str, Any]] = []
+
         for note in note_rows:
             student_id = str(note["student_id"])
             coach_id = note.get("coach_id")
@@ -463,9 +478,38 @@ def compose_parent(
                     "coach_name": coach_name,
                     "body": str(note.get("body") or note.get("note") or ""),
                     "created_at": note.get("created_at") or datetime.now(UTC),
+                    "note_type": "progress_note",
                 }
             )
-        return rows, total
+
+        for fb in feedback_rows:
+            student_id = str(fb["student_id"])
+            coach_id = fb.get("coach_id")
+            if coach_id not in coach_cache:
+                coach_cache[coach_id] = await _resolve_coach_name(coach_id)
+            coach_name = coach_cache[coach_id]
+            session_id = fb.get("session_id")
+            session = sessions_map.get(str(session_id)) if session_id else None
+            session_title = str(session.get("title") or "Session") if session else None
+            rows.append(
+                {
+                    "note_id": str(fb.get("feedback_id") or fb["_id"]),
+                    "student_id": student_id,
+                    "student_name": str(by_id.get(student_id, {}).get("full_name") or "Unnamed student"),
+                    "session_id": str(session_id) if session_id else None,
+                    "session_title": session_title,
+                    "coach_id": coach_id,
+                    "coach_name": coach_name,
+                    "body": str(fb.get("body") or ""),
+                    "created_at": fb.get("created_at") or datetime.now(UTC),
+                    "note_type": "feedback",
+                    "rating": fb.get("rating"),
+                }
+            )
+
+        # Re-sort blended results by created_at descending
+        rows.sort(key=lambda r: r["created_at"], reverse=True)
+        return rows[:limit], total
 
     async def list_invoices_for_parent(parent_id: str):
         return await billing_ledger_repo.list_invoices_for_parent(parent_id)

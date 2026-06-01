@@ -12,6 +12,10 @@ from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance imp
     BulkMarkAttendance,
 )
 from backend.v2.contexts.coaching.application.use_cases.mark_attendance import MarkAttendance
+from backend.v2.contexts.coaching.application.use_cases.session_feedback import (
+    CreateSessionFeedback,
+    ListSessionFeedback,
+)
 from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     CreateLessonPlan,
     CreateProgressNote,
@@ -20,6 +24,9 @@ from backend.v2.contexts.coaching.application.use_cases.session_notes import (
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
     MongoAttendanceRepository,
+)
+from backend.v2.contexts.coaching.infrastructure.mongo_session_feedback_repo import (
+    MongoSessionFeedbackRepository,
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_session_notes_repo import (
     MongoCoachingNotesRepository,
@@ -70,6 +77,8 @@ class CoachComposition:
     assigned_sessions: CoachAssignedSessionLookup
     add_student_to_roster: CoachAddStudentToRoster
     remove_student_from_roster: CoachRemoveStudentFromRoster
+    create_feedback: CreateSessionFeedback
+    list_feedback: ListSessionFeedback
 
 
 class CoachAssignedSessionLookup:
@@ -93,6 +102,7 @@ def compose_coach(
     attendance_repo = MongoAttendanceRepository(db)
     occurrences_repo = MongoSessionOccurrenceRepository(db)
     notes_repo = MongoCoachingNotesRepository(db)
+    feedback_repo = MongoSessionFeedbackRepository(db)
     assigned_sessions = CoachAssignedSessionLookup(sessions_repo)
 
     async def get_dashboard_metrics(coach_id: str) -> dict[str, int | float]:
@@ -180,4 +190,10 @@ def compose_coach(
             enrollments=enrollments_repo,
             assigned_sessions=assigned_sessions,
         ),
+        create_feedback=CreateSessionFeedback(
+            feedback_repo=feedback_repo,
+            assignment_lookup=assigned_sessions,
+            outbox=outbox,
+        ),
+        list_feedback=ListSessionFeedback(feedback_repo=feedback_repo),
     )

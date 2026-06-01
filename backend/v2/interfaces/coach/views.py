@@ -139,3 +139,25 @@ class BulkAttendanceEntryResponse(BaseModel):
 
 class BulkMarkAttendanceResponse(BaseModel):
     results: list[BulkAttendanceEntryResponse]
+
+
+class CreateFeedbackRequest(BaseModel):
+    student_id: str
+    occurrence_id: str | None = None
+    body: str
+    rating: int | None = None
+
+
+class FeedbackView(BaseModel):
+    feedback_id: str
+    session_id: str
+    occurrence_id: str | None = None
+    coach_id: str
+    student_id: str
+    body: str
+    rating: int | None = None
+    created_at: datetime
+
+
+class FeedbackListResponse(BaseModel):
+    feedback: list[FeedbackView]

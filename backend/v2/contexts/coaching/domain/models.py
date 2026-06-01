@@ -49,3 +49,19 @@ class CoachAttendance(BaseModel):
     marked_at: datetime
     rate_override_minor: int | None = Field(default=None, ge=0)
     note: str = ""
+
+
+class SessionFeedback(BaseModel):
+    """One coach-authored feedback entry for a student in a session."""
+
+    model_config = {"frozen": True}
+
+    feedback_id: str  # ULID
+    academy_id: str
+    session_id: str
+    occurrence_id: str | None = None
+    coach_id: str
+    student_id: str
+    body: str
+    rating: int | None = Field(default=None, ge=1, le=5)  # 1-5 if present
+    created_at: datetime

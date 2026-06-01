@@ -21,6 +21,10 @@ from backend.v2.contexts.coaching.application.use_cases.mark_attendance import M
 from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance import (
     MarkCoachAttendance,
 )
+from backend.v2.contexts.coaching.application.use_cases.session_feedback import (
+    CreateSessionFeedback,
+    ListSessionFeedback,
+)
 from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     CreateLessonPlan,
     CreateProgressNote,
@@ -159,6 +163,20 @@ class FakeCoachingNotesRepo:
             if a.attendance_id == attendance_id:
                 return a
         return None
+
+
+class FakeFeedbackRepo:
+    def __init__(self) -> None:
+        self.saved: list = []
+
+    async def save(self, feedback) -> None:
+        self.saved.append(feedback)
+
+    async def list_for_session(self, session_id: str, *, limit: int = 100) -> list:
+        return [f for f in self.saved if f.session_id == session_id][:limit]
+
+    async def list_for_student(self, student_id: str, *, limit: int = 100) -> list:
+        return [f for f in self.saved if f.student_id == student_id][:limit]
 
 
 class FakeOutbox:
@@ -460,6 +478,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
         }
 
     notes = FakeCoachingNotesRepo()
+    _feedback_repo = FakeFeedbackRepo()
     session_lookup = _SL()
     rw_store = FakeCoachEnrollmentWriter(seed_data["enrollments"], seed_data["sessions"])
     enrollment_writer = _EnrollmentWriterAdapter(rw_store)
@@ -511,6 +530,12 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             enrollments=enrollment_writer,
             assigned_sessions=session_lookup,
         ),
+        create_feedback=CreateSessionFeedback(
+            feedback_repo=_feedback_repo,
+            assignment_lookup=session_lookup,
+            outbox=_outbox,
+        ),
+        list_feedback=ListSessionFeedback(feedback_repo=_feedback_repo),
     )
 
 

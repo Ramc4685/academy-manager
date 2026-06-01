@@ -15,6 +15,10 @@ from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance imp
     BulkMarkAttendance,
 )
 from backend.v2.contexts.coaching.application.use_cases.mark_attendance import MarkAttendance
+from backend.v2.contexts.coaching.application.use_cases.session_feedback import (
+    CreateSessionFeedback,
+    ListSessionFeedback,
+)
 from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     CreateLessonPlan,
     CreateProgressNote,
@@ -47,6 +51,8 @@ class CoachUseCases:
     assigned_sessions: object  # CoachAssignedSessionLookup (any with is_coach_assigned)
     add_student_to_roster: CoachAddStudentToRoster
     remove_student_from_roster: CoachRemoveStudentFromRoster
+    create_feedback: CreateSessionFeedback
+    list_feedback: ListSessionFeedback
 
 
 def get_coach_use_cases(request: Request) -> CoachUseCases:

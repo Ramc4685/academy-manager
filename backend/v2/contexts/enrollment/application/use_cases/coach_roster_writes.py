@@ -25,7 +25,6 @@ from backend.v2.contexts.enrollment.domain.errors import (
     SessionNotAssigned,
 )
 from backend.v2.contexts.enrollment.domain.models import Enrollment
-from backend.v2.shared.config import get_settings
 
 
 class CoachSessionLookup(Protocol):

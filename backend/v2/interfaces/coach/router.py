@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from .attendance_routes import router as attendance_router
 from .dashboard_routes import router as dashboard_router
+from .feedback_routes import router as feedback_router
 from .notes_routes import router as notes_router
 from .roster_routes import router as roster_router
 from .today_routes import router as today_router
@@ -16,3 +17,4 @@ router.include_router(dashboard_router)
 router.include_router(attendance_router)
 router.include_router(notes_router)
 router.include_router(roster_router)
+router.include_router(feedback_router)
