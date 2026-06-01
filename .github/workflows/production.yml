@@ -164,10 +164,10 @@ jobs:
         continue-on-error: true
         run: mypy --config-file pyproject.toml v2
 
-  frontend:
-    name: Frontend
+  frontend-static:
+    name: Frontend Static
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     needs: [changes]
     if: >
       needs.changes.outputs.frontend == 'true' ||
@@ -244,19 +244,97 @@ jobs:
             echo "No Lighthouse config yet; skipping."
           fi
 
-      - name: Install Playwright browsers
-        run: pnpm exec playwright install --with-deps chromium webkit
+  frontend-e2e-chromium:
+    name: Frontend E2E Chromium
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    needs: [changes]
+    if: >
+      needs.changes.outputs.frontend == 'true' ||
+      needs.changes.outputs.ci == 'true' ||
+      github.event_name == 'workflow_dispatch'
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
 
-      - name: Playwright E2E
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Playwright E2E Chromium
         env:
           CI: "1"
-        run: pnpm e2e
+        run: pnpm exec playwright test --project=chromium-mobile
 
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-report
+          name: playwright-report-chromium
+          path: frontend/playwright-report
+          retention-days: 7
+
+  frontend-e2e-webkit:
+    name: Frontend E2E WebKit
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    needs: [changes]
+    if: >
+      needs.changes.outputs.frontend == 'true' ||
+      needs.changes.outputs.ci == 'true' ||
+      github.event_name == 'workflow_dispatch'
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps webkit
+
+      - name: Playwright E2E WebKit
+        env:
+          CI: "1"
+        run: pnpm exec playwright test --project=webkit-mobile
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-webkit
           path: frontend/playwright-report
           retention-days: 7
 
@@ -264,11 +342,21 @@ jobs:
     name: Production Approval
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [backend, frontend, backend-advisory, changes]
+    needs:
+      [
+        backend,
+        frontend-static,
+        frontend-e2e-chromium,
+        frontend-e2e-webkit,
+        backend-advisory,
+        changes,
+      ]
     if: >
       always() &&
       needs.backend.result != 'failure' &&
-      needs.frontend.result != 'failure' &&
+      needs.frontend-static.result != 'failure' &&
+      needs.frontend-e2e-chromium.result != 'failure' &&
+      needs.frontend-e2e-webkit.result != 'failure' &&
       needs.backend-advisory.result != 'failure' &&
       (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true') &&
       github.ref == 'refs/heads/main' &&

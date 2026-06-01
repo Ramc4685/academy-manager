@@ -43,11 +43,37 @@ async function stubMe(page: Page) {
   });
 }
 
+async function stubAdminShell(page: Page) {
+  await stubMe(page);
+  await page.route("**/api/v2/admin/academy", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, {
+      academy_id: "academy-e2e",
+      display_name: "Rally Academy",
+      timezone: "America/Chicago",
+      contact_email: null,
+      contact_phone: null,
+      hours_text: null,
+      address: null,
+      logo_url: null,
+      brand_color: null,
+    });
+  });
+}
+
+async function stubWaiverTemplates(page: Page) {
+  await page.route("**/api/v2/admin/waivers/templates*", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { templates: [] });
+  });
+}
+
 test.describe("admin waivers", () => {
   test("renders BFF summary counts and waiver student rows", async ({ page }) => {
     const errors = collectConsoleErrors(page);
     const requests: string[] = [];
-    await stubMe(page);
+    await stubAdminShell(page);
+    await stubWaiverTemplates(page);
     await page.route("**/api/v2/admin/waivers*", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       requests.push(route.request().url());
@@ -126,7 +152,8 @@ test.describe("admin waivers", () => {
 
   test("shows a truthful empty state when the BFF returns no waiver rows", async ({ page }) => {
     const errors = collectConsoleErrors(page);
-    await stubMe(page);
+    await stubAdminShell(page);
+    await stubWaiverTemplates(page);
     await page.route("**/api/v2/admin/waivers*", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, {
