@@ -1,5 +1,8 @@
 "use client";
 
+import Link from "next/link";
+import type { UrlObject } from "url";
+
 export type SettingsPanelKey =
   | "academy"
   | "fees"
@@ -21,29 +24,30 @@ export const SETTINGS_TABS: Array<{ key: SettingsPanelKey; label: string }> = [
 
 interface SettingsTabsProps {
   active: SettingsPanelKey;
-  onChange: (key: SettingsPanelKey) => void;
+  hrefFor: (key: SettingsPanelKey) => UrlObject;
 }
 
-export function SettingsTabs({ active, onChange }: SettingsTabsProps) {
+export function SettingsTabs({ active, hrefFor }: SettingsTabsProps) {
   return (
     <div className="overflow-x-auto">
       <div className="inline-flex min-w-max gap-1 rounded-lg bg-rally-paper p-1">
         {SETTINGS_TABS.map((tab) => {
           const isActive = tab.key === active;
           return (
-            <button
+            <Link
               key={tab.key}
-              type="button"
-              onClick={() => onChange(tab.key)}
+              href={hrefFor(tab.key)}
+              replace
+              scroll={false}
               className={`rounded-md px-4 py-2 font-mono text-[10px] font-bold uppercase tracking-overline transition-colors ${
                 isActive
                   ? "bg-blue-600 text-white"
                   : "text-rally-muted hover:bg-white hover:text-rally-ink"
               }`}
-              aria-pressed={isActive}
+              aria-current={isActive ? "page" : undefined}
             >
               {tab.label}
-            </button>
+            </Link>
           );
         })}
       </div>
