@@ -1032,6 +1032,47 @@ class AdminReportsDashboardResponse(BaseModel):
     empty_states: list[str] = []
 
 
+# --- Analytics ---
+
+
+class EnrollmentFunnelResponse(BaseModel):
+    leads: int
+    applied: int
+    assessed: int
+    confirmed: int
+    dropped: int
+    total_applications: int
+    conversion_rate: float
+    period: str | None = None
+
+
+class AttendancePeriodPointView(BaseModel):
+    period: str
+    scheduled_count: int
+    completed_count: int
+    no_show_count: int
+    completion_rate: float
+
+
+class AttendanceTrendsResponse(BaseModel):
+    periods: list[AttendancePeriodPointView]
+    overall_completion_rate: float
+
+
+class CoachUtilizationPointView(BaseModel):
+    coach_id: str
+    period: str
+    hours: float
+    payout_minor: int
+    utilization_rate: float
+
+
+class CoachUtilizationResponse(BaseModel):
+    coaches: list[CoachUtilizationPointView]
+    periods: list[str]
+    total_payout_minor: int
+
+
 # --- Enrollment Events ---
 
 

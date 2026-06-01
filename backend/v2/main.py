@@ -202,12 +202,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.platform_billing = build_platform_billing_use_cases(db)
 
+    # Stripe gateway shared across all BFFs that need it.
+    stripe_gw = _build_stripe(settings)
+
     # Coach BFF wiring — exposed as app.state.coach for routes via deps.py.
-    app.state.coach = compose_coach(db, outbox, idempotency_store)
+    app.state.coach = compose_coach(db, outbox, idempotency_store, stripe_gw)
 
     # Parent BFF wiring (Wave 2). Cross-context event handlers are registered
     # by compose_parent via install_handlers().
-    stripe_gw = _build_stripe(settings)
     app.state.parent = compose_parent(db, outbox, idempotency_store, stripe_gw)
 
     # Admin BFF wiring (Wave 3).

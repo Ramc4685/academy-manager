@@ -8,6 +8,19 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from backend.v2.contexts.billing.application.ports import StripeGateway
+from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
+    ListSessionTypes,
+    ListStudentBillingEnrollments,
+    MoveStudentSessionType,
+    PreviewStudentSessionTypeMove,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_session_type_repo import (
+    MongoSessionTypeRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_student_billing_enrollment_repo import (
+    MongoStudentBillingEnrollmentRepository,
+)
 from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import (
     BulkMarkAttendance,
 )
@@ -40,6 +53,10 @@ from backend.v2.contexts.enrollment.application.use_cases.get_session_roster imp
 )
 from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences_for_date import (
     ListCoachOccurrencesForDate,
+)
+from backend.v2.contexts.enrollment.domain.events import (
+    StudentSessionTypeChanged,
+    StudentSessionTypeChangedPayload,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
@@ -79,6 +96,15 @@ class CoachComposition:
     remove_student_from_roster: CoachRemoveStudentFromRoster
     create_feedback: CreateSessionFeedback
     list_feedback: ListSessionFeedback
+    # Phase 2 — billing enrollment move surface
+    list_billing_enrollments: ListStudentBillingEnrollments
+    preview_student_session_type_move: PreviewStudentSessionTypeMove
+    move_student_session_type: MoveStudentSessionType
+    list_session_types: ListSessionTypes
+    get_billing_enrollment: object  # Callable[[str], Awaitable[StudentBillingEnrollment | None]]
+    get_active_session_enrollments_for_student: (
+        object  # Callable[[str], Awaitable[list[Enrollment]]]
+    )
 
 
 class CoachAssignedSessionLookup:
@@ -90,10 +116,46 @@ class CoachAssignedSessionLookup:
         return bool(session and session.coach_id == coach_id)
 
 
+class _SessionTypeChangedEventSink:
+    def __init__(self, outbox: Outbox) -> None:
+        self._outbox = outbox
+
+    async def record_session_type_changed(
+        self,
+        *,
+        academy_id: str,
+        enrollment_id: str,
+        student_id: str,
+        parent_id: str,
+        from_session_type_id: str | None,
+        to_session_type_id: str,
+        net_cents: int,
+        actor_id: str,
+        reason: str | None,
+    ) -> None:
+        await self._outbox.append(
+            StudentSessionTypeChanged(
+                aggregate_id=enrollment_id,
+                academy_id=academy_id,
+                payload=StudentSessionTypeChangedPayload(
+                    enrollment_id=enrollment_id,
+                    student_id=student_id,
+                    parent_id=parent_id,
+                    from_session_type_id=from_session_type_id,
+                    to_session_type_id=to_session_type_id,
+                    net_cents=net_cents,
+                    actor_id=actor_id,
+                    reason=reason,
+                ),
+            )
+        )
+
+
 def compose_coach(
     db: AsyncIOMotorDatabase[Any],
     outbox: Outbox,
     idempotency_store: IdempotencyStore,
+    stripe: StripeGateway,
 ) -> CoachComposition:
     settings = get_settings()
     sessions_repo = MongoSessionRepository(db)
@@ -104,6 +166,9 @@ def compose_coach(
     notes_repo = MongoCoachingNotesRepository(db)
     feedback_repo = MongoSessionFeedbackRepository(db)
     assigned_sessions = CoachAssignedSessionLookup(sessions_repo)
+    # Billing repos for session-type move surface
+    session_type_repo = MongoSessionTypeRepository(db)
+    billing_enrollment_repo = MongoStudentBillingEnrollmentRepository(db)
 
     async def get_dashboard_metrics(coach_id: str) -> dict[str, int | float]:
         today = datetime.now(UTC).date()
@@ -196,4 +261,19 @@ def compose_coach(
             outbox=outbox,
         ),
         list_feedback=ListSessionFeedback(feedback_repo=feedback_repo),
+        # Phase 2 — billing enrollment move surface
+        list_billing_enrollments=ListStudentBillingEnrollments(enrollments=billing_enrollment_repo),
+        preview_student_session_type_move=PreviewStudentSessionTypeMove(
+            enrollments=billing_enrollment_repo,
+            session_types=session_type_repo,
+        ),
+        move_student_session_type=MoveStudentSessionType(
+            enrollments=billing_enrollment_repo,
+            session_types=session_type_repo,
+            stripe=stripe,
+            event_sink=_SessionTypeChangedEventSink(outbox),
+        ),
+        list_session_types=ListSessionTypes(session_types=session_type_repo),
+        get_billing_enrollment=billing_enrollment_repo.get,
+        get_active_session_enrollments_for_student=enrollments_repo.active_for_student,
     )

@@ -147,10 +147,28 @@ from backend.v2.contexts.finance.application.use_cases.approve_payout_period imp
     ApprovePayoutPeriod,
     MarkPayoutPaid,
 )
+from backend.v2.contexts.finance.application.use_cases.attendance_trends import (
+    GetAttendanceTrends,
+)
+from backend.v2.contexts.finance.application.use_cases.coach_utilization import (
+    GetCoachUtilization,
+)
+from backend.v2.contexts.finance.application.use_cases.enrollment_funnel import (
+    GetEnrollmentFunnel,
+)
 from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
     GeneratePayoutPeriod,
 )
 from backend.v2.contexts.finance.domain.payout_period import PersistedPayoutLine
+from backend.v2.contexts.finance.infrastructure.mongo_application_funnel_reader import (
+    MongoApplicationFunnelReader,
+)
+from backend.v2.contexts.finance.infrastructure.mongo_attendance_snapshot_reader import (
+    MongoAttendanceSnapshotReader,
+)
+from backend.v2.contexts.finance.infrastructure.mongo_coach_payout_snapshot_reader import (
+    MongoCoachPayoutSnapshotReader,
+)
 from backend.v2.contexts.finance.infrastructure.mongo_payout_period_repo import (
     MongoPayoutPeriodRepository,
 )
@@ -1662,6 +1680,21 @@ def compose_admin(
         override_student_price=override_student_price,
     )
     admin.get_reports_dashboard = _make_reports_dashboard(db)  # type: ignore[attr-defined]
+
+    # Analytics use cases (Phase 2)
+    admin.get_enrollment_funnel = GetEnrollmentFunnel(  # type: ignore[attr-defined]
+        application_reader=MongoApplicationFunnelReader(db),
+        academy_id=academy_id,
+    ).execute
+    admin.get_attendance_trends = GetAttendanceTrends(  # type: ignore[attr-defined]
+        snapshot_repo=MongoAttendanceSnapshotReader(db),
+        academy_id=academy_id,
+    ).execute
+    admin.get_coach_utilization = GetCoachUtilization(  # type: ignore[attr-defined]
+        snapshot_repo=MongoCoachPayoutSnapshotReader(db),
+        academy_id=academy_id,
+    ).execute
+
     return admin
 
 

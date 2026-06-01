@@ -193,6 +193,15 @@ class AdminUseCases:
     list_student_billing_enrollments: ListStudentBillingEnrollments | None = None
     move_student_session_type: MoveStudentSessionType | None = None
     override_student_price: OverrideStudentPrice | None = None
+    get_enrollment_funnel: object | None = (
+        None  # async (period: str | None) -> EnrollmentFunnelResult
+    )
+    get_attendance_trends: object | None = (
+        None  # async (periods: list[str]) -> AttendanceTrendsResult
+    )
+    get_coach_utilization: object | None = (
+        None  # async (periods: list[str]) -> CoachUtilizationResult
+    )
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:

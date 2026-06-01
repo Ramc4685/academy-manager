@@ -161,3 +161,31 @@ class FeedbackView(BaseModel):
 
 class FeedbackListResponse(BaseModel):
     feedback: list[FeedbackView]
+
+
+# ---------------------------------------------------------------------------
+# Billing enrollment views (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+class CoachBillingEnrollmentView(BaseModel):
+    enrollment_id: str
+    student_id: str
+    session_type_id: str
+    session_type_name: str
+    status: str
+    billing_start_date: datetime
+    override_price_cents: int | None = None
+
+
+class ProrationPreviewView(BaseModel):
+    credit_cents: int
+    charge_cents: int
+    net_cents: int
+    from_session_type_id: str | None
+    to_session_type_id: str
+
+
+class MoveEnrollmentResponse(BaseModel):
+    enrollment: CoachBillingEnrollmentView
+    proration: ProrationPreviewView
