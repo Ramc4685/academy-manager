@@ -199,9 +199,27 @@ class ApplicationFunnelReader(Protocol):
     async def get_funnel_counts(self, academy_id: str, period: str | None) -> dict[str, int]: ...
 
 
+class AttendanceSnapshotReader(Protocol):
+    """Read ``SessionAttendanceSnapshot`` records for a set of periods.
+
+    The implementor queries the ``session_attendance_snapshots`` collection
+    and returns all snapshot documents that match the given academy and
+    periods.  The finance context uses this to build trend reports without
+    knowing Mongo internals.
+
+    Returns all matching snapshots (one per session per period).  An
+    unknown period or an academy with no data returns an empty list.
+    """
+
+    async def list_snapshots_for_periods(
+        self, *, academy_id: str, periods: list[str]
+    ) -> list[SessionAttendanceSnapshot]: ...
+
+
 __all__ = [
     "AcademyRevenueSnapshotRepository",
     "ApplicationFunnelReader",
+    "AttendanceSnapshotReader",
     "BillingLedgerReader",
     "BillingPeriodTotals",
     "CoachPayoutSnapshotRepository",
