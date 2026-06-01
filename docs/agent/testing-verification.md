@@ -63,21 +63,25 @@ pytest v2/tests
 - Find the root cause.
 - Avoid symptom-only patches.
 - Add regression coverage when practical.
-- Record the failure mode in the final response or `test_result.md` when relevant.
+- Record the failure mode in the final response or relevant `docs/test-results/active/`
+  ledger when relevant.
 
 ---
 
 ## Testing Agent Protocol
 
-This repo uses `test_result.md` as the shared ledger between main and testing agents.
+This repo uses `test_result.md` as a small index and `docs/test-results/active/`
+files as the shared ledger between main and testing agents.
+
+Use the CLI; do not manually edit large shared status blocks in `test_result.md`.
 
 Before calling a testing agent:
 
-1. Update `test_result.md`.
-2. Mark changed tasks with `needs_retesting: true`.
+1. Create or update the task ledger with `scripts/dev/test_result.py`.
+2. Mark changed tasks as needing retest in the task ledger.
 3. Add implementation details and files touched.
-4. Update `test_plan.current_focus`.
-5. Add an `agent_communication` note with exact scenarios to test.
+4. Add exact scenarios to test.
+5. Keep `test_result.md` as the generated index only.
 
 After testing:
 

@@ -15,7 +15,8 @@ Before coding, read:
 1. `README.md`
 2. `DEPLOYMENT.md`
 3. `test_result.md`
-4. The focused rule file for the task.
+4. The relevant active ledger under `docs/test-results/active/`, if one exists.
+5. The focused rule file for the task.
 
 If the branch contains `docs/tickets/`, also read:
 
@@ -24,6 +25,37 @@ If the branch contains `docs/tickets/`, also read:
 3. Any ADR or policy doc referenced by the ticket.
 
 Do not treat `.claude/worktrees/*` as canonical project source unless the user explicitly asks about that worktree.
+
+---
+
+## Test Result Kickoff
+
+`test_result.md` is only an index. Detailed testing state lives in
+`docs/test-results/active/`.
+
+At the start of a task:
+
+```bash
+git status --short --branch
+sed -n '1,160p' test_result.md
+ls docs/test-results/active
+```
+
+If there is no active ledger for the task, create one:
+
+```bash
+scripts/dev/test_result.py start "task title" --problem "What needs to be verified"
+```
+
+During and after work, update the task ledger:
+
+```bash
+scripts/dev/test_result.py log task-title --agent main --status working --message "What changed"
+scripts/dev/test_result.py verify task-title --message "Command/result or skipped check reason"
+scripts/dev/test_result.py close task-title
+```
+
+Do not manually restore the old global YAML ledger in `test_result.md`.
 
 ---
 
@@ -80,7 +112,7 @@ SaaS direction:
 - Follow DDD boundaries in `backend/v2`.
 - Keep BFF APIs persona-shaped, not generic CRUD.
 - Keep frontend presentation-focused; business truth belongs to backend.
-- Update `test_result.md` before handing work to a testing agent.
+- Use `scripts/dev/test_result.py` before handing work to a testing agent.
 - Verify before claiming done.
 - Be honest about skipped checks and failures.
 
@@ -254,9 +286,9 @@ Use `docs/agent/feedback-loop.md`.
 
 Minimum loop:
 
-1. Read current status: `git status`, `test_result.md`, tickets if present.
+1. Read current status: `git status`, `test_result.md`, the relevant `docs/test-results/active/` ledger, and tickets if present.
 2. Implement the smallest coherent change.
-3. Update `test_result.md` with what changed and what needs retesting.
+3. Use `scripts/dev/test_result.py log` or `verify` to record what changed and what needs retesting.
 4. Run focused verification.
 5. Record results and remaining risks.
 6. Update ticket checkboxes only when acceptance criteria are verified.

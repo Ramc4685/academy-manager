@@ -91,7 +91,9 @@ def main() -> int:
     print("1. Reproduce the first failed step locally with the same command shown in the job log.")
     print("2. Fix the narrow cause and add or update regression coverage when practical.")
     print("3. Run the full local CI-equivalent block for the touched area.")
-    print("4. Update test_result.md with the failure cause, fix, verification, and skipped checks.")
+    print(
+        "4. Update the relevant docs/test-results/active/ ledger with the failure cause, fix, verification, and skipped checks."
+    )
     print("5. Push only after the local reproduction command is green.")
     return 1
 

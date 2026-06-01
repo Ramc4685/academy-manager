@@ -17,9 +17,10 @@ git status --short --branch
 Then read:
 
 1. `test_result.md`
-2. Relevant ticket sheet, if `docs/tickets/` exists
-3. Relevant ADR or policy docs
-4. Existing code around the target files
+2. Relevant active ledger under `docs/test-results/active/`, if one exists
+3. Relevant ticket sheet, if `docs/tickets/` exists
+4. Relevant ADR or policy docs
+5. Existing code around the target files
 
 Write down the current state before editing:
 
@@ -54,24 +55,33 @@ For non-ticketed bug fixes:
 
 ---
 
-## `test_result.md` Loop
+## Test Result Loop
 
-Use `test_result.md` as the agent-to-agent source of truth.
+Use `test_result.md` as the small index. Use per-task files under
+`docs/test-results/active/` as the agent-to-agent source of truth.
+
+Do not manually restore or edit large shared YAML status blocks in
+`test_result.md`. Use the CLI so updates are append-only and task-scoped:
+
+```bash
+scripts/dev/test_result.py start "task title" --problem "What needs testing"
+scripts/dev/test_result.py log task-title --agent main --status working --message "What changed"
+scripts/dev/test_result.py verify task-title --message "pytest path/to/test.py -q passed"
+scripts/dev/test_result.py close task-title
+```
 
 Before testing:
 
-- Add or update the task entry.
-- Set `implemented: true` when code exists.
-- Set `working: "NA"` until tested.
-- Set `needs_retesting: true`.
+- Create or update the relevant active task ledger.
+- Record whether code exists and whether it still needs retesting.
 - Add files touched.
-- Add clear scenarios in `test_plan.current_focus`.
-- Add an `agent_communication` message.
+- Add clear scenarios for the testing agent.
+- Add a log message explaining what changed.
 
 After testing:
 
-- Set `working: true` or `false`.
-- Set `needs_retesting: false` only when the scenario was actually retested.
+- Record pass/fail status in the task ledger.
+- Record that retesting is complete only when the scenario was actually retested.
 - Preserve failure details.
 - Add new stuck tasks instead of burying failures in prose.
 
@@ -138,7 +148,7 @@ When a PR check fails, do not guess from the GitHub UI summary.
    ```
 
 2. Copy the failing job, failing step, command, and shortest useful log
-   snippet into `test_result.md`.
+   snippet into the relevant `docs/test-results/active/` ledger.
 3. Add the missing local command to the relevant pre-push checklist when CI
    caught something the local loop did not.
 4. Reproduce the first failed command locally before editing.
