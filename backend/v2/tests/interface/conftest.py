@@ -15,6 +15,11 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
+    ListSessionTypes,
+    ListStudentBillingEnrollments,
+    MoveStudentSessionType,
+)
 from backend.v2.contexts.coaching.application.ports import OccurrenceDetails
 from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import (
     BulkMarkAttendance,
@@ -486,6 +491,56 @@ def _build_use_cases(seed_data) -> CoachUseCases:
     _enrollment_lookup = _EL()
     _outbox = FakeOutbox()
     _idempotency_store = FakeIdempotencyStore()
+
+    # Minimal billing stubs (not exercised by existing coach tests)
+    class _StubBillingEnrollmentRepo:
+        async def save(self, e):
+            pass
+
+        async def get(self, eid):
+            return None
+
+        async def list_for_student(self, sid):
+            return []
+
+        async def list_for_parent(self, pid):
+            return []
+
+        async def get_by_stripe_subscription(self, sub):
+            return None
+
+    class _StubSessionTypeRepo:
+        async def save(self, st):
+            pass
+
+        async def get(self, stid):
+            return None
+
+        async def list_active(self):
+            return []
+
+        async def soft_delete(self, stid):
+            pass
+
+    class _StubEventSink:
+        async def record_session_type_changed(self, **kwargs):
+            pass
+
+    class _StubStripe:
+        async def update_subscription_proration(self, *a, **kw):
+            return None
+
+    _billing_enrollment_repo = _StubBillingEnrollmentRepo()
+    _session_type_repo = _StubSessionTypeRepo()
+    _list_billing_enrollments = ListStudentBillingEnrollments(enrollments=_billing_enrollment_repo)
+    _list_session_types = ListSessionTypes(session_types=_session_type_repo)
+    _move_student_session_type = MoveStudentSessionType(
+        enrollments=_billing_enrollment_repo,
+        session_types=_session_type_repo,
+        stripe=_StubStripe(),
+        event_sink=_StubEventSink(),
+    )
+
     return CoachUseCases(
         list_today=ListCoachOccurrencesForDate(occurrences=occurrences, sessions=sessions),
         get_roster=GetSessionRoster(enrollments=enrollments, students=students),
@@ -534,6 +589,10 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             outbox=_outbox,
         ),
         list_feedback=ListSessionFeedback(feedback_repo=_feedback_repo),
+        list_billing_enrollments=_list_billing_enrollments,
+        move_student_session_type=_move_student_session_type,
+        list_session_types=_list_session_types,
+        get_billing_enrollment=_billing_enrollment_repo.get,
     )
 
 

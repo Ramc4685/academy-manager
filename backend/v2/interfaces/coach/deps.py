@@ -11,6 +11,11 @@ from dataclasses import dataclass
 
 from fastapi import Request
 
+from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
+    ListSessionTypes,
+    ListStudentBillingEnrollments,
+    MoveStudentSessionType,
+)
 from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import (
     BulkMarkAttendance,
 )
@@ -53,6 +58,13 @@ class CoachUseCases:
     remove_student_from_roster: CoachRemoveStudentFromRoster
     create_feedback: CreateSessionFeedback
     list_feedback: ListSessionFeedback
+    # Phase 2 — billing enrollment move surface
+    list_billing_enrollments: ListStudentBillingEnrollments
+    move_student_session_type: MoveStudentSessionType
+    list_session_types: ListSessionTypes
+    get_billing_enrollment: (
+        object  # async callable: (enrollment_id: str) -> StudentBillingEnrollment | None
+    )
 
 
 def get_coach_use_cases(request: Request) -> CoachUseCases:
