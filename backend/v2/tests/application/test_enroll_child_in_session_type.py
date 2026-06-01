@@ -162,8 +162,10 @@ async def test_enroll_creates_enrollment_and_returns_redirect_url():
     assert persisted is not None
     assert persisted.status == "active"
 
-    # Stripe was called
+    # Stripe was called with correct URLs
     assert len(stripe.subscription_checkouts) == 1
+    assert stripe.subscription_checkouts[0]["success_url"] == "https://example.com/success"
+    assert stripe.subscription_checkouts[0]["cancel_url"] == "https://example.com/cancel"
 
 
 @pytest.mark.asyncio
@@ -286,6 +288,25 @@ async def test_cancel_missing_enrollment_raises_not_found():
 
     with pytest.raises(StudentBillingEnrollmentNotFound):
         await uc.execute(parent_id="parent-1", enrollment_id="enr-missing")
+
+
+@pytest.mark.asyncio
+async def test_cancel_already_cancelled_is_idempotent():
+    """Cancelling an already-cancelled enrollment returns it without calling Stripe."""
+    enrollments = FakeEnrollmentRepo()
+    enrollment = _persisted_enrollment(status="cancelled")
+    enrollments.rows[enrollment.enrollment_id] = enrollment
+    stripe = FakeStripeGateway()
+
+    uc = CancelBillingEnrollment(enrollments=enrollments, stripe=stripe, clock=lambda: _NOW)
+    result = await uc.execute(parent_id="parent-1", enrollment_id="enr-1")
+
+    # Returns the already-cancelled enrollment
+    assert result.status == "cancelled"
+    assert result.enrollment_id == "enr-1"
+
+    # Stripe was NOT called
+    assert len(stripe.cancelled_subscriptions) == 0
 
 
 @pytest.mark.asyncio

@@ -116,6 +116,8 @@ class EnrollChildInSessionType:
             session_type_id=cmd.session_type_id,
             stripe_subscription_id=stripe_subscription_id,
             billing_start_date=now,
+            # NOTE: status set active optimistically; a webhook handler should reconcile
+            # if checkout is abandoned (Stripe subscription stays incomplete).
             status="active",
             enrolled_at=now,
             updated_at=now,
@@ -146,14 +148,18 @@ class CancelBillingEnrollment:
                 enrollment_id=enrollment_id,
             )
 
-        # 2. Cancel Stripe subscription if present
+        # 2. Short-circuit if already cancelled (idempotent)
+        if enrollment.status == "cancelled":
+            return enrollment  # idempotent — already cancelled
+
+        # 3. Cancel Stripe subscription if present
         if enrollment.stripe_subscription_id:
             await self._stripe.cancel_subscription(
                 enrollment.stripe_subscription_id,
                 at_period_end=True,
             )
 
-        # 3. Update status
+        # 4. Update status
         updated = enrollment.model_copy(
             update={"status": "cancelled", "updated_at": self._now()}
         )
