@@ -43,11 +43,11 @@ from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import 
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
 )
-from backend.v2.contexts.billing.infrastructure.mongo_stripe_dedup import (
-    MongoStripeEventDedup,
-)
 from backend.v2.contexts.billing.infrastructure.mongo_session_type_repo import (
     MongoSessionTypeRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_stripe_dedup import (
+    MongoStripeEventDedup,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_student_billing_enrollment_repo import (
     MongoStudentBillingEnrollmentRepository,
@@ -75,17 +75,14 @@ from backend.v2.contexts.enrollment.domain.errors import SessionNotFound
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_event_repo import (
     MongoEnrollmentEventRepository,
 )
-from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import (
-    MongoSessionOccurrenceRepository,
-)
-from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
-    MongoStudentRepository,
-)
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_writer import (
     MongoEnrollmentWriter,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import (
+    MongoSessionOccurrenceRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_pause_request_repo import (
     MongoPauseRequestRepository,
@@ -95,6 +92,9 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_writer import (
     MongoSessionWriter,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
+    MongoStudentRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_student_writer import (
     MongoStudentWriter,
@@ -373,17 +373,13 @@ def compose_parent(
             return [], 0
         query = {"academy_id": academy_id, "student_id": {"$in": list(by_id)}}
         total = await db["attendance"].count_documents(query)
-        cursor = (
-            db["attendance"]
-            .find(query)
-            .sort([("marked_at", -1)])
-            .skip(offset)
-            .limit(limit)
-        )
+        cursor = db["attendance"].find(query).sort([("marked_at", -1)]).skip(offset).limit(limit)
         attendance_rows = [doc async for doc in cursor]
 
         # Batch-fetch all sessions referenced in this page
-        session_ids = list({str(row["session_id"]) for row in attendance_rows if row.get("session_id")})
+        session_ids = list(
+            {str(row["session_id"]) for row in attendance_rows if row.get("session_id")}
+        )
         sessions_map: dict[str, Any] = {}
         if session_ids:
             async for sdoc in db["sessions"].find(
@@ -404,7 +400,9 @@ def compose_parent(
                 {
                     "attendance_id": str(attendance["attendance_id"]),
                     "student_id": student_id,
-                    "student_name": str(by_id.get(student_id, {}).get("full_name") or "Unnamed student"),
+                    "student_name": str(
+                        by_id.get(student_id, {}).get("full_name") or "Unnamed student"
+                    ),
                     "session_id": str(attendance["session_id"]),
                     "session_title": str((session or {}).get("title") or "Session"),
                     "status": str(attendance["status"]),
@@ -426,22 +424,13 @@ def compose_parent(
         total_feedback = await db["session_feedback"].count_documents(query)
         total = total_notes + total_feedback
         note_cursor = (
-            db["progress_notes"]
-            .find(query)
-            .sort([("created_at", -1)])
-            .skip(offset)
-            .limit(limit)
+            db["progress_notes"].find(query).sort([("created_at", -1)]).skip(offset).limit(limit)
         )
         note_rows = [doc async for doc in note_cursor]
 
         # Also fetch session feedback for the same students (un-paginated portion
         # after notes are exhausted; blend by created_at desc within the page).
-        feedback_cursor = (
-            db["session_feedback"]
-            .find(query)
-            .sort([("created_at", -1)])
-            .limit(limit)
-        )
+        feedback_cursor = db["session_feedback"].find(query).sort([("created_at", -1)]).limit(limit)
         feedback_rows = [doc async for doc in feedback_cursor]
 
         # Batch-fetch all sessions referenced in this page
@@ -471,7 +460,9 @@ def compose_parent(
                 {
                     "note_id": str(note.get("note_id") or note["_id"]),
                     "student_id": student_id,
-                    "student_name": str(by_id.get(student_id, {}).get("full_name") or "Unnamed student"),
+                    "student_name": str(
+                        by_id.get(student_id, {}).get("full_name") or "Unnamed student"
+                    ),
                     "session_id": str(session_id) if session_id else None,
                     "session_title": session_title,
                     "coach_id": coach_id,
@@ -495,7 +486,9 @@ def compose_parent(
                 {
                     "note_id": str(fb.get("feedback_id") or fb["_id"]),
                     "student_id": student_id,
-                    "student_name": str(by_id.get(student_id, {}).get("full_name") or "Unnamed student"),
+                    "student_name": str(
+                        by_id.get(student_id, {}).get("full_name") or "Unnamed student"
+                    ),
                     "session_id": str(session_id) if session_id else None,
                     "session_title": session_title,
                     "coach_id": coach_id,

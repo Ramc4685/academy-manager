@@ -16,7 +16,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.v2.contexts.coaching.application.ports import OccurrenceDetails
-from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import BulkMarkAttendance
+from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import (
+    BulkMarkAttendance,
+)
 from backend.v2.contexts.coaching.application.use_cases.mark_attendance import MarkAttendance
 from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance import (
     MarkCoachAttendance,
@@ -249,9 +251,7 @@ class FakeCoachEnrollmentWriter:
         if e is not None:
             self._enrollments[enrollment_id] = e.model_copy(update={"status": status})
 
-    async def find_for_session_student(
-        self, session_id: str, student_id: str
-    ) -> Enrollment | None:
+    async def find_for_session_student(self, session_id: str, student_id: str) -> Enrollment | None:
         return next(
             (
                 e
@@ -280,9 +280,7 @@ class _EnrollmentWriterAdapter:
     async def get(self, enrollment_id: str) -> Enrollment | None:
         return self._store._enrollments.get(enrollment_id)
 
-    async def find_for_session_student(
-        self, session_id: str, student_id: str
-    ) -> Enrollment | None:
+    async def find_for_session_student(self, session_id: str, student_id: str) -> Enrollment | None:
         return await self._store.find_for_session_student(session_id, student_id)
 
 

@@ -10,8 +10,12 @@ from backend.v2.contexts.enrollment.application.use_cases.get_child_schedule imp
     GetChildSchedule,
     StudentNotOwnedByParent,
 )
-from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, SessionOccurrence, Student
-
+from backend.v2.contexts.enrollment.domain.models import (
+    Enrollment,
+    Session,
+    SessionOccurrence,
+    Student,
+)
 
 # --- Fakes ---
 
@@ -245,8 +249,12 @@ async def test_pagination_offset_and_limit() -> None:
     occs = [_occurrence(f"occ-{i}", "sess-1", _IN_2_DAYS + timedelta(hours=i)) for i in range(5)]
 
     uc = _make_uc([student], [_enrollment("e1", "st-1", "sess-1")], occs, [session])
-    page1_entries, page1_total = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=2, offset=0)
-    page2_entries, page2_total = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=2, offset=2)
+    page1_entries, page1_total = await uc.execute(
+        "parent-1", "st-1", frm=None, to=None, limit=2, offset=0
+    )
+    page2_entries, page2_total = await uc.execute(
+        "parent-1", "st-1", frm=None, to=None, limit=2, offset=2
+    )
 
     assert len(page1_entries) == 2
     assert page1_total == 5  # full collection size, not page size

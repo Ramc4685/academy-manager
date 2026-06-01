@@ -62,9 +62,7 @@ class CoachAddStudentToRoster:
 
     async def execute(self, cmd: CoachAddStudentToRosterCommand) -> Enrollment:
         if not await self._assigned_sessions.is_coach_assigned(cmd.coach_id, cmd.session_id):
-            raise SessionNotAssigned(
-                "session not assigned to coach", session_id=cmd.session_id
-            )
+            raise SessionNotAssigned("session not assigned to coach", session_id=cmd.session_id)
         return await self._delegate.execute(
             EditRosterAddCommand(
                 session_id=cmd.session_id,
@@ -98,9 +96,7 @@ class CoachRemoveStudentFromRoster:
 
     async def execute(self, cmd: CoachRemoveStudentFromRosterCommand) -> None:
         if not await self._assigned_sessions.is_coach_assigned(cmd.coach_id, cmd.session_id):
-            raise SessionNotAssigned(
-                "session not assigned to coach", session_id=cmd.session_id
-            )
+            raise SessionNotAssigned("session not assigned to coach", session_id=cmd.session_id)
         enrollment = await self._enrollments.find_for_session_student(
             cmd.session_id, cmd.student_id
         )

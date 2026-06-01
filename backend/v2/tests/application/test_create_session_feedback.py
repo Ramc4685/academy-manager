@@ -14,7 +14,6 @@ from backend.v2.contexts.coaching.application.use_cases.session_feedback import 
 from backend.v2.contexts.coaching.domain.errors import SessionNotAssigned
 from backend.v2.contexts.coaching.domain.models import SessionFeedback
 
-
 # --- in-memory fakes ---
 
 

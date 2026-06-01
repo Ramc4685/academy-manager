@@ -67,9 +67,7 @@ class GetChildSchedule:
 
         now = datetime.now(UTC)
         start_dt: datetime = (
-            datetime(frm.year, frm.month, frm.day, 0, 0, 0, tzinfo=UTC)
-            if frm is not None
-            else now
+            datetime(frm.year, frm.month, frm.day, 0, 0, 0, tzinfo=UTC) if frm is not None else now
         )
         end_dt: datetime = (
             datetime(to.year, to.month, to.day, tzinfo=UTC) + timedelta(days=1)

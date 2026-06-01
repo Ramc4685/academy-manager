@@ -40,8 +40,8 @@ async def get_child_schedule(
             limit=limit,
             offset=offset,
         )
-    except StudentNotOwnedByParent:
-        raise HTTPException(status_code=404, detail="Not found")
+    except StudentNotOwnedByParent as err:
+        raise HTTPException(status_code=404, detail="Not found") from err
 
     return ParentScheduleResponse(
         entries=[

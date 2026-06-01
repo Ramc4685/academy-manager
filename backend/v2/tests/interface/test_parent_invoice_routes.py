@@ -59,7 +59,9 @@ def _line(*, line_id: str, invoice_id: str) -> InvoiceLine:
 
 
 class _FakeInvoiceRepo:
-    def __init__(self, invoices: dict[str, LedgerInvoice], lines: dict[str, list[InvoiceLine]]) -> None:
+    def __init__(
+        self, invoices: dict[str, LedgerInvoice], lines: dict[str, list[InvoiceLine]]
+    ) -> None:
         self._invoices = invoices
         self._lines = lines
 

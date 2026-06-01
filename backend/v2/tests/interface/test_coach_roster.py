@@ -16,7 +16,6 @@ Scenarios:
 
 from __future__ import annotations
 
-
 SESSION_ID = "s-today-1"
 OTHER_SESSION_ID = "s-other-coach"
 

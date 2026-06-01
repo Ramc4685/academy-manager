@@ -81,8 +81,7 @@ async def bulk_mark_attendance(
         occurrence_id=occurrence_id,
         session_id=body.session_id,
         entries=[
-            BulkAttendanceEntry(student_id=e.student_id, status=e.status)
-            for e in body.entries
+            BulkAttendanceEntry(student_id=e.student_id, status=e.status) for e in body.entries
         ],
     )
     result = await use_cases.bulk_mark_attendance.execute(cmd, coach_id=claims.user_id)

@@ -6,7 +6,6 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -82,9 +81,7 @@ def _make_client(
     register_exception_handlers(app)
     app.include_router(parent_router, prefix="/api/v2")
     app.dependency_overrides[get_auth_claims] = lambda: _claims(role, user_id)
-    app.dependency_overrides[get_parent_use_cases] = lambda: _FakeParentUseCases(
-        entries, owned_ids
-    )
+    app.dependency_overrides[get_parent_use_cases] = lambda: _FakeParentUseCases(entries, owned_ids)
     with TestClient(app) as client:
         yield client
 
@@ -120,9 +117,7 @@ def test_happy_path_returns_schedule() -> None:
 def test_pagination_limit_and_offset() -> None:
     entries = [_entry(f"occ-{i}", i) for i in range(10)]
     with _make_client(entries=entries) as client:
-        response = client.get(
-            "/api/v2/parent/children/student-1/schedule?limit=3&offset=4"
-        )
+        response = client.get("/api/v2/parent/children/student-1/schedule?limit=3&offset=4")
 
     assert response.status_code == 200
     body = response.json()

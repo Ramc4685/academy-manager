@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 # coach_client, parent_client, admin_client, anon_client are provided by conftest.py
 
 

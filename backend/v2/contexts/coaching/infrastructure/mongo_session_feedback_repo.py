@@ -28,9 +28,7 @@ class MongoSessionFeedbackRepository(TenantScopedRepository):
     async def save(self, feedback: SessionFeedback) -> None:
         await self._insert_one(feedback.model_dump(mode="python"))
 
-    async def list_for_session(
-        self, session_id: str, *, limit: int = 100
-    ) -> list[SessionFeedback]:
+    async def list_for_session(self, session_id: str, *, limit: int = 100) -> list[SessionFeedback]:
         cursor = self._find_many(
             {"session_id": session_id},
             sort=[("created_at", -1)],
@@ -38,9 +36,7 @@ class MongoSessionFeedbackRepository(TenantScopedRepository):
         )
         return [self._to_domain(doc) async for doc in cursor]
 
-    async def list_for_student(
-        self, student_id: str, *, limit: int = 100
-    ) -> list[SessionFeedback]:
+    async def list_for_student(self, student_id: str, *, limit: int = 100) -> list[SessionFeedback]:
         cursor = self._find_many(
             {"student_id": student_id},
             sort=[("created_at", -1)],

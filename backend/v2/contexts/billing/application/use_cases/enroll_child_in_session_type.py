@@ -89,22 +89,24 @@ class EnrollChildInSessionType:
         now = self._now()
 
         # 4. Start Stripe subscription checkout
-        _, redirect_url, stripe_subscription_id = (
-            await self._stripe.create_subscription_checkout_session(
-                parent_id=cmd.parent_id,
-                enrollment_id=enrollment_id,
-                session_id=cmd.session_type_id,  # session_id field used as reference
-                amount_cents=session_type.price_cents,
-                success_url=cmd.success_url,
-                cancel_url=cmd.cancel_url,
-                metadata={
-                    "academy_id": self._academy_id,
-                    "enrollment_id": enrollment_id,
-                    "parent_id": cmd.parent_id,
-                    "student_id": cmd.student_id,
-                    "session_type_id": cmd.session_type_id,
-                },
-            )
+        (
+            _,
+            redirect_url,
+            stripe_subscription_id,
+        ) = await self._stripe.create_subscription_checkout_session(
+            parent_id=cmd.parent_id,
+            enrollment_id=enrollment_id,
+            session_id=cmd.session_type_id,  # session_id field used as reference
+            amount_cents=session_type.price_cents,
+            success_url=cmd.success_url,
+            cancel_url=cmd.cancel_url,
+            metadata={
+                "academy_id": self._academy_id,
+                "enrollment_id": enrollment_id,
+                "parent_id": cmd.parent_id,
+                "student_id": cmd.student_id,
+                "session_type_id": cmd.session_type_id,
+            },
         )
 
         # 5. Persist enrollment with active status
@@ -160,8 +162,6 @@ class CancelBillingEnrollment:
             )
 
         # 4. Update status
-        updated = enrollment.model_copy(
-            update={"status": "cancelled", "updated_at": self._now()}
-        )
+        updated = enrollment.model_copy(update={"status": "cancelled", "updated_at": self._now()})
         await self._enrollments.save(updated)
         return updated
