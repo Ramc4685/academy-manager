@@ -78,7 +78,10 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
     ) -> list[SessionOccurrence]:
         cursor = self._find_many(
             {
-                "session_id": session_id,
+                "$or": [
+                    {"session_id": session_id},
+                    {"template_session_id": session_id},
+                ],
                 "start_at": {"$gte": start_at, "$lte": end_at},
             },
             sort=[("start_at", 1)],

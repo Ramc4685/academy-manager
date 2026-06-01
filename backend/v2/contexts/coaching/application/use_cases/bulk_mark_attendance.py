@@ -145,6 +145,19 @@ class BulkMarkAttendance:
                 "duplicate student_id entries in batch", session_id=cmd.session_id
             )
 
+        # 2c. Pre-flight: check for existing attendance before writing any rows so
+        # a conflict never causes a partial batch (raises before first write).
+        for entry in cmd.entries:
+            existing = await self._attendance.find_existing(cmd.occurrence_id, entry.student_id)
+            if existing is not None:
+                raise ConflictAttendanceExists(
+                    "attendance already recorded for this occurrence and student",
+                    session_id=cmd.session_id,
+                    occurrence_id=cmd.occurrence_id,
+                    student_id=entry.student_id,
+                    existing_attendance_id=existing.attendance_id,
+                )
+
         # 3. Persist attendance and emit events per entry.
         now = self._now()
         entry_results: list[BulkAttendanceEntryResult] = []
