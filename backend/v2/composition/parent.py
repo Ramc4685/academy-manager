@@ -404,7 +404,7 @@ def compose_parent(
         for attendance in attendance_rows:
             student_id = str(attendance["student_id"])
             session = sessions_map.get(str(attendance["session_id"]))
-            coach_id = attendance.get("coach_id")
+            coach_id = attendance.get("marked_by") or attendance.get("coach_id")
             if coach_id not in coach_cache:
                 coach_cache[coach_id] = await _resolve_coach_name(coach_id)
             coach_name = coach_cache[coach_id]
@@ -435,15 +435,14 @@ def compose_parent(
         total_notes = await db["progress_notes"].count_documents(query)
         total_feedback = await db["session_feedback"].count_documents(query)
         total = total_notes + total_feedback
-        note_cursor = (
-            db["progress_notes"].find(query).sort([("created_at", -1)]).skip(offset).limit(limit)
-        )
-        note_rows = [doc async for doc in note_cursor]
-
-        # Also fetch session feedback for the same students (un-paginated portion
-        # after notes are exhausted; blend by created_at desc within the page).
-        feedback_cursor = db["session_feedback"].find(query).sort([("created_at", -1)]).limit(limit)
-        feedback_rows = [doc async for doc in feedback_cursor]
+        # Fetch ALL matching rows from both collections (no skip/limit on DB queries)
+        # so we can merge and slice correctly — avoids page 2 repeating feedback items.
+        note_rows = [
+            doc async for doc in db["progress_notes"].find(query).sort([("created_at", -1)])
+        ]
+        feedback_rows = [
+            doc async for doc in db["session_feedback"].find(query).sort([("created_at", -1)])
+        ]
 
         # Batch-fetch all sessions referenced in this page
         all_session_ids = list(
@@ -512,22 +511,10 @@ def compose_parent(
                 }
             )
 
-        # Re-sort blended results by created_at descending
+        # Re-sort blended results by created_at descending, then slice for the requested page
         rows.sort(key=lambda r: r["created_at"], reverse=True)
-        return rows[:limit], total
-
-    async def list_invoices_for_parent(parent_id: str):
-        return await billing_ledger_repo.list_invoices_for_parent(parent_id)
-
-    async def get_invoice_for_parent(*, parent_id: str, invoice_id: str):
-        invoice = await billing_ledger_repo.get_invoice(invoice_id)
-        if invoice is None or invoice.parent_id != parent_id:
-            return None
-        lines_cursor = db["invoice_lines"].find(
-            {"academy_id": academy_id, "invoice_id": invoice_id}
-        )
-        lines = [InvoiceLine(**doc) async for doc in lines_cursor]
-        return {"invoice": invoice, "lines": lines}
+        page = rows[offset : offset + limit]
+        return page, total
 
     async def list_invoices_for_parent(parent_id: str):
         return await billing_ledger_repo.list_invoices_for_parent(parent_id)

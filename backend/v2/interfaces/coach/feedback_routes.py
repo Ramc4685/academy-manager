@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from backend.v2.contexts.coaching.application.use_cases.session_feedback import (
     CreateFeedbackCommand,
@@ -17,6 +17,15 @@ from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
 router = APIRouter(tags=["coach.feedback"])
+
+_FORBIDDEN = HTTPException(
+    status_code=status.HTTP_403_FORBIDDEN, detail="session not assigned to coach"
+)
+
+
+async def _require_assigned(use_cases: CoachUseCases, coach_id: str, session_id: str) -> None:
+    if not await use_cases.assigned_sessions.is_coach_assigned(coach_id, session_id):
+        raise _FORBIDDEN
 
 
 @router.post(
@@ -58,6 +67,7 @@ async def list_feedback(
     claims: AuthClaims = Depends(require_persona("coach")),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> FeedbackListResponse:
+    await _require_assigned(use_cases, claims.user_id, session_id)
     rows = await use_cases.list_feedback.execute(session_id)
     return FeedbackListResponse(
         feedback=[

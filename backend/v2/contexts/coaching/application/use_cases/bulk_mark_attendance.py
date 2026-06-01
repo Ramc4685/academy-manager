@@ -23,6 +23,7 @@ from backend.v2.contexts.coaching.application.ports import (
 from backend.v2.contexts.coaching.domain.errors import (
     BulkSessionNotAssigned,
     BulkStudentNotEnrolled,
+    SessionCancelled,
 )
 from backend.v2.contexts.coaching.domain.events import (
     AttendanceMarked,
@@ -110,6 +111,15 @@ class BulkMarkAttendance:
         }:
             raise BulkSessionNotAssigned(
                 "session occurrence not assigned to this coach",
+                session_id=cmd.session_id,
+                occurrence_id=cmd.occurrence_id,
+                coach_id=coach_id,
+            )
+
+        # 1b. Reject cancelled occurrences before persisting anything.
+        if occurrence.status == "cancelled":
+            raise SessionCancelled(
+                "occurrence is cancelled",
                 session_id=cmd.session_id,
                 occurrence_id=cmd.occurrence_id,
                 coach_id=coach_id,
