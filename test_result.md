@@ -1627,3 +1627,12 @@ agent_communication:
       Change prepared: keep canonical same-origin tenant API path /api/v2/*, add BFF-owned X-CourtMastr-Auth bridge header from the browser only for same-origin BFF requests, and have the Next BFF route map that header back to backend Authorization while stripping it before upstream. Also keeps the direct post-login user.getIdToken path and service-worker NetworkOnly rule for non-coach /api/* requests.
 
       Verification passed in a clean temporary frontend copy: node --test frontend/lib/api/proxy-headers.node-test.mjs frontend/lib/api/auth-token.node-test.mjs frontend/lib/auth/token-readiness.node-test.mjs; pnpm typecheck; pnpm lint; pnpm build with BFF_API_ORIGIN=https://api.academy.courtmastr.com, NEXT_PUBLIC_API_BASE=/api/v2, and Firebase emulator host cleared. Root worktree pnpm typecheck remains blocked by unrelated dirty/untracked parent waiver/admin directory files.
+  - agent: "main"
+    message: |
+      GitHub Actions frontend Playwright flake fix — 2026-06-01.
+
+      User asked to fix failed Production run 26734663351 job 78785427303. Root cause from CI artifact: the WebKit mobile admin settings E2E saw the Branding tab rendered, but clicking it left the URL at /admin/settings?panel=roles, making the test flaky under CI's failOnFlakyTests policy. The settings tab row was using button onClick handlers plus router.replace for URL state, which made tab navigation more timing-sensitive than necessary.
+
+      Change: converted admin settings panel tabs to native Next links with replace + scroll=false, preserving active styling with aria-current="page"; updated the admin-shell E2E to assert link semantics.
+
+      Verification passed: focused WebKit mobile settings spec repeated 5 times passed; full admin-shell.spec.ts passed on webkit-mobile with 26 passed; pnpm typecheck passed; pnpm lint passed; pnpm build passed. In-app Browser reached the local app but redirected to /login because that browser path cannot install the E2E BFF route stubs used by this spec, so rendered flow verification used the repository Playwright workflow that matches CI.

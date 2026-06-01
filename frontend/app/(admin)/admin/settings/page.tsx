@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
+import type { UrlObject } from "url";
 
 import { AcademyPanel } from "@/components/admin/settings/academy-panel";
 import { BrandingPanel } from "@/components/admin/settings/branding-panel";
@@ -25,7 +26,6 @@ function coercePanel(value: string | null): SettingsPanelKey {
 }
 
 export default function AdminSettingsPage() {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const active = coercePanel(searchParams.get("panel"));
@@ -41,15 +41,18 @@ export default function AdminSettingsPage() {
     }
   }, [active, params, pathname, searchParams]);
 
-  function setPanel(panel: SettingsPanelKey) {
+  function hrefForPanel(panel: SettingsPanelKey): UrlObject {
     const next = new URLSearchParams(params);
     next.set("panel", panel);
-    router.replace(`${pathname}?${next.toString()}` as never, { scroll: false });
+    return {
+      pathname,
+      query: Object.fromEntries(next),
+    };
   }
 
   return (
     <section data-testid="admin-settings" className="space-y-6">
-      <SettingsTabs active={active} onChange={setPanel} />
+      <SettingsTabs active={active} hrefFor={hrefForPanel} />
       {active === "academy" && <AcademyPanel />}
       {active === "fees" && <FeesPanel />}
       {active === "gateway" && <GatewayPanel />}
