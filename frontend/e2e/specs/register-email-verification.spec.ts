@@ -100,7 +100,9 @@ test.describe("parent email registration verification", () => {
 
     await page.goto("/login");
     await page.getByTestId("login-email").fill("parent@example.com");
+    await expect(page.getByTestId("login-email")).toHaveValue("parent@example.com");
     await page.getByTestId("login-password").fill("correct-horse-1");
+    await expect(page.getByTestId("login-password")).toHaveValue("correct-horse-1");
     await page.getByTestId("login-submit").click();
 
     await expect(page).toHaveURL(/\/parent\/onboarding$/);
