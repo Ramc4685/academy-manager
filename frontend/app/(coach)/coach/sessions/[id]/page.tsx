@@ -1,20 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { use, useState } from "react";
+import { use, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ulid } from "ulid";
 
 import {
   createProgressNote,
-  getCoachSchedule,
-  getSessionRoster,
+  getCoachToday,
   markAttendance,
   type AttendanceStatus,
-  type RosterEntry,
+  type CoachRosterEntry,
 } from "@/lib/api/coach";
 import { queryKeys } from "@/lib/query/keys";
 import { useOnline } from "@/lib/pwa/online";
+
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -34,26 +37,20 @@ export default function SessionDetailPage({ params }: PageProps) {
   const queryClient = useQueryClient();
   const online = useOnline();
 
-  const { data: schedule } = useQuery({
-    queryKey: queryKeys.coach.schedule(),
-    queryFn: getCoachSchedule,
+  const date = todayISO();
+  const { data: today, isLoading } = useQuery({
+    queryKey: queryKeys.coach.today(date),
+    queryFn: () => getCoachToday(date),
     staleTime: 5 * 60 * 1000,
   });
 
-  const { data: rosterData, isLoading: rosterLoading } = useQuery({
-    queryKey: ["coach", "roster", id],
-    queryFn: () => getSessionRoster(id),
-    staleTime: 5 * 60 * 1000,
-  });
+  const session = useMemo(() => today?.sessions.find((s) => s.session_id === id), [today, id]);
+  const roster: CoachRosterEntry[] = session?.roster ?? [];
 
   const [localMarks, setLocalMarks] = useState<Record<string, OptimisticEntry>>({});
   // noteOpen tracks which student has the inline note box open
   const [noteOpen, setNoteOpen] = useState<string | null>(null);
   const [noteTexts, setNoteTexts] = useState<Record<string, string>>({});
-
-  const session = schedule?.sessions.find((s) => s.session_id === id);
-  const roster = rosterData?.roster ?? [];
-  const isLoading = rosterLoading;
 
   const noteMutation = useMutation({
     mutationFn: ({ studentId, body }: { studentId: string; body: string }) =>
@@ -177,7 +174,7 @@ function RosterRow({
   onNoteSave,
   noteSaving,
 }: {
-  student: RosterEntry;
+  student: CoachRosterEntry;
   local?: OptimisticEntry;
   noteOpen: boolean;
   noteText: string;
