@@ -34,7 +34,7 @@ export default function SessionDetailPage({ params }: PageProps) {
   const queryClient = useQueryClient();
   const online = useOnline();
 
-  const { data: schedule, isLoading: scheduleLoading } = useQuery({
+  const { data: schedule } = useQuery({
     queryKey: queryKeys.coach.schedule(),
     queryFn: getCoachSchedule,
     staleTime: 5 * 60 * 1000,
@@ -53,7 +53,7 @@ export default function SessionDetailPage({ params }: PageProps) {
 
   const session = schedule?.sessions.find((s) => s.session_id === id);
   const roster = rosterData?.roster ?? [];
-  const isLoading = scheduleLoading || rosterLoading;
+  const isLoading = rosterLoading;
 
   const noteMutation = useMutation({
     mutationFn: ({ studentId, body }: { studentId: string; body: string }) =>
