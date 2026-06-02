@@ -201,6 +201,7 @@ function RosterRow({
         <div className="flex gap-1 shrink-0" role="group">
           {/* Present */}
           <button
+            data-testid={`mark-${student.student_id}-present`}
             disabled={disabled || local?.pending}
             onClick={() => onMark("present")}
             className="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50"
@@ -214,6 +215,7 @@ function RosterRow({
           </button>
           {/* Absent */}
           <button
+            data-testid={`mark-${student.student_id}-absent`}
             disabled={disabled || local?.pending}
             onClick={() => onMark("absent")}
             className="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50"
@@ -241,7 +243,7 @@ function RosterRow({
       </div>
 
       {local?.error && (
-        <p className="mt-1.5 text-xs text-red-600">{local.error}</p>
+        <p data-testid={`mark-error-${student.student_id}`} className="mt-1.5 text-xs text-red-600">{local.error}</p>
       )}
 
       {/* Inline note box */}
