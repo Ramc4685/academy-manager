@@ -63,11 +63,12 @@ async def list_sessions(
         default=None,
         description="Set to 'upcoming' to return all sessions starting from today through the next 30 days. Overrides 'date' when both are passed.",
     ),
+    coach_id: str | None = Query(default=None, description="Filter sessions by coach ID"),
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionList:
     parsed = date.fromisoformat(on_date) if on_date else None
-    sessions = await use_cases.list_admin_sessions(parsed, window=window)  # type: ignore[operator]
+    sessions = await use_cases.list_admin_sessions(parsed, window=window, coach_id=coach_id)  # type: ignore[operator]
     rows = [s if isinstance(s, dict) else s.model_dump(exclude={"academy_id"}) for s in sessions]
     return AdminSessionList(sessions=[AdminSessionView(**s) for s in rows])
 

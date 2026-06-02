@@ -15,12 +15,15 @@ import { ArrowLeft, RefreshCw } from "lucide-react";
 
 import {
   changeAdminStudentParent,
+  listAdminSessions,
   listAdminUsers,
+  type AdminSessionView,
   type AdminUserView,
   type ChangeAdminStudentParentRequest,
 } from "@/lib/api/admin";
 import {
   getAdminStudent,
+  transferEnrollment,
   updateAdminStudent,
   type AdminStudentDetail,
   type AdminStudentPaymentSummary,
@@ -125,7 +128,11 @@ export default function AdminStudentDetailPage() {
           />
         </Card>
         <CurrentPaymentPanel student={student} />
-        <SessionsPanel sessions={student.enrolled_sessions ?? []} />
+        <SessionsPanel
+          sessions={student.enrolled_sessions ?? []}
+          studentId={studentId}
+          queryClient={queryClient}
+        />
         <Card p={20}>
           <Overline>Engagement</Overline>
           <DetailList
@@ -209,60 +216,204 @@ function CurrentPaymentPanel({ student }: { student: AdminStudentDetail }) {
   );
 }
 
-function SessionsPanel({ sessions }: { sessions: AdminStudentSessionSummary[] }) {
+function SessionsPanel({
+  sessions,
+  studentId,
+  queryClient,
+}: {
+  sessions: AdminStudentSessionSummary[];
+  studentId: string;
+  queryClient: ReturnType<typeof useQueryClient>;
+}) {
+  const [moving, setMoving] = useState<AdminStudentSessionSummary | null>(null);
+  const [targetSessionId, setTargetSessionId] = useState("");
+  const [effectiveDate, setEffectiveDate] = useState(
+    () => new Date().toISOString().slice(0, 10),
+  );
+  const [reason, setReason] = useState("");
+
+  const sessionsQuery = useQuery({
+    queryKey: queryKeys.admin.sessions("upcoming"),
+    queryFn: () => listAdminSessions(undefined, { window: "upcoming" }),
+    enabled: Boolean(moving),
+  });
+
+  const transferMutation = useMutation({
+    mutationFn: () =>
+      transferEnrollment(moving!.enrollment_id, {
+        target_session_id: targetSessionId,
+        effective_date: effectiveDate,
+        reason: reason || null,
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.admin.studentDetail(studentId),
+      });
+      setMoving(null);
+      setTargetSessionId("");
+      setReason("");
+    },
+  });
+
+  const availableSessions: AdminSessionView[] =
+    (sessionsQuery.data?.sessions ?? []).filter(
+      (s) => s.session_id !== moving?.session_id,
+    );
+
   return (
-    <Card p={20} className="lg:col-span-2">
-      <div className="flex items-center justify-between gap-3">
-        <Overline>Enrolled sessions</Overline>
-        <span className="font-mono text-xs text-rally-muted tabular-nums">
-          {sessions.length} active
-        </span>
-      </div>
-      {sessions.length === 0 ? (
-        <p className="mt-3 text-sm text-rally-muted" data-testid="admin-student-no-sessions">
-          No active session enrollments.
-        </p>
-      ) : (
-        <div className="mt-3 overflow-x-auto" data-testid="admin-student-enrolled-sessions">
-          <table className="min-w-full text-left text-sm">
-            <thead className="border-b border-neutral-200 text-xs uppercase tracking-overline text-rally-muted">
-              <tr>
-                <th className="py-2 pr-4 font-medium">Session</th>
-                <th className="py-2 pr-4 font-medium">Schedule</th>
-                <th className="py-2 pr-4 font-medium">Billing</th>
-                <th className="py-2 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100">
-              {sessions.map((session) => (
-                <tr key={session.enrollment_id}>
-                  <td className="py-3 pr-4 align-top">
-                    <div className="font-medium text-rally-ink">{session.session_title}</div>
-                    <div className="text-xs text-rally-muted">
-                      {session.location ?? session.session_id}
-                    </div>
-                  </td>
-                  <td className="py-3 pr-4 align-top text-rally-muted">
-                    {formatDateTimeRange(session.start_at, session.end_at)}
-                  </td>
-                  <td className="py-3 pr-4 align-top">
-                    <div className="font-mono tabular-nums text-rally-ink">
-                      {session.amount_cents == null ? "—" : formatCurrencyCents(session.amount_cents)}
-                    </div>
-                    <div className="text-xs text-rally-muted">
-                      {session.payment_mode ?? session.subscription_status ?? "—"}
-                    </div>
-                  </td>
-                  <td className="py-3 align-top">
-                    <StatusChip status={session.subscription_status ?? session.status} />
-                  </td>
+    <>
+      <Card p={20} className="lg:col-span-2">
+        <div className="flex items-center justify-between gap-3">
+          <Overline>Enrolled sessions</Overline>
+          <span className="font-mono text-xs text-rally-muted tabular-nums">
+            {sessions.length} active
+          </span>
+        </div>
+        {sessions.length === 0 ? (
+          <p className="mt-3 text-sm text-rally-muted" data-testid="admin-student-no-sessions">
+            No active session enrollments.
+          </p>
+        ) : (
+          <div className="mt-3 overflow-x-auto" data-testid="admin-student-enrolled-sessions">
+            <table className="min-w-full text-left text-sm">
+              <thead className="border-b border-neutral-200 text-xs uppercase tracking-overline text-rally-muted">
+                <tr>
+                  <th className="py-2 pr-4 font-medium">Session</th>
+                  <th className="py-2 pr-4 font-medium">Schedule</th>
+                  <th className="py-2 pr-4 font-medium">Billing</th>
+                  <th className="py-2 pr-4 font-medium">Status</th>
+                  <th className="py-2 font-medium" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-neutral-100">
+                {sessions.map((session) => (
+                  <tr key={session.enrollment_id}>
+                    <td className="py-3 pr-4 align-top">
+                      <div className="font-medium text-rally-ink">{session.session_title}</div>
+                      <div className="text-xs text-rally-muted">
+                        {session.location ?? session.session_id}
+                      </div>
+                    </td>
+                    <td className="py-3 pr-4 align-top text-rally-muted">
+                      {formatDateTimeRange(session.start_at, session.end_at)}
+                    </td>
+                    <td className="py-3 pr-4 align-top">
+                      <div className="font-mono tabular-nums text-rally-ink">
+                        {session.amount_cents == null
+                          ? "—"
+                          : formatCurrencyCents(session.amount_cents)}
+                      </div>
+                      <div className="text-xs text-rally-muted">
+                        {session.payment_mode ?? session.subscription_status ?? "—"}
+                      </div>
+                    </td>
+                    <td className="py-3 pr-4 align-top">
+                      <StatusChip status={session.subscription_status ?? session.status} />
+                    </td>
+                    <td className="py-3 align-top">
+                      <button
+                        className="text-xs font-medium text-rally-blue hover:underline"
+                        onClick={() => {
+                          setMoving(session);
+                          setTargetSessionId("");
+                          setReason("");
+                          setEffectiveDate(new Date().toISOString().slice(0, 10));
+                        }}
+                      >
+                        Move
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {moving && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl dark:bg-neutral-900">
+            <h2 className="mb-1 text-base font-semibold text-rally-ink">Move student session</h2>
+            <p className="mb-4 text-sm text-rally-muted">
+              Moving <span className="font-medium">{moving.session_title}</span>
+            </p>
+
+            {transferMutation.isError && (
+              <p className="mb-3 rounded bg-red-50 px-3 py-2 text-xs text-red-600">
+                {String(transferMutation.error)}
+              </p>
+            )}
+
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium uppercase tracking-overline text-rally-muted">
+                  New session
+                </label>
+                <select
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  value={targetSessionId}
+                  onChange={(e) => setTargetSessionId(e.target.value)}
+                  disabled={sessionsQuery.isPending}
+                >
+                  <option value="">
+                    {sessionsQuery.isPending ? "Loading…" : "Select a session"}
+                  </option>
+                  {availableSessions.map((s) => (
+                    <option key={s.session_id} value={s.session_id}>
+                      {s.title} {s.coach_name ? `— ${s.coach_name}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium uppercase tracking-overline text-rally-muted">
+                  Effective date
+                </label>
+                <input
+                  type="date"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  value={effectiveDate}
+                  onChange={(e) => setEffectiveDate(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium uppercase tracking-overline text-rally-muted">
+                  Reason (optional)
+                </label>
+                <textarea
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  rows={2}
+                  placeholder="e.g. schedule conflict"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setMoving(null)}
+                disabled={transferMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => transferMutation.mutate()}
+                disabled={!targetSessionId || transferMutation.isPending}
+              >
+                {transferMutation.isPending ? "Moving…" : "Move student"}
+              </Button>
+            </div>
+          </div>
         </div>
       )}
-    </Card>
+    </>
   );
 }
 

@@ -664,6 +664,7 @@ export interface AdminUserView {
 export interface AdminUserDetail extends AdminUserView {
   roles: AdminUserRole[];
   linked_student_count: number;
+  session_count: number;
 }
 
 export interface AdminUserList {
@@ -833,6 +834,7 @@ export function getAdminUser(userId: string): Promise<AdminUserDetail> {
 export function updateAdminUser(
   userId: string,
   payload: Partial<{
+    email: string;
     display_name: string;
     phone: string | null;
     status: string;
@@ -843,6 +845,13 @@ export function updateAdminUser(
     method: "PATCH",
     body: JSON.stringify(payload),
   });
+}
+
+export function listAdminSessionsByCoach(coachId: string): Promise<AdminSessionList> {
+  return apiFetch<AdminSessionList>(
+    `/admin/sessions?window=upcoming&coach_id=${encodeURIComponent(coachId)}`,
+    { method: "GET" },
+  );
 }
 
 function isQueryFunctionContext(params: ListAdminStudentsParams | QueryFunctionContextArg): params is QueryFunctionContextArg {

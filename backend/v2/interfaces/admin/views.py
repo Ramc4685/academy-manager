@@ -25,6 +25,7 @@ class AdminUserDetailView(AdminUserView):
     phone: str | None = None
     roles: list[Literal["admin", "coach", "parent"]] = []
     linked_student_count: int = 0
+    session_count: int = 0
 
 
 class AdminUserList(BaseModel):
@@ -125,6 +126,7 @@ class AdminStudentParentChangeView(BaseModel):
 
 
 class UpdateAdminUserRequest(BaseModel):
+    email: str | None = Field(default=None, max_length=254)
     display_name: str | None = Field(default=None, min_length=1, max_length=120)
     phone: str | None = Field(default=None, max_length=40)
     status: str | None = Field(default=None, max_length=32)

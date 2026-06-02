@@ -184,7 +184,7 @@ class MongoUserRepository:
         )
 
     def _to_admin_detail(
-        self, doc: dict[str, object], *, linked_student_count: int
+        self, doc: dict[str, object], *, linked_student_count: int, session_count: int = 0
     ) -> AdminUserDetail:
         user = self._to_domain(doc)
         summary = self._to_admin_summary(doc)
@@ -192,6 +192,7 @@ class MongoUserRepository:
             **summary.model_dump(),
             roles=user.roles,
             linked_student_count=linked_student_count,
+            session_count=session_count,
         )
 
     @staticmethod
@@ -240,7 +241,15 @@ class MongoUserRepository:
                 ],
             }
         )
-        return self._to_admin_detail(doc, linked_student_count=linked_student_count)
+        session_count = await self._db["sessions"].count_documents(
+            {
+                "academy_id": academy_id,
+                "coach_id": {"$in": lookup_ids},
+            }
+        )
+        return self._to_admin_detail(
+            doc, linked_student_count=linked_student_count, session_count=session_count
+        )
 
     async def create_admin_user(
         self,

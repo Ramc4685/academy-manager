@@ -33,12 +33,13 @@ usage() {
 Usage: scripts/local_test_stack.sh <command>
 
 Commands:
+  fresh        FULL RESET: stop → start everything → seed demo data. Use this to start testing.
+  all          Start infra + app (skips already-running services), then smoke check.
   status       Show local Mongo/Firebase/backend/frontend status.
   infra        Start local MongoDB and Firebase Auth emulator if missing.
   app          Start backend and frontend if missing.
-  all          Start infra, start app, then run smoke checks.
   smoke        Check local health endpoints and expected ports.
-  seed         Run backend/scripts/seed_local.py when present.
+  seed         Drop and re-seed demo data into local MongoDB (destructive).
   test         Run backend v2 tests and frontend typecheck.
   logs         Print log file paths and recent lines.
   stop         Stop only processes started by this script.
@@ -71,6 +72,20 @@ print_port() {
   else
     printf '%-24s stopped port=%s\n' "${label}" "${port}"
   fi
+}
+
+wait_for_port_free() {
+  label="$1"
+  port="$2"
+  timeout="${3:-15}"
+  started_at="$(date +%s)"
+  while has_listener "${port}"; do
+    if [ "$(( $(date +%s) - started_at ))" -ge "${timeout}" ]; then
+      printf 'WARN: %s port %s did not free within %ss — continuing anyway\n' "${label}" "${port}" "${timeout}" >&2
+      return 0
+    fi
+    sleep 1
+  done
 }
 
 wait_for_port() {
@@ -150,6 +165,29 @@ is_valid_firebase_api_key() {
   esac
 }
 
+bootstrap_env_local() {
+  env_local="${ROOT_DIR}/frontend/.env.local"
+  [ -f "${env_local}" ] && return 0
+  api_key="$(firebase_api_key || true)"
+  [ -n "${api_key}" ] || return 0
+  sender_id="$(read_frontend_env NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || read_frontend_env REACT_APP_FIREBASE_MESSAGING_SENDER_ID || true)"
+  app_id="$(read_frontend_env NEXT_PUBLIC_FIREBASE_APP_ID || read_frontend_env REACT_APP_FIREBASE_APP_ID || true)"
+  measurement_id="$(read_frontend_env NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID || read_frontend_env REACT_APP_FIREBASE_MEASUREMENT_ID || true)"
+  log "Creating frontend/.env.local (one-time bootstrap)"
+  cat >"${env_local}" <<EOF
+BFF_API_ORIGIN=${BACKEND_URL}
+NEXT_PUBLIC_API_BASE=/api/v2
+NEXT_PUBLIC_FIREBASE_API_KEY=${api_key}
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${FIREBASE_PROJECT_ID}.firebaseapp.com
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=${FIREBASE_PROJECT_ID}.firebasestorage.app
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=${sender_id}
+NEXT_PUBLIC_FIREBASE_APP_ID=${app_id}
+NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=${measurement_id}
+NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST=http://${FIREBASE_AUTH_EMULATOR_HOST}
+EOF
+}
+
 start_mongo() {
   if has_listener "${MONGO_PORT}"; then
     log "MongoDB already listening on ${MONGO_HOST}:${MONGO_PORT}"
@@ -190,13 +228,14 @@ start_backend() {
     cd "${ROOT_DIR}/backend"
     # shellcheck disable=SC1091
     . .venv/bin/activate
-    nohup env APP_ENV=development EMAIL_DELIVERY_MODE=disabled MONGO_URL="${MONGO_URL}" DB_NAME="${DB_NAME}" FIREBASE_AUTH_ENABLED=true FIREBASE_PROJECT_ID="${FIREBASE_PROJECT_ID}" FIREBASE_AUTH_EMULATOR_HOST="${FIREBASE_AUTH_EMULATOR_HOST}" FRONTEND_URL="${FRONTEND_URL}" CORS_ORIGINS="${FRONTEND_URL},http://127.0.0.1:${FRONTEND_PORT}" COOKIE_SECURE=false V2_ALLOWED_INTERNAL_TENANT_HEADER=x-academy-id PYTHONPATH="${ROOT_DIR}" uvicorn backend.v2.main:app --host "${BACKEND_HOST}" --port "${BACKEND_PORT}" --reload
+    nohup env APP_ENV=development EMAIL_DELIVERY_MODE=disabled MONGO_URL="${MONGO_URL}" DB_NAME="${DB_NAME}" FIREBASE_AUTH_ENABLED=true FIREBASE_PROJECT_ID="${FIREBASE_PROJECT_ID}" FIREBASE_AUTH_EMULATOR_HOST="${FIREBASE_AUTH_EMULATOR_HOST}" FRONTEND_URL="${FRONTEND_URL}" CORS_ORIGINS="${FRONTEND_URL},http://127.0.0.1:${FRONTEND_PORT}" COOKIE_SECURE=false V2_ALLOWED_INTERNAL_TENANT_HEADER=x-academy-id V2_DEFAULT_ACADEMY_ID=blno PYTHONPATH="${ROOT_DIR}" uvicorn backend.v2.main:app --host "${BACKEND_HOST}" --port "${BACKEND_PORT}" --reload
   ) >"${LOG_DIR}/backend.log" 2>&1 &
   write_pid backend "$!"
   wait_for_url "Backend health" "${BACKEND_URL}/api/v2/healthz" 60 || { tail -n 120 "${LOG_DIR}/backend.log" >&2 || true; exit 1; }
 }
 
 start_frontend() {
+  bootstrap_env_local
   if has_listener "${FRONTEND_PORT}"; then
     log "Frontend already listening on ${FRONTEND_HOST}:${FRONTEND_PORT}"
     return 0
@@ -205,7 +244,7 @@ start_frontend() {
   api_key="$(firebase_api_key || true)"
   [ -n "${api_key}" ] || die "Missing NEXT_PUBLIC_FIREBASE_API_KEY. Add it to frontend/.env.local or export it."
   log "Starting frontend on ${FRONTEND_URL}"
-  frontend_cmd="cd '${ROOT_DIR}/frontend' && env BFF_API_ORIGIN='${BACKEND_URL}' NEXT_PUBLIC_API_BASE=/api/v2 NEXT_PUBLIC_FIREBASE_API_KEY='${api_key}' NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN='${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:-${FIREBASE_PROJECT_ID}.firebaseapp.com}' NEXT_PUBLIC_FIREBASE_PROJECT_ID='${NEXT_PUBLIC_FIREBASE_PROJECT_ID:-${FIREBASE_PROJECT_ID}}' NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET='${NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:-${FIREBASE_PROJECT_ID}.firebasestorage.app}' NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID='${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:-953230788846}' NEXT_PUBLIC_FIREBASE_APP_ID='${NEXT_PUBLIC_FIREBASE_APP_ID:-1:953230788846:web:1f2819c11418ecf5860bff}' NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID='${NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID:-G-Z6GS6WRZY8}' NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST='${NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST:-http://${FIREBASE_AUTH_EMULATOR_HOST}}' NEXT_PUBLIC_ACADEMY_SLUG=default-academy PORT='${FRONTEND_PORT}' pnpm dev >'${LOG_DIR}/frontend.log' 2>&1"
+  frontend_cmd="cd '${ROOT_DIR}/frontend' && env BFF_API_ORIGIN='${BACKEND_URL}' NEXT_PUBLIC_API_BASE=/api/v2 NEXT_PUBLIC_FIREBASE_API_KEY='${api_key}' NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN='${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:-${FIREBASE_PROJECT_ID}.firebaseapp.com}' NEXT_PUBLIC_FIREBASE_PROJECT_ID='${NEXT_PUBLIC_FIREBASE_PROJECT_ID:-${FIREBASE_PROJECT_ID}}' NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET='${NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:-${FIREBASE_PROJECT_ID}.firebasestorage.app}' NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID='${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:-953230788846}' NEXT_PUBLIC_FIREBASE_APP_ID='${NEXT_PUBLIC_FIREBASE_APP_ID:-1:953230788846:web:1f2819c11418ecf5860bff}' NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID='${NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID:-G-Z6GS6WRZY8}' NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST='${NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST:-http://${FIREBASE_AUTH_EMULATOR_HOST}}' NEXT_PUBLIC_ACADEMY_SLUG=blno PORT='${FRONTEND_PORT}' pnpm dev >'${LOG_DIR}/frontend.log' 2>&1"
   if command -v screen >/dev/null 2>&1; then
     screen -S academy-frontend -X quit >/dev/null 2>&1 || true
     screen -dmS academy-frontend bash -lc "${frontend_cmd}"
@@ -287,6 +326,7 @@ stop_started() {
 }
 
 case "${1:-all}" in
+  fresh) stop_started; wait_for_port_free "MongoDB" "${MONGO_PORT}"; wait_for_port_free "Firebase" "${FIREBASE_AUTH_PORT}"; wait_for_port_free "Backend" "${BACKEND_PORT}"; start_mongo; start_firebase; start_backend; start_frontend; seed; smoke ;;
   status) status ;;
   infra) start_mongo; start_firebase; status ;;
   app) start_backend; start_frontend; status ;;

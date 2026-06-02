@@ -25,6 +25,7 @@ class AdminUserDetail(AdminUserSummary):
 
     roles: tuple[Role, ...] = ()
     linked_student_count: int = 0
+    session_count: int = 0
 
 
 class CreateAdminUserCommand(BaseModel):

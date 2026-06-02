@@ -39,8 +39,20 @@ from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 
 import bcrypt
+import firebase_admin
+from firebase_admin import auth as firebase_admin_auth, credentials as firebase_admin_credentials
 from motor.motor_asyncio import AsyncIOMotorClient
 from backend.v2.shared.ids import new_ulid
+
+def _init_firebase_admin() -> None:
+    if firebase_admin._apps:
+        return
+    options = {"projectId": FIREBASE_PROJECT}
+    try:
+        cred = firebase_admin_credentials.ApplicationDefault()
+        firebase_admin.initialize_app(cred, options)
+    except Exception:
+        firebase_admin.initialize_app(options=options)
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +64,7 @@ PARENT_PASSWORD = os.environ.get("SEED_PARENT_PASSWORD", "Parent@12345")
 FIREBASE_MODE   = os.environ.get("FIREBASE_AUTH_ENABLED", "").lower() in ("1", "true", "yes")
 FIREBASE_PROJECT = os.environ.get("FIREBASE_PROJECT_ID", "academy-courtmastr")
 FIREBASE_EMULATOR = os.environ.get("FIREBASE_AUTH_EMULATOR_HOST", "127.0.0.1:9099")
-ACADEMY_ID      = "default-academy"
+ACADEMY_ID      = "blno"
 ACADEMY_NAME    = "BLno Badminton Academy"
 ACADEMY_TZ      = "America/Chicago"
 
@@ -149,22 +161,25 @@ def firebase_clear_users() -> None:
 
 
 def firebase_create_user(email: str, password: str, display_name: str = "") -> str:
-    """Create user in emulator. Returns localId (Firebase UID)."""
+    """Create user in emulator with email pre-verified. Returns localId (Firebase UID)."""
     try:
         resp = _emulator_request(
-            f"/identitytoolkit.googleapis.com/v1/accounts:signUp?key=emulator-local",
+            "/identitytoolkit.googleapis.com/v1/accounts:signUp?key=emulator-local",
             {"email": email, "password": password, "displayName": display_name, "returnSecureToken": True},
         )
-        return resp["localId"]
     except RuntimeError as e:
         if "EMAIL_EXISTS" in str(e):
-            # Sign in to get existing UID
             resp = _emulator_request(
-                f"/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=emulator-local",
+                "/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=emulator-local",
                 {"email": email, "password": password, "returnSecureToken": True},
             )
-            return resp["localId"]
-        raise
+        else:
+            raise
+    uid = resp["localId"]
+    # Mark email verified via Admin SDK so backend password-provider email check passes.
+    _init_firebase_admin()
+    firebase_admin_auth.update_user(uid, email_verified=True)
+    return uid
 
 
 def firebase_available() -> bool:
@@ -515,24 +530,16 @@ async def main() -> None:
     waiver_version_id = str(waiver_r.inserted_id)
 
     # ── 5. Sessions ─────────────────────────────────────────────────────────
-    # Each weekly template (e.g. "Thursday 6:00 PM Beginner") is materialised
-    # into concrete dated session instances covering the past 4 weeks and the
-    # next 12 weeks. Every doc carries start_at/end_at datetimes so the v2
-    # Session domain model + admin BFF read them natively (the legacy-template
-    # synthesise-on-query bridge in composition/admin.py becomes defensive code
-    # for any non-seed legacy docs still in the DB).
-    #
-    # session_ids[template_name] maps to the FIRST upcoming-or-today instance
-    # of that template, which is what enrollments + payments reference. The
-    # session detail page therefore shows that instance's roster; historical
-    # session instances exist for charts and "Sessions today" filtering.
+    # Each weekly template is materialised into exactly one upcoming occurrence
+    # (weeks_back=0, weeks_forward=1 guarantees Wed and Thu each appear once
+    # in the next 7 days regardless of what day today is).
     today = datetime.now(timezone.utc).date()
     session_ids: dict[str, str] = {}
     total_instances = 0
     for s in SESSIONS:
         coach_id = coach_ids[s["coach_key"]]
         amount_cents = int(s["monthly_price"] * 100)
-        dated = expand_template_to_dated_sessions(s, today)
+        dated = expand_template_to_dated_sessions(s, today, weeks_back=0, weeks_forward=1)
         first_upcoming_id: str | None = None
         for start_at, end_at in dated:
             session_id = new_id()
@@ -847,6 +854,35 @@ async def main() -> None:
             "created_at": utcnow(),
         })
     print(f"Expenses: {len(EXPENSES)}")
+
+    # ── 10. Academy memberships ──────────────────────────────────────────────
+    # Required by the SaaS auth middleware: every user needs an active
+    # academy_memberships row or login returns MembershipNotFound (401).
+    all_users = await db.users.find({"academy_id": ACADEMY_ID}).to_list(None)
+    membership_count = 0
+    now = utcnow()
+    for u in all_users:
+        uid = u.get("user_id") or u.get("firebase_uid") or str(u["_id"])
+        raw_roles = u.get("roles", [])
+        roles = list(raw_roles) if raw_roles else ["parent"]
+        await db["academy_memberships"].update_one(
+            {"academy_id": ACADEMY_ID, "user_id": uid},
+            {
+                "$set": {"roles": roles, "status": "active", "updated_at": now},
+                "$setOnInsert": {
+                    "membership_id": new_ulid(),
+                    "academy_id": ACADEMY_ID,
+                    "user_id": uid,
+                    "invited_by": uid,
+                    "invited_at": now,
+                    "accepted_at": now,
+                    "created_at": now,
+                },
+            },
+            upsert=True,
+        )
+        membership_count += 1
+    print(f"Memberships: {membership_count}")
 
     print("\n✓ Seed complete.")
     print(f"\nLogin credentials:")

@@ -79,7 +79,7 @@ Current production app:
 - Frontend: Next.js 15 App Router, React 19, Tailwind, Firebase Web SDK, PWA.
 - Auth: Firebase Authentication in production; legacy password auth can be disabled with `FIREBASE_AUTH_ENABLED=true`.
 - Deployment: Fly.io backend app `courtmastr-academy-api`; Cloudflare Worker frontend `academy-next`.
-- Local services: backend `http://127.0.0.1:8001/api`, frontend `http://localhost:3000`, MongoDB `mongodb://127.0.0.1:27017` (all via Docker — see `docs/local-infra.md`).
+- Local services: backend `http://127.0.0.1:8001`, frontend `http://localhost:3001`, MongoDB `mongodb://127.0.0.1:27017`, Firebase Auth emulator `http://127.0.0.1:9099`. Start everything with `scripts/local_test_stack.sh all`.
 
 Migration direction:
 
@@ -209,49 +209,52 @@ version differs from CI's and will produce false "already formatted" results.
 
 **Never push without running this first. If it fails locally, fix it — do not push to unblock CI.**
 
-Local testing stack:
+Local testing stack (recommended — use this for all manual testing):
 
 ```bash
-scripts/local_test_stack.sh status
-scripts/local_test_stack.sh all
-scripts/local_test_stack.sh smoke
-scripts/local_test_stack.sh seed
-scripts/local_test_stack.sh stop
+scripts/local_test_stack.sh fresh     # FULL RESET: stop → start everything → seed demo data
+scripts/local_test_stack.sh all       # start everything (skips already-running) + smoke check
+scripts/local_test_stack.sh status    # show what is running and on which port
+scripts/local_test_stack.sh infra     # start MongoDB + Firebase Auth emulator only
+scripts/local_test_stack.sh app       # start backend + frontend only (infra must be up)
+scripts/local_test_stack.sh smoke     # hit health endpoints and report status
+scripts/local_test_stack.sh seed      # load demo data into local MongoDB
+scripts/local_test_stack.sh test      # run backend v2 tests + frontend typecheck
+scripts/local_test_stack.sh logs      # tail all service logs
+scripts/local_test_stack.sh stop      # stop only processes started by this script
 ```
 
-Use this helper for local manual testing. It checks/starts MongoDB,
-Firebase Auth emulator, backend, and frontend with the local Firebase/Mongo/BFF
-environment wired together. It writes logs and PID files under
-`/tmp/academy-manager-local`. `stop` only stops processes started by this
-script. The frontend still needs a real public Firebase web API key in
-`frontend/.env.local`, `frontend/.env`, or the environment; do not fall back to
-`dummy` for Firebase Auth testing.
+This starts MongoDB, Firebase Auth emulator, backend (FastAPI `--reload`), and
+frontend (`pnpm dev`) with all services wired together. Logs and PID files go
+under `/tmp/academy-manager-local`. Frontend runs on port `3001`.
+
+One-time setup: create `frontend/.env.local` with the real Firebase Web API key
+(copy from `frontend/.env.example` and fill in `NEXT_PUBLIC_FIREBASE_API_KEY`).
+The script also falls back to `REACT_APP_FIREBASE_API_KEY` in `frontend/.env`
+if `.env.local` is absent. Never use `dummy` — Firebase Auth will fail silently.
 
 Local Firebase/Auth testing guardrails:
 
-- Prefer `scripts/local_test_stack.sh all` or `scripts/local_test_stack.sh app`
-  over ad hoc `pnpm dev` restarts. The helper maps the local Firebase key into
-  the Next.js environment.
-- Next.js client code reads `NEXT_PUBLIC_FIREBASE_*`. Older
-  `REACT_APP_FIREBASE_*` values do not reach the browser unless they are
-  explicitly bridged. Before manual frontend restarts, verify
-  `NEXT_PUBLIC_FIREBASE_API_KEY` is non-empty and is not `dummy`.
-- Frontend Auth emulator URL must include a protocol, for example
-  `NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST=http://127.0.0.1:9101`. Backend
-  Admin SDK emulator config uses host:port only, for example
-  `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9101`.
-- Health checks are not enough for auth regressions. After restarting the
-  frontend for local testing, use a browser to sign in and confirm Firebase
-  calls go to the Auth emulator without `auth/invalid-api-key`.
-- For BLNO tenant testing, use the tenant host (`http://blno.localhost:3001`)
-  when verifying login and admin pages, not only `http://localhost:3001`.
+- Prefer `scripts/local_test_stack.sh all` over ad hoc `pnpm dev` restarts. The
+  helper sets all required env vars automatically.
+- Next.js client code reads `NEXT_PUBLIC_FIREBASE_*` only. `REACT_APP_FIREBASE_*`
+  values in `frontend/.env` do not reach the browser directly.
+- Frontend Auth emulator URL must include a protocol:
+  `NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST=http://127.0.0.1:9099`.
+  Backend Admin SDK uses host:port only: `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099`.
+- After starting the frontend, open a browser and sign in to confirm Firebase
+  calls reach the Auth emulator without `auth/invalid-api-key`.
+- For local BLNO tenant testing, use `http://blno.localhost:3001` — the seed registers the academy with `slug: "blno"` and the backend starts with `DEFAULT_ACADEMY_ID=blno`. Plain `http://localhost:3001` also works (falls back to `default_academy_id`).
 
-Container smoke:
+Container smoke (build verification only — NOT for real testing):
 
 ```bash
 docker compose up --build
 curl http://127.0.0.1:8001/api/v2/healthz
 ```
+
+Docker uses a hardcoded `dummy` Firebase API key so Firebase Auth will not work.
+Use it only to verify the app builds and the health endpoint responds.
 
 ---
 

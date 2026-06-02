@@ -76,3 +76,19 @@ export function updateAdminStudent(
     body: JSON.stringify(payload),
   });
 }
+
+export interface TransferEnrollmentRequest {
+  target_session_id: string;
+  effective_date: string; // ISO date YYYY-MM-DD
+  reason?: string | null;
+}
+
+export function transferEnrollment(
+  enrollmentId: string,
+  payload: TransferEnrollmentRequest,
+): Promise<unknown> {
+  return apiFetch(`/admin/enrollments/${encodeURIComponent(enrollmentId)}/transfer`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}

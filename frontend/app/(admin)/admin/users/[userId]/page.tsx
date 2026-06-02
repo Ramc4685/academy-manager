@@ -8,8 +8,12 @@ import { ArrowLeft, RefreshCw } from "lucide-react";
 
 import {
   getAdminUser,
+  listAdminSessions,
+  listAdminSessionsByCoach,
+  updateAdminSession,
   updateAdminUser,
   updateAdminUserRole,
+  type AdminSessionView,
   type AdminUserDetail,
   type AdminUserRole,
 } from "@/lib/api/admin";
@@ -58,6 +62,13 @@ export default function AdminUserDetailPage() {
   }
 
   const user = userQuery.data;
+  const isCoach = user.role === "coach";
+
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.userDetail(userId) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.users() });
+  };
+
   return (
     <section className="space-y-6" data-testid="admin-user-detail">
       <BackLink />
@@ -65,25 +76,16 @@ export default function AdminUserDetailPage() {
       <div className="grid gap-6 lg:grid-cols-3">
         <Card p={20} className="lg:col-span-2">
           <Overline>Profile</Overline>
-          <UserEditForm
-            user={user}
-            onSaved={() => {
-              void queryClient.invalidateQueries({ queryKey: queryKeys.admin.userDetail(userId) });
-              void queryClient.invalidateQueries({ queryKey: queryKeys.admin.users() });
-            }}
-          />
+          <UserEditForm user={user} onSaved={invalidate} />
         </Card>
         <Card p={20}>
           <Overline>Access</Overline>
-          <RoleChangePanel
-            user={user}
-            onSaved={() => {
-              void queryClient.invalidateQueries({ queryKey: queryKeys.admin.userDetail(userId) });
-              void queryClient.invalidateQueries({ queryKey: queryKeys.admin.users() });
-            }}
-          />
+          <RoleChangePanel user={user} onSaved={invalidate} />
         </Card>
       </div>
+      {isCoach && (
+        <CoachSessionsPanel user={user} onAssigned={invalidate} />
+      )}
     </section>
   );
 }
@@ -154,6 +156,7 @@ function Header({ user }: { user: AdminUserDetail }) {
 }
 
 function UserEditForm({ user, onSaved }: { user: AdminUserDetail; onSaved: () => void }) {
+  const [email, setEmail] = useState(user.email);
   const [displayName, setDisplayName] = useState(user.display_name);
   const [phone, setPhone] = useState(user.phone ?? "");
   const [status, setStatus] = useState(user.status);
@@ -162,14 +165,16 @@ function UserEditForm({ user, onSaved }: { user: AdminUserDetail; onSaved: () =>
   const [submitOk, setSubmitOk] = useState(false);
 
   useEffect(() => {
+    setEmail(user.email);
     setDisplayName(user.display_name);
     setPhone(user.phone ?? "");
     setStatus(user.status);
-  }, [user.display_name, user.phone, user.status]);
+  }, [user.email, user.display_name, user.phone, user.status]);
 
   const mutation = useMutation({
     mutationFn: () =>
       updateAdminUser(user.user_id, {
+        email: email !== user.email ? email : undefined,
         display_name: displayName !== user.display_name ? displayName : undefined,
         phone: phone !== (user.phone ?? "") ? phone || null : undefined,
         status: status !== user.status ? status : undefined,
@@ -187,7 +192,10 @@ function UserEditForm({ user, onSaved }: { user: AdminUserDetail; onSaved: () =>
   });
 
   const dirty =
-    displayName !== user.display_name || phone !== (user.phone ?? "") || status !== user.status;
+    email !== user.email ||
+    displayName !== user.display_name ||
+    phone !== (user.phone ?? "") ||
+    status !== user.status;
 
   return (
     <form
@@ -200,6 +208,18 @@ function UserEditForm({ user, onSaved }: { user: AdminUserDetail; onSaved: () =>
         mutation.mutate();
       }}
     >
+      <Field label="Email" htmlFor="user-email">
+        <input
+          id="user-email"
+          type="email"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+          required
+          maxLength={254}
+        />
+      </Field>
+
       <Field label="Display name" htmlFor="user-display-name">
         <input
           id="user-display-name"
@@ -266,6 +286,7 @@ function UserEditForm({ user, onSaved }: { user: AdminUserDetail; onSaved: () =>
             variant="secondary"
             size="sm"
             onClick={() => {
+              setEmail(user.email);
               setDisplayName(user.display_name);
               setPhone(user.phone ?? "");
               setStatus(user.status);
@@ -304,6 +325,8 @@ function RoleChangePanel({ user, onSaved }: { user: AdminUserDetail; onSaved: ()
     },
   });
 
+  const isCoach = user.role === "coach";
+
   return (
     <form
       className="mt-3 space-y-4"
@@ -317,7 +340,9 @@ function RoleChangePanel({ user, onSaved }: { user: AdminUserDetail; onSaved: ()
     >
       <DetailList
         rows={[
-          { label: "Linked students", value: String(user.linked_student_count) },
+          isCoach
+            ? { label: "Active sessions", value: String(user.session_count) }
+            : { label: "Linked students", value: String(user.linked_student_count) },
           { label: "Current role", value: user.role.toUpperCase() },
         ]}
       />
@@ -361,6 +386,171 @@ function RoleChangePanel({ user, onSaved }: { user: AdminUserDetail; onSaved: ()
         {mutation.isPending ? "Saving..." : "Change role"}
       </Button>
     </form>
+  );
+}
+
+function CoachSessionsPanel({
+  user,
+  onAssigned,
+}: {
+  user: AdminUserDetail;
+  onAssigned: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [assignSessionId, setAssignSessionId] = useState("");
+  const [assignReason, setAssignReason] = useState("Admin coach assignment");
+  const [assignError, setAssignError] = useState<string | null>(null);
+  const [assignOk, setAssignOk] = useState(false);
+
+  const coachSessionsQuery = useQuery({
+    queryKey: queryKeys.admin.coachSessions(user.user_id),
+    queryFn: () => listAdminSessionsByCoach(user.user_id),
+  });
+
+  const allSessionsQuery = useQuery({
+    queryKey: queryKeys.admin.sessions(),
+    queryFn: () => listAdminSessions(undefined, { window: "upcoming" }),
+  });
+
+  const assignMutation = useMutation({
+    mutationFn: () =>
+      updateAdminSession(assignSessionId, { coach_id: user.user_id, reason: assignReason }),
+    onSuccess: () => {
+      setAssignError(null);
+      setAssignOk(true);
+      setAssignSessionId("");
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.coachSessions(user.user_id) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.userDetail(user.user_id) });
+      onAssigned();
+    },
+    onError: (err: unknown) => {
+      setAssignOk(false);
+      setAssignError(err instanceof Error ? err.message : "Could not assign session.");
+    },
+  });
+
+  const coachSessions = coachSessionsQuery.data?.sessions ?? [];
+  const allSessions = allSessionsQuery.data?.sessions ?? [];
+  const unassignedSessions = allSessions.filter((s) => s.coach_id !== user.user_id);
+
+  const fmt = (iso: string) =>
+    new Date(iso).toLocaleString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+
+  return (
+    <Card p={20}>
+      <Overline>Coach Sessions</Overline>
+
+      <div className="mt-4 space-y-6">
+        <div>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-rally-muted">
+            Assigned sessions ({coachSessions.length})
+          </p>
+          {coachSessionsQuery.isPending ? (
+            <div className="h-12 animate-pulse rounded-md bg-neutral-100" />
+          ) : coachSessions.length === 0 ? (
+            <p className="text-sm text-rally-muted">No sessions assigned to this coach.</p>
+          ) : (
+            <ul className="divide-y divide-neutral-100 rounded-md border border-neutral-200">
+              {coachSessions.map((session) => (
+                <SessionRow key={session.session_id} session={session} fmt={fmt} />
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-rally-muted">
+            Assign a session to this coach
+          </p>
+          <form
+            className="space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setAssignOk(false);
+              setAssignError(null);
+              assignMutation.mutate();
+            }}
+          >
+            <Field label="Session" htmlFor="assign-session">
+              <select
+                id="assign-session"
+                value={assignSessionId}
+                onChange={(e) => setAssignSessionId(e.target.value)}
+                className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+                required
+              >
+                <option value="">Select a session…</option>
+                {unassignedSessions.map((s) => (
+                  <option key={s.session_id} value={s.session_id}>
+                    {s.title} — {fmt(s.start_at)} ({s.enrolled_count} students)
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field label="Reason" htmlFor="assign-reason">
+              <input
+                id="assign-reason"
+                value={assignReason}
+                onChange={(e) => setAssignReason(e.target.value)}
+                className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+                required
+                maxLength={500}
+              />
+            </Field>
+
+            <MutationMessages error={assignError} ok={assignOk} />
+
+            <Button
+              type="submit"
+              variant="primary"
+              size="sm"
+              disabled={!assignSessionId || assignMutation.isPending}
+              icon={
+                assignMutation.isPending ? (
+                  <RefreshCw className="size-3.5 animate-spin" />
+                ) : undefined
+              }
+            >
+              {assignMutation.isPending ? "Assigning…" : "Assign to coach"}
+            </Button>
+          </form>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function SessionRow({
+  session,
+  fmt,
+}: {
+  session: AdminSessionView;
+  fmt: (iso: string) => string;
+}) {
+  return (
+    <li className="flex items-center justify-between px-3 py-2.5 text-sm">
+      <div className="min-w-0">
+        <p className="truncate font-medium text-rally-ink">{session.title}</p>
+        <p className="truncate text-xs text-rally-muted">{fmt(session.start_at)}</p>
+      </div>
+      <div className="ml-4 shrink-0 text-right text-xs text-rally-muted">
+        <span>{session.enrolled_count} enrolled</span>
+        <Link
+          href={`/admin/sessions/${session.session_id}`}
+          className="ml-3 text-rally-cobalt-600 hover:underline"
+        >
+          View
+        </Link>
+      </div>
+    </li>
   );
 }
 
