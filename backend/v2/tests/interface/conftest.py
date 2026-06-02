@@ -609,7 +609,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
         list_session_types=_list_session_types,
         get_billing_enrollment=_billing_enrollment_repo.get,
         get_active_session_enrollments_for_student=_session_enrollment_repo.active_for_student,
-        list_all_sessions=sessions.for_coach,
+        list_all_sessions=_async_none,
         get_profile=_async_none,
         update_profile=_async_none,
     )
