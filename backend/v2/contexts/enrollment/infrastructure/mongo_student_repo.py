@@ -546,6 +546,27 @@ class MongoStudentRepository(TenantScopedRepository):
             ]
         )
         docs = [doc async for doc in cursor]
+
+        # Billing-ledger invoices (autopay / Stripe subscription) live in a
+        # separate collection. Include open/unpaid ones not already covered by
+        # a payment row so the panel shows the real balance.
+        covered_invoice_ids: set[str] = {
+            str(doc["invoice_id"]) for doc in docs if doc.get("invoice_id")
+        }
+        invoice_cursor = self._db["invoices"].find(
+            {
+                "academy_id": academy_id,
+                "student_id": student_id,
+                "status": {"$nin": ["void"]},
+                "is_deleted": {"$ne": True},
+            }
+        )
+        async for inv_doc in invoice_cursor:
+            inv_id = str(inv_doc.get("invoice_id") or inv_doc.get("_id") or "")
+            if inv_id and inv_id not in covered_invoice_ids:
+                covered_invoice_ids.add(inv_id)
+                docs.append(self._invoice_doc_to_payment_doc(inv_doc))
+
         docs.sort(
             key=lambda doc: (
                 self._coerce_datetime(doc.get("created_at") or doc.get("invoice_created_at"))
@@ -555,6 +576,25 @@ class MongoStudentRepository(TenantScopedRepository):
             reverse=True,
         )
         return [self._to_admin_student_payment_summary(doc) for doc in docs]
+
+    @staticmethod
+    def _invoice_doc_to_payment_doc(inv_doc: dict[str, object]) -> dict[str, object]:
+        """Shim a billing-ledger invoice doc into the payment-summary shape."""
+        total = int(inv_doc.get("total_cents") or inv_doc.get("subtotal_cents") or 0)
+        balance = int(inv_doc.get("balance_due_cents") or 0)
+        return {
+            "payment_id": str(inv_doc.get("invoice_id") or inv_doc.get("_id")),
+            "student_id": inv_doc.get("student_id"),
+            "period": inv_doc.get("period"),
+            "amount_cents": total,
+            "gross_amount_cents": total,
+            "final_amount_cents": total,
+            "paid_amount_cents": max(total - balance, 0),
+            "balance_due_cents": balance,
+            "status": str(inv_doc.get("status") or "open"),
+            "payment_method": "autopay",
+            "created_at": inv_doc.get("created_at"),
+        }
 
     @classmethod
     def _to_admin_student_payment_summary(
