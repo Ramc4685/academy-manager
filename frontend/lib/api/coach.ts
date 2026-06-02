@@ -77,6 +77,31 @@ export interface ProgressNote {
   created_at: string;
 }
 
+export interface CoachScheduleEntry {
+  session_id: string;
+  title: string;
+  location: string;
+  start_at: string;
+  end_at: string;
+}
+
+export interface CoachScheduleResponse {
+  sessions: CoachScheduleEntry[];
+}
+
+export interface CoachProfileResponse {
+  user_id: string;
+  display_name: string;
+  email: string;
+  phone: string | null;
+}
+
+export interface UpdateCoachProfileRequest {
+  display_name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+}
+
 export async function getCoachToday(date?: string): Promise<CoachTodayResponse> {
   const q = date ? `?date=${encodeURIComponent(date)}` : "";
   return apiFetch<CoachTodayResponse>(`/coach/today${q}`, { method: "GET" });
@@ -119,6 +144,38 @@ export function createProgressNote(
 ): Promise<ProgressNote> {
   return apiFetch(`/coach/sessions/${sessionId}/progress-notes`, {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getCoachSchedule(): Promise<CoachScheduleResponse> {
+  return apiFetch<CoachScheduleResponse>("/coach/sessions", { method: "GET" });
+}
+
+export interface RosterEntry {
+  enrollment_id: string;
+  student_id: string;
+  full_name: string;
+  enrollment_status: string;
+}
+
+export interface RosterResponse {
+  roster: RosterEntry[];
+}
+
+export async function getSessionRoster(sessionId: string): Promise<RosterResponse> {
+  return apiFetch<RosterResponse>(`/coach/sessions/${sessionId}/roster`, { method: "GET" });
+}
+
+export async function getCoachProfile(): Promise<CoachProfileResponse> {
+  return apiFetch<CoachProfileResponse>("/coach/profile", { method: "GET" });
+}
+
+export async function updateCoachProfile(
+  payload: UpdateCoachProfileRequest
+): Promise<CoachProfileResponse> {
+  return apiFetch<CoachProfileResponse>("/coach/profile", {
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
 }

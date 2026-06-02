@@ -22,6 +22,7 @@ Firebase emulator mode (requires emulator running on :9099):
 No Excel file required.
 """
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -387,7 +388,7 @@ async def main() -> None:
     for col in ("academies", "sessions", "students", "enrollments", "payments", "expenses",
                 "attendance", "lesson_plans", "progress_notes", "coach_payouts",
                 "payout_rules", "move_log", "messages", "notifications", "invites",
-                "audit_logs", "waiver_versions", "waiver_acceptances", "platform_roles"):
+                "audit_logs", "waivers", "waiver_versions", "waiver_acceptances", "platform_roles"):
         await db[col].drop()
     await db.users.delete_many({"email": {"$ne": admin_email}})
     print("Cleared collections.")
@@ -518,13 +519,18 @@ async def main() -> None:
             "created_at": utcnow(),
         })
 
-    # ── 4. Waiver version ───────────────────────────────────────────────────
-    waiver_r = await db.waiver_versions.insert_one({
+    # ── 4. Waiver ────────────────────────────────────────────────────────────
+    # MongoWaiverRepository reads from the "waivers" collection and maps:
+    # waiver_id, version, text, content_hash, effective_from.
+    _waiver_text = "I, the parent/guardian, have read and agree to the BlNo Badminton Academy Liability Waiver."
+    _waiver_id = new_id()
+    waiver_r = await db.waivers.insert_one({
         "academy_id": ACADEMY_ID,
+        "waiver_id": _waiver_id,
         "version": "1.0",
-        "content": "I, the parent/guardian, have read and agree to the BlNo Badminton Academy Liability Waiver.",
-        "effective_date": "2026-04-01",
-        "is_active": True,
+        "text": _waiver_text,
+        "content_hash": hashlib.sha256(_waiver_text.encode()).hexdigest(),
+        "effective_from": datetime(2026, 4, 1, tzinfo=timezone.utc),
         "created_at": utcnow(),
     })
     waiver_version_id = str(waiver_r.inserted_id)
@@ -562,6 +568,24 @@ async def main() -> None:
                 "monthly_price": s["monthly_price"],
             }
             await db.sessions.insert_one(doc)
+            # Create a matching occurrence so attendance marking works.
+            # occurrence_id == session_id so the frontend can pass either.
+            await db.session_occurrences.update_one(
+                {"occurrence_id": session_id, "academy_id": ACADEMY_ID},
+                {"$setOnInsert": {
+                    "occurrence_id": session_id,
+                    "academy_id": ACADEMY_ID,
+                    "session_id": session_id,
+                    "template_session_id": session_id,
+                    "start_at": start_at,
+                    "end_at": end_at,
+                    "status": "scheduled",
+                    "scheduled_coach_id": coach_id,
+                    "is_billable": True,
+                    "is_payable": True,
+                }},
+                upsert=True,
+            )
             total_instances += 1
             if first_upcoming_id is None and start_at.date() >= today:
                 first_upcoming_id = session_id

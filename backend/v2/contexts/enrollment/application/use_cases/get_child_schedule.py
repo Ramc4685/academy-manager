@@ -28,6 +28,7 @@ class ChildScheduleEntry(BaseModel):
     occurrence_id: str
     session_id: str
     session_title: str
+    location: str | None = None
     start_at: datetime
     end_at: datetime
     status: str
@@ -94,12 +95,14 @@ class GetChildSchedule:
             session = sessions_map.get(enrollment.session_id)
             session_title = session.title if session else "Session"
 
+            session_location = session.location if session else None
             for occ in session_occs:
                 all_entries.append(
                     ChildScheduleEntry(
                         occurrence_id=occ.occurrence_id,
                         session_id=enrollment.session_id,
                         session_title=session_title,
+                        location=session_location,
                         start_at=occ.start_at,
                         end_at=occ.end_at,
                         status=occ.status,

@@ -112,15 +112,37 @@ export interface ParentAttendanceRecord {
   session_title: string;
   status: string;
   marked_at: string;
+  coach_name: string | null;
 }
 
 export interface ParentProgressNote {
   note_id: string;
   student_id: string;
   student_name: string;
+  session_id: string | null;
+  session_title: string | null;
   coach_id: string | null;
+  coach_name: string | null;
   body: string;
   created_at: string;
+}
+
+export interface ParentScheduleEntry {
+  occurrence_id: string;
+  session_id: string;
+  session_title: string;
+  location: string | null;
+  start_at: string;
+  end_at: string;
+  status: string;
+  coach_name: string | null;
+}
+
+export interface ParentScheduleResponse {
+  entries: ParentScheduleEntry[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface ParentPauseRequest {
@@ -239,6 +261,23 @@ export function listParentProgress(): Promise<{ notes: ParentProgressNote[] }> {
 
 export function listParentPauseRequests(): Promise<{ requests: ParentPauseRequest[] }> {
   return apiFetch("/parent/pause-requests", { method: "GET" });
+}
+
+export function getChildSchedule(studentId: string): Promise<ParentScheduleResponse> {
+  return apiFetch(`/parent/children/${studentId}/schedule`, { method: "GET" });
+}
+
+export interface ParentAcademy {
+  display_name: string;
+  contact_email: string | null;
+  contact_phone: string | null;
+  hours_text: string | null;
+  address: string | null;
+  logo_url: string | null;
+}
+
+export function getParentAcademy(): Promise<ParentAcademy> {
+  return apiFetch("/parent/academy", { method: "GET" });
 }
 
 export function createParentPauseRequest(payload: {

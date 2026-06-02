@@ -132,6 +132,14 @@ class MongoSessionRepository(TenantScopedRepository):
         )
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def for_coach(self, coach_id: str) -> list[Session]:
+        now = datetime.now(UTC)
+        cursor = self._find_many(
+            {"coach_id": coach_id, "start_at": {"$gte": now}},
+            sort=[("start_at", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def get(self, session_id: str) -> Session | None:
         doc = await self._find_one(_session_filter(session_id))
         return self._to_domain(doc) if doc else None

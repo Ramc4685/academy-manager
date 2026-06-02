@@ -10,6 +10,8 @@ export const queryKeys = {
     all: ["coach"] as const,
     dashboard: () => ["coach", "dashboard"] as const,
     today: (date: string) => ["coach", "today", date] as const,
+    schedule: () => ["coach", "schedule"] as const,
+    profile: () => ["coach", "profile"] as const,
     session: (sessionId: string) => ["coach", "session", sessionId] as const,
   },
   admin: {

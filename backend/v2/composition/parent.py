@@ -158,6 +158,7 @@ class ParentComposition:
     cancel_billing_enrollment: object
     get_parent_waiver_requirement: GetParentWaiverRequirement
     accept_parent_waiver: AcceptParentWaiver
+    get_academy_info: object  # callable
 
 
 def compose_parent(
@@ -366,15 +367,15 @@ def compose_parent(
         user = await db["users"].find_one(
             {"academy_id": academy_id, "$or": [{"user_id": coach_id}, {"firebase_uid": coach_id}]}
         )
-        if user and user.get("full_name"):
-            return str(user["full_name"])
-        if user:
-            first = str(user.get("first_name") or "")
-            last = str(user.get("last_name") or "")
-            name = f"{first} {last}".strip()
-            if name:
-                return name
-        return None
+        if not user:
+            return None
+        for field in ("full_name", "display_name", "name"):
+            if user.get(field):
+                return str(user[field])
+        first = str(user.get("first_name") or "")
+        last = str(user.get("last_name") or "")
+        name = f"{first} {last}".strip()
+        return name or None
 
     async def list_attendance_for_parent(
         parent_id: str, *, limit: int = 50, offset: int = 0
@@ -670,6 +671,19 @@ def compose_parent(
         result = await checkout_status.execute(checkout_session_id, parent_id=parent_id)
         return result.model_dump()
 
+    async def get_academy_info() -> dict[str, Any]:
+        doc = await db["academies"].find_one({"academy_id": academy_id})
+        if not doc:
+            return {"display_name": "Academy", "contact_email": None, "contact_phone": None, "hours_text": None, "address": None, "logo_url": None}
+        return {
+            "display_name": str(doc.get("display_name") or "Academy"),
+            "contact_email": doc.get("contact_email"),
+            "contact_phone": doc.get("contact_phone"),
+            "hours_text": doc.get("hours_text"),
+            "address": doc.get("address"),
+            "logo_url": doc.get("logo_url"),
+        }
+
     async def get_child_schedule(
         *,
         parent_id: str,
@@ -740,6 +754,7 @@ def compose_parent(
         cancel_billing_enrollment=cancel_billing_enrollment_uc.execute,
         get_parent_waiver_requirement=get_waiver_req,
         accept_parent_waiver=accept_waiver,
+        get_academy_info=get_academy_info,
     )
 
 
