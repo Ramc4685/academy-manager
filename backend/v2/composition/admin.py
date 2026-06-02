@@ -1070,7 +1070,9 @@ def compose_admin(
 
         return rows
 
-    async def list_admin_sessions(on_date: date | None, *, window: str | None = None, coach_id: str | None = None):
+    async def list_admin_sessions(
+        on_date: date | None, *, window: str | None = None, coach_id: str | None = None
+    ):
         # window="upcoming" returns all dated sessions from now through +30d.
         # Used by the transfer-enrollment dropdown so the user can pick any
         # upcoming session, not just today's.
@@ -1104,7 +1106,12 @@ def compose_admin(
             upcoming_docs.sort(key=session_start_sort_key)
             rows = await _build_admin_session_rows(upcoming_docs)
             if coach_id:
-                rows = [r for r in rows if (r.get("coach_id") if isinstance(r, dict) else getattr(r, "coach_id", None)) == coach_id]
+                rows = [
+                    r
+                    for r in rows
+                    if (r.get("coach_id") if isinstance(r, dict) else getattr(r, "coach_id", None))
+                    == coach_id
+                ]
             return rows
 
         if on_date is None:
@@ -1142,7 +1149,12 @@ def compose_admin(
 
         rows = await _build_admin_session_rows(all_docs)
         if coach_id:
-            rows = [r for r in rows if (r.get("coach_id") if isinstance(r, dict) else getattr(r, "coach_id", None)) == coach_id]
+            rows = [
+                r
+                for r in rows
+                if (r.get("coach_id") if isinstance(r, dict) else getattr(r, "coach_id", None))
+                == coach_id
+            ]
         return rows
 
     async def list_admin_enrollments_for_session(session_id: str):

@@ -112,7 +112,9 @@ class CoachComposition:
     )
     list_all_sessions: object  # Callable[[str], Awaitable[list[Session]]]
     get_profile: object  # Callable[[str], Awaitable[CoachProfileResponse | None]]
-    update_profile: object  # Callable[[str, body, academy_id], Awaitable[CoachProfileResponse | None]]
+    update_profile: (
+        object  # Callable[[str, body, academy_id], Awaitable[CoachProfileResponse | None]]
+    )
 
 
 class CoachAssignedSessionLookup:

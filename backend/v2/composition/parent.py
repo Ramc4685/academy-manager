@@ -674,7 +674,14 @@ def compose_parent(
     async def get_academy_info() -> dict[str, Any]:
         doc = await db["academies"].find_one({"academy_id": academy_id})
         if not doc:
-            return {"display_name": "Academy", "contact_email": None, "contact_phone": None, "hours_text": None, "address": None, "logo_url": None}
+            return {
+                "display_name": "Academy",
+                "contact_email": None,
+                "contact_phone": None,
+                "hours_text": None,
+                "address": None,
+                "logo_url": None,
+            }
         return {
             "display_name": str(doc.get("display_name") or "Academy"),
             "contact_email": doc.get("contact_email"),

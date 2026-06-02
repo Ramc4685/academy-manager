@@ -70,7 +70,9 @@ class CoachUseCases:
     get_active_session_enrollments_for_student: Callable[[str], Awaitable[list[Any]]]
     list_all_sessions: object  # Callable[[str], Awaitable[list[Session]]]
     get_profile: object  # Callable[[str], Awaitable[CoachProfileResponse | None]]
-    update_profile: object  # Callable[[str, body, academy_id], Awaitable[CoachProfileResponse | None]]
+    update_profile: (
+        object  # Callable[[str, body, academy_id], Awaitable[CoachProfileResponse | None]]
+    )
 
 
 def get_coach_use_cases(request: Request) -> CoachUseCases:

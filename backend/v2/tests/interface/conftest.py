@@ -430,6 +430,10 @@ def _admin_claims() -> AuthClaims:
     )
 
 
+async def _async_none(*_args, **_kwargs):
+    return None
+
+
 def _build_use_cases(seed_data) -> CoachUseCases:
     sessions = FakeSessionQuery(seed_data["sessions"])
     enrollments = FakeEnrollmentQuery(seed_data["enrollments"])
@@ -605,6 +609,9 @@ def _build_use_cases(seed_data) -> CoachUseCases:
         list_session_types=_list_session_types,
         get_billing_enrollment=_billing_enrollment_repo.get,
         get_active_session_enrollments_for_student=_session_enrollment_repo.active_for_student,
+        list_all_sessions=sessions.for_coach,
+        get_profile=_async_none,
+        update_profile=_async_none,
     )
 
 
