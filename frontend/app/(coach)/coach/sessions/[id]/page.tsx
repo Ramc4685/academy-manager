@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { use, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ulid } from "ulid";
@@ -103,7 +104,7 @@ export default function SessionDetailPage({ params }: PageProps) {
     return (
       <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
         Session not found.{" "}
-        <a className="underline" href="/coach/sessions">Back to sessions</a>
+        <Link className="underline" href="/coach/sessions">Back to sessions</Link>
       </div>
     );
   }
