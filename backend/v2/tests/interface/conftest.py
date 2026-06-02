@@ -1472,7 +1472,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     delete_expense = DeleteExpense(expenses=expenses)  # type: ignore[arg-type]
     revenue_query = AcademyRevenueQuery(payments=payments)
 
-    async def list_admin_sessions(on_date, *, window=None):
+    async def list_admin_sessions(on_date, *, window=None, coach_id=None):
         if window == "upcoming":
             today = _now().date()
             return [s for s in sessions.sessions.values() if s.start_at.date() >= today]
