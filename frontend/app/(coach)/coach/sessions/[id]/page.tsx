@@ -32,6 +32,12 @@ interface OptimisticEntry {
   error?: string;
 }
 
+function formatApiError(err: unknown): string {
+  const apiError = err as { code?: string; message?: string };
+  const message = apiError.message ?? "Failed";
+  return apiError.code ? `${apiError.code}: ${message}` : message;
+}
+
 export default function SessionDetailPage({ params }: PageProps) {
   const { id } = use(params);
   const queryClient = useQueryClient();
@@ -89,7 +95,7 @@ export default function SessionDetailPage({ params }: PageProps) {
           student_id: vars.student_id,
           status: null,
           pending: false,
-          error: (err as { message?: string }).message ?? "Failed",
+          error: formatApiError(err),
         },
       }));
     },
