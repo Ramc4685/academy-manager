@@ -57,6 +57,26 @@ async def dashboard_attention(
             )
         )
 
+    blocked_resume_reader = getattr(use_cases, "list_blocked_scheduled_resume_actions", None)
+    if callable(blocked_resume_reader):
+        blocked_resumes = await blocked_resume_reader()
+        if blocked_resumes:
+            count = len(blocked_resumes)
+            items.append(
+                AdminAttentionItemView(
+                    attention_id="scheduled-resume-blocked",
+                    kind="scheduled_resume_blocked",
+                    title="Scheduled resume blocked",
+                    detail=(
+                        f"{count} enrollment{'s' if count != 1 else ''} could not resume "
+                        "because the class is full."
+                    ),
+                    severity="medium",
+                    href="/admin/pause-requests",
+                    count=count,
+                )
+            )
+
     waiver_report = await use_cases.list_admin_waivers.execute()
     waiver_count = waiver_report.summary.pending_count + waiver_report.summary.outdated_count
     if waiver_count:

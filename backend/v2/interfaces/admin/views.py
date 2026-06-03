@@ -405,6 +405,8 @@ class AdminPauseRequestView(BaseModel):
     enrollment_id: str
     parent_id: str
     period: str
+    pause_kind: str = "fixed"
+    resume_on: date | None = None
     reason: str
     status: str
     created_at: datetime
@@ -903,6 +905,7 @@ AdminAttentionSeverity = Literal["high", "medium", "low"]
 AdminAttentionKind = Literal[
     "overdue_dues",
     "pause_requests",
+    "scheduled_resume_blocked",
     "waivers",
     "session_pressure",
 ]

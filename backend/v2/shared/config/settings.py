@@ -70,6 +70,7 @@ class Settings(BaseSettings):
     firebase_project_id: str | None = Field(default=None)
     cors_origins: str = Field(default="")
     frontend_url: str | None = Field(default=None)
+    scheduler_tz: str = Field(default="UTC")
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -115,6 +116,8 @@ class Settings(BaseSettings):
             self.cors_origins = os.environ.get("CORS_ORIGINS", self.cors_origins)
         if "V2_FRONTEND_URL" not in os.environ:
             self.frontend_url = os.environ.get("FRONTEND_URL", self.frontend_url)
+        if "V2_SCHEDULER_TZ" not in os.environ:
+            self.scheduler_tz = os.environ.get("SCHEDULER_TZ", self.scheduler_tz)
         self._validate_production_settings()
         return self
 

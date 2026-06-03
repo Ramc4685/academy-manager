@@ -218,6 +218,8 @@ class PauseRequestView(BaseModel):
     enrollment_id: str
     parent_id: str
     period: str
+    pause_kind: str = "fixed"
+    resume_on: date | None = None
     reason: str
     status: str
     created_at: datetime
@@ -231,7 +233,9 @@ class PauseRequestsResponse(BaseModel):
 
 class CreatePauseRequest(BaseModel):
     enrollment_id: str
-    period: str
+    period: str = ""
+    pause_kind: str = "fixed"
+    resume_on: date | None = None
     reason: str = ""
 
 

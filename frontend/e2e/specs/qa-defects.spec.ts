@@ -98,8 +98,8 @@ test.describe("QA defect regressions", () => {
       if (route.request().method() !== "POST") return route.fallback();
       return fulfillJson(
         route,
-        { detail: "Stripe billing portal is unavailable" },
-        503,
+        { error: { message: "parent raw-id has no Stripe customer" } },
+        409,
       );
     });
 
@@ -107,9 +107,77 @@ test.describe("QA defect regressions", () => {
     await page.getByRole("button", { name: "Billing portal" }).click();
 
     await expect(page.getByTestId("billing-portal-error")).toContainText(
-      "Billing portal",
+      "available after your first successful autopay setup",
     );
+    await expect(page.getByTestId("billing-portal-error")).not.toContainText("raw-id");
     await expect(page).toHaveURL(/\/parent\/payments$/);
+  });
+
+  test("parent pause request sends resume date contract", async ({ page }) => {
+    await stubParentShell(page);
+    await page.route("**/api/v2/parent/payments", (route) =>
+      fulfillJson(route, { payments: [] }),
+    );
+    await page.route("**/api/v2/parent/enrollments", (route) =>
+      fulfillJson(route, {
+        enrollments: [
+          {
+            enrollment_id: "enr-qa-1",
+            student_id: "student-qa-1",
+            student_name: "Nila Rao",
+            session_id: "session-qa-1",
+            session_title: "Thursday Beginner",
+            status: "active",
+            payment_mode: "monthly",
+            subscription_status: "active",
+          },
+        ],
+      }),
+    );
+    await page.route("**/api/v2/parent/pause-requests", (route) => {
+      if (route.request().method() === "POST") {
+        const body = JSON.parse(route.request().postData() ?? "{}");
+        return fulfillJson(route, {
+          pause_request_id: "pause-qa-1",
+          parent_id: "user-parent-qa",
+          enrollment_id: body.enrollment_id,
+          period: body.period,
+          pause_kind: body.pause_kind,
+          resume_on: body.resume_on,
+          reason: body.reason ?? null,
+          status: "pending",
+          created_at: "2026-06-03T00:00:00Z",
+          decided_at: null,
+          decided_by: null,
+        });
+      }
+      return fulfillJson(route, { requests: [] });
+    });
+    await page.route("**/api/v2/parent/credits", (route) =>
+      fulfillJson(route, { balance_cents: 0, credits: [] }),
+    );
+
+    await page.goto("/parent/payments");
+    await page.getByRole("button", { name: "Request pause" }).click();
+    await page.getByLabel("Requested resume date").fill("2026-07-15");
+    await page.getByLabel("Reason").fill("Summer travel");
+
+    const pausePost = page.waitForRequest((request) => {
+      return (
+        request.method() === "POST" &&
+        request.url().includes("/api/v2/parent/pause-requests")
+      );
+    });
+    await page.getByRole("button", { name: "Submit" }).click();
+
+    const payload = JSON.parse((await pausePost).postData() ?? "{}");
+    expect(payload).toMatchObject({
+      enrollment_id: "enr-qa-1",
+      pause_kind: "fixed",
+      resume_on: "2026-07-15",
+      period: "2026-07",
+      reason: "Summer travel",
+    });
   });
 
   test("wrong-role admin redirects explain the access denial", async ({

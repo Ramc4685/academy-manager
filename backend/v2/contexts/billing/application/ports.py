@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Protocol
+from typing import Literal, Protocol
 
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment, Subscription
 from backend.v2.contexts.billing.domain.proration import (
@@ -99,6 +99,17 @@ class StripeGateway(Protocol):
         self, stripe_subscription_id: str, *, at_period_end: bool
     ) -> None:
         """Cancel a Stripe subscription now or at period end."""
+
+    async def pause_subscription_collection(
+        self,
+        stripe_subscription_id: str,
+        *,
+        behavior: Literal["void", "keep_as_draft", "mark_uncollectible"] = "void",
+    ) -> None:
+        """Pause invoice collection for an active subscription."""
+
+    async def resume_subscription_collection(self, stripe_subscription_id: str) -> None:
+        """Resume invoice collection for a paused subscription."""
 
     async def update_subscription_proration(
         self,

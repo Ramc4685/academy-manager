@@ -6,6 +6,7 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 ## Active Test Result Files
 
 - [2026-06-01-production-defect-bundle](docs/test-results/active/2026-06-01-production-defect-bundle.md)
+- [2026-06-03-pause-resume-autopay](docs/test-results/active/2026-06-03-pause-resume-autopay.md)
 
 ## Required Workflow
 

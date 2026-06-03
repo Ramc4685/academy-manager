@@ -20,7 +20,9 @@ class MongoPauseRequestRepository(TenantScopedRepository):
             pause_request_id=str(doc["pause_request_id"]),
             enrollment_id=str(doc["enrollment_id"]),
             parent_id=str(doc["parent_id"]),
-            period=str(doc["period"]),
+            period=str(doc.get("period") or ""),
+            pause_kind=doc.get("pause_kind", "fixed"),  # type: ignore[arg-type]
+            resume_on=doc.get("resume_on"),  # type: ignore[arg-type]
             reason=str(doc.get("reason") or ""),
             status=doc.get("status", "pending"),  # type: ignore[arg-type]
             created_at=doc["created_at"],  # type: ignore[arg-type]
@@ -29,7 +31,10 @@ class MongoPauseRequestRepository(TenantScopedRepository):
         )
 
     async def add(self, request: PauseRequest) -> None:
-        await self._insert_one(request.model_dump(mode="python"))
+        doc = request.model_dump(mode="python")
+        if request.resume_on is not None:
+            doc["resume_on"] = request.resume_on.isoformat()
+        await self._insert_one(doc)
 
     async def get(self, pause_request_id: str) -> PauseRequest | None:
         doc = await self._find_one({"pause_request_id": pause_request_id})

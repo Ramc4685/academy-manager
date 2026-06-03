@@ -63,6 +63,9 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
     DeclinePauseRequest,
     ListAdminPauseRequests,
 )
+from backend.v2.contexts.enrollment.application.use_cases.process_scheduled_resume_actions import (
+    ProcessScheduledResumeActions,
+)
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
@@ -193,6 +196,8 @@ class AdminUseCases:
     list_student_billing_enrollments: ListStudentBillingEnrollments | None = None
     move_student_session_type: MoveStudentSessionType | None = None
     override_student_price: OverrideStudentPrice | None = None
+    process_scheduled_resume_actions: ProcessScheduledResumeActions | None = None
+    list_blocked_scheduled_resume_actions: object | None = None
     get_enrollment_funnel: object | None = (
         None  # async (period: str | None) -> EnrollmentFunnelResult
     )

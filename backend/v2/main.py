@@ -15,6 +15,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from motor.motor_asyncio import AsyncIOMotorClient
 from starlette.middleware.cors import CORSMiddleware
@@ -90,6 +91,7 @@ from backend.v2.shared.events import EventDispatcher, MongoOutbox
 from backend.v2.shared.http import InMemoryRateLimitMiddleware, register_exception_handlers
 from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
 from backend.v2.shared.observability import configure_logging, configure_tracing
+from backend.v2.shared.tenancy.context import tenant_scope
 from backend.v2.shared.tenancy.resolver import (
     TenantResolutionError,
     TenantResolver,
@@ -215,6 +217,42 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Admin BFF wiring (Wave 3).
     app.state.admin = compose_admin(db, outbox, idempotency_store, stripe_gw)
 
+    scheduler: AsyncIOScheduler | None = None
+
+    async def _process_scheduled_resumes() -> None:
+        totals = {
+            "processed": 0,
+            "succeeded": 0,
+            "blocked_capacity": 0,
+            "failed": 0,
+            "academy_count": 0,
+        }
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            settings.default_academy_id,
+        ):
+            with tenant_scope(academy_id):
+                result = await app.state.admin.process_scheduled_resume_actions.execute(limit=100)
+            totals["academy_count"] += 1
+            totals["processed"] += result.processed
+            totals["succeeded"] += result.succeeded
+            totals["blocked_capacity"] += result.blocked_capacity
+            totals["failed"] += result.failed
+        if totals["processed"]:
+            log.info("scheduled_resume_actions_processed", extra=totals)
+
+    scheduler = AsyncIOScheduler(timezone=settings.scheduler_tz)
+    scheduler.add_job(
+        _process_scheduled_resumes,
+        "cron",
+        hour=2,
+        minute=0,
+        id="process_scheduled_resume_actions",
+        replace_existing=True,
+    )
+    scheduler.start()
+    app.state.scheduler = scheduler
+
     app.state.bootstrap_academy = BootstrapAcademy(
         store=MongoTenantBootstrapStore(db),
     )
@@ -222,8 +260,25 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        if scheduler is not None:
+            scheduler.shutdown(wait=False)
         await dispatcher.stop()
         client.close()
+
+
+async def _scheduler_academy_ids(
+    academies: MongoAcademyRepository,
+    default_academy_id: str,
+) -> list[str]:
+    academy_ids: list[str] = []
+    seen: set[str] = set()
+    for academy_id in await academies.list_ids():
+        if academy_id and academy_id not in seen:
+            academy_ids.append(academy_id)
+            seen.add(academy_id)
+    if default_academy_id and default_academy_id not in seen:
+        academy_ids.append(default_academy_id)
+    return academy_ids
 
 
 def create_app() -> FastAPI:

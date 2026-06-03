@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from backend.v2.contexts.billing.application.ports import StripeGateway
 
@@ -103,7 +103,9 @@ class RealStripeGateway(StripeGateway):
         stripe_customer_id: str | None,
     ) -> str:
         if not stripe_customer_id:
-            raise ValueError(f"parent {parent_id} has no Stripe customer")
+            raise ValueError(
+                "Billing portal will be available after the first successful autopay setup."
+            )
 
         def _create() -> Any:
             return self._stripe.billing_portal.Session.create(
@@ -140,6 +142,29 @@ class RealStripeGateway(StripeGateway):
                 self._stripe.Subscription.delete(stripe_subscription_id)
 
         await asyncio.to_thread(_cancel)
+
+    async def pause_subscription_collection(
+        self,
+        stripe_subscription_id: str,
+        *,
+        behavior: Literal["void", "keep_as_draft", "mark_uncollectible"] = "void",
+    ) -> None:
+        def _pause() -> None:
+            self._stripe.Subscription.modify(
+                stripe_subscription_id,
+                pause_collection={"behavior": behavior},
+            )
+
+        await asyncio.to_thread(_pause)
+
+    async def resume_subscription_collection(self, stripe_subscription_id: str) -> None:
+        def _resume() -> None:
+            self._stripe.Subscription.modify(
+                stripe_subscription_id,
+                pause_collection="",
+            )
+
+        await asyncio.to_thread(_resume)
 
     async def update_subscription_proration(
         self,

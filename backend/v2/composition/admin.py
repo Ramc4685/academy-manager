@@ -105,6 +105,9 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
     DeclinePauseRequest,
     ListAdminPauseRequests,
 )
+from backend.v2.contexts.enrollment.application.use_cases.process_scheduled_resume_actions import (
+    ProcessScheduledResumeActions,
+)
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
@@ -127,6 +130,9 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import 
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_pause_request_repo import (
     MongoPauseRequestRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_scheduled_action_repo import (
+    MongoScheduledEnrollmentActionRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
@@ -830,6 +836,8 @@ def compose_admin(
     students_r = MongoStudentRepository(db)
     waitlist = MongoWaitlistRepository(db)
     pause_requests = MongoPauseRequestRepository(db)
+    scheduled_actions = MongoScheduledEnrollmentActionRepository(db)
+    subscriptions_repo = MongoSubscriptionRepository(db)
 
     create_session = CreateSession(sessions=sessions_w, academy_id=academy_id)
     edit_session = EditSession(sessions=sessions_w)
@@ -892,14 +900,26 @@ def compose_admin(
     skip = SkipFromWaitlist(waitlist=waitlist)
     remove = RemoveFromWaitlist(waitlist=waitlist)
     list_admin_pause_requests = ListAdminPauseRequests(pause_requests=pause_requests)
-    approve_pause_request = ApprovePauseRequest(pause_requests=pause_requests)
+    approve_pause_request = ApprovePauseRequest(
+        pause_requests=pause_requests,
+        pause_enrollment=pause_enrollment,
+        scheduled_actions=scheduled_actions,
+        subscriptions=subscriptions_repo,
+        stripe=stripe,
+        academy_id=academy_id,
+    )
     decline_pause_request = DeclinePauseRequest(pause_requests=pause_requests)
+    process_scheduled_resume_actions = ProcessScheduledResumeActions(
+        scheduled_actions=scheduled_actions,
+        resume_enrollment=resume_enrollment,
+        subscriptions=subscriptions_repo,
+        stripe=stripe,
+    )
 
     # Billing
     billing_ledger_repo = MongoBillingLedgerRepository(db)
     credits_repo = MongoCreditLedgerRepository(db)
     payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
-    subscriptions_repo = MongoSubscriptionRepository(db)
     session_type_repo = MongoSessionTypeRepository(db)
     student_billing_enrollment_repo = MongoStudentBillingEnrollmentRepository(db)
     create_session_type = CreateSessionType(
@@ -1644,6 +1664,7 @@ def compose_admin(
         list_admin_pause_requests=list_admin_pause_requests,
         approve_pause_request=approve_pause_request,
         decline_pause_request=decline_pause_request,
+        process_scheduled_resume_actions=process_scheduled_resume_actions,
         issue_refund=issue_refund,
         quote_enrollment=quote_enrollment,
         preview_withdrawal_credit=preview_withdrawal_credit,
@@ -1703,6 +1724,10 @@ def compose_admin(
         list_student_billing_enrollments=list_student_billing_enrollments,
         move_student_session_type=move_student_session_type,
         override_student_price=override_student_price,
+        list_blocked_scheduled_resume_actions=lambda: scheduled_actions.list_by_status(
+            "blocked_capacity",
+            limit=100,
+        ),
     )
     admin.get_reports_dashboard = _make_reports_dashboard(db)  # type: ignore[attr-defined]
 

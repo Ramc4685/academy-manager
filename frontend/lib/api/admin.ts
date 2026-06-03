@@ -622,6 +622,7 @@ export type AdminAttentionSeverity = "high" | "medium" | "low";
 export type AdminAttentionKind =
   | "overdue_dues"
   | "pause_requests"
+  | "scheduled_resume_blocked"
   | "waivers"
   | "session_pressure";
 
@@ -726,6 +727,8 @@ export interface AdminPauseRequestView {
   parent_id: string;
   enrollment_id: string;
   period: string;
+  pause_kind: "fixed" | "indefinite";
+  resume_on: string | null;
   reason: string | null;
   status: "pending" | "approved" | "declined";
   created_at: string;
