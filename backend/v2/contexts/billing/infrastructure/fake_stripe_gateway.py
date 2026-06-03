@@ -20,6 +20,8 @@ class FakeStripeGateway(StripeGateway):
         self.portal_sessions: list[dict[str, Any]] = []
         self.refunds: list[dict[str, Any]] = []
         self.cancelled_subscriptions: list[dict[str, Any]] = []
+        self.paused_subscriptions: list[dict[str, Any]] = []
+        self.resumed_subscriptions: list[dict[str, Any]] = []
         self.subscription_prorations: list[dict[str, Any]] = []
 
     async def create_checkout_session(
@@ -117,6 +119,22 @@ class FakeStripeGateway(StripeGateway):
                 "at_period_end": at_period_end,
             }
         )
+
+    async def pause_subscription_collection(
+        self,
+        stripe_subscription_id: str,
+        *,
+        behavior: str = "void",
+    ) -> None:
+        self.paused_subscriptions.append(
+            {
+                "stripe_subscription_id": stripe_subscription_id,
+                "behavior": behavior,
+            }
+        )
+
+    async def resume_subscription_collection(self, stripe_subscription_id: str) -> None:
+        self.resumed_subscriptions.append({"stripe_subscription_id": stripe_subscription_id})
 
     async def update_subscription_proration(
         self,

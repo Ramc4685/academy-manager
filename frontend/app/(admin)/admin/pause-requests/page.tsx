@@ -48,7 +48,7 @@ export default function AdminPauseRequestsPage() {
               <thead>
                 <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
                   <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Requested</th>
-                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Period</th>
+                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Pause</th>
                   <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Reason</th>
                   <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Status</th>
                   <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted sr-only">Actions</th>
@@ -105,7 +105,12 @@ function PauseRow({
           Awaiting admin decision
         </div>
       </td>
-      <td className="px-2 py-3 font-medium text-rally-base">{request.period}</td>
+      <td className="px-2 py-3">
+        <div className="font-medium text-rally-base">{pauseLabel(request)}</div>
+        <div className="mt-1 text-xs text-rally-subtle">
+          Releases seat, moves student to waitlist, and pauses billing.
+        </div>
+      </td>
       <td className="px-2 py-3 text-rally-subtle">{request.reason || "—"}</td>
       <td className="px-2 py-3">
         <Chip variant={mapStatus(request.status)} label={request.status.toUpperCase()} />
@@ -134,6 +139,20 @@ function PauseRow({
       </td>
     </tr>
   );
+}
+
+function pauseLabel(request: AdminPauseRequestView): string {
+  if (request.pause_kind === "indefinite") return "Indefinite pause";
+  if (!request.resume_on) return request.period || "Resume date pending";
+  return `Resume ${formatDate(request.resume_on)}`;
+}
+
+function formatDate(value: string): string {
+  return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function Skeleton() {

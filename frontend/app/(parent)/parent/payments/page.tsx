@@ -19,7 +19,8 @@ function money(cents: number, currency = "USD"): string {
 
 export default function ParentPaymentsPage() {
   const [pauseEnrollmentId, setPauseEnrollmentId] = useState("");
-  const [pausePeriod, setPausePeriod] = useState(currentPeriod());
+  const [pauseKind, setPauseKind] = useState<"fixed" | "indefinite">("fixed");
+  const [resumeOn, setResumeOn] = useState(currentDate());
   const [pauseReason, setPauseReason] = useState("");
   const [portalError, setPortalError] = useState<string | null>(null);
   const paymentsQuery = useQuery({
@@ -52,6 +53,12 @@ export default function ParentPaymentsPage() {
     },
     onError: (error) => {
       const detail = error instanceof Error ? error.message : "Request failed";
+      if (detail.includes("Stripe customer") || detail.includes("autopay setup")) {
+        setPortalError(
+          "Billing portal will be available after your first successful autopay setup. Use Start autopay for an enrollment first.",
+        );
+        return;
+      }
       setPortalError(`Billing portal could not open. ${detail}`);
     },
   });
@@ -70,11 +77,15 @@ export default function ParentPaymentsPage() {
     mutationFn: () =>
       createParentPauseRequest({
         enrollment_id: pauseEnrollmentId,
-        period: pausePeriod,
+        period: pauseKind === "fixed" ? resumeOn.slice(0, 7) : undefined,
+        pause_kind: pauseKind,
+        resume_on: pauseKind === "fixed" ? resumeOn : null,
         reason: pauseReason || undefined,
       }),
     onSuccess: () => {
       setPauseEnrollmentId("");
+      setPauseKind("fixed");
+      setResumeOn(currentDate());
       setPauseReason("");
       void pauseRequestsQuery.refetch();
     },
@@ -204,15 +215,47 @@ export default function ParentPaymentsPage() {
         <section className="rounded-lg border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
           <h2 className="text-lg font-semibold">Pause request</h2>
           <div className="mt-4 space-y-3">
-            <label className="block text-sm font-medium">
-              Month
-              <input
-                type="month"
-                value={pausePeriod}
-                onChange={(event) => setPausePeriod(event.target.value)}
-                className="mt-1 h-11 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm dark:border-neutral-700 dark:bg-neutral-950"
-              />
-            </label>
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium">Pause type</legend>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label className="flex min-h-touch items-center gap-2 rounded-md border border-neutral-300 px-3 text-sm dark:border-neutral-700">
+                  <input
+                    type="radio"
+                    name="pause-kind"
+                    value="fixed"
+                    checked={pauseKind === "fixed"}
+                    onChange={() => setPauseKind("fixed")}
+                  />
+                  Fixed date
+                </label>
+                <label className="flex min-h-touch items-center gap-2 rounded-md border border-neutral-300 px-3 text-sm dark:border-neutral-700">
+                  <input
+                    type="radio"
+                    name="pause-kind"
+                    value="indefinite"
+                    checked={pauseKind === "indefinite"}
+                    onChange={() => setPauseKind("indefinite")}
+                  />
+                  Indefinite
+                </label>
+              </div>
+            </fieldset>
+            {pauseKind === "fixed" && (
+              <label className="block text-sm font-medium">
+                Requested resume date
+                <input
+                  type="date"
+                  value={resumeOn}
+                  onChange={(event) => setResumeOn(event.target.value)}
+                  className="mt-1 h-11 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+                />
+              </label>
+            )}
+            <p className="text-xs text-neutral-500">
+              {pauseKind === "fixed"
+                ? "We will attempt to resume this enrollment on the requested date if a seat is available."
+                : "This will stay paused until you or an admin choose a resume date or cancel the enrollment."}
+            </p>
             <label className="block text-sm font-medium">
               Reason
               <textarea
@@ -226,14 +269,19 @@ export default function ParentPaymentsPage() {
               <button
                 type="button"
                 onClick={() => pauseMutation.mutate()}
-                disabled={pauseMutation.isPending || !pausePeriod}
+                disabled={pauseMutation.isPending || (pauseKind === "fixed" && !resumeOn)}
                 className="min-h-touch rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
               >
                 {pauseMutation.isPending ? "Sending..." : "Submit"}
               </button>
               <button
                 type="button"
-                onClick={() => setPauseEnrollmentId("")}
+                onClick={() => {
+                  setPauseEnrollmentId("");
+                  setPauseKind("fixed");
+                  setResumeOn(currentDate());
+                  setPauseReason("");
+                }}
                 className="min-h-touch rounded-md border border-neutral-300 px-4 text-sm dark:border-neutral-700"
               >
                 Cancel
@@ -255,7 +303,11 @@ export default function ParentPaymentsPage() {
                 className="rounded-lg border border-neutral-200 bg-white p-3 text-sm dark:border-neutral-800 dark:bg-neutral-900"
               >
                 <div className="flex items-center justify-between gap-3">
-                  <span className="font-medium">{request.period}</span>
+                  <span className="font-medium">
+                    {request.pause_kind === "indefinite"
+                      ? "Indefinite pause"
+                      : `Resume ${formatDate(request.resume_on)}`}
+                  </span>
                   <StatusBadge status={request.status} />
                 </div>
                 {request.reason && <p className="mt-1 text-neutral-500">{request.reason}</p>}
@@ -300,9 +352,20 @@ export default function ParentPaymentsPage() {
   );
 }
 
-function currentPeriod(): string {
+function currentDate(): string {
   const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+    now.getDate(),
+  ).padStart(2, "0")}`;
+}
+
+function formatDate(value: string | null): string {
+  if (!value) return "date pending";
+  return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function StatusBadge({ status }: { status: string }) {

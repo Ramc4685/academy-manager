@@ -16,6 +16,14 @@ class MongoAcademyRepository:
             return None
         return doc
 
+    async def list_ids(self) -> list[str]:
+        academy_ids: list[str] = []
+        async for doc in self.collection.find({}, {"academy_id": 1}):
+            academy_id = str(doc.get("academy_id") or "")
+            if academy_id:
+                academy_ids.append(academy_id)
+        return academy_ids
+
     async def update_by_id(self, academy_id: str, fields: dict[str, Any]) -> dict[str, Any] | None:
         doc = await self.collection.find_one_and_update(
             {"academy_id": academy_id},
