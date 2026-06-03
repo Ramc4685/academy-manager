@@ -98,7 +98,8 @@ test.describe("parent email registration verification", () => {
       page.getByRole("button", { name: "Send verification email" })
     ).toBeHidden();
 
-    await page.goto("/login");
+    await page.getByRole("link", { name: "Sign in" }).click();
+    await expect(page).toHaveURL(/\/login$/);
     await expect(page.getByTestId("login-submit")).toBeEnabled();
     await page.getByTestId("login-email").fill("parent@example.com");
     await page.getByTestId("login-password").fill("correct-horse-1");
