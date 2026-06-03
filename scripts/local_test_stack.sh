@@ -326,7 +326,7 @@ stop_started() {
 }
 
 case "${1:-all}" in
-  fresh) stop_started; wait_for_port_free "MongoDB" "${MONGO_PORT}"; wait_for_port_free "Firebase" "${FIREBASE_AUTH_PORT}"; wait_for_port_free "Backend" "${BACKEND_PORT}"; start_mongo; start_firebase; start_backend; start_frontend; seed; smoke ;;
+  fresh) stop_started; wait_for_port_free "MongoDB" "${MONGO_PORT}"; wait_for_port_free "Firebase Auth" "${FIREBASE_AUTH_PORT}"; wait_for_port_free "Firebase UI" "${FIREBASE_UI_PORT}"; wait_for_port_free "Backend" "${BACKEND_PORT}"; wait_for_port_free "Frontend" "${FRONTEND_PORT}"; start_mongo; start_firebase; start_backend; start_frontend; seed; smoke ;;
   status) status ;;
   infra) start_mongo; start_firebase; status ;;
   app) start_backend; start_frontend; status ;;

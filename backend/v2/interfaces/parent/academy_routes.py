@@ -17,5 +17,5 @@ async def get_academy_info(
     claims: AuthClaims = Depends(require_persona("parent")),
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> ParentAcademyView:
-    info = await use_cases.get_academy_info()  # type: ignore[operator]
+    info = await use_cases.get_academy_info(academy_id=claims.academy_id)  # type: ignore[operator]
     return ParentAcademyView(**info)

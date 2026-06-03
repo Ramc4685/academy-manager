@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Protocol
 
@@ -43,11 +44,13 @@ class GetChildSchedule:
         occurrences: SessionOccurrenceRepository,
         sessions: SessionQuery,
         students: _StudentQuery,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._enrollments = enrollments
         self._occurrences = occurrences
         self._sessions = sessions
         self._students = students
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     async def execute(
         self,
@@ -66,7 +69,7 @@ class GetChildSchedule:
                 f"student {student_id!r} not found for parent {parent_id!r}"
             )
 
-        now = datetime.now(UTC)
+        now = self._clock()
         start_dt: datetime = (
             datetime(frm.year, frm.month, frm.day, 0, 0, 0, tzinfo=UTC) if frm is not None else now
         )

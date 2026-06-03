@@ -65,7 +65,9 @@ export default function AdminUserDetailPage() {
   const isCoach = user.role === "coach";
 
   const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.userDetail(userId) });
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.admin.userDetail(userId),
+    });
     void queryClient.invalidateQueries({ queryKey: queryKeys.admin.users() });
   };
 
@@ -83,19 +85,26 @@ export default function AdminUserDetailPage() {
           <RoleChangePanel user={user} onSaved={invalidate} />
         </Card>
       </div>
-      {isCoach && (
-        <CoachSessionsPanel user={user} onAssigned={invalidate} />
-      )}
+      {isCoach && <CoachSessionsPanel user={user} onAssigned={invalidate} />}
     </section>
   );
 }
 
-function StateCard({ message, isError = false }: { message: string; isError?: boolean }) {
+function StateCard({
+  message,
+  isError = false,
+}: {
+  message: string;
+  isError?: boolean;
+}) {
   return (
     <section className="space-y-4">
       <BackLink />
       <Card p={20}>
-        <p role={isError ? "alert" : undefined} className="text-sm text-rally-muted">
+        <p
+          role={isError ? "alert" : undefined}
+          className="text-sm text-rally-muted"
+        >
           {message}
         </p>
       </Card>
@@ -126,7 +135,10 @@ function Header({ user }: { user: AdminUserDetail }) {
               {user.display_name}
             </h2>
             <div className="mt-1 flex items-center gap-2">
-              <Chip variant={roleVariant(user.role)} label={user.role.toUpperCase()} />
+              <Chip
+                variant={roleVariant(user.role)}
+                label={user.role.toUpperCase()}
+              />
               <Chip
                 variant={user.status === "active" ? "enrolled" : "expired"}
                 label={user.status.toUpperCase()}
@@ -155,7 +167,13 @@ function Header({ user }: { user: AdminUserDetail }) {
   );
 }
 
-function UserEditForm({ user, onSaved }: { user: AdminUserDetail; onSaved: () => void }) {
+function UserEditForm({
+  user,
+  onSaved,
+}: {
+  user: AdminUserDetail;
+  onSaved: () => void;
+}) {
   const [email, setEmail] = useState(user.email);
   const [displayName, setDisplayName] = useState(user.display_name);
   const [phone, setPhone] = useState(user.phone ?? "");
@@ -175,7 +193,8 @@ function UserEditForm({ user, onSaved }: { user: AdminUserDetail; onSaved: () =>
     mutationFn: () =>
       updateAdminUser(user.user_id, {
         email: email !== user.email ? email : undefined,
-        display_name: displayName !== user.display_name ? displayName : undefined,
+        display_name:
+          displayName !== user.display_name ? displayName : undefined,
         phone: phone !== (user.phone ?? "") ? phone || null : undefined,
         status: status !== user.status ? status : undefined,
         reason,
@@ -187,7 +206,9 @@ function UserEditForm({ user, onSaved }: { user: AdminUserDetail; onSaved: () =>
     },
     onError: (err: unknown) => {
       setSubmitOk(false);
-      setSubmitError(err instanceof Error ? err.message : "Could not save user.");
+      setSubmitError(
+        err instanceof Error ? err.message : "Could not save user.",
+      );
     },
   });
 
@@ -276,7 +297,11 @@ function UserEditForm({ user, onSaved }: { user: AdminUserDetail; onSaved: () =>
           variant="primary"
           size="sm"
           disabled={!dirty || mutation.isPending}
-          icon={mutation.isPending ? <RefreshCw className="size-3.5 animate-spin" /> : undefined}
+          icon={
+            mutation.isPending ? (
+              <RefreshCw className="size-3.5 animate-spin" />
+            ) : undefined
+          }
         >
           {mutation.isPending ? "Saving..." : "Save changes"}
         </Button>
@@ -302,7 +327,13 @@ function UserEditForm({ user, onSaved }: { user: AdminUserDetail; onSaved: () =>
   );
 }
 
-function RoleChangePanel({ user, onSaved }: { user: AdminUserDetail; onSaved: () => void }) {
+function RoleChangePanel({
+  user,
+  onSaved,
+}: {
+  user: AdminUserDetail;
+  onSaved: () => void;
+}) {
   const [role, setRole] = useState<AdminUserRole>(user.role);
   const [reason, setReason] = useState("Admin role change");
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -321,7 +352,9 @@ function RoleChangePanel({ user, onSaved }: { user: AdminUserDetail; onSaved: ()
     },
     onError: (err: unknown) => {
       setSubmitOk(false);
-      setSubmitError(err instanceof Error ? err.message : "Could not change role.");
+      setSubmitError(
+        err instanceof Error ? err.message : "Could not change role.",
+      );
     },
   });
 
@@ -342,7 +375,10 @@ function RoleChangePanel({ user, onSaved }: { user: AdminUserDetail; onSaved: ()
         rows={[
           isCoach
             ? { label: "Active sessions", value: String(user.session_count) }
-            : { label: "Linked students", value: String(user.linked_student_count) },
+            : {
+                label: "Linked students",
+                value: String(user.linked_student_count),
+              },
           { label: "Current role", value: user.role.toUpperCase() },
         ]}
       />
@@ -381,7 +417,11 @@ function RoleChangePanel({ user, onSaved }: { user: AdminUserDetail; onSaved: ()
         variant="primary"
         size="sm"
         disabled={role === user.role || mutation.isPending}
-        icon={mutation.isPending ? <RefreshCw className="size-3.5 animate-spin" /> : undefined}
+        icon={
+          mutation.isPending ? (
+            <RefreshCw className="size-3.5 animate-spin" />
+          ) : undefined
+        }
       >
         {mutation.isPending ? "Saving..." : "Change role"}
       </Button>
@@ -414,25 +454,38 @@ function CoachSessionsPanel({
 
   const assignMutation = useMutation({
     mutationFn: () =>
-      updateAdminSession(assignSessionId, { coach_id: user.user_id, reason: assignReason }),
+      updateAdminSession(assignSessionId, {
+        coach_id: user.user_id,
+        reason: assignReason,
+      }),
     onSuccess: () => {
       setAssignError(null);
       setAssignOk(true);
       setAssignSessionId("");
-      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.coachSessions(user.user_id) });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions() });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.userDetail(user.user_id) });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.admin.coachSessions(user.user_id),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.admin.sessions(),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.admin.userDetail(user.user_id),
+      });
       onAssigned();
     },
     onError: (err: unknown) => {
       setAssignOk(false);
-      setAssignError(err instanceof Error ? err.message : "Could not assign session.");
+      setAssignError(
+        err instanceof Error ? err.message : "Could not assign session.",
+      );
     },
   });
 
   const coachSessions = coachSessionsQuery.data?.sessions ?? [];
   const allSessions = allSessionsQuery.data?.sessions ?? [];
-  const unassignedSessions = allSessions.filter((s) => s.coach_id !== user.user_id);
+  const availableSessions = allSessions.filter(
+    (s) => s.coach_id !== user.user_id,
+  );
 
   const fmt = (iso: string) =>
     new Date(iso).toLocaleString(undefined, {
@@ -455,11 +508,17 @@ function CoachSessionsPanel({
           {coachSessionsQuery.isPending ? (
             <div className="h-12 animate-pulse rounded-md bg-neutral-100" />
           ) : coachSessions.length === 0 ? (
-            <p className="text-sm text-rally-muted">No sessions assigned to this coach.</p>
+            <p className="text-sm text-rally-muted">
+              No sessions assigned to this coach.
+            </p>
           ) : (
             <ul className="divide-y divide-neutral-100 rounded-md border border-neutral-200">
               {coachSessions.map((session) => (
-                <SessionRow key={session.session_id} session={session} fmt={fmt} />
+                <SessionRow
+                  key={session.session_id}
+                  session={session}
+                  fmt={fmt}
+                />
               ))}
             </ul>
           )}
@@ -487,7 +546,7 @@ function CoachSessionsPanel({
                 required
               >
                 <option value="">Select a session…</option>
-                {unassignedSessions.map((s) => (
+                {availableSessions.map((s) => (
                   <option key={s.session_id} value={s.session_id}>
                     {s.title} — {fmt(s.start_at)} ({s.enrolled_count} students)
                   </option>
@@ -539,7 +598,9 @@ function SessionRow({
     <li className="flex items-center justify-between px-3 py-2.5 text-sm">
       <div className="min-w-0">
         <p className="truncate font-medium text-rally-ink">{session.title}</p>
-        <p className="truncate text-xs text-rally-muted">{fmt(session.start_at)}</p>
+        <p className="truncate text-xs text-rally-muted">
+          {fmt(session.start_at)}
+        </p>
       </div>
       <div className="ml-4 shrink-0 text-right text-xs text-rally-muted">
         <span>{session.enrolled_count} enrolled</span>
@@ -554,7 +615,11 @@ function SessionRow({
   );
 }
 
-function DetailList({ rows }: { rows: Array<{ label: string; value: string }> }) {
+function DetailList({
+  rows,
+}: {
+  rows: Array<{ label: string; value: string }>;
+}) {
   return (
     <dl className="grid grid-cols-1 gap-3 text-sm">
       {rows.map((row) => (
@@ -567,16 +632,28 @@ function DetailList({ rows }: { rows: Array<{ label: string; value: string }> })
   );
 }
 
-function MutationMessages({ error, ok }: { error: string | null; ok: boolean }) {
+function MutationMessages({
+  error,
+  ok,
+}: {
+  error: string | null;
+  ok: boolean;
+}) {
   return (
     <>
       {error && (
-        <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700">
+        <p
+          role="alert"
+          className="rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700"
+        >
           {error}
         </p>
       )}
       {ok && (
-        <p role="status" className="rounded-md border border-emerald-200 bg-emerald-50 p-2 text-sm text-emerald-800">
+        <p
+          role="status"
+          className="rounded-md border border-emerald-200 bg-emerald-50 p-2 text-sm text-emerald-800"
+        >
           Saved.
         </p>
       )}

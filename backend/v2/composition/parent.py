@@ -158,7 +158,7 @@ class ParentComposition:
     cancel_billing_enrollment: object
     get_parent_waiver_requirement: GetParentWaiverRequirement
     accept_parent_waiver: AcceptParentWaiver
-    get_academy_info: object  # callable
+    get_academy_info: object  # callable accepting academy_id
 
 
 def compose_parent(
@@ -671,7 +671,7 @@ def compose_parent(
         result = await checkout_status.execute(checkout_session_id, parent_id=parent_id)
         return result.model_dump()
 
-    async def get_academy_info() -> dict[str, Any]:
+    async def get_academy_info(*, academy_id: str) -> dict[str, Any]:
         doc = await db["academies"].find_one({"academy_id": academy_id})
         if not doc:
             return {

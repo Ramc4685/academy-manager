@@ -52,15 +52,21 @@ export default function CoachSessionsPage() {
             </h2>
             <ul className="space-y-3">
               {daySessions.map((session) => (
-                <li key={session.session_id}>
+                <li key={session.occurrence_id}>
                   <Link
-                    href={`/coach/sessions/${session.session_id}` as Parameters<typeof Link>[0]["href"]}
+                    href={
+                      `/coach/sessions/${encodeURIComponent(session.occurrence_id)}?date=${localDateKey(session.start_at)}` as Parameters<
+                        typeof Link
+                      >[0]["href"]
+                    }
                     className="block rounded-lg border border-neutral-200 bg-white p-4 hover:border-blue-400 dark:border-neutral-800 dark:bg-neutral-900"
                   >
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <p className="font-semibold">{session.title}</p>
-                        <p className="text-sm text-neutral-500">{session.location}</p>
+                        <p className="text-sm text-neutral-500">
+                          {session.location}
+                        </p>
                       </div>
                       <p className="text-sm tabular-nums text-neutral-600 dark:text-neutral-300">
                         {formatTimeRange(session.start_at, session.end_at)}
@@ -86,8 +92,17 @@ function formatTimeRange(start: string, end: string): string {
   return `${fmt(start)} – ${fmt(end)}`;
 }
 
-function formatDateLabel(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
+function localDateKey(iso: string): string {
+  const date = new Date(iso);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatDateLabel(key: string): string {
+  const [year, month, day] = key.split("-").map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
     weekday: "long",
     month: "short",
     day: "numeric",
@@ -95,16 +110,16 @@ function formatDateLabel(iso: string): string {
 }
 
 function groupByDate(
-  sessions: CoachScheduleEntry[]
+  sessions: CoachScheduleEntry[],
 ): { label: string; sessions: CoachScheduleEntry[] }[] {
   const map = new Map<string, CoachScheduleEntry[]>();
   for (const s of sessions) {
-    const key = s.start_at.slice(0, 10);
+    const key = localDateKey(s.start_at);
     const bucket = map.get(key) ?? [];
     bucket.push(s);
     map.set(key, bucket);
   }
   return Array.from(map.entries())
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, items]) => ({ label: formatDateLabel(key + "T00:00:00"), sessions: items }));
+    .map(([key, items]) => ({ label: formatDateLabel(key), sessions: items }));
 }

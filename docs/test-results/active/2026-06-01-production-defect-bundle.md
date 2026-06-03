@@ -41,6 +41,7 @@ Sessions are not showing; admin student profile needs enrolled sessions, payment
 - 2026-06-02T20:15:38 main/working: Investigating GitHub Actions run 26848747368 for PR #132; only Frontend E2E Chromium/WebKit failed, backend and static jobs passed.
 - 2026-06-02T20:16:35 main/working: Root cause found for run 26848747368: coach session detail preserved only ApiError.message in row state, while E2E and offline conflict UX require structured error code visibility for 409 attendance conflicts.
 - 2026-06-02T20:34:40 main/working: Follow-up CI run 26858112085 fixed original coach conflict path in Chromium, but WebKit reported a flaky register-email-verification navigation race. Stabilizing the test to use the rendered Sign in link after resend state settles instead of direct page.goto('/login').
+- 2026-06-03T08:25:12 main/working: Addressing valid PR #132 review comments: coach occurrence schedule/detail flow, URL encoding, pre-push E2E range, local stack waits, and docs.
 ## Verification
 
 - 2026-06-01T08:09:04: cd backend && source .venv/bin/activate && ruff format --check v2 => 473 files already formatted
@@ -52,6 +53,8 @@ Sessions are not showing; admin student profile needs enrolled sessions, payment
 - 2026-06-02T20:24:49: Pre-push verification passed via temporary pnpm shim: scripts/dev/pre-push-checks.sh => ruff format --check v2 passed, ruff check v2 passed, pytest v2/tests passed, frontend node unit tests passed, pnpm typecheck passed, pnpm lint passed; E2E skipped by script because no frontend/e2e files changed. Script emitted existing integer-expression warning from E2E change detector but exited 0.
 - 2026-06-02T20:37:23: WebKit CI flake stabilization verification: npm exec --yes pnpm@10.24.0 -- exec playwright test e2e/specs/register-email-verification.spec.ts --project=webkit-mobile --repeat-each=10 --workers=2 => 10 passed; npm exec --yes pnpm@10.24.0 -- exec playwright test --project=webkit-mobile => 69 passed, 10 skipped. The previously flaky register-email-verification spec passed inside the full WebKit project.
 - 2026-06-02T20:42:05: Waiver E2E stub fix verification: npm exec --yes pnpm@10.24.0 -- exec playwright test e2e/specs/saas-parent-waivers.spec.ts --project=chromium-mobile --project=webkit-mobile => 6 passed. Added explicit GET /api/v2/admin/waivers/templates stub so template-management query does not fall through to local backend proxy during full E2E.
+- 2026-06-03T09:02:46: Full pre-push --full failed before push: backend/static checks passed, but local E2E used non-CI worker settings and produced broad timeout failures under load (114 passed, 20 skipped, 24 failed). Stopped stale Next dev servers and updated pre-push E2E invocation to run with CI=true so it matches Playwright CI worker/retry settings.
+- 2026-06-03T09:07:18: Final full pre-push verification passed after stopping stale dev servers and running E2E with CI=true from the pre-push script: ruff format --check v2, ruff check v2, pytest v2/tests, frontend node unit tests, pnpm typecheck, pnpm lint, and pnpm e2e all passed.
 ## Reusable Lessons
 
 - None recorded yet.

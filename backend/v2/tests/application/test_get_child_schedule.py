@@ -133,6 +133,7 @@ def _make_uc(
         occurrences=FakeOccurrenceQuery(occurrences),
         sessions=FakeSessionQuery(sessions),
         students=FakeStudentQuery(students),
+        clock=lambda: _NOW,
     )
 
 

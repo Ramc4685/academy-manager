@@ -35,6 +35,14 @@ class SessionOccurrenceRepository(Protocol):
         on_date: date,
     ) -> list[SessionOccurrence]: ...
 
+    async def list_for_coach_upcoming(
+        self,
+        *,
+        coach_id: str,
+        now: datetime | None = None,
+        limit: int = 100,
+    ) -> list[SessionOccurrence]: ...
+
     async def list_for_session_between(
         self,
         *,

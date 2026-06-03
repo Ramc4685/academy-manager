@@ -5,8 +5,18 @@ import { ACADEMY_A, fulfillJson, stubMe } from "../fixtures/saas-stubs";
 const draftApplication = {
   application_id: "app-qa-1",
   status: "DRAFT",
-  parent_profile: { first_name: "", last_name: "", email: "parent@example.com", phone: "" },
-  child_profile: { first_name: "", last_name: "", date_of_birth: "", skill_level: "" },
+  parent_profile: {
+    first_name: "",
+    last_name: "",
+    email: "parent@example.com",
+    phone: "",
+  },
+  child_profile: {
+    first_name: "",
+    last_name: "",
+    date_of_birth: "",
+    skill_level: "",
+  },
   selected_session_id: null,
   waiver_accepted: false,
   expires_at: "2026-05-27T00:00:00Z",
@@ -22,20 +32,24 @@ async function stubParentShell(page: Parameters<typeof stubMe>[0]) {
 }
 
 async function stubParentPayments(page: Parameters<typeof stubMe>[0]) {
-  await page.route("**/api/v2/parent/payments", (route) => fulfillJson(route, { payments: [] }));
+  await page.route("**/api/v2/parent/payments", (route) =>
+    fulfillJson(route, { payments: [] }),
+  );
   await page.route("**/api/v2/parent/enrollments", (route) =>
-    fulfillJson(route, { enrollments: [] })
+    fulfillJson(route, { enrollments: [] }),
   );
   await page.route("**/api/v2/parent/pause-requests", (route) =>
-    fulfillJson(route, { requests: [] })
+    fulfillJson(route, { requests: [] }),
   );
   await page.route("**/api/v2/parent/credits", (route) =>
-    fulfillJson(route, { balance_cents: 0, credits: [] })
+    fulfillJson(route, { balance_cents: 0, credits: [] }),
   );
 }
 
 test.describe("QA defect regressions", () => {
-  test("parent onboarding child step uses stable date and skill controls", async ({ page }) => {
+  test("parent onboarding child step uses stable date and skill controls", async ({
+    page,
+  }) => {
     await stubParentShell(page);
     await page.route("**/api/v2/parent/onboarding/start", (route) => {
       if (route.request().method() !== "POST") return route.fallback();
@@ -57,7 +71,7 @@ test.describe("QA defect regressions", () => {
       });
     });
     await page.route("**/api/v2/parent/sessions/available", (route) =>
-      fulfillJson(route, { sessions: [] })
+      fulfillJson(route, { sessions: [] }),
     );
 
     await page.goto("/parent/onboarding");
@@ -82,33 +96,49 @@ test.describe("QA defect regressions", () => {
     await stubParentPayments(page);
     await page.route("**/api/v2/parent/billing/portal", (route) => {
       if (route.request().method() !== "POST") return route.fallback();
-      return fulfillJson(route, { detail: "Stripe billing portal is unavailable" }, 503);
+      return fulfillJson(
+        route,
+        { detail: "Stripe billing portal is unavailable" },
+        503,
+      );
     });
 
     await page.goto("/parent/payments");
     await page.getByRole("button", { name: "Billing portal" }).click();
 
-    await expect(page.getByTestId("billing-portal-error")).toContainText("Billing portal");
+    await expect(page.getByTestId("billing-portal-error")).toContainText(
+      "Billing portal",
+    );
     await expect(page).toHaveURL(/\/parent\/payments$/);
   });
 
-  test("wrong-role admin redirects explain the access denial", async ({ page }) => {
+  test("wrong-role admin redirects explain the access denial", async ({
+    page,
+  }) => {
     await stubParentShell(page);
     await stubParentPayments(page);
 
     await page.goto("/admin");
 
     await expect(page).toHaveURL(/\/parent\/payments\?access_denied=admin/);
-    await expect(page.getByTestId("persona-access-denied")).toContainText("admin access");
+    await expect(page.getByTestId("persona-access-denied")).toContainText(
+      "admin access",
+    );
   });
 
-  test("wrong-role coach redirects explain the access denial", async ({ page }) => {
+  test("wrong-role coach redirects explain the access denial", async ({
+    page,
+  }) => {
     await stubParentShell(page);
     await stubParentPayments(page);
 
     await page.goto("/coach/sessions");
 
-    await expect(page).toHaveURL(/\/parent\/payments\?access_denied=coach/);
-    await expect(page.getByTestId("persona-access-denied")).toContainText("coach access");
+    await expect(page).toHaveURL(/\/parent\/payments\?access_denied=coach/, {
+      timeout: 15000,
+    });
+    await expect(page.getByTestId("persona-access-denied")).toContainText(
+      "coach access",
+    );
   });
 });

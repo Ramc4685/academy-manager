@@ -198,6 +198,7 @@ class MoveEnrollmentResponse(BaseModel):
 
 class CoachScheduleEntry(BaseModel):
     session_id: str
+    occurrence_id: str
     title: str
     location: str
     start_at: datetime

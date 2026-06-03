@@ -38,10 +38,18 @@ run_check() {
 
 # ── Detect whether E2E should run ─────────────────────────────────────────────
 FULL="${1:-}"
-CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
-E2E_CHANGED=$(echo "$CHANGED" | grep -c "^frontend/e2e/" 2>/dev/null || echo 0)
+UPSTREAM_REF="$(git rev-parse --abbrev-ref --symbolic-full-name @{upstream} 2>/dev/null || true)"
+BASE=""
+if [ -n "${UPSTREAM_REF}" ]; then
+  BASE="$(git merge-base HEAD "${UPSTREAM_REF}" 2>/dev/null || true)"
+fi
+if [ -n "${BASE}" ]; then
+  CHANGED="$(git diff --name-only "${BASE}"..HEAD 2>/dev/null || true)"
+else
+  CHANGED="$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)"
+fi
 RUN_E2E=false
-if [ "$FULL" = "--full" ] || [ "$E2E_CHANGED" -gt 0 ]; then
+if [ "$FULL" = "--full" ] || printf '%s\n' "${CHANGED}" | grep -q "^frontend/e2e/"; then
   RUN_E2E=true
 fi
 
@@ -71,7 +79,7 @@ run_check "pnpm typecheck" pnpm typecheck
 run_check "pnpm lint"      pnpm lint
 
 if [ "$RUN_E2E" = true ]; then
-  run_check "pnpm e2e" pnpm e2e
+  run_check "pnpm e2e" env CI=true pnpm e2e
 else
   info "E2E skipped (no e2e/ files changed) — use --full to force"
 fi

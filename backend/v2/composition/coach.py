@@ -53,6 +53,7 @@ from backend.v2.contexts.enrollment.application.use_cases.get_session_roster imp
 )
 from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences_for_date import (
     ListCoachOccurrencesForDate,
+    ListCoachUpcomingOccurrences,
 )
 from backend.v2.contexts.enrollment.domain.events import (
     StudentSessionTypeChanged,
@@ -321,7 +322,10 @@ def compose_coach(
         list_session_types=ListSessionTypes(session_types=session_type_repo),
         get_billing_enrollment=billing_enrollment_repo.get,
         get_active_session_enrollments_for_student=enrollments_repo.active_for_student,
-        list_all_sessions=sessions_repo.for_coach,
+        list_all_sessions=ListCoachUpcomingOccurrences(
+            occurrences=occurrences_repo,
+            sessions=sessions_repo,
+        ).execute,
         get_profile=get_profile,
         update_profile=update_profile,
     )

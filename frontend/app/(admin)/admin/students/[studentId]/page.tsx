@@ -123,7 +123,9 @@ export default function AdminStudentDetailPage() {
               void queryClient.invalidateQueries({
                 queryKey: queryKeys.admin.studentDetail(studentId),
               });
-              void queryClient.invalidateQueries({ queryKey: ["admin", "students"] });
+              void queryClient.invalidateQueries({
+                queryKey: ["admin", "students"],
+              });
             }}
           />
         </Card>
@@ -173,8 +175,12 @@ export default function AdminStudentDetailPage() {
               void queryClient.invalidateQueries({
                 queryKey: queryKeys.admin.studentDetail(studentId),
               });
-              void queryClient.invalidateQueries({ queryKey: ["admin", "students"] });
-              void queryClient.invalidateQueries({ queryKey: queryKeys.admin.users("parent") });
+              void queryClient.invalidateQueries({
+                queryKey: ["admin", "students"],
+              });
+              void queryClient.invalidateQueries({
+                queryKey: queryKeys.admin.users("parent"),
+              });
             }}
           />
         </Card>
@@ -189,14 +195,21 @@ function CurrentPaymentPanel({ student }: { student: AdminStudentDetail }) {
     <Card p={20}>
       <Overline>Current payment</Overline>
       {current ? (
-        <div className="mt-3 space-y-3" data-testid="admin-student-current-payment">
+        <div
+          className="mt-3 space-y-3"
+          data-testid="admin-student-current-payment"
+        >
           <div>
             <div className="font-mono text-2xl font-semibold tabular-nums text-rally-ink">
               {formatCurrencyCents(current.amount_cents)}
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-rally-muted">
               <StatusChip status={current.status} />
-              <span>{current.source === "invoice" ? "Invoice balance" : "Session price"}</span>
+              <span>
+                {current.source === "invoice"
+                  ? "Invoice balance"
+                  : "Session price"}
+              </span>
             </div>
           </div>
           <DetailList
@@ -208,7 +221,10 @@ function CurrentPaymentPanel({ student }: { student: AdminStudentDetail }) {
           />
         </div>
       ) : (
-        <p className="mt-3 text-sm text-rally-muted" data-testid="admin-student-no-current-payment">
+        <p
+          className="mt-3 text-sm text-rally-muted"
+          data-testid="admin-student-no-current-payment"
+        >
           No current balance.
         </p>
       )}
@@ -227,8 +243,8 @@ function SessionsPanel({
 }) {
   const [moving, setMoving] = useState<AdminStudentSessionSummary | null>(null);
   const [targetSessionId, setTargetSessionId] = useState("");
-  const [effectiveDate, setEffectiveDate] = useState(
-    () => new Date().toISOString().slice(0, 10),
+  const [effectiveDate, setEffectiveDate] = useState(() =>
+    new Date().toISOString().slice(0, 10),
   );
   const [reason, setReason] = useState("");
 
@@ -255,10 +271,20 @@ function SessionsPanel({
     },
   });
 
-  const availableSessions: AdminSessionView[] =
-    (sessionsQuery.data?.sessions ?? []).filter(
-      (s) => s.session_id !== moving?.session_id,
-    );
+  const availableSessions: AdminSessionView[] = (
+    sessionsQuery.data?.sessions ?? []
+  ).filter((s) => s.session_id !== moving?.session_id);
+
+  useEffect(() => {
+    if (!moving) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !transferMutation.isPending) {
+        setMoving(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [moving, transferMutation.isPending]);
 
   return (
     <>
@@ -270,11 +296,17 @@ function SessionsPanel({
           </span>
         </div>
         {sessions.length === 0 ? (
-          <p className="mt-3 text-sm text-rally-muted" data-testid="admin-student-no-sessions">
+          <p
+            className="mt-3 text-sm text-rally-muted"
+            data-testid="admin-student-no-sessions"
+          >
             No active session enrollments.
           </p>
         ) : (
-          <div className="mt-3 overflow-x-auto" data-testid="admin-student-enrolled-sessions">
+          <div
+            className="mt-3 overflow-x-auto"
+            data-testid="admin-student-enrolled-sessions"
+          >
             <table className="min-w-full text-left text-sm">
               <thead className="border-b border-neutral-200 text-xs uppercase tracking-overline text-rally-muted">
                 <tr>
@@ -289,7 +321,9 @@ function SessionsPanel({
                 {sessions.map((session) => (
                   <tr key={session.enrollment_id}>
                     <td className="py-3 pr-4 align-top">
-                      <div className="font-medium text-rally-ink">{session.session_title}</div>
+                      <div className="font-medium text-rally-ink">
+                        {session.session_title}
+                      </div>
                       <div className="text-xs text-rally-muted">
                         {session.location ?? session.session_id}
                       </div>
@@ -304,11 +338,15 @@ function SessionsPanel({
                           : formatCurrencyCents(session.amount_cents)}
                       </div>
                       <div className="text-xs text-rally-muted">
-                        {session.payment_mode ?? session.subscription_status ?? "—"}
+                        {session.payment_mode ??
+                          session.subscription_status ??
+                          "—"}
                       </div>
                     </td>
                     <td className="py-3 pr-4 align-top">
-                      <StatusChip status={session.subscription_status ?? session.status} />
+                      <StatusChip
+                        status={session.subscription_status ?? session.status}
+                      />
                     </td>
                     <td className="py-3 align-top">
                       <button
@@ -317,7 +355,9 @@ function SessionsPanel({
                           setMoving(session);
                           setTargetSessionId("");
                           setReason("");
-                          setEffectiveDate(new Date().toISOString().slice(0, 10));
+                          setEffectiveDate(
+                            new Date().toISOString().slice(0, 10),
+                          );
                         }}
                       >
                         Move
@@ -333,8 +373,18 @@ function SessionsPanel({
 
       {moving && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl dark:bg-neutral-900">
-            <h2 className="mb-1 text-base font-semibold text-rally-ink">Move student session</h2>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="move-session-title"
+            className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl dark:bg-neutral-900"
+          >
+            <h2
+              id="move-session-title"
+              className="mb-1 text-base font-semibold text-rally-ink"
+            >
+              Move student session
+            </h2>
             <p className="mb-4 text-sm text-rally-muted">
               Moving <span className="font-medium">{moving.session_title}</span>
             </p>
@@ -417,7 +467,11 @@ function SessionsPanel({
   );
 }
 
-function PaymentHistoryPanel({ payments }: { payments: AdminStudentPaymentSummary[] }) {
+function PaymentHistoryPanel({
+  payments,
+}: {
+  payments: AdminStudentPaymentSummary[];
+}) {
   return (
     <Card p={20} className="lg:col-span-2">
       <div className="flex items-center justify-between gap-3">
@@ -427,11 +481,17 @@ function PaymentHistoryPanel({ payments }: { payments: AdminStudentPaymentSummar
         </span>
       </div>
       {payments.length === 0 ? (
-        <p className="mt-3 text-sm text-rally-muted" data-testid="admin-student-no-payments">
+        <p
+          className="mt-3 text-sm text-rally-muted"
+          data-testid="admin-student-no-payments"
+        >
           No payment records.
         </p>
       ) : (
-        <div className="mt-3 overflow-x-auto" data-testid="admin-student-payment-history">
+        <div
+          className="mt-3 overflow-x-auto"
+          data-testid="admin-student-payment-history"
+        >
           <table className="min-w-full text-left text-sm">
             <thead className="border-b border-neutral-200 text-xs uppercase tracking-overline text-rally-muted">
               <tr>
@@ -449,7 +509,9 @@ function PaymentHistoryPanel({ payments }: { payments: AdminStudentPaymentSummar
                   <td className="py-3 pr-4 align-top text-rally-muted">
                     {formatDate(payment.created_at)}
                   </td>
-                  <td className="py-3 pr-4 align-top text-rally-ink">{payment.period ?? "—"}</td>
+                  <td className="py-3 pr-4 align-top text-rally-ink">
+                    {payment.period ?? "—"}
+                  </td>
                   <td className="py-3 pr-4 align-top font-mono tabular-nums text-rally-ink">
                     {formatCurrencyCents(payment.amount_cents)}
                   </td>
@@ -534,7 +596,9 @@ function StatusChip({ status }: { status: string }) {
         ? "paid"
         : normalized === "paused"
           ? "paused"
-          : normalized === "pending" || normalized === "unpaid" || normalized === "open"
+          : normalized === "pending" ||
+              normalized === "unpaid" ||
+              normalized === "open"
             ? "pending"
             : normalized === "failed"
               ? "failed"
@@ -567,7 +631,10 @@ function formatDateTime(value: string | null | undefined) {
   });
 }
 
-function formatDateTimeRange(startAt: string | null | undefined, endAt: string | null | undefined) {
+function formatDateTimeRange(
+  startAt: string | null | undefined,
+  endAt: string | null | undefined,
+) {
   if (!startAt && !endAt) return "—";
   if (!endAt) return formatDateTime(startAt);
   if (!startAt) return formatDateTime(endAt);
@@ -616,7 +683,13 @@ function StudentEditForm({
     setLevel(student.level ?? "");
     setStatus((student.status as EditableStatus) ?? "active");
     setNotes(student.notes ?? "");
-  }, [student.full_name, student.date_of_birth, student.level, student.status, student.notes]);
+  }, [
+    student.full_name,
+    student.date_of_birth,
+    student.level,
+    student.status,
+    student.notes,
+  ]);
 
   const mutation = useMutation({
     mutationFn: (payload: UpdateAdminStudentRequest) =>
@@ -628,7 +701,8 @@ function StudentEditForm({
     },
     onError: (err: unknown) => {
       setSubmitOk(false);
-      const message = err instanceof Error ? err.message : "Could not save changes.";
+      const message =
+        err instanceof Error ? err.message : "Could not save changes.";
       setSubmitError(message);
     },
   });
@@ -650,10 +724,12 @@ function StudentEditForm({
         setSubmitError(null);
         const payload: UpdateAdminStudentRequest = {};
         if (fullName !== student.full_name) payload.full_name = fullName;
-        if (dateOfBirth !== (student.date_of_birth ?? "")) payload.date_of_birth = dateOfBirth || null;
+        if (dateOfBirth !== (student.date_of_birth ?? ""))
+          payload.date_of_birth = dateOfBirth || null;
         if (level !== (student.level ?? "")) payload.level = level || null;
         if (status !== student.status) payload.status = status;
-        if ((notes ?? "") !== (student.notes ?? "")) payload.notes = notes || null;
+        if ((notes ?? "") !== (student.notes ?? ""))
+          payload.notes = notes || null;
         payload.reason = reason;
         mutation.mutate(payload);
       }}
@@ -753,7 +829,11 @@ function StudentEditForm({
           variant="primary"
           size="sm"
           disabled={!dirty || mutation.isPending}
-          icon={mutation.isPending ? <RefreshCw className="size-3.5 animate-spin" /> : undefined}
+          icon={
+            mutation.isPending ? (
+              <RefreshCw className="size-3.5 animate-spin" />
+            ) : undefined
+          }
         >
           {mutation.isPending ? "Saving…" : "Save changes"}
         </Button>
@@ -808,13 +888,18 @@ function ChangeParentPanel({
     const normalized = search.trim().toLowerCase();
     if (!normalized) return activeParents;
     return activeParents.filter((parent) => {
-      const haystack = `${parent.display_name} ${parent.email} ${parent.phone ?? ""}`.toLowerCase();
+      const haystack =
+        `${parent.display_name} ${parent.email} ${parent.phone ?? ""}`.toLowerCase();
       return haystack.includes(normalized);
     });
   }, [activeParents, search]);
 
   useEffect(() => {
-    if (!parentId || filteredParents.some((parent) => parent.user_id === parentId)) return;
+    if (
+      !parentId ||
+      filteredParents.some((parent) => parent.user_id === parentId)
+    )
+      return;
     setParentId("");
   }, [filteredParents, parentId]);
 
@@ -825,8 +910,12 @@ function ChangeParentPanel({
     setWarnings([]);
   }, [student.student_id, student.parent_id]);
 
-  const selectedParent = activeParents.find((parent) => parent.user_id === parentId);
-  const canSubmit = Boolean(parentId && parentId !== student.parent_id && reason.trim());
+  const selectedParent = activeParents.find(
+    (parent) => parent.user_id === parentId,
+  );
+  const canSubmit = Boolean(
+    parentId && parentId !== student.parent_id && reason.trim(),
+  );
 
   const mutation = useMutation({
     mutationFn: (payload: ChangeAdminStudentParentRequest) =>
@@ -842,7 +931,9 @@ function ChangeParentPanel({
     onError: (err: unknown) => {
       setSubmitOk(false);
       setWarnings([]);
-      setSubmitError(err instanceof Error ? err.message : "Could not change parent account.");
+      setSubmitError(
+        err instanceof Error ? err.message : "Could not change parent account.",
+      );
     },
   });
 
@@ -863,7 +954,8 @@ function ChangeParentPanel({
         rows={[
           {
             label: "Current parent",
-            value: student.parent_name ?? student.parent_email ?? "Parent on file",
+            value:
+              student.parent_name ?? student.parent_email ?? "Parent on file",
           },
           {
             label: "Available parents",
@@ -873,7 +965,10 @@ function ChangeParentPanel({
       />
 
       {parentsError && (
-        <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700">
+        <p
+          role="alert"
+          className="rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700"
+        >
           Could not load parent accounts.
         </p>
       )}
@@ -899,7 +994,9 @@ function ChangeParentPanel({
             setSubmitError(null);
           }}
           className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-          disabled={parentsLoading || parentsError || filteredParents.length === 0}
+          disabled={
+            parentsLoading || parentsError || filteredParents.length === 0
+          }
           required
         >
           <option value="">
@@ -919,9 +1016,13 @@ function ChangeParentPanel({
 
       {selectedParent && (
         <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm">
-          <div className="font-medium text-rally-ink">{selectedParent.display_name}</div>
+          <div className="font-medium text-rally-ink">
+            {selectedParent.display_name}
+          </div>
           <div className="text-rally-muted">{selectedParent.email}</div>
-          {selectedParent.phone && <div className="text-rally-muted">{selectedParent.phone}</div>}
+          {selectedParent.phone && (
+            <div className="text-rally-muted">{selectedParent.phone}</div>
+          )}
         </div>
       )}
 
@@ -966,8 +1067,14 @@ function ChangeParentPanel({
         type="submit"
         variant="primary"
         size="sm"
-        disabled={!canSubmit || mutation.isPending || parentsLoading || parentsError}
-        icon={mutation.isPending ? <RefreshCw className="size-3.5 animate-spin" /> : undefined}
+        disabled={
+          !canSubmit || mutation.isPending || parentsLoading || parentsError
+        }
+        icon={
+          mutation.isPending ? (
+            <RefreshCw className="size-3.5 animate-spin" />
+          ) : undefined
+        }
       >
         {mutation.isPending ? "Changing..." : "Change parent"}
       </Button>

@@ -14,6 +14,7 @@ export interface MockState {
     date: string;
     sessions: Array<{
       session_id: string;
+      occurrence_id: string;
       title: string;
       location: string;
       start_at: string;
@@ -32,7 +33,10 @@ export interface MockState {
   };
 }
 
-export const test = base.extend<{ mock: MockState; signIn: () => Promise<void> }>({
+export const test = base.extend<{
+  mock: MockState;
+  signIn: () => Promise<void>;
+}>({
   mock: async ({ page }, use) => {
     const state: MockState = {
       today: {
@@ -40,13 +44,22 @@ export const test = base.extend<{ mock: MockState; signIn: () => Promise<void> }
         sessions: [
           {
             session_id: "s-today-1",
+            occurrence_id: "occ-today-1",
             title: "Junior A",
             location: "Court 1",
             start_at: `${new Date().toISOString().slice(0, 10)}T09:00:00Z`,
             end_at: `${new Date().toISOString().slice(0, 10)}T10:30:00Z`,
             roster: [
-              { student_id: "st1", full_name: "Alice", enrollment_status: "active" },
-              { student_id: "st2", full_name: "Bob", enrollment_status: "active" },
+              {
+                student_id: "st1",
+                full_name: "Alice",
+                enrollment_status: "active",
+              },
+              {
+                student_id: "st2",
+                full_name: "Bob",
+                enrollment_status: "active",
+              },
             ],
           },
         ],
@@ -94,6 +107,7 @@ export const test = base.extend<{ mock: MockState; signIn: () => Promise<void> }
         contentType: "application/json",
         body: JSON.stringify({
           attendance_id: body.mutation_id,
+          occurrence_id: body.occurrence_id,
           session_id: body.session_id,
           student_id: body.student_id,
           status: body.status,
@@ -102,23 +116,29 @@ export const test = base.extend<{ mock: MockState; signIn: () => Promise<void> }
       });
     });
 
-    await page.route("**/api/v2/coach/sessions/*/lesson-plans", async (route: Route) => {
-      if (route.request().method() !== "GET") return route.fallback();
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ plans: [] }),
-      });
-    });
+    await page.route(
+      "**/api/v2/coach/sessions/*/lesson-plans",
+      async (route: Route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ plans: [] }),
+        });
+      },
+    );
 
-    await page.route("**/api/v2/coach/sessions/*/progress-notes", async (route: Route) => {
-      if (route.request().method() !== "GET") return route.fallback();
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ notes: [] }),
-      });
-    });
+    await page.route(
+      "**/api/v2/coach/sessions/*/progress-notes",
+      async (route: Route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ notes: [] }),
+        });
+      },
+    );
 
     await use(state);
   },

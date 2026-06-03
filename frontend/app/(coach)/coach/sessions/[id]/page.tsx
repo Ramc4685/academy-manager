@@ -16,11 +16,16 @@ import { queryKeys } from "@/lib/query/keys";
 import { useOnline } from "@/lib/pwa/online";
 
 function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 interface PageProps {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ date?: string }>;
 }
 
 type MarkStatus = "present" | "absent";
@@ -38,54 +43,82 @@ function formatApiError(err: unknown): string {
   return apiError.code ? `${apiError.code}: ${message}` : message;
 }
 
-export default function SessionDetailPage({ params }: PageProps) {
+export default function SessionDetailPage({ params, searchParams }: PageProps) {
   const { id } = use(params);
+  const { date: dateParam } = use(searchParams);
   const queryClient = useQueryClient();
   const online = useOnline();
 
-  const date = todayISO();
+  const date = dateParam ?? todayISO();
   const { data: today, isLoading } = useQuery({
     queryKey: queryKeys.coach.today(date),
     queryFn: () => getCoachToday(date),
     staleTime: 5 * 60 * 1000,
   });
 
-  const session = useMemo(() => today?.sessions.find((s) => s.session_id === id), [today, id]);
+  const session = useMemo(
+    () =>
+      today?.sessions.find(
+        (s) => s.occurrence_id === id || s.session_id === id,
+      ),
+    [today, id],
+  );
   const roster: CoachRosterEntry[] = session?.roster ?? [];
 
-  const [localMarks, setLocalMarks] = useState<Record<string, OptimisticEntry>>({});
+  const [localMarks, setLocalMarks] = useState<Record<string, OptimisticEntry>>(
+    {},
+  );
   // noteOpen tracks which student has the inline note box open
   const [noteOpen, setNoteOpen] = useState<string | null>(null);
   const [noteTexts, setNoteTexts] = useState<Record<string, string>>({});
 
   const noteMutation = useMutation({
     mutationFn: ({ studentId, body }: { studentId: string; body: string }) =>
-      createProgressNote(id, { student_id: studentId, body }),
+      createProgressNote(session?.session_id ?? id, {
+        student_id: studentId,
+        body,
+      }),
     onSuccess: (_data, { studentId }) => {
       setNoteTexts((t) => ({ ...t, [studentId]: "" }));
       setNoteOpen(null);
-      void queryClient.invalidateQueries({ queryKey: ["coach", "progress-notes", id] });
+      void queryClient.invalidateQueries({
+        queryKey: ["coach", "progress-notes", id],
+      });
     },
   });
 
   const attendanceMutation = useMutation({
-    mutationFn: async (vars: { student_id: string; status: AttendanceStatus }) =>
+    mutationFn: async (vars: {
+      student_id: string;
+      status: AttendanceStatus;
+    }) =>
       markAttendance({
         mutation_id: ulid(),
-        occurrence_id: id,
-        session_id: id,
+        occurrence_id: session?.occurrence_id ?? id,
+        session_id: session?.session_id ?? id,
         student_id: vars.student_id,
         status: vars.status,
         client_app_version: "v2-w1b",
         marked_at_client: new Date().toISOString(),
       }),
     onMutate: ({ student_id, status }) => {
-      setLocalMarks((m) => ({ ...m, [student_id]: { student_id, status: status as MarkStatus, pending: true } }));
+      setLocalMarks((m) => ({
+        ...m,
+        [student_id]: {
+          student_id,
+          status: status as MarkStatus,
+          pending: true,
+        },
+      }));
     },
     onSuccess: (res) => {
       setLocalMarks((m) => ({
         ...m,
-        [res.student_id]: { student_id: res.student_id, status: res.status as MarkStatus, pending: false },
+        [res.student_id]: {
+          student_id: res.student_id,
+          status: res.status as MarkStatus,
+          pending: false,
+        },
       }));
     },
     onError: (err: unknown, vars) => {
@@ -101,13 +134,16 @@ export default function SessionDetailPage({ params }: PageProps) {
     },
   });
 
-  if (isLoading) return <div className="text-neutral-500">Loading session…</div>;
+  if (isLoading)
+    return <div className="text-neutral-500">Loading session…</div>;
 
   if (!session) {
     return (
       <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
         Session not found.{" "}
-        <Link className="underline" href="/coach/sessions">Back to sessions</Link>
+        <Link className="underline" href="/coach/sessions">
+          Back to sessions
+        </Link>
       </div>
     );
   }
@@ -115,8 +151,16 @@ export default function SessionDetailPage({ params }: PageProps) {
   return (
     <section data-testid="session-detail">
       <header className="mb-4">
-        <h1 className="text-xl font-semibold" style={{ color: "var(--rally-ink)" }}>{session.title}</h1>
-        <p className="text-sm" style={{ color: "var(--rally-muted)" }}>{session.location} · {formatTimeRange(session.start_at, session.end_at)}</p>
+        <h1
+          className="text-xl font-semibold"
+          style={{ color: "var(--rally-ink)" }}
+        >
+          {session.title}
+        </h1>
+        <p className="text-sm" style={{ color: "var(--rally-muted)" }}>
+          {session.location} ·{" "}
+          {formatTimeRange(session.start_at, session.end_at)}
+        </p>
       </header>
 
       {!online && (
@@ -127,11 +171,16 @@ export default function SessionDetailPage({ params }: PageProps) {
 
       {/* Attendance roster */}
       <section>
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide" style={{ color: "var(--rally-muted)" }}>
+        <h2
+          className="mb-2 text-sm font-semibold uppercase tracking-wide"
+          style={{ color: "var(--rally-muted)" }}
+        >
           Attendance · {roster.length} students
         </h2>
         {roster.length === 0 ? (
-          <p className="text-sm" style={{ color: "var(--rally-muted)" }}>No students enrolled.</p>
+          <p className="text-sm" style={{ color: "var(--rally-muted)" }}>
+            No students enrolled.
+          </p>
         ) : (
           <ul className="space-y-2" data-testid="roster">
             {roster.map((student) => (
@@ -142,9 +191,16 @@ export default function SessionDetailPage({ params }: PageProps) {
                 noteOpen={noteOpen === student.student_id}
                 noteText={noteTexts[student.student_id] ?? ""}
                 disabled={!online}
-                onMark={(status) => attendanceMutation.mutate({ student_id: student.student_id, status })}
+                onMark={(status) =>
+                  attendanceMutation.mutate({
+                    student_id: student.student_id,
+                    status,
+                  })
+                }
                 onToggleNote={() =>
-                  setNoteOpen((prev) => (prev === student.student_id ? null : student.student_id))
+                  setNoteOpen((prev) =>
+                    prev === student.student_id ? null : student.student_id,
+                  )
                 }
                 onNoteChange={(text) =>
                   setNoteTexts((t) => ({ ...t, [student.student_id]: text }))
@@ -164,7 +220,10 @@ export default function SessionDetailPage({ params }: PageProps) {
 
 function formatTimeRange(start: string, end: string): string {
   const fmt = (v: string) =>
-    new Date(v).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    new Date(v).toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    });
   return `${fmt(start)} – ${fmt(end)}`;
 }
 
@@ -200,7 +259,12 @@ function RosterRow({
       style={{ borderColor: "var(--rally-line)" }}
     >
       <div className="flex items-center justify-between gap-2">
-        <p className="font-medium text-sm" style={{ color: "var(--rally-ink)" }}>{student.full_name}</p>
+        <p
+          className="font-medium text-sm"
+          style={{ color: "var(--rally-ink)" }}
+        >
+          {student.full_name}
+        </p>
         <div className="flex gap-1 shrink-0" role="group">
           {/* Present */}
           <button
@@ -210,8 +274,15 @@ function RosterRow({
             className="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50"
             style={
               marked === "present"
-                ? { background: "#16a34a", borderColor: "#16a34a", color: "#fff" }
-                : { borderColor: "var(--rally-line)", color: "var(--rally-muted)" }
+                ? {
+                    background: "#16a34a",
+                    borderColor: "#16a34a",
+                    color: "#fff",
+                  }
+                : {
+                    borderColor: "var(--rally-line)",
+                    color: "var(--rally-muted)",
+                  }
             }
           >
             Present
@@ -224,8 +295,15 @@ function RosterRow({
             className="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50"
             style={
               marked === "absent"
-                ? { background: "#dc2626", borderColor: "#dc2626", color: "#fff" }
-                : { borderColor: "var(--rally-line)", color: "var(--rally-muted)" }
+                ? {
+                    background: "#dc2626",
+                    borderColor: "#dc2626",
+                    color: "#fff",
+                  }
+                : {
+                    borderColor: "var(--rally-line)",
+                    color: "var(--rally-muted)",
+                  }
             }
           >
             Absent
@@ -236,8 +314,15 @@ function RosterRow({
             className="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
             style={
               noteOpen
-                ? { background: "#facc15", borderColor: "#facc15", color: "#0a0f1c" }
-                : { borderColor: "var(--rally-line)", color: "var(--rally-muted)" }
+                ? {
+                    background: "#facc15",
+                    borderColor: "#facc15",
+                    color: "#0a0f1c",
+                  }
+                : {
+                    borderColor: "var(--rally-line)",
+                    color: "var(--rally-muted)",
+                  }
             }
           >
             Note
@@ -246,7 +331,12 @@ function RosterRow({
       </div>
 
       {local?.error && (
-        <p data-testid={`mark-error-${student.student_id}`} className="mt-1.5 text-xs text-red-600">{local.error}</p>
+        <p
+          data-testid={`mark-error-${student.student_id}`}
+          className="mt-1.5 text-xs text-red-600"
+        >
+          {local.error}
+        </p>
       )}
 
       {/* Inline note box */}
@@ -258,7 +348,10 @@ function RosterRow({
             rows={2}
             placeholder={`Progress note for ${student.full_name}…`}
             className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400"
-            style={{ borderColor: "var(--rally-line)", background: "var(--rally-paper)" }}
+            style={{
+              borderColor: "var(--rally-line)",
+              background: "var(--rally-paper)",
+            }}
           />
           <button
             disabled={noteSaving || !noteText.trim()}

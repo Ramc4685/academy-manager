@@ -58,7 +58,7 @@ class ParentUseCases:
     cancel_billing_enrollment: object  # callable — CancelBillingEnrollment.execute
     get_parent_waiver_requirement: GetParentWaiverRequirement
     accept_parent_waiver: AcceptParentWaiver
-    get_academy_info: object  # callable
+    get_academy_info: object  # callable accepting academy_id
 
 
 def get_parent_use_cases(request: Request) -> ParentUseCases:

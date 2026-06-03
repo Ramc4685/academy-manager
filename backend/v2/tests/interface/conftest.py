@@ -49,6 +49,7 @@ from backend.v2.contexts.enrollment.application.use_cases.get_session_roster imp
 )
 from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences_for_date import (
     ListCoachOccurrencesForDate,
+    ListCoachUpcomingOccurrences,
 )
 from backend.v2.contexts.enrollment.domain.models import (
     Enrollment,
@@ -127,6 +128,28 @@ class FakeOccurrenceQuery:
                 occurrence.substitute_coach_id,
             }
         ]
+
+    async def list_for_coach_upcoming(
+        self,
+        *,
+        coach_id: str,
+        now: datetime | None = None,
+        limit: int = 100,
+    ) -> list[SessionOccurrence]:
+        start_at = now or _now()
+        rows = [
+            occurrence
+            for occurrence in self._occurrences
+            if occurrence.start_at >= start_at
+            and occurrence.status != "cancelled"
+            and coach_id
+            in {
+                occurrence.scheduled_coach_id,
+                occurrence.actual_coach_id,
+                occurrence.substitute_coach_id,
+            }
+        ]
+        return sorted(rows, key=lambda occurrence: occurrence.start_at)[:limit]
 
 
 class FakeAttendanceRepo:
@@ -609,7 +632,10 @@ def _build_use_cases(seed_data) -> CoachUseCases:
         list_session_types=_list_session_types,
         get_billing_enrollment=_billing_enrollment_repo.get,
         get_active_session_enrollments_for_student=_session_enrollment_repo.active_for_student,
-        list_all_sessions=_async_none,
+        list_all_sessions=ListCoachUpcomingOccurrences(
+            occurrences=occurrences,
+            sessions=sessions,
+        ).execute,
         get_profile=_async_none,
         update_profile=_async_none,
     )

@@ -26,6 +26,7 @@ async def get_sessions(
         sessions=[
             CoachScheduleEntry(
                 session_id=s.session_id,
+                occurrence_id=s.occurrence_id,
                 title=s.title,
                 location=s.location,
                 start_at=s.start_at,
