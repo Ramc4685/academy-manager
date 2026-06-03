@@ -18,6 +18,7 @@ from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 
 class SessionQuery(Protocol):
     async def for_coach_on_date(self, coach_id: str, on_date: date) -> list[Session]: ...
+    async def for_coach(self, coach_id: str) -> list[Session]: ...
     async def get(self, session_id: str) -> Session | None: ...
     async def get_many(self, session_ids: list[str]) -> list[Session]: ...
 
@@ -32,6 +33,14 @@ class SessionOccurrenceRepository(Protocol):
         *,
         coach_id: str,
         on_date: date,
+    ) -> list[SessionOccurrence]: ...
+
+    async def list_for_coach_upcoming(
+        self,
+        *,
+        coach_id: str,
+        now: datetime | None = None,
+        limit: int = 100,
     ) -> list[SessionOccurrence]: ...
 
     async def list_for_session_between(

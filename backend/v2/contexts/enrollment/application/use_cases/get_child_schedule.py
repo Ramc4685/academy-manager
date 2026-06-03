@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Protocol
 
@@ -28,6 +29,7 @@ class ChildScheduleEntry(BaseModel):
     occurrence_id: str
     session_id: str
     session_title: str
+    location: str | None = None
     start_at: datetime
     end_at: datetime
     status: str
@@ -42,11 +44,13 @@ class GetChildSchedule:
         occurrences: SessionOccurrenceRepository,
         sessions: SessionQuery,
         students: _StudentQuery,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._enrollments = enrollments
         self._occurrences = occurrences
         self._sessions = sessions
         self._students = students
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     async def execute(
         self,
@@ -65,7 +69,7 @@ class GetChildSchedule:
                 f"student {student_id!r} not found for parent {parent_id!r}"
             )
 
-        now = datetime.now(UTC)
+        now = self._clock()
         start_dt: datetime = (
             datetime(frm.year, frm.month, frm.day, 0, 0, 0, tzinfo=UTC) if frm is not None else now
         )
@@ -94,12 +98,14 @@ class GetChildSchedule:
             session = sessions_map.get(enrollment.session_id)
             session_title = session.title if session else "Session"
 
+            session_location = session.location if session else None
             for occ in session_occs:
                 all_entries.append(
                     ChildScheduleEntry(
                         occurrence_id=occ.occurrence_id,
                         session_id=enrollment.session_id,
                         session_title=session_title,
+                        location=session_location,
                         start_at=occ.start_at,
                         end_at=occ.end_at,
                         status=occ.status,

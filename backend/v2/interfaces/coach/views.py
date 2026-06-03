@@ -189,3 +189,39 @@ class ProrationPreviewView(BaseModel):
 class MoveEnrollmentResponse(BaseModel):
     enrollment: CoachBillingEnrollmentView
     proration: ProrationPreviewView
+
+
+# ---------------------------------------------------------------------------
+# Schedule (all upcoming sessions for the coach)
+# ---------------------------------------------------------------------------
+
+
+class CoachScheduleEntry(BaseModel):
+    session_id: str
+    occurrence_id: str
+    title: str
+    location: str
+    start_at: datetime
+    end_at: datetime
+
+
+class CoachScheduleResponse(BaseModel):
+    sessions: list[CoachScheduleEntry]
+
+
+# ---------------------------------------------------------------------------
+# Self-service profile
+# ---------------------------------------------------------------------------
+
+
+class CoachProfileResponse(BaseModel):
+    user_id: str
+    display_name: str
+    email: str
+    phone: str | None = None
+
+
+class UpdateCoachProfileRequest(BaseModel):
+    display_name: str | None = None
+    phone: str | None = None
+    email: str | None = None

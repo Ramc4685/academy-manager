@@ -307,6 +307,7 @@ class ParentScheduleEntryView(BaseModel):
     occurrence_id: str
     session_id: str
     session_title: str
+    location: str | None = None
     start_at: datetime
     end_at: datetime
     status: str
@@ -366,3 +367,15 @@ class ParentAvailableSessionView(BaseModel):
 
 class ParentAvailableSessionsResponse(BaseModel):
     sessions: list[ParentAvailableSessionView]
+
+
+# --- Academy info ---
+
+
+class ParentAcademyView(BaseModel):
+    display_name: str
+    contact_email: str | None = None
+    contact_phone: str | None = None
+    hours_text: str | None = None
+    address: str | None = None
+    logo_url: str | None = None

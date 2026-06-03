@@ -69,6 +69,29 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
         )
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def list_for_coach_upcoming(
+        self,
+        *,
+        coach_id: str,
+        now: datetime | None = None,
+        limit: int = 100,
+    ) -> list[SessionOccurrence]:
+        start_at = now or datetime.now(UTC)
+        cursor = self._find_many(
+            {
+                "start_at": {"$gte": start_at},
+                "status": {"$ne": "cancelled"},
+                "$or": [
+                    {"scheduled_coach_id": coach_id},
+                    {"actual_coach_id": coach_id},
+                    {"substitute_coach_id": coach_id},
+                ],
+            },
+            sort=[("start_at", 1)],
+            limit=limit,
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def list_for_session_between(
         self,
         *,

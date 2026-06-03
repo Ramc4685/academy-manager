@@ -10,20 +10,33 @@ export const queryKeys = {
     all: ["coach"] as const,
     dashboard: () => ["coach", "dashboard"] as const,
     today: (date: string) => ["coach", "today", date] as const,
+    schedule: () => ["coach", "schedule"] as const,
+    profile: () => ["coach", "profile"] as const,
     session: (sessionId: string) => ["coach", "session", sessionId] as const,
   },
   admin: {
     all: ["admin"] as const,
     sessions: (date?: string) => ["admin", "sessions", date ?? "all"] as const,
+    coachSessions: (coachId: string) =>
+      ["admin", "sessions", "coach", coachId] as const,
     users: (role?: string) => ["admin", "users", role ?? "all"] as const,
     userDetail: (userId: string) => ["admin", "user", userId] as const,
     students: (params?: { search?: string; status?: string; limit?: number }) =>
-      ["admin", "students", params?.search ?? "", params?.status ?? "all", params?.limit ?? "default"] as const,
-    studentDetail: (studentId: string) => ["admin", "student", studentId] as const,
-    sessionDetail: (sessionId: string) => ["admin", "session", sessionId] as const,
+      [
+        "admin",
+        "students",
+        params?.search ?? "",
+        params?.status ?? "all",
+        params?.limit ?? "default",
+      ] as const,
+    studentDetail: (studentId: string) =>
+      ["admin", "student", studentId] as const,
+    sessionDetail: (sessionId: string) =>
+      ["admin", "session", sessionId] as const,
     sessionOccurrences: (sessionId: string) =>
       ["admin", "session", sessionId, "occurrences"] as const,
-    enrollments: (sessionId: string) => ["admin", "enrollments", sessionId] as const,
+    enrollments: (sessionId: string) =>
+      ["admin", "enrollments", sessionId] as const,
     waitlist: (sessionId: string) => ["admin", "waitlist", sessionId] as const,
     globalWaitlist: () => ["admin", "waitlist", "global"] as const,
     registrations: () => ["admin", "registrations"] as const,
@@ -44,6 +57,9 @@ export const queryKeys = {
   },
 } as const;
 
-export type QueryKey = ReturnType<
-  (typeof queryKeys.coach)["today"] | (typeof queryKeys.coach)["session"]
->;
+type QueryKeyFactory = (...args: never[]) => readonly unknown[];
+type QueryKeyFrom<T> = T extends QueryKeyFactory ? ReturnType<T> : never;
+
+export type QueryKey =
+  | QueryKeyFrom<(typeof queryKeys.coach)[keyof typeof queryKeys.coach]>
+  | QueryKeyFrom<(typeof queryKeys.admin)[keyof typeof queryKeys.admin]>;

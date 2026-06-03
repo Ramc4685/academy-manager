@@ -3,7 +3,12 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { getCurrentUser, homeForRoles, type CurrentUser, type UserRole } from "@/lib/api/me";
+import {
+  getCurrentUser,
+  homeForRoles,
+  type CurrentUser,
+  type UserRole,
+} from "@/lib/api/me";
 import { onAuthChange } from "@/lib/auth/firebase";
 
 export type PersonaAuthState =
@@ -26,7 +31,7 @@ export function usePersonaAuth(requiredRole: UserRole): PersonaAuthState {
       if (!firebaseUser) {
         if (!cancelled) {
           setState({ checked: true, authorized: false, user: null });
-          router.replace("/login");
+          replaceLocation(router, "/login");
         }
         return;
       }
@@ -39,20 +44,34 @@ export function usePersonaAuth(requiredRole: UserRole): PersonaAuthState {
             return;
           }
           setState({ checked: true, authorized: false, user: null });
-          const target = new URL(homeForRoles(currentUser.roles), window.location.origin);
-          target.searchParams.set("access_denied", requiredRole);
-          router.replace(
-            `${target.pathname}${target.search}` as Parameters<typeof router.replace>[0]
+          const target = new URL(
+            homeForRoles(currentUser.roles),
+            window.location.origin,
           );
+          target.searchParams.set("access_denied", requiredRole);
+          replaceLocation(router, `${target.pathname}${target.search}`);
         })
         .catch(() => {
           if (!cancelled) {
             setState({ checked: true, authorized: false, user: null });
-            router.replace("/login");
+            replaceLocation(router, "/login");
           }
         });
     });
   }, [requiredRole, router]);
 
   return state;
+}
+
+function replaceLocation(
+  router: ReturnType<typeof useRouter>,
+  path: string,
+): void {
+  router.replace(path as Parameters<typeof router.replace>[0]);
+  window.setTimeout(() => {
+    const current = `${window.location.pathname}${window.location.search}`;
+    if (current !== path) {
+      window.location.replace(path);
+    }
+  }, 100);
 }

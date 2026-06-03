@@ -112,15 +112,37 @@ export interface ParentAttendanceRecord {
   session_title: string;
   status: string;
   marked_at: string;
+  coach_name: string | null;
 }
 
 export interface ParentProgressNote {
   note_id: string;
   student_id: string;
   student_name: string;
+  session_id: string | null;
+  session_title: string | null;
   coach_id: string | null;
+  coach_name: string | null;
   body: string;
   created_at: string;
+}
+
+export interface ParentScheduleEntry {
+  occurrence_id: string;
+  session_id: string;
+  session_title: string;
+  location: string | null;
+  start_at: string;
+  end_at: string;
+  status: string;
+  coach_name: string | null;
+}
+
+export interface ParentScheduleResponse {
+  entries: ParentScheduleEntry[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface ParentPauseRequest {
@@ -146,7 +168,7 @@ export function patchOnboarding(
     child_profile?: Partial<ChildProfile>;
     selected_session_id?: string;
     accept_waiver?: boolean;
-  }
+  },
 ): Promise<OnboardingApplication> {
   return apiFetch(`/parent/onboarding/${application_id}`, {
     method: "PATCH",
@@ -154,8 +176,12 @@ export function patchOnboarding(
   });
 }
 
-export function getOnboardingStatus(application_id: string): Promise<OnboardingApplication> {
-  return apiFetch(`/parent/onboarding/${application_id}/status`, { method: "GET" });
+export function getOnboardingStatus(
+  application_id: string,
+): Promise<OnboardingApplication> {
+  return apiFetch(`/parent/onboarding/${application_id}/status`, {
+    method: "GET",
+  });
 }
 
 export function startCheckout(payload: {
@@ -206,10 +232,14 @@ export function getCheckoutStatus(checkoutSessionId: string): Promise<{
   status: string;
   parent_id: string;
 }> {
-  return apiFetch(`/parent/checkout/status/${checkoutSessionId}`, { method: "GET" });
+  return apiFetch(`/parent/checkout/status/${checkoutSessionId}`, {
+    method: "GET",
+  });
 }
 
-export function listAvailableParentSessions(): Promise<{ sessions: ParentAvailableSession[] }> {
+export function listAvailableParentSessions(): Promise<{
+  sessions: ParentAvailableSession[];
+}> {
   return apiFetch("/parent/sessions/available", { method: "GET" });
 }
 
@@ -225,11 +255,15 @@ export function listParentChildren(): Promise<{ children: ParentChild[] }> {
   return apiFetch("/parent/children", { method: "GET" });
 }
 
-export function listParentEnrollments(): Promise<{ enrollments: ParentEnrollment[] }> {
+export function listParentEnrollments(): Promise<{
+  enrollments: ParentEnrollment[];
+}> {
   return apiFetch("/parent/enrollments", { method: "GET" });
 }
 
-export function listParentAttendance(): Promise<{ records: ParentAttendanceRecord[] }> {
+export function listParentAttendance(): Promise<{
+  records: ParentAttendanceRecord[];
+}> {
   return apiFetch("/parent/attendance", { method: "GET" });
 }
 
@@ -237,8 +271,32 @@ export function listParentProgress(): Promise<{ notes: ParentProgressNote[] }> {
   return apiFetch("/parent/progress", { method: "GET" });
 }
 
-export function listParentPauseRequests(): Promise<{ requests: ParentPauseRequest[] }> {
+export function listParentPauseRequests(): Promise<{
+  requests: ParentPauseRequest[];
+}> {
   return apiFetch("/parent/pause-requests", { method: "GET" });
+}
+
+export function getChildSchedule(
+  studentId: string,
+): Promise<ParentScheduleResponse> {
+  return apiFetch(
+    `/parent/children/${encodeURIComponent(studentId)}/schedule`,
+    { method: "GET" },
+  );
+}
+
+export interface ParentAcademy {
+  display_name: string;
+  contact_email: string | null;
+  contact_phone: string | null;
+  hours_text: string | null;
+  address: string | null;
+  logo_url: string | null;
+}
+
+export function getParentAcademy(): Promise<ParentAcademy> {
+  return apiFetch("/parent/academy", { method: "GET" });
 }
 
 export function createParentPauseRequest(payload: {
@@ -254,7 +312,11 @@ export function createParentPauseRequest(payload: {
 
 // --- Waivers ---
 
-export type ParentWaiverStatus = "signed" | "pending" | "outdated" | "not_required";
+export type ParentWaiverStatus =
+  | "signed"
+  | "pending"
+  | "outdated"
+  | "not_required";
 
 export interface ParentWaiverStudentView {
   student_id: string;

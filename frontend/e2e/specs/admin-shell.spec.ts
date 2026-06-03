@@ -174,16 +174,16 @@ async function stubAdminBff(page: Page) {
     });
   });
   await page.route("**/api/v2/admin/students*", (route) =>
-    fulfillJson(route, { students: [] })
+    fulfillJson(route, { students: [] }),
   );
   await page.route("**/api/v2/admin/registrations*", (route) =>
-    fulfillJson(route, { registrations: [] })
+    fulfillJson(route, { registrations: [] }),
   );
   await page.route("**/api/v2/admin/payments*", (route) =>
-    fulfillJson(route, { payments: [] })
+    fulfillJson(route, { payments: [] }),
   );
   await page.route("**/api/v2/admin/messages*", (route) =>
-    fulfillJson(route, { messages: [] })
+    fulfillJson(route, { messages: [] }),
   );
   await page.route("**/api/v2/admin/waivers*", (route) =>
     fulfillJson(route, {
@@ -197,10 +197,10 @@ async function stubAdminBff(page: Page) {
       },
       current_waiver: null,
       waivers: [],
-    })
+    }),
   );
   await page.route("**/api/v2/admin/waitlist", (route) =>
-    fulfillJson(route, { total_waitlisted: 0, sessions: [] })
+    fulfillJson(route, { total_waitlisted: 0, sessions: [] }),
   );
   await page.route("**/api/v2/admin/dashboard/attention*", (route) =>
     fulfillJson(route, {
@@ -215,50 +215,52 @@ async function stubAdminBff(page: Page) {
           count: 3,
         },
       ],
-    })
+    }),
   );
   await page.route("**/api/v2/admin/pause-requests*", (route) =>
-    fulfillJson(route, { requests: [] })
+    fulfillJson(route, { requests: [] }),
   );
   await page.route("**/api/v2/admin/audit-logs*", (route) =>
-    fulfillJson(route, { logs: [] })
+    fulfillJson(route, { logs: [] }),
   );
   await page.route("**/api/v2/admin/dues-followup*", (route) =>
-    fulfillJson(route, { parents: [] })
+    fulfillJson(route, { parents: [] }),
   );
   const financeBff = "**/api/v2/admin/" + "finance/";
   await page.route(`${financeBff}payouts*`, (route) =>
-    fulfillJson(route, { payouts: [] })
+    fulfillJson(route, { payouts: [] }),
   );
   await page.route(`${financeBff}expenses*`, (route) =>
-    fulfillJson(route, { expenses: [] })
+    fulfillJson(route, { expenses: [] }),
   );
   await page.route(`${financeBff}revenue*`, (route) =>
-    fulfillJson(route, { by_month: {} })
+    fulfillJson(route, { by_month: {} }),
   );
   await page.route("**/api/v2/admin/reports/dashboard*", (route) =>
-    fulfillJson(route, REPORTS_DASHBOARD_EMPTY)
+    fulfillJson(route, REPORTS_DASHBOARD_EMPTY),
   );
   await page.route(/\/api\/v2\/admin\/academy\/gateway(?:\?.*)?$/, (route) =>
     fulfillJson(route, {
       stripe_connected: false,
       stripe_account_id_masked: null,
       manual_methods: ["cash", "check"],
-    })
+    }),
   );
   await page.route(/\/api\/v2\/admin\/academy\/fees(?:\?.*)?$/, (route) =>
     fulfillJson(route, {
       default_monthly_cents: null,
       late_fee_cents: null,
       grace_days: null,
-    })
+    }),
   );
-  await page.route(/\/api\/v2\/admin\/academy\/notifications(?:\?.*)?$/, (route) =>
-    fulfillJson(route, {
-      dues_reminders: false,
-      attendance_alerts: false,
-      daily_digest_to_admin: false,
-    })
+  await page.route(
+    /\/api\/v2\/admin\/academy\/notifications(?:\?.*)?$/,
+    (route) =>
+      fulfillJson(route, {
+        dues_reminders: false,
+        attendance_alerts: false,
+        daily_digest_to_admin: false,
+      }),
   );
   await page.route(/\/api\/v2\/admin\/academy(?:\?.*)?$/, (route) =>
     fulfillJson(route, {
@@ -269,21 +271,21 @@ async function stubAdminBff(page: Page) {
       contact_phone: null,
       hours_text: null,
       address: null,
-    })
+    }),
   );
 }
 
 async function stubCoachBff(page: Page) {
   await stubMe(page, COACH_ME);
   await page.route("**/api/v2/coach/today*", (route) =>
-    fulfillJson(route, { date: "2026-05-20", sessions: [] })
+    fulfillJson(route, { date: "2026-05-20", sessions: [] }),
   );
 }
 
 async function stubParentBff(page: Page) {
   await stubMe(page, PARENT_ME);
   await page.route("**/api/v2/parent/payments*", (route) =>
-    fulfillJson(route, { payments: [] })
+    fulfillJson(route, { payments: [] }),
   );
 }
 
@@ -295,14 +297,19 @@ async function openAdminDrawer(page: Page) {
 }
 
 test.describe("Rally admin shell", () => {
-  test("admin shell uses academy display name without demo branding or internal IDs", async ({ page }) => {
+  test("admin shell uses academy display name without demo branding or internal IDs", async ({
+    page,
+  }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
     await page.goto("/admin");
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
-    await expect(page.getByTestId("tenant-switcher-single")).toContainText("Academy E2E", {
-      timeout: 10_000,
-    });
+    await expect(page.getByTestId("tenant-switcher-single")).toContainText(
+      "Academy E2E",
+      {
+        timeout: 10_000,
+      },
+    );
     await openAdminDrawer(page);
     const drawer = page.getByTestId("admin-mobile-drawer");
     await expect(drawer.getByText("Academy E2E")).toBeVisible();
@@ -312,10 +319,15 @@ test.describe("Rally admin shell", () => {
     await expect(page.getByText("COURT 7")).toHaveCount(0);
     await expect(page.getByText("academy-e2e")).toHaveCount(0);
     await expect(page.getByText("user-admin-e2e")).toHaveCount(0);
-    expect(errors, `App console errors on shell branding: ${errors.join("\n")}`).toEqual([]);
+    expect(
+      errors,
+      `App console errors on shell branding: ${errors.join("\n")}`,
+    ).toEqual([]);
   });
 
-  test("mobile drawer opens, contains all nav groups, and closes", async ({ page }) => {
+  test("mobile drawer opens, contains all nav groups, and closes", async ({
+    page,
+  }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
     await page.goto("/admin");
@@ -325,23 +337,29 @@ test.describe("Rally admin shell", () => {
     await expect(drawer).toBeVisible();
     await expect(drawer.getByText("WORK", { exact: true })).toBeVisible();
     await expect(drawer.getByText("MONEY", { exact: true })).toBeVisible();
-    await expect(drawer.getByText("COMMS · OPS", { exact: true })).toBeVisible();
+    await expect(
+      drawer.getByText("COMMS · OPS", { exact: true }),
+    ).toBeVisible();
     await expect(drawer.getByRole("link", { name: /waivers/i })).toBeVisible();
     await drawer.getByLabel("Close menu").click();
     await expect(drawer).toBeHidden();
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });
 
-  test("dashboard renders real attention items from the BFF", async ({ page }) => {
+  test("dashboard renders real attention items from the BFF", async ({
+    page,
+  }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
     await page.goto("/admin");
     await expect(page.getByTestId("admin-dashboard-attention")).toBeVisible();
-    await expect(page.getByRole("link", { name: /Waivers need review/i })).toHaveAttribute(
-      "href",
-      "/admin/waivers"
-    );
-    expect(errors, `App console errors on dashboard attention: ${errors.join("\n")}`).toEqual([]);
+    await expect(
+      page.getByRole("link", { name: /Waivers need review/i }),
+    ).toHaveAttribute("href", "/admin/waivers");
+    expect(
+      errors,
+      `App console errors on dashboard attention: ${errors.join("\n")}`,
+    ).toEqual([]);
   });
 
   for (const route of ADMIN_ROUTES) {
@@ -349,12 +367,19 @@ test.describe("Rally admin shell", () => {
       const errors = collectConsoleErrors(page);
       await stubAdminBff(page);
       await page.goto(route.href);
-      await expect(page.getByTestId(route.testid)).toBeVisible({ timeout: 15000 });
-      expect(errors, `App console errors on ${route.href}: ${errors.join("\n")}`).toEqual([]);
+      await expect(page.getByTestId(route.testid)).toBeVisible({
+        timeout: 15000,
+      });
+      expect(
+        errors,
+        `App console errors on ${route.href}: ${errors.join("\n")}`,
+      ).toEqual([]);
     });
   }
 
-  test("payments renders legacy paid and waived statuses without crashing", async ({ page }) => {
+  test("payments renders legacy paid and waived statuses without crashing", async ({
+    page,
+  }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
     await page.route("**/api/v2/admin/payments*", (route) =>
@@ -407,29 +432,41 @@ test.describe("Rally admin shell", () => {
             created_at: "2026-05-02T12:00:00Z",
           },
         ],
-      })
+      }),
     );
 
     await page.goto("/admin/payments");
 
     await expect(page.getByTestId("payment-row-legacy-paid")).toBeVisible();
-    await expect(page.getByTestId("payment-row-legacy-paid").getByText("PAID")).toBeVisible();
+    await expect(
+      page.getByTestId("payment-row-legacy-paid").getByText("PAID"),
+    ).toBeVisible();
     await expect(page.getByTestId("payment-row-legacy-waived")).toBeVisible();
-    await expect(page.getByTestId("payment-row-legacy-waived").getByText("WAIVED")).toBeVisible();
-    expect(errors, `Console errors on legacy payment statuses: ${errors.join("\n")}`).toEqual([]);
+    await expect(
+      page.getByTestId("payment-row-legacy-waived").getByText("WAIVED"),
+    ).toBeVisible();
+    expect(
+      errors,
+      `Console errors on legacy payment statuses: ${errors.join("\n")}`,
+    ).toEqual([]);
   });
 
-  test("settings defaults to academy and each panel tab updates the URL", async ({ page }) => {
+  test("settings defaults to academy and each panel tab updates the URL", async ({
+    page,
+  }) => {
+    test.slow();
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
     await page.goto("/admin/settings");
     await expect(page.getByTestId("admin-settings-academy")).toBeVisible();
     await expect(page).toHaveURL(/\/admin\/settings\?panel=academy$/);
 
-    for (const panel of SETTINGS_PANELS.filter((panel) => panel.key !== "academy")) {
+    for (const panel of SETTINGS_PANELS.filter(
+      (panel) => panel.key !== "academy",
+    )) {
       const tab = page.getByRole("link", { name: panel.label, exact: true });
       await tab.evaluate((element) =>
-        element.scrollIntoView({ block: "nearest", inline: "center" })
+        element.scrollIntoView({ block: "nearest", inline: "center" }),
       );
       await Promise.all([
         page.waitForURL(new RegExp(`panel=${panel.key}`)),
@@ -438,10 +475,15 @@ test.describe("Rally admin shell", () => {
       await expect(tab).toHaveAttribute("aria-current", "page");
       await expect(page.getByTestId(panel.testid)).toBeVisible();
     }
-    expect(errors, `App console errors on settings: ${errors.join("\n")}`).toEqual([]);
+    expect(
+      errors,
+      `App console errors on settings: ${errors.join("\n")}`,
+    ).toEqual([]);
   });
 
-  test("students search sends BFF query and renders returned rich fields", async ({ page }) => {
+  test("students search sends BFF query and renders returned rich fields", async ({
+    page,
+  }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
     const seenSearches: string[] = [];
@@ -471,13 +513,18 @@ test.describe("Rally admin shell", () => {
     await page.getByPlaceholder("Search students or parents").fill("alice");
 
     await expect
-      .poll(() => seenSearches, { message: "students search query should be sent" })
+      .poll(() => seenSearches, {
+        message: "students search query should be sent",
+      })
       .toContain("alice");
     const row = page.getByTestId("admin-students-row-st-alice");
     await expect(row.getByText("Alice Chen")).toBeVisible();
     await expect(row.getByText("85%")).toBeVisible();
     await expect(row.getByText("DUE")).toBeVisible();
-    expect(errors, `Console errors on students search: ${errors.join("\n")}`).toEqual([]);
+    expect(
+      errors,
+      `Console errors on students search: ${errors.join("\n")}`,
+    ).toEqual([]);
   });
 
   test("students status filter resets pagination cursor", async ({ page }) => {
@@ -515,9 +562,14 @@ test.describe("Rally admin shell", () => {
     await page.getByRole("button", { name: /Paused/i }).click();
 
     await expect
-      .poll(() => requests.some((req) => req.status === "paused" && req.cursor === ""))
+      .poll(() =>
+        requests.some((req) => req.status === "paused" && req.cursor === ""),
+      )
       .toBe(true);
-    expect(errors, `Console errors on students pagination: ${errors.join("\n")}`).toEqual([]);
+    expect(
+      errors,
+      `Console errors on students pagination: ${errors.join("\n")}`,
+    ).toEqual([]);
   });
 
   test("session detail page mounts", async ({ page }) => {
@@ -525,7 +577,10 @@ test.describe("Rally admin shell", () => {
     await stubAdminBff(page);
     await page.goto("/admin/sessions/some-session-id");
     await expect(page.getByTestId("admin-session-detail")).toBeVisible();
-    expect(errors, `Console errors on session detail: ${errors.join("\n")}`).toEqual([]);
+    expect(
+      errors,
+      `Console errors on session detail: ${errors.join("\n")}`,
+    ).toEqual([]);
   });
 
   test("coach smoke route mounts", async ({ page }) => {
@@ -533,7 +588,10 @@ test.describe("Rally admin shell", () => {
     await stubCoachBff(page);
     await page.goto("/coach/today");
     await expect(page.getByTestId("coach-today")).toBeVisible();
-    expect(errors, `Console errors on coach route: ${errors.join("\n")}`).toEqual([]);
+    expect(
+      errors,
+      `Console errors on coach route: ${errors.join("\n")}`,
+    ).toEqual([]);
   });
 
   test("parent smoke route mounts", async ({ page }) => {
@@ -541,6 +599,9 @@ test.describe("Rally admin shell", () => {
     await stubParentBff(page);
     await page.goto("/parent/dashboard");
     await expect(page.getByTestId("parent-dashboard")).toBeVisible();
-    expect(errors, `Console errors on parent route: ${errors.join("\n")}`).toEqual([]);
+    expect(
+      errors,
+      `Console errors on parent route: ${errors.join("\n")}`,
+    ).toEqual([]);
   });
 });

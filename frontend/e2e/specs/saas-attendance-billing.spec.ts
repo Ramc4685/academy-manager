@@ -56,22 +56,27 @@ test.describe("SaaS v2 — coach attendance is tenant-scoped", () => {
         sessions: [
           {
             session_id: "sess-aces-today",
+            occurrence_id: "occ-aces-today",
             title: "Aces Junior A",
             location: "Aces Court 1",
             start_at: `${today}T09:00:00Z`,
             end_at: `${today}T10:30:00Z`,
             roster: [
-              { student_id: "stA", full_name: "Asha", enrollment_status: "active" },
+              {
+                student_id: "stA",
+                full_name: "Asha",
+                enrollment_status: "active",
+              },
             ],
           },
         ],
       });
     });
     await page.route("**/api/v2/coach/sessions/*/lesson-plans", (route) =>
-      fulfillJson(route, { plans: [] })
+      fulfillJson(route, { plans: [] }),
     );
     await page.route("**/api/v2/coach/sessions/*/progress-notes", (route) =>
-      fulfillJson(route, { notes: [] })
+      fulfillJson(route, { notes: [] }),
     );
     await page.route("**/api/v2/coach/attendance", (route) => {
       if (route.request().method() !== "POST") return route.fallback();
@@ -79,6 +84,7 @@ test.describe("SaaS v2 — coach attendance is tenant-scoped", () => {
       writes.push(body);
       return fulfillJson(route, {
         attendance_id: `att-${writes.length}`,
+        occurrence_id: body.occurrence_id,
         session_id: body.session_id,
         student_id: body.student_id,
         status: body.status,
@@ -90,6 +96,7 @@ test.describe("SaaS v2 — coach attendance is tenant-scoped", () => {
     await page.getByTestId("mark-stA-present").click();
     await expect.poll(() => writes.length).toBe(1);
     expect(writes[0]).toMatchObject({
+      occurrence_id: "occ-aces-today",
       session_id: "sess-aces-today",
       student_id: "stA",
       status: "present",
@@ -97,7 +104,7 @@ test.describe("SaaS v2 — coach attendance is tenant-scoped", () => {
 
     // All coach traffic must have gone to /api/v2/coach/*.
     const coachCalls = guard.v2Requests.filter((r) =>
-      r.url.includes("/api/v2/coach/")
+      r.url.includes("/api/v2/coach/"),
     );
     expect(coachCalls.length).toBeGreaterThan(0);
     guard.assertNoLegacyApiCalls();
@@ -122,7 +129,9 @@ test.describe("SaaS v2 — coach attendance is tenant-scoped", () => {
     await expect(page.getByTestId("coach-today")).toBeVisible();
     await expect(page.getByText(/Asha/i)).toHaveCount(0);
     // No row for any session from Academy A.
-    await expect(page.locator('[data-testid^="session-sess-aces-"]')).toHaveCount(0);
+    await expect(
+      page.locator('[data-testid^="session-sess-aces-"]'),
+    ).toHaveCount(0);
 
     guard.assertNoLegacyApiCalls();
     expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
@@ -160,42 +169,45 @@ test.describe("SaaS v2 — admin billing ledger idempotency", () => {
     let firstPaymentId: string | null = null;
     const seenKeys = new Set<string>();
     const generateRequests: Request[] = [];
-    await page.route("**/api/v2/admin/payments/generate-monthly", async (route) => {
-      if (route.request().method() !== "POST") return route.fallback();
-      generateRequests.push(route.request());
-      const body = JSON.parse(route.request().postData() ?? "{}");
-      const headers = route.request().headers();
-      const key =
-        headers["idempotency-key"] ??
-        headers["x-idempotency-key"] ??
-        body.period ??
-        "default";
-      let createdThisCall = 0;
-      let skippedThisCall = 0;
-      if (!seenKeys.has(key)) {
-        seenKeys.add(key);
-        createdCalls += 1;
-        createdThisCall = 1;
-        firstPaymentId = `pmt-${Date.now()}`;
-      } else {
-        skippedThisCall = 1;
-      }
-      return fulfillJson(route, {
-        created: createdThisCall,
-        skipped_existing: skippedThisCall,
-        payments: firstPaymentId
-          ? [
-              {
-                payment_id: firstPaymentId,
-                student_id: "stu-1",
-                amount_cents: 10000,
-                status: "pending",
-                billing_period: body.period ?? "2026-05",
-              },
-            ]
-          : [],
-      });
-    });
+    await page.route(
+      "**/api/v2/admin/payments/generate-monthly",
+      async (route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        generateRequests.push(route.request());
+        const body = JSON.parse(route.request().postData() ?? "{}");
+        const headers = route.request().headers();
+        const key =
+          headers["idempotency-key"] ??
+          headers["x-idempotency-key"] ??
+          body.period ??
+          "default";
+        let createdThisCall = 0;
+        let skippedThisCall = 0;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          createdCalls += 1;
+          createdThisCall = 1;
+          firstPaymentId = `pmt-${Date.now()}`;
+        } else {
+          skippedThisCall = 1;
+        }
+        return fulfillJson(route, {
+          created: createdThisCall,
+          skipped_existing: skippedThisCall,
+          payments: firstPaymentId
+            ? [
+                {
+                  payment_id: firstPaymentId,
+                  student_id: "stu-1",
+                  amount_cents: 10000,
+                  status: "pending",
+                  billing_period: body.period ?? "2026-05",
+                },
+              ]
+            : [],
+        });
+      },
+    );
 
     await page.route("**/api/v2/admin/payments*", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
@@ -220,13 +232,13 @@ test.describe("SaaS v2 — admin billing ledger idempotency", () => {
     expect(generateRequests.length).toBe(2);
     expect(
       createdCalls,
-      "Idempotent generate-monthly must create exactly ONE payment regardless of submit count"
+      "Idempotent generate-monthly must create exactly ONE payment regardless of submit count",
     ).toBe(1);
     // Both responses describe the same payment_id (ledger contract).
     expect(results[0].payments[0]?.payment_id).toBeTruthy();
-    expect(results[1].payments[0]?.payment_id ?? results[0].payments[0]?.payment_id).toBe(
-      results[0].payments[0]?.payment_id
-    );
+    expect(
+      results[1].payments[0]?.payment_id ?? results[0].payments[0]?.payment_id,
+    ).toBe(results[0].payments[0]?.payment_id);
 
     guard.assertNoLegacyApiCalls();
     expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);

@@ -53,6 +53,7 @@ from backend.v2.contexts.enrollment.application.use_cases.get_session_roster imp
 )
 from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences_for_date import (
     ListCoachOccurrencesForDate,
+    ListCoachUpcomingOccurrences,
 )
 from backend.v2.contexts.enrollment.domain.events import (
     StudentSessionTypeChanged,
@@ -70,6 +71,11 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
 from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
     MongoStudentRepository,
 )
+from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+    UpdateAdminUserCommand,
+)
+from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
+from backend.v2.interfaces.coach.views import CoachProfileResponse, UpdateCoachProfileRequest
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
@@ -104,6 +110,11 @@ class CoachComposition:
     get_billing_enrollment: object  # Callable[[str], Awaitable[StudentBillingEnrollment | None]]
     get_active_session_enrollments_for_student: (
         object  # Callable[[str], Awaitable[list[Enrollment]]]
+    )
+    list_all_sessions: object  # Callable[[str], Awaitable[list[Session]]]
+    get_profile: object  # Callable[[str], Awaitable[CoachProfileResponse | None]]
+    update_profile: (
+        object  # Callable[[str, body, academy_id], Awaitable[CoachProfileResponse | None]]
     )
 
 
@@ -159,6 +170,7 @@ def compose_coach(
 ) -> CoachComposition:
     settings = get_settings()
     sessions_repo = MongoSessionRepository(db)
+    user_repo = MongoUserRepository(db, default_academy_id=settings.default_academy_id)
     enrollments_repo = MongoEnrollmentRepository(db)
     students_repo = MongoStudentRepository(db)
     attendance_repo = MongoAttendanceRepository(db)
@@ -209,6 +221,40 @@ def compose_coach(
             "expected_cut_cents": present_marks * 3500,
             "marked_attendance_count": total_marks,
         }
+
+    async def get_profile(user_id: str) -> CoachProfileResponse | None:
+        user = await user_repo.get_by_id(user_id)
+        if user is None:
+            return None
+        return CoachProfileResponse(
+            user_id=user.user_id,
+            display_name=user.display_name,
+            email=str(user.email),
+            phone=user.phone,
+        )
+
+    async def update_profile(
+        user_id: str,
+        body: UpdateCoachProfileRequest,
+        *,
+        academy_id: str,
+    ) -> CoachProfileResponse | None:
+        command = UpdateAdminUserCommand(
+            email=body.email,  # type: ignore[arg-type]
+            display_name=body.display_name,
+            phone=body.phone,
+            actor_id=user_id,
+            reason="self-service profile update",
+        )
+        result = await user_repo.update_admin_user(user_id, command, academy_id=academy_id)
+        if result is None:
+            return None
+        return CoachProfileResponse(
+            user_id=result.user_id,
+            display_name=result.display_name,
+            email=str(result.email),
+            phone=result.phone,
+        )
 
     return CoachComposition(
         list_today=ListCoachOccurrencesForDate(
@@ -276,4 +322,10 @@ def compose_coach(
         list_session_types=ListSessionTypes(session_types=session_type_repo),
         get_billing_enrollment=billing_enrollment_repo.get,
         get_active_session_enrollments_for_student=enrollments_repo.active_for_student,
+        list_all_sessions=ListCoachUpcomingOccurrences(
+            occurrences=occurrences_repo,
+            sessions=sessions_repo,
+        ).execute,
+        get_profile=get_profile,
+        update_profile=update_profile,
     )

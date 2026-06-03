@@ -20,38 +20,40 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
   useEffect(() => startAutoSync(), []);
 
   if (!auth.checked) {
-    return <div className="min-h-screen flex items-center justify-center text-neutral-500">Loading…</div>;
+    return <div className="min-h-screen flex items-center justify-center" style={{ background: "var(--rally-paper)" }}>Loading…</div>;
   }
 
   if (!auth.authorized) {
-    return <div className="min-h-screen flex items-center justify-center text-neutral-500">Redirecting…</div>;
+    return <div className="min-h-screen flex items-center justify-center" style={{ background: "var(--rally-paper)" }}>Redirecting…</div>;
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-white dark:bg-neutral-950">
-      <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-neutral-200 dark:border-neutral-800 bg-white/90 dark:bg-neutral-950/90 backdrop-blur px-4 py-3">
+    <div className="min-h-screen flex flex-col" style={{ background: "var(--rally-paper)" }}>
+      <header
+        className="sticky top-0 z-10 flex items-center justify-between px-4 py-3"
+        style={{ background: "#0a0f1c", borderBottom: "1px solid #1e293b" }}
+      >
+        <Link href="/coach/dashboard" className="flex items-center gap-2">
+          <div
+            className="h-7 w-7 rounded-md flex items-center justify-center font-bold text-xs"
+            style={{ background: "#facc15", color: "#0a0f1c" }}
+          >
+            C
+          </div>
+          <span className="font-semibold text-white text-[15px] tracking-tight">Academy</span>
+        </Link>
         <div className="flex items-center gap-2">
-          <Link href="/coach/dashboard" className="font-semibold">
-            Academy
-          </Link>
           {!online && (
-            <span
-              data-testid="offline-indicator"
-              className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900 dark:text-amber-100"
-            >
+            <span className="rounded-full px-2 py-0.5 text-xs font-medium text-amber-300" style={{ background: "rgba(251,191,36,0.15)" }}>
               Offline
             </span>
           )}
+          {hasUpdate && (
+            <button onClick={applyUpdate} data-testid="sw-update-button" className="min-h-touch rounded-md px-3 text-sm font-medium text-white" style={{ background: "var(--rally-cobalt)" }}>
+              Refresh
+            </button>
+          )}
         </div>
-        {hasUpdate && (
-          <button
-            onClick={applyUpdate}
-            data-testid="sw-update-button"
-            className="min-h-touch rounded-md bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            Refresh
-          </button>
-        )}
       </header>
 
       <main className="flex-1 px-4 py-4 pb-24">
@@ -60,24 +62,12 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
         {children}
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 border-t border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950">
+      <nav className="fixed bottom-0 left-0 right-0" style={{ background: "#0a0f1c", borderTop: "1px solid #1e293b" }}>
         <div className="mx-auto flex max-w-md">
-          <BottomTab
-            href="/coach/dashboard"
-            label="Home"
-            active={pathname === "/coach/dashboard"}
-          />
+          <BottomTab href="/coach/dashboard" label="Home" active={pathname === "/coach/dashboard"} />
           <BottomTab href="/coach/today" label="Today" active={pathname?.startsWith("/coach/today") ?? false} />
-          <BottomTab
-            href="/coach/sessions"
-            label="Sessions"
-            active={pathname?.startsWith("/coach/sessions") ?? false}
-          />
-          <BottomTab
-            href="/coach/profile"
-            label="Profile"
-            active={pathname?.startsWith("/coach/profile") ?? false}
-          />
+          <BottomTab href="/coach/sessions" label="Sessions" active={pathname?.startsWith("/coach/sessions") ?? false} />
+          <BottomTab href="/coach/profile" label="Profile" active={pathname?.startsWith("/coach/profile") ?? false} />
         </div>
       </nav>
     </div>
@@ -88,9 +78,11 @@ function BottomTab({ href, label, active }: { href: string; label: string; activ
   return (
     <Link
       href={href as Parameters<typeof Link>[0]["href"]}
-      className={`flex flex-1 min-h-touch items-center justify-center text-sm ${
-        active ? "text-blue-600 font-semibold" : "text-neutral-600 dark:text-neutral-400"
-      }`}
+      className="flex flex-1 min-h-touch items-center justify-center text-sm font-medium transition-colors"
+      style={{
+        color: active ? "#facc15" : "#64748b",
+        borderTop: `2px solid ${active ? "#facc15" : "transparent"}`,
+      }}
     >
       {label}
     </Link>

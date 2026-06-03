@@ -9,11 +9,15 @@ from .billing_enrollment_routes import router as billing_enrollment_router
 from .dashboard_routes import router as dashboard_router
 from .feedback_routes import router as feedback_router
 from .notes_routes import router as notes_router
+from .profile_routes import router as profile_router
 from .roster_routes import router as roster_router
+from .sessions_routes import router as sessions_router
 from .today_routes import router as today_router
 
 router = APIRouter(prefix="/coach")
 router.include_router(today_router)
+router.include_router(sessions_router)
+router.include_router(profile_router)
 router.include_router(dashboard_router)
 router.include_router(attendance_router)
 router.include_router(notes_router)

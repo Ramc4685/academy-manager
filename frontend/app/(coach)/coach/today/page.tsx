@@ -10,8 +10,11 @@ import { reportVitals } from "@/lib/pwa/vitals";
 
 function todayISO(offset = 0): string {
   const d = new Date();
-  d.setUTCDate(d.getUTCDate() + offset);
-  return d.toISOString().slice(0, 10);
+  d.setDate(d.getDate() + offset);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 export default function CoachTodayPage() {
@@ -39,23 +42,35 @@ export default function CoachTodayPage() {
       {isLoading && <SessionSkeleton />}
 
       {isError && (
-        <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        <div
+          role="alert"
+          className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
+        >
           <p>Couldn&apos;t load today.</p>
-          <button onClick={() => void refetch()} className="mt-2 min-h-touch rounded-md border px-3">
+          <button
+            onClick={() => void refetch()}
+            className="mt-2 min-h-touch rounded-md border px-3"
+          >
             Retry
           </button>
         </div>
       )}
 
       {!isError && data && sessions.length === 0 && (
-        <p className="text-neutral-500" data-testid="empty-state">No sessions today.</p>
+        <p className="text-neutral-500" data-testid="empty-state">
+          No sessions today.
+        </p>
       )}
 
       <ul className="space-y-3" data-testid="session-list">
         {sessions.map((s) => (
           <li key={s.occurrence_id}>
             <Link
-              href={`/coach/sessions/${s.session_id}` as Parameters<typeof Link>[0]["href"]}
+              href={
+                `/coach/sessions/${encodeURIComponent(s.occurrence_id)}?date=${date}` as Parameters<
+                  typeof Link
+                >[0]["href"]
+              }
               className="block rounded-lg border border-neutral-200 bg-white p-4 hover:border-blue-400 dark:border-neutral-800 dark:bg-neutral-900"
               data-testid={`session-${s.session_id}`}
             >
@@ -69,7 +84,8 @@ export default function CoachTodayPage() {
                 </p>
               </div>
               <p className="mt-2 text-sm text-neutral-500">
-                {s.roster.length} {s.roster.length === 1 ? "student" : "students"}
+                {s.roster.length}{" "}
+                {s.roster.length === 1 ? "student" : "students"}
               </p>
             </Link>
           </li>
@@ -83,11 +99,21 @@ export default function CoachTodayPage() {
   );
 }
 
-function DatePicker({ date, onChange }: { date: string; onChange: (d: string) => void }) {
+function DatePicker({
+  date,
+  onChange,
+}: {
+  date: string;
+  onChange: (d: string) => void;
+}) {
   const shift = (days: number) => {
-    const d = new Date(`${date}T00:00:00Z`);
-    d.setUTCDate(d.getUTCDate() + days);
-    onChange(d.toISOString().slice(0, 10));
+    const [year, month, day] = date.split("-").map(Number);
+    const d = new Date(year, month - 1, day);
+    d.setDate(d.getDate() + days);
+    const nextYear = d.getFullYear();
+    const nextMonth = String(d.getMonth() + 1).padStart(2, "0");
+    const nextDay = String(d.getDate()).padStart(2, "0");
+    onChange(`${nextYear}-${nextMonth}-${nextDay}`);
   };
   return (
     <div className="flex items-center gap-1">
@@ -117,7 +143,10 @@ function DatePicker({ date, onChange }: { date: string; onChange: (d: string) =>
 
 function formatTimeRange(start: string, end: string): string {
   const fmt = (s: string) =>
-    new Date(s).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    new Date(s).toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    });
   return `${fmt(start)} – ${fmt(end)}`;
 }
 

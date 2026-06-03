@@ -5,16 +5,8 @@
 # Usage:
 #   scripts/dev/pre-push-checks.sh          # skip E2E unless e2e/ files changed
 #   scripts/dev/pre-push-checks.sh --full   # always run E2E
-#
-# Parallelism:
-#   - Backend group and Frontend group run concurrently.
-#   - Within Frontend, typecheck and lint run concurrently.
-#   - pytest uses -n auto (pytest-xdist) when available for ~4-5x speedup.
-#
-# Install pytest-xdist once to unlock the biggest win:
-#   cd backend && source .venv/bin/activate && pip install pytest-xdist
 
-set -uo pipefail
+set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BACKEND="$ROOT/backend"
@@ -31,140 +23,63 @@ fail() { echo -e "${RED}✗${RESET} $*"; }
 info() { echo -e "${YELLOW}▸${RESET} $*"; }
 header() { echo -e "\n${BOLD}$*${RESET}"; }
 
-# ── Detect whether E2E should run ─────────────────────────────────────────────
-FULL="${1:-}"
-CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
-E2E_CHANGED=$(echo "$CHANGED" | grep -c "^frontend/e2e/" 2>/dev/null || true)
-RUN_E2E=false
-if [ "$FULL" = "--full" ] || [ "$E2E_CHANGED" -gt 0 ]; then
-  RUN_E2E=true
-fi
-if [ "${SKIP_E2E:-}" = "1" ]; then
-  RUN_E2E=false
-fi
+ERRORS=0
 
-# ── Per-check temp files (fixes shared /tmp/pre-push-out race condition) ──────
-TMPDIR_CHECKS="$(mktemp -d /tmp/pre-push-XXXXXX)"
-trap 'rm -rf "$TMPDIR_CHECKS"' EXIT
-
-# run_check_bg LABEL OUTFILE CMD...
-# Runs CMD in background; writes exit-code to OUTFILE.exit, stdout+stderr to OUTFILE.log
-run_check_bg() {
-  local label="$1" outfile="$2"; shift 2
-  (
-    if "$@" > "$outfile.log" 2>&1; then
-      echo 0 > "$outfile.exit"
-    else
-      echo 1 > "$outfile.exit"
-    fi
-  ) &
-}
-
-print_result() {
-  local label="$1" outfile="$2"
-  local code
-  code=$(cat "$outfile.exit" 2>/dev/null || echo 1)
-  if [ "$code" = "0" ]; then
+run_check() {
+  local label="$1"; shift
+  if "$@" > /tmp/pre-push-out 2>&1; then
     pass "$label"
   else
     fail "$label"
-    cat "$outfile.log"
-    return 1
+    cat /tmp/pre-push-out
+    ERRORS=$((ERRORS + 1))
   fi
 }
 
-# ── Backend group (background) ────────────────────────────────────────────────
-run_backend() {
-  cd "$BACKEND"
+# ── Detect whether E2E should run ─────────────────────────────────────────────
+FULL="${1:-}"
+UPSTREAM_REF="$(git rev-parse --abbrev-ref --symbolic-full-name @{upstream} 2>/dev/null || true)"
+BASE=""
+if [ -n "${UPSTREAM_REF}" ]; then
+  BASE="$(git merge-base HEAD "${UPSTREAM_REF}" 2>/dev/null || true)"
+fi
+if [ -n "${BASE}" ]; then
+  CHANGED="$(git diff --name-only "${BASE}"..HEAD 2>/dev/null || true)"
+else
+  CHANGED="$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)"
+fi
+RUN_E2E=false
+if [ "$FULL" = "--full" ] || printf '%s\n' "${CHANGED}" | grep -q "^frontend/e2e/"; then
+  RUN_E2E=true
+fi
 
-  if ! source .venv/bin/activate 2>/dev/null; then
-    echo "backend .venv not found — run: cd backend && python -m venv .venv && pip install -r requirements.txt" \
-      > "$TMPDIR_CHECKS/backend-venv.log"
-    echo 1 > "$TMPDIR_CHECKS/backend-venv.exit"
-    return 1
-  fi
-
-  # ruff format and ruff check in parallel (both trivial)
-  run_check_bg "ruff format --check v2" "$TMPDIR_CHECKS/ruff-fmt" ruff format --check v2
-  run_check_bg "ruff check v2"          "$TMPDIR_CHECKS/ruff-chk" ruff check v2
-
-  # pytest: use -n auto when pytest-xdist is installed (830 tests → ~4-5x faster)
-  if python -c "import xdist" 2>/dev/null; then
-    run_check_bg "pytest v2/tests" "$TMPDIR_CHECKS/pytest" \
-      pytest v2/tests -q --tb=short -n auto
-  else
-    run_check_bg "pytest v2/tests" "$TMPDIR_CHECKS/pytest" \
-      pytest v2/tests -q --tb=short
-  fi
-
-  wait
-}
-
-run_backend &
-backend_pid=$!
-
-# ── Frontend group (concurrent with backend) ──────────────────────────────────
-run_frontend() {
-  cd "$FRONTEND"
-
-  # node unit tests, typecheck, lint — all independent, all in parallel
-  run_check_bg "node unit tests" "$TMPDIR_CHECKS/node-tests" \
-    node --no-warnings --test \
-      lib/api/proxy-headers.node-test.mjs \
-      lib/api/auth-token.node-test.mjs \
-      lib/auth/token-readiness.node-test.mjs
-
-  run_check_bg "pnpm typecheck" "$TMPDIR_CHECKS/typecheck" pnpm typecheck
-  run_check_bg "pnpm lint"      "$TMPDIR_CHECKS/lint"      pnpm lint
-
-  wait
-}
-
-run_frontend &
-frontend_pid=$!
-
-# ── Wait for both groups ──────────────────────────────────────────────────────
-wait "$backend_pid" || true
-wait "$frontend_pid" || true
-
-# ── Print results in order ────────────────────────────────────────────────────
-ERRORS=0
-
+# ── Backend ───────────────────────────────────────────────────────────────────
 header "Backend"
-if [ -f "$TMPDIR_CHECKS/backend-venv.exit" ]; then
+cd "$BACKEND"
+
+if ! source .venv/bin/activate 2>/dev/null; then
   fail "backend .venv not found — run: cd backend && python -m venv .venv && pip install -r requirements.txt"
   ERRORS=$((ERRORS + 1))
 else
-  for check in ruff-fmt ruff-chk pytest; do
-    case "$check" in
-      ruff-fmt) label="ruff format --check v2" ;;
-      ruff-chk) label="ruff check v2" ;;
-      pytest)   label="pytest v2/tests" ;;
-    esac
-    print_result "$label" "$TMPDIR_CHECKS/$check" || ERRORS=$((ERRORS + 1))
-  done
+  run_check "ruff format --check v2" ruff format --check v2
+  run_check "ruff check v2"          ruff check v2
+  run_check "pytest v2/tests"        pytest v2/tests -q --tb=short
 fi
 
+# ── Frontend ──────────────────────────────────────────────────────────────────
 header "Frontend"
-for check in node-tests typecheck lint; do
-  case "$check" in
-    node-tests) label="node unit tests" ;;
-    typecheck)  label="pnpm typecheck" ;;
-    lint)       label="pnpm lint" ;;
-  esac
-  print_result "$label" "$TMPDIR_CHECKS/$check" || ERRORS=$((ERRORS + 1))
-done
+cd "$FRONTEND"
 
-# E2E runs after everything else (needs the dev stack, sequential is correct)
+run_check "node unit tests" node --no-warnings --test \
+  lib/api/proxy-headers.node-test.mjs \
+  lib/api/auth-token.node-test.mjs \
+  lib/auth/token-readiness.node-test.mjs
+
+run_check "pnpm typecheck" pnpm typecheck
+run_check "pnpm lint"      pnpm lint
+
 if [ "$RUN_E2E" = true ]; then
-  cd "$FRONTEND"
-  if env CI=1 pnpm e2e > "$TMPDIR_CHECKS/e2e.log" 2>&1; then
-    pass "pnpm e2e"
-  else
-    fail "pnpm e2e"
-    cat "$TMPDIR_CHECKS/e2e.log"
-    ERRORS=$((ERRORS + 1))
-  fi
+  run_check "pnpm e2e" env CI=true pnpm e2e
 else
   info "E2E skipped (no e2e/ files changed) — use --full to force"
 fi

@@ -98,6 +98,7 @@ async def update_user(
     user = await use_case.execute(
         user_id,
         UpdateAdminUserCommand(
+            email=payload.email,
             display_name=payload.display_name,
             phone=payload.phone,
             status=payload.status,

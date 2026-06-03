@@ -4,7 +4,7 @@
  * Wraps the admin student detail/edit endpoints.
  */
 import { apiFetch } from "../client";
-import { type AdminStudentView } from "../admin";
+import { type AdminEnrollmentView, type AdminStudentView } from "../admin";
 
 export interface AdminStudentSessionSummary {
   enrollment_id: string;
@@ -51,10 +51,15 @@ export interface AdminStudentDetail extends AdminStudentView {
   current_payment?: AdminStudentCurrentPaymentSummary | null;
 }
 
-export async function getAdminStudent(studentId: string): Promise<AdminStudentDetail | null> {
-  return apiFetch<AdminStudentDetail>(`/admin/students/${encodeURIComponent(studentId)}`, {
-    method: "GET",
-  });
+export async function getAdminStudent(
+  studentId: string,
+): Promise<AdminStudentDetail | null> {
+  return apiFetch<AdminStudentDetail>(
+    `/admin/students/${encodeURIComponent(studentId)}`,
+    {
+      method: "GET",
+    },
+  );
 }
 
 export interface UpdateAdminStudentRequest {
@@ -71,8 +76,30 @@ export function updateAdminStudent(
   studentId: string,
   payload: UpdateAdminStudentRequest,
 ): Promise<AdminStudentDetail> {
-  return apiFetch<AdminStudentDetail>(`/admin/students/${encodeURIComponent(studentId)}`, {
-    method: "PATCH",
-    body: JSON.stringify(payload),
-  });
+  return apiFetch<AdminStudentDetail>(
+    `/admin/students/${encodeURIComponent(studentId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export interface TransferEnrollmentRequest {
+  target_session_id: string;
+  effective_date: string; // ISO date YYYY-MM-DD
+  reason?: string | null;
+}
+
+export function transferEnrollment(
+  enrollmentId: string,
+  payload: TransferEnrollmentRequest,
+): Promise<AdminEnrollmentView> {
+  return apiFetch<AdminEnrollmentView>(
+    `/admin/enrollments/${encodeURIComponent(enrollmentId)}/transfer`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
 }

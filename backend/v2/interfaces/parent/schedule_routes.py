@@ -49,6 +49,7 @@ async def get_child_schedule(
                 occurrence_id=e.occurrence_id,
                 session_id=e.session_id,
                 session_title=e.session_title,
+                location=e.location,
                 start_at=e.start_at,
                 end_at=e.end_at,
                 status=e.status,

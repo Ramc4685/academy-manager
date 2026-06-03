@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -146,6 +147,7 @@ def _make_use_cases(
         cancel_billing_enrollment=cancel_uc.execute,
         get_parent_waiver_requirement=None,  # type: ignore[arg-type]
         accept_parent_waiver=None,  # type: ignore[arg-type]
+        get_academy_info=None,
     )
 
 
@@ -209,6 +211,30 @@ def client(setup) -> Iterator[TestClient]:
         c.enrollments = setup["enrollments"]  # type: ignore[attr-defined]
         c.stripe = setup["stripe"]  # type: ignore[attr-defined]
         yield c
+
+
+# ---------------------------------------------------------------------------
+# GET /parent/academy
+# ---------------------------------------------------------------------------
+
+
+def test_parent_academy_uses_request_tenant(client, setup):
+    setup["use_cases"].get_academy_info = AsyncMock(
+        return_value={
+            "display_name": "Request Academy",
+            "contact_email": "hello@example.com",
+            "contact_phone": None,
+            "hours_text": None,
+            "address": None,
+            "logo_url": None,
+        }
+    )
+
+    resp = client.get("/api/v2/parent/academy")
+
+    assert resp.status_code == 200
+    assert resp.json()["display_name"] == "Request Academy"
+    setup["use_cases"].get_academy_info.assert_awaited_once_with(academy_id="acad")
 
 
 # ---------------------------------------------------------------------------

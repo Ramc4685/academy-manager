@@ -143,6 +143,10 @@ class _FakeEventSink:
 # ---------------------------------------------------------------------------
 
 
+async def _async_none(*_args, **_kwargs):
+    return None
+
+
 def _make_session_type(st_id: str, name: str, price_cents: int) -> SessionType:
     return SessionType(
         session_type_id=st_id,
@@ -236,6 +240,9 @@ def _build_use_cases(
         list_session_types=list_session_types_uc,
         get_billing_enrollment=billing_enrollments.get,
         get_active_session_enrollments_for_student=session_enrollment_repo.active_for_student,
+        list_all_sessions=_async_none,
+        get_profile=_async_none,
+        update_profile=_async_none,
     )
 
 

@@ -122,6 +122,10 @@ test.describe("SaaS v2 — waiver template versioning", () => {
         ],
       });
     });
+    await page.route("**/api/v2/admin/waivers/templates*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, { templates: [] });
+    });
 
     await page.goto("/admin/waivers");
     const row = page.getByTestId("admin-waivers-row-waiver-w5-signed");

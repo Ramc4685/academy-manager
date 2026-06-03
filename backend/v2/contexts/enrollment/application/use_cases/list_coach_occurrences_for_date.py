@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date, datetime
 
 from pydantic import BaseModel
@@ -10,6 +11,7 @@ from backend.v2.contexts.enrollment.application.ports import (
     SessionOccurrenceRepository,
     SessionQuery,
 )
+from backend.v2.contexts.enrollment.domain.models import SessionOccurrence
 
 
 class CoachOccurrenceForDate(BaseModel):
@@ -40,22 +42,55 @@ class ListCoachOccurrencesForDate:
             on_date=on_date,
         )
 
-        rows: list[CoachOccurrenceForDate] = []
-        for occurrence in occurrences:
-            roster_session_id = occurrence.template_session_id or occurrence.session_id
-            session = await self._sessions.get(roster_session_id)
-            if session is None and occurrence.template_session_id:
-                session = await self._sessions.get(occurrence.session_id)
+        return await _hydrate_occurrences(occurrences, sessions=self._sessions)
 
-            rows.append(
-                CoachOccurrenceForDate(
-                    occurrence_id=occurrence.occurrence_id,
-                    session_id=roster_session_id,
-                    roster_session_id=roster_session_id,
-                    title=session.title if session else "Session",
-                    location=session.location if session else "",
-                    start_at=occurrence.start_at,
-                    end_at=occurrence.end_at,
-                )
+
+class ListCoachUpcomingOccurrences:
+    def __init__(
+        self,
+        *,
+        occurrences: SessionOccurrenceRepository,
+        sessions: SessionQuery,
+    ) -> None:
+        self._occurrences = occurrences
+        self._sessions = sessions
+
+    async def execute(
+        self,
+        coach_id: str,
+        *,
+        now: datetime | None = None,
+        limit: int = 100,
+    ) -> list[CoachOccurrenceForDate]:
+        occurrences = await self._occurrences.list_for_coach_upcoming(
+            coach_id=coach_id,
+            now=now,
+            limit=limit,
+        )
+        return await _hydrate_occurrences(occurrences, sessions=self._sessions)
+
+
+async def _hydrate_occurrences(
+    occurrences: Sequence[SessionOccurrence],
+    *,
+    sessions: SessionQuery,
+) -> list[CoachOccurrenceForDate]:
+    rows: list[CoachOccurrenceForDate] = []
+    for occurrence in occurrences:
+        roster_session_id = occurrence.template_session_id or occurrence.session_id
+        session = await sessions.get(roster_session_id)
+        if session is None and occurrence.template_session_id:
+            session = await sessions.get(occurrence.session_id)
+
+        rows.append(
+            CoachOccurrenceForDate(
+                occurrence_id=occurrence.occurrence_id,
+                session_id=roster_session_id,
+                roster_session_id=roster_session_id,
+                title=session.title if session else "Session",
+                location=session.location if session else "",
+                start_at=occurrence.start_at,
+                end_at=occurrence.end_at,
             )
-        return rows
+        )
+    return rows
