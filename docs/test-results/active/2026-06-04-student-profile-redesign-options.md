@@ -23,10 +23,13 @@ Explore current student profile data and propose UI redesign options without imp
 - 2026-06-04T17:24:26 main/working: User approved tabbed student record information architecture and asked about editability. Next design section will define editable fields, guarded actions, and data additions.
 - 2026-06-04T17:30:17 main/working: User approved editability mockup and asked for detailed contents of the remaining tabs. Defining tab-by-tab data inventory and edit/read-only behavior.
 - 2026-06-04T17:35:23 main/working: Wrote student profile redesign spec and self-reviewed it. Tightened ambiguous BFF additions: level normalization, waiver field types, recent attendance limit, age derivation, and move history first-implementation scope.
+- 2026-06-04T18:05:44 main/working: Implemented tabbed admin student record frontend with editable Overview, Training, and Family fields; wired new student detail API fields; focused frontend typecheck and Playwright student profile path pass.
 ## Verification
 
 - No verification recorded yet.
 - 2026-06-04T17:36:24: Design-only verification: spec self-review completed; placeholder/ambiguity scan found no unresolved TBD/TODO/FIXME/Open Decision markers. No app tests run because no application code was changed.
+- 2026-06-04T18:05:44: cd frontend && pnpm typecheck -> passed; cd frontend && pnpm e2e --grep 'renders the student profile' -> 2 passed
+- 2026-06-04T18:06:08: cd frontend && pnpm lint -> passed (Next lint deprecation notice only; no warnings or errors)
 ## Reusable Lessons
 
 - None recorded yet.
