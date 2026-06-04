@@ -12,6 +12,7 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, Field
 
 DuesStatus = Literal["current", "due", "overdue"]
+WaiverStatus = Literal["signed", "missing", "unknown"]
 
 
 class AdminStudentCursor(BaseModel):
@@ -76,6 +77,15 @@ class AdminStudentCurrentPaymentSummary(BaseModel):
     session_id: str | None = None
 
 
+class AdminStudentRecentAttendance(BaseModel):
+    model_config = {"frozen": True}
+
+    session_id: str | None = None
+    date: str | None = None
+    status: str
+    marked_at: datetime | None = None
+
+
 class AdminStudentDetail(AdminStudentSummary):
     model_config = {"frozen": True}
 
@@ -84,6 +94,15 @@ class AdminStudentDetail(AdminStudentSummary):
     notes: str | None = None
     parent_phone: str | None = None
     parent_details: str | None = None
+    previous_experience: str | None = None
+    medical_notes: str | None = None
+    emergency_contact_name: str | None = None
+    emergency_contact_phone: str | None = None
+    t_shirt_size: str | None = None
+    waiver_status: WaiverStatus = "unknown"
+    waiver_signed_at: datetime | None = None
+    waiver_version: str | None = None
+    recent_attendance: list[AdminStudentRecentAttendance] = Field(default_factory=list)
     enrolled_sessions: list[AdminStudentSessionSummary] = Field(default_factory=list)
     payment_history: list[AdminStudentPaymentSummary] = Field(default_factory=list)
     current_payment: AdminStudentCurrentPaymentSummary | None = None
@@ -98,6 +117,11 @@ class UpdateAdminStudentCommand(BaseModel):
     status: str | None = Field(default=None, max_length=32)
     parent_id: str | None = Field(default=None, min_length=1, max_length=120)
     notes: str | None = Field(default=None, max_length=2000)
+    previous_experience: str | None = Field(default=None, max_length=1000)
+    medical_notes: str | None = Field(default=None, max_length=1000)
+    emergency_contact_name: str | None = Field(default=None, max_length=120)
+    emergency_contact_phone: str | None = Field(default=None, max_length=40)
+    t_shirt_size: str | None = Field(default=None, max_length=20)
     actor_id: str = Field(min_length=1)
     reason: str = Field(min_length=1, max_length=500)
 

@@ -79,12 +79,28 @@ class AdminStudentCurrentPaymentSummaryView(BaseModel):
     session_id: str | None = None
 
 
+class AdminStudentRecentAttendanceView(BaseModel):
+    session_id: str | None = None
+    date: str | None = None
+    status: str
+    marked_at: datetime | None = None
+
+
 class AdminStudentDetailView(AdminStudentView):
     date_of_birth: date | None = None
     level: str | None = None
     notes: str | None = None
     parent_phone: str | None = None
     parent_details: str | None = None
+    previous_experience: str | None = None
+    medical_notes: str | None = None
+    emergency_contact_name: str | None = None
+    emergency_contact_phone: str | None = None
+    t_shirt_size: str | None = None
+    waiver_status: Literal["signed", "missing", "unknown"] = "unknown"
+    waiver_signed_at: datetime | None = None
+    waiver_version: str | None = None
+    recent_attendance: list[AdminStudentRecentAttendanceView] = Field(default_factory=list)
     enrolled_sessions: list[AdminStudentSessionSummaryView] = Field(default_factory=list)
     payment_history: list[AdminStudentPaymentSummaryView] = Field(default_factory=list)
     current_payment: AdminStudentCurrentPaymentSummaryView | None = None
@@ -102,6 +118,11 @@ class UpdateAdminStudentRequest(BaseModel):
     status: str | None = Field(default=None, max_length=32)
     parent_id: str | None = Field(default=None, min_length=1, max_length=120)
     notes: str | None = Field(default=None, max_length=2000)
+    previous_experience: str | None = Field(default=None, max_length=1000)
+    medical_notes: str | None = Field(default=None, max_length=1000)
+    emergency_contact_name: str | None = Field(default=None, max_length=120)
+    emergency_contact_phone: str | None = Field(default=None, max_length=40)
+    t_shirt_size: str | None = Field(default=None, max_length=20)
     reason: str = Field(default="admin profile update", min_length=1, max_length=500)
 
 
