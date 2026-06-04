@@ -12,7 +12,7 @@ Eligibility (per occurrence):
 2. ``occurrence.status == "completed"``
 3. ``occurrence.is_payable is True``
 4. Attributed coach == requested ``coach_id``, where the attribution rule is:
-   ``actual_coach_id ?? substitute_coach_id ?? scheduled_coach_id``.
+   ``actual_coach_id ?? scheduled_coach_id``.
 5. A ``CoachRate`` exists for that coach effective at
    ``occurrence.start_at``. If not, the occurrence is reported in
    ``unpaid_occurrence_ids`` rather than silently dropped.
@@ -62,8 +62,6 @@ class CoachRateRepository(Protocol):
 def _paying_coach(occ: PayableOccurrence) -> tuple[str, PayoutBasis]:
     if occ.actual_coach_id:
         return occ.actual_coach_id, "actual"
-    if occ.substitute_coach_id:
-        return occ.substitute_coach_id, "substitute"
     return occ.scheduled_coach_id, "scheduled"
 
 
@@ -124,51 +122,6 @@ class ComputeCoachPayout:
 
         for occ in occs:
             if not occ.is_payable:
-                continue
-
-            if occ.coach_attendance:
-                for attendance in occ.coach_attendance:
-                    if attendance.coach_id != coach_id or attendance.status != "present":
-                        continue
-
-                    minutes = _occurrence_minutes(occ)
-                    if attendance.rate_override_minor is not None:
-                        line_currency = currency or "USD"
-                        currency = _ensure_statement_currency(
-                            currency, line_currency, coach_id=coach_id
-                        )
-                        lines.append(
-                            PayoutLine(
-                                occurrence_id=occ.occurrence_id,
-                                coach_id=coach_id,
-                                basis=attendance.role,
-                                minutes=minutes,
-                                amount_minor=attendance.rate_override_minor,
-                                currency=line_currency,
-                                rate_id=f"override:{occ.occurrence_id}:{coach_id}",
-                            )
-                        )
-                        continue
-
-                    rate = await self._rates.find_for_coach_at(coach_id, occ.start_at)
-                    if rate is None:
-                        unpaid.append(occ.occurrence_id)
-                        continue
-
-                    currency = _ensure_statement_currency(
-                        currency, rate.currency, coach_id=coach_id
-                    )
-                    lines.append(
-                        PayoutLine(
-                            occurrence_id=occ.occurrence_id,
-                            coach_id=coach_id,
-                            basis=attendance.role,
-                            minutes=minutes,
-                            amount_minor=_compute_line_amount_minor(rate, minutes),
-                            currency=rate.currency,
-                            rate_id=rate.rate_id,
-                        )
-                    )
                 continue
 
             if occ.status != "completed":

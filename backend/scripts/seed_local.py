@@ -30,8 +30,9 @@ import re
 import sys
 import urllib.error
 import urllib.request
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = ROOT.parent
@@ -82,13 +83,7 @@ def expand_template_to_dated_sessions(
     weeks_back: int = 4,
     weeks_forward: int = 12,
 ) -> list[tuple[datetime, datetime]]:
-    """Expand a weekly recurring template into concrete dated (start_at, end_at) pairs.
-
-    Why: the v2 Session domain model requires start_at/end_at datetimes;
-    weekly templates with days_of_week alone are not v2-compatible. The seed
-    materialises a window of concrete sessions so the admin BFF can read
-    sessions natively (no synthesise-on-query bridge required for fresh seeds).
-    """
+    """Expand a weekly recurring template into legacy dated session pairs."""
     dow_strs: list[str] = list(template.get("days_of_week") or [])
     dow_ints = {DOW_MAP[d] for d in dow_strs if d in DOW_MAP}
     if not dow_ints:
@@ -109,6 +104,137 @@ def expand_template_to_dated_sessions(
             )
         cursor += timedelta(days=1)
     return dated
+
+
+def _template_date(value: object) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        return date.fromisoformat(value)
+    return None
+
+
+def _first_matching_template_date(template: dict[str, object], fallback: date) -> date:
+    start_date = _template_date(template.get("start_date")) or fallback
+    end_date = _template_date(template.get("end_date"))
+    dow_ints = {
+        DOW_MAP[str(day)[:3].title()]
+        for day in list(template.get("days_of_week") or [])
+        if str(day)[:3].title() in DOW_MAP
+    }
+    if not dow_ints:
+        return start_date
+
+    current = start_date
+    while end_date is None or current <= end_date:
+        if current.weekday() in dow_ints:
+            return current
+        current += timedelta(days=1)
+    return start_date
+
+
+def _local_datetime(
+    local_date: date,
+    value: object,
+    timezone_name: str,
+) -> datetime:
+    parsed_time = time.fromisoformat(str(value))
+    return datetime.combine(local_date, parsed_time, tzinfo=ZoneInfo(timezone_name)).astimezone(UTC)
+
+
+def build_recurring_session_doc(
+    template: dict[str, object],
+    *,
+    session_id: str,
+    coach_id: str,
+    amount_cents: int,
+    created_at: datetime,
+) -> dict[str, object]:
+    """Build the canonical local seed session document for a weekly class."""
+    timezone_name = str(template.get("timezone") or ACADEMY_TZ)
+    representative_date = _first_matching_template_date(template, created_at.date())
+    start_time_value = str(template["start_time"])
+    end_time_value = str(template["end_time"])
+    return {
+        "academy_id": ACADEMY_ID,
+        "session_id": session_id,
+        "coach_id": coach_id,
+        "title": template["name"],
+        "location": template["location"],
+        "capacity": template["max_students"],
+        "amount_cents": amount_cents,
+        "start_at": _local_datetime(representative_date, start_time_value, timezone_name),
+        "end_at": _local_datetime(representative_date, end_time_value, timezone_name),
+        "status": "scheduled",
+        "is_deleted": False,
+        "created_at": created_at,
+        "days_of_week": list(template.get("days_of_week") or []),
+        "start_time": start_time_value,
+        "end_time": end_time_value,
+        "timezone": timezone_name,
+        "start_date": str(template.get("start_date") or representative_date.isoformat()),
+        "end_date": str(template.get("end_date") or "2026-12-31"),
+        "skill_level": template["skill_level"],
+        "age_group": template["age_group"],
+        "monthly_price": template["monthly_price"],
+    }
+
+
+def build_session_occurrence_docs(
+    session_doc: dict[str, object],
+    *,
+    window_start: date,
+    days_forward: int = 60,
+    days_back: int = 0,
+) -> list[dict[str, object]]:
+    timezone_name = str(session_doc.get("timezone") or ACADEMY_TZ)
+    active_start = _template_date(session_doc.get("start_date"))
+    active_end = _template_date(session_doc.get("end_date"))
+    current = window_start - timedelta(days=days_back)
+    final = window_start + timedelta(days=days_forward)
+    if active_start is not None:
+        current = max(current, active_start)
+    if active_end is not None:
+        final = min(final, active_end)
+
+    dow_ints = {
+        DOW_MAP[str(day)[:3].title()]
+        for day in list(session_doc.get("days_of_week") or [])
+        if str(day)[:3].title() in DOW_MAP
+    }
+    if not dow_ints:
+        return []
+
+    session_id = str(session_doc["session_id"])
+    start_time_value = str(session_doc["start_time"])
+    end_time_value = str(session_doc["end_time"])
+    rows: list[dict[str, object]] = []
+    while current <= final:
+        if current.weekday() in dow_ints:
+            rows.append(
+                {
+                    "occurrence_id": f"{session_id}:{current.isoformat()}:{start_time_value[:5]}",
+                    "academy_id": str(session_doc["academy_id"]),
+                    "session_id": session_id,
+                    "template_session_id": session_id,
+                    "start_at": _local_datetime(current, start_time_value, timezone_name),
+                    "end_at": _local_datetime(current, end_time_value, timezone_name),
+                    "status": "scheduled",
+                    "scheduled_coach_id": str(session_doc["coach_id"]),
+                    "is_billable": True,
+                    "is_payable": True,
+                }
+            )
+        current += timedelta(days=1)
+    return rows
+
+
+def is_concrete_session_for_completion(session_doc: dict[str, object]) -> bool:
+    return not bool(session_doc.get("days_of_week"))
 
 
 def hp(p: str) -> str:
@@ -1476,77 +1602,53 @@ async def main() -> None:
     waiver_version_id = str(waiver_r.inserted_id)
 
     # ── 5. Sessions ─────────────────────────────────────────────────────────
-    # Each weekly template is materialised into exactly one upcoming occurrence
-    # (weeks_back=0, weeks_forward=1 guarantees Wed and Thu each appear once
-    # in the next 7 days regardless of what day today is).
+    # Weekly classes are stored as recurring templates. Dated class instances
+    # live in session_occurrences for the maintained local testing window.
     today = datetime.now(timezone.utc).date()
     session_ids: dict[str, str] = {}
-    total_instances = 0
+    total_occurrences = 0
     for s in SESSIONS:
         coach_id = coach_ids[s["coach_key"]]
         amount_cents = int(s["monthly_price"] * 100)
-        dated = expand_template_to_dated_sessions(s, today, weeks_back=0, weeks_forward=1)
-        first_upcoming_id: str | None = None
-        for start_at, end_at in dated:
-            session_id = new_id()
-            doc = {
-                "academy_id": ACADEMY_ID,
-                "session_id": session_id,
-                "coach_id": coach_id,
-                "title": s["name"],
-                "location": s["location"],
-                "capacity": s["max_students"],
-                "amount_cents": amount_cents,
-                "start_at": start_at,
-                "end_at": end_at,
-                "status": "scheduled",
-                "is_deleted": False,
-                "created_at": utcnow(),
-                # Cross-instance metadata for analytics / future "series" model.
-                "skill_level": s["skill_level"],
-                "age_group": s["age_group"],
-                "monthly_price": s["monthly_price"],
-            }
-            await db.sessions.insert_one(doc)
-            # Create a matching occurrence so attendance marking works.
-            # occurrence_id == session_id so the frontend can pass either.
+        session_id = new_id()
+        doc = build_recurring_session_doc(
+            s,
+            session_id=session_id,
+            coach_id=coach_id,
+            amount_cents=amount_cents,
+            created_at=utcnow(),
+        )
+        await db.sessions.insert_one(doc)
+        session_ids[s["name"]] = session_id
+
+        for occurrence in build_session_occurrence_docs(
+            doc,
+            window_start=today,
+            days_back=35,
+            days_forward=60,
+        ):
             await db.session_occurrences.update_one(
-                {"occurrence_id": session_id, "academy_id": ACADEMY_ID},
-                {
-                    "$setOnInsert": {
-                        "occurrence_id": session_id,
-                        "academy_id": ACADEMY_ID,
-                        "session_id": session_id,
-                        "template_session_id": session_id,
-                        "start_at": start_at,
-                        "end_at": end_at,
-                        "status": "scheduled",
-                        "scheduled_coach_id": coach_id,
-                        "is_billable": True,
-                        "is_payable": True,
-                    }
-                },
+                {"occurrence_id": occurrence["occurrence_id"], "academy_id": ACADEMY_ID},
+                {"$setOnInsert": occurrence},
                 upsert=True,
             )
-            total_instances += 1
-            if first_upcoming_id is None and start_at.date() >= today:
-                first_upcoming_id = session_id
-        # Fallback: if every instance is in the past (window mis-config),
-        # point enrollments at the most recent one.
-        if first_upcoming_id is None and dated:
-            first_upcoming_id = session_id  # last inserted
-        if first_upcoming_id:
-            session_ids[s["name"]] = first_upcoming_id
-    print(f"Sessions: {len(session_ids)} templates → {total_instances} dated instances")
+            total_occurrences += 1
+    print(f"Sessions: {len(session_ids)} recurring templates, {total_occurrences} occurrences")
 
     # ── Past sessions: mark completed + seed occurrences for payout ──────────
     today_dt = datetime.now(timezone.utc)
     past_sessions = await db.sessions.find(
-        {"academy_id": ACADEMY_ID, "start_at": {"$lt": today_dt}}
+        {
+            "academy_id": ACADEMY_ID,
+            "start_at": {"$lt": today_dt},
+            "$or": [{"days_of_week": {"$exists": False}}, {"days_of_week": []}],
+        }
     ).to_list(length=None)
 
     occurrence_count = 0
     for sess in past_sessions:
+        if not is_concrete_session_for_completion(sess):
+            continue
         sid = str(sess.get("session_id") or sess["_id"])
         coach_id = str(sess.get("coach_id", ""))
         await db.sessions.update_one(
@@ -1574,7 +1676,14 @@ async def main() -> None:
             upsert=True,
         )
         occurrence_count += 1
-    print(f"  Past occurrences completed+seeded: {occurrence_count}")
+    completed_occurrences = await db.session_occurrences.update_many(
+        {"academy_id": ACADEMY_ID, "start_at": {"$lt": today_dt}},
+        {"$set": {"status": "completed", "is_billable": True, "is_payable": True}},
+    )
+    print(
+        "  Past occurrences completed+seeded: "
+        f"{occurrence_count + completed_occurrences.modified_count}"
+    )
 
     # ── Coach rates (per-session billing) ────────────────────────────────────
     effective_from_dt = datetime(2026, 1, 1, tzinfo=timezone.utc)

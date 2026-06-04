@@ -15,6 +15,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 
 import {
+  getAdminSession,
   listAdminSessions,
   listAdminUsers,
   listAdminStudents,
@@ -30,8 +31,8 @@ import {
   withdrawEnrollment,
   deleteAdminSession,
   updateAdminSession,
-  updateSessionOccurrenceCoach,
-  updateOccurrenceCoachAttendance,
+  addSessionReplacement,
+  updateSessionOccurrenceReplacement,
   promoteWaitlist,
   approveWithdrawalCredit,
   previewWithdrawalCredit,
@@ -75,12 +76,58 @@ const WAITLIST_CHIP: Record<WaitlistStatus, { variant: ChipVariant; label: strin
   removed: { variant: "expired", label: "REMOVED" },
 };
 
-function toDateTimeLocal(value: string): string {
-  return new Date(value).toISOString().slice(0, 16);
+const DEFAULT_TIMEZONE = "America/Chicago";
+const actionHeaderClass = "sticky right-0 z-10 bg-white shadow-[-12px_0_16px_-18px_rgba(15,23,42,0.5)]";
+const actionCellClass = "sticky right-0 z-10 px-4 py-3 shadow-[-12px_0_16px_-18px_rgba(15,23,42,0.5)]";
+const DAYS_OF_WEEK = [
+  { value: "Mon", label: "Monday" },
+  { value: "Tue", label: "Tuesday" },
+  { value: "Wed", label: "Wednesday" },
+  { value: "Thu", label: "Thursday" },
+  { value: "Fri", label: "Friday" },
+  { value: "Sat", label: "Saturday" },
+  { value: "Sun", label: "Sunday" },
+] as const;
+
+function formatClock(time: string | null | undefined): string {
+  if (!time) return "";
+  const [hourText = "0", minuteText = "00"] = time.split(":");
+  const hour = Number(hourText);
+  if (!Number.isFinite(hour)) return time;
+  const period = hour >= 12 ? "PM" : "AM";
+  const hour12 = hour % 12 || 12;
+  return `${hour12}:${minuteText.padStart(2, "0")} ${period}`;
+}
+
+function sessionTimeRange(session: AdminSessionView): string {
+  if (session.start_time && session.end_time) {
+    return `${formatClock(session.start_time)} – ${formatClock(session.end_time)}`;
+  }
+  return `${new Date(session.start_at).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  })} – ${new Date(session.end_at).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  })}`;
+}
+
+function sessionWeekday(session: AdminSessionView): string {
+  return session.days_of_week[0] ?? "Wed";
 }
 
 function todayDateInput(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+function dateInputValueFromOffset(days: number): string {
+  const value = new Date();
+  value.setDate(value.getDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
+function toDateInputValue(value: string): string {
+  return new Date(value).toISOString().slice(0, 10);
 }
 
 export default function AdminSessionDetailPage() {
@@ -94,14 +141,11 @@ export default function AdminSessionDetailPage() {
   const [transferTarget, setTransferTarget] = useState<AdminEnrollmentView | null>(null);
   const [withdrawalTarget, setWithdrawalTarget] = useState<AdminEnrollmentView | null>(null);
   const [occurrenceTarget, setOccurrenceTarget] = useState<AdminSessionOccurrenceView | null>(null);
-  const [attendanceTarget, setAttendanceTarget] = useState<AdminSessionOccurrenceView | null>(null);
+  const [replacementOpen, setReplacementOpen] = useState(false);
 
   const sessionsQuery = useQuery({
     queryKey: queryKeys.admin.sessionDetail(sessionId),
-    queryFn: async () => {
-      const list = await listAdminSessions(undefined, { window: "upcoming" });
-      return list.sessions.find((s) => s.session_id === sessionId) ?? null;
-    },
+    queryFn: () => getAdminSession(sessionId),
   });
 
   const enrollmentsQuery = useQuery({
@@ -158,6 +202,7 @@ export default function AdminSessionDetailPage() {
   const session = sessionsQuery.data ?? null;
   const enrollments = enrollmentsQuery.data?.enrollments ?? [];
   const occurrences = occurrencesQuery.data?.occurrences ?? [];
+  const replacementOccurrences = occurrences.filter((occurrence) => Boolean(occurrence.actual_coach_id));
   const userNameById = new Map(
     (usersQuery.data?.users ?? []).map((user) => [user.user_id, user.display_name || user.email])
   );
@@ -183,9 +228,7 @@ export default function AdminSessionDetailPage() {
                 {session.title}
               </h1>
               <p className="mt-1 text-sm text-rally-muted">
-                {session.location} · {new Date(session.start_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
-                {" – "}
-                {new Date(session.end_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+                {session.location} · {sessionTimeRange(session)}
                 {session.coach_name ? ` · Coach ${session.coach_name}` : ""}
               </p>
             </>
@@ -224,25 +267,37 @@ export default function AdminSessionDetailPage() {
         </div>
       </div>
 
-      {/* Occurrences */}
-      <Card p={20}>
-        <LaneHeader index="01" title="Occurrences" />
+      {/* Replacement coaches */}
+      <Card p={20} className="min-w-0">
+        <LaneHeader
+          index="01"
+          title="Replacement coaches"
+          action={
+            <Button
+              variant="primary"
+              size="sm"
+              icon={Icon.plus(14, "currentColor")}
+              onClick={() => setReplacementOpen(true)}
+            >
+              Add replacement
+            </Button>
+          }
+        />
         {occurrencesQuery.isLoading ? (
           <TableSkeleton />
-        ) : occurrences.length === 0 ? (
-          <p className="text-sm text-rally-subtle">No dated occurrences found.</p>
+        ) : replacementOccurrences.length === 0 ? (
+          <p className="text-sm text-rally-subtle">No replacement coaches added.</p>
         ) : (
-          <OccurrenceTable
-            occurrences={occurrences}
+          <ReplacementCoachTable
+            occurrences={replacementOccurrences}
             userNameById={userNameById}
             onEdit={setOccurrenceTarget}
-            onAttendance={setAttendanceTarget}
           />
         )}
       </Card>
 
       {/* Roster */}
-      <Card p={20}>
+      <Card p={20} className="min-w-0">
         <LaneHeader
           index="02"
           title="Roster"
@@ -286,7 +341,7 @@ export default function AdminSessionDetailPage() {
       </Card>
 
       {/* Waitlist */}
-      <Card p={20}>
+      <Card p={20} className="min-w-0">
         <LaneHeader
           index="03"
           title="Waitlist"
@@ -345,21 +400,17 @@ export default function AdminSessionDetailPage() {
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
         }}
       />
-      <OccurrenceCoachDialog
+      <OccurrenceReplacementDialog
+        sessionId={sessionId}
+        open={replacementOpen}
         occurrence={occurrenceTarget}
-        onClose={() => setOccurrenceTarget(null)}
-        onSaved={() => {
+        onClose={() => {
+          setReplacementOpen(false);
           setOccurrenceTarget(null);
-          void queryClient.invalidateQueries({
-            queryKey: queryKeys.admin.sessionOccurrences(sessionId),
-          });
         }}
-      />
-      <CoachAttendanceDialog
-        occurrence={attendanceTarget}
-        onClose={() => setAttendanceTarget(null)}
         onSaved={() => {
-          setAttendanceTarget(null);
+          setReplacementOpen(false);
+          setOccurrenceTarget(null);
           void queryClient.invalidateQueries({
             queryKey: queryKeys.admin.sessionOccurrences(sessionId),
           });
@@ -409,35 +460,28 @@ export default function AdminSessionDetailPage() {
   );
 }
 
-function OccurrenceTable({
+function ReplacementCoachTable({
   occurrences,
   userNameById,
   onEdit,
-  onAttendance,
 }: {
   occurrences: AdminSessionOccurrenceView[];
   userNameById: Map<string, string>;
   onEdit: (occurrence: AdminSessionOccurrenceView) => void;
-  onAttendance: (occurrence: AdminSessionOccurrenceView) => void;
 }) {
   const coachLabel = (coachId: string | null | undefined, fallback: string) =>
     coachId ? userNameById.get(coachId) ?? fallback : "-";
-  const markerLabel = (markerId: string) => userNameById.get(markerId) ?? "Staff member";
-  const moneyLabel = (minor: number | null) =>
-    minor == null ? "" : ` · $${(minor / 100).toFixed(2)}`;
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm">
+      <table className="w-full min-w-[760px] text-left text-sm">
         <thead>
           <tr className="border-b border-rally-line text-xs uppercase tracking-wide text-rally-muted">
             <Th>Date</Th>
-            <Th>Scheduled</Th>
-            <Th>Actual</Th>
-            <Th>Substitute</Th>
-            <Th>Attendance</Th>
-            <Th>Payroll</Th>
-            <Th>Action</Th>
+            <Th>Time</Th>
+            <Th>Scheduled coach</Th>
+            <Th>Replacement coach</Th>
+            <Th className={actionHeaderClass}>Action</Th>
           </tr>
         </thead>
         <tbody>
@@ -450,72 +494,28 @@ function OccurrenceTable({
                     day: "numeric",
                   })}
                 </p>
-                <p className="text-xs text-rally-muted">
-                  {new Date(occurrence.start_at).toLocaleTimeString(undefined, {
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })}
-                  {" - "}
-                  {new Date(occurrence.end_at).toLocaleTimeString(undefined, {
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })}
-                </p>
+              </td>
+              <td className="py-3 pr-4 font-mono text-rally-muted">
+                {new Date(occurrence.start_at).toLocaleTimeString(undefined, {
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+                {" - "}
+                {new Date(occurrence.end_at).toLocaleTimeString(undefined, {
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
               </td>
               <td className="py-3 pr-4 text-rally-muted">
                 {coachLabel(occurrence.scheduled_coach_id, "Scheduled coach")}
               </td>
               <td className="py-3 pr-4 text-rally-muted">
-                {coachLabel(occurrence.actual_coach_id, "Assigned coach")}
+                {coachLabel(occurrence.actual_coach_id, "Replacement coach")}
               </td>
-              <td className="py-3 pr-4 text-rally-muted">
-                {coachLabel(occurrence.substitute_coach_id, "Substitute coach")}
-              </td>
-              <td className="py-3 pr-4 text-rally-muted">
-                {occurrence.attendance_marked_count > 0 ? (
-                  <div className="space-y-1">
-                    <p>{occurrence.attendance_marked_count} marks</p>
-                    <p className="text-xs">
-                      By{" "}
-                      {occurrence.attendance_marked_by.map(markerLabel).join(", ") ||
-                        "staff member"}
-                    </p>
-                    <p className="text-xs">
-                      {occurrence.attendance_last_marked_at
-                        ? new Date(occurrence.attendance_last_marked_at).toLocaleString()
-                        : "Time not recorded"}
-                    </p>
-                  </div>
-                ) : (
-                  "Not marked"
-                )}
-              </td>
-              <td className="py-3 pr-4 text-rally-muted">
-                {occurrence.coach_attendance.length > 0 ? (
-                  <div className="space-y-1">
-                    {occurrence.coach_attendance.map((row) => (
-                      <p key={row.attendance_id} className="text-xs">
-                        <span className="font-medium text-rally-ink">
-                          {coachLabel(row.coach_id, "Coach")}
-                        </span>{" "}
-                        {row.status} · {row.role}
-                        {moneyLabel(row.rate_override_minor)}
-                      </p>
-                    ))}
-                  </div>
-                ) : (
-                  "Not marked"
-                )}
-              </td>
-              <td className="py-3">
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="secondary" size="sm" onClick={() => onEdit(occurrence)}>
-                    Change coach
-                  </Button>
-                  <Button variant="secondary" size="sm" onClick={() => onAttendance(occurrence)}>
-                    Coach attendance
-                  </Button>
-                </div>
+              <td className={actionCellClass}>
+                <Button variant="secondary" size="sm" onClick={() => onEdit(occurrence)}>
+                  Change replacement
+                </Button>
               </td>
             </tr>
           ))}
@@ -525,67 +525,72 @@ function OccurrenceTable({
   );
 }
 
-function CoachAttendanceDialog({
+function OccurrenceReplacementDialog({
+  sessionId,
+  open,
   occurrence,
   onClose,
   onSaved,
 }: {
+  sessionId: string;
+  open: boolean;
   occurrence: AdminSessionOccurrenceView | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const isEditing = Boolean(occurrence);
+  const dialogOpen = open || isEditing;
+  const [dateValue, setDateValue] = useState("");
   const [coachId, setCoachId] = useState("");
-  const [status, setStatus] = useState<"present" | "absent">("present");
-  const [role, setRole] = useState<"lead" | "assistant">("lead");
-  const [rateOverride, setRateOverride] = useState("");
-  const [note, setNote] = useState("");
+  const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const coachesQuery = useQuery({
     queryKey: queryKeys.admin.users("coach"),
     queryFn: () => listAdminUsers("coach"),
-    enabled: Boolean(occurrence),
+    enabled: dialogOpen,
   });
   const coaches = coachesQuery.data?.users ?? [];
 
   useEffect(() => {
-    if (!occurrence) return;
-    const existing = occurrence.coach_attendance[0];
-    setCoachId(existing?.coach_id ?? occurrence.actual_coach_id ?? occurrence.scheduled_coach_id);
-    setStatus(existing?.status ?? "present");
-    setRole(existing?.role ?? "lead");
-    setRateOverride(
-      existing?.rate_override_minor == null ? "" : (existing.rate_override_minor / 100).toFixed(2)
-    );
-    setNote(existing?.note ?? "");
+    if (!dialogOpen) return;
+    setDateValue(occurrence ? toDateInputValue(occurrence.start_at) : "");
+    setCoachId(occurrence?.actual_coach_id ?? "");
+    setReason("");
     setError(null);
-  }, [occurrence]);
+  }, [dialogOpen, occurrence]);
 
   const mutation = useMutation({
     mutationFn: () => {
-      const trimmedRate = rateOverride.trim();
-      const rate_override_minor =
-        trimmedRate.length === 0 ? null : Math.round(Number(trimmedRate) * 100);
-      return updateOccurrenceCoachAttendance(occurrence!.occurrence_id, {
-        coach_id: coachId,
-        status,
-        role,
-        rate_override_minor,
-        note,
+      const trimmedReason = reason.trim() || null;
+      if (occurrence) {
+        return updateSessionOccurrenceReplacement(occurrence.occurrence_id, {
+          replacement_coach_id: coachId || null,
+          reason: trimmedReason,
+        });
+      }
+      return addSessionReplacement(sessionId, {
+        date: dateValue,
+        replacement_coach_id: coachId,
+        reason: trimmedReason,
       });
     },
     onSuccess: onSaved,
-    onError: (err: Error) => setError(err.message ?? "Failed to save coach attendance."),
+    onError: (err: Error) => setError(err.message ?? "Failed to update replacement coach."),
   });
+
+  const canSave = isEditing
+    ? Boolean(occurrence?.actual_coach_id || coachId)
+    : Boolean(dateValue && coachId);
 
   return (
     <RallyDialog
-      open={Boolean(occurrence)}
+      open={dialogOpen}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      title="Coach payroll attendance"
-      description="Record which coach was present for this dated class."
-      overline="Occurrence"
+      title={isEditing ? "Change replacement" : "Add replacement"}
+      description="Set the replacement coach for a normal class date."
+      overline="Replacement"
     >
       {error && <DialogError message={error} />}
       <form
@@ -595,9 +600,26 @@ function CoachAttendanceDialog({
           mutation.mutate();
         }}
       >
-        <Field label="Coach">
+        <Field label="Date">
+          <input
+            type="date"
+            value={dateValue}
+            onChange={(event) => setDateValue(event.target.value)}
+            className={inputClass}
+            min={todayDateInput()}
+            max={dateInputValueFromOffset(60)}
+            disabled={isEditing}
+          />
+        </Field>
+        <Field label="Replacement coach">
           {coaches.length > 0 ? (
-            <CoachSelect coaches={coaches} value={coachId} onChange={setCoachId} />
+            <CoachSelect
+              coaches={coaches}
+              value={coachId}
+              onChange={setCoachId}
+              allowEmpty={isEditing}
+              emptyLabel={isEditing ? "No replacement" : "Select coach"}
+            />
           ) : (
             <input
               value={coachId}
@@ -607,41 +629,10 @@ function CoachAttendanceDialog({
             />
           )}
         </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Status">
-            <select
-              value={status}
-              onChange={(event) => setStatus(event.target.value as "present" | "absent")}
-              className={inputClass}
-            >
-              <option value="present">Present</option>
-              <option value="absent">Absent</option>
-            </select>
-          </Field>
-          <Field label="Role">
-            <select
-              value={role}
-              onChange={(event) => setRole(event.target.value as "lead" | "assistant")}
-              className={inputClass}
-            >
-              <option value="lead">Lead</option>
-              <option value="assistant">Assistant</option>
-            </select>
-          </Field>
-        </div>
-        <Field label="Pay override">
+        <Field label="Reason">
           <input
-            value={rateOverride}
-            onChange={(event) => setRateOverride(event.target.value)}
-            className={inputClass}
-            inputMode="decimal"
-            placeholder="Optional amount, e.g. 15.00"
-          />
-        </Field>
-        <Field label="Note">
-          <input
-            value={note}
-            onChange={(event) => setNote(event.target.value)}
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
             className={inputClass}
             placeholder="Optional"
           />
@@ -654,119 +645,7 @@ function CoachAttendanceDialog({
             variant="primary"
             size="sm"
             type="submit"
-            disabled={mutation.isPending || !coachId || Number.isNaN(Number(rateOverride || "0"))}
-          >
-            {mutation.isPending ? "Saving..." : "Save"}
-          </Button>
-        </DialogActions>
-      </form>
-    </RallyDialog>
-  );
-}
-
-function OccurrenceCoachDialog({
-  occurrence,
-  onClose,
-  onSaved,
-}: {
-  occurrence: AdminSessionOccurrenceView | null;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [coachId, setCoachId] = useState("");
-  const [substituteCoachId, setSubstituteCoachId] = useState("");
-  const [reason, setReason] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const coachesQuery = useQuery({
-    queryKey: queryKeys.admin.users("coach"),
-    queryFn: () => listAdminUsers("coach"),
-    enabled: Boolean(occurrence),
-  });
-  const coaches = coachesQuery.data?.users ?? [];
-
-  useEffect(() => {
-    if (!occurrence) return;
-    setCoachId(occurrence.actual_coach_id ?? occurrence.scheduled_coach_id);
-    setSubstituteCoachId(occurrence.substitute_coach_id ?? "");
-    setReason("");
-    setError(null);
-  }, [occurrence]);
-
-  const mutation = useMutation({
-    mutationFn: () =>
-      updateSessionOccurrenceCoach(occurrence!.occurrence_id, {
-        actual_coach_id: coachId,
-        substitute_coach_id: substituteCoachId || null,
-        reason,
-      }),
-    onSuccess: onSaved,
-    onError: (err: Error) => setError(err.message ?? "Failed to update occurrence."),
-  });
-
-  return (
-    <RallyDialog
-      open={Boolean(occurrence)}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-      title="Change occurrence coach"
-      description="Set the actual coach for this dated class occurrence."
-      overline="Occurrence"
-    >
-      {error && <DialogError message={error} />}
-      <form
-        className="space-y-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          mutation.mutate();
-        }}
-      >
-        <Field label="Actual coach">
-          {coaches.length > 0 ? (
-            <CoachSelect coaches={coaches} value={coachId} onChange={setCoachId} />
-          ) : (
-            <input
-              value={coachId}
-              onChange={(event) => setCoachId(event.target.value)}
-              className={inputClass}
-              placeholder={coachesQuery.isLoading ? "Loading coaches..." : "Coach reference"}
-            />
-          )}
-        </Field>
-        <Field label="Substitute coach">
-          {coaches.length > 0 ? (
-            <CoachSelect
-              coaches={coaches}
-              value={substituteCoachId}
-              onChange={setSubstituteCoachId}
-            />
-          ) : (
-            <input
-              value={substituteCoachId}
-              onChange={(event) => setSubstituteCoachId(event.target.value)}
-              className={inputClass}
-              placeholder={coachesQuery.isLoading ? "Loading coaches..." : "Optional substitute"}
-            />
-          )}
-        </Field>
-        <Field label="Reason">
-          <input
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-            required
-            className={inputClass}
-            placeholder="Schedule change, substitute, correction"
-          />
-        </Field>
-        <DialogActions>
-          <Button variant="secondary" size="sm" type="button" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            type="submit"
-            disabled={mutation.isPending || !coachId || !reason.trim()}
+            disabled={mutation.isPending || !canSave}
           >
             {mutation.isPending ? "Saving..." : "Save"}
           </Button>
@@ -801,8 +680,10 @@ function SessionEditDialog({
       coach_id: session.coach_id,
       title: session.title,
       location: session.location,
-      start_at: toDateTimeLocal(session.start_at),
-      end_at: toDateTimeLocal(session.end_at),
+      days_of_week: [sessionWeekday(session)],
+      start_time: session.start_time ?? "18:00",
+      end_time: session.end_time ?? "18:45",
+      timezone: session.timezone ?? DEFAULT_TIMEZONE,
       capacity: session.capacity,
       reason: "",
     });
@@ -828,7 +709,7 @@ function SessionEditDialog({
         onOpenChange(nextOpen);
       }}
       title="Edit session"
-      description="Update schedule, capacity, and coach assignment."
+      description="Update recurring schedule, capacity, and coach assignment."
       overline="Session"
     >
       {error && <DialogError message={error} />}
@@ -870,34 +751,42 @@ function SessionEditDialog({
           />
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Start">
-            <input
-              type="datetime-local"
-              value={form.start_at ?? ""}
-              onChange={(event) => setForm((f) => ({ ...f, start_at: event.target.value }))}
-              className={inputClass}
+          <Field label="Day of week">
+            <DaySelect
+              value={form.days_of_week?.[0] ?? "Wed"}
+              onChange={(day) => setForm((f) => ({ ...f, days_of_week: [day] }))}
             />
           </Field>
-          <Field label="End">
+          <Field label="Start time">
             <input
-              type="datetime-local"
-              value={form.end_at ?? ""}
-              onChange={(event) => setForm((f) => ({ ...f, end_at: event.target.value }))}
+              type="time"
+              value={form.start_time ?? ""}
+              onChange={(event) => setForm((f) => ({ ...f, start_time: event.target.value }))}
               className={inputClass}
             />
           </Field>
         </div>
-        <Field label="Capacity">
-          <input
-            type="number"
-            min={1}
-            value={form.capacity ?? 1}
-            onChange={(event) =>
-              setForm((f) => ({ ...f, capacity: parseInt(event.target.value, 10) || 1 }))
-            }
-            className={inputClass}
-          />
-        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="End time">
+            <input
+              type="time"
+              value={form.end_time ?? ""}
+              onChange={(event) => setForm((f) => ({ ...f, end_time: event.target.value }))}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Capacity">
+            <input
+              type="number"
+              min={1}
+              value={form.capacity ?? 1}
+              onChange={(event) =>
+                setForm((f) => ({ ...f, capacity: parseInt(event.target.value, 10) || 1 }))
+              }
+              className={inputClass}
+            />
+          </Field>
+        </div>
         <Field label="Reason">
           <input
             value={form.reason ?? ""}
@@ -943,7 +832,7 @@ function RosterMetrics({
       : `${Math.min(...numericLevels)}-${Math.max(...numericLevels)}`;
 
   return (
-    <div className="mb-4 grid gap-2 sm:grid-cols-4">
+    <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 2xl:grid-cols-4">
       <RosterMetric label="In session" value={String(filled)} />
       <RosterMetric
         label="Open spots"
@@ -984,7 +873,7 @@ function RosterMetric({
             ? "border-rally-line bg-rally-paper text-rally-ink"
             : "border-rally-line bg-white text-rally-ink";
   return (
-    <div className={`rounded-md border px-3 py-2 ${toneClass}`}>
+    <div className={`min-w-0 rounded-md border px-3 py-2 ${toneClass}`}>
       <p className="font-mono text-[10px] font-bold uppercase tracking-overline opacity-70">
         {label}
       </p>
@@ -1015,7 +904,7 @@ function RosterTable({
 }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+      <table className="w-full min-w-[1040px] text-sm">
         <thead>
           <tr className="border-b border-rally-line text-left">
             <Th>Name</Th>
@@ -1023,28 +912,30 @@ function RosterTable({
             <Th>Status</Th>
             <Th>Fees</Th>
             <Th>Enrolled</Th>
-            <Th><span className="sr-only">Actions</span></Th>
+            <Th className={actionHeaderClass}><span className="sr-only">Actions</span></Th>
           </tr>
         </thead>
         <tbody>
           {enrollments.map((e) => {
             const chip = ENROLL_CHIP[e.status];
+            const rowToneClass =
+              e.dues_status === "overdue"
+                ? "bg-red-50/60"
+                : e.dues_status === "due"
+                  ? "bg-amber-50/60"
+                  : "bg-white";
             return (
               <tr
                 key={e.enrollment_id}
                 data-testid={`enrollment-row-${e.enrollment_id}`}
-                className={`border-b border-rally-line/60 last:border-0 ${
-                  e.dues_status === "overdue"
-                    ? "bg-red-50/60"
-                    : e.dues_status === "due"
-                      ? "bg-amber-50/60"
-                      : ""
-                }`}
+                className={`border-b border-rally-line/60 last:border-0 ${rowToneClass}`}
               >
                 <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
                     <Avatar name={e.full_name} size={28} />
-                    <span className="font-display font-semibold text-rally-ink">{e.full_name}</span>
+                    <span className="min-w-0 font-display font-semibold text-rally-ink">
+                      {e.full_name}
+                    </span>
                   </div>
                 </td>
                 <td className="px-4 py-3">
@@ -1064,8 +955,8 @@ function RosterTable({
                   {new Date(e.enrolled_at).toLocaleDateString()}
                   <EnrollmentHistory enrollmentId={e.enrollment_id} />
                 </td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2 justify-end">
+                <td className={`${actionCellClass} ${rowToneClass}`}>
+                  <div className="flex min-w-[262px] flex-wrap items-center justify-end gap-1.5">
                     {e.status === "active" ? (
                       <Button variant="secondary" size="sm" onClick={() => onPause(e)}>
                         Pause
@@ -1169,13 +1060,13 @@ function WaitlistTable({
 }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+      <table className="w-full min-w-[620px] text-sm">
         <thead>
           <tr className="border-b border-rally-line text-left">
             <Th>#</Th>
             <Th>Name</Th>
             <Th>Status</Th>
-            <Th><span className="sr-only">Actions</span></Th>
+            <Th className={actionHeaderClass}><span className="sr-only">Actions</span></Th>
           </tr>
         </thead>
         <tbody>
@@ -1192,8 +1083,8 @@ function WaitlistTable({
                 <td className="px-4 py-3">
                   <Chip variant={chip.variant} label={chip.label} />
                 </td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2 justify-end">
+                <td className={actionCellClass}>
+                  <div className="flex min-w-[140px] flex-wrap items-center justify-end gap-1.5">
                     {w.status === "waiting" && (
                       <Button variant="secondary" size="sm" onClick={() => onSkip(w.waitlist_id)}>
                         Skip
@@ -1943,17 +1834,44 @@ function CoachSelect({
   coaches,
   value,
   onChange,
+  allowEmpty = false,
+  emptyLabel = "Select coach",
 }: {
   coaches: AdminUserView[];
   value: string;
   onChange: (coachId: string) => void;
+  allowEmpty?: boolean;
+  emptyLabel?: string;
 }) {
   return (
-    <select value={value} onChange={(event) => onChange(event.target.value)} className={inputClass}>
-      <option value="">Select coach</option>
+    <select
+      required={!allowEmpty}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      className={inputClass}
+    >
+      <option value="">{emptyLabel}</option>
       {coaches.map((coach) => (
         <option key={coach.user_id} value={coach.user_id}>
           {coach.display_name} ({coach.email})
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function DaySelect({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (day: string) => void;
+}) {
+  return (
+    <select required value={value} onChange={(event) => onChange(event.target.value)} className={inputClass}>
+      {DAYS_OF_WEEK.map((day) => (
+        <option key={day.value} value={day.value}>
+          {day.label}
         </option>
       ))}
     </select>
@@ -2020,9 +1938,11 @@ function Field({
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
+function Th({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <th className="px-4 py-3 text-left font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+    <th
+      className={`px-4 py-3 text-left font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted ${className ?? ""}`}
+    >
       {children}
     </th>
   );

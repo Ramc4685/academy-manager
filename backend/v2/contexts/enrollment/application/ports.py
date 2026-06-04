@@ -97,6 +97,19 @@ class SessionWriter(Protocol):
 
     async def update(self, session: Session) -> None: ...
 
+    async def find_duplicate_recurring_series(
+        self,
+        *,
+        title: str,
+        location: str,
+        coach_id: str,
+        days_of_week: list[str],
+        start_time: str,
+        end_time: str,
+        timezone: str,
+        exclude_session_id: str | None = None,
+    ) -> Session | None: ...
+
 
 class EnrollmentWriter(Protocol):
     async def create(self, enrollment: Enrollment) -> None: ...

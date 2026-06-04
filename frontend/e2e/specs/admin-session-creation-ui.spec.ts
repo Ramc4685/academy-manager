@@ -56,6 +56,10 @@ test.describe("admin session creation and fee settings UI", () => {
           location: "BLNO Court 3",
           start_at: "2026-05-29T17:00:00Z",
           end_at: "2026-05-29T18:00:00Z",
+          days_of_week: ["Fri"],
+          start_time: "17:00",
+          end_time: "18:00",
+          timezone: "America/Chicago",
           capacity: 12,
           status: "scheduled",
           enrolled_count: 0,
@@ -84,10 +88,11 @@ test.describe("admin session creation and fee settings UI", () => {
     await expect(page.getByRole("heading", { name: "Create session" })).toBeVisible();
 
     await page.getByLabel("Coach").selectOption("coach-e2e");
-    await page.getByLabel("Title").fill("Intermediate badminton");
+    await page.getByLabel("Name").fill("Intermediate badminton");
     await page.getByLabel("Location").fill("BLNO Court 3");
-    await page.getByLabel("Start").fill("2026-05-29T17:00");
-    await page.getByLabel("End").fill("2026-05-29T18:00");
+    await page.getByLabel("Day of week").selectOption("Fri");
+    await page.getByLabel("Start time").fill("17:00");
+    await page.getByLabel("End time").fill("18:00");
     await page.getByLabel("Capacity").fill("12");
     await page.getByRole("button", { name: "Create" }).click();
 
@@ -95,8 +100,10 @@ test.describe("admin session creation and fee settings UI", () => {
       coach_id: "coach-e2e",
       title: "Intermediate badminton",
       location: "BLNO Court 3",
-      start_at: "2026-05-29T17:00",
-      end_at: "2026-05-29T18:00",
+      days_of_week: ["Fri"],
+      start_time: "17:00",
+      end_time: "18:00",
+      timezone: "America/Chicago",
       capacity: 12,
     });
   });
@@ -135,5 +142,129 @@ test.describe("admin session creation and fee settings UI", () => {
     await page.getByRole("button", { name: "Save changes" }).click();
 
     await expect.poll(() => feePatch).toEqual({ default_monthly_cents: 12550 });
+  });
+
+  test("session detail adds replacement coach from a selected recurring date", async ({
+    page,
+  }) => {
+    await stubAdminShell(page);
+    let replacementPayload: unknown = null;
+
+    await page.route("**/api/v2/admin/**", (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      if (request.method() === "GET" && url.pathname === "/api/v2/admin/sessions/series-wed") {
+        return fulfillJson(route, {
+          session_id: "series-wed",
+          coach_id: "coach-scheduled",
+          coach_name: "Scheduled Coach",
+          title: "Wednesday 6:00 PM - 6:45 PM Beginner",
+          location: "Court 1",
+          start_at: "2026-06-03T23:00:00Z",
+          end_at: "2026-06-03T23:45:00Z",
+          days_of_week: ["Wed"],
+          start_time: "18:00",
+          end_time: "18:45",
+          timezone: "America/Chicago",
+          capacity: 12,
+          status: "scheduled",
+          enrolled_count: 0,
+          waitlist_count: 0,
+        });
+      }
+      if (
+        request.method() === "GET" &&
+        url.pathname === "/api/v2/admin/sessions/series-wed/occurrences"
+      ) {
+        return fulfillJson(route, {
+          occurrences: [
+            {
+              occurrence_id: "series-wed:2026-06-10:18:00",
+              session_id: "series-wed",
+              start_at: "2026-06-10T23:00:00Z",
+              end_at: "2026-06-10T23:45:00Z",
+              status: "scheduled",
+              scheduled_coach_id: "coach-scheduled",
+              actual_coach_id: null,
+              substitute_coach_id: null,
+              attendance_marked_count: 0,
+              attendance_marked_by: [],
+              attendance_last_marked_at: null,
+              coach_attendance: [],
+            },
+          ],
+        });
+      }
+      if (
+        request.method() === "PATCH" &&
+        url.pathname === "/api/v2/admin/sessions/series-wed/replacement"
+      ) {
+        replacementPayload = request.postDataJSON();
+        return fulfillJson(route, {
+          occurrence_id: "series-wed:2026-06-10:18:00",
+          session_id: "series-wed",
+          start_at: "2026-06-10T23:00:00Z",
+          end_at: "2026-06-10T23:45:00Z",
+          status: "scheduled",
+          scheduled_coach_id: "coach-scheduled",
+          actual_coach_id: "coach-replacement",
+          substitute_coach_id: null,
+          attendance_marked_count: 0,
+          attendance_marked_by: [],
+          attendance_last_marked_at: null,
+          coach_attendance: [],
+        });
+      }
+      if (
+        request.method() === "GET" &&
+        url.pathname === "/api/v2/admin/sessions/series-wed/enrollments"
+      ) {
+        return fulfillJson(route, { enrollments: [] });
+      }
+      if (
+        request.method() === "GET" &&
+        url.pathname === "/api/v2/admin/sessions/series-wed/waitlist"
+      ) {
+        return fulfillJson(route, { waitlist: [] });
+      }
+      if (request.method() === "GET" && url.pathname === "/api/v2/admin/users") {
+        return fulfillJson(route, {
+          users: [
+            {
+              user_id: "coach-scheduled",
+              email: "scheduled@example.com",
+              display_name: "Scheduled Coach",
+              role: "coach",
+              status: "active",
+            },
+            {
+              user_id: "coach-replacement",
+              email: "replacement@example.com",
+              display_name: "Replacement Coach",
+              role: "coach",
+              status: "active",
+            },
+          ],
+        });
+      }
+      return route.fallback();
+    });
+
+    await page.goto("/admin/sessions/series-wed");
+
+    await expect(page.getByText("Replacement coaches")).toBeVisible();
+    await expect(page.getByText("Occurrences")).toHaveCount(0);
+    await expect(page.getByText("No replacement coaches added.")).toBeVisible();
+
+    await page.getByRole("button", { name: "Add replacement" }).click();
+    await page.getByLabel("Date").fill("2026-06-10");
+    await page.getByLabel("Replacement coach").selectOption("coach-replacement");
+    await page.getByRole("button", { name: "Save" }).click();
+
+    await expect.poll(() => replacementPayload).toEqual({
+      date: "2026-06-10",
+      replacement_coach_id: "coach-replacement",
+      reason: null,
+    });
   });
 });

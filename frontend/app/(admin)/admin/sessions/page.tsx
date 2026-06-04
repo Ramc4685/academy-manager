@@ -46,8 +46,36 @@ function formatTimeRange(start: string, end: string): string {
   return `${fmt(start)} – ${fmt(end)}`;
 }
 
-function toDateTimeLocal(value: string): string {
-  return new Date(value).toISOString().slice(0, 16);
+const DEFAULT_TIMEZONE = "America/Chicago";
+const DAYS_OF_WEEK = [
+  { value: "Mon", label: "Monday" },
+  { value: "Tue", label: "Tuesday" },
+  { value: "Wed", label: "Wednesday" },
+  { value: "Thu", label: "Thursday" },
+  { value: "Fri", label: "Friday" },
+  { value: "Sat", label: "Saturday" },
+  { value: "Sun", label: "Sunday" },
+] as const;
+
+function formatClock(time: string | null | undefined): string {
+  if (!time) return "";
+  const [hourText = "0", minuteText = "00"] = time.split(":");
+  const hour = Number(hourText);
+  if (!Number.isFinite(hour)) return time;
+  const period = hour >= 12 ? "PM" : "AM";
+  const hour12 = hour % 12 || 12;
+  return `${hour12}:${minuteText.padStart(2, "0")} ${period}`;
+}
+
+function formatSessionTimeRange(session: AdminSessionView): string {
+  if (session.start_time && session.end_time) {
+    return `${formatClock(session.start_time)} – ${formatClock(session.end_time)}`;
+  }
+  return formatTimeRange(session.start_at, session.end_at);
+}
+
+function sessionWeekday(session: AdminSessionView): string {
+  return session.days_of_week[0] ?? "Wed";
 }
 
 function fillChip(enrolled: number, capacity: number): { variant: ChipVariant; label: string } {
@@ -252,7 +280,7 @@ function SessionList({
                   </td>
                   <td className="px-4 py-3 text-rally-muted">{s.location}</td>
                   <td className="px-4 py-3 font-mono tabular-nums text-rally-muted">
-                    {formatTimeRange(s.start_at, s.end_at)}
+                    {formatSessionTimeRange(s)}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
@@ -337,8 +365,10 @@ function EditSessionDialog({
       coach_id: session.coach_id,
       title: session.title,
       location: session.location,
-      start_at: toDateTimeLocal(session.start_at),
-      end_at: toDateTimeLocal(session.end_at),
+      days_of_week: [sessionWeekday(session)],
+      start_time: session.start_time ?? "18:00",
+      end_time: session.end_time ?? "18:45",
+      timezone: session.timezone ?? DEFAULT_TIMEZONE,
       capacity: session.capacity,
       reason: "",
     });
@@ -363,7 +393,7 @@ function EditSessionDialog({
             Edit session
           </Dialog.Title>
           <Dialog.Description className="mb-4 mt-1 text-sm text-rally-muted">
-            Update schedule, capacity, and coach assignment.
+            Update recurring schedule, capacity, and coach assignment.
           </Dialog.Description>
           {error && (
             <p role="alert" className="mb-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -411,34 +441,42 @@ function EditSessionDialog({
               />
             </Field>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Start">
-                <input
-                  type="datetime-local"
-                  value={form.start_at ?? ""}
-                  onChange={(event) => setForm((f) => ({ ...f, start_at: event.target.value }))}
-                  className={inputClass}
+              <Field label="Day of week">
+                <DaySelect
+                  value={form.days_of_week?.[0] ?? "Wed"}
+                  onChange={(day) => setForm((f) => ({ ...f, days_of_week: [day] }))}
                 />
               </Field>
-              <Field label="End">
+              <Field label="Start time">
                 <input
-                  type="datetime-local"
-                  value={form.end_at ?? ""}
-                  onChange={(event) => setForm((f) => ({ ...f, end_at: event.target.value }))}
+                  type="time"
+                  value={form.start_time ?? ""}
+                  onChange={(event) => setForm((f) => ({ ...f, start_time: event.target.value }))}
                   className={inputClass}
                 />
               </Field>
             </div>
-            <Field label="Capacity">
-              <input
-                type="number"
-                min={1}
-                value={form.capacity ?? 1}
-                onChange={(event) =>
-                  setForm((f) => ({ ...f, capacity: parseInt(event.target.value, 10) || 1 }))
-                }
-                className={inputClass}
-              />
-            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="End time">
+                <input
+                  type="time"
+                  value={form.end_time ?? ""}
+                  onChange={(event) => setForm((f) => ({ ...f, end_time: event.target.value }))}
+                  className={inputClass}
+                />
+              </Field>
+              <Field label="Capacity">
+                <input
+                  type="number"
+                  min={1}
+                  value={form.capacity ?? 1}
+                  onChange={(event) =>
+                    setForm((f) => ({ ...f, capacity: parseInt(event.target.value, 10) || 1 }))
+                  }
+                  className={inputClass}
+                />
+              </Field>
+            </div>
             <Field label="Reason">
               <input
                 value={form.reason ?? ""}
@@ -500,8 +538,10 @@ const EMPTY_FORM: CreateSessionRequest = {
   coach_id: "",
   title: "",
   location: "",
-  start_at: "",
-  end_at: "",
+  days_of_week: ["Wed"],
+  start_time: "18:00",
+  end_time: "18:45",
+  timezone: DEFAULT_TIMEZONE,
   capacity: 10,
 };
 
@@ -554,7 +594,7 @@ function CreateSessionDialog({
             Create session
           </Dialog.Title>
           <Dialog.Description id="create-session-desc" className="text-sm text-rally-muted mb-4 mt-1">
-            Fill in the details below to schedule a new session.
+            Create a weekly recurring session.
           </Dialog.Description>
 
           {error && (
@@ -585,7 +625,7 @@ function CreateSessionDialog({
                 />
               )}
             </Field>
-            <Field label="Title" required>
+            <Field label="Name" required>
               <input
                 type="text"
                 required
@@ -604,37 +644,45 @@ function CreateSessionDialog({
               />
             </Field>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Start" required>
-                <input
-                  type="datetime-local"
-                  required
-                  value={form.start_at}
-                  onChange={(e) => setForm((f) => ({ ...f, start_at: e.target.value }))}
-                  className={inputClass}
+              <Field label="Day of week" required>
+                <DaySelect
+                  value={form.days_of_week?.[0] ?? "Wed"}
+                  onChange={(day) => setForm((f) => ({ ...f, days_of_week: [day] }))}
                 />
               </Field>
-              <Field label="End" required>
+              <Field label="Start time" required>
                 <input
-                  type="datetime-local"
+                  type="time"
                   required
-                  value={form.end_at}
-                  onChange={(e) => setForm((f) => ({ ...f, end_at: e.target.value }))}
+                  value={form.start_time ?? ""}
+                  onChange={(e) => setForm((f) => ({ ...f, start_time: e.target.value }))}
                   className={inputClass}
                 />
               </Field>
             </div>
-            <Field label="Capacity" required>
-              <input
-                type="number"
-                required
-                min={1}
-                value={form.capacity}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, capacity: parseInt(e.target.value, 10) || 1 }))
-                }
-                className={inputClass}
-              />
-            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="End time" required>
+                <input
+                  type="time"
+                  required
+                  value={form.end_time ?? ""}
+                  onChange={(e) => setForm((f) => ({ ...f, end_time: e.target.value }))}
+                  className={inputClass}
+                />
+              </Field>
+              <Field label="Capacity" required>
+                <input
+                  type="number"
+                  required
+                  min={1}
+                  value={form.capacity}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, capacity: parseInt(e.target.value, 10) || 1 }))
+                  }
+                  className={inputClass}
+                />
+              </Field>
+            </div>
 
             <div className="flex justify-end gap-2 pt-2">
               <Dialog.Close asChild>
@@ -678,6 +726,24 @@ function CoachSelect({
       {coaches.map((coach) => (
         <option key={coach.user_id} value={coach.user_id}>
           {coach.display_name} ({coach.email})
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function DaySelect({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (day: string) => void;
+}) {
+  return (
+    <select required value={value} onChange={(e) => onChange(e.target.value)} className={inputClass}>
+      {DAYS_OF_WEEK.map((day) => (
+        <option key={day.value} value={day.value}>
+          {day.label}
         </option>
       ))}
     </select>

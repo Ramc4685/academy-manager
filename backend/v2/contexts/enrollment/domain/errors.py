@@ -15,6 +15,11 @@ class SessionCancelled(DomainError):
     status_code = 409
 
 
+class DuplicateSessionSeries(DomainError):
+    code = "Enrollment.DuplicateSessionSeries"
+    status_code = 409
+
+
 class SessionNotAssigned(DomainError):
     """The session exists but is not assigned to the requesting coach for the requested date."""
 

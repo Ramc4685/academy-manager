@@ -342,6 +342,21 @@ async def test_parent_available_catalog_includes_available_recurring_templates(
             },
             {
                 "academy_id": "academy-a",
+                "session_id": "tpl-prod-shaped",
+                "title": "Production Shaped Recurring",
+                "location": "Court 4",
+                "capacity": 7,
+                "status": "scheduled",
+                "days_of_week": ["Mon"],
+                "start_time": "11:00",
+                "end_time": "12:00",
+                "monthly_price_cents": 8800,
+                "timezone": "America/Chicago",
+                "start_at": datetime(2026, 5, 25, 16, 0, tzinfo=UTC),
+                "end_at": datetime(2026, 5, 25, 17, 0, tzinfo=UTC),
+            },
+            {
+                "academy_id": "academy-a",
                 "session_id": "tpl-full",
                 "name": "Full Recurring",
                 "max_students": 1,
@@ -412,7 +427,12 @@ async def test_parent_available_catalog_includes_available_recurring_templates(
         rows = await MongoSessionRepository(db).available_for_parent_catalog()
 
     by_id = {row.session_id: row for row in rows}
-    assert set(by_id) == {"sess-concrete", "tpl-available", "tpl-not-started"}
+    assert set(by_id) == {
+        "sess-concrete",
+        "tpl-available",
+        "tpl-not-started",
+        "tpl-prod-shaped",
+    }
     assert by_id["tpl-available"].title == "Recurring Session"
     assert by_id["tpl-available"].capacity == 5
     assert by_id["tpl-available"].enrolled_count == 1
@@ -420,6 +440,8 @@ async def test_parent_available_catalog_includes_available_recurring_templates(
     assert by_id["tpl-available"].amount_cents == 9950
     assert by_id["tpl-available"].start_at == datetime(2026, 6, 1, 21, 30, tzinfo=UTC)
     assert by_id["tpl-not-started"].start_at == datetime(2026, 6, 15, 21, 30, tzinfo=UTC)
+    assert by_id["tpl-prod-shaped"].start_at == datetime(2026, 6, 1, 16, 0, tzinfo=UTC)
+    assert by_id["tpl-prod-shaped"].amount_cents == 8800
 
 
 @pytest.mark.asyncio

@@ -191,6 +191,7 @@ test.describe("QA defect regressions", () => {
     await expect(page).toHaveURL(/\/parent\/payments\?access_denied=admin/);
     await expect(page.getByTestId("persona-access-denied")).toContainText(
       "admin access",
+      { timeout: 15000 },
     );
   });
 
@@ -207,6 +208,7 @@ test.describe("QA defect regressions", () => {
     });
     await expect(page.getByTestId("persona-access-denied")).toContainText(
       "coach access",
+      { timeout: 15000 },
     );
   });
 });

@@ -108,7 +108,9 @@ def _make_period(
 
 
 @pytest.mark.asyncio
-async def test_payout_repo_derives_attendance_payouts_when_no_periods_exist(db, acad) -> None:
+async def test_payout_repo_derives_occurrence_attributed_payouts_when_no_periods_exist(
+    db, acad
+) -> None:
     repo = MongoPayoutRepository(db)
     await db["session_occurrences"].insert_many(
         [
@@ -118,7 +120,7 @@ async def test_payout_repo_derives_attendance_payouts_when_no_periods_exist(db, 
                 "session_id": "sess-1",
                 "start_at": _dt("2026-05-27T18:00:00"),
                 "end_at": _dt("2026-05-27T19:00:00"),
-                "status": "scheduled",
+                "status": "completed",
                 "scheduled_coach_id": "coach-blno",
                 "is_payable": True,
             },
@@ -128,49 +130,34 @@ async def test_payout_repo_derives_attendance_payouts_when_no_periods_exist(db, 
                 "session_id": "sess-2",
                 "start_at": _dt("2026-05-28T18:00:00"),
                 "end_at": _dt("2026-05-28T19:00:00"),
-                "status": "scheduled",
+                "status": "completed",
                 "scheduled_coach_id": "coach-blno",
+                "actual_coach_id": "coach-replacement",
                 "is_payable": True,
             },
         ]
     )
-    await db["coach_rates"].insert_one(
-        {
-            "academy_id": acad,
-            "coach_id": "coach-blno",
-            "rate_id": "rate-1",
-            "billing_unit": "per_session",
-            "amount_minor": 2500,
-            "currency": "USD",
-            "effective_from": _dt("2026-01-01T00:00:00"),
-            "status": "active",
-        }
-    )
-    await db["coach_attendance"].insert_many(
+    await db["coach_rates"].insert_many(
         [
             {
                 "academy_id": acad,
-                "attendance_id": "coach-att-1",
-                "occurrence_id": "occ-1",
                 "coach_id": "coach-blno",
-                "status": "present",
-                "role": "lead",
-                "source": "admin",
-                "marked_by": "admin-1",
-                "marked_at": _dt("2026-05-27T19:05:00"),
-                "rate_override_minor": None,
+                "rate_id": "rate-1",
+                "billing_unit": "per_session",
+                "amount_minor": 2500,
+                "currency": "USD",
+                "effective_from": _dt("2026-01-01T00:00:00"),
+                "status": "active",
             },
             {
                 "academy_id": acad,
-                "attendance_id": "coach-att-2",
-                "occurrence_id": "occ-2",
-                "coach_id": "coach-blno",
-                "status": "present",
-                "role": "assistant",
-                "source": "admin",
-                "marked_by": "admin-1",
-                "marked_at": _dt("2026-05-28T19:05:00"),
-                "rate_override_minor": 1500,
+                "coach_id": "coach-replacement",
+                "rate_id": "rate-2",
+                "billing_unit": "per_session",
+                "amount_minor": 3000,
+                "currency": "USD",
+                "effective_from": _dt("2026-01-01T00:00:00"),
+                "status": "active",
             },
         ]
     )
@@ -201,14 +188,16 @@ async def test_payout_repo_derives_attendance_payouts_when_no_periods_exist(db, 
 
     rows = await repo.list_all()
 
-    assert len(rows) == 1
-    payout = rows[0]
-    assert payout.coach_id == "coach-blno"
-    assert payout.amount_cents == 4000
-    assert payout.expected_revenue_cents is None
-    assert payout.students_count == 2
-    assert payout.sessions_count == 2
-    assert payout.rule_label == "Coach attendance"
+    by_coach = {row.coach_id: row for row in rows}
+    assert set(by_coach) == {"coach-blno", "coach-replacement"}
+    assert by_coach["coach-blno"].amount_cents == 2500
+    assert by_coach["coach-blno"].students_count == 1
+    assert by_coach["coach-blno"].sessions_count == 1
+    assert by_coach["coach-blno"].rule_label == "Occurrence attribution"
+    assert by_coach["coach-replacement"].amount_cents == 3000
+    assert by_coach["coach-replacement"].students_count == 1
+    assert by_coach["coach-replacement"].sessions_count == 1
+    assert by_coach["coach-replacement"].rule_label == "Occurrence attribution"
 
 
 @pytest.mark.asyncio

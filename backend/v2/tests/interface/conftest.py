@@ -841,6 +841,46 @@ class FakeSessionWriter:
     async def update(self, session):
         self.sessions[session.session_id] = session
 
+    async def find_duplicate_recurring_series(
+        self,
+        *,
+        title,
+        location,
+        coach_id,
+        days_of_week,
+        start_time,
+        end_time,
+        timezone,
+        exclude_session_id=None,
+    ):
+        def norm(value):
+            return " ".join(str(value or "").strip().casefold().split())
+
+        target = (
+            norm(location),
+            coach_id,
+            tuple(days_of_week or []),
+            start_time,
+            end_time,
+            timezone,
+        )
+        for session in self.sessions.values():
+            if exclude_session_id and session.session_id == exclude_session_id:
+                continue
+            if session.status not in {"scheduled", "active", "open"}:
+                continue
+            candidate = (
+                norm(session.location),
+                session.coach_id,
+                tuple(session.days_of_week or []),
+                session.start_time,
+                session.end_time,
+                session.timezone or "America/Chicago",
+            )
+            if candidate == target:
+                return session
+        return None
+
 
 @dataclass
 class FakeAdminOccurrenceRepo:

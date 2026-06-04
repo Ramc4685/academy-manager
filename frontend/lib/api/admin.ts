@@ -19,6 +19,10 @@ export interface AdminSessionView {
   location: string;
   start_at: string; // ISO 8601
   end_at: string; // ISO 8601
+  days_of_week: string[];
+  start_time: string | null;
+  end_time: string | null;
+  timezone: string | null;
   capacity: number;
   status: "scheduled" | "cancelled" | "completed";
   enrolled_count: number;
@@ -67,6 +71,17 @@ export interface UpdateSessionOccurrenceCoachRequest {
   reason: string;
 }
 
+export interface UpdateOccurrenceReplacementRequest {
+  replacement_coach_id?: string | null;
+  reason?: string | null;
+}
+
+export interface AddSessionReplacementRequest {
+  date: string;
+  replacement_coach_id: string;
+  reason?: string | null;
+}
+
 export interface UpdateOccurrenceCoachAttendanceRequest {
   coach_id: string;
   status: "present" | "absent";
@@ -79,8 +94,12 @@ export interface CreateSessionRequest {
   coach_id: string;
   title: string;
   location: string;
-  start_at: string;
-  end_at: string;
+  start_at?: string | null;
+  end_at?: string | null;
+  days_of_week?: string[];
+  start_time?: string | null;
+  end_time?: string | null;
+  timezone?: string | null;
   capacity: number;
 }
 
@@ -88,8 +107,12 @@ export interface EditSessionRequest {
   coach_id?: string;
   title?: string;
   location?: string;
-  start_at?: string;
-  end_at?: string;
+  start_at?: string | null;
+  end_at?: string | null;
+  days_of_week?: string[];
+  start_time?: string | null;
+  end_time?: string | null;
+  timezone?: string | null;
   capacity?: number;
   reason?: string;
 }
@@ -913,6 +936,12 @@ export function listAdminSessions(
   return apiFetch<AdminSessionList>(`/admin/sessions${q}`, { method: "GET" });
 }
 
+export function getAdminSession(sessionId: string): Promise<AdminSessionView> {
+  return apiFetch<AdminSessionView>(`/admin/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "GET",
+  });
+}
+
 export function createAdminSession(payload: CreateSessionRequest): Promise<AdminSessionView> {
   return apiFetch<AdminSessionView>("/admin/sessions", {
     method: "POST",
@@ -949,6 +978,32 @@ export function updateSessionOccurrenceCoach(
 ): Promise<AdminSessionOccurrenceView> {
   return apiFetch<AdminSessionOccurrenceView>(
     `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/coach`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export function updateSessionOccurrenceReplacement(
+  occurrenceId: string,
+  payload: UpdateOccurrenceReplacementRequest
+): Promise<AdminSessionOccurrenceView> {
+  return apiFetch<AdminSessionOccurrenceView>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/replacement`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export function addSessionReplacement(
+  sessionId: string,
+  payload: AddSessionReplacementRequest
+): Promise<AdminSessionOccurrenceView> {
+  return apiFetch<AdminSessionOccurrenceView>(
+    `/admin/sessions/${encodeURIComponent(sessionId)}/replacement`,
     {
       method: "PATCH",
       body: JSON.stringify(payload),

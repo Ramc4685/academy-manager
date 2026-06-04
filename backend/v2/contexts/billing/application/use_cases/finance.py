@@ -135,41 +135,29 @@ class MongoPayoutRepository(TenantScopedRepository):
         persisted = [self._to_domain(d) async for d in cursor]
         if persisted:
             return persisted
-        return await self._derive_from_coach_attendance()
+        return await self._derive_from_completed_occurrences()
 
     async def list_for_coach(self, coach_id: str) -> list[Payout]:
         cursor = self._find_many({"coach_id": coach_id}, sort=[("period_start", -1)], limit=500)
         return [self._to_domain(d) async for d in cursor]
 
-    async def _derive_from_coach_attendance(self) -> list[Payout]:
+    async def _derive_from_completed_occurrences(self) -> list[Payout]:
         academy_id = current_academy_id()
-        attendance_rows = [
+        occurrence_rows = [
             doc
-            async for doc in self._find_many_in_collection(
-                "coach_attendance",
-                {
-                    "status": "present",
-                },
-                sort=[("marked_at", 1)],
-            )
-        ]
-        if not attendance_rows:
-            return []
-
-        occurrence_ids = sorted({str(row["occurrence_id"]) for row in attendance_rows})
-        occurrence_docs = {
-            str(doc["occurrence_id"]): doc
             async for doc in self._find_many_in_collection(
                 "session_occurrences",
                 {
-                    "occurrence_id": {"$in": occurrence_ids},
                     "is_payable": {"$ne": False},
-                    "status": {"$ne": "cancelled"},
+                    "status": "completed",
                 },
+                sort=[("start_at", 1)],
             )
-        }
-        if not occurrence_docs:
+        ]
+        if not occurrence_rows:
             return []
+
+        occurrence_ids = sorted({str(row["occurrence_id"]) for row in occurrence_rows})
 
         students_by_occurrence: dict[str, set[str]] = {
             occurrence_id: set() for occurrence_id in occurrence_ids
@@ -189,14 +177,11 @@ class MongoPayoutRepository(TenantScopedRepository):
                 )
 
         grouped: dict[tuple[str, str], dict[str, object]] = {}
-        for attendance in attendance_rows:
-            occurrence_id = str(attendance["occurrence_id"])
-            occurrence = occurrence_docs.get(occurrence_id)
-            if occurrence is None:
-                continue
-            coach_id = str(attendance["coach_id"])
+        for occurrence in occurrence_rows:
+            occurrence_id = str(occurrence["occurrence_id"])
+            coach_id = str(occurrence.get("actual_coach_id") or occurrence["scheduled_coach_id"])
             start_at = occurrence["start_at"]
-            amount = await self._attendance_amount_minor(attendance, coach_id, start_at, occurrence)
+            amount = await self._occurrence_amount_minor(coach_id, start_at, occurrence)
             if amount is None:
                 continue
             period = start_at.strftime("%Y-%m")
@@ -216,7 +201,7 @@ class MongoPayoutRepository(TenantScopedRepository):
             period_start, period_end = _period_window(period)
             payouts.append(
                 Payout(
-                    payout_id=f"attendance:{period}:{coach_id}",
+                    payout_id=f"occurrence:{period}:{coach_id}",
                     academy_id=academy_id,
                     coach_id=coach_id,
                     amount_cents=amount_cents,
@@ -224,21 +209,17 @@ class MongoPayoutRepository(TenantScopedRepository):
                     period_end=period_end,
                     students_count=len(bucket["students"]),  # type: ignore[arg-type]
                     sessions_count=len(bucket["occurrences"]),  # type: ignore[arg-type]
-                    rule_label="Coach attendance",
+                    rule_label="Occurrence attribution",
                 )
             )
         return sorted(payouts, key=lambda payout: payout.period_start, reverse=True)
 
-    async def _attendance_amount_minor(
+    async def _occurrence_amount_minor(
         self,
-        attendance: dict[str, object],
         coach_id: str,
         start_at: datetime,
         occurrence: dict[str, object],
     ) -> int | None:
-        if attendance.get("rate_override_minor") is not None:
-            return int(attendance["rate_override_minor"])
-
         rate = await self._find_one_in_collection(
             "coach_rates",
             {
