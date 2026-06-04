@@ -30,6 +30,7 @@ Explore current student profile data and propose UI redesign options without imp
 - 2026-06-04T17:36:24: Design-only verification: spec self-review completed; placeholder/ambiguity scan found no unresolved TBD/TODO/FIXME/Open Decision markers. No app tests run because no application code was changed.
 - 2026-06-04T18:05:44: cd frontend && pnpm typecheck -> passed; cd frontend && pnpm e2e --grep 'renders the student profile' -> 2 passed
 - 2026-06-04T18:06:08: cd frontend && pnpm lint -> passed (Next lint deprecation notice only; no warnings or errors)
+- 2026-06-04T18:11:02: scripts/dev/pre-push-checks.sh -> passed: backend ruff format/check, backend v2 tests, frontend node unit tests, pnpm typecheck, pnpm lint, pnpm e2e
 ## Reusable Lessons
 
 - None recorded yet.
