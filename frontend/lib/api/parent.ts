@@ -150,9 +150,11 @@ export interface ParentPauseRequest {
   parent_id: string;
   enrollment_id: string;
   period: string;
+  pause_kind: "fixed" | "indefinite";
+  resume_on: string | null;
   reason: string | null;
   status: "pending" | "approved" | "declined";
-  requested_at: string;
+  created_at: string;
   decided_at: string | null;
   decided_by: string | null;
 }
@@ -301,7 +303,9 @@ export function getParentAcademy(): Promise<ParentAcademy> {
 
 export function createParentPauseRequest(payload: {
   enrollment_id: string;
-  period: string;
+  period?: string;
+  pause_kind: "fixed" | "indefinite";
+  resume_on?: string | null;
   reason?: string;
 }): Promise<ParentPauseRequest> {
   return apiFetch("/parent/pause-requests", {
