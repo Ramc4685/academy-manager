@@ -86,6 +86,7 @@ frontend/node_modules/.cache/
 chainlit.md
 .chainlit/
 .superpowers/
+.worktrees/
 .ipynb_checkpoints/
 .playwright-mcp/
 rally-*.png
