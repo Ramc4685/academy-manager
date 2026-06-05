@@ -11,7 +11,7 @@ from backend.v2.contexts.student_progress.application.use_cases.place_student im
 from backend.v2.contexts.student_progress.application.use_cases.review_level_up import (
     ReviewLevelUpCommand,
 )
-from backend.v2.contexts.student_progress.domain.errors import (
+from backend.v2.contexts.student_progress.application.errors import (
     RecommendationNotFound,
     StudentNotPlaced,
 )

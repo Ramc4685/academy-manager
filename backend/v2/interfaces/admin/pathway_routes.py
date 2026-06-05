@@ -22,7 +22,7 @@ from backend.v2.contexts.curriculum.application.use_cases.manage_skills import (
     CreateSkillCommand,
     UpdateSkillCommand,
 )
-from backend.v2.contexts.curriculum.domain.errors import (
+from backend.v2.contexts.curriculum.application.errors import (
     LevelNotFound,
     ProgramNotFound,
     SkillNotFound,

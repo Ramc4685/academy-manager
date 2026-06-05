@@ -10,7 +10,7 @@ from backend.v2.contexts.student_progress.application.use_cases.get_certificates
 from backend.v2.contexts.student_progress.application.use_cases.get_passport import (
     GetStudentPassportCommand,
 )
-from backend.v2.contexts.student_progress.domain.errors import StudentNotPlaced
+from backend.v2.contexts.student_progress.application.errors import StudentNotPlaced
 from backend.v2.interfaces.parent.deps import ParentUseCases, get_parent_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
