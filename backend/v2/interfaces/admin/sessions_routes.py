@@ -13,6 +13,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     CancelEnrollmentCommand,
     CancelSessionCommand,
     CreateSessionCommand,
+    DuplicateSessionSeries,
     EditRosterAddCommand,
     EditSessionCommand,
     PauseEnrollmentCommand,
@@ -21,6 +22,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
+    AddSessionReplacementRequest,
     AdminCoachAttendanceView,
     AdminEnrollmentList,
     AdminEnrollmentView,
@@ -37,6 +39,7 @@ from backend.v2.interfaces.admin.views import (
     RemoveEnrollmentRequest,
     TransferEnrollmentRequest,
     UpdateOccurrenceCoachAttendanceRequest,
+    UpdateOccurrenceReplacementRequest,
     UpdateSessionOccurrenceCoachRequest,
     WithdrawEnrollmentRequest,
 )
@@ -79,7 +82,12 @@ async def create_session(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionView:
-    session = await use_cases.create_session.execute(CreateSessionCommand(**body.model_dump()))
+    try:
+        session = await use_cases.create_session.execute(CreateSessionCommand(**body.model_dump()))
+    except DuplicateSessionSeries as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if use_cases.maintain_session_occurrences is not None:
+        await use_cases.maintain_session_occurrences(session)
     return AdminSessionView(**session.model_dump(exclude={"academy_id"}))
 
 
@@ -90,14 +98,33 @@ async def edit_session(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionView:
-    session = await use_cases.edit_session.execute(
-        EditSessionCommand(
-            session_id=session_id,
-            actor_id=claims.user_id,
-            **body.model_dump(exclude_unset=True),
+    try:
+        session = await use_cases.edit_session.execute(
+            EditSessionCommand(
+                session_id=session_id,
+                actor_id=claims.user_id,
+                **body.model_dump(exclude_unset=True),
+            )
         )
-    )
+    except DuplicateSessionSeries as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if use_cases.maintain_session_occurrences is not None:
+        await use_cases.maintain_session_occurrences(session)
     return AdminSessionView(**session.model_dump(exclude={"academy_id"}))
+
+
+@router.get("/sessions/{session_id}", response_model=AdminSessionView, summary="Get session")
+async def get_session(
+    session_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminSessionView:
+    if use_cases.get_admin_session is None:
+        raise HTTPException(status_code=503, detail="Session detail is not configured")
+    row = await use_cases.get_admin_session(session_id)  # type: ignore[operator]
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return AdminSessionView(**row)
 
 
 @router.delete(
@@ -148,6 +175,61 @@ async def update_session_occurrence_coach(
         actor_id=claims.user_id,
         reason=body.reason,
     )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Occurrence not found")
+    return AdminSessionOccurrenceView(**row)
+
+
+@router.patch(
+    "/sessions/{session_id}/replacement",
+    response_model=AdminSessionOccurrenceView,
+    summary="Set replacement coach for a selected recurring session date",
+)
+async def add_session_replacement(
+    session_id: str,
+    body: AddSessionReplacementRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminSessionOccurrenceView:
+    if use_cases.add_session_replacement is None:
+        raise HTTPException(status_code=503, detail="Session replacement is not configured")
+    try:
+        row = await use_cases.add_session_replacement(  # type: ignore[operator]
+            session_id=session_id,
+            occurrence_date=body.date,
+            replacement_coach_id=body.replacement_coach_id,
+            actor_id=claims.user_id,
+            reason=body.reason or "replacement coach update",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return AdminSessionOccurrenceView(**row)
+
+
+@router.patch(
+    "/session-occurrences/{occurrence_id}/replacement",
+    response_model=AdminSessionOccurrenceView,
+    summary="Set replacement coach for one dated occurrence",
+)
+async def update_session_occurrence_replacement(
+    occurrence_id: str,
+    body: UpdateOccurrenceReplacementRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminSessionOccurrenceView:
+    if use_cases.update_session_occurrence_replacement is None:
+        raise HTTPException(status_code=503, detail="Occurrence replacement is not configured")
+    try:
+        row = await use_cases.update_session_occurrence_replacement(  # type: ignore[operator]
+            occurrence_id=occurrence_id,
+            replacement_coach_id=body.replacement_coach_id,
+            actor_id=claims.user_id,
+            reason=body.reason or "replacement coach update",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if row is None:
         raise HTTPException(status_code=404, detail="Occurrence not found")
     return AdminSessionOccurrenceView(**row)

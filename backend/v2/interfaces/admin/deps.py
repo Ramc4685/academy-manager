@@ -183,6 +183,10 @@ class AdminUseCases:
     get_admin_student: GetAdminStudent | None = None
     update_admin_student: UpdateAdminStudent | None = None
     change_admin_student_parent: ChangeAdminStudentParent | None = None
+    get_admin_session: object | None = None  # async (session_id: str) -> dict | None
+    maintain_session_occurrences: object | None = None  # async (session) -> None
+    add_session_replacement: object | None = None  # async (...) -> dict | None
+    update_session_occurrence_replacement: object | None = None  # async (...) -> dict | None
     manage_admin_waiver_templates: ManageAdminWaiverTemplates | None = None
     admin_registration_review: AdminRegistrationReview | None = None
     payout_periods: object | None = None

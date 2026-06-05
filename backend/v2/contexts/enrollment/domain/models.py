@@ -34,6 +34,10 @@ class Session(BaseModel):
     end_at: datetime
     capacity: int = Field(ge=1)
     status: SessionStatus = "scheduled"
+    days_of_week: list[str] = Field(default_factory=list)
+    start_time: str | None = None
+    end_time: str | None = None
+    timezone: str | None = None
 
 
 class SessionOccurrence(BaseModel):

@@ -122,6 +122,10 @@ class MongoSessionRepository(TenantScopedRepository):
             end_at=end_at,  # type: ignore[arg-type]
             capacity=int(doc.get("capacity") or doc.get("max_students") or 15),  # type: ignore[arg-type]
             status=status,  # type: ignore[arg-type]
+            days_of_week=list(doc.get("days_of_week") or []),
+            start_time=None if doc.get("start_time") is None else str(doc.get("start_time")),
+            end_time=None if doc.get("end_time") is None else str(doc.get("end_time")),
+            timezone=None if doc.get("timezone") is None else str(doc.get("timezone")),
         )
 
     async def for_coach_on_date(self, coach_id: str, on_date: date) -> list[Session]:
@@ -157,6 +161,7 @@ class MongoSessionRepository(TenantScopedRepository):
             {
                 "status": {"$nin": ["cancelled", "completed"]},
                 "start_at": {"$gte": now, "$lte": end},
+                "days_of_week": {"$exists": False},
             },
             sort=[("start_at", 1)],
         )
@@ -165,7 +170,6 @@ class MongoSessionRepository(TenantScopedRepository):
             {
                 "status": {"$nin": ["cancelled", "completed"]},
                 "days_of_week": {"$exists": True},
-                "start_at": {"$exists": False},
             },
         )
         template_docs = [doc async for doc in template_cursor]

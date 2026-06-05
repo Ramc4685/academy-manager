@@ -1056,6 +1056,10 @@ def compose_admin(
                     "coach_id": str(doc.get("coach_id") or ""),
                     "enrolled_count": enrolled_count,
                     "waitlist_count": waitlist_count,
+                    "days_of_week": list(doc.get("days_of_week") or []),
+                    "start_time": doc.get("start_time"),
+                    "end_time": doc.get("end_time"),
+                    "timezone": doc.get("timezone"),
                 }
             )
 
@@ -1090,6 +1094,461 @@ def compose_admin(
 
         return rows
 
+    async def get_admin_session(session_id: str):
+        session = await sessions_r.get(session_id)
+        if session is None:
+            return None
+        rows = await _build_admin_session_rows([session.model_dump(mode="python")])
+        return rows[0] if rows else None
+
+    def _normalized_series_text(value: object) -> str:
+        return " ".join(str(value or "").strip().casefold().split())
+
+    _WEEKDAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    _WEEKDAY_INDEX = {
+        "mon": 0,
+        "monday": 0,
+        "tue": 1,
+        "tuesday": 1,
+        "wed": 2,
+        "wednesday": 2,
+        "thu": 3,
+        "thursday": 3,
+        "fri": 4,
+        "friday": 4,
+        "sat": 5,
+        "saturday": 5,
+        "sun": 6,
+        "sunday": 6,
+    }
+
+    def _canonical_weekdays(days: object) -> tuple[str, ...]:
+        values = list(days or []) if isinstance(days, list) else []
+        canonical: set[str] = set()
+        passthrough: set[str] = set()
+        for day in values:
+            raw = str(day).strip()
+            index = _WEEKDAY_INDEX.get(raw.casefold())
+            if index is None:
+                if raw:
+                    passthrough.add(raw)
+                continue
+            canonical.add(_WEEKDAY_NAMES[index])
+        return tuple(
+            sorted(canonical, key=lambda day: _WEEKDAY_NAMES.index(day)) + sorted(passthrough)
+        )
+
+    def _local_interval_utc(
+        occurrence_date: date,
+        start_time: time,
+        end_time: time,
+        tz: ZoneInfo,
+    ) -> tuple[datetime, datetime]:
+        local_start = datetime.combine(occurrence_date, start_time, tzinfo=tz)
+        local_end = datetime.combine(occurrence_date, end_time, tzinfo=tz)
+        if local_end <= local_start:
+            local_end += timedelta(days=1)
+        return local_start.astimezone(UTC), local_end.astimezone(UTC)
+
+    def _dated_session_range_filter(start: datetime, end: datetime) -> dict[str, Any]:
+        return {
+            "start_at": {"$gte": start, "$lte": end},
+            "$or": [
+                {"days_of_week": {"$exists": False}},
+                {"days_of_week": []},
+                {"days_of_week": None},
+            ],
+        }
+
+    def _series_local_clock_signature(
+        row: dict[str, Any],
+    ) -> tuple[tuple[str, ...], str, str, str] | None:
+        timezone_name = str(row.get("timezone") or "America/Chicago")
+        days = list(row.get("days_of_week") or [])
+        if days and row.get("start_time") and row.get("end_time"):
+            return (
+                _canonical_weekdays(days),
+                str(row.get("start_time") or ""),
+                str(row.get("end_time") or ""),
+                timezone_name,
+            )
+
+        start_at = row.get("start_at")
+        end_at = row.get("end_at")
+        if not start_at or not end_at:
+            return None
+        tz = ZoneInfo(timezone_name)
+        local_start = _as_utc_datetime(start_at).astimezone(tz)
+        local_end = _as_utc_datetime(end_at).astimezone(tz)
+        weekday = _WEEKDAY_NAMES[local_start.weekday()]
+        return (
+            (weekday,),
+            local_start.strftime("%H:%M"),
+            local_end.strftime("%H:%M"),
+            timezone_name,
+        )
+
+    def _session_series_signature(row: dict[str, Any]) -> tuple[object, ...] | None:
+        clock_signature = _series_local_clock_signature(row)
+        if clock_signature is None:
+            return None
+        days, start_time_value, end_time_value, timezone_name = clock_signature
+        return (
+            _normalized_series_text(row.get("location")),
+            str(row.get("coach_id") or ""),
+            days,
+            start_time_value,
+            end_time_value,
+            timezone_name,
+        )
+
+    def _recurring_row_rank(row: dict[str, Any]) -> tuple[int, int, datetime]:
+        start_at = row["start_at"]
+        if getattr(start_at, "tzinfo", None) is None:
+            start_at = start_at.replace(tzinfo=UTC)
+        return (
+            int(row.get("enrolled_count") or 0),
+            int(row.get("waitlist_count") or 0),
+            -start_at.timestamp(),
+        )
+
+    def _dedupe_session_series_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        deduped: list[dict[str, Any]] = []
+        index_by_signature: dict[tuple[object, ...], int] = {}
+        for row in rows:
+            signature = _session_series_signature(row)
+            if signature is None:
+                deduped.append(row)
+                continue
+            existing_index = index_by_signature.get(signature)
+            if existing_index is None:
+                index_by_signature[signature] = len(deduped)
+                deduped.append(row)
+                continue
+            existing = deduped[existing_index]
+            if _recurring_row_rank(row) > _recurring_row_rank(existing):
+                deduped[existing_index] = row
+        return deduped
+
+    def _series_occurrence_candidates(session) -> list[dict[str, Any]]:
+        if not session.days_of_week or not session.start_time or not session.end_time:
+            return []
+        if session.status == "cancelled":
+            return []
+        timezone_name = session.timezone or "America/Chicago"
+        tz = ZoneInfo(timezone_name)
+        target_days = {
+            _WEEKDAY_INDEX[str(day).casefold()]
+            for day in session.days_of_week
+            if str(day).casefold() in _WEEKDAY_INDEX
+        }
+        if not target_days:
+            return []
+        local_start = datetime.now(UTC).astimezone(tz).date()
+        local_end = (datetime.now(UTC) + timedelta(days=60)).astimezone(tz).date()
+        start_time = time.fromisoformat(session.start_time)
+        end_time = time.fromisoformat(session.end_time)
+        rows: list[dict[str, Any]] = []
+        current = local_start
+        while current <= local_end:
+            if current.weekday() in target_days:
+                starts_at, ends_at = _local_interval_utc(current, start_time, end_time, tz)
+                occurrence_id = (
+                    f"{session.session_id}:{current.isoformat()}:{start_time.strftime('%H:%M')}"
+                )
+                rows.append(
+                    {
+                        "occurrence_id": occurrence_id,
+                        "academy_id": session.academy_id,
+                        "session_id": session.session_id,
+                        "template_session_id": session.session_id,
+                        "start_at": starts_at,
+                        "end_at": ends_at,
+                        "status": "scheduled",
+                        "scheduled_coach_id": session.coach_id,
+                        "actual_coach_id": None,
+                        "substitute_coach_id": None,
+                        "is_billable": True,
+                        "is_payable": True,
+                    }
+                )
+            current += timedelta(days=1)
+        return rows
+
+    def _series_occurrence_candidate_for_date(
+        session,
+        occurrence_date: date,
+    ) -> dict[str, Any]:
+        if session.status == "cancelled":
+            raise ValueError("Replacement cannot be added to a cancelled session")
+        timezone_name = session.timezone or "America/Chicago"
+        tz = ZoneInfo(timezone_name)
+        target_days = {
+            _WEEKDAY_INDEX[str(day).casefold()]
+            for day in session.days_of_week
+            if str(day).casefold() in _WEEKDAY_INDEX
+        }
+        if not target_days:
+            raise ValueError("Session does not have a supported recurring weekday")
+        now = datetime.now(UTC)
+        local_today = now.astimezone(tz).date()
+        local_window_end = (now + timedelta(days=60)).astimezone(tz).date()
+        if occurrence_date < local_today or occurrence_date > local_window_end:
+            raise ValueError("Replacement date must be within today through 60 days ahead")
+        if occurrence_date.weekday() not in target_days:
+            raise ValueError("Replacement date must match the session weekday")
+
+        start_time = time.fromisoformat(session.start_time)
+        end_time = time.fromisoformat(session.end_time)
+        starts_at, ends_at = _local_interval_utc(occurrence_date, start_time, end_time, tz)
+        occurrence_id = (
+            f"{session.session_id}:{occurrence_date.isoformat()}:{start_time.strftime('%H:%M')}"
+        )
+        return {
+            "occurrence_id": occurrence_id,
+            "academy_id": session.academy_id,
+            "session_id": session.session_id,
+            "template_session_id": session.session_id,
+            "start_at": starts_at,
+            "end_at": ends_at,
+            "status": "scheduled",
+            "scheduled_coach_id": session.coach_id,
+            "actual_coach_id": None,
+            "substitute_coach_id": None,
+            "is_billable": True,
+            "is_payable": True,
+        }
+
+    def _dated_occurrence_candidate_for_date(
+        session,
+        occurrence_date: date,
+        *,
+        matched_session_doc: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if session.status == "cancelled":
+            raise ValueError("Replacement cannot be added to a cancelled session")
+        timezone_name = session.timezone or "America/Chicago"
+        tz = ZoneInfo(timezone_name)
+        starts_at = _as_utc_datetime(session.start_at)
+        ends_at = _as_utc_datetime(session.end_at)
+        local_start = starts_at.astimezone(tz)
+        local_end = ends_at.astimezone(tz)
+        now = datetime.now(UTC)
+        local_today = now.astimezone(tz).date()
+        local_window_end = (now + timedelta(days=60)).astimezone(tz).date()
+        if occurrence_date < local_today or occurrence_date > local_window_end:
+            raise ValueError("Replacement date must be within today through 60 days ahead")
+        if occurrence_date.weekday() != local_start.weekday():
+            raise ValueError("Replacement date must match the session weekday")
+        if matched_session_doc is not None:
+            session_id = str(
+                matched_session_doc.get("session_id") or matched_session_doc.get("_id")
+            )
+            starts_at = _as_utc_datetime(matched_session_doc["start_at"])
+            ends_at = _as_utc_datetime(matched_session_doc["end_at"])
+            return {
+                "occurrence_id": session_id,
+                "academy_id": session.academy_id,
+                "session_id": session_id,
+                "template_session_id": session_id,
+                "start_at": starts_at,
+                "end_at": ends_at,
+                "status": str(matched_session_doc.get("status") or "scheduled"),
+                "scheduled_coach_id": str(matched_session_doc.get("coach_id") or session.coach_id),
+                "actual_coach_id": None,
+                "substitute_coach_id": None,
+                "is_billable": True,
+                "is_payable": True,
+            }
+        starts_at, ends_at = _local_interval_utc(
+            occurrence_date,
+            local_start.timetz().replace(tzinfo=None),
+            local_end.timetz().replace(tzinfo=None),
+            tz,
+        )
+        occurrence_id = (
+            f"{session.session_id}:{occurrence_date.isoformat()}:{local_start.strftime('%H:%M')}"
+        )
+        return {
+            "occurrence_id": occurrence_id,
+            "academy_id": session.academy_id,
+            "session_id": session.session_id,
+            "template_session_id": session.session_id,
+            "start_at": starts_at,
+            "end_at": ends_at,
+            "status": "scheduled",
+            "scheduled_coach_id": session.coach_id,
+            "actual_coach_id": None,
+            "substitute_coach_id": None,
+            "is_billable": True,
+            "is_payable": True,
+        }
+
+    def _session_domain_row(session) -> dict[str, Any]:
+        return session.model_dump(mode="python")
+
+    async def _matching_dated_series_session_doc(
+        session,
+        occurrence_date: date,
+    ) -> dict[str, Any] | None:
+        target_signature = _session_series_signature(_session_domain_row(session))
+        if target_signature is None:
+            return None
+        timezone_name = session.timezone or "America/Chicago"
+        tz = ZoneInfo(timezone_name)
+        cursor = sessions_r._find_many(  # type: ignore[attr-defined]
+            {
+                "coach_id": session.coach_id,
+                "location": session.location,
+                "$or": [
+                    {"days_of_week": {"$exists": False}},
+                    {"days_of_week": []},
+                    {"days_of_week": None},
+                ],
+            },
+            sort=[("start_at", 1)],
+        )
+        async for doc in cursor:
+            if str(doc.get("status") or "scheduled") == "cancelled":
+                continue
+            if _session_series_signature(doc) != target_signature:
+                continue
+            starts_at = doc.get("start_at")
+            if starts_at is None:
+                continue
+            if _as_utc_datetime(starts_at).astimezone(tz).date() == occurrence_date:
+                return doc
+        return None
+
+    async def _dated_series_session_ids(session) -> list[str]:
+        target_signature = _session_series_signature(_session_domain_row(session))
+        if target_signature is None:
+            return [session.session_id]
+        cursor = sessions_r._find_many(  # type: ignore[attr-defined]
+            {
+                "coach_id": session.coach_id,
+                "location": session.location,
+                "$or": [
+                    {"days_of_week": {"$exists": False}},
+                    {"days_of_week": []},
+                    {"days_of_week": None},
+                ],
+            },
+            sort=[("start_at", 1)],
+        )
+        ids: list[str] = []
+        async for doc in cursor:
+            if str(doc.get("status") or "scheduled") == "cancelled":
+                continue
+            if _session_series_signature(doc) != target_signature:
+                continue
+            session_id = str(doc.get("session_id") or doc.get("_id") or "")
+            if session_id and session_id not in ids:
+                ids.append(session_id)
+        if session.session_id not in ids:
+            ids.insert(0, session.session_id)
+        return ids
+
+    async def _replacement_occurrence_candidate_for_date(
+        session,
+        occurrence_date: date,
+    ) -> dict[str, Any]:
+        if session.days_of_week and session.start_time and session.end_time:
+            return _series_occurrence_candidate_for_date(session, occurrence_date)
+        matched_doc = await _matching_dated_series_session_doc(session, occurrence_date)
+        if matched_doc is None:
+            raise ValueError("Replacement date must match a scheduled session date")
+        return _dated_occurrence_candidate_for_date(
+            session,
+            occurrence_date,
+            matched_session_doc=matched_doc,
+        )
+
+    def _as_utc_datetime(value: datetime) -> datetime:
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+    async def _is_clean_future_occurrence(doc: dict[str, Any], *, now: datetime) -> bool:
+        starts_at = doc.get("start_at")
+        if starts_at is None or _as_utc_datetime(starts_at) < now:
+            return False
+        if str(doc.get("status") or "scheduled") != "scheduled":
+            return False
+        if doc.get("actual_coach_id") or doc.get("substitute_coach_id"):
+            return False
+        academy_id = str(doc.get("academy_id") or "")
+        occurrence_id = str(doc.get("occurrence_id") or "")
+        if await db["attendance"].count_documents(
+            {"academy_id": academy_id, "occurrence_id": occurrence_id}, limit=1
+        ):
+            return False
+        if await db["coach_attendance"].count_documents(
+            {"academy_id": academy_id, "occurrence_id": occurrence_id}, limit=1
+        ):
+            return False
+        if await db["payout_period_lines"].count_documents(
+            {"academy_id": academy_id, "occurrence_id": occurrence_id}, limit=1
+        ):
+            return False
+        return True
+
+    async def maintain_session_occurrences(session) -> None:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        candidates = _series_occurrence_candidates(session)
+        if not candidates and session.status != "cancelled":
+            return
+        academy_id = current_academy_id()
+        now = datetime.now(UTC)
+        window_end = now + timedelta(days=60, hours=23, minutes=59, seconds=59)
+        cursor = db["session_occurrences"].find(
+            {
+                "academy_id": academy_id,
+                "$or": [
+                    {"session_id": session.session_id},
+                    {"template_session_id": session.session_id},
+                ],
+                "start_at": {"$gte": now, "$lte": window_end},
+            }
+        )
+        existing = {str(doc["occurrence_id"]): doc async for doc in cursor}
+        candidate_ids = {row["occurrence_id"] for row in candidates}
+        for occurrence_id, doc in existing.items():
+            if occurrence_id in candidate_ids:
+                continue
+            if await _is_clean_future_occurrence(doc, now=now):
+                await db["session_occurrences"].delete_one(
+                    {"academy_id": academy_id, "occurrence_id": occurrence_id}
+                )
+
+        for row in candidates:
+            existing_doc = existing.get(str(row["occurrence_id"]))
+            if existing_doc is not None and not await _is_clean_future_occurrence(
+                existing_doc, now=now
+            ):
+                continue
+            await db["session_occurrences"].update_one(
+                {"academy_id": academy_id, "occurrence_id": row["occurrence_id"]},
+                {
+                    "$set": {
+                        "session_id": row["session_id"],
+                        "template_session_id": row["template_session_id"],
+                        "start_at": row["start_at"],
+                        "end_at": row["end_at"],
+                        "status": row["status"],
+                        "scheduled_coach_id": row["scheduled_coach_id"],
+                        "actual_coach_id": None,
+                        "substitute_coach_id": None,
+                        "is_billable": True,
+                        "is_payable": True,
+                    },
+                    "$setOnInsert": {
+                        "academy_id": academy_id,
+                        "occurrence_id": row["occurrence_id"],
+                    },
+                },
+                upsert=True,
+            )
+
     async def list_admin_sessions(
         on_date: date | None, *, window: str | None = None, coach_id: str | None = None
     ):
@@ -1107,12 +1566,12 @@ def compose_admin(
                 microseconds=999999,
             )
             v2_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
-                {"start_at": {"$gte": start, "$lte": end}},
+                _dated_session_range_filter(start, end),
                 sort=[("start_at", 1)],
             )
             upcoming_docs = [doc async for doc in v2_cursor]
             template_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
-                {"days_of_week": {"$exists": True}, "start_at": {"$exists": False}},
+                {"days_of_week": {"$exists": True}},
             )
             template_docs = [doc async for doc in template_cursor]
             upcoming_docs.extend(
@@ -1125,6 +1584,7 @@ def compose_admin(
             )
             upcoming_docs.sort(key=session_start_sort_key)
             rows = await _build_admin_session_rows(upcoming_docs)
+            rows = _dedupe_session_series_rows(rows)
             if coach_id:
                 rows = [
                     r
@@ -1145,14 +1605,14 @@ def compose_admin(
 
         # v2 schema: individual session instances with start_at/end_at
         v2_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
-            {"start_at": {"$gte": start, "$lte": end}},
+            _dated_session_range_filter(start, end),
             sort=[("start_at", 1)],
         )
         async for doc in v2_cursor:
             all_docs.append(doc)
 
         legacy_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
-            {"days_of_week": {"$exists": True}, "start_at": {"$exists": False}},
+            {"days_of_week": {"$exists": True}},
         )
         template_docs = [doc async for doc in legacy_cursor]
         all_docs.extend(
@@ -1168,6 +1628,7 @@ def compose_admin(
         all_docs.sort(key=session_start_sort_key)
 
         rows = await _build_admin_session_rows(all_docs)
+        rows = _dedupe_session_series_rows(rows)
         if coach_id:
             rows = [
                 r
@@ -1261,6 +1722,19 @@ def compose_admin(
         }
 
     async def list_session_occurrences(session_id: str) -> list[dict[str, Any]]:
+        session = await sessions_r.get(session_id)
+        if session is not None and not (
+            session.days_of_week and session.start_time and session.end_time
+        ):
+            occurrence_by_id = {}
+            for series_session_id in await _dated_series_session_ids(session):
+                for occurrence in await occurrences_r.list_for_session(series_session_id):
+                    occurrence_by_id[occurrence.occurrence_id] = occurrence
+            occurrences = sorted(
+                occurrence_by_id.values(),
+                key=lambda occurrence: occurrence.start_at,
+            )
+            return [await _occurrence_row(occurrence) for occurrence in occurrences]
         occurrences = await occurrences_r.list_for_session(session_id)
         return [await _occurrence_row(occurrence) for occurrence in occurrences]
 
@@ -1280,6 +1754,106 @@ def compose_admin(
             assignment_reason=reason,
         )
         return None if occurrence is None else await _occurrence_row(occurrence)
+
+    async def _clear_or_reject_replacement_payout_snapshots(
+        *,
+        academy_id: str,
+        occurrence_id: str,
+    ) -> None:
+        payout_line_cursor = db["payout_period_lines"].find(
+            {"academy_id": academy_id, "occurrence_id": occurrence_id},
+            {"period_id": 1},
+        )
+        payout_period_ids = sorted(
+            {str(row["period_id"]) async for row in payout_line_cursor if row.get("period_id")}
+        )
+        if not payout_period_ids:
+            return
+        period_cursor = db["payout_periods"].find(
+            {
+                "academy_id": academy_id,
+                "period_id": {"$in": payout_period_ids},
+            },
+            {"period_id": 1, "status": 1},
+        )
+        draft_period_ids: list[str] = []
+        async for period in period_cursor:
+            status = str(period.get("status") or "draft")
+            if status in {"approved", "paid"}:
+                raise ValueError(
+                    "Replacement coach cannot be changed after payout is approved or paid"
+                )
+            draft_period_ids.append(str(period["period_id"]))
+        if draft_period_ids:
+            await db["payout_period_lines"].delete_many(
+                {"academy_id": academy_id, "period_id": {"$in": draft_period_ids}}
+            )
+            await db["payout_periods"].delete_many(
+                {"academy_id": academy_id, "period_id": {"$in": draft_period_ids}}
+            )
+
+    async def update_session_occurrence_replacement(
+        *,
+        occurrence_id: str,
+        replacement_coach_id: str | None,
+        actor_id: str,
+        reason: str,
+    ) -> dict[str, Any] | None:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        academy_id = current_academy_id()
+        await _clear_or_reject_replacement_payout_snapshots(
+            academy_id=academy_id,
+            occurrence_id=occurrence_id,
+        )
+
+        update_fields: dict[str, Any] = {
+            "actual_coach_id": replacement_coach_id,
+            "substitute_coach_id": None,
+            "replacement_reason": reason,
+            "replacement_updated_by": actor_id,
+            "updated_at": datetime.now(UTC),
+        }
+        result = await db["session_occurrences"].update_one(
+            {"academy_id": academy_id, "occurrence_id": occurrence_id},
+            {"$set": update_fields},
+        )
+        if result.matched_count == 0:
+            return None
+        occurrence = await occurrences_r.get(occurrence_id)
+        return None if occurrence is None else await _occurrence_row(occurrence)
+
+    async def add_session_replacement(
+        *,
+        session_id: str,
+        occurrence_date: date,
+        replacement_coach_id: str,
+        actor_id: str,
+        reason: str,
+    ) -> dict[str, Any] | None:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        academy_id = current_academy_id()
+        session = await sessions_r.get(session_id)
+        if session is None:
+            return None
+        candidate = await _replacement_occurrence_candidate_for_date(session, occurrence_date)
+        await db["session_occurrences"].update_one(
+            {"academy_id": academy_id, "occurrence_id": candidate["occurrence_id"]},
+            {
+                "$setOnInsert": {
+                    **candidate,
+                    "academy_id": academy_id,
+                }
+            },
+            upsert=True,
+        )
+        return await update_session_occurrence_replacement(
+            occurrence_id=str(candidate["occurrence_id"]),
+            replacement_coach_id=replacement_coach_id,
+            actor_id=actor_id,
+            reason=reason,
+        )
 
     class _AdminOccurrenceLookup:
         async def get(self, occurrence_id: str):
@@ -1688,8 +2262,12 @@ def compose_admin(
         approve_payout_period=approve_payout_period,
         mark_payout_paid=mark_payout_paid,
         list_admin_sessions=list_admin_sessions,
+        get_admin_session=get_admin_session,
+        maintain_session_occurrences=maintain_session_occurrences,
         list_session_occurrences=list_session_occurrences,
         update_session_occurrence_coach=update_session_occurrence_coach,
+        add_session_replacement=add_session_replacement,
+        update_session_occurrence_replacement=update_session_occurrence_replacement,
         mark_coach_attendance=mark_coach_attendance,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,

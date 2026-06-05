@@ -244,6 +244,10 @@ class AdminSessionView(BaseModel):
     status: Literal["scheduled", "cancelled", "completed"]
     enrolled_count: int = 0
     waitlist_count: int = 0
+    days_of_week: list[str] = Field(default_factory=list)
+    start_time: str | None = None
+    end_time: str | None = None
+    timezone: str | None = None
 
 
 class AdminSessionList(BaseModel):
@@ -300,9 +304,13 @@ class CreateSessionRequest(BaseModel):
     coach_id: str
     title: str
     location: str
-    start_at: datetime
-    end_at: datetime
+    start_at: datetime | None = None
+    end_at: datetime | None = None
     capacity: int
+    days_of_week: list[str] = Field(default_factory=list)
+    start_time: str | None = None
+    end_time: str | None = None
+    timezone: str | None = None
 
 
 class EditSessionRequest(BaseModel):
@@ -312,6 +320,21 @@ class EditSessionRequest(BaseModel):
     start_at: datetime | None = None
     end_at: datetime | None = None
     capacity: int | None = Field(default=None, ge=1)
+    days_of_week: list[str] | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    timezone: str | None = None
+    reason: str | None = None
+
+
+class UpdateOccurrenceReplacementRequest(BaseModel):
+    replacement_coach_id: str | None = None
+    reason: str | None = None
+
+
+class AddSessionReplacementRequest(BaseModel):
+    date: date
+    replacement_coach_id: str
     reason: str | None = None
 
 
