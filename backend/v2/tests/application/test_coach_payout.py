@@ -11,7 +11,7 @@ Coach payout combines two Wave 3 outputs:
 
 Attribution rule (single paying coach per occurrence):
 
-    actual_coach_id ?? substitute_coach_id ?? scheduled_coach_id
+    actual_coach_id ?? scheduled_coach_id
 
 Eligibility rule (an occurrence pays out iff):
 
@@ -232,11 +232,11 @@ async def test_actual_coach_id_takes_precedence_over_substitute_and_scheduled() 
 
 
 @pytest.mark.asyncio
-async def test_substitute_paid_when_no_actual_set() -> None:
+async def test_scheduled_coach_paid_when_only_legacy_substitute_is_set() -> None:
     rate = CoachRate(
         rate_id="cr-1",
         academy_id="acad-1",
-        coach_id="coach-sub",
+        coach_id="coach-scheduled",
         billing_unit="per_session",
         amount_minor=5000,
         currency="USD",
@@ -257,21 +257,21 @@ async def test_substitute_paid_when_no_actual_set() -> None:
         rates=FakeRateRepo([rate]),
     )
     statement = await use_case.execute(
-        coach_id="coach-sub",
+        coach_id="coach-scheduled",
         academy_id="acad-1",
         period_start=_dt("2026-05-01T00:00:00"),
         period_end=_dt("2026-06-01T00:00:00"),
     )
     assert len(statement.lines) == 1
-    assert statement.lines[0].basis == "substitute"
+    assert statement.lines[0].basis == "scheduled"
 
 
 @pytest.mark.asyncio
-async def test_scheduled_coach_does_not_get_paid_when_substitute_covered() -> None:
+async def test_legacy_substitute_does_not_get_paid_without_actual_assignment() -> None:
     rate = CoachRate(
         rate_id="cr-1",
         academy_id="acad-1",
-        coach_id="coach-scheduled",
+        coach_id="coach-sub",
         billing_unit="per_session",
         amount_minor=5000,
         currency="USD",
@@ -292,7 +292,7 @@ async def test_scheduled_coach_does_not_get_paid_when_substitute_covered() -> No
         rates=FakeRateRepo([rate]),
     )
     statement = await use_case.execute(
-        coach_id="coach-scheduled",
+        coach_id="coach-sub",
         academy_id="acad-1",
         period_start=_dt("2026-05-01T00:00:00"),
         period_end=_dt("2026-06-01T00:00:00"),
@@ -376,9 +376,7 @@ async def test_non_payable_occurrences_are_skipped() -> None:
 
 
 @pytest.mark.asyncio
-async def test_attendance_present_row_pays_scheduled_occurrence_even_before_status_completed() -> (
-    None
-):
+async def test_legacy_attendance_does_not_pay_before_occurrence_is_completed() -> None:
     rate = CoachRate(
         rate_id="cr-1",
         academy_id="acad-1",
@@ -414,12 +412,12 @@ async def test_attendance_present_row_pays_scheduled_occurrence_even_before_stat
         period_start=_dt("2026-05-01T00:00:00"),
         period_end=_dt("2026-06-01T00:00:00"),
     )
-    assert statement.total_minor == 5000
-    assert statement.lines[0].basis == "lead"
+    assert statement.lines == []
+    assert statement.total_minor == 0
 
 
 @pytest.mark.asyncio
-async def test_attendance_absent_row_blocks_scheduled_fallback_pay() -> None:
+async def test_legacy_absent_attendance_does_not_override_scheduled_payout() -> None:
     rate = CoachRate(
         rate_id="cr-1",
         academy_id="acad-1",
@@ -455,12 +453,12 @@ async def test_attendance_absent_row_blocks_scheduled_fallback_pay() -> None:
         period_start=_dt("2026-05-01T00:00:00"),
         period_end=_dt("2026-06-01T00:00:00"),
     )
-    assert statement.lines == []
-    assert statement.total_minor == 0
+    assert statement.total_minor == 5000
+    assert statement.lines[0].basis == "scheduled"
 
 
 @pytest.mark.asyncio
-async def test_attendance_assistant_rate_override_pays_without_rate_sheet() -> None:
+async def test_legacy_assistant_attendance_does_not_override_occurrence_attribution() -> None:
     occ = _occurrence(
         "occ-1",
         start="2026-05-10T18:00:00",
@@ -485,10 +483,8 @@ async def test_attendance_assistant_rate_override_pays_without_rate_sheet() -> N
         period_start=_dt("2026-05-01T00:00:00"),
         period_end=_dt("2026-06-01T00:00:00"),
     )
-    assert statement.lines[0].basis == "assistant"
-    assert statement.lines[0].amount_minor == 1500
-    assert statement.lines[0].rate_id == "override:occ-1:coach-assistant"
-    assert statement.total_minor == 1500
+    assert statement.lines == []
+    assert statement.total_minor == 0
 
 
 # ---------------------------------------------------------------------------

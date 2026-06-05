@@ -11,8 +11,9 @@ promotion on cancellation, comms notifications, etc.) react.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
@@ -27,6 +28,7 @@ from backend.v2.contexts.enrollment.application.ports import (
     WaitlistRepository,
 )
 from backend.v2.contexts.enrollment.domain.errors import (
+    DuplicateSessionSeries,
     EnrollmentNotFound,
     SessionNotFound,
 )
@@ -92,15 +94,87 @@ async def _record_lifecycle_event(
 
 # -- Session writes ------------------------------------------------------
 
+_DOW_MAP = {
+    "Mon": 0,
+    "Tue": 1,
+    "Wed": 2,
+    "Thu": 3,
+    "Fri": 4,
+    "Sat": 5,
+    "Sun": 6,
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
+
+
+def _has_recurring_schedule(cmd: CreateSessionCommand) -> bool:
+    return bool(cmd.days_of_week and cmd.start_time and cmd.end_time)
+
+
+def _has_recurring_mapping(values: dict[str, object]) -> bool:
+    return bool(values.get("days_of_week") and values.get("start_time") and values.get("end_time"))
+
+
+def _normalize_series_text(value: str) -> str:
+    return " ".join(value.strip().casefold().split())
+
+
+def _normalize_days(days_of_week: list[str]) -> list[str]:
+    reverse_dow = {
+        0: "Mon",
+        1: "Tue",
+        2: "Wed",
+        3: "Thu",
+        4: "Fri",
+        5: "Sat",
+        6: "Sun",
+    }
+    return [reverse_dow[_DOW_MAP[day]] for day in days_of_week if day in _DOW_MAP]
+
+
+def _duplicate_series_message(existing: Session) -> str:
+    return (
+        "A recurring session already exists for this coach, class, location, "
+        f"day, and time: {existing.title}."
+    )
+
+
+def _representative_series_datetimes(
+    *,
+    days_of_week: list[str],
+    start_time: str,
+    end_time: str,
+    timezone_name: str,
+) -> tuple[datetime, datetime]:
+    tz = ZoneInfo(timezone_name)
+    target_days = [_DOW_MAP[day] for day in days_of_week if day in _DOW_MAP]
+    if not target_days:
+        raise ValueError("days_of_week must include a supported weekday")
+    local_date = datetime.now(UTC).astimezone(tz).date()
+    while local_date.weekday() not in target_days:
+        local_date += timedelta(days=1)
+    start = datetime.combine(local_date, time.fromisoformat(start_time), tzinfo=tz)
+    end = datetime.combine(local_date, time.fromisoformat(end_time), tzinfo=tz)
+    return start.astimezone(UTC), end.astimezone(UTC)
+
 
 class CreateSessionCommand(BaseModel):
     model_config = {"frozen": True}
     coach_id: str
     title: str
     location: str
-    start_at: datetime
-    end_at: datetime
+    start_at: datetime | None = None
+    end_at: datetime | None = None
     capacity: int = Field(ge=1)
+    days_of_week: list[str] = Field(default_factory=list)
+    start_time: str | None = None
+    end_time: str | None = None
+    timezone: str | None = None
 
 
 class CreateSession:
@@ -109,19 +183,67 @@ class CreateSession:
         self._academy_id = academy_id
 
     async def execute(self, cmd: CreateSessionCommand) -> Session:
+        start_at = cmd.start_at
+        end_at = cmd.end_at
+        if _has_recurring_schedule(cmd):
+            await self._ensure_no_duplicate_series(
+                title=cmd.title,
+                location=cmd.location,
+                coach_id=cmd.coach_id,
+                days_of_week=cmd.days_of_week,
+                start_time=cmd.start_time or "00:00",
+                end_time=cmd.end_time or cmd.start_time or "00:00",
+                timezone=cmd.timezone or "America/Chicago",
+            )
+        if (start_at is None or end_at is None) and _has_recurring_schedule(cmd):
+            start_at, end_at = _representative_series_datetimes(
+                days_of_week=cmd.days_of_week,
+                start_time=cmd.start_time or "00:00",
+                end_time=cmd.end_time or cmd.start_time or "00:00",
+                timezone_name=cmd.timezone or "America/Chicago",
+            )
+        if start_at is None or end_at is None:
+            raise ValueError("start_at/end_at or recurring schedule fields are required")
         session = Session(
             session_id=str(new_ulid()),
             academy_id=self._academy_id,
             coach_id=cmd.coach_id,
             title=cmd.title,
             location=cmd.location,
-            start_at=cmd.start_at,
-            end_at=cmd.end_at,
+            start_at=start_at,
+            end_at=end_at,
             capacity=cmd.capacity,
             status="scheduled",
+            days_of_week=cmd.days_of_week,
+            start_time=cmd.start_time,
+            end_time=cmd.end_time,
+            timezone=cmd.timezone,
         )
         await self._sessions.create(session)
         return session
+
+    async def _ensure_no_duplicate_series(
+        self,
+        *,
+        title: str,
+        location: str,
+        coach_id: str,
+        days_of_week: list[str],
+        start_time: str,
+        end_time: str,
+        timezone: str,
+    ) -> None:
+        existing = await self._sessions.find_duplicate_recurring_series(
+            title=_normalize_series_text(title),
+            location=_normalize_series_text(location),
+            coach_id=coach_id,
+            days_of_week=_normalize_days(days_of_week),
+            start_time=start_time,
+            end_time=end_time,
+            timezone=timezone,
+        )
+        if existing is not None:
+            raise DuplicateSessionSeries(_duplicate_series_message(existing))
 
 
 class EditSessionCommand(BaseModel):
@@ -133,6 +255,10 @@ class EditSessionCommand(BaseModel):
     start_at: datetime | None = None
     end_at: datetime | None = None
     capacity: int | None = Field(default=None, ge=1)
+    days_of_week: list[str] | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    timezone: str | None = None
     actor_id: str | None = None
     reason: str | None = None
 
@@ -147,10 +273,64 @@ class EditSession:
             raise SessionNotFound("session missing", session_id=cmd.session_id)
 
         update: dict[str, object] = {}
-        for field_name in ("coach_id", "title", "location", "start_at", "end_at", "capacity"):
+        for field_name in (
+            "coach_id",
+            "title",
+            "location",
+            "start_at",
+            "end_at",
+            "capacity",
+            "days_of_week",
+            "start_time",
+            "end_time",
+            "timezone",
+        ):
             value = getattr(cmd, field_name)
             if value is not None:
                 update[field_name] = value
+
+        recurring_values = {
+            "days_of_week": update.get("days_of_week", current.days_of_week),
+            "start_time": update.get("start_time", current.start_time),
+            "end_time": update.get("end_time", current.end_time),
+            "timezone": update.get("timezone", current.timezone),
+        }
+        title = str(update.get("title", current.title))
+        location = str(update.get("location", current.location))
+        coach_id = str(update.get("coach_id", current.coach_id))
+        if _has_recurring_mapping(recurring_values) and {
+            "days_of_week",
+            "start_time",
+            "end_time",
+            "timezone",
+            "title",
+            "location",
+            "coach_id",
+        }.intersection(update):
+            existing = await self._sessions.find_duplicate_recurring_series(
+                title=_normalize_series_text(title),
+                location=_normalize_series_text(location),
+                coach_id=coach_id,
+                days_of_week=_normalize_days(list(recurring_values["days_of_week"] or [])),
+                start_time=str(recurring_values["start_time"] or "00:00"),
+                end_time=str(
+                    recurring_values["end_time"] or recurring_values["start_time"] or "00:00"
+                ),
+                timezone=str(recurring_values["timezone"] or "America/Chicago"),
+                exclude_session_id=current.session_id,
+            )
+            if existing is not None:
+                raise DuplicateSessionSeries(_duplicate_series_message(existing))
+            start_at, end_at = _representative_series_datetimes(
+                days_of_week=list(recurring_values["days_of_week"] or []),
+                start_time=str(recurring_values["start_time"] or "00:00"),
+                end_time=str(
+                    recurring_values["end_time"] or recurring_values["start_time"] or "00:00"
+                ),
+                timezone_name=str(recurring_values["timezone"] or "America/Chicago"),
+            )
+            update["start_at"] = start_at
+            update["end_at"] = end_at
 
         updated = current.model_copy(update=update)
         await self._sessions.update(updated)
