@@ -38,7 +38,7 @@
   },
   "devDependencies": {
     "@fullcalendar/daygrid": "6.1.15",
-    "@fullcalendar/react": "6.1.15",
+    "@fullcalendar/react": "6.1.20",
     "@lhci/cli": "0.15.1",
     "@opennextjs/cloudflare": "^1.19.11",
     "@playwright/test": "1.60.0",
