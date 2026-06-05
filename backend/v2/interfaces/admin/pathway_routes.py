@@ -5,6 +5,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from backend.v2.contexts.curriculum.application.errors import (
+    LevelNotFound,
+    ProgramNotFound,
+    SkillNotFound,
+)
 from backend.v2.contexts.curriculum.application.use_cases.manage_criteria import (
     AddSkillCriterionCommand,
 )
@@ -21,11 +26,6 @@ from backend.v2.contexts.curriculum.application.use_cases.manage_refs import (
 from backend.v2.contexts.curriculum.application.use_cases.manage_skills import (
     CreateSkillCommand,
     UpdateSkillCommand,
-)
-from backend.v2.contexts.curriculum.application.errors import (
-    LevelNotFound,
-    ProgramNotFound,
-    SkillNotFound,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.shared.auth.claims import AuthClaims

@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from backend.v2.contexts.student_progress.application.errors import StudentNotPlaced
 from backend.v2.contexts.student_progress.application.use_cases.get_passport import (
     GetStudentPassportCommand,
 )
@@ -17,7 +18,6 @@ from backend.v2.contexts.student_progress.application.use_cases.record_test_atte
 from backend.v2.contexts.student_progress.application.use_cases.update_skill_status import (
     UpdateSkillStatusCommand,
 )
-from backend.v2.contexts.student_progress.application.errors import StudentNotPlaced
 from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
