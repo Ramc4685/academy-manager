@@ -862,7 +862,7 @@ class FakeSessionWriter:
             tuple(days_of_week or []),
             start_time,
             end_time,
-            timezone,
+            timezone or "America/Chicago",
         )
         for session in self.sessions.values():
             if exclude_session_id and session.session_id == exclude_session_id:

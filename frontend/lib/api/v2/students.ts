@@ -40,12 +40,28 @@ export interface AdminStudentCurrentPaymentSummary {
   session_id?: string | null;
 }
 
+export interface AdminStudentRecentAttendance {
+  session_id: string;
+  date: string;
+  status: string;
+  marked_at?: string | null;
+}
+
 export interface AdminStudentDetail extends AdminStudentView {
   date_of_birth?: string | null;
   level?: string | null;
   notes?: string | null;
   parent_phone?: string | null;
   parent_details?: string | null;
+  previous_experience?: string | null;
+  medical_notes?: string | null;
+  emergency_contact_name?: string | null;
+  emergency_contact_phone?: string | null;
+  t_shirt_size?: string | null;
+  waiver_status?: "signed" | "missing" | "unknown";
+  waiver_signed_at?: string | null;
+  waiver_version?: string | null;
+  recent_attendance: AdminStudentRecentAttendance[];
   enrolled_sessions: AdminStudentSessionSummary[];
   payment_history: AdminStudentPaymentSummary[];
   current_payment?: AdminStudentCurrentPaymentSummary | null;
@@ -69,6 +85,11 @@ export interface UpdateAdminStudentRequest {
   status?: "active" | "paused" | "inactive";
   parent_id?: string;
   notes?: string | null;
+  previous_experience?: string | null;
+  medical_notes?: string | null;
+  emergency_contact_name?: string | null;
+  emergency_contact_phone?: string | null;
+  t_shirt_size?: string | null;
   reason?: string;
 }
 

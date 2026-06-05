@@ -74,8 +74,44 @@ function formatSessionTimeRange(session: AdminSessionView): string {
   return formatTimeRange(session.start_at, session.end_at);
 }
 
-function sessionWeekday(session: AdminSessionView): string {
-  return session.days_of_week[0] ?? "Wed";
+function hasRecurringSchedule(session: AdminSessionView): boolean {
+  return Boolean(session.days_of_week.length && session.start_time && session.end_time);
+}
+
+function sessionDateLabel(session: AdminSessionView): string {
+  return new Date(session.start_at).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function buildEditSessionForm(session: AdminSessionView): EditSessionRequest {
+  const common = {
+    coach_id: session.coach_id,
+    title: session.title,
+    location: session.location,
+    capacity: session.capacity,
+    reason: "",
+  };
+  if (hasRecurringSchedule(session)) {
+    return {
+      ...common,
+      days_of_week: [...session.days_of_week],
+      start_time: session.start_time,
+      end_time: session.end_time,
+      timezone: session.timezone ?? DEFAULT_TIMEZONE,
+    };
+  }
+  return {
+    ...common,
+    start_at: session.start_at,
+    end_at: session.end_at,
+    days_of_week: [],
+    start_time: null,
+    end_time: null,
+    timezone: session.timezone ?? DEFAULT_TIMEZONE,
+  };
 }
 
 function fillChip(enrolled: number, capacity: number): { variant: ChipVariant; label: string } {
@@ -361,18 +397,11 @@ function EditSessionDialog({
 
   useEffect(() => {
     if (!session) return;
-    setForm({
-      coach_id: session.coach_id,
-      title: session.title,
-      location: session.location,
-      days_of_week: [sessionWeekday(session)],
-      start_time: session.start_time ?? "18:00",
-      end_time: session.end_time ?? "18:45",
-      timezone: session.timezone ?? DEFAULT_TIMEZONE,
-      capacity: session.capacity,
-      reason: "",
-    });
+    setForm(buildEditSessionForm(session));
   }, [session]);
+
+  const recurring = session ? hasRecurringSchedule(session) : false;
+  const selectedDays = form.days_of_week ?? [];
 
   return (
     <Dialog.Root
@@ -441,11 +470,19 @@ function EditSessionDialog({
               />
             </Field>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Day of week">
-                <DaySelect
-                  value={form.days_of_week?.[0] ?? "Wed"}
-                  onChange={(day) => setForm((f) => ({ ...f, days_of_week: [day] }))}
-                />
+              <Field label={recurring ? "Day of week" : "Date"}>
+                {recurring ? (
+                  selectedDays.length <= 1 ? (
+                    <DaySelect
+                      value={selectedDays[0] ?? "Wed"}
+                      onChange={(day) => setForm((f) => ({ ...f, days_of_week: [day] }))}
+                    />
+                  ) : (
+                    <input value={selectedDays.join(", ")} readOnly className={inputClass} />
+                  )
+                ) : (
+                  <input value={session ? sessionDateLabel(session) : ""} readOnly className={inputClass} />
+                )}
               </Field>
               <Field label="Start time">
                 <input
@@ -453,6 +490,7 @@ function EditSessionDialog({
                   value={form.start_time ?? ""}
                   onChange={(event) => setForm((f) => ({ ...f, start_time: event.target.value }))}
                   className={inputClass}
+                  disabled={!recurring}
                 />
               </Field>
             </div>
@@ -463,6 +501,7 @@ function EditSessionDialog({
                   value={form.end_time ?? ""}
                   onChange={(event) => setForm((f) => ({ ...f, end_time: event.target.value }))}
                   className={inputClass}
+                  disabled={!recurring}
                 />
               </Field>
               <Field label="Capacity">

@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 /**
  * RevenueChart — Recharts BarChart, dynamically imported by admin pages.
  *
@@ -22,6 +24,13 @@ import {
 export interface RevenueDataPoint {
   month: string; // e.g. "2025-01"
   revenue: number; // dollars (already divided by 100)
+}
+
+function formatCurrency(value: unknown) {
+  const numericValue = typeof value === "number" ? value : Number(value ?? 0);
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
+    Number.isFinite(numericValue) ? numericValue : 0,
+  );
 }
 
 export default function RevenueChart({ data }: { data: RevenueDataPoint[] }) {
@@ -47,10 +56,8 @@ export default function RevenueChart({ data }: { data: RevenueDataPoint[] }) {
           width={40}
         />
         <Tooltip
-          formatter={(value: number) =>
-            new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value)
-          }
-          labelFormatter={(label: string) => label}
+          formatter={(value: unknown) => formatCurrency(value)}
+          labelFormatter={(label: ReactNode) => String(label ?? "")}
         />
         <Bar dataKey="revenue" fill="#2563eb" radius={[4, 4, 0, 0]} />
       </BarChart>

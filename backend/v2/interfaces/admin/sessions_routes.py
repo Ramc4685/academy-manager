@@ -13,13 +13,13 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     CancelEnrollmentCommand,
     CancelSessionCommand,
     CreateSessionCommand,
+    DuplicateSessionSeries,
     EditRosterAddCommand,
     EditSessionCommand,
     PauseEnrollmentCommand,
     TransferEnrollmentCommand,
     WithdrawEnrollmentCommand,
 )
-from backend.v2.contexts.enrollment.domain.errors import DuplicateSessionSeries
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
     AddSessionReplacementRequest,

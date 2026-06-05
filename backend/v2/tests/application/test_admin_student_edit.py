@@ -33,6 +33,15 @@ class FakeStudentEditor:
             attendance_rate=None,
             dues_status="current",
             level="beginner",
+            previous_experience="Played recreationally",
+            medical_notes="Uses inhaler before intense sessions",
+            emergency_contact_name="Anita Chen",
+            emergency_contact_phone="555-0199",
+            t_shirt_size="M",
+            waiver_status="signed",
+            waiver_signed_at=None,
+            waiver_version="2026-v1",
+            recent_attendance=[],
         )
         self.commands: list[UpdateAdminStudentCommand] = []
         self.parent_change_commands: list[ChangeAdminStudentParentCommand] = []
@@ -55,6 +64,11 @@ class FakeStudentEditor:
                 "level": command.level,
                 "status": command.status or self.student.status,
                 "notes": command.notes,
+                "previous_experience": command.previous_experience,
+                "medical_notes": command.medical_notes,
+                "emergency_contact_name": command.emergency_contact_name,
+                "emergency_contact_phone": command.emergency_contact_phone,
+                "t_shirt_size": command.t_shirt_size,
             }
         )
         return self.student
@@ -95,6 +109,13 @@ async def test_get_admin_student_returns_parent_contact_details() -> None:
     assert result.parent_email == "parent@example.com"
     assert result.parent_phone == "555-0101"
     assert result.level == "beginner"
+    assert result.previous_experience == "Played recreationally"
+    assert result.medical_notes == "Uses inhaler before intense sessions"
+    assert result.emergency_contact_name == "Anita Chen"
+    assert result.emergency_contact_phone == "555-0199"
+    assert result.t_shirt_size == "M"
+    assert result.waiver_status == "signed"
+    assert result.waiver_version == "2026-v1"
 
 
 @pytest.mark.asyncio
@@ -106,6 +127,11 @@ async def test_update_admin_student_forwards_safe_fields_with_audit_context() ->
         level="intermediate",
         status="paused",
         notes="Prefers evening classes",
+        previous_experience="Tournament prep",
+        medical_notes="No restrictions",
+        emergency_contact_name="Rina Rao",
+        emergency_contact_phone="555-0303",
+        t_shirt_size="L",
         actor_id="admin-1",
         reason="Parent requested profile correction",
     )
@@ -115,6 +141,11 @@ async def test_update_admin_student_forwards_safe_fields_with_audit_context() ->
     assert result.full_name == "Alice Rao"
     assert result.date_of_birth == date(2016, 4, 5)
     assert result.status == "paused"
+    assert result.previous_experience == "Tournament prep"
+    assert result.medical_notes == "No restrictions"
+    assert result.emergency_contact_name == "Rina Rao"
+    assert result.emergency_contact_phone == "555-0303"
+    assert result.t_shirt_size == "L"
     assert repo.commands == [command]
 
 

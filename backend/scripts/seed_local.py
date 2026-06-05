@@ -1419,6 +1419,7 @@ async def main() -> None:
     for col in (
         "academies",
         "sessions",
+        "session_occurrences",
         "students",
         "enrollments",
         "payments",
