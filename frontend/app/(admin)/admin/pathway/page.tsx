@@ -147,7 +147,6 @@ export default function AdminPathwayPage() {
               program={program}
               seedPending={seedMutation.isPending}
               onViewPathway={() =>
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 router.push(`/admin/pathway/${encodeURIComponent(program.program_id)}` as any)
               }
               onSeedBadminton={() => seedMutation.mutate(program.program_id)}
