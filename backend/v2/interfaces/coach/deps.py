@@ -43,6 +43,7 @@ from backend.v2.contexts.enrollment.application.use_cases.get_session_roster imp
 from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences_for_date import (
     ListCoachOccurrencesForDate,
 )
+from backend.v2.composition.pathway import StudentProgressComposition
 
 
 @dataclass
@@ -73,6 +74,10 @@ class CoachUseCases:
     update_profile: (
         object  # Callable[[str, body, academy_id], Awaitable[CoachProfileResponse | None]]
     )
+    # Skill pathway surface
+    student_progress: StudentProgressComposition
+    create_skill_note: object  # CreateSkillNote
+    list_skill_notes: object  # ListSkillNotes
 
 
 def get_coach_use_cases(request: Request) -> CoachUseCases:

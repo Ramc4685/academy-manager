@@ -219,6 +219,12 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import
 from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_template_repo import (
     MongoWaiverTemplateRepository,
 )
+from backend.v2.composition.pathway import (
+    CurriculumComposition,
+    StudentProgressComposition,
+    compose_curriculum,
+    compose_student_progress,
+)
 from backend.v2.interfaces.admin.deps import AdminUseCases
 from backend.v2.shared.comms import CommsService, MongoMessageRepository
 from backend.v2.shared.config import get_settings
@@ -2300,6 +2306,9 @@ def compose_admin(
         snapshot_repo=MongoCoachPayoutSnapshotReader(db),
         academy_id=academy_id,
     ).execute
+
+    admin.curriculum = compose_curriculum(db)  # type: ignore[attr-defined]
+    admin.student_progress = compose_student_progress(db)  # type: ignore[attr-defined]
 
     return admin
 

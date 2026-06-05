@@ -45,6 +45,18 @@ TENANT_OWNED_COLLECTIONS = {
     "waiver_versions",
     "waivers",
     "waitlist",
+    # skill pathway collections
+    "skill_programs",
+    "skill_levels",
+    "skills",
+    "skill_criteria",
+    "external_lesson_refs",
+    "student_level_progress",
+    "student_skill_progress",
+    "test_attempts",
+    "level_up_recommendations",
+    "skill_certificates",
+    "coach_skill_notes",
 }
 
 MONGO_METHODS = {

@@ -18,6 +18,8 @@ from .reports_routes import router as reports_router
 from .session_type_routes import router as session_type_router
 from .sessions_routes import router as sessions_router
 from .waitlist_routes import router as waitlist_router
+from .pathway_routes import router as pathway_router
+from .progress_routes import router as progress_router
 from .waiver_routes import router as waiver_router
 
 router = APIRouter(prefix="/admin")
@@ -36,3 +38,5 @@ router.include_router(payout_period_router)
 router.include_router(comms_router)
 router.include_router(academy_router)
 router.include_router(waiver_router)
+router.include_router(pathway_router)
+router.include_router(progress_router)

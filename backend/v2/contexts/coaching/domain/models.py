@@ -65,3 +65,18 @@ class SessionFeedback(BaseModel):
     body: str
     rating: int | None = Field(default=None, ge=1, le=5)  # 1-5 if present
     created_at: datetime
+
+
+class CoachSkillNote(BaseModel):
+    """A coach's free-text note about a student's skill."""
+
+    model_config = {"frozen": True}
+
+    note_id: str
+    academy_id: str
+    student_id: str
+    skill_id: str
+    coach_id: str
+    session_id: str | None = None
+    body: str
+    created_at: datetime

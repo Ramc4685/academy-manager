@@ -15,6 +15,13 @@ from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     MoveStudentSessionType,
     PreviewStudentSessionTypeMove,
 )
+from backend.v2.contexts.coaching.application.use_cases.skill_notes import (
+    CreateSkillNote,
+    ListSkillNotes,
+)
+from backend.v2.contexts.coaching.infrastructure.mongo_skill_note_repo import (
+    MongoSkillNoteRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_session_type_repo import (
     MongoSessionTypeRepository,
 )
@@ -54,6 +61,10 @@ from backend.v2.contexts.enrollment.application.use_cases.get_session_roster imp
 from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences_for_date import (
     ListCoachOccurrencesForDate,
     ListCoachUpcomingOccurrences,
+)
+from backend.v2.composition.pathway import (
+    StudentProgressComposition,
+    compose_student_progress,
 )
 from backend.v2.contexts.enrollment.domain.events import (
     StudentSessionTypeChanged,
@@ -116,6 +127,10 @@ class CoachComposition:
     update_profile: (
         object  # Callable[[str, body, academy_id], Awaitable[CoachProfileResponse | None]]
     )
+    # Skill pathway surface
+    create_skill_note: CreateSkillNote
+    list_skill_notes: ListSkillNotes
+    student_progress: StudentProgressComposition
 
 
 class CoachAssignedSessionLookup:
@@ -181,6 +196,8 @@ def compose_coach(
     # Billing repos for session-type move surface
     session_type_repo = MongoSessionTypeRepository(db)
     billing_enrollment_repo = MongoStudentBillingEnrollmentRepository(db)
+    # Skill note repo
+    skill_note_repo = MongoSkillNoteRepository(db)
 
     async def get_dashboard_metrics(coach_id: str) -> dict[str, int | float]:
         today = datetime.now(UTC).date()
@@ -328,4 +345,8 @@ def compose_coach(
         ).execute,
         get_profile=get_profile,
         update_profile=update_profile,
+        # Skill pathway
+        create_skill_note=CreateSkillNote(notes=skill_note_repo),
+        list_skill_notes=ListSkillNotes(notes=skill_note_repo),
+        student_progress=compose_student_progress(db),
     )

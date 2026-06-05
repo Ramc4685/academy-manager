@@ -27,6 +27,7 @@ from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers
     AcceptParentWaiver,
     GetParentWaiverRequirement,
 )
+from backend.v2.composition.pathway import StudentProgressComposition
 
 
 @dataclass
@@ -59,6 +60,7 @@ class ParentUseCases:
     get_parent_waiver_requirement: GetParentWaiverRequirement
     accept_parent_waiver: AcceptParentWaiver
     get_academy_info: object  # callable accepting academy_id
+    student_progress: StudentProgressComposition
 
 
 def get_parent_use_cases(request: Request) -> ParentUseCases:

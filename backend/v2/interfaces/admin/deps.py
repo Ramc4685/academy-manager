@@ -104,6 +104,7 @@ from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates
 from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
     ListAdminWaivers,
 )
+from backend.v2.composition.pathway import CurriculumComposition, StudentProgressComposition
 from backend.v2.shared.comms import CommsService
 
 
@@ -211,6 +212,8 @@ class AdminUseCases:
     get_coach_utilization: object | None = (
         None  # async (periods: list[str]) -> CoachUtilizationResult
     )
+    curriculum: CurriculumComposition | None = None
+    student_progress: StudentProgressComposition | None = None
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:
