@@ -15,6 +15,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
     AdminStudentParentChangeResult,
     AdminStudentParentSummary,
     AdminStudentPaymentSummary,
+    AdminStudentRecentAttendance,
     AdminStudentSessionSummary,
     AdminStudentSummary,
     ChangeAdminStudentParentCommand,
@@ -116,6 +117,10 @@ class MongoStudentRepository(TenantScopedRepository):
         enrolled_sessions: list[AdminStudentSessionSummary] | None = None,
         payment_history: list[AdminStudentPaymentSummary] | None = None,
         current_payment: AdminStudentCurrentPaymentSummary | None = None,
+        waiver_status: str = "unknown",
+        waiver_signed_at: datetime | None = None,
+        waiver_version: str | None = None,
+        recent_attendance: list[AdminStudentRecentAttendance] | None = None,
     ) -> AdminStudentDetail:
         summary = cls._to_admin_summary(
             doc,
@@ -134,13 +139,23 @@ class MongoStudentRepository(TenantScopedRepository):
             dob = raw_dob
         elif isinstance(raw_dob, str) and raw_dob:
             dob = date.fromisoformat(raw_dob[:10])
+        raw_level = doc.get("level") if doc.get("level") is not None else doc.get("skill_level")
         return AdminStudentDetail(
             **summary.model_dump(),
             date_of_birth=dob,
-            level=str(doc.get("level")) if doc.get("level") is not None else None,
-            notes=str(doc.get("notes")) if doc.get("notes") is not None else None,
+            level=cls._optional_str(raw_level),
+            notes=cls._optional_str(doc.get("notes")),
             parent_phone=parent_phone,
             parent_details=None,
+            previous_experience=cls._optional_str(doc.get("previous_experience")),
+            medical_notes=cls._optional_str(doc.get("medical_notes")),
+            emergency_contact_name=cls._optional_str(doc.get("emergency_contact_name")),
+            emergency_contact_phone=cls._optional_str(doc.get("emergency_contact_phone")),
+            t_shirt_size=cls._optional_str(doc.get("t_shirt_size")),
+            waiver_status=waiver_status,  # type: ignore[arg-type]
+            waiver_signed_at=waiver_signed_at,
+            waiver_version=waiver_version,
+            recent_attendance=recent_attendance or [],
             enrolled_sessions=enrolled_sessions or [],
             payment_history=payment_history or [],
             current_payment=current_payment,
@@ -170,6 +185,15 @@ class MongoStudentRepository(TenantScopedRepository):
             payment_history=payment_history,
             enrolled_sessions=enrolled_sessions,
         )
+        waiver_status, waiver_signed_at, waiver_version = await self._waiver_summary(
+            academy_id=academy_id,
+            student_id=resolved_id,
+            student_doc=doc,
+        )
+        recent_attendance = await self._recent_attendance(
+            academy_id=academy_id,
+            student_id=resolved_id,
+        )
         att = attendance.get(resolved_id, {})
         return self._to_admin_detail(
             doc,
@@ -183,6 +207,10 @@ class MongoStudentRepository(TenantScopedRepository):
             enrolled_sessions=enrolled_sessions,
             payment_history=payment_history,
             current_payment=current_payment,
+            waiver_status=waiver_status,
+            waiver_signed_at=waiver_signed_at,
+            waiver_version=waiver_version,
+            recent_attendance=recent_attendance,
         )
 
     async def update_admin_student(
@@ -201,13 +229,25 @@ class MongoStudentRepository(TenantScopedRepository):
         if command.date_of_birth is not None:
             set_doc["date_of_birth"] = command.date_of_birth.isoformat()
         if command.level is not None:
-            set_doc["level"] = command.level.strip() or None
+            normalized_level = command.level.strip() or None
+            set_doc["level"] = normalized_level
+            set_doc["skill_level"] = normalized_level
         if command.status is not None:
             set_doc["status"] = command.status
         if command.parent_id is not None:
             set_doc["parent_id"] = command.parent_id
         if command.notes is not None:
             set_doc["notes"] = command.notes
+        if command.previous_experience is not None:
+            set_doc["previous_experience"] = command.previous_experience.strip() or None
+        if command.medical_notes is not None:
+            set_doc["medical_notes"] = command.medical_notes.strip() or None
+        if command.emergency_contact_name is not None:
+            set_doc["emergency_contact_name"] = command.emergency_contact_name.strip() or None
+        if command.emergency_contact_phone is not None:
+            set_doc["emergency_contact_phone"] = command.emergency_contact_phone.strip() or None
+        if command.t_shirt_size is not None:
+            set_doc["t_shirt_size"] = command.t_shirt_size.strip() or None
 
         changed = [
             key
@@ -651,6 +691,153 @@ class MongoStudentRepository(TenantScopedRepository):
                     session_id=enrollment.session_id,
                 )
         return None
+
+    async def _waiver_summary(
+        self,
+        *,
+        academy_id: str,
+        student_id: str,
+        student_doc: dict[str, object],
+    ) -> tuple[str, datetime | None, str | None]:
+        tenant_filter = {
+            "$or": [
+                {"academy_id": academy_id},
+                {"academy_id": {"$exists": False}},
+                {"academy_id": None},
+            ]
+        }
+        signature_docs = [
+            doc
+            async for doc in self._db["waiver_signatures"]
+            .find(
+                {
+                    "student_id": student_id,
+                    "is_deleted": {"$ne": True},
+                    **tenant_filter,
+                }
+            )
+            .sort([("signed_at", -1), ("created_at", -1), ("_id", -1)])
+            .limit(1)
+        ]
+        if signature_docs:
+            doc = signature_docs[0]
+            template_id = self._optional_str(
+                doc.get("waiver_template_id") or doc.get("waiver_version_id")
+            )
+            version = await self._waiver_version_label(academy_id, template_id)
+            return (
+                "signed",
+                self._coerce_datetime(doc.get("signed_at") or doc.get("created_at")),
+                self._optional_str(doc.get("waiver_version") or version),
+            )
+
+        acceptance_docs = [
+            doc
+            async for doc in self._db["waiver_acceptances"]
+            .find(
+                {
+                    "student_id": student_id,
+                    "is_deleted": {"$ne": True},
+                    **tenant_filter,
+                }
+            )
+            .sort([("accepted_at", -1), ("created_at", -1), ("_id", -1)])
+            .limit(1)
+        ]
+        if acceptance_docs:
+            doc = acceptance_docs[0]
+            version_id = self._optional_str(
+                doc.get("waiver_version_id") or doc.get("waiver_template_id")
+            )
+            version = await self._waiver_version_label(academy_id, version_id)
+            return (
+                "signed",
+                self._coerce_datetime(doc.get("accepted_at") or doc.get("created_at")),
+                self._optional_str(doc.get("waiver_version") or doc.get("version") or version),
+            )
+
+        if student_doc.get("waiver_accepted") is True:
+            return (
+                "signed",
+                self._coerce_datetime(
+                    student_doc.get("waiver_accepted_at") or student_doc.get("waiver_date")
+                ),
+                self._optional_str(student_doc.get("waiver_version")),
+            )
+        return ("missing", None, None)
+
+    async def _waiver_version_label(
+        self,
+        academy_id: str,
+        waiver_id: str | None,
+    ) -> str | None:
+        if not waiver_id:
+            return None
+        filters: list[dict[str, object]] = [
+            {"waiver_version_id": waiver_id},
+            {"waiver_template_id": waiver_id},
+            {"waiver_id": waiver_id},
+        ]
+        if BsonObjectId.is_valid(waiver_id):
+            filters.append({"_id": BsonObjectId(waiver_id)})
+        doc = await self._db["waiver_versions"].find_one(
+            {
+                "$and": [
+                    {
+                        "$or": [
+                            {"academy_id": academy_id},
+                            {"academy_id": {"$exists": False}},
+                            {"academy_id": None},
+                        ]
+                    },
+                    {"$or": filters},
+                ]
+            }
+        )
+        if doc is None:
+            return None
+        return self._optional_str(doc.get("version") or doc.get("name") or doc.get("title"))
+
+    async def _recent_attendance(
+        self,
+        *,
+        academy_id: str,
+        student_id: str,
+    ) -> list[AdminStudentRecentAttendance]:
+        cursor = (
+            self._db["attendance"]
+            .find(
+                {
+                    "academy_id": academy_id,
+                    "student_id": student_id,
+                    "is_deleted": {"$ne": True},
+                }
+            )
+            .sort([("marked_at", -1), ("date", -1), ("_id", -1)])
+            .limit(10)
+        )
+        rows: list[AdminStudentRecentAttendance] = []
+        async for doc in cursor:
+            rows.append(
+                AdminStudentRecentAttendance(
+                    session_id=self._optional_str(doc.get("session_id")),
+                    date=self._attendance_date_label(doc.get("date")),
+                    status=str(doc.get("status") or "unknown"),
+                    marked_at=self._coerce_datetime(doc.get("marked_at")),
+                )
+            )
+        return rows
+
+    @staticmethod
+    def _attendance_date_label(value: object | None) -> str | None:
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        if value is None:
+            return None
+        text = str(value)
+        return text[:10] if text else None
 
     @classmethod
     def _enrollment_session_amount_cents(

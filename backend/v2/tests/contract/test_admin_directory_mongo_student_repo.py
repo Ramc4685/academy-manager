@@ -256,6 +256,12 @@ async def test_get_admin_student_enriches_sessions_payments_and_current_invoice(
                 "full_name": "Alice Chen",
                 "parent_id": "parent-1",
                 "status": "active",
+                "skill_level": "intermediate",
+                "previous_experience": "Two years of club play",
+                "medical_notes": "Peanut allergy",
+                "emergency_contact_name": "Anita Chen",
+                "emergency_contact_phone": "555-0199",
+                "t_shirt_size": "M",
             },
             {
                 "academy_id": acad,
@@ -376,11 +382,64 @@ async def test_get_admin_student_enriches_sessions_payments_and_current_invoice(
             },
         ]
     )
+    await db["waiver_versions"].insert_one(
+        {
+            "academy_id": acad,
+            "waiver_version_id": "waiver-2026",
+            "version": "2026-v1",
+        }
+    )
+    await db["waiver_acceptances"].insert_one(
+        {
+            "academy_id": acad,
+            "student_id": "st-alice",
+            "waiver_version_id": "waiver-2026",
+            "accepted_at": now - timedelta(days=20),
+        }
+    )
+    await db["attendance"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "student_id": "st-alice",
+                "session_id": "sess-active",
+                "date": "2026-05-18",
+                "status": "present",
+                "marked_at": now - timedelta(days=3),
+            },
+            {
+                "academy_id": acad,
+                "student_id": "st-alice",
+                "session_id": "sess-active",
+                "date": "2026-05-11",
+                "status": "absent",
+                "marked_at": now - timedelta(days=10),
+            },
+            {
+                "academy_id": "other-academy",
+                "student_id": "st-alice",
+                "session_id": "sess-other",
+                "date": "2026-05-20",
+                "status": "present",
+                "marked_at": now,
+            },
+        ]
+    )
 
     repo = MongoStudentRepository(db)
     detail = await repo.get_admin_student("st-alice")
 
     assert detail is not None
+    assert detail.level == "intermediate"
+    assert detail.previous_experience == "Two years of club play"
+    assert detail.medical_notes == "Peanut allergy"
+    assert detail.emergency_contact_name == "Anita Chen"
+    assert detail.emergency_contact_phone == "555-0199"
+    assert detail.t_shirt_size == "M"
+    assert detail.waiver_status == "signed"
+    assert detail.waiver_signed_at is not None
+    assert detail.waiver_version == "2026-v1"
+    assert [row.status for row in detail.recent_attendance] == ["present", "absent"]
     assert [row.enrollment_id for row in detail.enrolled_sessions] == ["enr-active"]
     assert detail.enrolled_sessions[0].session_id == "sess-active"
     assert detail.enrolled_sessions[0].session_title == "Advanced Footwork"
@@ -399,6 +458,25 @@ async def test_get_admin_student_enriches_sessions_payments_and_current_invoice(
     assert detail.current_payment.amount_cents == 11_000
     assert detail.current_payment.source == "invoice"
     assert detail.current_payment.status == "partially_paid"
+
+
+@pytest.mark.asyncio
+async def test_get_admin_student_marks_missing_waiver(db, acad) -> None:
+    await db["students"].insert_one(
+        {
+            "academy_id": acad,
+            "student_id": "st-missing",
+            "full_name": "Mira Patel",
+            "parent_id": "parent-1",
+            "status": "active",
+        }
+    )
+
+    detail = await MongoStudentRepository(db).get_admin_student("st-missing")
+
+    assert detail is not None
+    assert detail.waiver_status == "missing"
+    assert detail.recent_attendance == []
 
 
 @pytest.mark.asyncio

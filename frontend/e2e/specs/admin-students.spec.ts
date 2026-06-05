@@ -217,6 +217,81 @@ test.describe("admin students", () => {
     page,
   }) => {
     const errors = collectConsoleErrors(page);
+    let patchBody: unknown = null;
+    const studentFixture = {
+      student_id: "student-1",
+      full_name: "Amit Rao",
+      parent_id: "parent-1",
+      parent_name: "Rohan Rao",
+      parent_email: "rohan@example.com",
+      parent_phone: "555-0101",
+      status: "active",
+      active_session_count: 1,
+      last_seen_at: "2026-05-18T15:00:00Z",
+      attendance_rate: 0.91,
+      dues_status: "due",
+      date_of_birth: "2015-04-10",
+      level: "intermediate",
+      notes: "Prefers evening sessions",
+      parent_details: null,
+      previous_experience: "Two years of club play",
+      medical_notes: "Peanut allergy",
+      emergency_contact_name: "Anita Chen",
+      emergency_contact_phone: "555-0199",
+      t_shirt_size: "M",
+      waiver_status: "signed",
+      waiver_signed_at: "2026-05-10T15:00:00Z",
+      waiver_version: "2026-v1",
+      recent_attendance: [
+        {
+          session_id: "sess-1",
+          date: "2026-05-18",
+          status: "present",
+          marked_at: "2026-05-18T15:00:00Z",
+        },
+        {
+          session_id: "sess-1",
+          date: "2026-05-11",
+          status: "absent",
+          marked_at: "2026-05-11T15:00:00Z",
+        },
+      ],
+      enrolled_sessions: [
+        {
+          enrollment_id: "enr-1",
+          session_id: "sess-1",
+          session_title: "Advanced Footwork",
+          location: "Court 1",
+          start_at: "2026-06-02T21:00:00Z",
+          end_at: "2026-06-02T22:00:00Z",
+          status: "active",
+          payment_mode: "monthly",
+          subscription_status: "active",
+          amount_cents: 15000,
+        },
+      ],
+      payment_history: [
+        {
+          payment_id: "pay-1",
+          session_id: "sess-1",
+          period: "2026-06",
+          amount_cents: 15000,
+          paid_amount_cents: 4000,
+          balance_due_cents: 11000,
+          status: "partially_paid",
+          payment_method: "cash",
+          created_at: "2026-06-01T15:00:00Z",
+        },
+      ],
+      current_payment: {
+        amount_cents: 11000,
+        source: "invoice",
+        status: "partially_paid",
+        period: "2026-06",
+        payment_id: "pay-1",
+        session_id: "sess-1",
+      },
+    };
     await stubMe(page);
     await stubAdminAcademy(page);
     await page.route("**/api/v2/admin/users?role=parent", (route) => {
@@ -235,74 +310,69 @@ test.describe("admin students", () => {
       });
     });
     await page.route("**/api/v2/admin/students/student-1", (route) => {
+      if (route.request().method() === "PATCH") {
+        const requestBody = route.request().postDataJSON() as Record<string, unknown>;
+        patchBody = requestBody;
+        return fulfillJson(route, {
+          ...studentFixture,
+          medical_notes: requestBody.medical_notes,
+        });
+      }
       if (route.request().method() !== "GET") return route.fallback();
-      return fulfillJson(route, {
-        student_id: "student-1",
-        full_name: "Amit Rao",
-        parent_id: "parent-1",
-        parent_name: "Rohan Rao",
-        parent_email: "rohan@example.com",
-        parent_phone: "555-0101",
-        status: "active",
-        active_session_count: 1,
-        last_seen_at: "2026-05-18T15:00:00Z",
-        attendance_rate: 0.91,
-        dues_status: "due",
-        date_of_birth: "2015-04-10",
-        level: "intermediate",
-        notes: "Prefers evening sessions",
-        parent_details: null,
-        enrolled_sessions: [
-          {
-            enrollment_id: "enr-1",
-            session_id: "sess-1",
-            session_title: "Advanced Footwork",
-            location: "Court 1",
-            start_at: "2026-06-02T21:00:00Z",
-            end_at: "2026-06-02T22:00:00Z",
-            status: "active",
-            payment_mode: "monthly",
-            subscription_status: "active",
-            amount_cents: 15000,
-          },
-        ],
-        payment_history: [
-          {
-            payment_id: "pay-1",
-            session_id: "sess-1",
-            period: "2026-06",
-            amount_cents: 15000,
-            paid_amount_cents: 4000,
-            balance_due_cents: 11000,
-            status: "partially_paid",
-            payment_method: "cash",
-            created_at: "2026-06-01T15:00:00Z",
-          },
-        ],
-        current_payment: {
-          amount_cents: 11000,
-          source: "invoice",
-          status: "partially_paid",
-          period: "2026-06",
-          payment_id: "pay-1",
-          session_id: "sess-1",
-        },
-      });
+      return fulfillJson(route, studentFixture);
     });
 
     await page.goto("/admin/students/student-1");
     await expect(page.getByTestId("admin-student-detail")).toContainText("Amit Rao");
-    await expect(page.getByTestId("admin-student-current-payment")).toContainText("$110");
-    await expect(page.getByTestId("admin-student-current-payment")).toContainText(
-      "Invoice balance",
+    await expect(page.getByTestId("admin-student-summary-strip")).toContainText("$110");
+    await expect(page.getByTestId("admin-student-summary-strip")).toContainText("91%");
+    await expect(page.getByRole("tab", { name: "Training" })).toBeVisible();
+
+    await page.getByRole("tab", { name: "Training" }).click();
+    await expect(page.getByTestId("admin-student-training-tab")).toContainText(
+      "Two years of club play",
     );
+    await expect(page.getByLabel("Previous experience")).toHaveAttribute(
+      "maxlength",
+      "1000",
+    );
+    await expect(page.getByLabel("Medical notes")).toHaveValue("Peanut allergy");
+    await expect(page.getByLabel("Medical notes")).toHaveAttribute("maxlength", "1000");
+    await expect(page.getByLabel("Emergency contact name")).toHaveValue("Anita Chen");
+    await expect(page.getByLabel("Emergency contact phone")).toHaveValue("555-0199");
+    await expect(page.getByLabel("Emergency contact phone")).toHaveAttribute(
+      "maxlength",
+      "40",
+    );
+    await expect(page.getByTestId("admin-student-recent-attendance")).toContainText(
+      "PRESENT",
+    );
+    await page.getByLabel("Medical notes").fill("");
+    await page.getByRole("button", { name: /^save changes$/i }).click();
+    expect(patchBody).toMatchObject({
+      medical_notes: "",
+      reason: "Admin profile update",
+    });
+
+    await page.getByRole("tab", { name: "Sessions" }).click();
     await expect(page.getByTestId("admin-student-enrolled-sessions")).toContainText(
       "Advanced Footwork",
     );
     await expect(page.getByTestId("admin-student-enrolled-sessions")).toContainText("$150");
+
+    await page.getByRole("tab", { name: "Billing" }).click();
+    await expect(page.getByTestId("admin-student-current-payment")).toContainText("$110");
+    await expect(page.getByTestId("admin-student-current-payment")).toContainText(
+      "Invoice balance",
+    );
     await expect(page.getByTestId("admin-student-payment-history")).toContainText("2026-06");
     await expect(page.getByTestId("admin-student-payment-history")).toContainText("$40");
     await expect(page.getByTestId("admin-student-payment-history")).toContainText("$110");
+
+    await page.getByRole("tab", { name: "Family & Compliance" }).click();
+    await expect(page.getByTestId("admin-student-compliance-tab")).toContainText("2026-v1");
+    await expect(page.getByLabel("T-shirt size")).toHaveValue("M");
+    await expect(page.getByLabel("T-shirt size")).toHaveAttribute("maxlength", "20");
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });
 });

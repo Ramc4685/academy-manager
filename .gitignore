@@ -85,6 +85,8 @@ frontend/node_modules/.cache/
 # ── Dev tools ──────────────────────────────────────────────────────────────────
 chainlit.md
 .chainlit/
+.superpowers/
+.worktrees/
 .ipynb_checkpoints/
 .playwright-mcp/
 rally-*.png
