@@ -12,22 +12,12 @@ Routes covered:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
-import pytest
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
-from backend.v2.contexts.curriculum.application.ports import (
-    CriterionRepository,
-    ExternalRefRepository,
-    LevelRepository,
-    PathwayQuery,
-    ProgramRepository,
-    SkillRepository,
-)
-from backend.v2.contexts.curriculum.application.use_cases.get_pathway import GetFullPathway
 from backend.v2.contexts.curriculum.application.use_cases.seed_curriculum import (
     seed_badminton_pathway,
 )
@@ -43,7 +33,6 @@ from backend.v2.contexts.curriculum.domain.models import (
 )
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.ids import new_ulid
-
 
 # ---------------------------------------------------------------------------
 # Fake in-memory repositories
@@ -203,6 +192,7 @@ def _build_app(*, academy_id: str = "test-academy") -> FastAPI:
     async def create_program(body: dict, request: Request) -> dict:
         state: _PathwayState = request.app.state.pathway
         from datetime import UTC, datetime
+
         now = datetime.now(UTC)
         program = Program(
             program_id=str(new_ulid()),

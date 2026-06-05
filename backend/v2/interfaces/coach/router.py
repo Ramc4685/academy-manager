@@ -6,13 +6,13 @@ from fastapi import APIRouter
 
 from .attendance_routes import router as attendance_router
 from .billing_enrollment_routes import router as billing_enrollment_router
-from .skill_routes import router as skill_router
 from .dashboard_routes import router as dashboard_router
 from .feedback_routes import router as feedback_router
 from .notes_routes import router as notes_router
 from .profile_routes import router as profile_router
 from .roster_routes import router as roster_router
 from .sessions_routes import router as sessions_router
+from .skill_routes import router as skill_router
 from .today_routes import router as today_router
 
 router = APIRouter(prefix="/coach")

@@ -13,6 +13,7 @@ from typing import Any
 
 from fastapi import Request
 
+from backend.v2.composition.pathway import StudentProgressComposition
 from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     ListSessionTypes,
     ListStudentBillingEnrollments,
@@ -43,7 +44,6 @@ from backend.v2.contexts.enrollment.application.use_cases.get_session_roster imp
 from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences_for_date import (
     ListCoachOccurrencesForDate,
 )
-from backend.v2.composition.pathway import StudentProgressComposition
 
 
 @dataclass
@@ -74,10 +74,13 @@ class CoachUseCases:
     update_profile: (
         object  # Callable[[str, body, academy_id], Awaitable[CoachProfileResponse | None]]
     )
-    # Skill pathway surface
-    student_progress: StudentProgressComposition
-    create_skill_note: object  # CreateSkillNote
-    list_skill_notes: object  # ListSkillNotes
+    # Skill pathway surface. Optional so existing CoachUseCases constructions
+    # (and the shared coach test fixtures) that predate the skill pathway keep
+    # working. Real coach composition always sets these; only the skill routes
+    # consume them.
+    student_progress: StudentProgressComposition | None = None
+    create_skill_note: object | None = None  # CreateSkillNote
+    list_skill_notes: object | None = None  # ListSkillNotes
 
 
 def get_coach_use_cases(request: Request) -> CoachUseCases:

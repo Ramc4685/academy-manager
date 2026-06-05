@@ -9,6 +9,10 @@ from zoneinfo import ZoneInfo
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from backend.v2.composition.pathway import (
+    StudentProgressComposition,
+    compose_student_progress,
+)
 from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.application.use_cases.enroll_child_in_session_type import (
     CancelBillingEnrollment,
@@ -125,11 +129,6 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_repo import (
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
-
-from backend.v2.composition.pathway import (
-    StudentProgressComposition,
-    compose_student_progress,
-)
 
 from .event_handlers import HandlerDeps, install_handlers
 

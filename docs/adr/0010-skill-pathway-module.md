@@ -28,6 +28,8 @@ Students at the academy progress through levels. The existing system does not tr
 
 9. **History is immutable.** `test_attempts` and `student_skill_progress` are never deleted.
 
+10. **No cross-context student lookup in MVP.** The `student_progress` use cases identify a student purely by `student_id`, supplied by the caller (admin/coach/parent routes). They never enrich with student metadata (name, parent) — display names are resolved in the `enrollment`/admin-directory context that owns them. An earlier `StudentLookup` port + `EnrollmentStudentLookup` adapter were scaffolded but never consumed, so they were removed to avoid dead wiring. The one place that *would* benefit is certificate display fields (`student_name`, `level_name`, `program_name`): in MVP the approve route does not populate these, so certificates are issued with blank display names. Re-introducing a purposeful student/level/program lookup at certificate-issue time is deferred to the "Better certificates" backlog item.
+
 ## Consequences
 
 - New collections: `skill_programs`, `skill_levels`, `skills`, `skill_criteria`, `external_lesson_refs`, `student_level_progress`, `student_skill_progress`, `test_attempts`, `level_up_recommendations`, `skill_certificates`, `coach_skill_notes`.

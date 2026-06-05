@@ -502,6 +502,7 @@ async def seed_badminton_pathway(
         await levels.save(level)
 
         # Seed skills for this level
+        first_skill_id: str | None = None
         for skill_data in level_data["skills"]:
             skill = Skill(
                 skill_id=str(new_ulid()),
@@ -521,6 +522,8 @@ async def seed_badminton_pathway(
                 created_by=created_by,
             )
             await skills.save(skill)
+            if first_skill_id is None:
+                first_skill_id = skill.skill_id
 
             # Seed criteria for this skill
             for i, criterion_desc in enumerate(skill_data["criteria"]):
@@ -537,25 +540,24 @@ async def seed_badminton_pathway(
                 )
                 await criteria.save(criterion)
 
-        # Seed external reference for this level (reference only — no lesson body text)
+        # Seed the external reference for this level (reference metadata ONLY —
+        # never lesson body text). It is anchored to the level's first skill.
         ext = level_data["ext_ref"]
-        ref = ExternalLessonReference(
-            ref_id=str(new_ulid()),
-            # Use first skill of this level as the anchor skill for the reference
-            skill_id=str(new_ulid()),  # placeholder — overridden below
-            academy_id=academy_id,
-            source="BWF_SHUTTLE_TIME",
-            source_title="BWF Shuttle Time",
-            module_name=ext["module_name"],
-            lesson_range=ext["lesson_range"],
-            reference_title=ext["reference_title"],
-            page_hint=ext.get("page_hint"),
-            internal_note="External structural reference only. Do not reproduce content.",
-            created_at=now,
-            created_by=created_by,
-        )
-        # Note: ref is stored per-level conceptually; skill_id links to first skill
-        # For seed purposes we skip the per-skill save to keep it simple
-        _ = ref  # ref saved per skill in production workflow via AddExternalReference
+        if first_skill_id is not None:
+            ref = ExternalLessonReference(
+                ref_id=str(new_ulid()),
+                skill_id=first_skill_id,
+                academy_id=academy_id,
+                source="BWF_SHUTTLE_TIME",
+                source_title="BWF Shuttle Time",
+                module_name=ext["module_name"],
+                lesson_range=ext["lesson_range"],
+                reference_title=ext["reference_title"],
+                page_hint=ext.get("page_hint"),
+                internal_note="External structural reference only. Do not reproduce content.",
+                created_at=now,
+                created_by=created_by,
+            )
+            await refs.save(ref)
 
     return program

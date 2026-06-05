@@ -15,20 +15,19 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-import pytest
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.v2.contexts.student_progress.application.use_cases.get_student_progress import (
     GetStudentPassport,
 )
-from backend.v2.contexts.student_progress.application.use_cases.record_test_attempt import (
-    RecordTestAttempt,
-    RecordTestAttemptCommand,
-)
 from backend.v2.contexts.student_progress.application.use_cases.recommend_level_up import (
     RecommendLevelUp,
     RecommendLevelUpCommand,
+)
+from backend.v2.contexts.student_progress.application.use_cases.record_test_attempt import (
+    RecordTestAttempt,
+    RecordTestAttemptCommand,
 )
 from backend.v2.contexts.student_progress.application.use_cases.update_skill_status import (
     UpdateSkillStatus,
@@ -36,7 +35,6 @@ from backend.v2.contexts.student_progress.application.use_cases.update_skill_sta
 )
 from backend.v2.contexts.student_progress.domain.models import (
     LevelUpRecommendation,
-    SkillPassportEntry,
     StudentLevelProgress,
     StudentSkillProgress,
     TestAttempt,
@@ -113,9 +111,7 @@ class _FakeSkillProgressRepo:
         return [
             sp
             for sp in self._store.values()
-            if sp.student_id == student_id
-            and sp.level_id == level_id
-            and sp.status == "PASSED"
+            if sp.student_id == student_id and sp.level_id == level_id and sp.status == "PASSED"
         ]
 
 
@@ -126,12 +122,8 @@ class _FakeTestAttemptRepo:
     async def save(self, attempt: TestAttempt) -> None:
         self._store.append(attempt)
 
-    async def list_for_student_skill(
-        self, student_id: str, skill_id: str
-    ) -> list[TestAttempt]:
-        return [
-            a for a in self._store if a.student_id == student_id and a.skill_id == skill_id
-        ]
+    async def list_for_student_skill(self, student_id: str, skill_id: str) -> list[TestAttempt]:
+        return [a for a in self._store if a.student_id == student_id and a.skill_id == skill_id]
 
     async def count_for_student_skill(self, student_id: str, skill_id: str) -> int:
         return len(await self.list_for_student_skill(student_id, skill_id))
@@ -186,8 +178,8 @@ class _FakeSkillLookup:
     """Returns minimal Skill-like objects for the use cases."""
 
     def __init__(self, skills: list[object], levels: list[object]) -> None:
-        self._skills = {getattr(s, "skill_id"): s for s in skills}
-        self._levels = {getattr(lv, "level_id"): lv for lv in levels}
+        self._skills = {s.skill_id: s for s in skills}
+        self._levels = {lv.level_id: lv for lv in levels}
 
     async def get_skill(self, skill_id: str) -> object | None:
         return self._skills.get(skill_id)
@@ -196,14 +188,11 @@ class _FakeSkillLookup:
         return self._levels.get(level_id)
 
     async def list_skills_for_level(self, level_id: str) -> list[object]:
-        return [s for s in self._skills.values() if getattr(s, "level_id") == level_id]
+        return [s for s in self._skills.values() if s.level_id == level_id]
 
     async def get_next_level(self, program_id: str, current_sequence: int) -> object | None:
         for lv in self._levels.values():
-            if (
-                getattr(lv, "program_id") == program_id
-                and getattr(lv, "sequence") == current_sequence + 1
-            ):
+            if lv.program_id == program_id and lv.sequence == current_sequence + 1:
                 return lv
         return None
 

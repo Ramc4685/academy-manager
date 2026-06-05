@@ -14,6 +14,10 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
 )
+from backend.v2.composition.pathway import (
+    compose_curriculum,
+    compose_student_progress,
+)
 from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscount,
@@ -218,12 +222,6 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import
 )
 from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_template_repo import (
     MongoWaiverTemplateRepository,
-)
-from backend.v2.composition.pathway import (
-    CurriculumComposition,
-    StudentProgressComposition,
-    compose_curriculum,
-    compose_student_progress,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases
 from backend.v2.shared.comms import CommsService, MongoMessageRepository

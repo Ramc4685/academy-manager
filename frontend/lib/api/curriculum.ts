@@ -128,10 +128,10 @@ export interface SkillCertificate {
 // ---------------------------------------------------------------------------
 
 export function listPrograms(academyId: string): Promise<Program[]> {
-  return apiFetch<Program[]>(
+  return apiFetch<{ programs: Program[] }>(
     `/admin/programs?academy_id=${encodeURIComponent(academyId)}`,
     { method: "GET" },
-  );
+  ).then((d) => d.programs);
 }
 
 export function createProgram(body: {
@@ -216,9 +216,9 @@ export function getStudentProgress(
 
 export function getLevelUpQueue(programId?: string): Promise<LevelUpRecommendation[]> {
   const q = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
-  return apiFetch<LevelUpRecommendation[]>(`/admin/level-up-queue${q}`, {
+  return apiFetch<{ queue: LevelUpRecommendation[] }>(`/admin/level-up-queue${q}`, {
     method: "GET",
-  });
+  }).then((d) => d.queue);
 }
 
 export function approveLevelUp(recId: string): Promise<{ approved: boolean }> {
@@ -239,10 +239,10 @@ export function rejectLevelUp(
 }
 
 export function getAdminStudentCertificates(studentId: string): Promise<SkillCertificate[]> {
-  return apiFetch<SkillCertificate[]>(
+  return apiFetch<{ certificates: SkillCertificate[] }>(
     `/admin/students/${encodeURIComponent(studentId)}/certificates`,
     { method: "GET" },
-  );
+  ).then((d) => d.certificates);
 }
 
 // ---------------------------------------------------------------------------
@@ -253,10 +253,10 @@ export function getStudentPassport(
   studentId: string,
   programId: string,
 ): Promise<SkillPassportEntry[]> {
-  return apiFetch<SkillPassportEntry[]>(
+  return apiFetch<{ passport: SkillPassportEntry[] }>(
     `/coach/students/${encodeURIComponent(studentId)}/passport?program_id=${encodeURIComponent(programId)}`,
     { method: "GET" },
-  );
+  ).then((d) => d.passport);
 }
 
 export function updateSkillStatus(
@@ -304,15 +304,15 @@ export function getParentStudentPassport(
   studentId: string,
   programId: string,
 ): Promise<SkillPassportEntry[]> {
-  return apiFetch<SkillPassportEntry[]>(
+  return apiFetch<{ passport: SkillPassportEntry[] }>(
     `/parent/students/${encodeURIComponent(studentId)}/skill-progress?program_id=${encodeURIComponent(programId)}`,
     { method: "GET" },
-  );
+  ).then((d) => d.passport);
 }
 
 export function getParentStudentCertificates(studentId: string): Promise<SkillCertificate[]> {
-  return apiFetch<SkillCertificate[]>(
+  return apiFetch<{ certificates: SkillCertificate[] }>(
     `/parent/students/${encodeURIComponent(studentId)}/certificates`,
     { method: "GET" },
-  );
+  ).then((d) => d.certificates);
 }

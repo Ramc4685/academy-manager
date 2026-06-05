@@ -8,19 +8,16 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from backend.v2.composition.pathway import (
+    StudentProgressComposition,
+    compose_student_progress,
+)
 from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     ListSessionTypes,
     ListStudentBillingEnrollments,
     MoveStudentSessionType,
     PreviewStudentSessionTypeMove,
-)
-from backend.v2.contexts.coaching.application.use_cases.skill_notes import (
-    CreateSkillNote,
-    ListSkillNotes,
-)
-from backend.v2.contexts.coaching.infrastructure.mongo_skill_note_repo import (
-    MongoSkillNoteRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_session_type_repo import (
     MongoSessionTypeRepository,
@@ -42,6 +39,10 @@ from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     ListLessonPlans,
     ListProgressNotes,
 )
+from backend.v2.contexts.coaching.application.use_cases.skill_notes import (
+    CreateSkillNote,
+    ListSkillNotes,
+)
 from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
     MongoAttendanceRepository,
 )
@@ -50,6 +51,9 @@ from backend.v2.contexts.coaching.infrastructure.mongo_session_feedback_repo imp
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_session_notes_repo import (
     MongoCoachingNotesRepository,
+)
+from backend.v2.contexts.coaching.infrastructure.mongo_skill_note_repo import (
+    MongoSkillNoteRepository,
 )
 from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes import (
     CoachAddStudentToRoster,
@@ -61,10 +65,6 @@ from backend.v2.contexts.enrollment.application.use_cases.get_session_roster imp
 from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences_for_date import (
     ListCoachOccurrencesForDate,
     ListCoachUpcomingOccurrences,
-)
-from backend.v2.composition.pathway import (
-    StudentProgressComposition,
-    compose_student_progress,
 )
 from backend.v2.contexts.enrollment.domain.events import (
     StudentSessionTypeChanged,

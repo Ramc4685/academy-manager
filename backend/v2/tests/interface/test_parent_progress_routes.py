@@ -25,7 +25,6 @@ from backend.v2.contexts.student_progress.domain.models import (
     SkillCertificate,
     StudentLevelProgress,
     StudentSkillProgress,
-    TestAttempt,
 )
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.ids import new_ulid
@@ -109,9 +108,7 @@ class _FakeSkillProgressRepo:
         return [
             sp
             for sp in self._store.values()
-            if sp.student_id == student_id
-            and sp.level_id == level_id
-            and sp.status == "PASSED"
+            if sp.student_id == student_id and sp.level_id == level_id and sp.status == "PASSED"
         ]
 
 

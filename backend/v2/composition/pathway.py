@@ -171,7 +171,13 @@ def compose_curriculum(db: AsyncIOMotorDatabase[Any]) -> CurriculumComposition:
     skills_repo = MongoSkillRepository(db)
     criteria_repo = MongoCriterionRepository(db)
     refs_repo = MongoExternalRefRepository(db)
-    pathway_query = MongoPathwayQuery(db)
+    pathway_query = MongoPathwayQuery(
+        programs_repo,
+        levels_repo,
+        skills_repo,
+        criteria_repo,
+        refs_repo,
+    )
 
     return CurriculumComposition(
         create_program=CreateProgram(programs=programs_repo),
@@ -203,7 +209,10 @@ def compose_student_progress(db: AsyncIOMotorDatabase[Any]) -> StudentProgressCo
     test_attempt_repo = MongoTestAttemptRepository(db)
     recommendation_repo = MongoRecommendationRepository(db)
     certificate_repo = MongoCertificateRepository(db)
-    skill_lookup = CurriculumSkillLookup(db)
+    skill_lookup = CurriculumSkillLookup(
+        skill_repo=MongoSkillRepository(db),
+        level_repo=MongoLevelRepository(db),
+    )
 
     return StudentProgressComposition(
         place_student=PlaceStudentInLevel(

@@ -9,6 +9,7 @@ from fastapi import Request
 from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
 )
+from backend.v2.composition.pathway import CurriculumComposition, StudentProgressComposition
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscount,
     GenerateMonthlyPayments,
@@ -104,7 +105,6 @@ from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates
 from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
     ListAdminWaivers,
 )
-from backend.v2.composition.pathway import CurriculumComposition, StudentProgressComposition
 from backend.v2.shared.comms import CommsService
 
 
