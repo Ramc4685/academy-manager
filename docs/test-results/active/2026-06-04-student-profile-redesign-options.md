@@ -24,6 +24,7 @@ Explore current student profile data and propose UI redesign options without imp
 - 2026-06-04T17:30:17 main/working: User approved editability mockup and asked for detailed contents of the remaining tabs. Defining tab-by-tab data inventory and edit/read-only behavior.
 - 2026-06-04T17:35:23 main/working: Wrote student profile redesign spec and self-reviewed it. Tightened ambiguous BFF additions: level normalization, waiver field types, recent attendance limit, age derivation, and move history first-implementation scope.
 - 2026-06-04T18:05:44 main/working: Implemented tabbed admin student record frontend with editable Overview, Training, and Family fields; wired new student detail API fields; focused frontend typecheck and Playwright student profile path pass.
+- 2026-06-05T08:22:19 main/working: Addressed PR #135 review comments after #134 merge: rebased onto origin/main without conflicts, preserved explicit empty-string clears for new editable student fields, and aligned frontend maxLength values to backend API limits.
 ## Verification
 
 - No verification recorded yet.
@@ -31,6 +32,10 @@ Explore current student profile data and propose UI redesign options without imp
 - 2026-06-04T18:05:44: cd frontend && pnpm typecheck -> passed; cd frontend && pnpm e2e --grep 'renders the student profile' -> 2 passed
 - 2026-06-04T18:06:08: cd frontend && pnpm lint -> passed (Next lint deprecation notice only; no warnings or errors)
 - 2026-06-04T18:11:02: scripts/dev/pre-push-checks.sh -> passed: backend ruff format/check, backend v2 tests, frontend node unit tests, pnpm typecheck, pnpm lint, pnpm e2e
+- 2026-06-05T08:22:19: PR comment focused checks: cd frontend && pnpm typecheck -> passed; cd frontend && pnpm lint -> passed; cd frontend && pnpm e2e --grep 'renders the student profile' -> 2 passed
+- 2026-06-05T08:25:49: scripts/dev/pre-push-checks.sh attempt after review fixes -> failed during pnpm e2e webServer startup because http://localhost:3001 was already in use; focused E2E had passed, and lsof later showed port 3001 free for retry.
+- 2026-06-05T08:38:39: PLAYWRIGHT_PORT=3011 pnpm e2e -> passed: 142 passed, 20 skipped. Used alternate port because an external temp Playwright run repeatedly occupied localhost:3001 during pre-push.
+- 2026-06-05T08:43:00: PLAYWRIGHT_PORT=3011 scripts/dev/pre-push-checks.sh -> passed: backend ruff format/check, backend v2 tests, frontend node unit tests, pnpm typecheck, pnpm lint, pnpm e2e
 ## Reusable Lessons
 
 - None recorded yet.
