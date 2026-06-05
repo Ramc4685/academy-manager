@@ -311,10 +311,11 @@ test.describe("admin students", () => {
     });
     await page.route("**/api/v2/admin/students/student-1", (route) => {
       if (route.request().method() === "PATCH") {
-        patchBody = route.request().postDataJSON();
+        const requestBody = route.request().postDataJSON() as Record<string, unknown>;
+        patchBody = requestBody;
         return fulfillJson(route, {
           ...studentFixture,
-          medical_notes: "Carries inhaler",
+          medical_notes: requestBody.medical_notes,
         });
       }
       if (route.request().method() !== "GET") return route.fallback();
@@ -331,16 +332,25 @@ test.describe("admin students", () => {
     await expect(page.getByTestId("admin-student-training-tab")).toContainText(
       "Two years of club play",
     );
+    await expect(page.getByLabel("Previous experience")).toHaveAttribute(
+      "maxlength",
+      "1000",
+    );
     await expect(page.getByLabel("Medical notes")).toHaveValue("Peanut allergy");
+    await expect(page.getByLabel("Medical notes")).toHaveAttribute("maxlength", "1000");
     await expect(page.getByLabel("Emergency contact name")).toHaveValue("Anita Chen");
     await expect(page.getByLabel("Emergency contact phone")).toHaveValue("555-0199");
+    await expect(page.getByLabel("Emergency contact phone")).toHaveAttribute(
+      "maxlength",
+      "40",
+    );
     await expect(page.getByTestId("admin-student-recent-attendance")).toContainText(
       "PRESENT",
     );
-    await page.getByLabel("Medical notes").fill("Carries inhaler");
+    await page.getByLabel("Medical notes").fill("");
     await page.getByRole("button", { name: /^save changes$/i }).click();
     expect(patchBody).toMatchObject({
-      medical_notes: "Carries inhaler",
+      medical_notes: "",
       reason: "Admin profile update",
     });
 
@@ -362,6 +372,7 @@ test.describe("admin students", () => {
     await page.getByRole("tab", { name: "Family & Compliance" }).click();
     await expect(page.getByTestId("admin-student-compliance-tab")).toContainText("2026-v1");
     await expect(page.getByLabel("T-shirt size")).toHaveValue("M");
+    await expect(page.getByLabel("T-shirt size")).toHaveAttribute("maxlength", "20");
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });
 });

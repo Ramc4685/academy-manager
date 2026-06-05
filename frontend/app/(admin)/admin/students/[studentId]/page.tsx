@@ -1130,16 +1130,16 @@ function StudentEditForm({
         }
         if (mode === "training") {
           if (dirtyFields.previousExperience)
-            payload.previous_experience = previousExperience || null;
+            payload.previous_experience = previousExperience;
           if (dirtyFields.medicalNotes)
-            payload.medical_notes = medicalNotes || null;
+            payload.medical_notes = medicalNotes;
           if (dirtyFields.emergencyContactName)
-            payload.emergency_contact_name = emergencyContactName || null;
+            payload.emergency_contact_name = emergencyContactName;
           if (dirtyFields.emergencyContactPhone)
-            payload.emergency_contact_phone = emergencyContactPhone || null;
+            payload.emergency_contact_phone = emergencyContactPhone;
         }
         if (mode === "family" && dirtyFields.tShirtSize) {
-          payload.t_shirt_size = tShirtSize || null;
+          payload.t_shirt_size = tShirtSize;
         }
         payload.reason = reason;
         mutation.mutate(payload);
@@ -1216,7 +1216,7 @@ function StudentEditForm({
               value={previousExperience}
               onChange={(e) => setPreviousExperience(e.target.value)}
               rows={3}
-              maxLength={2000}
+              maxLength={1000}
               className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
               placeholder="Prior coaching, club play, school teams"
             />
@@ -1228,7 +1228,7 @@ function StudentEditForm({
               value={medicalNotes}
               onChange={(e) => setMedicalNotes(e.target.value)}
               rows={3}
-              maxLength={2000}
+              maxLength={1000}
               className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
               placeholder="Allergies, injuries, health notes"
             />
@@ -1257,7 +1257,7 @@ function StudentEditForm({
                 value={emergencyContactPhone}
                 onChange={(e) => setEmergencyContactPhone(e.target.value)}
                 className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-                maxLength={80}
+                maxLength={40}
               />
             </Field>
           </div>
@@ -1271,7 +1271,7 @@ function StudentEditForm({
             value={tShirtSize}
             onChange={(e) => setTShirtSize(e.target.value)}
             className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-            maxLength={40}
+            maxLength={20}
           />
         </Field>
       )}
