@@ -149,6 +149,7 @@ test.describe("admin session creation and fee settings UI", () => {
   }) => {
     await stubAdminShell(page);
     let replacementPayload: unknown = null;
+    let replacementCoachId: string | null = null;
 
     await page.route("**/api/v2/admin/**", (route) => {
       const request = route.request();
@@ -185,7 +186,7 @@ test.describe("admin session creation and fee settings UI", () => {
               end_at: "2026-06-10T23:45:00Z",
               status: "scheduled",
               scheduled_coach_id: "coach-scheduled",
-              actual_coach_id: null,
+              actual_coach_id: replacementCoachId,
               substitute_coach_id: null,
               attendance_marked_count: 0,
               attendance_marked_by: [],
@@ -200,6 +201,7 @@ test.describe("admin session creation and fee settings UI", () => {
         url.pathname === "/api/v2/admin/sessions/series-wed/replacement"
       ) {
         replacementPayload = request.postDataJSON();
+        replacementCoachId = "coach-replacement";
         return fulfillJson(route, {
           occurrence_id: "series-wed:2026-06-10:18:00",
           session_id: "series-wed",
@@ -266,5 +268,7 @@ test.describe("admin session creation and fee settings UI", () => {
       replacement_coach_id: "coach-replacement",
       reason: null,
     });
+    await expect(page.getByText("No replacement coaches added.")).toHaveCount(0);
+    await expect(page.getByRole("cell", { name: "Replacement Coach" })).toBeVisible();
   });
 });

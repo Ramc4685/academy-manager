@@ -59,6 +59,8 @@ def _series_signature(
     end_time: object,
     timezone: object,
 ) -> tuple[object, ...]:
+    """Return the duplicate-series key; title is accepted but intentionally ignored."""
+
     return (
         _normalize_text(location),
         str(coach_id or ""),

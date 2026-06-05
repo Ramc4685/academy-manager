@@ -82,7 +82,7 @@ def test_seed_occurrence_docs_cover_the_maintained_future_window() -> None:
         for occ in occurrences
     }
     assert {date(2026, 6, 4), date(2026, 6, 11), date(2026, 6, 18)} <= set(by_date)
-    assert max(by_date) <= date(2026, 8, 3)
+    assert max(by_date) == date(2026, 7, 30)
     assert by_date[date(2026, 6, 18)] == {
         "occurrence_id": "session-thu-6:2026-06-18:18:00",
         "academy_id": "blno",

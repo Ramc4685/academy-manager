@@ -1104,6 +1104,62 @@ def compose_admin(
     def _normalized_series_text(value: object) -> str:
         return " ".join(str(value or "").strip().casefold().split())
 
+    _WEEKDAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    _WEEKDAY_INDEX = {
+        "mon": 0,
+        "monday": 0,
+        "tue": 1,
+        "tuesday": 1,
+        "wed": 2,
+        "wednesday": 2,
+        "thu": 3,
+        "thursday": 3,
+        "fri": 4,
+        "friday": 4,
+        "sat": 5,
+        "saturday": 5,
+        "sun": 6,
+        "sunday": 6,
+    }
+
+    def _canonical_weekdays(days: object) -> tuple[str, ...]:
+        values = list(days or []) if isinstance(days, list) else []
+        canonical: set[str] = set()
+        passthrough: set[str] = set()
+        for day in values:
+            raw = str(day).strip()
+            index = _WEEKDAY_INDEX.get(raw.casefold())
+            if index is None:
+                if raw:
+                    passthrough.add(raw)
+                continue
+            canonical.add(_WEEKDAY_NAMES[index])
+        return tuple(
+            sorted(canonical, key=lambda day: _WEEKDAY_NAMES.index(day)) + sorted(passthrough)
+        )
+
+    def _local_interval_utc(
+        occurrence_date: date,
+        start_time: time,
+        end_time: time,
+        tz: ZoneInfo,
+    ) -> tuple[datetime, datetime]:
+        local_start = datetime.combine(occurrence_date, start_time, tzinfo=tz)
+        local_end = datetime.combine(occurrence_date, end_time, tzinfo=tz)
+        if local_end <= local_start:
+            local_end += timedelta(days=1)
+        return local_start.astimezone(UTC), local_end.astimezone(UTC)
+
+    def _dated_session_range_filter(start: datetime, end: datetime) -> dict[str, Any]:
+        return {
+            "start_at": {"$gte": start, "$lte": end},
+            "$or": [
+                {"days_of_week": {"$exists": False}},
+                {"days_of_week": []},
+                {"days_of_week": None},
+            ],
+        }
+
     def _series_local_clock_signature(
         row: dict[str, Any],
     ) -> tuple[tuple[str, ...], str, str, str] | None:
@@ -1111,7 +1167,7 @@ def compose_admin(
         days = list(row.get("days_of_week") or [])
         if days and row.get("start_time") and row.get("end_time"):
             return (
-                tuple(str(day) for day in days),
+                _canonical_weekdays(days),
                 str(row.get("start_time") or ""),
                 str(row.get("end_time") or ""),
                 timezone_name,
@@ -1124,7 +1180,7 @@ def compose_admin(
         tz = ZoneInfo(timezone_name)
         local_start = _as_utc_datetime(start_at).astimezone(tz)
         local_end = _as_utc_datetime(end_at).astimezone(tz)
-        weekday = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")[local_start.weekday()]
+        weekday = _WEEKDAY_NAMES[local_start.weekday()]
         return (
             (weekday,),
             local_start.strftime("%H:%M"),
@@ -1181,23 +1237,11 @@ def compose_admin(
             return []
         timezone_name = session.timezone or "America/Chicago"
         tz = ZoneInfo(timezone_name)
-        dow_map = {
-            "Mon": 0,
-            "Tue": 1,
-            "Wed": 2,
-            "Thu": 3,
-            "Fri": 4,
-            "Sat": 5,
-            "Sun": 6,
-            "monday": 0,
-            "tuesday": 1,
-            "wednesday": 2,
-            "thursday": 3,
-            "friday": 4,
-            "saturday": 5,
-            "sunday": 6,
+        target_days = {
+            _WEEKDAY_INDEX[str(day).casefold()]
+            for day in session.days_of_week
+            if str(day).casefold() in _WEEKDAY_INDEX
         }
-        target_days = {dow_map[day] for day in session.days_of_week if day in dow_map}
         if not target_days:
             return []
         local_start = datetime.now(UTC).astimezone(tz).date()
@@ -1208,8 +1252,7 @@ def compose_admin(
         current = local_start
         while current <= local_end:
             if current.weekday() in target_days:
-                starts_at = datetime.combine(current, start_time, tzinfo=tz).astimezone(UTC)
-                ends_at = datetime.combine(current, end_time, tzinfo=tz).astimezone(UTC)
+                starts_at, ends_at = _local_interval_utc(current, start_time, end_time, tz)
                 occurrence_id = (
                     f"{session.session_id}:{current.isoformat()}:{start_time.strftime('%H:%M')}"
                 )
@@ -1240,23 +1283,11 @@ def compose_admin(
             raise ValueError("Replacement cannot be added to a cancelled session")
         timezone_name = session.timezone or "America/Chicago"
         tz = ZoneInfo(timezone_name)
-        dow_map = {
-            "Mon": 0,
-            "Tue": 1,
-            "Wed": 2,
-            "Thu": 3,
-            "Fri": 4,
-            "Sat": 5,
-            "Sun": 6,
-            "monday": 0,
-            "tuesday": 1,
-            "wednesday": 2,
-            "thursday": 3,
-            "friday": 4,
-            "saturday": 5,
-            "sunday": 6,
+        target_days = {
+            _WEEKDAY_INDEX[str(day).casefold()]
+            for day in session.days_of_week
+            if str(day).casefold() in _WEEKDAY_INDEX
         }
-        target_days = {dow_map[day] for day in session.days_of_week if day in dow_map}
         if not target_days:
             raise ValueError("Session does not have a supported recurring weekday")
         now = datetime.now(UTC)
@@ -1269,8 +1300,7 @@ def compose_admin(
 
         start_time = time.fromisoformat(session.start_time)
         end_time = time.fromisoformat(session.end_time)
-        starts_at = datetime.combine(occurrence_date, start_time, tzinfo=tz).astimezone(UTC)
-        ends_at = datetime.combine(occurrence_date, end_time, tzinfo=tz).astimezone(UTC)
+        starts_at, ends_at = _local_interval_utc(occurrence_date, start_time, end_time, tz)
         occurrence_id = (
             f"{session.session_id}:{occurrence_date.isoformat()}:{start_time.strftime('%H:%M')}"
         )
@@ -1330,16 +1360,12 @@ def compose_admin(
                 "is_billable": True,
                 "is_payable": True,
             }
-        starts_at = datetime.combine(
+        starts_at, ends_at = _local_interval_utc(
             occurrence_date,
             local_start.timetz().replace(tzinfo=None),
-            tzinfo=tz,
-        ).astimezone(UTC)
-        ends_at = datetime.combine(
-            occurrence_date,
             local_end.timetz().replace(tzinfo=None),
-            tzinfo=tz,
-        ).astimezone(UTC)
+            tz,
+        )
         occurrence_id = (
             f"{session.session_id}:{occurrence_date.isoformat()}:{local_start.strftime('%H:%M')}"
         )
@@ -1430,6 +1456,8 @@ def compose_admin(
         if session.days_of_week and session.start_time and session.end_time:
             return _series_occurrence_candidate_for_date(session, occurrence_date)
         matched_doc = await _matching_dated_series_session_doc(session, occurrence_date)
+        if matched_doc is None:
+            raise ValueError("Replacement date must match a scheduled session date")
         return _dated_occurrence_candidate_for_date(
             session,
             occurrence_date,
@@ -1538,10 +1566,7 @@ def compose_admin(
                 microseconds=999999,
             )
             v2_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
-                {
-                    "start_at": {"$gte": start, "$lte": end},
-                    "days_of_week": {"$exists": False},
-                },
+                _dated_session_range_filter(start, end),
                 sort=[("start_at", 1)],
             )
             upcoming_docs = [doc async for doc in v2_cursor]
@@ -1580,10 +1605,7 @@ def compose_admin(
 
         # v2 schema: individual session instances with start_at/end_at
         v2_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
-            {
-                "start_at": {"$gte": start, "$lte": end},
-                "days_of_week": {"$exists": False},
-            },
+            _dated_session_range_filter(start, end),
             sort=[("start_at", 1)],
         )
         async for doc in v2_cursor:

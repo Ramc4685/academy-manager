@@ -870,7 +870,7 @@ async def test_session_replacement_endpoint_updates_existing_dated_session_occur
 
 
 @pytest.mark.asyncio
-async def test_session_replacement_endpoint_infers_dated_weekly_series_for_future_date(
+async def test_session_replacement_endpoint_uses_matching_dated_weekly_series_date(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -940,7 +940,7 @@ async def test_session_replacement_endpoint_infers_dated_weekly_series_for_futur
         response = client.patch(
             "/api/v2/admin/sessions/dated-thu-jun4/replacement",
             json={
-                "date": "2026-06-18",
+                "date": "2026-06-11",
                 "replacement_coach_id": "coach-replacement",
                 "reason": "coach unavailable",
             },
@@ -948,17 +948,30 @@ async def test_session_replacement_endpoint_infers_dated_weekly_series_for_futur
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["session_id"] == "dated-thu-jun4"
+    assert body["session_id"] == "dated-thu-jun11"
     assert body["scheduled_coach_id"] == "coach-scheduled"
     assert body["actual_coach_id"] == "coach-replacement"
-    assert body["start_at"].startswith("2026-06-18T23:00:00")
+    assert body["start_at"].startswith("2026-06-11T23:00:00")
     stored = await db.session_occurrences.find_one(
         {"academy_id": "academy-b", "occurrence_id": body["occurrence_id"]}
     )
     assert stored is not None
-    assert stored["session_id"] == "dated-thu-jun4"
+    assert stored["session_id"] == "dated-thu-jun11"
     assert stored["scheduled_coach_id"] == "coach-scheduled"
     assert stored["actual_coach_id"] == "coach-replacement"
+
+    with TestClient(_mongo_admin_app(db)) as client:
+        unscheduled = client.patch(
+            "/api/v2/admin/sessions/dated-thu-jun4/replacement",
+            json={
+                "date": "2026-06-18",
+                "replacement_coach_id": "coach-replacement",
+                "reason": "coach unavailable",
+            },
+        )
+
+    assert unscheduled.status_code == 409, unscheduled.text
+    assert "scheduled session date" in unscheduled.json()["detail"]
 
 
 @pytest.mark.asyncio

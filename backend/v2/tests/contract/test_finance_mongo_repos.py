@@ -135,6 +135,16 @@ async def test_payout_repo_derives_occurrence_attributed_payouts_when_no_periods
                 "actual_coach_id": "coach-replacement",
                 "is_payable": True,
             },
+            {
+                "academy_id": "other-academy",
+                "occurrence_id": "occ-other",
+                "session_id": "sess-other",
+                "start_at": _dt("2026-05-29T18:00:00"),
+                "end_at": _dt("2026-05-29T19:00:00"),
+                "status": "completed",
+                "scheduled_coach_id": "coach-other",
+                "is_payable": True,
+            },
         ]
     )
     await db["coach_rates"].insert_many(
@@ -155,6 +165,16 @@ async def test_payout_repo_derives_occurrence_attributed_payouts_when_no_periods
                 "rate_id": "rate-2",
                 "billing_unit": "per_session",
                 "amount_minor": 3000,
+                "currency": "USD",
+                "effective_from": _dt("2026-01-01T00:00:00"),
+                "status": "active",
+            },
+            {
+                "academy_id": "other-academy",
+                "coach_id": "coach-other",
+                "rate_id": "rate-other",
+                "billing_unit": "per_session",
+                "amount_minor": 9999,
                 "currency": "USD",
                 "effective_from": _dt("2026-01-01T00:00:00"),
                 "status": "active",
@@ -183,6 +203,16 @@ async def test_payout_repo_derives_occurrence_attributed_payouts_when_no_periods
                 "marked_at": _dt("2026-05-28T19:00:00"),
                 "status": "late",
             },
+            {
+                "academy_id": "other-academy",
+                "attendance_id": "att-other",
+                "occurrence_id": "occ-other",
+                "session_id": "sess-other",
+                "student_id": "student-other",
+                "marked_by": "coach-other",
+                "marked_at": _dt("2026-05-29T19:00:00"),
+                "status": "present",
+            },
         ]
     )
 
@@ -190,6 +220,7 @@ async def test_payout_repo_derives_occurrence_attributed_payouts_when_no_periods
 
     by_coach = {row.coach_id: row for row in rows}
     assert set(by_coach) == {"coach-blno", "coach-replacement"}
+    assert "coach-other" not in by_coach
     assert by_coach["coach-blno"].amount_cents == 2500
     assert by_coach["coach-blno"].students_count == 1
     assert by_coach["coach-blno"].sessions_count == 1
