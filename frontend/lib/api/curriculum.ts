@@ -101,6 +101,41 @@ export interface StudentProgressSummary {
   level_up_status: string | null;
 }
 
+export type ProgressNextAction =
+  | "place_in_level"
+  | "continue_practice"
+  | "record_tests"
+  | "recommend_level_up"
+  | "awaiting_admin_approval"
+  | "certificate_issued";
+
+export type LevelCompletionStatus =
+  | "not_started"
+  | "in_progress"
+  | "test_ready"
+  | "complete";
+
+export interface StudentProgressOverview {
+  student_id: string;
+  student_name: string;
+  program_id: string;
+  program_name: string;
+  current_level_id: string | null;
+  current_level_name: string | null;
+  current_level_sequence: number | null;
+  required_skill_count: number;
+  required_skills_passed: number;
+  total_skill_count: number;
+  total_skills_passed: number;
+  in_progress_count: number;
+  not_started_count: number;
+  test_ready_count: number;
+  level_completion_status: LevelCompletionStatus;
+  level_up_status: string | null;
+  certificate_count: number;
+  next_action: ProgressNextAction;
+}
+
 export interface LevelUpRecommendation {
   rec_id: string;
   student_id: string;
@@ -243,6 +278,41 @@ export function getAdminStudentCertificates(studentId: string): Promise<SkillCer
     `/admin/students/${encodeURIComponent(studentId)}/certificates`,
     { method: "GET" },
   ).then((d) => d.certificates);
+}
+
+// ---------------------------------------------------------------------------
+// Progress overview
+// ---------------------------------------------------------------------------
+
+export function getAdminPathwayProgress(
+  programId: string,
+  nextAction?: ProgressNextAction,
+): Promise<StudentProgressOverview[]> {
+  const params = new URLSearchParams({ program_id: programId });
+  if (nextAction) params.set("next_action", nextAction);
+  return apiFetch<{ rows: StudentProgressOverview[] }>(
+    `/admin/pathway/progress?${params.toString()}`,
+    { method: "GET" },
+  ).then((d) => d.rows);
+}
+
+export function getCoachSessionStudentsProgress(
+  sessionId: string,
+  programId: string,
+): Promise<StudentProgressOverview[]> {
+  return apiFetch<{ rows: StudentProgressOverview[] }>(
+    `/coach/sessions/${encodeURIComponent(sessionId)}/students-progress?program_id=${encodeURIComponent(programId)}`,
+    { method: "GET" },
+  ).then((d) => d.rows);
+}
+
+export function getParentProgressSummary(
+  programId: string,
+): Promise<StudentProgressOverview[]> {
+  return apiFetch<{ rows: StudentProgressOverview[] }>(
+    `/parent/progress/summary?program_id=${encodeURIComponent(programId)}`,
+    { method: "GET" },
+  ).then((d) => d.rows);
 }
 
 // ---------------------------------------------------------------------------

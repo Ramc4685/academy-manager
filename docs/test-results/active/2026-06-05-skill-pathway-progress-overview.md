@@ -18,6 +18,7 @@ Verify shared progress summary and admin/coach/parent UI slice
 - 2026-06-06T09:09:01 main/working: Starting remaining Skill Pathway work on feat/skill-pathway-mvp. Preflight clean; P0.1 source commit 19cf2dd exists; parent SkillProgressSection selectedProgramId selector confirmed.
 - 2026-06-06T09:26:22 agent-b/working: Starting Backend BFF progress overview route implementation; reading existing route, composition, dependency, and interface test patterns before editing.
 - 2026-06-06T09:38:22 agent-b/working: Resuming backend BFF route slice after focused test failure; fixing coach overview row assertion and confirming parent missing program_id coverage before verification.
+- 2026-06-06T09:48:46 main/working: Starting frontend API helpers and unconditional coach session progress bug fix against backend BFF route contracts.
 ## Verification
 
 - No verification recorded yet.
@@ -30,6 +31,7 @@ Verify shared progress summary and admin/coach/parent UI slice
 - 2026-06-06T09:39:55: Agent B backend BFF routes: focused interface pytest passed (40 passed, 2 warnings); ruff check v2 passed; ruff format --check v2 passed.
 - 2026-06-06T09:41:16: Agent B final verification after parent 422 coverage and key-field assertions: focused interface pytest passed (40 passed, 2 warnings); ruff check v2 passed; ruff format --check v2 passed.
 - 2026-06-06T09:48:17: Backend BFF review fixes verified: focused coach/admin/parent progress route tests 41 passed; ruff check v2 passed; ruff format --check v2 passed.
+- 2026-06-06T09:50:49: Frontend API helpers and coach session progress fix verified: pnpm typecheck passed; pnpm lint passed.
 ## Reusable Lessons
 
 - None recorded yet.
