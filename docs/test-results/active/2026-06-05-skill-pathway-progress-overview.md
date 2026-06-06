@@ -19,6 +19,7 @@ Verify shared progress summary and admin/coach/parent UI slice
 - 2026-06-06T09:26:22 agent-b/working: Starting Backend BFF progress overview route implementation; reading existing route, composition, dependency, and interface test patterns before editing.
 - 2026-06-06T09:38:22 agent-b/working: Resuming backend BFF route slice after focused test failure; fixing coach overview row assertion and confirming parent missing program_id coverage before verification.
 - 2026-06-06T09:48:46 main/working: Starting frontend API helpers and unconditional coach session progress bug fix against backend BFF route contracts.
+- 2026-06-06T13:44:46 main/working: Created canonical skill pathway architecture plan: pathway levels become the only student progression source, session roster/student detail/coach flows derive from student_level_progress.
 ## Verification
 
 - No verification recorded yet.
