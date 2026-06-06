@@ -446,6 +446,7 @@ def test_parent_progress_summary_no_children_returns_empty_rows() -> None:
 
     assert response.status_code == 200, response.text
     assert response.json() == {"rows": []}
+    assert spies.get_program.calls == []
     assert spies.get_progress_summary.calls == []
 
 

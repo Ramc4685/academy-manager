@@ -296,6 +296,7 @@ class _FakeCertificateRepo:
 class _FakeListAdminStudents:
     def __init__(self, students: list[AdminStudentSummary]) -> None:
         self.students = students
+        self.pages: dict[str | None, tuple[list[AdminStudentSummary], str | None]] | None = None
         self.calls: list[dict[str, object]] = []
 
     async def execute(
@@ -307,6 +308,9 @@ class _FakeListAdminStudents:
         cursor: str | None = None,
     ) -> AdminStudentPage:
         self.calls.append({"search": search, "status": status, "limit": limit, "cursor": cursor})
+        if self.pages is not None:
+            students, next_cursor = self.pages[cursor]
+            return AdminStudentPage(students=students, next_cursor=next_cursor)
         return AdminStudentPage(students=self.students, next_cursor=None)
 
 
@@ -642,7 +646,31 @@ def test_pathway_progress_summary_returns_rows_for_active_students(env):
     assert body["rows"][1]["student_name"] == "Bob New"
     assert body["rows"][1]["next_action"] == "place_in_level"
     assert env.list_admin_students.calls == [
-        {"search": None, "status": "active", "limit": 1000, "cursor": None}
+        {"search": None, "status": "active", "limit": 200, "cursor": None}
+    ]
+
+
+def test_pathway_progress_summary_reads_all_admin_student_pages(env):
+    students = env.list_admin_students.students
+    env.list_admin_students.pages = {
+        None: ([students[0]], "page-2"),
+        "page-2": ([students[1]], None),
+    }
+    assert _place(env, "st-overview-active").status_code == 201
+
+    response = env.client.get(
+        "/api/v2/admin/pathway/progress",
+        params={"program_id": env.program_id},
+    )
+
+    assert response.status_code == 200, response.text
+    assert [row["student_id"] for row in response.json()["rows"]] == [
+        "st-overview-active",
+        "st-overview-unplaced",
+    ]
+    assert env.list_admin_students.calls == [
+        {"search": None, "status": "active", "limit": 200, "cursor": None},
+        {"search": None, "status": "active", "limit": 200, "cursor": "page-2"},
     ]
 
 

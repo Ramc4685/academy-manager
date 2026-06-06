@@ -84,11 +84,11 @@ async def get_progress_summary(
     if use_cases.student_progress is None:
         raise HTTPException(status_code=503, detail="Student progress service not configured")
 
-    program_name = await _program_name(use_cases, program_id)
     children = await use_cases.list_children_for_parent(claims.user_id)  # type: ignore[operator]
     if not children:
         return {"rows": []}
 
+    program_name = await _program_name(use_cases, program_id)
     rows = [
         await use_cases.student_progress.get_progress_summary.execute(
             ProgressSummaryRequest(

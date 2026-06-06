@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
@@ -24,6 +26,9 @@ from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
 router = APIRouter(tags=["admin-progress"])
+_PATHWAY_PROGRESS_PAGE_SIZE = 200
+_PATHWAY_PROGRESS_MAX_STUDENTS = 5000
+_PATHWAY_PROGRESS_CONCURRENCY = 20
 
 
 # ---------------------------------------------------------------------------
@@ -95,26 +100,64 @@ async def get_pathway_progress_overview(
         raise HTTPException(status_code=503, detail="Student progress service not configured")
 
     program_name = await _admin_program_name(use_cases, program_id)
-    rows = []
-    page = await use_cases.list_admin_students.execute(
-        search=None,
-        status="active",
-        limit=1000,
-        cursor=None,
+    students = await _list_active_admin_students(use_cases)
+    summaries = await _build_progress_overviews(
+        use_cases=use_cases,
+        students=students,
+        program_id=program_id,
+        program_name=program_name,
     )
-    for student in page.students:
-        summary = await use_cases.student_progress.get_progress_summary.execute(
-            ProgressSummaryRequest(
-                student_id=student.student_id,
-                student_name=student.full_name,
-                program_id=program_id,
-                program_name=program_name,
-            )
-        )
-        if next_action is None or summary.next_action == next_action:
-            rows.append(summary)
+    rows = [
+        summary
+        for summary in summaries
+        if next_action is None or summary.next_action == next_action
+    ]
 
     return {"rows": [row.model_dump(mode="json") for row in rows]}
+
+
+async def _list_active_admin_students(use_cases: AdminUseCases) -> list[object]:
+    students: list[object] = []
+    cursor: str | None = None
+    while True:
+        page = await use_cases.list_admin_students.execute(
+            search=None,
+            status="active",
+            limit=_PATHWAY_PROGRESS_PAGE_SIZE,
+            cursor=cursor,
+        )
+        students.extend(page.students)
+        if page.next_cursor is None:
+            return students
+        if len(students) >= _PATHWAY_PROGRESS_MAX_STUDENTS:
+            raise HTTPException(
+                status_code=413,
+                detail="Too many students for one progress overview request",
+            )
+        cursor = page.next_cursor
+
+
+async def _build_progress_overviews(
+    *,
+    use_cases: AdminUseCases,
+    students: list[object],
+    program_id: str,
+    program_name: str,
+) -> list[object]:
+    limiter = asyncio.Semaphore(_PATHWAY_PROGRESS_CONCURRENCY)
+
+    async def summarize(student: object) -> object:
+        async with limiter:
+            return await use_cases.student_progress.get_progress_summary.execute(
+                ProgressSummaryRequest(
+                    student_id=student.student_id,
+                    student_name=student.full_name,
+                    program_id=program_id,
+                    program_name=program_name,
+                )
+            )
+
+    return await asyncio.gather(*(summarize(student) for student in students))
 
 
 async def _admin_program_name(use_cases: AdminUseCases, program_id: str) -> str:

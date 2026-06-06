@@ -29,6 +29,7 @@ Verify shared progress summary and admin/coach/parent UI slice
 - 2026-06-06T09:39:41: Backend BFF progress routes: focused interface tests passed; full v2 tests passed; ruff check/format passed.
 - 2026-06-06T09:39:55: Agent B backend BFF routes: focused interface pytest passed (40 passed, 2 warnings); ruff check v2 passed; ruff format --check v2 passed.
 - 2026-06-06T09:41:16: Agent B final verification after parent 422 coverage and key-field assertions: focused interface pytest passed (40 passed, 2 warnings); ruff check v2 passed; ruff format --check v2 passed.
+- 2026-06-06T09:48:17: Backend BFF review fixes verified: focused coach/admin/parent progress route tests 41 passed; ruff check v2 passed; ruff format --check v2 passed.
 ## Reusable Lessons
 
 - None recorded yet.
