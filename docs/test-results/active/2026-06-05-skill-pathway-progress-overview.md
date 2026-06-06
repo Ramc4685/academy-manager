@@ -33,6 +33,7 @@ Verify shared progress summary and admin/coach/parent UI slice
 - 2026-06-06T09:48:17: Backend BFF review fixes verified: focused coach/admin/parent progress route tests 41 passed; ruff check v2 passed; ruff format --check v2 passed.
 - 2026-06-06T09:50:49: Frontend API helpers and coach session progress fix verified: pnpm typecheck passed; pnpm lint passed.
 - 2026-06-06T09:53:37: Admin progress overview UI and parent summary card verified: pnpm typecheck passed; pnpm lint passed.
+- 2026-06-06T09:56:15: Full final gate passed: backend pytest v2/tests -q 958 passed, 3 warnings; ruff check v2 passed; ruff format --check v2 passed; frontend pnpm typecheck passed; frontend pnpm lint passed. Manual browser smoke not run in this pass.
 ## Reusable Lessons
 
 - None recorded yet.
