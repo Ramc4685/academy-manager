@@ -21,6 +21,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend.v2.contexts.enrollment.domain.models import RosterEntry
+from backend.v2.contexts.student_progress.application.use_cases.get_progress_summary import (
+    ProgressSummaryRequest,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_student_progress import (
     GetStudentPassport,
 )
@@ -39,6 +43,7 @@ from backend.v2.contexts.student_progress.application.use_cases.update_skill_sta
 from backend.v2.contexts.student_progress.domain.models import (
     LevelUpRecommendation,
     StudentLevelProgress,
+    StudentProgressOverview,
     StudentSkillProgress,
     TestAttempt,
 )
@@ -543,12 +548,37 @@ def _build_real_router_app(
         recommend_level_up=_SpyUseCase(_Dumpable(student_id=STUDENT_ID)),
         create_skill_note=_SpyUseCase(_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)),
         list_skill_notes=_SpyUseCase([_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)]),
+        get_progress_summary=_SpyUseCase(
+            StudentProgressOverview(
+                student_id=STUDENT_ID,
+                student_name="Student One",
+                program_id=PROGRAM_ID,
+                program_name="Badminton Skill Pathway",
+                next_action="continue_practice",
+            )
+        ),
+        get_program=_SpyUseCase(_Dumpable(program_id=PROGRAM_ID, name="Badminton Skill Pathway")),
     )
     student_progress = SimpleNamespace(
         get_passport=spies.get_passport,
         update_skill_status=spies.update_skill_status,
         record_test_attempt=spies.record_test_attempt,
         recommend_level_up=spies.recommend_level_up,
+        get_progress_summary=spies.get_progress_summary,
+    )
+    curriculum = SimpleNamespace(
+        get_program=spies.get_program,
+    )
+
+    get_roster = _SpyUseCase(
+        [
+            RosterEntry(
+                enrollment_id="enrollment-001",
+                student_id=STUDENT_ID,
+                full_name="Student One",
+                status="active",
+            )
+        ]
     )
 
     async def active_session_enrollments_for_student(student_id: str) -> list[SimpleNamespace]:
@@ -558,7 +588,7 @@ def _build_real_router_app(
 
     use_cases = CoachUseCases(
         list_today=AsyncMock(),  # type: ignore[arg-type]
-        get_roster=AsyncMock(),  # type: ignore[arg-type]
+        get_roster=get_roster,  # type: ignore[arg-type]
         mark_attendance=AsyncMock(),  # type: ignore[arg-type]
         bulk_mark_attendance=AsyncMock(),  # type: ignore[arg-type]
         get_dashboard_metrics=AsyncMock(),  # type: ignore[arg-type]
@@ -584,6 +614,7 @@ def _build_real_router_app(
         create_skill_note=spies.create_skill_note,
         list_skill_notes=spies.list_skill_notes,
     )
+    use_cases.curriculum = curriculum
 
     app = FastAPI()
     app.include_router(coach_router, prefix="/api/v2")
@@ -599,6 +630,7 @@ def _assert_no_skill_spies_called(spies: SimpleNamespace) -> None:
     assert spies.recommend_level_up.calls == 0
     assert spies.create_skill_note.calls == 0
     assert spies.list_skill_notes.calls == 0
+    assert spies.get_progress_summary.calls == 0
 
 
 _SKILL_ENDPOINTS = [
@@ -796,3 +828,57 @@ def test_real_skill_note_create_passes_command_and_academy_id_for_assigned_coach
     assert spies.create_skill_note.args[0].coach_id == COACH_ID
     assert spies.create_skill_note.args[0].session_id == SESSION_ID
     assert spies.create_skill_note.kwargs == {"academy_id": ACADEMY_ID}
+
+
+def test_real_skill_router_session_students_progress_returns_rows_for_assigned_coach() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    client = TestClient(app)
+
+    response = client.get(
+        f"/api/v2/coach/sessions/{SESSION_ID}/students-progress",
+        params={"program_id": PROGRAM_ID},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["rows"]) == 1
+    row = body["rows"][0]
+    assert row["student_id"] == STUDENT_ID
+    assert row["student_name"] == "Student One"
+    assert row["program_id"] == PROGRAM_ID
+    assert row["program_name"] == "Badminton Skill Pathway"
+    assert row["next_action"] == "continue_practice"
+    assert row["required_skill_count"] == 0
+    assert row["certificate_count"] == 0
+    assert spies.assigned_sessions.calls == [(COACH_ID, SESSION_ID)]
+    assert spies.get_program.calls == 1
+    assert spies.get_progress_summary.calls == 1
+    assert spies.get_progress_summary.args == (
+        ProgressSummaryRequest(
+            student_id=STUDENT_ID,
+            student_name="Student One",
+            program_id=PROGRAM_ID,
+            program_name="Badminton Skill Pathway",
+        ),
+    )
+
+
+def test_real_skill_router_session_students_progress_unassigned_returns_404_before_roster() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids=set(),
+    )
+    client = TestClient(app)
+
+    response = client.get(
+        f"/api/v2/coach/sessions/{SESSION_ID}/students-progress",
+        params={"program_id": PROGRAM_ID},
+    )
+
+    assert response.status_code == 404, response.text
+    assert spies.assigned_sessions.calls == [(COACH_ID, SESSION_ID)]
+    assert spies.get_program.calls == 0
+    assert spies.get_progress_summary.calls == 0

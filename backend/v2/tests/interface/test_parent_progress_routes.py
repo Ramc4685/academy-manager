@@ -12,10 +12,14 @@ Routes covered:
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
+from backend.v2.contexts.student_progress.application.use_cases.get_progress_summary import (
+    ProgressSummaryRequest,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_student_progress import (
     GetStudentCertificates,
     GetStudentProgress,
@@ -26,6 +30,8 @@ from backend.v2.contexts.student_progress.domain.models import (
     StudentLevelProgress,
     StudentSkillProgress,
 )
+from backend.v2.interfaces.parent.deps import get_parent_use_cases
+from backend.v2.interfaces.parent.progress_skill_routes import router as progress_skill_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.ids import new_ulid
 
@@ -309,3 +315,177 @@ def test_skill_progress_summary_has_expected_fields():
     body = r.json()
     for field in ("student_id", "program_id", "total_skills", "passed_skills", "certificates"):
         assert field in body, f"missing field: {field}"
+
+
+class _Dumpable:
+    def __init__(self, **values: object) -> None:
+        self._values = values
+
+    def model_dump(self, *args: object, **kwargs: object) -> dict[str, object]:
+        return self._values
+
+
+class _CallableSpy:
+    def __init__(self, result: object) -> None:
+        self.result = result
+        self.calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    async def __call__(self, *args: object, **kwargs: object) -> object:
+        self.calls.append((args, kwargs))
+        return self.result
+
+
+class _ExecuteSpy:
+    def __init__(self, result: object) -> None:
+        self.result = result
+        self.calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    async def execute(self, *args: object, **kwargs: object) -> object:
+        self.calls.append((args, kwargs))
+        return self.result
+
+
+def _parent_claims() -> AuthClaims:
+    return AuthClaims(
+        user_id=PARENT_ID,
+        email="parent@example.com",
+        academy_id=ACADEMY_ID,
+        roles=("parent",),
+    )
+
+
+def _build_real_parent_progress_app(
+    *,
+    children: list[dict[str, object]],
+    program: object | None = None,
+) -> tuple[FastAPI, SimpleNamespace]:
+    list_children = _CallableSpy(children)
+    get_program = _ExecuteSpy(
+        program
+        if program is not None
+        else _Dumpable(program_id=PROGRAM_ID, name="Badminton Skill Pathway")
+    )
+    get_progress_summary = _ExecuteSpy(
+        _Dumpable(
+            student_id=OWN_STUDENT_ID,
+            student_name="Owned Student",
+            program_id=PROGRAM_ID,
+            program_name="Badminton Skill Pathway",
+            next_action="continue_practice",
+        )
+    )
+    use_cases = SimpleNamespace(
+        list_children_for_parent=list_children,
+        curriculum=SimpleNamespace(get_program=get_program),
+        student_progress=SimpleNamespace(get_progress_summary=get_progress_summary),
+    )
+
+    app = FastAPI()
+    app.include_router(progress_skill_router, prefix="/api/v2/parent")
+    app.dependency_overrides[get_auth_claims] = _parent_claims
+    app.dependency_overrides[get_parent_use_cases] = lambda: use_cases
+
+    return app, SimpleNamespace(
+        list_children=list_children,
+        get_program=get_program,
+        get_progress_summary=get_progress_summary,
+    )
+
+
+def test_parent_progress_summary_returns_owned_children_rows() -> None:
+    app, spies = _build_real_parent_progress_app(
+        children=[
+            {
+                "student_id": OWN_STUDENT_ID,
+                "full_name": "Owned Student",
+                "status": "active",
+            }
+        ]
+    )
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/v2/parent/progress/summary",
+        params={"program_id": PROGRAM_ID},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["rows"]) == 1
+    row = body["rows"][0]
+    assert row["student_id"] == OWN_STUDENT_ID
+    assert row["student_name"] == "Owned Student"
+    assert row["program_id"] == PROGRAM_ID
+    assert row["program_name"] == "Badminton Skill Pathway"
+    assert row["next_action"] == "continue_practice"
+    assert spies.list_children.calls == [((PARENT_ID,), {})]
+    assert spies.get_program.calls == [((PROGRAM_ID,), {})]
+    assert spies.get_progress_summary.calls == [
+        (
+            (
+                ProgressSummaryRequest(
+                    student_id=OWN_STUDENT_ID,
+                    student_name="Owned Student",
+                    program_id=PROGRAM_ID,
+                    program_name="Badminton Skill Pathway",
+                ),
+            ),
+            {},
+        )
+    ]
+
+
+def test_parent_progress_summary_no_children_returns_empty_rows() -> None:
+    app, spies = _build_real_parent_progress_app(children=[])
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/v2/parent/progress/summary",
+        params={"program_id": PROGRAM_ID},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"rows": []}
+    assert spies.get_progress_summary.calls == []
+
+
+def test_parent_progress_summary_missing_program_id_returns_422() -> None:
+    app, spies = _build_real_parent_progress_app(
+        children=[
+            {
+                "student_id": OWN_STUDENT_ID,
+                "full_name": "Owned Student",
+                "status": "active",
+            }
+        ],
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/v2/parent/progress/summary")
+
+    assert response.status_code == 422, response.text
+    assert spies.list_children.calls == []
+    assert spies.get_program.calls == []
+    assert spies.get_progress_summary.calls == []
+
+
+def test_parent_progress_summary_unknown_program_returns_404() -> None:
+    app, spies = _build_real_parent_progress_app(
+        children=[
+            {
+                "student_id": OWN_STUDENT_ID,
+                "full_name": "Owned Student",
+                "status": "active",
+            }
+        ],
+    )
+    spies.get_program.result = None
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/v2/parent/progress/summary",
+        params={"program_id": "missing-program"},
+    )
+
+    assert response.status_code == 404, response.text
+    assert spies.get_progress_summary.calls == []

@@ -10,7 +10,9 @@ from zoneinfo import ZoneInfo
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from backend.v2.composition.pathway import (
+    CurriculumComposition,
     StudentProgressComposition,
+    compose_curriculum,
     compose_student_progress,
 )
 from backend.v2.contexts.billing.application.ports import StripeGateway
@@ -164,6 +166,7 @@ class ParentComposition:
     accept_parent_waiver: AcceptParentWaiver
     get_academy_info: object  # callable accepting academy_id
     student_progress: StudentProgressComposition
+    curriculum: CurriculumComposition
 
 
 def compose_parent(
@@ -739,6 +742,7 @@ def compose_parent(
     )
 
     sp_composition = compose_student_progress(db, outbox)
+    curriculum_composition = compose_curriculum(db)
 
     return ParentComposition(
         start_application=start_app,
@@ -770,6 +774,7 @@ def compose_parent(
         accept_parent_waiver=accept_waiver,
         get_academy_info=get_academy_info,
         student_progress=sp_composition,
+        curriculum=curriculum_composition,
     )
 
 

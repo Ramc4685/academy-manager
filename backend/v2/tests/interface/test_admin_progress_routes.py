@@ -42,11 +42,18 @@ from backend.v2.contexts.curriculum.domain.models import (
     Skill,
     SkillCriterion,
 )
+from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    AdminStudentPage,
+    AdminStudentSummary,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_certificates import (
     GetStudentCertificates,
 )
 from backend.v2.contexts.student_progress.application.use_cases.get_level_up_queue import (
     GetLevelUpQueue,
+)
+from backend.v2.contexts.student_progress.application.use_cases.get_progress_summary import (
+    GetProgressSummary,
 )
 from backend.v2.contexts.student_progress.application.use_cases.get_student_progress import (
     GetStudentProgress,
@@ -286,6 +293,23 @@ class _FakeCertificateRepo:
         return [c for c in self.rows if c.student_id == student_id]
 
 
+class _FakeListAdminStudents:
+    def __init__(self, students: list[AdminStudentSummary]) -> None:
+        self.students = students
+        self.calls: list[dict[str, object]] = []
+
+    async def execute(
+        self,
+        *,
+        search: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> AdminStudentPage:
+        self.calls.append({"search": search, "status": status, "limit": limit, "cursor": cursor})
+        return AdminStudentPage(students=self.students, next_cursor=None)
+
+
 # ---------------------------------------------------------------------------
 # App / env assembly
 # ---------------------------------------------------------------------------
@@ -373,6 +397,13 @@ def env():
             certificates=cert_repo,
             skill_lookup=skill_lookup,
         ),
+        get_progress_summary=GetProgressSummary(
+            level_progress=level_repo,
+            skill_progress=skill_repo,
+            recommendations=rec_repo,
+            certificates=cert_repo,
+            skill_lookup=skill_lookup,
+        ),
         get_level_up_queue=GetLevelUpQueue(
             level_progress=level_repo,
             skill_progress=skill_repo,
@@ -392,7 +423,24 @@ def env():
         async def execute(self, student_id: str):
             return SimpleNamespace(student_id=student_id, full_name="Alice Flow")
 
+    list_admin_students = _FakeListAdminStudents(
+        [
+            AdminStudentSummary(
+                student_id="st-overview-active",
+                full_name="Alice Flow",
+                parent_id="parent-1",
+                status="active",
+            ),
+            AdminStudentSummary(
+                student_id="st-overview-unplaced",
+                full_name="Bob New",
+                parent_id="parent-2",
+                status="active",
+            ),
+        ]
+    )
     use_cases = SimpleNamespace(
+        list_admin_students=list_admin_students,
         student_progress=student_progress,
         curriculum=curriculum,
         get_admin_student=_FakeGetAdminStudent(),
@@ -402,6 +450,7 @@ def env():
     return SimpleNamespace(
         client=TestClient(app),
         use_cases=use_cases,
+        list_admin_students=list_admin_students,
         ns=student_progress,
         level_repo=level_repo,
         rec_repo=rec_repo,
@@ -571,6 +620,51 @@ def test_reject_levelup_blocks_progression_and_saves_reason(env):
     saved = _run(env.rec_repo.get(rec.rec_id))
     assert saved.status == "REJECTED"
     assert saved.rejection_reason == reason
+
+
+def test_pathway_progress_summary_returns_rows_for_active_students(env):
+    assert _place(env, "st-overview-active").status_code == 201
+
+    response = env.client.get(
+        "/api/v2/admin/pathway/progress",
+        params={"program_id": env.program_id},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [row["student_id"] for row in body["rows"]] == [
+        "st-overview-active",
+        "st-overview-unplaced",
+    ]
+    assert body["rows"][0]["student_name"] == "Alice Flow"
+    assert body["rows"][0]["program_name"] == "Badminton Skill Pathway"
+    assert body["rows"][0]["next_action"] == "continue_practice"
+    assert body["rows"][1]["student_name"] == "Bob New"
+    assert body["rows"][1]["next_action"] == "place_in_level"
+    assert env.list_admin_students.calls == [
+        {"search": None, "status": "active", "limit": 1000, "cursor": None}
+    ]
+
+
+def test_pathway_progress_summary_filters_by_next_action_after_summaries(env):
+    assert _place(env, "st-overview-active").status_code == 201
+
+    response = env.client.get(
+        "/api/v2/admin/pathway/progress",
+        params={"program_id": env.program_id, "next_action": "place_in_level"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert [row["student_id"] for row in response.json()["rows"]] == ["st-overview-unplaced"]
+
+
+def test_pathway_progress_summary_unknown_program_returns_404(env):
+    response = env.client.get(
+        "/api/v2/admin/pathway/progress",
+        params={"program_id": "missing-program"},
+    )
+
+    assert response.status_code == 404, response.text
 
 
 # ---------------------------------------------------------------------------

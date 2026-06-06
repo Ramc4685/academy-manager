@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from fastapi import Request
 
-from backend.v2.composition.pathway import StudentProgressComposition
+from backend.v2.composition.pathway import CurriculumComposition, StudentProgressComposition
 from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
     HandleWebhookEvent,
 )
@@ -64,6 +64,7 @@ class ParentUseCases:
     # the skill pathway keep working. Real parent composition always sets it;
     # the skill routes are the only consumers.
     student_progress: StudentProgressComposition | None = None
+    curriculum: CurriculumComposition | None = None
 
 
 def get_parent_use_cases(request: Request) -> ParentUseCases:

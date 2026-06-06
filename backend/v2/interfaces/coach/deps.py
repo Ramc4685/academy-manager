@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import Request
 
-from backend.v2.composition.pathway import StudentProgressComposition
+from backend.v2.composition.pathway import CurriculumComposition, StudentProgressComposition
 from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     ListSessionTypes,
     ListStudentBillingEnrollments,
@@ -79,6 +79,7 @@ class CoachUseCases:
     # working. Real coach composition always sets these; only the skill routes
     # consume them.
     student_progress: StudentProgressComposition | None = None
+    curriculum: CurriculumComposition | None = None
     create_skill_note: object | None = None  # CreateSkillNote
     list_skill_notes: object | None = None  # ListSkillNotes
 

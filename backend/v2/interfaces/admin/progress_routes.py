@@ -9,12 +9,16 @@ from backend.v2.contexts.student_progress.application.errors import (
     RecommendationNotFound,
     StudentNotPlaced,
 )
+from backend.v2.contexts.student_progress.application.use_cases.get_progress_summary import (
+    ProgressSummaryRequest,
+)
 from backend.v2.contexts.student_progress.application.use_cases.place_student import (
     PlaceStudentInLevelCommand,
 )
 from backend.v2.contexts.student_progress.application.use_cases.review_level_up import (
     ReviewLevelUpCommand,
 )
+from backend.v2.contexts.student_progress.domain.models import ProgressNextAction
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
@@ -78,6 +82,51 @@ async def get_student_progress(
     except StudentNotPlaced as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return result.model_dump() if hasattr(result, "model_dump") else result
+
+
+@router.get("/pathway/progress")
+async def get_pathway_progress_overview(
+    program_id: str = Query(...),
+    next_action: ProgressNextAction | None = Query(default=None),
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> object:
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+
+    program_name = await _admin_program_name(use_cases, program_id)
+    rows = []
+    page = await use_cases.list_admin_students.execute(
+        search=None,
+        status="active",
+        limit=1000,
+        cursor=None,
+    )
+    for student in page.students:
+        summary = await use_cases.student_progress.get_progress_summary.execute(
+            ProgressSummaryRequest(
+                student_id=student.student_id,
+                student_name=student.full_name,
+                program_id=program_id,
+                program_name=program_name,
+            )
+        )
+        if next_action is None or summary.next_action == next_action:
+            rows.append(summary)
+
+    return {"rows": [row.model_dump(mode="json") for row in rows]}
+
+
+async def _admin_program_name(use_cases: AdminUseCases, program_id: str) -> str:
+    curriculum = use_cases.curriculum
+    if curriculum is None:
+        raise HTTPException(status_code=503, detail="Curriculum service not configured")
+    program = await curriculum.get_program.execute(program_id)
+    if program is None:
+        raise HTTPException(status_code=404, detail="program not found")
+    if hasattr(program, "model_dump"):
+        return str(program.model_dump().get("name") or program_id)
+    return getattr(program, "name", None) or program_id
 
 
 @router.get("/level-up-queue")

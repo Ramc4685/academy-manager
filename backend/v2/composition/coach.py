@@ -9,7 +9,9 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from backend.v2.composition.pathway import (
+    CurriculumComposition,
     StudentProgressComposition,
+    compose_curriculum,
     compose_student_progress,
 )
 from backend.v2.contexts.billing.application.ports import StripeGateway
@@ -131,6 +133,7 @@ class CoachComposition:
     create_skill_note: CreateSkillNote
     list_skill_notes: ListSkillNotes
     student_progress: StudentProgressComposition
+    curriculum: CurriculumComposition
 
 
 class CoachAssignedSessionLookup:
@@ -349,4 +352,5 @@ def compose_coach(
         create_skill_note=CreateSkillNote(notes=skill_note_repo),
         list_skill_notes=ListSkillNotes(notes=skill_note_repo),
         student_progress=compose_student_progress(db, outbox),
+        curriculum=compose_curriculum(db),
     )
