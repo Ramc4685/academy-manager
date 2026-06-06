@@ -30,6 +30,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend.v2.contexts.curriculum.application.use_cases.manage_levels import ListLevels
+from backend.v2.contexts.curriculum.application.use_cases.manage_program import GetProgram
 from backend.v2.contexts.curriculum.application.use_cases.seed_curriculum import (
     seed_badminton_pathway,
 )
@@ -379,7 +381,22 @@ def env():
         ),
         get_certificates=GetStudentCertificates(certificates=cert_repo),
     )
-    use_cases = SimpleNamespace(student_progress=student_progress)
+    # Curriculum + student-name lookups the approve route uses to populate
+    # certificate display fields (P1.2). Backed by the same fake repos.
+    curriculum = SimpleNamespace(
+        get_program=GetProgram(programs=programs),
+        list_levels=ListLevels(levels=levels),
+    )
+
+    class _FakeGetAdminStudent:
+        async def execute(self, student_id: str):
+            return SimpleNamespace(student_id=student_id, full_name="Alice Flow")
+
+    use_cases = SimpleNamespace(
+        student_progress=student_progress,
+        curriculum=curriculum,
+        get_admin_student=_FakeGetAdminStudent(),
+    )
     app = _build_app(use_cases, _admin_claims())
 
     return SimpleNamespace(
@@ -506,6 +523,11 @@ def test_full_levelup_and_certificate_flow(env):
     assert cert["cert_id"] == approved["cert_id"]
     assert cert["level_id"] == env.level1.level_id  # cert is for the completed level
     assert cert["cert_number"]
+    # P1.2: display fields are populated from the directory/curriculum lookups,
+    # not left blank.
+    assert cert["student_name"] == "Alice Flow"
+    assert cert["level_name"] == env.level1.name
+    assert cert["program_name"] == "Badminton Skill Pathway"
 
     # Queue is empty once the recommendation has been decided.
     assert env.client.get("/api/v2/admin/level-up-queue").json()["queue"] == []
