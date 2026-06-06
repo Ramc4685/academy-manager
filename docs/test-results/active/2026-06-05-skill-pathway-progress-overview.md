@@ -32,6 +32,7 @@ Verify shared progress summary and admin/coach/parent UI slice
 - 2026-06-06T09:41:16: Agent B final verification after parent 422 coverage and key-field assertions: focused interface pytest passed (40 passed, 2 warnings); ruff check v2 passed; ruff format --check v2 passed.
 - 2026-06-06T09:48:17: Backend BFF review fixes verified: focused coach/admin/parent progress route tests 41 passed; ruff check v2 passed; ruff format --check v2 passed.
 - 2026-06-06T09:50:49: Frontend API helpers and coach session progress fix verified: pnpm typecheck passed; pnpm lint passed.
+- 2026-06-06T09:53:37: Admin progress overview UI and parent summary card verified: pnpm typecheck passed; pnpm lint passed.
 ## Reusable Lessons
 
 - None recorded yet.

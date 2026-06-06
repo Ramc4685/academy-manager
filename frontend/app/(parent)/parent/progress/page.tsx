@@ -6,12 +6,16 @@ import { listParentProgress, listParentChildren } from "@/lib/api/parent";
 import {
   getParentStudentPassport,
   getParentStudentCertificates,
+  getParentProgressSummary,
   listPrograms,
   type SkillPassportEntry,
   type SkillCertificate,
   type SkillStatus,
+  type StudentProgressOverview,
 } from "@/lib/api/curriculum";
 import { getActiveAcademyId } from "@/lib/api/client";
+
+const progressOverviewEnabled = process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
 
 const ACCENTS = ["#2563eb", "#059669", "#7c3aed", "#d97706", "#0891b2", "#db2777"];
 function noteAccent(id: string) {
@@ -216,6 +220,15 @@ function SkillProgressSection() {
   const [selectedProgramId, setSelectedProgramId] = useState("");
 
   const activeChild = children[activeChildIdx];
+  const { data: overviewRows, isLoading: loadingOverview } = useQuery({
+    queryKey: ["parent", "progress-summary", selectedProgramId],
+    queryFn: () => getParentProgressSummary(selectedProgramId),
+    enabled: progressOverviewEnabled && Boolean(selectedProgramId),
+  });
+  const activeChildOverview =
+    activeChild && overviewRows
+      ? overviewRows.find((row) => row.student_id === activeChild.student_id)
+      : undefined;
 
   if (children.length === 0 || programList.length === 0) return null;
 
@@ -269,12 +282,104 @@ function SkillProgressSection() {
       </div>
 
       {activeChild && selectedProgramId && (
-        <ChildPassportView
-          studentId={activeChild.student_id}
-          studentName={activeChild.full_name}
-          programId={selectedProgramId}
-        />
+        <>
+          {progressOverviewEnabled && (
+            <ParentProgressSummaryCard
+              overview={activeChildOverview}
+              isLoading={loadingOverview}
+              childName={activeChild.full_name}
+            />
+          )}
+          <ChildPassportView
+            studentId={activeChild.student_id}
+            studentName={activeChild.full_name}
+            programId={selectedProgramId}
+          />
+        </>
       )}
+    </div>
+  );
+}
+
+function ParentProgressSummaryCard({
+  overview,
+  isLoading,
+  childName,
+}: {
+  overview: StudentProgressOverview | undefined;
+  isLoading: boolean;
+  childName: string;
+}) {
+  if (isLoading) {
+    return <div className="h-28 animate-pulse rounded-2xl shimmer" />;
+  }
+
+  if (!overview) {
+    return (
+      <div
+        className="rounded-2xl p-4"
+        style={{ background: "white", border: "1px solid var(--rally-line)" }}
+      >
+        <p className="text-sm font-bold" style={{ color: "var(--rally-ink)" }}>
+          {childName}
+        </p>
+        <p className="mt-1 text-sm" style={{ color: "var(--rally-muted)" }}>
+          No level placement found for this program.
+        </p>
+      </div>
+    );
+  }
+
+  const totalPct =
+    overview.total_skill_count > 0
+      ? Math.round((overview.total_skills_passed / overview.total_skill_count) * 100)
+      : 0;
+
+  return (
+    <div
+      className="rounded-2xl p-4"
+      style={{ background: "white", border: "1px solid var(--rally-line)" }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-bold truncate" style={{ color: "var(--rally-ink)" }}>
+            {overview.student_name}
+          </p>
+          <p className="mt-0.5 text-xs truncate" style={{ color: "var(--rally-muted)" }}>
+            {overview.current_level_name ?? "Not placed"} · {overview.program_name}
+          </p>
+        </div>
+        <span
+          className="shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold"
+          style={{ background: "var(--rally-cobalt-soft)", color: "var(--rally-cobalt)" }}
+        >
+          {totalPct}%
+        </span>
+      </div>
+      <div className="mt-3 h-2 overflow-hidden rounded-full" style={{ background: "var(--rally-line)" }}>
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{ width: `${totalPct}%`, background: "var(--rally-cobalt)" }}
+        />
+      </div>
+      <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+        <SummaryMetric label="Mastered" value={overview.total_skills_passed} />
+        <SummaryMetric label="Learning" value={overview.in_progress_count} />
+        <SummaryMetric label="Ready" value={overview.test_ready_count} />
+      </div>
+    </div>
+  );
+}
+
+function SummaryMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-xl px-2 py-2" style={{ background: "#f8fafc" }}>
+      <p className="text-sm font-bold" style={{ color: "var(--rally-ink)" }}>
+        {value}
+      </p>
+      <p className="text-[11px]" style={{ color: "var(--rally-muted)" }}>
+        {label}
+      </p>
     </div>
   );
 }
@@ -448,4 +553,3 @@ function SkillListSkeleton() {
     </div>
   );
 }
-

@@ -14,6 +14,8 @@ import { getActiveAcademyId } from "@/lib/api/client";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 
+const progressOverviewEnabled = process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
+
 export default function AdminPathwayPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -60,13 +62,24 @@ export default function AdminPathwayPage() {
             Programs and their learning levels
           </p>
         </div>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => setShowForm((v) => !v)}
-        >
-          {showForm ? "Cancel" : "Create Program"}
-        </Button>
+        <div className="flex gap-2">
+          {progressOverviewEnabled && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => router.push("/admin/pathway/progress" as any)}
+            >
+              Progress Overview
+            </Button>
+          )}
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => setShowForm((v) => !v)}
+          >
+            {showForm ? "Cancel" : "Create Program"}
+          </Button>
+        </div>
       </div>
 
       {showForm && (
