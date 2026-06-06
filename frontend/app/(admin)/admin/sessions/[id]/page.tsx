@@ -892,7 +892,7 @@ function RosterMetrics({
         detail={overdueCount > 0 ? `${overdueCount} overdue` : dueCount > 0 ? `${dueCount} due` : "Clear"}
         tone={overdueCount > 0 ? "danger" : dueCount > 0 ? "warn" : "open"}
       />
-      <RosterMetric label="Levels" value={levelText} detail="1-10" />
+      <RosterMetric label="Roster levels" value={levelText} detail="Legacy 1-10" />
     </div>
   );
 }
@@ -954,7 +954,7 @@ function RosterTable({
         <thead>
           <tr className="border-b border-rally-line text-left">
             <Th>Name</Th>
-            <Th>Level</Th>
+            <Th>Roster Level</Th>
             <Th>Status</Th>
             <Th>Fees</Th>
             <Th>Enrolled</Th>
@@ -990,6 +990,7 @@ function RosterTable({
                     disabled={updatingLevelStudentId === e.student_id}
                     onChange={(level) => onLevelChange(e.student_id, level)}
                   />
+                  <p className="mt-1 text-[11px] text-rally-muted">Legacy 1-10</p>
                 </td>
                 <td className="px-4 py-3">
                   <Chip variant={chip.variant} label={chip.label} />
@@ -1015,6 +1016,12 @@ function RosterTable({
                     <Button variant="secondary" size="sm" onClick={() => onTransfer(e)}>
                       Move
                     </Button>
+                    <Link
+                      href={`/admin/students/${encodeURIComponent(e.student_id)}/progress` as Parameters<typeof Link>[0]["href"]}
+                      className="inline-flex min-h-9 items-center justify-center rounded-md border border-rally-line bg-white px-3 py-1.5 text-sm font-semibold text-rally-ink shadow-sm transition-colors hover:bg-neutral-50"
+                    >
+                      Pathway
+                    </Link>
                     {e.status === "active" && (
                       <Button variant="secondary" size="sm" onClick={() => onWithdraw(e)}>
                         Withdraw
