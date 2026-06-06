@@ -36,6 +36,7 @@ Verify shared progress summary and admin/coach/parent UI slice
 - 2026-06-06T09:56:15: Full final gate passed: backend pytest v2/tests -q 958 passed, 3 warnings; ruff check v2 passed; ruff format --check v2 passed; frontend pnpm typecheck passed; frontend pnpm lint passed. Manual browser smoke not run in this pass.
 - 2026-06-06T10:14:45: Admin Pathway sidebar nav fix verified: pnpm typecheck passed; pnpm lint passed.
 - 2026-06-06T10:17:31: Local stack seed now includes badminton pathway seed. Verified scripts/local_test_stack.sh seed creates 1 program, 6 levels, 33 skills, 99 criteria, 6 external refs for academy blno; pnpm typecheck passed; pnpm lint passed.
+- 2026-06-06T10:25:02: Student detail skill-pathway UI wiring verified: Training tab links to student progress management; admin student progress placement now uses program/level selectors. pnpm typecheck passed; pnpm lint passed.
 ## Reusable Lessons
 
 - None recorded yet.

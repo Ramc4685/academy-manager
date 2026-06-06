@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   getAdminStudentCertificates,
+  getFullPathway,
   getStudentProgress,
   listPrograms,
   placeStudentInLevel,
@@ -22,12 +23,27 @@ export default function AdminStudentProgressPage() {
 
   const programIdParam = searchParams.get("program_id") ?? "";
   const [selectedProgramId, setSelectedProgramId] = useState(programIdParam);
+  const [showPlaceForm, setShowPlaceForm] = useState(false);
+  const [placeProgramId, setPlaceProgramId] = useState("");
+  const [placeLevelId, setPlaceLevelId] = useState("");
 
   const { data: programs } = useQuery({
     queryKey: ["admin", "programs", academyId],
     queryFn: () => listPrograms(academyId),
     enabled: Boolean(academyId),
   });
+
+  useEffect(() => {
+    if (!selectedProgramId && programs && programs.length > 0) {
+      setSelectedProgramId(programs[0].program_id);
+    }
+  }, [programs, selectedProgramId]);
+
+  useEffect(() => {
+    if (showPlaceForm && selectedProgramId && !placeProgramId) {
+      setPlaceProgramId(selectedProgramId);
+    }
+  }, [placeProgramId, selectedProgramId, showPlaceForm]);
 
   const { data: progress, isLoading, isError } = useQuery({
     queryKey: ["admin", "student-progress", studentId, selectedProgramId],
@@ -41,9 +57,11 @@ export default function AdminStudentProgressPage() {
     enabled: Boolean(studentId),
   });
 
-  const [showPlaceForm, setShowPlaceForm] = useState(false);
-  const [placeProgramId, setPlaceProgramId] = useState("");
-  const [placeLevelId, setPlaceLevelId] = useState("");
+  const { data: placePathway } = useQuery({
+    queryKey: ["admin", "pathway", placeProgramId],
+    queryFn: () => getFullPathway(placeProgramId),
+    enabled: showPlaceForm && Boolean(placeProgramId),
+  });
 
   const placeMutation = useMutation({
     mutationFn: () =>
@@ -56,12 +74,13 @@ export default function AdminStudentProgressPage() {
         queryKey: ["admin", "student-progress", studentId],
       });
       setShowPlaceForm(false);
-      setPlaceProgramId("");
+      setSelectedProgramId(placeProgramId);
       setPlaceLevelId("");
     },
   });
 
   const programList = programs ?? [];
+  const placeLevels = placePathway?.levels.map((entry) => entry.level) ?? [];
   const certList = certificates ?? [];
 
   const passedPct =
@@ -106,24 +125,43 @@ export default function AdminStudentProgressPage() {
           <h2 className="mb-3 text-sm font-semibold">Place in Level</h2>
           <div className="space-y-3">
             <div>
-              <label className="mb-1 block text-xs font-medium text-neutral-600">Program ID</label>
-              <input
-                type="text"
+              <label className="mb-1 block text-xs font-medium text-neutral-600">Program</label>
+              <select
                 value={placeProgramId}
-                onChange={(e) => setPlaceProgramId(e.target.value)}
-                placeholder="Program ID"
+                onChange={(e) => {
+                  setPlaceProgramId(e.target.value);
+                  setPlaceLevelId("");
+                }}
                 className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-              />
+              >
+                <option value="">Select a program</option>
+                {programList.map((program) => (
+                  <option key={program.program_id} value={program.program_id}>
+                    {program.name}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-neutral-600">Level ID</label>
-              <input
-                type="text"
+              <label className="mb-1 block text-xs font-medium text-neutral-600">Level</label>
+              <select
                 value={placeLevelId}
                 onChange={(e) => setPlaceLevelId(e.target.value)}
-                placeholder="Level ID"
                 className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-              />
+                disabled={!placeProgramId || placeLevels.length === 0}
+              >
+                <option value="">Select a level</option>
+                {placeLevels.map((level) => (
+                  <option key={level.level_id} value={level.level_id}>
+                    Level {level.sequence}: {level.name}
+                  </option>
+                ))}
+              </select>
+              {placeProgramId && placeLevels.length === 0 && (
+                <p className="mt-1 text-xs text-neutral-500">
+                  No levels found for this program.
+                </p>
+              )}
             </div>
             {placeMutation.isError && (
               <p className="text-xs text-red-600">Failed to place student. Please try again.</p>

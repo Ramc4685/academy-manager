@@ -189,7 +189,10 @@ export default function AdminStudentDetailPage() {
                 }}
               />
             </Card>
-            <RecentAttendancePanel student={student} />
+            <div className="space-y-6">
+              <SkillPathwayPanel student={student} />
+              <RecentAttendancePanel student={student} />
+            </div>
           </div>
         </TabPanel>
       )}
@@ -439,6 +442,28 @@ function TrainingSnapshot({ student }: { student: AdminStudentDetail }) {
         {student.previous_experience || "No prior experience recorded."}
       </p>
     </div>
+  );
+}
+
+function SkillPathwayPanel({ student }: { student: AdminStudentDetail }) {
+  return (
+    <Card p={20}>
+      <div className="flex items-center gap-2">
+        <Activity className="size-4 text-rally-muted" aria-hidden="true" />
+        <Overline>Skill pathway</Overline>
+      </div>
+      <p className="mt-3 text-sm text-rally-muted">
+        Place this student in a curriculum level and review skill completion.
+      </p>
+      <div className="mt-4">
+        <Link
+          href={`/admin/students/${encodeURIComponent(student.student_id)}/progress` as Parameters<typeof Link>[0]["href"]}
+          className="inline-flex items-center justify-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+        >
+          Manage skill progress
+        </Link>
+      </div>
+    </Card>
   );
 }
 
