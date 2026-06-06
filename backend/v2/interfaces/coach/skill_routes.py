@@ -5,6 +5,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from backend.v2.contexts.coaching.application.use_cases.skill_notes import (
+    CreateSkillNoteCommand,
+)
 from backend.v2.contexts.student_progress.application.errors import StudentNotPlaced
 from backend.v2.contexts.student_progress.application.use_cases.get_passport import (
     GetStudentPassportCommand,
@@ -57,6 +60,31 @@ class CreateSkillNoteBody(BaseModel):
     body: str
 
 
+async def _require_assigned_to_student(
+    use_cases: CoachUseCases,
+    coach_id: str,
+    student_id: str,
+    session_id: str | None = None,
+) -> str | None:
+    enrollments = await use_cases.get_active_session_enrollments_for_student(student_id)
+    enrolled_session_ids = [
+        str(enrollment.session_id)
+        for enrollment in enrollments
+        if getattr(enrollment, "session_id", None)
+    ]
+    if not enrolled_session_ids:
+        raise HTTPException(status_code=404, detail="student not found")
+
+    candidate_session_ids = [session_id] if session_id is not None else enrolled_session_ids
+    for candidate_session_id in candidate_session_ids:
+        if candidate_session_id not in enrolled_session_ids:
+            continue
+        if await use_cases.assigned_sessions.is_coach_assigned(coach_id, candidate_session_id):
+            return candidate_session_id
+
+    raise HTTPException(status_code=404, detail="student not found")
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -66,9 +94,10 @@ class CreateSkillNoteBody(BaseModel):
 async def get_passport(
     student_id: str,
     program_id: str = Query(...),
-    _claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_persona("coach")),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
+    await _require_assigned_to_student(use_cases, claims.user_id, student_id)
     try:
         entries = await use_cases.student_progress.get_passport.execute(
             GetStudentPassportCommand(student_id=student_id, program_id=program_id)
@@ -86,6 +115,7 @@ async def update_skill_status(
     claims: AuthClaims = Depends(require_persona("coach")),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
+    await _require_assigned_to_student(use_cases, claims.user_id, student_id)
     try:
         result = await use_cases.student_progress.update_skill_status.execute(
             UpdateSkillStatusCommand(
@@ -110,6 +140,9 @@ async def record_test(
     claims: AuthClaims = Depends(require_persona("coach")),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
+    await _require_assigned_to_student(
+        use_cases, claims.user_id, student_id, session_id=body.session_id
+    )
     try:
         result = await use_cases.student_progress.record_test_attempt.execute(
             RecordTestAttemptCommand(
@@ -138,6 +171,7 @@ async def recommend_level_up(
     claims: AuthClaims = Depends(require_persona("coach")),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
+    await _require_assigned_to_student(use_cases, claims.user_id, student_id)
     try:
         rec = await use_cases.student_progress.recommend_level_up.execute(
             RecommendLevelUpCommand(
@@ -158,11 +192,16 @@ async def create_skill_note(
     claims: AuthClaims = Depends(require_persona("coach")),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
+    session_id = await _require_assigned_to_student(use_cases, claims.user_id, student_id)
     result = await use_cases.create_skill_note.execute(  # type: ignore[union-attr]
-        student_id=student_id,
-        skill_id=body.skill_id,
-        coach_id=claims.user_id,
-        body=body.body,
+        CreateSkillNoteCommand(
+            student_id=student_id,
+            skill_id=body.skill_id,
+            coach_id=claims.user_id,
+            session_id=session_id,
+            body=body.body,
+        ),
+        academy_id=claims.academy_id,
     )
     return result.model_dump() if hasattr(result, "model_dump") else result
 
@@ -171,9 +210,10 @@ async def create_skill_note(
 async def list_skill_notes(
     student_id: str,
     skill_id: str = Query(...),
-    _claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_persona("coach")),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
+    await _require_assigned_to_student(use_cases, claims.user_id, student_id)
     results = await use_cases.list_skill_notes.execute(  # type: ignore[union-attr]
         student_id=student_id,
         skill_id=skill_id,
