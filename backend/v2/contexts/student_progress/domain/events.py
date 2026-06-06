@@ -39,6 +39,26 @@ class SkillStatusUpdated(DomainEvent):
     payload: SkillStatusUpdatedPayload
 
 
+class SkillTestAttemptedPayload(BaseModel):
+    model_config = {"frozen": True}
+    attempt_id: str
+    student_id: str
+    skill_id: str
+    level_id: str
+    program_id: str
+    coach_id: str
+    attempts_count: int
+    success_count: int
+    score: float
+    passed: bool
+
+
+class SkillTestAttempted(DomainEvent):
+    name: Literal["StudentProgress.SkillTestAttempted"] = "StudentProgress.SkillTestAttempted"
+    schema_version: Literal[1] = 1
+    payload: SkillTestAttemptedPayload
+
+
 class SkillPassedPayload(BaseModel):
     model_config = {"frozen": True}
     student_id: str

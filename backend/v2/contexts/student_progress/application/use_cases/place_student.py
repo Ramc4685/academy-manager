@@ -11,11 +11,29 @@ from backend.v2.contexts.student_progress.application.ports import (
     StudentLevelProgressRepository,
     StudentSkillProgressRepository,
 )
+from backend.v2.contexts.student_progress.domain.events import (
+    StudentPlacedInLevel,
+    StudentPlacedInLevelPayload,
+)
 from backend.v2.contexts.student_progress.domain.models import (
     StudentLevelProgress,
     StudentSkillProgress,
 )
+from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
+
+
+def _resolve_academy_id() -> str:
+    """Best-effort tenant id for the emitted event.
+
+    Persisted documents are tenant-scoped by the repository regardless; this
+    only carries the academy onto the event when the tenant ContextVar is set.
+    """
+    try:
+        return current_academy_id()
+    except TenantContextUnset:
+        return ""
 
 
 class PlaceStudentInLevelCommand(BaseModel):
@@ -33,10 +51,12 @@ class PlaceStudentInLevel:
         level_progress: StudentLevelProgressRepository,
         skill_progress: StudentSkillProgressRepository,
         skill_lookup: SkillLookup,
+        outbox: Outbox | None = None,
     ) -> None:
         self._level_progress = level_progress
         self._skill_progress = skill_progress
         self._skill_lookup = skill_lookup
+        self._outbox = outbox
 
     async def execute(self, cmd: PlaceStudentInLevelCommand) -> StudentLevelProgress:
         now = datetime.now(UTC)
@@ -69,5 +89,19 @@ class PlaceStudentInLevel:
                 last_updated_by=cmd.placed_by,
             )
             await self._skill_progress.upsert(skill_prog)
+
+        if self._outbox is not None:
+            await self._outbox.append(
+                StudentPlacedInLevel(
+                    aggregate_id=progress.progress_id,
+                    academy_id=_resolve_academy_id(),
+                    payload=StudentPlacedInLevelPayload(
+                        student_id=cmd.student_id,
+                        program_id=cmd.program_id,
+                        level_id=cmd.level_id,
+                        progress_id=progress.progress_id,
+                    ),
+                )
+            )
 
         return progress
