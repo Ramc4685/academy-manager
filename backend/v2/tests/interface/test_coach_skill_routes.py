@@ -513,8 +513,10 @@ class _SpyUseCase:
 class _AssignedSessions:
     def __init__(self, assigned_session_ids: set[str]) -> None:
         self._assigned_session_ids = assigned_session_ids
+        self.calls: list[tuple[str, str]] = []
 
     async def is_coach_assigned(self, coach_id: str, session_id: str) -> bool:
+        self.calls.append((coach_id, session_id))
         return coach_id == COACH_ID and session_id in self._assigned_session_ids
 
 
@@ -532,7 +534,9 @@ def _build_real_router_app(
     student_session_ids: list[str],
     assigned_session_ids: set[str],
 ) -> tuple[FastAPI, SimpleNamespace]:
+    assigned_sessions = _AssignedSessions(assigned_session_ids)
     spies = SimpleNamespace(
+        assigned_sessions=assigned_sessions,
         get_passport=_SpyUseCase([_Dumpable(skill_id=SKILL_ID)]),
         update_skill_status=_SpyUseCase(_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)),
         record_test_attempt=_SpyUseCase(_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)),
@@ -562,7 +566,7 @@ def _build_real_router_app(
         list_lesson_plans=AsyncMock(),  # type: ignore[arg-type]
         create_progress_note=AsyncMock(),  # type: ignore[arg-type]
         list_progress_notes=AsyncMock(),  # type: ignore[arg-type]
-        assigned_sessions=_AssignedSessions(assigned_session_ids),  # type: ignore[arg-type]
+        assigned_sessions=assigned_sessions,  # type: ignore[arg-type]
         add_student_to_roster=AsyncMock(),  # type: ignore[arg-type]
         remove_student_from_roster=AsyncMock(),  # type: ignore[arg-type]
         create_feedback=AsyncMock(),  # type: ignore[arg-type]
@@ -634,6 +638,89 @@ _SKILL_ENDPOINTS = [
         None,
     ),
 ]
+
+
+_ASSIGNED_SKILL_ENDPOINTS = [
+    (
+        "GET",
+        f"/api/v2/coach/students/{STUDENT_ID}/passport?program_id={PROGRAM_ID}",
+        None,
+        200,
+        "get_passport",
+        {"passport": [{"skill_id": SKILL_ID}]},
+    ),
+    (
+        "POST",
+        f"/api/v2/coach/students/{STUDENT_ID}/skills/{SKILL_ID}/status",
+        {"level_id": LEVEL_ID, "program_id": PROGRAM_ID, "status": "PRACTICING"},
+        200,
+        "update_skill_status",
+        {"student_id": STUDENT_ID, "skill_id": SKILL_ID},
+    ),
+    (
+        "POST",
+        f"/api/v2/coach/students/{STUDENT_ID}/skills/{SKILL_ID}/test",
+        {
+            "level_id": LEVEL_ID,
+            "program_id": PROGRAM_ID,
+            "attempts_count": 3,
+            "success_count": 2,
+        },
+        201,
+        "record_test_attempt",
+        {"student_id": STUDENT_ID, "skill_id": SKILL_ID},
+    ),
+    (
+        "POST",
+        f"/api/v2/coach/students/{STUDENT_ID}/level-up",
+        {"program_id": PROGRAM_ID},
+        201,
+        "recommend_level_up",
+        {"student_id": STUDENT_ID},
+    ),
+    (
+        "POST",
+        f"/api/v2/coach/students/{STUDENT_ID}/skill-notes",
+        {"skill_id": SKILL_ID, "body": "ready for review"},
+        201,
+        "create_skill_note",
+        {"student_id": STUDENT_ID, "skill_id": SKILL_ID},
+    ),
+    (
+        "GET",
+        f"/api/v2/coach/students/{STUDENT_ID}/skill-notes?skill_id={SKILL_ID}",
+        None,
+        200,
+        "list_skill_notes",
+        {"notes": [{"student_id": STUDENT_ID, "skill_id": SKILL_ID}]},
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "json_body", "expected_status", "spy_name", "expected_json"),
+    _ASSIGNED_SKILL_ENDPOINTS,
+)
+def test_real_skill_router_allows_assigned_coach_to_access_student_skill_routes(
+    method: str,
+    path: str,
+    json_body: dict[str, object] | None,
+    expected_status: int,
+    spy_name: str,
+    expected_json: dict[str, object],
+) -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    client = TestClient(app)
+
+    response = client.request(method, path, json=json_body)
+
+    assert response.status_code == expected_status, response.text
+    assert response.json() == expected_json
+    assert getattr(spies, spy_name).calls == 1
+    assert spies.assigned_sessions.calls == [(COACH_ID, SESSION_ID)]
 
 
 @pytest.mark.parametrize(("method", "path", "json_body"), _SKILL_ENDPOINTS)
