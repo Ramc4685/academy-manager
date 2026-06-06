@@ -96,7 +96,7 @@ async def main() -> None:
             "MongoCriterionRepository",
         )
         refs = _get_repo(
-            "backend.v2.contexts.curriculum.infrastructure.mongo_external_ref_repo",
+            "backend.v2.contexts.curriculum.infrastructure.mongo_ext_ref_repo",
             "MongoExternalRefRepository",
         )
     except (ImportError, AttributeError):
@@ -120,20 +120,23 @@ async def main() -> None:
     academy_id: str = os.environ.get("ACADEMY_ID", "dev-academy-001")
     user_id: str = os.environ.get("SEED_USER_ID", "seed-script")
 
+    from backend.v2.shared.tenancy.context import tenant_scope
+
     print(
         f"[seed] Seeding badminton pathway for academy_id={academy_id!r} …",
         file=sys.stderr,
     )
 
-    program = await seed_badminton_pathway(
-        academy_id=academy_id,
-        programs=programs,
-        levels=levels,
-        skills=skills,
-        criteria=criteria,
-        refs=refs,
-        created_by=user_id,
-    )
+    with tenant_scope(academy_id):
+        program = await seed_badminton_pathway(
+            academy_id=academy_id,
+            programs=programs,
+            levels=levels,
+            skills=skills,
+            criteria=criteria,
+            refs=refs,
+            created_by=user_id,
+        )
 
     print(
         f"[seed] Done. program_id={program.program_id!r}  name={program.name!r}",
