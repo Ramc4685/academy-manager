@@ -28,6 +28,17 @@ LevelUpStatus = Literal[
 
 LevelProgressStatus = Literal["active", "completed", "withdrawn"]
 
+ProgressNextAction = Literal[
+    "place_in_level",
+    "continue_practice",
+    "record_tests",
+    "recommend_level_up",
+    "awaiting_admin_approval",
+    "certificate_issued",
+]
+
+LevelCompletionStatus = Literal["not_started", "in_progress", "test_ready", "complete"]
+
 
 class StudentLevelProgress(BaseModel):
     """Tracks which level a student is on for a program."""
@@ -147,6 +158,31 @@ class StudentProgressSummary(BaseModel):
     not_started_skills: int
     level_up_status: LevelUpStatus | None
     certificates: list[SkillCertificate]
+
+
+class StudentProgressOverview(BaseModel):
+    """Shared progress overview for persona BFF summaries."""
+
+    model_config = {"frozen": True}
+
+    student_id: str
+    student_name: str
+    program_id: str
+    program_name: str
+    current_level_id: str | None = None
+    current_level_name: str | None = None
+    current_level_sequence: int | None = None
+    required_skill_count: int = 0
+    required_skills_passed: int = 0
+    total_skill_count: int = 0
+    total_skills_passed: int = 0
+    in_progress_count: int = 0
+    not_started_count: int = 0
+    test_ready_count: int = 0
+    level_completion_status: LevelCompletionStatus = "not_started"
+    level_up_status: LevelUpStatus | None = None
+    certificate_count: int = 0
+    next_action: ProgressNextAction = "place_in_level"
 
 
 class SkillPassportEntry(BaseModel):

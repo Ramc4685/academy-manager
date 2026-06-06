@@ -47,6 +47,9 @@ from backend.v2.contexts.student_progress.application.use_cases.get_level_up_que
 from backend.v2.contexts.student_progress.application.use_cases.get_passport import (
     GetStudentPassport,
 )
+from backend.v2.contexts.student_progress.application.use_cases.get_progress_summary import (
+    GetProgressSummary,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_student_progress import (
     GetStudentProgress,
 )
@@ -153,6 +156,7 @@ class StudentProgressComposition:
     recommend_level_up: RecommendLevelUp
     review_level_up: ReviewLevelUpRecommendation
     get_student_progress: GetStudentProgress
+    get_progress_summary: GetProgressSummary
     get_passport: GetStudentPassport
     get_level_up_queue: GetLevelUpQueue
     get_certificates: GetStudentCertificates
@@ -253,6 +257,13 @@ def compose_student_progress(
             outbox=outbox,
         ),
         get_student_progress=GetStudentProgress(
+            level_progress=level_progress_repo,
+            skill_progress=skill_progress_repo,
+            recommendations=recommendation_repo,
+            certificates=certificate_repo,
+            skill_lookup=skill_lookup,
+        ),
+        get_progress_summary=GetProgressSummary(
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,
             recommendations=recommendation_repo,
