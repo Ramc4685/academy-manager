@@ -16,13 +16,28 @@ from backend.v2.contexts.student_progress.application.ports import (
 from backend.v2.contexts.student_progress.domain.errors import (
     RecommendationNotFound,
 )
+from backend.v2.contexts.student_progress.domain.events import (
+    CertificateIssued,
+    CertificateIssuedPayload,
+    StudentLeveledUp,
+    StudentLeveledUpPayload,
+)
 from backend.v2.contexts.student_progress.domain.logic import generate_cert_number
 from backend.v2.contexts.student_progress.domain.models import (
     SkillCertificate,
     StudentLevelProgress,
     StudentSkillProgress,
 )
+from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
+
+
+def _resolve_academy_id() -> str:
+    try:
+        return current_academy_id()
+    except TenantContextUnset:
+        return ""
 
 
 class ReviewLevelUpCommand(BaseModel):
@@ -54,12 +69,14 @@ class ReviewLevelUpRecommendation:
         skill_progress: StudentSkillProgressRepository,
         certificates: CertificateRepository,
         skill_lookup: SkillLookup,
+        outbox: Outbox | None = None,
     ) -> None:
         self._recs = recommendations
         self._level_progress = level_progress
         self._skill_progress = skill_progress
         self._certs = certificates
         self._skill_lookup = skill_lookup
+        self._outbox = outbox
 
     async def execute(self, cmd: ReviewLevelUpCommand) -> ReviewLevelUpResult:
         rec = await self._recs.get(cmd.rec_id)
@@ -68,6 +85,7 @@ class ReviewLevelUpRecommendation:
 
         now = datetime.now(UTC)
         cert_id: str | None = None
+        new_progress_id: str | None = None
 
         if cmd.action == "approve":
             # Complete current level progress
@@ -88,6 +106,7 @@ class ReviewLevelUpRecommendation:
                     completed_at=None,
                     created_at=now,
                 )
+                new_progress_id = new_progress.progress_id
                 await self._level_progress.save(new_progress)
 
                 # Seed NOT_STARTED skill records for new level
@@ -130,6 +149,38 @@ class ReviewLevelUpRecommendation:
             await self._certs.save(cert)
 
             await self._recs.update_status(cmd.rec_id, "APPROVED", cmd.reviewed_by, now, None)
+
+            if self._outbox is not None:
+                academy_id = _resolve_academy_id()
+                await self._outbox.append(
+                    StudentLeveledUp(
+                        aggregate_id=rec.rec_id,
+                        academy_id=academy_id,
+                        payload=StudentLeveledUpPayload(
+                            student_id=rec.student_id,
+                            from_level_id=rec.from_level_id,
+                            to_level_id=rec.to_level_id,
+                            program_id=rec.program_id,
+                            new_progress_id=new_progress_id
+                            or (active.progress_id if active is not None else ""),
+                            cert_id=cert_id,
+                        ),
+                    )
+                )
+                await self._outbox.append(
+                    CertificateIssued(
+                        aggregate_id=cert_id,
+                        academy_id=academy_id,
+                        payload=CertificateIssuedPayload(
+                            cert_id=cert_id,
+                            cert_number=cert_number,
+                            student_id=rec.student_id,
+                            level_id=rec.from_level_id,
+                            program_id=rec.program_id,
+                            issued_by=cmd.reviewed_by,
+                        ),
+                    )
+                )
 
         else:  # reject
             await self._recs.update_status(

@@ -106,17 +106,68 @@ async def approve_level_up(
 ) -> object:
     if use_cases.student_progress is None:
         raise HTTPException(status_code=503, detail="Student progress service not configured")
+
+    # Resolve certificate display fields up front (the use case stays pure — it
+    # receives the already-resolved names). The pending recommendation carries
+    # the student/program/from-level ids we need to look those names up.
+    display = await _resolve_certificate_display(rec_id, use_cases)
+
     try:
         result = await use_cases.student_progress.review_level_up.execute(
             ReviewLevelUpCommand(
                 rec_id=rec_id,
                 action="approve",
                 reviewed_by=claims.user_id,
+                student_name=display["student_name"],
+                level_name=display["level_name"],
+                program_name=display["program_name"],
+                level_sequence=display["level_sequence"],
             )
         )
     except RecommendationNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return result.model_dump()
+
+
+async def _resolve_certificate_display(rec_id: str, use_cases: AdminUseCases) -> dict[str, object]:
+    """Best-effort lookup of certificate display fields for a pending rec.
+
+    Uses only the existing admin composition surface. Falls back to blank
+    names / sequence 1 if anything is unavailable so approval never fails on a
+    cosmetic lookup.
+    """
+    from backend.v2.contexts.student_progress.application.use_cases.get_level_up_queue import (
+        GetLevelUpQueueCommand,
+    )
+
+    display: dict[str, object] = {
+        "student_name": "",
+        "level_name": "",
+        "program_name": "",
+        "level_sequence": 1,
+    }
+    if use_cases.student_progress is None:
+        return display
+
+    queue = await use_cases.student_progress.get_level_up_queue.execute(GetLevelUpQueueCommand())
+    rec = next((r for r in queue if r.rec_id == rec_id), None)
+    if rec is None:
+        return display
+
+    if use_cases.get_admin_student is not None:
+        student = await use_cases.get_admin_student.execute(rec.student_id)
+        display["student_name"] = getattr(student, "full_name", "") or ""
+
+    if use_cases.curriculum is not None:
+        program = await use_cases.curriculum.get_program.execute(rec.program_id)
+        display["program_name"] = getattr(program, "name", "") or ""
+        levels = await use_cases.curriculum.list_levels.execute(rec.program_id)
+        level = next((lv for lv in levels if lv.level_id == rec.from_level_id), None)
+        if level is not None:
+            display["level_name"] = level.name
+            display["level_sequence"] = level.sequence
+
+    return display
 
 
 @router.post("/level-up/{rec_id}/reject")

@@ -738,7 +738,7 @@ def compose_parent(
         stripe=stripe,
     )
 
-    sp_composition = compose_student_progress(db)
+    sp_composition = compose_student_progress(db, outbox)
 
     return ParentComposition(
         start_application=start_app,

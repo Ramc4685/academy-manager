@@ -2328,7 +2328,7 @@ def compose_admin(
     ).execute
 
     admin.curriculum = compose_curriculum(db)  # type: ignore[attr-defined]
-    admin.student_progress = compose_student_progress(db)  # type: ignore[attr-defined]
+    admin.student_progress = compose_student_progress(db, outbox)  # type: ignore[attr-defined]
 
     return admin
 

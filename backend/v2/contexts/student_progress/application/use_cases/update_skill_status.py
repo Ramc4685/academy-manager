@@ -15,13 +15,26 @@ from backend.v2.contexts.student_progress.domain.errors import (
     SkillAlreadyPassed,
     StudentNotPlaced,
 )
+from backend.v2.contexts.student_progress.domain.events import (
+    SkillStatusUpdated,
+    SkillStatusUpdatedPayload,
+)
 from backend.v2.contexts.student_progress.domain.models import (
     StudentSkillProgress,
 )
+from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
 
 # Statuses a coach can set (cannot set PASSED directly — use RecordTestAttempt)
 CoachSettableStatus = Literal["INTRODUCED", "LEARNING", "PRACTICING", "TEST_READY", "NEEDS_REVIEW"]
+
+
+def _resolve_academy_id() -> str:
+    try:
+        return current_academy_id()
+    except TenantContextUnset:
+        return ""
 
 
 class UpdateSkillStatusCommand(BaseModel):
@@ -40,9 +53,11 @@ class UpdateSkillStatus:
         *,
         level_progress: StudentLevelProgressRepository,
         skill_progress: StudentSkillProgressRepository,
+        outbox: Outbox | None = None,
     ) -> None:
         self._level_progress = level_progress
         self._skill_progress = skill_progress
+        self._outbox = outbox
 
     async def execute(self, cmd: UpdateSkillStatusCommand) -> StudentSkillProgress:
         # Verify student has an active level
@@ -86,4 +101,22 @@ class UpdateSkillStatus:
                     "last_updated_by": cmd.updated_by,
                 }
             )
-        return await self._skill_progress.upsert(updated)
+        persisted = await self._skill_progress.upsert(updated)
+
+        if self._outbox is not None:
+            await self._outbox.append(
+                SkillStatusUpdated(
+                    aggregate_id=persisted.skill_progress_id,
+                    academy_id=_resolve_academy_id(),
+                    payload=SkillStatusUpdatedPayload(
+                        student_id=cmd.student_id,
+                        skill_id=cmd.skill_id,
+                        level_id=cmd.level_id,
+                        old_status=existing.status if existing is not None else "NONE",
+                        new_status=cmd.new_status,
+                        updated_by=cmd.updated_by,
+                    ),
+                )
+            )
+
+        return persisted

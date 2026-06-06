@@ -16,6 +16,14 @@ from backend.v2.contexts.student_progress.domain.errors import (
     OverrideNotPermitted,
     StudentNotPlaced,
 )
+from backend.v2.contexts.student_progress.domain.events import (
+    LevelCompleted,
+    LevelCompletedPayload,
+    SkillPassed,
+    SkillPassedPayload,
+    SkillTestAttempted,
+    SkillTestAttemptedPayload,
+)
 from backend.v2.contexts.student_progress.domain.logic import (
     calculate_skill_pass,
     check_level_completion,
@@ -24,7 +32,16 @@ from backend.v2.contexts.student_progress.domain.models import (
     StudentSkillProgress,
     TestAttempt,
 )
+from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
+
+
+def _resolve_academy_id() -> str:
+    try:
+        return current_academy_id()
+    except TenantContextUnset:
+        return ""
 
 
 class RecordTestAttemptCommand(BaseModel):
@@ -61,11 +78,13 @@ class RecordTestAttempt:
         skill_progress: StudentSkillProgressRepository,
         test_attempts: TestAttemptRepository,
         skill_lookup: SkillLookup,
+        outbox: Outbox | None = None,
     ) -> None:
         self._level_progress = level_progress
         self._skill_progress = skill_progress
         self._test_attempts = test_attempts
         self._skill_lookup = skill_lookup
+        self._outbox = outbox
 
     async def execute(self, cmd: RecordTestAttemptCommand) -> RecordTestAttemptResult:
         active = await self._level_progress.get_active(cmd.student_id, cmd.program_id)
@@ -162,6 +181,55 @@ class RecordTestAttempt:
             # Include the one we just passed
             passed_ids.add(cmd.skill_id)
             level_completed = check_level_completion(required_ids, passed_ids)
+
+        if self._outbox is not None:
+            academy_id = _resolve_academy_id()
+            await self._outbox.append(
+                SkillTestAttempted(
+                    aggregate_id=attempt.attempt_id,
+                    academy_id=academy_id,
+                    payload=SkillTestAttemptedPayload(
+                        student_id=cmd.student_id,
+                        skill_id=cmd.skill_id,
+                        level_id=cmd.level_id,
+                        program_id=cmd.program_id,
+                        coach_id=cmd.coach_id,
+                        attempt_id=attempt.attempt_id,
+                        attempts_count=cmd.attempts_count,
+                        success_count=cmd.success_count,
+                        score=round(score, 2),
+                        passed=passed,
+                    ),
+                )
+            )
+            if passed:
+                await self._outbox.append(
+                    SkillPassed(
+                        aggregate_id=attempt.attempt_id,
+                        academy_id=academy_id,
+                        payload=SkillPassedPayload(
+                            student_id=cmd.student_id,
+                            skill_id=cmd.skill_id,
+                            level_id=cmd.level_id,
+                            program_id=cmd.program_id,
+                            coach_id=cmd.coach_id,
+                            attempt_id=attempt.attempt_id,
+                        ),
+                    )
+                )
+            if level_completed:
+                await self._outbox.append(
+                    LevelCompleted(
+                        aggregate_id=active.progress_id,
+                        academy_id=academy_id,
+                        payload=LevelCompletedPayload(
+                            student_id=cmd.student_id,
+                            level_id=cmd.level_id,
+                            program_id=cmd.program_id,
+                            progress_id=active.progress_id,
+                        ),
+                    )
+                )
 
         return RecordTestAttemptResult(
             attempt_id=attempt.attempt_id,

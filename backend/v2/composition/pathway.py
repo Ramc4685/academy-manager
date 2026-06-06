@@ -84,6 +84,7 @@ from backend.v2.contexts.student_progress.infrastructure.mongo_test_attempt_repo
     MongoTestAttemptRepository,
 )
 from backend.v2.shared.config import get_settings
+from backend.v2.shared.events import Outbox
 
 # ---------------------------------------------------------------------------
 # SeedBadmintonPathway callable wrapper
@@ -203,7 +204,10 @@ def compose_curriculum(db: AsyncIOMotorDatabase[Any]) -> CurriculumComposition:
     )
 
 
-def compose_student_progress(db: AsyncIOMotorDatabase[Any]) -> StudentProgressComposition:
+def compose_student_progress(
+    db: AsyncIOMotorDatabase[Any],
+    outbox: Outbox | None = None,
+) -> StudentProgressComposition:
     level_progress_repo = MongoLevelProgressRepository(db)
     skill_progress_repo = MongoSkillProgressRepository(db)
     test_attempt_repo = MongoTestAttemptRepository(db)
@@ -219,22 +223,26 @@ def compose_student_progress(db: AsyncIOMotorDatabase[Any]) -> StudentProgressCo
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,
             skill_lookup=skill_lookup,
+            outbox=outbox,
         ),
         update_skill_status=UpdateSkillStatus(
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,
+            outbox=outbox,
         ),
         record_test_attempt=RecordTestAttempt(
             test_attempts=test_attempt_repo,
             skill_progress=skill_progress_repo,
             level_progress=level_progress_repo,
             skill_lookup=skill_lookup,
+            outbox=outbox,
         ),
         recommend_level_up=RecommendLevelUp(
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,
             recommendations=recommendation_repo,
             skill_lookup=skill_lookup,
+            outbox=outbox,
         ),
         review_level_up=ReviewLevelUpRecommendation(
             recommendations=recommendation_repo,
@@ -242,6 +250,7 @@ def compose_student_progress(db: AsyncIOMotorDatabase[Any]) -> StudentProgressCo
             skill_progress=skill_progress_repo,
             certificates=certificate_repo,
             skill_lookup=skill_lookup,
+            outbox=outbox,
         ),
         get_student_progress=GetStudentProgress(
             level_progress=level_progress_repo,

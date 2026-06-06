@@ -348,5 +348,5 @@ def compose_coach(
         # Skill pathway
         create_skill_note=CreateSkillNote(notes=skill_note_repo),
         list_skill_notes=ListSkillNotes(notes=skill_note_repo),
-        student_progress=compose_student_progress(db),
+        student_progress=compose_student_progress(db, outbox),
     )

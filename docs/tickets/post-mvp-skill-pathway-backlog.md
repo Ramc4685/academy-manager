@@ -66,3 +66,33 @@ Coaches/parents/admins are not notified of level-up recommendations,
 approvals, or certificate issuance.
 **Scope:** Consume student_progress domain events; notify the relevant persona
 (in-app + email). Foundation for #6 delivery.
+
+## 9. Coach session-progress page calls an admin-only endpoint (bug)
+**Problem:** `frontend/app/(coach)/coach/sessions/[id]/progress/page.tsx` loads
+per-student progress via `getStudentProgress()`
+(`frontend/lib/api/curriculum.ts`), which targets
+`GET /admin/students/{student_id}/progress`. That route is guarded by
+`require_persona("admin")` (`backend/v2/interfaces/admin/progress_routes.py`),
+so a coach token is rejected and the per-student progress cards fail to load for
+real coaches. The session **roster** call (`GET /coach/sessions/{id}/roster`)
+is correct; only the per-student progress call is wrong-persona.
+**Scope (P2.1):** Add a coach-scoped per-student progress endpoint — e.g.
+`GET /coach/sessions/{session_id}/students-progress` (or
+`GET /coach/students/{student_id}/progress`) reusing `GetSessionRoster` +
+`GetStudentProgress`/`get_passport`, behind the **coach-assignment guard**
+(the same guard P0.1 adds to the coach skill routes), then repoint the frontend
+helper. **Deferred from this pass** to avoid colliding with the in-flight P0.1
+coach-authorization branch and the P1.1 composition wiring, both of which are
+actively editing the coach routes/composition. Promote to P1 when those land.
+
+---
+
+## Accepted contract decisions (not tickets)
+
+- **P2.2 — `InsufficientTestData`:** `RecordTestAttemptCommand` enforces
+  `attempts_count` via pydantic `Field(ge=1)`, so an empty/zero-attempt request
+  is rejected with **HTTP 422** at the schema boundary. We **accept the 422 as
+  the contract** rather than introducing a dedicated `InsufficientTestData`
+  domain error — the 422 already prevents the invalid state and a custom 4xx
+  adds no behavioural value. Revisit only if a clearer client-facing message is
+  required.

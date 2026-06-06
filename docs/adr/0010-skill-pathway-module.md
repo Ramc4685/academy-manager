@@ -14,7 +14,7 @@ Students at the academy progress through levels. The existing system does not tr
 
 2. **Two new bounded contexts.** `curriculum` owns programs/levels/skills/criteria. `student_progress` owns tracking, test attempts, certificates, and level-up workflow. Class delivery additions go into the existing `coaching` context.
 
-3. **MVP skips station-based class planning UI.** The data model is defined (`ClassPlan`, `Station`), but the UI is deferred.
+3. **MVP defers station-based class planning entirely.** Both the data model (`ClassPlan`, `Station`) and the UI are deferred — neither is built in the MVP. Tracked as post-MVP backlog item #5 (Station planner UI).
 
 4. **Certificates are JSON records.** No PDF library in MVP. A certificate document is issued after level-up approval.
 
