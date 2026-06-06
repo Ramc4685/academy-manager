@@ -279,9 +279,12 @@ smoke() {
 
 seed() {
   [ -f "${ROOT_DIR}/backend/scripts/seed_local.py" ] || die "Missing backend/scripts/seed_local.py"
+  [ -f "${ROOT_DIR}/scripts/dev/seed_badminton_pathway.py" ] || die "Missing scripts/dev/seed_badminton_pathway.py"
   [ -x "${ROOT_DIR}/backend/.venv/bin/python" ] || die "backend/.venv is missing"
   log "Seeding ${DB_NAME}"
   (cd "${ROOT_DIR}" && env MONGO_URL="${MONGO_URL}" DB_NAME="${DB_NAME}" FIREBASE_AUTH_ENABLED=true FIREBASE_PROJECT_ID="${FIREBASE_PROJECT_ID}" FIREBASE_AUTH_EMULATOR_HOST="${FIREBASE_AUTH_EMULATOR_HOST}" backend/.venv/bin/python backend/scripts/seed_local.py)
+  log "Seeding badminton skill pathway"
+  (cd "${ROOT_DIR}" && env PYTHONPATH="${ROOT_DIR}" MONGO_URL="${MONGO_URL}" DB_NAME="${DB_NAME}" ACADEMY_ID=blno backend/.venv/bin/python scripts/dev/seed_badminton_pathway.py)
 }
 
 run_tests() {
