@@ -18,7 +18,7 @@ The academy needs one trusted answer to these questions:
 - What should the coach do next in a session?
 - What should an admin or parent see when reviewing progress?
 
-Today those answers can come from different places. The session roster shows a simple level value like `1-10`, while Skill Pathway has curriculum programs, levels, skills, tests, certificates, and progress summaries. That creates operational confusion:
+Today those answers can come from different places. The session roster can show a simple legacy level value, while Skill Pathway has curriculum programs, levels, skills, tests, certificates, and progress summaries. That creates operational confusion:
 
 - Coaches cannot reliably tell whether a roster level maps to the skills they should assess.
 - Admins can change a student "level" without initializing skills or progress.
@@ -52,13 +52,15 @@ Concrete gaps found in the codebase:
 - Admin session roster reads `students.level` through enrollment/admin directory composition.
 - Admin session roster writes `students.level` through the old student update flow.
 - Student detail Training tab still displays old training level text.
-- Seeded BLNO pathway currently has six pathway levels, while the tenant workflow expects Level 1 through Level 10.
+- BLNO's current entered pathway has six curriculum levels, but older UI wording and roster fields still imply a separate numeric level system.
 - Seeded students are not guaranteed to be placed into pathway levels.
 - Some frontend flows still depend on passing raw `program_id` and `level_id` instead of letting the BFF resolve the tenant pathway context.
 
 ## Architecture Decision
 
 Skill Pathway is the only source of truth for tenant curriculum levels.
+
+Level count, level names, and level order come from the selected pathway program's `skill_levels`. They are not hardcoded as 6 or 10 in application logic. The current BLNO seeded pathway has six entered levels; another tenant program can have a different number of levels and different skills.
 
 The canonical student level is:
 
@@ -68,19 +70,22 @@ active student_level_progress row
   -> scoped by academy_id and program_id
 ```
 
+Student placement is always program-scoped. If a tenant has different programs, each program has its own levels and skills, and the student must be mapped to the program whose curriculum they are following.
+
 `students.level` is deprecated. It can be used only as a migration/backfill input or short-term read fallback. No new BFF route or UI flow should write it.
 
 ## Target Model
 
 ```txt
 Tenant
-  -> active/default Skill Program
+  -> one or more Skill Programs
     -> Skill Levels
       -> Skills
         -> Criteria / references
 
 Student
-  -> active Student Level Progress
+  -> program mapping / selected pathway program
+  -> active Student Level Progress for that program
     -> Student Skill Progress
       -> Test Attempts
         -> Level completion / recommendations / certificates
@@ -89,10 +94,10 @@ Student
 Current student level calculation:
 
 1. Resolve tenant from request context.
-2. Resolve the tenant's active/default skill program.
+2. Resolve the student's selected pathway program, or the tenant's default active program when there is only one active program.
 3. Read active `student_level_progress` for `(academy_id, student_id, program_id)`.
 4. Join `level_id` to `skill_levels`.
-5. Use `skill_levels.sequence` as the displayed level number.
+5. Use `skill_levels.sequence` as the displayed order within that program.
 6. Use `skill_levels.name` as the displayed level name.
 7. Load skills for that level.
 8. Load `student_skill_progress` for those skills.
@@ -143,14 +148,17 @@ BFF responsibilities:
 - Coach BFF must verify assignment before reading or writing a student's pathway data.
 - Parent BFF must restrict rows to children owned by the parent.
 - BFF routes should resolve default tenant program when there is one active pathway.
+- BFF routes should require explicit program selection when the tenant/student can map to multiple programs.
 - BFF routes should not expose legacy `students.level` as the primary level field.
 
 Application/domain responsibilities:
 
+- A single `student_progress` application read service should resolve canonical pathway placement and summary data. BFF routes call this service; they do not reimplement placement calculation per persona.
 - `PlaceStudentInLevel` creates active placement and initializes level skills.
 - Skill status/test workflows update `student_skill_progress` and test attempts.
 - Level completion and level-up recommendation logic stays in `student_progress`.
 - Curriculum validation stays in `curriculum`.
+- MVP read models should read live from tenant-scoped repositories. Add batching before roster/admin overview cutover if N+1 behavior appears in tests or local smoke; defer materialized/cached summaries until there is a measured need.
 
 Infrastructure responsibilities:
 
@@ -164,36 +172,47 @@ Infrastructure responsibilities:
    - Resolve the active/default skill program for the request tenant.
    - If a tenant has multiple active programs, require explicit selection.
 
-2. Canonical placement read model
+2. Program mapping policy
+   - Define where student-to-program mapping is stored or derived.
+   - Support multiple tenant programs without inventing a second level system.
+   - Treat one active program as the default only when the tenant truly has one active pathway.
+
+3. Canonical placement read model
    - Return student id, program id, level id, level sequence, level name, placement status, and next action.
    - Used by admin roster, student detail, coach progress, parent progress, and summary views.
 
-3. Admin session roster pathway enrichment
+4. Admin session roster pathway enrichment
    - Roster rows should show `pathway_level_sequence` and `pathway_level_name`.
    - Roster level metrics should derive from pathway placements.
 
-4. Pathway placement BFF route
+5. Pathway placement BFF route
    - Admin placement endpoint should call `PlaceStudentInLevel`.
    - It should validate tenant, program, level, and student.
    - It should never patch `students.level`.
 
-5. Coach pathway workflow cleanup
+6. Coach pathway workflow cleanup
    - Coach session progress and passport flows should resolve the tenant program server-side when possible.
    - Skill updates and test attempts should derive the active pathway level instead of trusting arbitrary client level ids where possible.
 
-6. Parent progress summary
+7. Parent progress summary
    - Parent views should show the same canonical level and skill completion data as admin/coach, scoped to owned children.
 
-7. Local seed/backfill
-   - Seed tenant pathway with the tenant's expected Level 1 through Level 10 structure.
+8. Local seed/backfill
+   - Seed tenant pathway with the levels and skills entered for that pathway program.
+   - Current BLNO local seed should keep its six entered curriculum levels unless the tenant curriculum is explicitly changed.
    - Place seeded students into pathway levels.
    - Initialize skill progress rows through the same placement use case.
 
-8. Tests
+9. Tests
    - Unit tests for placement read model.
    - Interface tests for admin/coach/parent BFF routes.
    - Contract tests for tenant isolation.
    - Regression tests proving old `students.level` writes are not used by pathway workflows.
+
+10. Cutover observability
+   - Report unplaced students by tenant/program.
+   - Report backfill placed/skipped/unmappable counts.
+   - Track deprecated `students.level` write attempts after the new placement route is live.
 
 ## Things To Remove Or Deprecate
 
@@ -218,7 +237,7 @@ Eventually remove:
 
 ## Implementation Plan
 
-### Phase 1: Confirm And Seed Tenant Curriculum
+### Phase 1: Confirm And Seed Tenant Curriculum As Entered
 
 Files likely affected:
 
@@ -228,10 +247,12 @@ Files likely affected:
 
 Work:
 
-1. Confirm BLNO uses Level 1 through Level 10 as the tenant pathway.
-2. Seed ten pathway levels, not a separate six-level curriculum.
-3. Keep BWF or other framework references as metadata, not as separate operational levels.
-4. Make seed idempotent.
+1. Confirm the entered BLNO pathway is the canonical curriculum for that program.
+2. Keep the current six entered pathway levels unless the admin changes the pathway itself.
+3. Do not create a separate Level 1 through Level 10 system.
+4. Each level owns its own skills; adding a level means adding skills under that level.
+5. Keep BWF or other framework references as metadata, not as separate operational levels.
+6. Make seed idempotent.
 
 Verification:
 
@@ -250,16 +271,18 @@ Files likely affected:
 
 Work:
 
-1. Add an application query that resolves the default active program for a tenant.
-2. Return a clear error if zero active programs exist.
-3. Return a clear error or require explicit selection if multiple active programs exist.
-4. Wire BFF routes to use this resolver.
+1. Add an application query that resolves the default active program for a tenant only when exactly one active program exists.
+2. Add or document the student/session-to-program mapping rule for tenants with multiple programs.
+3. Return a clear error if zero active programs exist.
+4. Require explicit program selection if multiple active programs exist and no student/session mapping resolves the program.
+5. Wire BFF routes to use this resolver.
 
 Verification:
 
 - Single active program resolves.
+- Student/session program mapping resolves when multiple programs exist.
 - No active program returns expected error.
-- Multiple active programs require explicit selection.
+- Multiple active programs without mapping require explicit selection.
 
 ### Phase 3: Add Canonical Student Pathway Placement Read Model
 
@@ -272,16 +295,39 @@ Files likely affected:
 Work:
 
 1. Add a `StudentPathwayPlacement` read model.
-2. Read active `student_level_progress`.
-3. Join level details from curriculum.
-4. Return an unplaced/next-action state when no active placement exists.
-5. Ensure it is tenant-scoped.
+2. Accept or resolve the pathway program first.
+3. Read active `student_level_progress` for that program.
+4. Join level details from curriculum.
+5. Return an unplaced/next-action state when no active placement exists.
+6. Ensure it is tenant-scoped.
 
 Verification:
 
 - Placed student returns correct sequence/name.
 - Unplaced student returns clear placement-needed state.
 - Cross-tenant data is not visible.
+
+### Phase 3.5: Backfill Before Roster Cutover
+
+Files likely affected:
+
+- `scripts/dev/backfill_student_pathway_placements.py`
+- `scripts/local_test_stack.sh`
+- `backend/v2/tests/`
+
+Work:
+
+1. Add an idempotent local/test backfill before changing roster reads.
+2. Use program mapping first. If no mapping exists and there is exactly one active program, use that program.
+3. Map old numeric `students.level` only when a configured mapping to `skill_levels.sequence` exists.
+4. Do not guess lossy mappings. If a student cannot be mapped, leave them in a placement-needed state.
+5. Produce a dry-run report with placed, skipped, and unmappable counts.
+
+Verification:
+
+- Fresh local seed creates student placements for mappable students.
+- Backfill can run twice without duplicate active placements.
+- Unmappable students are visible as placement-needed, not silently guessed.
 
 ### Phase 4: Move Admin Session Roster To Pathway Placement
 
@@ -376,11 +422,11 @@ Files likely affected:
 
 Work:
 
-1. Add idempotent local/test backfill.
-2. Map old numeric `students.level` to `skill_levels.sequence` where possible.
-3. Default unplaced local students to Level 1 if there is no legacy value.
-4. Stop exposing `level` as an editable admin student field.
-5. Keep a temporary read fallback for old records if needed.
+1. Keep the Phase 3.5 backfill script available for local/test rebuilds.
+2. Add operational reporting for unplaced students per tenant/program.
+3. Stop exposing `level` as an editable admin student field.
+4. Keep a temporary read fallback for old records if needed.
+5. Remove the fallback only after unplaced counts are known and accepted.
 
 Verification:
 
@@ -393,6 +439,8 @@ Verification:
 Risk: duplicate active placements for one student/program.
 
 Mitigation: enforce application-level deactivation of previous active rows, add repository query tests, and consider a unique active-placement constraint where supported.
+
+Implementation note: placement writes should be idempotent for the same `(academy_id, student_id, program_id, level_id)` request. Concurrent writes should leave one active placement per `(academy_id, student_id, program_id)` and return the resulting active placement.
 
 Risk: multi-program tenants.
 
@@ -449,7 +497,7 @@ Manual smoke:
 
 1. Run `scripts/local_test_stack.sh fresh`.
 2. Open `http://blno.localhost:3001/admin/pathway`.
-3. Confirm tenant curriculum shows Level 1 through Level 10.
+3. Confirm tenant curriculum shows the levels entered for that pathway program.
 4. Open an admin session roster.
 5. Confirm roster shows pathway levels, not a separate legacy level system.
 6. Change a student's pathway placement and confirm progress page reflects it.
