@@ -191,7 +191,6 @@ async def update_student(
         UpdateAdminStudentCommand(
             full_name=payload.full_name,
             date_of_birth=payload.date_of_birth,
-            level=payload.level,
             status=payload.status,
             parent_id=payload.parent_id,
             notes=payload.notes,

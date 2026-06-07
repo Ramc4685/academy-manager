@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from backend.v2.contexts.student_progress.application.errors import (
@@ -24,6 +25,7 @@ from backend.v2.contexts.student_progress.domain.models import ProgressNextActio
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
+from backend.v2.shared.ids import new_ulid
 
 router = APIRouter(tags=["admin-progress"])
 _PATHWAY_PROGRESS_PAGE_SIZE = 200
@@ -37,8 +39,9 @@ _PATHWAY_PROGRESS_CONCURRENCY = 20
 
 
 class PlaceStudentBody(BaseModel):
-    program_id: str
+    program_id: str | None = None
     level_id: str
+    reason: str | None = None
 
 
 class RejectLevelUpBody(BaseModel):
@@ -54,39 +57,116 @@ class RejectLevelUpBody(BaseModel):
 async def place_student(
     student_id: str,
     body: PlaceStudentBody,
+    request: Request,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> object:
+    return await _place_student_in_pathway(student_id, body, request, claims, use_cases)
+
+
+@router.post("/students/{student_id}/pathway-placement", status_code=201)
+async def place_student_pathway(
+    student_id: str,
+    body: PlaceStudentBody,
+    request: Request,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> object:
+    return await _place_student_in_pathway(student_id, body, request, claims, use_cases)
+
+
+async def _place_student_in_pathway(
+    student_id: str,
+    body: PlaceStudentBody,
+    request: Request,
+    claims: AuthClaims,
+    use_cases: AdminUseCases,
+) -> object:
     if use_cases.student_progress is None:
         raise HTTPException(status_code=503, detail="Student progress service not configured")
+    program_id = await _resolve_program_id(use_cases, body.program_id)
     progress = await use_cases.student_progress.place_student.execute(
         PlaceStudentInLevelCommand(
             student_id=student_id,
-            program_id=body.program_id,
+            program_id=program_id,
             level_id=body.level_id,
             placed_by=claims.user_id,
+            reason=body.reason or "admin_pathway_placement",
         )
     )
+    await _write_pathway_placement_audit(
+        request,
+        claims=claims,
+        student_id=student_id,
+        program_id=program_id,
+        level_id=body.level_id,
+        progress_id=progress.progress_id,
+        reason=body.reason or "admin_pathway_placement",
+    )
     return progress.model_dump()
+
+
+async def _write_pathway_placement_audit(
+    request: Request,
+    *,
+    claims: AuthClaims,
+    student_id: str,
+    program_id: str,
+    level_id: str,
+    progress_id: str,
+    reason: str,
+) -> None:
+    db = getattr(request.app.state, "db", None)
+    if db is None:
+        return
+    await db["audit_logs"].insert_one(
+        {
+            "audit_id": str(new_ulid()),
+            "academy_id": claims.academy_id,
+            "actor_id": claims.user_id,
+            "action": "student.pathway_placed",
+            "entity_type": "student",
+            "entity_id": student_id,
+            "reason": reason,
+            "changed_keys": ["program_id", "level_id", "progress_id"],
+            "after": {
+                "program_id": program_id,
+                "level_id": level_id,
+                "progress_id": progress_id,
+            },
+            "created_at": datetime.now(UTC),
+        }
+    )
 
 
 @router.get("/students/{student_id}/progress")
 async def get_student_progress(
     student_id: str,
-    program_id: str = Query(...),
+    program_id: str | None = Query(default=None),
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> object:
     if use_cases.student_progress is None:
         raise HTTPException(status_code=503, detail="Student progress service not configured")
+    resolved_program_id = await _resolve_program_id(use_cases, program_id)
     try:
         result = await use_cases.student_progress.get_student_progress.execute(
             student_id=student_id,
-            program_id=program_id,
+            program_id=resolved_program_id,
         )
     except StudentNotPlaced as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return result.model_dump() if hasattr(result, "model_dump") else result
+
+
+async def _resolve_program_id(use_cases: AdminUseCases, program_id: str | None) -> str:
+    if program_id:
+        return program_id
+    curriculum = use_cases.curriculum
+    if curriculum is None:
+        raise HTTPException(status_code=503, detail="Curriculum service not configured")
+    program = await curriculum.resolve_default_program.execute()
+    return program.program_id
 
 
 @router.get("/pathway/progress")

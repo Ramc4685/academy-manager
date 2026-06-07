@@ -558,6 +558,9 @@ def _build_real_router_app(
             )
         ),
         get_program=_SpyUseCase(_Dumpable(program_id=PROGRAM_ID, name="Badminton Skill Pathway")),
+        resolve_default_program=_SpyUseCase(
+            _Dumpable(program_id=PROGRAM_ID, name="Badminton Skill Pathway")
+        ),
     )
     student_progress = SimpleNamespace(
         get_passport=spies.get_passport,
@@ -568,6 +571,7 @@ def _build_real_router_app(
     )
     curriculum = SimpleNamespace(
         get_program=spies.get_program,
+        resolve_default_program=spies.resolve_default_program,
     )
 
     get_roster = _SpyUseCase(
@@ -856,6 +860,29 @@ def test_real_skill_router_session_students_progress_returns_rows_for_assigned_c
     assert spies.assigned_sessions.calls == [(COACH_ID, SESSION_ID)]
     assert spies.get_program.calls == 1
     assert spies.get_progress_summary.calls == 1
+    assert spies.get_progress_summary.args == (
+        ProgressSummaryRequest(
+            student_id=STUDENT_ID,
+            student_name="Student One",
+            program_id=PROGRAM_ID,
+            program_name="Badminton Skill Pathway",
+        ),
+    )
+
+
+def test_real_skill_router_session_students_progress_without_program_uses_default_program() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    client = TestClient(app)
+
+    response = client.get(f"/api/v2/coach/sessions/{SESSION_ID}/students-progress")
+
+    assert response.status_code == 200, response.text
+    assert len(response.json()["rows"]) == 1
+    assert spies.resolve_default_program.calls == 1
+    assert spies.get_program.calls == 1
     assert spies.get_progress_summary.args == (
         ProgressSummaryRequest(
             student_id=STUDENT_ID,

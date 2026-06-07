@@ -365,6 +365,9 @@ def _build_real_parent_progress_app(
         if program is not None
         else _Dumpable(program_id=PROGRAM_ID, name="Badminton Skill Pathway")
     )
+    resolve_default_program = _ExecuteSpy(
+        _Dumpable(program_id=PROGRAM_ID, name="Badminton Skill Pathway")
+    )
     get_progress_summary = _ExecuteSpy(
         _Dumpable(
             student_id=OWN_STUDENT_ID,
@@ -376,7 +379,10 @@ def _build_real_parent_progress_app(
     )
     use_cases = SimpleNamespace(
         list_children_for_parent=list_children,
-        curriculum=SimpleNamespace(get_program=get_program),
+        curriculum=SimpleNamespace(
+            get_program=get_program,
+            resolve_default_program=resolve_default_program,
+        ),
         student_progress=SimpleNamespace(get_progress_summary=get_progress_summary),
     )
 
@@ -388,6 +394,7 @@ def _build_real_parent_progress_app(
     return app, SimpleNamespace(
         list_children=list_children,
         get_program=get_program,
+        resolve_default_program=resolve_default_program,
         get_progress_summary=get_progress_summary,
     )
 
@@ -450,7 +457,7 @@ def test_parent_progress_summary_no_children_returns_empty_rows() -> None:
     assert spies.get_progress_summary.calls == []
 
 
-def test_parent_progress_summary_missing_program_id_returns_422() -> None:
+def test_parent_progress_summary_missing_program_id_uses_default_program() -> None:
     app, spies = _build_real_parent_progress_app(
         children=[
             {
@@ -464,10 +471,24 @@ def test_parent_progress_summary_missing_program_id_returns_422() -> None:
 
     response = client.get("/api/v2/parent/progress/summary")
 
-    assert response.status_code == 422, response.text
-    assert spies.list_children.calls == []
-    assert spies.get_program.calls == []
-    assert spies.get_progress_summary.calls == []
+    assert response.status_code == 200, response.text
+    assert len(response.json()["rows"]) == 1
+    assert spies.list_children.calls == [((PARENT_ID,), {})]
+    assert spies.resolve_default_program.calls == [((), {})]
+    assert spies.get_program.calls == [((PROGRAM_ID,), {})]
+    assert spies.get_progress_summary.calls == [
+        (
+            (
+                ProgressSummaryRequest(
+                    student_id=OWN_STUDENT_ID,
+                    student_name="Owned Student",
+                    program_id=PROGRAM_ID,
+                    program_name="Badminton Skill Pathway",
+                ),
+            ),
+            {},
+        )
+    ]
 
 
 def test_parent_progress_summary_unknown_program_returns_404() -> None:

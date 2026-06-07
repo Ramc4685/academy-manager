@@ -22,6 +22,7 @@ class CoachOccurrenceForDate(BaseModel):
     roster_session_id: str
     title: str
     location: str
+    timezone: str | None = None
     start_at: datetime
     end_at: datetime
 
@@ -89,6 +90,7 @@ async def _hydrate_occurrences(
                 roster_session_id=roster_session_id,
                 title=session.title if session else "Session",
                 location=session.location if session else "",
+                timezone=session.timezone if session else None,
                 start_at=occurrence.start_at,
                 end_at=occurrence.end_at,
             )

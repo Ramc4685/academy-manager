@@ -10,6 +10,16 @@ class ProgramNotFound(DomainError):
     status_code = 404
 
 
+class NoActiveProgram(DomainError):
+    code = "Curriculum.NoActiveProgram"
+    status_code = 404
+
+
+class MultipleActivePrograms(DomainError):
+    code = "Curriculum.MultipleActivePrograms"
+    status_code = 409
+
+
 class LevelNotFound(DomainError):
     code = "Curriculum.LevelNotFound"
     status_code = 404

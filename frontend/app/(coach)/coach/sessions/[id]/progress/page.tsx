@@ -15,9 +15,9 @@ export default function CoachSessionProgressPage() {
   const programId = searchParams.get("program_id") ?? "";
 
   const { data: rows, isLoading, isError } = useQuery({
-    queryKey: ["coach", "session-progress", sessionId, programId],
-    queryFn: () => getCoachSessionStudentsProgress(sessionId, programId),
-    enabled: Boolean(sessionId) && Boolean(programId),
+    queryKey: ["coach", "session-progress", sessionId, programId || "default"],
+    queryFn: () => getCoachSessionStudentsProgress(sessionId, programId || undefined),
+    enabled: Boolean(sessionId),
     staleTime: 2 * 60 * 1000,
   });
 
@@ -32,19 +32,13 @@ export default function CoachSessionProgressPage() {
         </p>
       </div>
 
-      {!programId && (
-        <p role="alert" className="rounded-md bg-amber-50 p-3 text-sm text-amber-800">
-          Select a program before viewing skill progress.
-        </p>
-      )}
-
       {isError && (
         <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
           Could not load session progress.
         </p>
       )}
 
-      {!programId ? null : isLoading ? (
+      {isLoading ? (
         <SkeletonList />
       ) : progressRows.length === 0 ? (
         <p className="text-sm text-neutral-500">No students on roster.</p>

@@ -31,7 +31,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.v2.contexts.curriculum.application.use_cases.manage_levels import ListLevels
-from backend.v2.contexts.curriculum.application.use_cases.manage_program import GetProgram
+from backend.v2.contexts.curriculum.application.use_cases.manage_program import (
+    GetProgram,
+    ResolveDefaultActiveProgram,
+)
 from backend.v2.contexts.curriculum.application.use_cases.seed_curriculum import (
     seed_badminton_pathway,
 )
@@ -420,6 +423,7 @@ def env():
     # certificate display fields (P1.2). Backed by the same fake repos.
     curriculum = SimpleNamespace(
         get_program=GetProgram(programs=programs),
+        resolve_default_program=ResolveDefaultActiveProgram(programs=programs),
         list_levels=ListLevels(levels=levels),
     )
 
@@ -478,6 +482,10 @@ def _get_progress(env, student_id: str):
         f"/api/v2/admin/students/{student_id}/progress",
         params={"program_id": env.program_id},
     )
+
+
+def _get_default_progress(env, student_id: str):
+    return env.client.get(f"/api/v2/admin/students/{student_id}/progress")
 
 
 def _pass_all_level1_skills(env, student_id: str, coach_id: str = "coach-1") -> list:
@@ -584,6 +592,63 @@ def test_full_levelup_and_certificate_flow(env):
 
     # Queue is empty once the recommendation has been decided.
     assert env.client.get("/api/v2/admin/level-up-queue").json()["queue"] == []
+
+
+def test_place_student_resolves_default_program_when_only_one_active_program(env):
+    student_id = "st-default-program"
+
+    placed = env.client.post(
+        f"/api/v2/admin/students/{student_id}/place-in-level",
+        json={"level_id": env.level1.level_id},
+    )
+
+    assert placed.status_code == 201, placed.text
+    body = placed.json()
+    assert body["program_id"] == env.program_id
+    assert body["level_id"] == env.level1.level_id
+
+
+def test_pathway_placement_route_places_student_with_default_program(env):
+    student_id = "st-pathway-route"
+
+    placed = env.client.post(
+        f"/api/v2/admin/students/{student_id}/pathway-placement",
+        json={"level_id": env.level1.level_id},
+    )
+
+    assert placed.status_code == 201, placed.text
+    assert placed.json()["program_id"] == env.program_id
+    assert placed.json()["level_id"] == env.level1.level_id
+
+
+def test_get_student_progress_resolves_default_program_when_omitted(env):
+    student_id = "st-default-progress"
+    assert _place(env, student_id).status_code == 201
+
+    response = _get_default_progress(env, student_id)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["program_id"] == env.program_id
+    assert response.json()["current_level_id"] == env.level1.level_id
+
+
+def test_repeated_same_level_placement_returns_existing_active_placement(env):
+    student_id = "st-repeat-placement"
+
+    first = _place(env, student_id)
+    second = _place(env, student_id)
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert second.json()["progress_id"] == first.json()["progress_id"]
+    active_rows = [
+        row
+        for row in env.level_repo.rows
+        if row.student_id == student_id
+        and row.program_id == env.program_id
+        and row.status == "active"
+    ]
+    assert len(active_rows) == 1
 
 
 # ---------------------------------------------------------------------------

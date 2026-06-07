@@ -94,12 +94,17 @@ export async function apiFetch<T>(
     return parseResponse<T>(r.clone());
   }
 
-  const promise = fetch(url, { ...requestInit, headers });
+  // Abort hung requests after 20 s so loading states surface as errors
+  // instead of spinning forever when the backend is slow to respond.
+  const controller = new AbortController();
+  const abortTimer = setTimeout(() => controller.abort(), 20_000);
+  const promise = fetch(url, { ...requestInit, headers, signal: controller.signal });
   if (dedupKey) inflight.set(dedupKey, promise);
   try {
     const res = await promise;
     return await parseResponse<T>(res);
   } finally {
+    clearTimeout(abortTimer);
     if (dedupKey) inflight.delete(dedupKey);
   }
 }

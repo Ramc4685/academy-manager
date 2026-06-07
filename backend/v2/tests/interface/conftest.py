@@ -341,6 +341,7 @@ def seed():
             end_at=datetime(2026, 5, 16, 10, 30, tzinfo=UTC),
             capacity=8,
             status="scheduled",
+            timezone="America/Chicago",
         ),
         Session(
             session_id="s-today-2",
@@ -352,6 +353,7 @@ def seed():
             end_at=datetime(2026, 5, 16, 19, 30, tzinfo=UTC),
             capacity=10,
             status="scheduled",
+            timezone="America/Chicago",
         ),
         Session(
             session_id="s-other-coach",
@@ -363,6 +365,7 @@ def seed():
             end_at=datetime(2026, 5, 16, 13, 0, tzinfo=UTC),
             capacity=4,
             status="scheduled",
+            timezone="America/Chicago",
         ),
     ]
     enrollments = [

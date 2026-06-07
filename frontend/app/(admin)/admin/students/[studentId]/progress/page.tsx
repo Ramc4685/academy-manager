@@ -11,6 +11,7 @@ import {
   listPrograms,
   placeStudentInLevel,
 } from "@/lib/api/curriculum";
+import { getAdminStudent } from "@/lib/api/v2/students";
 import { getActiveAcademyId } from "@/lib/api/client";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
@@ -26,6 +27,12 @@ export default function AdminStudentProgressPage() {
   const [showPlaceForm, setShowPlaceForm] = useState(false);
   const [placeProgramId, setPlaceProgramId] = useState("");
   const [placeLevelId, setPlaceLevelId] = useState("");
+
+  const { data: student } = useQuery({
+    queryKey: ["admin", "student-detail", studentId],
+    queryFn: () => getAdminStudent(studentId),
+    enabled: Boolean(studentId),
+  });
 
   const { data: programs } = useQuery({
     queryKey: ["admin", "programs", academyId],
@@ -92,8 +99,10 @@ export default function AdminStudentProgressPage() {
     <section data-testid="admin-student-progress" className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Student Progress</h1>
-          <p className="mt-0.5 text-sm text-neutral-500">ID: {studentId}</p>
+          <h1 className="text-2xl font-semibold">
+            {student?.full_name ?? "Student Progress"}
+          </h1>
+          <p className="mt-0.5 text-sm text-neutral-500">Skill pathway progress</p>
         </div>
         <Button variant="primary" size="sm" onClick={() => setShowPlaceForm((v) => !v)}>
           {showPlaceForm ? "Cancel" : "Place in Level"}

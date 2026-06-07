@@ -21,6 +21,7 @@ import {
   createAdminSession,
   updateAdminSession,
   deleteAdminSession,
+  getAdminAcademy,
   type AdminUserView,
   type AdminSessionView,
   type CreateSessionRequest,
@@ -46,7 +47,7 @@ function formatTimeRange(start: string, end: string): string {
   return `${fmt(start)} – ${fmt(end)}`;
 }
 
-const DEFAULT_TIMEZONE = "America/Chicago";
+const DEFAULT_TIMEZONE = "UTC";
 const DAYS_OF_WEEK = [
   { value: "Mon", label: "Monday" },
   { value: "Tue", label: "Tuesday" },
@@ -595,6 +596,20 @@ function CreateSessionDialog({
 }) {
   const [form, setForm] = useState<CreateSessionRequest>(EMPTY_FORM);
   const [error, setError] = useState<string | null>(null);
+
+  const academyQuery = useQuery({
+    queryKey: queryKeys.admin.academy(),
+    queryFn: getAdminAcademy,
+    staleTime: 10 * 60 * 1000,
+  });
+
+  useEffect(() => {
+    if (open) {
+      setForm({ ...EMPTY_FORM, timezone: academyQuery.data?.timezone ?? "UTC" });
+      setError(null);
+    }
+  }, [open, academyQuery.data?.timezone]);
+
   const coachesQuery = useQuery({
     queryKey: queryKeys.admin.users("coach"),
     queryFn: () => listAdminUsers("coach"),

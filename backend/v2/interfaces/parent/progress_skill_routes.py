@@ -45,17 +45,34 @@ async def _program_name(use_cases: ParentUseCases, program_id: str) -> str:
     return getattr(program, "name", None) or program_id
 
 
+async def _resolve_program_id(use_cases: ParentUseCases, program_id: str | None) -> str:
+    if program_id:
+        return program_id
+    curriculum = use_cases.curriculum
+    if curriculum is None:
+        raise HTTPException(status_code=503, detail="Curriculum service not configured")
+    try:
+        program = await curriculum.resolve_default_program.execute()
+    except Exception as exc:
+        status_code = getattr(exc, "status_code", 409)
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    if hasattr(program, "model_dump"):
+        return str(program.model_dump()["program_id"])
+    return program.program_id
+
+
 @router.get("/students/{student_id}/skill-progress")
 async def get_skill_progress(
     student_id: str,
-    program_id: str = Query(...),
+    program_id: str | None = Query(None),
     claims: AuthClaims = Depends(require_persona("parent")),
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> object:
     await _verify_child_ownership(claims.user_id, student_id, use_cases)
+    resolved_program_id = await _resolve_program_id(use_cases, program_id)
     try:
         entries = await use_cases.student_progress.get_passport.execute(
-            GetStudentPassportCommand(student_id=student_id, program_id=program_id)
+            GetStudentPassportCommand(student_id=student_id, program_id=resolved_program_id)
         )
     except StudentNotPlaced as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -77,7 +94,7 @@ async def get_certificates(
 
 @router.get("/progress/summary")
 async def get_progress_summary(
-    program_id: str = Query(...),
+    program_id: str | None = Query(None),
     claims: AuthClaims = Depends(require_persona("parent")),
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> object:
@@ -88,6 +105,7 @@ async def get_progress_summary(
     if not children:
         return {"rows": []}
 
+    program_id = await _resolve_program_id(use_cases, program_id)
     program_name = await _program_name(use_cases, program_id)
     rows = [
         await use_cases.student_progress.get_progress_summary.execute(

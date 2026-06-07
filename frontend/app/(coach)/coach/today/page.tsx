@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getCoachToday } from "@/lib/api/coach";
 import { queryKeys } from "@/lib/query/keys";
 import { reportVitals } from "@/lib/pwa/vitals";
+import { formatSessionTimeRange } from "@/lib/time/session-time";
 
 function todayISO(offset = 0): string {
   const d = new Date();
@@ -80,7 +81,7 @@ export default function CoachTodayPage() {
                   <p className="text-sm text-neutral-500">{s.location}</p>
                 </div>
                 <p className="text-sm tabular-nums text-neutral-600 dark:text-neutral-300">
-                  {formatTimeRange(s.start_at, s.end_at)}
+                  {formatSessionTimeRange(s.start_at, s.end_at, s.timezone)}
                 </p>
               </div>
               <p className="mt-2 text-sm text-neutral-500">
@@ -139,15 +140,6 @@ function DatePicker({
       </button>
     </div>
   );
-}
-
-function formatTimeRange(start: string, end: string): string {
-  const fmt = (s: string) =>
-    new Date(s).toLocaleTimeString(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  return `${fmt(start)} – ${fmt(end)}`;
 }
 
 function SessionSkeleton() {

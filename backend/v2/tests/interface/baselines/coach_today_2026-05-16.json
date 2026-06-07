@@ -6,6 +6,7 @@
       "occurrence_id": "occ-today-1",
       "title": "Junior A",
       "location": "Court 1",
+      "timezone": "America/Chicago",
       "start_at": "2026-05-16T09:00:00Z",
       "end_at": "2026-05-16T10:30:00Z",
       "roster": [
@@ -18,6 +19,7 @@
       "occurrence_id": "occ-today-2",
       "title": "Adult B",
       "location": "Court 2",
+      "timezone": "America/Chicago",
       "start_at": "2026-05-16T18:00:00Z",
       "end_at": "2026-05-16T19:30:00Z",
       "roster": []

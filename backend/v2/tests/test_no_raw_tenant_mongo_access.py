@@ -91,6 +91,10 @@ APPROVED_COMPOSITION_EXCEPTIONS = {
         "Transitional Parent BFF read-model composition while Agent A/B replace "
         "default-academy wiring with request tenant claims."
     ),
+    Path("interfaces/admin/progress_routes.py"): (
+        "Transitional: fire-and-forget audit_logs.insert_one written inline as a "
+        "pathway-placement side effect until an AuditLogRepository is introduced."
+    ),
 }
 
 

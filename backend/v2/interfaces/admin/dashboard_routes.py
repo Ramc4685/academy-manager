@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from typing import Any
 
@@ -27,7 +28,26 @@ async def dashboard_attention(
 
     items: list[AdminAttentionItemView] = []
 
-    dues_rows = await use_cases.list_dues_followup()  # type: ignore[operator]
+    blocked_resume_reader = getattr(use_cases, "list_blocked_scheduled_resume_actions", None)
+
+    # Fan out all independent data fetches concurrently.
+    if callable(blocked_resume_reader):
+        dues_rows, pause_requests, blocked_resumes, waiver_report, sessions = await asyncio.gather(
+            use_cases.list_dues_followup(),  # type: ignore[operator]
+            use_cases.list_admin_pause_requests.execute(),
+            blocked_resume_reader(),
+            use_cases.list_admin_waivers.execute(),
+            use_cases.list_admin_sessions(date.today()),  # type: ignore[operator]
+        )
+    else:
+        dues_rows, pause_requests, waiver_report, sessions = await asyncio.gather(
+            use_cases.list_dues_followup(),  # type: ignore[operator]
+            use_cases.list_admin_pause_requests.execute(),
+            use_cases.list_admin_waivers.execute(),
+            use_cases.list_admin_sessions(date.today()),  # type: ignore[operator]
+        )
+        blocked_resumes: list[Any] = []
+
     overdue_count = len([row for row in dues_rows if int(row.get("total_due_cents") or 0) > 0])
     if overdue_count:
         items.append(
@@ -42,7 +62,6 @@ async def dashboard_attention(
             )
         )
 
-    pause_requests = await use_cases.list_admin_pause_requests.execute()
     pending_pauses = [row for row in pause_requests if getattr(row, "status", "") == "pending"]
     if pending_pauses:
         items.append(
@@ -57,27 +76,23 @@ async def dashboard_attention(
             )
         )
 
-    blocked_resume_reader = getattr(use_cases, "list_blocked_scheduled_resume_actions", None)
-    if callable(blocked_resume_reader):
-        blocked_resumes = await blocked_resume_reader()
-        if blocked_resumes:
-            count = len(blocked_resumes)
-            items.append(
-                AdminAttentionItemView(
-                    attention_id="scheduled-resume-blocked",
-                    kind="scheduled_resume_blocked",
-                    title="Scheduled resume blocked",
-                    detail=(
-                        f"{count} enrollment{'s' if count != 1 else ''} could not resume "
-                        "because the class is full."
-                    ),
-                    severity="medium",
-                    href="/admin/pause-requests",
-                    count=count,
-                )
+    if blocked_resumes:
+        count = len(blocked_resumes)
+        items.append(
+            AdminAttentionItemView(
+                attention_id="scheduled-resume-blocked",
+                kind="scheduled_resume_blocked",
+                title="Scheduled resume blocked",
+                detail=(
+                    f"{count} enrollment{'s' if count != 1 else ''} could not resume "
+                    "because the class is full."
+                ),
+                severity="medium",
+                href="/admin/pause-requests",
+                count=count,
             )
+        )
 
-    waiver_report = await use_cases.list_admin_waivers.execute()
     waiver_count = waiver_report.summary.pending_count + waiver_report.summary.outdated_count
     if waiver_count:
         items.append(
@@ -95,9 +110,7 @@ async def dashboard_attention(
             )
         )
 
-    sessions = await use_cases.list_admin_sessions(date.today())  # type: ignore[operator]
-    pressured = [_session_pressure(s) for s in sessions]
-    pressured = [p for p in pressured if p is not None]
+    pressured = [p for p in (_session_pressure(s) for s in sessions) if p is not None]
     if pressured:
         items.append(
             AdminAttentionItemView(

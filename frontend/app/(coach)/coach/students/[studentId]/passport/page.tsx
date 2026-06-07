@@ -55,30 +55,22 @@ export default function CoachStudentPassportPage() {
   const programId = searchParams.get("program_id") ?? "";
   const queryClient = useQueryClient();
 
-  const passportKey = ["coach", "passport", studentId, programId];
+  const passportKey = ["coach", "passport", studentId, programId || "default"];
 
   const { data, isLoading, isError } = useQuery({
     queryKey: passportKey,
-    queryFn: () => getStudentPassport(studentId, programId),
-    enabled: Boolean(studentId) && Boolean(programId),
+    queryFn: () => getStudentPassport(studentId, programId || undefined),
+    enabled: Boolean(studentId),
   });
 
   const levelUpMutation = useMutation({
-    mutationFn: () => recommendLevelUp(studentId, programId),
+    mutationFn: () => recommendLevelUp(studentId, programId || undefined),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: passportKey }),
   });
 
   const skills = data ?? [];
   const requiredSkills = skills.filter((s) => s.is_required);
   const allRequiredPassed = requiredSkills.length > 0 && requiredSkills.every((s) => s.status === "PASSED");
-
-  if (!programId) {
-    return (
-      <p className="text-sm text-neutral-500 p-4">
-        No program selected. Add ?program_id= to the URL.
-      </p>
-    );
-  }
 
   return (
     <section data-testid="coach-student-passport" className="space-y-4">
@@ -148,17 +140,23 @@ function SkillCard({
   const [notes, setNotes] = useState("");
 
   const statusMutation = useMutation({
-    mutationFn: (status: SkillStatus) => updateSkillStatus(studentId, entry.skill_id, status),
+    mutationFn: (status: SkillStatus) =>
+      updateSkillStatus(studentId, entry.skill_id, {
+        program_id: entry.program_id,
+        level_id: entry.level_id,
+        status,
+      }),
     onSuccess: onUpdated,
   });
 
   const testMutation = useMutation({
     mutationFn: () =>
       recordTestAttempt(studentId, entry.skill_id, {
+        program_id: entry.program_id,
+        level_id: entry.level_id,
         attempts_count: parseInt(attemptsCount, 10),
         success_count: parseInt(successCount, 10),
         notes: notes.trim() || undefined,
-        scoring_type: "binary",
       }),
     onSuccess: () => {
       onUpdated();

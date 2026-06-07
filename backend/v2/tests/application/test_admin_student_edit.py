@@ -61,7 +61,6 @@ class FakeStudentEditor:
             update={
                 "full_name": command.full_name or self.student.full_name,
                 "date_of_birth": command.date_of_birth,
-                "level": command.level,
                 "status": command.status or self.student.status,
                 "notes": command.notes,
                 "previous_experience": command.previous_experience,
@@ -124,7 +123,6 @@ async def test_update_admin_student_forwards_safe_fields_with_audit_context() ->
     command = UpdateAdminStudentCommand(
         full_name="Alice Rao",
         date_of_birth=date(2016, 4, 5),
-        level="intermediate",
         status="paused",
         notes="Prefers evening classes",
         previous_experience="Tournament prep",

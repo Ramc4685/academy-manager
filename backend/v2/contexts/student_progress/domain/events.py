@@ -15,6 +15,8 @@ class StudentPlacedInLevelPayload(BaseModel):
     program_id: str
     level_id: str
     progress_id: str
+    placed_by: str
+    reason: str
 
 
 class StudentPlacedInLevel(DomainEvent):

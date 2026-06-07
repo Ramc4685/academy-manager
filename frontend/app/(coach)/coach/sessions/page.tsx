@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { getCoachSchedule, type CoachScheduleEntry } from "@/lib/api/coach";
 import { queryKeys } from "@/lib/query/keys";
+import { formatSessionTimeRange, sessionDateKey } from "@/lib/time/session-time";
 
 export default function CoachSessionsPage() {
   const { data, isLoading, isError, refetch } = useQuery({
@@ -55,7 +56,9 @@ export default function CoachSessionsPage() {
                 <li key={session.occurrence_id}>
                   <Link
                     href={
-                      `/coach/sessions/${encodeURIComponent(session.occurrence_id)}?date=${localDateKey(session.start_at)}` as Parameters<
+                      // Raw UTC date matches backend _day_bounds_utc; sessionDateKey
+                      // is only for grouping headers (evening sessions cross UTC midnight).
+                      `/coach/sessions/${encodeURIComponent(session.occurrence_id)}?date=${session.start_at.slice(0, 10)}` as Parameters<
                         typeof Link
                       >[0]["href"]
                     }
@@ -69,7 +72,7 @@ export default function CoachSessionsPage() {
                         </p>
                       </div>
                       <p className="text-sm tabular-nums text-neutral-600 dark:text-neutral-300">
-                        {formatTimeRange(session.start_at, session.end_at)}
+                        {formatSessionTimeRange(session.start_at, session.end_at, session.timezone)}
                       </p>
                     </div>
                   </Link>
@@ -81,23 +84,6 @@ export default function CoachSessionsPage() {
       </div>
     </section>
   );
-}
-
-function formatTimeRange(start: string, end: string): string {
-  const fmt = (value: string) =>
-    new Date(value).toLocaleTimeString(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  return `${fmt(start)} – ${fmt(end)}`;
-}
-
-function localDateKey(iso: string): string {
-  const date = new Date(iso);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
 }
 
 function formatDateLabel(key: string): string {
@@ -114,7 +100,7 @@ function groupByDate(
 ): { label: string; sessions: CoachScheduleEntry[] }[] {
   const map = new Map<string, CoachScheduleEntry[]>();
   for (const s of sessions) {
-    const key = localDateKey(s.start_at);
+    const key = sessionDateKey(s.start_at, s.timezone);
     const bucket = map.get(key) ?? [];
     bucket.push(s);
     map.set(key, bucket);

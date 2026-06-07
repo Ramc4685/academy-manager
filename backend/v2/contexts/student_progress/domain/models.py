@@ -185,12 +185,33 @@ class StudentProgressOverview(BaseModel):
     next_action: ProgressNextAction = "place_in_level"
 
 
+class StudentPathwayPlacement(BaseModel):
+    """Canonical read model for one student's placement in one pathway program."""
+
+    model_config = {"frozen": True}
+
+    student_id: str
+    program_id: str
+    progress_id: str | None = None
+    level_id: str | None = None
+    level_sequence: int | None = None
+    level_name: str | None = None
+    placement_status: str = "unplaced"
+    next_action: ProgressNextAction = "place_in_level"
+    skills_total: int = 0
+    skills_completed: int = 0
+    skills_ready_for_test: int = 0
+    completion_percentage: int = 0
+
+
 class SkillPassportEntry(BaseModel):
     """One skill entry in the student's passport view."""
 
     model_config = {"frozen": True}
 
     skill_id: str
+    level_id: str
+    program_id: str
     skill_name: str
     skill_description: str
     sequence: int

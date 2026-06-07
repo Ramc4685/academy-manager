@@ -67,6 +67,8 @@ class GetStudentPassport:
             entries.append(
                 SkillPassportEntry(
                     skill_id=skill_id,
+                    level_id=active.level_id,
+                    program_id=cmd.program_id,
                     skill_name=getattr(skill, "name", ""),
                     skill_description=getattr(skill, "description", ""),
                     sequence=getattr(skill, "sequence", 0),

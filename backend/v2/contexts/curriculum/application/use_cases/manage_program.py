@@ -7,6 +7,10 @@ from datetime import UTC, datetime
 from pydantic import BaseModel
 
 from backend.v2.contexts.curriculum.application.ports import ProgramRepository
+from backend.v2.contexts.curriculum.domain.errors import (
+    MultipleActivePrograms,
+    NoActiveProgram,
+)
 from backend.v2.contexts.curriculum.domain.models import Program
 from backend.v2.shared.ids import new_ulid
 
@@ -46,6 +50,21 @@ class ListPrograms:
 
     async def execute(self) -> list[Program]:
         return await self._programs.list_active()
+
+
+class ResolveDefaultActiveProgram:
+    def __init__(self, *, programs: ProgramRepository) -> None:
+        self._programs = programs
+
+    async def execute(self) -> Program:
+        active = await self._programs.list_active()
+        if not active:
+            raise NoActiveProgram("No active pathway program exists for this tenant")
+        if len(active) > 1:
+            raise MultipleActivePrograms(
+                "Multiple active pathway programs exist; pass program_id explicitly"
+            )
+        return active[0]
 
 
 class GetProgram:

@@ -38,7 +38,6 @@ class StudentDetailStub:
                 active_session_count=1,
                 attendance_rate=None,
                 dues_status="current",
-                level=command.level,
                 notes=command.notes,
             )
         return AdminStudentDetail(
@@ -201,13 +200,13 @@ def test_admin_can_get_and_update_student_detail(admin_client):
         "period": "2026-06",
         "payment_id": "pay-1",
         "session_id": "sess-1",
+        "session_title": None,
     }
 
     updated = admin_client.patch(
         "/api/v2/admin/students/st-1",
         json={
             "full_name": "Alice Rao",
-            "level": "intermediate",
             "status": "paused",
             "notes": "Prefers evenings",
             "reason": "Parent requested correction",

@@ -47,22 +47,35 @@ class MongoParentWaiverRepository(TenantScopedRepository):
         return None
 
     async def list_active_students_for_parent(self, parent_id: str) -> list[ParentWaiverStudent]:
+        # Split $or into two indexed queries — parent_user_id has no compound index,
+        # so a single $or causes a collection scan on cold loads.
         academy_id = current_academy_id()
-        cursor = self._db["students"].find(
-            {
-                "academy_id": academy_id,
-                "$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}],
-                "is_deleted": {"$ne": True},
-                "status": "active",
-            },
-            sort=[("full_name", 1)],
-        )
+        base_filter = {"academy_id": academy_id, "is_deleted": {"$ne": True}, "status": "active"}
+        docs_a = [
+            doc
+            async for doc in self._db["students"].find(
+                {**base_filter, "parent_id": parent_id}, sort=[("full_name", 1)]
+            )
+        ]
+        docs_b = [
+            doc
+            async for doc in self._db["students"].find(
+                {**base_filter, "parent_user_id": parent_id}, sort=[("full_name", 1)]
+            )
+        ]
+        seen: set[str] = set()
+        merged: list[Any] = []
+        for doc in docs_a + docs_b:
+            k = str(doc.get("_id"))
+            if k not in seen:
+                seen.add(k)
+                merged.append(doc)
         return [
             ParentWaiverStudent(
                 student_id=str(doc.get("student_id") or doc.get("_id")),
                 student_name=self._student_name(doc),
             )
-            async for doc in cursor
+            for doc in merged
         ]
 
     async def latest_signatures_for_students(

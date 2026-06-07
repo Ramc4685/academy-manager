@@ -23,6 +23,7 @@ class CoachSession(BaseModel):
     occurrence_id: str
     title: str
     location: str
+    timezone: str | None = None
     start_at: datetime
     end_at: datetime
     roster: list[CoachRosterEntry]
@@ -201,6 +202,7 @@ class CoachScheduleEntry(BaseModel):
     occurrence_id: str
     title: str
     location: str
+    timezone: str | None = None
     start_at: datetime
     end_at: datetime
 

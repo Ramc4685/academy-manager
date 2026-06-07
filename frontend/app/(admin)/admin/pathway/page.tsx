@@ -7,7 +7,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createProgram,
   listPrograms,
-  seedBadminton,
   type Program,
 } from "@/lib/api/curriculum";
 import { getActiveAcademyId } from "@/lib/api/client";
@@ -41,13 +40,6 @@ export default function AdminPathwayPage() {
       setFormName("");
       setFormSport("");
       setFormDescription("");
-    },
-  });
-
-  const seedMutation = useMutation({
-    mutationFn: (programId: string) => seedBadminton(programId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["admin", "programs"] });
     },
   });
 
@@ -158,11 +150,9 @@ export default function AdminPathwayPage() {
             <ProgramCard
               key={program.program_id}
               program={program}
-              seedPending={seedMutation.isPending}
               onViewPathway={() =>
                 router.push(`/admin/pathway/${encodeURIComponent(program.program_id)}` as any)
               }
-              onSeedBadminton={() => seedMutation.mutate(program.program_id)}
             />
           ))}
         </div>
@@ -173,14 +163,10 @@ export default function AdminPathwayPage() {
 
 function ProgramCard({
   program,
-  seedPending,
   onViewPathway,
-  onSeedBadminton,
 }: {
   program: Program;
-  seedPending: boolean;
   onViewPathway: () => void;
-  onSeedBadminton: () => void;
 }) {
   return (
     <Card p={20}>
@@ -200,14 +186,6 @@ function ProgramCard({
           )}
         </div>
         <div className="flex shrink-0 gap-2">
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={seedPending}
-            onClick={onSeedBadminton}
-          >
-            Seed Badminton
-          </Button>
           <Button variant="primary" size="sm" onClick={onViewPathway}>
             View Pathway
           </Button>

@@ -77,6 +77,7 @@ class AdminStudentCurrentPaymentSummaryView(BaseModel):
     period: str | None = None
     payment_id: str | None = None
     session_id: str | None = None
+    session_title: str | None = None
 
 
 class AdminStudentRecentAttendanceView(BaseModel):
@@ -114,7 +115,6 @@ class AdminStudentList(BaseModel):
 class UpdateAdminStudentRequest(BaseModel):
     full_name: str | None = Field(default=None, min_length=1, max_length=120)
     date_of_birth: date | None = None
-    level: str | None = Field(default=None, max_length=80)
     status: str | None = Field(default=None, max_length=32)
     parent_id: str | None = Field(default=None, min_length=1, max_length=120)
     notes: str | None = Field(default=None, max_length=2000)
@@ -372,6 +372,16 @@ class AdminEnrollmentView(BaseModel):
     status: str
     enrolled_at: datetime | None = None
     level: str | None = None
+    pathway_program_id: str | None = None
+    pathway_level_id: str | None = None
+    pathway_level_sequence: int | None = None
+    pathway_level_name: str | None = None
+    pathway_placement_status: str = "unplaced"
+    pathway_skills_total: int = 0
+    pathway_skills_completed: int = 0
+    pathway_skills_ready_for_test: int = 0
+    pathway_completion_percentage: int = 0
+    pathway_next_action: str = "place_in_level"
     dues_status: Literal["current", "due", "overdue"] = "current"
 
 

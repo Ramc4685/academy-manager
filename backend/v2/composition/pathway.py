@@ -18,6 +18,7 @@ from backend.v2.contexts.curriculum.application.use_cases.manage_program import 
     CreateProgram,
     GetProgram,
     ListPrograms,
+    ResolveDefaultActiveProgram,
 )
 from backend.v2.contexts.curriculum.application.use_cases.manage_refs import AddExternalReference
 from backend.v2.contexts.curriculum.application.use_cases.manage_skills import (
@@ -46,6 +47,9 @@ from backend.v2.contexts.student_progress.application.use_cases.get_level_up_que
 )
 from backend.v2.contexts.student_progress.application.use_cases.get_passport import (
     GetStudentPassport,
+)
+from backend.v2.contexts.student_progress.application.use_cases.get_pathway_placement import (
+    GetStudentPathwayPlacement,
 )
 from backend.v2.contexts.student_progress.application.use_cases.get_progress_summary import (
     GetProgressSummary,
@@ -135,6 +139,7 @@ class SeedBadmintonPathway:
 class CurriculumComposition:
     create_program: CreateProgram
     list_programs: ListPrograms
+    resolve_default_program: ResolveDefaultActiveProgram
     get_program: GetProgram
     create_level: CreateLevel
     update_level: UpdateLevel
@@ -155,6 +160,7 @@ class StudentProgressComposition:
     record_test_attempt: RecordTestAttempt
     recommend_level_up: RecommendLevelUp
     review_level_up: ReviewLevelUpRecommendation
+    get_pathway_placement: GetStudentPathwayPlacement
     get_student_progress: GetStudentProgress
     get_progress_summary: GetProgressSummary
     get_passport: GetStudentPassport
@@ -187,6 +193,7 @@ def compose_curriculum(db: AsyncIOMotorDatabase[Any]) -> CurriculumComposition:
     return CurriculumComposition(
         create_program=CreateProgram(programs=programs_repo),
         list_programs=ListPrograms(programs=programs_repo),
+        resolve_default_program=ResolveDefaultActiveProgram(programs=programs_repo),
         get_program=GetProgram(programs=programs_repo),
         create_level=CreateLevel(programs=programs_repo, levels=levels_repo),
         update_level=UpdateLevel(levels=levels_repo),
@@ -255,6 +262,11 @@ def compose_student_progress(
             certificates=certificate_repo,
             skill_lookup=skill_lookup,
             outbox=outbox,
+        ),
+        get_pathway_placement=GetStudentPathwayPlacement(
+            level_progress=level_progress_repo,
+            skill_progress=skill_progress_repo,
+            skill_lookup=skill_lookup,
         ),
         get_student_progress=GetStudentProgress(
             level_progress=level_progress_repo,

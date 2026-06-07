@@ -74,6 +74,10 @@ Student placement is always program-scoped. If a tenant has different programs, 
 
 `students.level` is deprecated. It can be used only as a migration/backfill input or short-term read fallback. No new BFF route or UI flow should write it.
 
+**Domain invariant:** for a given `(academy_id, student_id, program_id)` there is at most one active placement at any time. `PlaceStudentInLevel` owns enforcement. This is not an implementation detail — it is the correctness rule the entire progression model depends on.
+
+**Level resolution ownership:** the student level resolution algorithm is a single application service in `student_progress` (with a curriculum read port). All three persona BFFs call this service; they do not reimplement it. Duplication here produces subtly divergent definitions of "what level is this student" across personas.
+
 ## Target Model
 
 ```txt
@@ -103,6 +107,26 @@ Current student level calculation:
 8. Load `student_skill_progress` for those skills.
 9. Mark the level complete when required skills are passed according to pathway rules.
 10. Use recommendation and approval workflows to move the student to the next level.
+
+**Current level vs completed level:** these are distinct concepts. Define them explicitly:
+
+```txt
+current_level         = active placement (where the student is working now)
+highest_completed_level = latest placement with status COMPLETED
+```
+
+Different screens may mean different things. Define it here so views don't disagree.
+
+**Placement status:** level completion is persisted state, not a value recalculated on every request. The active placement carries an explicit status field:
+
+```txt
+ACTIVE           — student is working at this level
+READY_FOR_REVIEW — all required skills passed; awaiting recommendation
+COMPLETED        — level approved and closed
+PROMOTED         — student moved to next level (terminal state for this placement row)
+```
+
+UI reads `placement.status`. Nothing recomputes completion at render time.
 
 ## BFF And DDD Boundaries
 
@@ -210,9 +234,31 @@ Infrastructure responsibilities:
    - Regression tests proving old `students.level` writes are not used by pathway workflows.
 
 10. Cutover observability
-   - Report unplaced students by tenant/program.
-   - Report backfill placed/skipped/unmappable counts.
-   - Track deprecated `students.level` write attempts after the new placement route is live.
+    - Report unplaced students by tenant/program.
+    - Report backfill placed/skipped/unmappable counts.
+    - Track deprecated `students.level` write attempts after the new placement route is live.
+
+11. StudentPlacement aggregate
+    - Make `StudentPlacement` a first-class aggregate separate from `student_level_progress` as progress data.
+    - Fields: `academy_id`, `student_id`, `program_id`, `active_level_id`, `status`, `placed_at`, `placed_by`.
+    - This is the write model. `student_level_progress` holds the skill-level progress data it owns.
+    - Separating them makes placement history, manual overrides, and audit trail natural rather than forced into a progress record.
+
+12. Placement audit trail
+    - Every placement change records: `student_id`, `old_level_id`, `new_level_id`, `actor_id`, `actor_role`, `timestamp`, `reason`.
+    - Reason values: `manual_admin`, `coach_recommendation`, `automatic_promotion`, `backfill_migration`.
+    - Backfill entries must use `reason: backfill_migration` so they are distinguishable from real placements.
+    - Without this, there is no way to answer "why did this student jump from Level 2 to Level 5?" a year later.
+
+13. Skill summary in placement read model
+    - Include `skills_total`, `skills_completed`, `skills_ready_for_test`, `completion_percentage` in `StudentPathwayPlacement`.
+    - Every current consumer (roster, coach view, parent view, student detail) needs these fields.
+    - Without them every consumer immediately issues a second query — guaranteed N+1.
+
+14. Placement idempotency design
+    - Unique partial index on `(academy_id, student_id, program_id)` where `status = ACTIVE`.
+    - On duplicate-key error: surface a conflict response, not a silent swallow.
+    - The POST placement endpoint is idempotent for `(student_id, level_id)` — the same call twice returns the existing active placement.
 
 ## Things To Remove Or Deprecate
 
@@ -334,7 +380,7 @@ Verification:
 Files likely affected:
 
 - `backend/v2/composition/admin.py`
-- `backend/v2/interfaces/admin/session_routes.py`
+- `backend/v2/interfaces/admin/session_routes.py` (**net-new file** — does not exist yet; create it)
 - `backend/v2/tests/interface/`
 - `frontend/app/(admin)/admin/sessions/[id]/page.tsx`
 - `frontend/lib/api/admin.ts`
@@ -354,6 +400,8 @@ Verification:
 - `students.level` is not patched.
 
 ### Phase 5: Replace Roster Level Write Path
+
+Note: `PlaceStudentInLevel` use case already exists (`place_student.py`, wired in composition and tests). This phase adds the BFF endpoint that exposes it.
 
 Files likely affected:
 
@@ -378,11 +426,23 @@ Work:
 4. Initialize skill progress for the new level.
 5. Invalidate roster and progress queries in frontend.
 
+Promotion transaction boundary — all steps are atomic, all-or-nothing:
+
+```txt
+1. Deactivate current placement (set status = COMPLETED)
+2. Create new active placement for next level
+3. Initialize skill progress rows for the new level
+4. Write audit trail entry (actor_id, reason, timestamp)
+```
+
+If step 3 fails, steps 1–2 roll back. This prevents a student being left with no active placement or with a new placement but no initialized skills.
+
 Verification:
 
 - Placement endpoint creates active pathway placement.
 - Skill progress rows are initialized.
 - Old `students.level` does not change.
+- Concurrent duplicate calls return the existing active placement, not a conflict error.
 
 ### Phase 6: Update Student, Coach, And Parent Screens
 
@@ -462,6 +522,18 @@ Risk: seeded or historical students have no pathway placement.
 
 Mitigation: show a placement-needed state, add admin placement action, and provide idempotent local/test backfill.
 
+Risk: backfill mapping is lossy when legacy integer levels outnumber pathway levels.
+
+Mitigation: define an explicit integer → `skill_levels.sequence` mapping table before running backfill. Values that cannot be mapped leave the student in placement-needed state. Never guess a level. Document the mapping table in the backfill script.
+
+Risk: dual-read window inconsistency during Phase 4–7 cutover.
+
+Mitigation: some students will resolve via pathway, others fall back to `students.level` until backfill completes. Coaches see mixed semantics on the same roster. Use a per-tenant cutover flag and the unplaced-student count metric from item 10. Remove the fallback only after the count reaches zero.
+
+Risk: incorrect backfill placement propagates into issued certificates.
+
+Mitigation: run backfill in dry-run mode with a manual review step before committing. Record all backfill placements as `reason: backfill_migration` in the audit trail so they are distinguishable from real admin placements and can be reviewed or corrected.
+
 ## Acceptance Criteria
 
 - There is one visible student level system in the UI: Skill Pathway.
@@ -473,6 +545,8 @@ Mitigation: show a placement-needed state, add admin placement action, and provi
 - Local seed creates tenant pathway levels and places students so the UI is usable after `scripts/local_test_stack.sh fresh`.
 - Backend tests cover BFF persona scoping and tenant isolation.
 - Frontend typecheck and lint pass.
+- Zero unplaced students after `scripts/local_test_stack.sh fresh` (backfill succeeded).
+- All placement changes have an audit trail entry with actor, reason, and timestamp.
 
 ## Verification Plan
 

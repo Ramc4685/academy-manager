@@ -6,8 +6,16 @@ import { useQuery } from "@tanstack/react-query";
 import { getCurrentUser } from "@/lib/api/me";
 
 export default function MessagesPage() {
-  const { data } = useQuery({ queryKey: ["me", "messages"], queryFn: getCurrentUser });
+  const { data, isLoading } = useQuery({ queryKey: ["me", "messages"], queryFn: getCurrentUser });
   const isAdmin = data?.roles.includes("admin") ?? false;
+
+  if (isLoading) {
+    return (
+      <main className="mx-auto max-w-2xl px-4 py-10">
+        <p className="text-sm text-neutral-500">Loading…</p>
+      </main>
+    );
+  }
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-10">

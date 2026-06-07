@@ -7,13 +7,11 @@ import {
   getParentStudentPassport,
   getParentStudentCertificates,
   getParentProgressSummary,
-  listPrograms,
   type SkillPassportEntry,
   type SkillCertificate,
   type SkillStatus,
   type StudentProgressOverview,
 } from "@/lib/api/curriculum";
-import { getActiveAcademyId } from "@/lib/api/client";
 
 const progressOverviewEnabled = process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
 
@@ -200,37 +198,27 @@ function skillStatusStyle(status: SkillStatus): { background: string; color: str
 }
 
 function SkillProgressSection() {
-  const academyId = getActiveAcademyId() ?? "";
-
   const { data: childrenData } = useQuery({
     queryKey: ["parent", "children"],
     queryFn: listParentChildren,
   });
 
-  const { data: programs } = useQuery({
-    queryKey: ["parent", "programs", academyId],
-    queryFn: () => listPrograms(academyId),
-    enabled: Boolean(academyId),
-  });
-
   const children = childrenData?.children ?? [];
-  const programList = programs ?? [];
 
   const [activeChildIdx, setActiveChildIdx] = useState(0);
-  const [selectedProgramId, setSelectedProgramId] = useState("");
 
   const activeChild = children[activeChildIdx];
   const { data: overviewRows, isLoading: loadingOverview } = useQuery({
-    queryKey: ["parent", "progress-summary", selectedProgramId],
-    queryFn: () => getParentProgressSummary(selectedProgramId),
-    enabled: progressOverviewEnabled && Boolean(selectedProgramId),
+    queryKey: ["parent", "progress-summary", "default"],
+    queryFn: () => getParentProgressSummary(),
+    enabled: progressOverviewEnabled,
   });
   const activeChildOverview =
     activeChild && overviewRows
       ? overviewRows.find((row) => row.student_id === activeChild.student_id)
       : undefined;
 
-  if (children.length === 0 || programList.length === 0) return null;
+  if (children.length === 0) return null;
 
   return (
     <div className="mt-8 space-y-4 animate-fade-in-up">
@@ -264,24 +252,7 @@ function SkillProgressSection() {
         </div>
       )}
 
-      {/* Program selector */}
-      <div>
-        <select
-          value={selectedProgramId}
-          onChange={(e) => setSelectedProgramId(e.target.value)}
-          className="rounded-xl border px-3 py-2 text-sm focus:outline-none"
-          style={{ borderColor: "var(--rally-line)", color: "var(--rally-ink)", background: "white" }}
-        >
-          <option value="">Select a program</option>
-          {programList.map((p) => (
-            <option key={p.program_id} value={p.program_id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {activeChild && selectedProgramId && (
+      {activeChild && (
         <>
           {progressOverviewEnabled && (
             <ParentProgressSummaryCard
@@ -293,7 +264,6 @@ function SkillProgressSection() {
           <ChildPassportView
             studentId={activeChild.student_id}
             studentName={activeChild.full_name}
-            programId={selectedProgramId}
           />
         </>
       )}
@@ -387,16 +357,14 @@ function SummaryMetric({ label, value }: { label: string; value: number }) {
 function ChildPassportView({
   studentId,
   studentName,
-  programId,
 }: {
   studentId: string;
   studentName: string;
-  programId: string;
 }) {
   const { data: passport, isLoading: loadingPassport } = useQuery({
-    queryKey: ["parent", "passport", studentId, programId],
-    queryFn: () => getParentStudentPassport(studentId, programId),
-    enabled: Boolean(studentId) && Boolean(programId),
+    queryKey: ["parent", "passport", studentId, "default"],
+    queryFn: () => getParentStudentPassport(studentId),
+    enabled: Boolean(studentId),
   });
 
   const { data: certs, isLoading: loadingCerts } = useQuery({

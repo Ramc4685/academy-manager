@@ -63,13 +63,65 @@ test.describe("local authenticated QA defect coverage", () => {
     await page.goto("/coach/sessions");
     await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
   });
+
+  test("seeded coach can open an upcoming session from schedule", async ({ page }) => {
+    test.slow();
+    await signIn(page, COACH_EMAIL, COACH_PASSWORD, /\/coach\/today/);
+
+    await page.goto("/coach/sessions");
+    const firstSession = page.locator('a[href*="/coach/sessions/"]').first();
+    await expect(firstSession).toContainText("6:00 PM");
+    await expect(firstSession).not.toContainText("11:00 PM");
+    await firstSession.click();
+
+    await expect(page.getByTestId("session-detail")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("Session not found.")).toHaveCount(0);
+  });
+
+  test("seeded coach blocker routes render content instead of stale loading states", async ({
+    page,
+  }) => {
+    test.slow();
+    await signIn(page, COACH_EMAIL, COACH_PASSWORD, /\/coach\/today/);
+    await page.goto("/coach/dashboard");
+    await expect(page.getByTestId("coach-dashboard")).toBeVisible();
+    await expect(page.getByText("Coach dashboard")).toBeVisible();
+    await page.goto("/coach/today");
+    await expect(page.getByTestId("coach-today")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
+  });
+
+  test("seeded admin blocker routes render content instead of stale loading states", async ({
+    page,
+  }) => {
+    test.slow();
+    await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD, /\/admin/);
+    await page.goto("/admin/pause-requests");
+    await expect(page.getByTestId("admin-pause-requests")).toBeVisible();
+    await page.goto("/admin/users");
+    await expect(page.getByTestId("admin-users")).toBeVisible();
+    await page.goto("/messages");
+    await expect(page.getByRole("heading", { name: "Messages" })).toBeVisible();
+  });
+
+  test("seeded parent blocker routes render content instead of stale loading states", async ({
+    page,
+  }) => {
+    test.slow();
+    await signIn(page, PARENT_EMAIL, PARENT_PASSWORD, /\/parent\/payments/);
+    await page.goto("/parent/waivers");
+    await expect(page.getByTestId("parent-waivers")).toBeVisible();
+    await page.goto("/parent/attendance");
+    await expect(page.getByTestId("parent-attendance")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Attendance" })).toBeVisible();
+  });
 });
 
 async function signIn(page: Page, email: string, password: string, homeUrl: RegExp) {
-  await page.goto("/login");
-  await expect(page.getByTestId("login-submit")).toBeEnabled();
+  await page.goto("/login", { waitUntil: "domcontentloaded", timeout: 90_000 });
+  await expect(page.getByTestId("login-submit")).toBeEnabled({ timeout: 90_000 });
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByTestId("login-submit").click();
-  await expect(page).toHaveURL(homeUrl);
+  await expect(page).toHaveURL(homeUrl, { timeout: 90_000 });
 }

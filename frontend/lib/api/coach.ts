@@ -22,6 +22,7 @@ export interface CoachSession {
   occurrence_id: string;
   title: string;
   location: string;
+  timezone?: string | null;
   start_at: string;
   end_at: string;
   roster: CoachRosterEntry[];
@@ -82,6 +83,7 @@ export interface CoachScheduleEntry {
   occurrence_id: string;
   title: string;
   location: string;
+  timezone?: string | null;
   start_at: string;
   end_at: string;
 }

@@ -296,6 +296,8 @@ async def test_place_student_emits_student_placed_event() -> None:
     assert event.payload.program_id == "program-1"
     assert event.payload.level_id == "level-1"
     assert event.payload.progress_id == result.progress_id
+    assert event.payload.placed_by == "admin-1"
+    assert event.payload.reason == "pathway_placement"
 
 
 @pytest.mark.asyncio

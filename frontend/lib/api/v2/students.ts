@@ -38,6 +38,7 @@ export interface AdminStudentCurrentPaymentSummary {
   period?: string | null;
   payment_id?: string | null;
   session_id?: string | null;
+  session_title?: string | null;
 }
 
 export interface AdminStudentRecentAttendance {

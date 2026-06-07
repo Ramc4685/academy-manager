@@ -42,6 +42,7 @@ from backend.v2.contexts.identity.application.use_cases.register_public_parent i
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     TransitionApplication,
 )
+from backend.v2.contexts.student_progress.domain.events import StudentPlacedInLevel
 from backend.v2.shared.events import handler
 from backend.v2.shared.tenancy.context import tenant_scope
 
@@ -74,6 +75,13 @@ def _require_deps() -> HandlerDeps:
             "event handlers not installed — composition root did not call install_handlers()"
         )
     return _deps
+
+
+@handler(event=StudentPlacedInLevel, schema_version=1)
+async def on_student_placed_in_level(_event: StudentPlacedInLevel) -> None:
+    # Placement audit is written synchronously by the admin route; this handler
+    # keeps the domain event registered until a cross-context subscriber exists.
+    return None
 
 
 @handler(event=PaymentSucceeded, schema_version=1)

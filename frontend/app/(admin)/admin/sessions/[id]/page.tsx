@@ -8,7 +8,7 @@
  * cancel session.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -51,7 +51,7 @@ import {
   type CreateEnrollmentRequest,
   type EditSessionRequest,
 } from "@/lib/api/admin";
-import { updateAdminStudent } from "@/lib/api/v2/students";
+import { getFullPathway, placeStudentInLevel, type Level } from "@/lib/api/curriculum";
 import { queryKeys } from "@/lib/query/keys";
 
 import { Avatar } from "@/components/ds/avatar";
@@ -76,7 +76,7 @@ const WAITLIST_CHIP: Record<WaitlistStatus, { variant: ChipVariant; label: strin
   removed: { variant: "expired", label: "REMOVED" },
 };
 
-const DEFAULT_TIMEZONE = "America/Chicago";
+const DEFAULT_TIMEZONE = "UTC";
 const actionHeaderClass = "sticky right-0 z-10 bg-white shadow-[-12px_0_16px_-18px_rgba(15,23,42,0.5)]";
 const actionCellClass = "sticky right-0 z-10 px-4 py-3 shadow-[-12px_0_16px_-18px_rgba(15,23,42,0.5)]";
 const DAYS_OF_WEEK = [
@@ -228,22 +228,11 @@ export default function AdminSessionDetailPage() {
     },
   });
 
-  const levelMutation = useMutation({
-    mutationFn: ({ studentId, level }: { studentId: string; level: string | null }) =>
-      updateAdminStudent(studentId, {
-        level,
-        reason: "session roster level update",
-      }),
-    onSuccess: (_student, variables) => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
-      void queryClient.invalidateQueries({
-        queryKey: queryKeys.admin.studentDetail(variables.studentId),
-      });
-    },
-  });
-
   const session = sessionsQuery.data ?? null;
-  const enrollments = enrollmentsQuery.data?.enrollments ?? [];
+  const enrollments = useMemo(
+    () => enrollmentsQuery.data?.enrollments ?? [],
+    [enrollmentsQuery.data?.enrollments],
+  );
   const occurrences = occurrencesQuery.data?.occurrences ?? [];
   const replacementOccurrences = occurrences.filter((occurrence) => Boolean(occurrence.actual_coach_id));
   const userNameById = new Map(
@@ -251,6 +240,47 @@ export default function AdminSessionDetailPage() {
   );
   const waitlist = waitlistQuery.data?.waitlist ?? [];
   const waitingCount = waitlist.filter((w) => w.status === "waiting").length;
+
+  const rosterProgramId = useMemo(
+    () => enrollments.find((enrollment) => enrollment.pathway_program_id)?.pathway_program_id ?? "",
+    [enrollments],
+  );
+
+  const pathwayQuery = useQuery({
+    queryKey: ["admin", "pathway", rosterProgramId],
+    queryFn: () => getFullPathway(rosterProgramId),
+    enabled: Boolean(rosterProgramId),
+  });
+
+  const pathwayLevels = useMemo(
+    () => pathwayQuery.data?.levels.map((entry) => entry.level) ?? [],
+    [pathwayQuery.data],
+  );
+
+  const placementMutation = useMutation({
+    mutationFn: ({
+      studentId,
+      programId,
+      levelId,
+    }: {
+      studentId: string;
+      programId?: string | null;
+      levelId: string;
+    }) =>
+      placeStudentInLevel(studentId, {
+        ...(programId ? { program_id: programId } : {}),
+        level_id: levelId,
+      }),
+    onSuccess: (_student, variables) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.admin.studentDetail(variables.studentId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["admin", "student-progress", variables.studentId],
+      });
+    },
+  });
 
   return (
     <section data-testid="admin-session-detail" className="space-y-6">
@@ -360,12 +390,19 @@ export default function AdminSessionDetailPage() {
         ) : enrollments.length === 0 ? (
           <p className="text-sm text-rally-subtle" data-testid="roster-empty">No enrolled students.</p>
         ) : (
-          <RosterTable
-            enrollments={enrollments}
-            updatingLevelStudentId={
-              levelMutation.isPending ? levelMutation.variables?.studentId : null
+              <RosterTable
+                enrollments={enrollments}
+                pathwayLevels={pathwayLevels}
+                updatingPlacementStudentId={
+                  placementMutation.isPending ? placementMutation.variables?.studentId : null
+                }
+            onPathwayLevelChange={(enrollment, levelId) =>
+              placementMutation.mutate({
+                studentId: enrollment.student_id,
+                programId: enrollment.pathway_program_id,
+                levelId,
+              })
             }
-            onLevelChange={(studentId, level) => levelMutation.mutate({ studentId, level })}
             onDelete={(enrollment) => setRemoveTarget(enrollment)}
             onPause={(enrollment) => setPauseTarget(enrollment)}
             onResume={(id) =>
@@ -870,8 +907,8 @@ function RosterMetrics({
   const dueCount = enrollments.filter((e) => e.dues_status === "due").length;
   const overdueCount = enrollments.filter((e) => e.dues_status === "overdue").length;
   const numericLevels = enrollments
-    .map((e) => Number(e.level))
-    .filter((level) => Number.isInteger(level) && level >= 1 && level <= 10);
+    .map((e) => e.pathway_level_sequence)
+    .filter((level): level is number => Number.isInteger(level));
   const levelText =
     numericLevels.length === 0
       ? "No levels"
@@ -892,7 +929,7 @@ function RosterMetrics({
         detail={overdueCount > 0 ? `${overdueCount} overdue` : dueCount > 0 ? `${dueCount} due` : "Clear"}
         tone={overdueCount > 0 ? "danger" : dueCount > 0 ? "warn" : "open"}
       />
-      <RosterMetric label="Roster levels" value={levelText} detail="Legacy 1-10" />
+      <RosterMetric label="Pathway levels" value={levelText} detail="Skill Pathway" />
     </div>
   );
 }
@@ -931,8 +968,9 @@ function RosterMetric({
 
 function RosterTable({
   enrollments,
-  updatingLevelStudentId,
-  onLevelChange,
+  pathwayLevels,
+  updatingPlacementStudentId,
+  onPathwayLevelChange,
   onDelete,
   onPause,
   onResume,
@@ -940,8 +978,9 @@ function RosterTable({
   onWithdraw,
 }: {
   enrollments: AdminEnrollmentView[];
-  updatingLevelStudentId: string | null;
-  onLevelChange: (studentId: string, level: string | null) => void;
+  pathwayLevels: Level[];
+  updatingPlacementStudentId: string | null;
+  onPathwayLevelChange: (enrollment: AdminEnrollmentView, levelId: string) => void;
   onDelete: (enrollment: AdminEnrollmentView) => void;
   onPause: (enrollment: AdminEnrollmentView) => void;
   onResume: (id: string) => void;
@@ -954,7 +993,7 @@ function RosterTable({
         <thead>
           <tr className="border-b border-rally-line text-left">
             <Th>Name</Th>
-            <Th>Roster Level</Th>
+            <Th>Pathway Level</Th>
             <Th>Status</Th>
             <Th>Fees</Th>
             <Th>Enrolled</Th>
@@ -986,11 +1025,20 @@ function RosterTable({
                 </td>
                 <td className="px-4 py-3">
                   <LevelSelect
-                    value={e.level ?? ""}
-                    disabled={updatingLevelStudentId === e.student_id}
-                    onChange={(level) => onLevelChange(e.student_id, level)}
+                    value={e.pathway_level_id ?? ""}
+                    levels={pathwayLevels}
+                    disabled={
+                      updatingPlacementStudentId === e.student_id ||
+                      !e.pathway_program_id ||
+                      pathwayLevels.length === 0
+                    }
+                    onChange={(levelId) => onPathwayLevelChange(e, levelId)}
                   />
-                  <p className="mt-1 text-[11px] text-rally-muted">Legacy 1-10</p>
+                  <p className="mt-1 text-[11px] text-rally-muted">
+                    {e.pathway_level_name
+                      ? `${e.pathway_skills_completed ?? 0}/${e.pathway_skills_total ?? 0} skills`
+                      : "Placement needed"}
+                  </p>
                 </td>
                 <td className="px-4 py-3">
                   <Chip variant={chip.variant} label={chip.label} />
@@ -1048,26 +1096,29 @@ function RosterTable({
 
 function LevelSelect({
   value,
+  levels,
   disabled,
   onChange,
 }: {
   value: string;
+  levels: Level[];
   disabled: boolean;
-  onChange: (level: string | null) => void;
+  onChange: (levelId: string) => void;
 }) {
-  const normalized = /^[1-9]$|^10$/.test(value) ? value : "";
   return (
     <select
-      value={normalized}
+      value={value}
       disabled={disabled}
-      onChange={(event) => onChange(event.target.value || null)}
+      onChange={(event) => {
+        if (event.target.value) onChange(event.target.value);
+      }}
       className="min-h-9 rounded-md border border-rally-line bg-white px-2 py-1 font-mono text-xs font-semibold text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30 disabled:opacity-60"
-      aria-label="Student level"
+      aria-label="Student pathway level"
     >
-      <option value="">-</option>
-      {Array.from({ length: 10 }, (_, index) => String(index + 1)).map((level) => (
-        <option key={level} value={level}>
-          L{level}
+      <option value="">Place</option>
+      {levels.map((level) => (
+        <option key={level.level_id} value={level.level_id}>
+          L{level.sequence} · {level.name}
         </option>
       ))}
     </select>

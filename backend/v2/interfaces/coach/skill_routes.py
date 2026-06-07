@@ -55,7 +55,7 @@ class RecordTestBody(BaseModel):
 
 
 class RecommendLevelUpBody(BaseModel):
-    program_id: str
+    program_id: str | None = None
 
 
 class CreateSkillNoteBody(BaseModel):
@@ -100,6 +100,22 @@ async def _program_name(use_cases: CoachUseCases, program_id: str) -> str:
     return getattr(program, "name", None) or program_id
 
 
+async def _resolve_program_id(use_cases: CoachUseCases, program_id: str | None) -> str:
+    if program_id:
+        return program_id
+    curriculum = use_cases.curriculum
+    if curriculum is None:
+        raise HTTPException(status_code=503, detail="Curriculum service not configured")
+    try:
+        program = await curriculum.resolve_default_program.execute()
+    except Exception as exc:
+        status_code = getattr(exc, "status_code", 409)
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    if hasattr(program, "model_dump"):
+        return str(program.model_dump()["program_id"])
+    return program.program_id
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -108,14 +124,15 @@ async def _program_name(use_cases: CoachUseCases, program_id: str) -> str:
 @router.get("/students/{student_id}/passport")
 async def get_passport(
     student_id: str,
-    program_id: str = Query(...),
+    program_id: str | None = Query(None),
     claims: AuthClaims = Depends(require_persona("coach")),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
     await _require_assigned_to_student(use_cases, claims.user_id, student_id)
+    resolved_program_id = await _resolve_program_id(use_cases, program_id)
     try:
         entries = await use_cases.student_progress.get_passport.execute(
-            GetStudentPassportCommand(student_id=student_id, program_id=program_id)
+            GetStudentPassportCommand(student_id=student_id, program_id=resolved_program_id)
         )
     except StudentNotPlaced as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -187,11 +204,12 @@ async def recommend_level_up(
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
     await _require_assigned_to_student(use_cases, claims.user_id, student_id)
+    program_id = await _resolve_program_id(use_cases, body.program_id)
     try:
         rec = await use_cases.student_progress.recommend_level_up.execute(
             RecommendLevelUpCommand(
                 student_id=student_id,
-                program_id=body.program_id,
+                program_id=program_id,
                 recommended_by=claims.user_id,
             )
         )
@@ -241,7 +259,7 @@ async def list_skill_notes(
 @router.get("/sessions/{session_id}/students-progress")
 async def get_session_students_progress(
     session_id: str,
-    program_id: str = Query(...),
+    program_id: str | None = Query(None),
     claims: AuthClaims = Depends(require_persona("coach")),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
@@ -250,6 +268,7 @@ async def get_session_students_progress(
     if not await use_cases.assigned_sessions.is_coach_assigned(claims.user_id, session_id):
         raise HTTPException(status_code=404, detail="session not found")
 
+    program_id = await _resolve_program_id(use_cases, program_id)
     program_name = await _program_name(use_cases, program_id)
     roster = await use_cases.get_roster.execute(session_id)
     rows = [

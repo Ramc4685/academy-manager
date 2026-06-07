@@ -42,6 +42,7 @@ class PlaceStudentInLevelCommand(BaseModel):
     program_id: str
     level_id: str
     placed_by: str
+    reason: str = "pathway_placement"
 
 
 class PlaceStudentInLevel:
@@ -60,6 +61,12 @@ class PlaceStudentInLevel:
 
     async def execute(self, cmd: PlaceStudentInLevelCommand) -> StudentLevelProgress:
         now = datetime.now(UTC)
+        active = await self._level_progress.get_active(cmd.student_id, cmd.program_id)
+        if active is not None and active.level_id == cmd.level_id:
+            return active
+        if active is not None:
+            await self._level_progress.complete(active.progress_id, now)
+
         progress = StudentLevelProgress(
             progress_id=str(new_ulid()),
             academy_id="",  # injected by repo
@@ -100,6 +107,8 @@ class PlaceStudentInLevel:
                         program_id=cmd.program_id,
                         level_id=cmd.level_id,
                         progress_id=progress.progress_id,
+                        placed_by=cmd.placed_by,
+                        reason=cmd.reason,
                     ),
                 )
             )

@@ -79,6 +79,8 @@ export type SkillStatus =
 
 export interface SkillPassportEntry {
   skill_id: string;
+  level_id: string;
+  program_id: string;
   skill_name: string;
   skill_description: string;
   sequence: number;
@@ -93,7 +95,9 @@ export interface StudentProgressSummary {
   student_id: string;
   program_id: string;
   program_name: string;
+  current_level_id: string | null;
   current_level_name: string | null;
+  current_level_sequence: number | null;
   total_skills: number;
   passed_skills: number;
   in_progress_skills: number;
@@ -187,13 +191,6 @@ export function getFullPathway(programId: string): Promise<FullPathway> {
   );
 }
 
-export function seedBadminton(programId: string): Promise<{ seeded: boolean }> {
-  return apiFetch<{ seeded: boolean }>(
-    `/admin/programs/${encodeURIComponent(programId)}/seed-badminton`,
-    { method: "POST" },
-  );
-}
-
 export function createLevel(
   programId: string,
   body: {
@@ -231,10 +228,10 @@ export function createSkill(
 
 export function placeStudentInLevel(
   studentId: string,
-  body: { program_id: string; level_id: string },
+  body: { program_id?: string; level_id: string },
 ): Promise<{ placed: boolean }> {
   return apiFetch<{ placed: boolean }>(
-    `/admin/students/${encodeURIComponent(studentId)}/place-in-level`,
+    `/admin/students/${encodeURIComponent(studentId)}/pathway-placement`,
     { method: "POST", body: JSON.stringify(body) },
   );
 }
@@ -298,19 +295,21 @@ export function getAdminPathwayProgress(
 
 export function getCoachSessionStudentsProgress(
   sessionId: string,
-  programId: string,
+  programId?: string,
 ): Promise<StudentProgressOverview[]> {
+  const q = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
   return apiFetch<{ rows: StudentProgressOverview[] }>(
-    `/coach/sessions/${encodeURIComponent(sessionId)}/students-progress?program_id=${encodeURIComponent(programId)}`,
+    `/coach/sessions/${encodeURIComponent(sessionId)}/students-progress${q}`,
     { method: "GET" },
   ).then((d) => d.rows);
 }
 
 export function getParentProgressSummary(
-  programId: string,
+  programId?: string,
 ): Promise<StudentProgressOverview[]> {
+  const q = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
   return apiFetch<{ rows: StudentProgressOverview[] }>(
-    `/parent/progress/summary?program_id=${encodeURIComponent(programId)}`,
+    `/parent/progress/summary${q}`,
     { method: "GET" },
   ).then((d) => d.rows);
 }
@@ -321,10 +320,11 @@ export function getParentProgressSummary(
 
 export function getStudentPassport(
   studentId: string,
-  programId: string,
+  programId?: string,
 ): Promise<SkillPassportEntry[]> {
+  const q = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
   return apiFetch<{ passport: SkillPassportEntry[] }>(
-    `/coach/students/${encodeURIComponent(studentId)}/passport?program_id=${encodeURIComponent(programId)}`,
+    `/coach/students/${encodeURIComponent(studentId)}/passport${q}`,
     { method: "GET" },
   ).then((d) => d.passport);
 }
@@ -332,11 +332,11 @@ export function getStudentPassport(
 export function updateSkillStatus(
   studentId: string,
   skillId: string,
-  status: SkillStatus,
+  body: { program_id: string; level_id: string; status: SkillStatus },
 ): Promise<{ updated: boolean }> {
   return apiFetch<{ updated: boolean }>(
     `/coach/students/${encodeURIComponent(studentId)}/skills/${encodeURIComponent(skillId)}/status`,
-    { method: "POST", body: JSON.stringify({ status }) },
+    { method: "POST", body: JSON.stringify(body) },
   );
 }
 
@@ -344,10 +344,11 @@ export function recordTestAttempt(
   studentId: string,
   skillId: string,
   body: {
+    program_id: string;
+    level_id: string;
     attempts_count: number;
     success_count: number;
     notes?: string;
-    scoring_type: string;
   },
 ): Promise<{ recorded: boolean }> {
   return apiFetch<{ recorded: boolean }>(
@@ -358,11 +359,11 @@ export function recordTestAttempt(
 
 export function recommendLevelUp(
   studentId: string,
-  programId: string,
+  programId?: string,
 ): Promise<LevelUpRecommendation> {
   return apiFetch<LevelUpRecommendation>(
     `/coach/students/${encodeURIComponent(studentId)}/level-up`,
-    { method: "POST", body: JSON.stringify({ program_id: programId }) },
+    { method: "POST", body: JSON.stringify(programId ? { program_id: programId } : {}) },
   );
 }
 
@@ -372,10 +373,11 @@ export function recommendLevelUp(
 
 export function getParentStudentPassport(
   studentId: string,
-  programId: string,
+  programId?: string,
 ): Promise<SkillPassportEntry[]> {
+  const q = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
   return apiFetch<{ passport: SkillPassportEntry[] }>(
-    `/parent/students/${encodeURIComponent(studentId)}/skill-progress?program_id=${encodeURIComponent(programId)}`,
+    `/parent/students/${encodeURIComponent(studentId)}/skill-progress${q}`,
     { method: "GET" },
   ).then((d) => d.passport);
 }
