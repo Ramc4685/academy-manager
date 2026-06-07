@@ -268,7 +268,11 @@ function RosterRow({
   noteSaving: boolean;
 }) {
   const marked = local?.status;
-  const passportHref = `/coach/students/${encodeURIComponent(student.student_id)}/passport?from_session=${encodeURIComponent(sessionId)}`;
+  const passportParams = new URLSearchParams({
+    from_session: sessionId,
+    student_name: student.full_name,
+  });
+  const passportHref = `/coach/students/${encodeURIComponent(student.student_id)}/passport?${passportParams.toString()}`;
 
   return (
     <li

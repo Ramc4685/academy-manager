@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleHelp } from "lucide-react";
 
 import {
+  getCoachSessionStudentsProgress,
   getStudentPassport,
   recommendLevelUp,
   recordTestAttempt,
@@ -57,6 +58,8 @@ export default function CoachStudentPassportPage() {
   const { studentId } = useParams<{ studentId: string }>();
   const searchParams = useSearchParams();
   const programId = searchParams.get("program_id") ?? "";
+  const fromSession = searchParams.get("from_session") ?? "";
+  const studentNameParam = searchParams.get("student_name") ?? "";
   const queryClient = useQueryClient();
 
   const passportKey = ["coach", "passport", studentId, programId || "default"];
@@ -67,6 +70,13 @@ export default function CoachStudentPassportPage() {
     enabled: Boolean(studentId),
   });
 
+  const { data: sessionRows } = useQuery({
+    queryKey: ["coach", "session-progress", fromSession, programId || "default"],
+    queryFn: () => getCoachSessionStudentsProgress(fromSession, programId || undefined),
+    enabled: Boolean(fromSession) && !studentNameParam,
+    staleTime: 2 * 60 * 1000,
+  });
+
   const levelUpMutation = useMutation({
     mutationFn: () => recommendLevelUp(studentId, programId || undefined),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: passportKey }),
@@ -75,13 +85,17 @@ export default function CoachStudentPassportPage() {
   const skills = data ?? [];
   const requiredSkills = skills.filter((s) => s.is_required);
   const allRequiredPassed = requiredSkills.length > 0 && requiredSkills.every((s) => s.status === "PASSED");
+  const resolvedStudentName =
+    studentNameParam ||
+    sessionRows?.find((row) => row.student_id === studentId)?.student_name ||
+    `Student ${studentId}`;
 
   return (
     <section data-testid="coach-student-passport" className="space-y-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">Skill Passport</h1>
-          <p className="text-sm text-neutral-500">Student {studentId}</p>
+          <p className="text-sm text-neutral-500">{resolvedStudentName}</p>
         </div>
         <button
           disabled={!allRequiredPassed || levelUpMutation.isPending}

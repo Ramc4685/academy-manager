@@ -64,7 +64,12 @@ function StudentProgressRow({
   progress: StudentProgressOverview;
   sessionId: string;
 }) {
-  const passportHref = `/coach/students/${encodeURIComponent(progress.student_id)}/passport?program_id=${encodeURIComponent(progress.program_id)}&from_session=${encodeURIComponent(sessionId)}`;
+  const passportParams = new URLSearchParams({
+    program_id: progress.program_id,
+    from_session: sessionId,
+    student_name: progress.student_name,
+  });
+  const passportHref = `/coach/students/${encodeURIComponent(progress.student_id)}/passport?${passportParams.toString()}`;
 
   const passedPct =
     progress.total_skill_count > 0

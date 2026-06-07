@@ -26,6 +26,7 @@ Verify shared progress summary and admin/coach/parent UI slice
 - 2026-06-07T15:47:46 main/working: Adding admin-side per-skill status and test recording controls for student pathway progress.
 - 2026-06-07T15:59:16 main/working: Fixing coach-side skill update access: attendance page lacks visible skill progress/passport actions and progress route should be reached with session_id rather than occurrence_id.
 - 2026-06-07T16:04:20 main/working: Added hover/focus help text to Attempts and Successes fields in admin and coach Record Test forms.
+- 2026-06-07T16:15:11 main/working: Fixing coach passport header to display student full name instead of raw student_id.
 ## Verification
 
 - No verification recorded yet.
@@ -53,6 +54,7 @@ Verify shared progress summary and admin/coach/parent UI slice
 - 2026-06-07T15:56:03: Admin skill update/test controls: backend focused pytest passed (12 passed); ruff check/format passed on admin progress route/tests; frontend pnpm typecheck and lint passed; Playwright browser smoke on blno.localhost:3001 verified Level Skills rows, Record Test form, and saving 1/1 test updated Netra progress from 0/6 to 1/6.
 - 2026-06-07T16:01:36: Coach skill update access: added Skill Progress header link and per-student Skills links from coach session attendance page, using session_id for progress/passport navigation. Verified frontend pnpm typecheck and lint passed. Playwright could not complete logged-in coach smoke because its browser context is authenticated as admin and redirects coach routes with access_denied=coach.
 - 2026-06-07T16:04:20: Attempts/Successes hover help: frontend pnpm typecheck passed; frontend pnpm lint passed.
+- 2026-06-07T16:16:59: Coach passport student name display: links now pass student_name and passport page falls back to session progress lookup before showing raw id. Frontend pnpm typecheck and lint passed.
 ## Reusable Lessons
 
 - None recorded yet.
