@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from backend.v2.contexts.student_progress.application.errors import (
+    ProgressNextAction,
     RecommendationNotFound,
     StudentNotPlaced,
+)
+from backend.v2.contexts.student_progress.application.use_cases.get_passport import (
+    GetStudentPassportCommand,
 )
 from backend.v2.contexts.student_progress.application.use_cases.get_progress_summary import (
     ProgressSummaryRequest,
@@ -18,10 +23,15 @@ from backend.v2.contexts.student_progress.application.use_cases.get_progress_sum
 from backend.v2.contexts.student_progress.application.use_cases.place_student import (
     PlaceStudentInLevelCommand,
 )
+from backend.v2.contexts.student_progress.application.use_cases.record_test_attempt import (
+    RecordTestAttemptCommand,
+)
 from backend.v2.contexts.student_progress.application.use_cases.review_level_up import (
     ReviewLevelUpCommand,
 )
-from backend.v2.contexts.student_progress.domain.models import ProgressNextAction
+from backend.v2.contexts.student_progress.application.use_cases.update_skill_status import (
+    UpdateSkillStatusCommand,
+)
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
@@ -46,6 +56,32 @@ class PlaceStudentBody(BaseModel):
 
 class RejectLevelUpBody(BaseModel):
     rejection_reason: str | None = None
+
+
+AdminSettableSkillStatus = Literal[
+    "INTRODUCED",
+    "LEARNING",
+    "PRACTICING",
+    "TEST_READY",
+    "NEEDS_REVIEW",
+]
+
+
+class UpdateSkillStatusBody(BaseModel):
+    level_id: str
+    program_id: str
+    status: AdminSettableSkillStatus
+
+
+class RecordTestBody(BaseModel):
+    program_id: str
+    level_id: str
+    attempts_count: int = 1
+    success_count: int = 0
+    session_id: str | None = None
+    notes: str = ""
+    coach_override: bool = False
+    override_reason: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +193,82 @@ async def get_student_progress(
     except StudentNotPlaced as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return result.model_dump() if hasattr(result, "model_dump") else result
+
+
+@router.get("/students/{student_id}/passport")
+async def get_student_passport(
+    student_id: str,
+    program_id: str | None = Query(default=None),
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> object:
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    resolved_program_id = await _resolve_program_id(use_cases, program_id)
+    try:
+        entries = await use_cases.student_progress.get_passport.execute(
+            GetStudentPassportCommand(student_id=student_id, program_id=resolved_program_id)
+        )
+    except StudentNotPlaced as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"passport": [entry.model_dump() for entry in entries]}
+
+
+@router.post("/students/{student_id}/skills/{skill_id}/status")
+async def update_admin_skill_status(
+    student_id: str,
+    skill_id: str,
+    body: UpdateSkillStatusBody,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> object:
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    try:
+        result = await use_cases.student_progress.update_skill_status.execute(
+            UpdateSkillStatusCommand(
+                student_id=student_id,
+                skill_id=skill_id,
+                level_id=body.level_id,
+                program_id=body.program_id,
+                new_status=body.status,  # type: ignore[arg-type]
+                updated_by=claims.user_id,
+            )
+        )
+    except StudentNotPlaced as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return result.model_dump()
+
+
+@router.post("/students/{student_id}/skills/{skill_id}/test", status_code=201)
+async def record_admin_skill_test(
+    student_id: str,
+    skill_id: str,
+    body: RecordTestBody,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> object:
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    try:
+        result = await use_cases.student_progress.record_test_attempt.execute(
+            RecordTestAttemptCommand(
+                student_id=student_id,
+                skill_id=skill_id,
+                program_id=body.program_id,
+                level_id=body.level_id,
+                coach_id=claims.user_id,
+                session_id=body.session_id,
+                attempts_count=body.attempts_count,
+                success_count=body.success_count,
+                notes=body.notes,
+                coach_override=body.coach_override,
+                override_reason=body.override_reason,
+            )
+        )
+    except StudentNotPlaced as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return result.model_dump()
 
 
 async def _resolve_program_id(use_cases: AdminUseCases, program_id: str | None) -> str:
