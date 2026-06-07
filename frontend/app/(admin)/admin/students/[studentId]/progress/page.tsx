@@ -3,18 +3,45 @@
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CircleHelp } from "lucide-react";
 
 import {
   getAdminStudentCertificates,
+  getAdminStudentPassport,
   getFullPathway,
   getStudentProgress,
   listPrograms,
   placeStudentInLevel,
+  recordAdminTestAttempt,
+  updateAdminSkillStatus,
+  type SkillPassportEntry,
+  type SkillStatus,
 } from "@/lib/api/curriculum";
 import { getAdminStudent } from "@/lib/api/v2/students";
 import { getActiveAcademyId } from "@/lib/api/client";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
+
+const STATUS_LABELS: Record<SkillStatus, string> = {
+  NOT_STARTED: "Not started",
+  INTRODUCED: "Introduced",
+  LEARNING: "Learning",
+  PRACTICING: "Practicing",
+  TEST_READY: "Test ready",
+  PASSED: "Passed",
+  NEEDS_REVIEW: "Needs review",
+};
+
+const ADMIN_SETTABLE_STATUSES: SkillStatus[] = [
+  "INTRODUCED",
+  "LEARNING",
+  "PRACTICING",
+  "TEST_READY",
+  "NEEDS_REVIEW",
+];
+
+const TEST_ATTEMPT_HINT =
+  "Attempts = total tries. Successes = correct tries. Examples: 1/1 means one correct try; 10/7 passes at 70%; 10/5 needs review.";
 
 export default function AdminStudentProgressPage() {
   const { studentId } = useParams<{ studentId: string }>();
@@ -62,6 +89,19 @@ export default function AdminStudentProgressPage() {
     queryKey: ["admin", "student-certificates", studentId],
     queryFn: () => getAdminStudentCertificates(studentId),
     enabled: Boolean(studentId),
+  });
+
+  const {
+    data: passport,
+    isLoading: passportLoading,
+    isError: passportError,
+  } = useQuery({
+    queryKey: ["admin", "student-passport", studentId, selectedProgramId],
+    queryFn: () => getAdminStudentPassport(studentId, selectedProgramId),
+    enabled:
+      Boolean(studentId) &&
+      Boolean(selectedProgramId) &&
+      Boolean(progress?.current_level_id),
   });
 
   const { data: placePathway } = useQuery({
@@ -247,6 +287,23 @@ export default function AdminStudentProgressPage() {
         </Card>
       ) : null}
 
+      {progress?.current_level_id && (
+        <SkillPassportSection
+          studentId={studentId}
+          skills={passport ?? []}
+          isLoading={passportLoading}
+          isError={passportError}
+          onUpdated={() => {
+            void queryClient.invalidateQueries({
+              queryKey: ["admin", "student-passport", studentId, selectedProgramId],
+            });
+            void queryClient.invalidateQueries({
+              queryKey: ["admin", "student-progress", studentId, selectedProgramId],
+            });
+          }}
+        />
+      )}
+
       {/* Certificates */}
       <div>
         <h2 className="mb-3 text-lg font-semibold">Certificates</h2>
@@ -275,6 +332,242 @@ export default function AdminStudentProgressPage() {
         )}
       </div>
     </section>
+  );
+}
+
+function SkillPassportSection({
+  studentId,
+  skills,
+  isLoading,
+  isError,
+  onUpdated,
+}: {
+  studentId: string;
+  skills: SkillPassportEntry[];
+  isLoading: boolean;
+  isError: boolean;
+  onUpdated: () => void;
+}) {
+  return (
+    <div>
+      <h2 className="mb-3 text-lg font-semibold">Level Skills</h2>
+      {isError ? (
+        <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+          Could not load skills.
+        </p>
+      ) : isLoading ? (
+        <div className="space-y-3">
+          {[0, 1, 2].map((index) => (
+            <div key={index} className="h-24 animate-pulse rounded-lg bg-neutral-100" />
+          ))}
+        </div>
+      ) : skills.length === 0 ? (
+        <p className="text-sm text-neutral-500">No skills found for this level.</p>
+      ) : (
+        <div className="space-y-3">
+          {skills.map((entry) => (
+            <AdminSkillRow
+              key={entry.skill_id}
+              entry={entry}
+              studentId={studentId}
+              onUpdated={onUpdated}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AdminSkillRow({
+  entry,
+  studentId,
+  onUpdated,
+}: {
+  entry: SkillPassportEntry;
+  studentId: string;
+  onUpdated: () => void;
+}) {
+  const [showTestForm, setShowTestForm] = useState(false);
+  const [attemptsCount, setAttemptsCount] = useState("1");
+  const [successCount, setSuccessCount] = useState("1");
+  const [notes, setNotes] = useState("");
+
+  const statusMutation = useMutation({
+    mutationFn: (status: SkillStatus) =>
+      updateAdminSkillStatus(studentId, entry.skill_id, {
+        program_id: entry.program_id,
+        level_id: entry.level_id,
+        status,
+      }),
+    onSuccess: onUpdated,
+  });
+
+  const testMutation = useMutation({
+    mutationFn: () =>
+      recordAdminTestAttempt(studentId, entry.skill_id, {
+        program_id: entry.program_id,
+        level_id: entry.level_id,
+        attempts_count: parseInt(attemptsCount, 10),
+        success_count: parseInt(successCount, 10),
+        notes: notes.trim() || undefined,
+      }),
+    onSuccess: () => {
+      onUpdated();
+      setShowTestForm(false);
+      setAttemptsCount("1");
+      setSuccessCount("1");
+      setNotes("");
+    },
+  });
+
+  const canChangeStatus = entry.status !== "PASSED";
+  const currentStatusIsSettable = ADMIN_SETTABLE_STATUSES.includes(entry.status);
+
+  return (
+    <div className="rounded-lg border border-neutral-200 bg-white p-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-rally-base">
+              {entry.sequence}. {entry.skill_name}
+            </span>
+            {entry.is_required && (
+              <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-600">
+                Required
+              </span>
+            )}
+          </div>
+          {entry.skill_description && (
+            <p className="mt-1 text-sm text-neutral-500">{entry.skill_description}</p>
+          )}
+          {entry.test_attempt_count > 0 && (
+            <p className="mt-2 text-xs text-neutral-500">
+              {entry.test_attempt_count} test attempt
+              {entry.test_attempt_count === 1 ? "" : "s"}
+              {entry.last_tested_at
+                ? ` · last ${formatDate(entry.last_tested_at)}`
+                : ""}
+              {entry.last_test_passed !== null
+                ? ` · ${entry.last_test_passed ? "passed" : "failed"}`
+                : ""}
+            </p>
+          )}
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <select
+            value={entry.status}
+            onChange={(event) => statusMutation.mutate(event.target.value as SkillStatus)}
+            disabled={!canChangeStatus || statusMutation.isPending}
+            className="min-h-[36px] rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-blue-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {!currentStatusIsSettable && (
+              <option value={entry.status}>{STATUS_LABELS[entry.status]}</option>
+            )}
+            {ADMIN_SETTABLE_STATUSES.map((status) => (
+              <option key={status} value={status}>
+                {STATUS_LABELS[status]}
+              </option>
+            ))}
+          </select>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setShowTestForm((value) => !value)}
+          >
+            {showTestForm ? "Cancel" : "Record Test"}
+          </Button>
+        </div>
+      </div>
+
+      {statusMutation.isError && (
+        <p className="mt-2 text-xs text-red-600">Failed to update skill status.</p>
+      )}
+
+      {showTestForm && (
+        <div className="mt-4 rounded-lg bg-neutral-50 p-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-1 flex items-center gap-1 text-xs font-medium text-neutral-600">
+                Attempts
+                <FieldHint message={TEST_ATTEMPT_HINT} />
+              </span>
+              <input
+                type="number"
+                min="1"
+                value={attemptsCount}
+                onChange={(event) => setAttemptsCount(event.target.value)}
+                className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 flex items-center gap-1 text-xs font-medium text-neutral-600">
+                Successes
+                <FieldHint message={TEST_ATTEMPT_HINT} align="end" />
+              </span>
+              <input
+                type="number"
+                min="0"
+                value={successCount}
+                onChange={(event) => setSuccessCount(event.target.value)}
+                className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              />
+            </label>
+          </div>
+          <label className="mt-3 block">
+            <span className="mb-1 block text-xs font-medium text-neutral-600">
+              Notes
+            </span>
+            <input
+              type="text"
+              value={notes}
+              onChange={(event) => setNotes(event.target.value)}
+              placeholder="Optional observation"
+              className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+            />
+          </label>
+          {testMutation.isError && (
+            <p className="mt-2 text-xs text-red-600">Failed to record test.</p>
+          )}
+          <div className="mt-3 flex justify-end">
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={testMutation.isPending}
+              onClick={() => testMutation.mutate()}
+            >
+              {testMutation.isPending ? "Saving..." : "Save Test"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FieldHint({
+  message,
+  align = "start",
+}: {
+  message: string;
+  align?: "start" | "end";
+}) {
+  return (
+    <span
+      tabIndex={0}
+      aria-label={message}
+      className="group relative inline-flex text-neutral-400 focus:outline-none"
+    >
+      <CircleHelp className="size-3.5" aria-hidden="true" />
+      <span
+        role="tooltip"
+        className={`pointer-events-none absolute top-5 z-20 w-64 rounded-md bg-neutral-900 px-3 py-2 text-left text-[11px] font-medium leading-4 text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus:opacity-100 ${
+          align === "end" ? "right-0" : "left-0"
+        }`}
+      >
+        {message}
+      </span>
+    </span>
   );
 }
 

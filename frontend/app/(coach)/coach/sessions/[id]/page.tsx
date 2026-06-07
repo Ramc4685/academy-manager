@@ -161,19 +161,29 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
     );
   }
 
+  const progressHref = `/coach/sessions/${encodeURIComponent(session.session_id)}/progress`;
+
   return (
     <section data-testid="session-detail">
-      <header className="mb-4">
-        <h1
-          className="text-xl font-semibold"
-          style={{ color: "var(--rally-ink)" }}
+      <header className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1
+            className="text-xl font-semibold"
+            style={{ color: "var(--rally-ink)" }}
+          >
+            {session.title}
+          </h1>
+          <p className="text-sm" style={{ color: "var(--rally-muted)" }}>
+            {session.location} ·{" "}
+            {formatSessionTimeRange(session.start_at, session.end_at, session.timezone)}
+          </p>
+        </div>
+        <Link
+          href={progressHref as Parameters<typeof Link>[0]["href"]}
+          className="inline-flex min-h-9 items-center justify-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
         >
-          {session.title}
-        </h1>
-        <p className="text-sm" style={{ color: "var(--rally-muted)" }}>
-          {session.location} ·{" "}
-          {formatSessionTimeRange(session.start_at, session.end_at, session.timezone)}
-        </p>
+          Skill Progress
+        </Link>
       </header>
 
       {!online && (
@@ -200,6 +210,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
               <RosterRow
                 key={student.student_id}
                 student={student}
+                sessionId={session.session_id}
                 local={localMarks[student.student_id]}
                 noteOpen={noteOpen === student.student_id}
                 noteText={noteTexts[student.student_id] ?? ""}
@@ -233,6 +244,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
 
 function RosterRow({
   student,
+  sessionId,
   local,
   noteOpen,
   noteText,
@@ -244,6 +256,7 @@ function RosterRow({
   noteSaving,
 }: {
   student: CoachRosterEntry;
+  sessionId: string;
   local?: OptimisticEntry;
   noteOpen: boolean;
   noteText: string;
@@ -255,6 +268,7 @@ function RosterRow({
   noteSaving: boolean;
 }) {
   const marked = local?.status;
+  const passportHref = `/coach/students/${encodeURIComponent(student.student_id)}/passport?from_session=${encodeURIComponent(sessionId)}`;
 
   return (
     <li
@@ -264,12 +278,22 @@ function RosterRow({
     >
       <div className="flex items-center justify-between gap-2">
         <p
-          className="font-medium text-sm"
+          className="min-w-0 flex-1 text-sm font-medium"
           style={{ color: "var(--rally-ink)" }}
         >
           {student.full_name}
         </p>
-        <div className="flex gap-1 shrink-0" role="group">
+        <div className="flex shrink-0 flex-wrap justify-end gap-1" role="group">
+          <Link
+            href={passportHref as Parameters<typeof Link>[0]["href"]}
+            className="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
+            style={{
+              borderColor: "var(--rally-line)",
+              color: "var(--rally-muted)",
+            }}
+          >
+            Skills
+          </Link>
           {/* Present */}
           <button
             data-testid={`mark-${student.student_id}-present`}

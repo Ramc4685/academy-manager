@@ -91,6 +91,26 @@ export interface SkillPassportEntry {
   test_attempt_count: number;
 }
 
+export interface StudentSkillProgress {
+  skill_progress_id: string;
+  student_id: string;
+  skill_id: string;
+  level_id: string;
+  program_id: string;
+  status: SkillStatus;
+  introduced_at: string | null;
+  last_updated_at: string;
+  last_updated_by: string;
+}
+
+export interface RecordTestAttemptResult {
+  attempt_id: string;
+  passed: boolean;
+  score: number;
+  skill_status: SkillStatus;
+  level_completed: boolean;
+}
+
 export interface StudentProgressSummary {
   student_id: string;
   program_id: string;
@@ -243,6 +263,45 @@ export function getStudentProgress(
   return apiFetch<StudentProgressSummary>(
     `/admin/students/${encodeURIComponent(studentId)}/progress?program_id=${encodeURIComponent(programId)}`,
     { method: "GET" },
+  );
+}
+
+export function getAdminStudentPassport(
+  studentId: string,
+  programId?: string,
+): Promise<SkillPassportEntry[]> {
+  const q = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
+  return apiFetch<{ passport: SkillPassportEntry[] }>(
+    `/admin/students/${encodeURIComponent(studentId)}/passport${q}`,
+    { method: "GET" },
+  ).then((d) => d.passport);
+}
+
+export function updateAdminSkillStatus(
+  studentId: string,
+  skillId: string,
+  body: { program_id: string; level_id: string; status: SkillStatus },
+): Promise<StudentSkillProgress> {
+  return apiFetch<StudentSkillProgress>(
+    `/admin/students/${encodeURIComponent(studentId)}/skills/${encodeURIComponent(skillId)}/status`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
+export function recordAdminTestAttempt(
+  studentId: string,
+  skillId: string,
+  body: {
+    program_id: string;
+    level_id: string;
+    attempts_count: number;
+    success_count: number;
+    notes?: string;
+  },
+): Promise<RecordTestAttemptResult> {
+  return apiFetch<RecordTestAttemptResult>(
+    `/admin/students/${encodeURIComponent(studentId)}/skills/${encodeURIComponent(skillId)}/test`,
+    { method: "POST", body: JSON.stringify(body) },
   );
 }
 

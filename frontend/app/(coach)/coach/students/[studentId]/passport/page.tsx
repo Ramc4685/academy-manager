@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CircleHelp } from "lucide-react";
 
 import {
   getStudentPassport,
@@ -32,6 +33,9 @@ const STATUS_ORDER: SkillStatus[] = [
   "PASSED",
   "NEEDS_REVIEW",
 ];
+
+const TEST_ATTEMPT_HINT =
+  "Attempts = total tries. Successes = correct tries. Examples: 1/1 means one correct try; 10/7 passes at 70%; 10/5 needs review.";
 
 function statusColor(status: SkillStatus): string {
   switch (status) {
@@ -237,7 +241,10 @@ function SkillCard({
         <div className="mt-3 rounded-lg bg-neutral-50 p-3 dark:bg-neutral-800">
           <div className="grid grid-cols-2 gap-2 mb-2">
             <div>
-              <label className="mb-1 block text-[11px] font-medium text-neutral-500">Attempts</label>
+              <label className="mb-1 flex items-center gap-1 text-[11px] font-medium text-neutral-500">
+                Attempts
+                <FieldHint message={TEST_ATTEMPT_HINT} />
+              </label>
               <input
                 type="number"
                 min="1"
@@ -247,7 +254,10 @@ function SkillCard({
               />
             </div>
             <div>
-              <label className="mb-1 block text-[11px] font-medium text-neutral-500">Successes</label>
+              <label className="mb-1 flex items-center gap-1 text-[11px] font-medium text-neutral-500">
+                Successes
+                <FieldHint message={TEST_ATTEMPT_HINT} align="end" />
+              </label>
               <input
                 type="number"
                 min="0"
@@ -280,6 +290,32 @@ function SkillCard({
         </div>
       )}
     </li>
+  );
+}
+
+function FieldHint({
+  message,
+  align = "start",
+}: {
+  message: string;
+  align?: "start" | "end";
+}) {
+  return (
+    <span
+      tabIndex={0}
+      aria-label={message}
+      className="group relative inline-flex text-neutral-400 focus:outline-none"
+    >
+      <CircleHelp className="size-3.5" aria-hidden="true" />
+      <span
+        role="tooltip"
+        className={`pointer-events-none absolute top-5 z-20 w-64 rounded-md bg-neutral-900 px-3 py-2 text-left text-[11px] font-medium leading-4 text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus:opacity-100 ${
+          align === "end" ? "right-0" : "left-0"
+        }`}
+      >
+        {message}
+      </span>
+    </span>
   );
 }
 

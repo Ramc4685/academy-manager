@@ -9,6 +9,7 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-06-03-pause-resume-autopay](docs/test-results/active/2026-06-03-pause-resume-autopay.md)
 - [2026-06-04-student-profile-redesign-options](docs/test-results/active/2026-06-04-student-profile-redesign-options.md)
 - [2026-06-05-skill-pathway-progress-overview](docs/test-results/active/2026-06-05-skill-pathway-progress-overview.md)
+- [2026-06-06-blno-feature-user-testing](docs/test-results/active/2026-06-06-blno-feature-user-testing.md)
 
 ## Required Workflow
 

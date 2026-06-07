@@ -23,6 +23,9 @@ Verify shared progress summary and admin/coach/parent UI slice
 - 2026-06-06T14:34:17 main/working: Implemented Phase 2 backend slice: default active pathway program resolver, admin progress/placement omitted-program handling, and idempotent same-level placement.
 - 2026-06-06T17:53:30 main/working: Implemented canonical student pathway placement read model, admin roster enrichment, default placement route/callers, local placement backfill, and coach/parent default-program pathway reads. Phase 7 intentionally left untouched for separate coder.
 - 2026-06-06T17:59:58 main/working: Starting local-stack browser smoke for Skill Pathway MVP; will verify seeded pathway, backfill, admin roster placement, coach progress, parent progress, and student profile level removal.
+- 2026-06-07T15:47:46 main/working: Adding admin-side per-skill status and test recording controls for student pathway progress.
+- 2026-06-07T15:59:16 main/working: Fixing coach-side skill update access: attendance page lacks visible skill progress/passport actions and progress route should be reached with session_id rather than occurrence_id.
+- 2026-06-07T16:04:20 main/working: Added hover/focus help text to Attempts and Successes fields in admin and coach Record Test forms.
 ## Verification
 
 - No verification recorded yet.
@@ -47,6 +50,9 @@ Verify shared progress summary and admin/coach/parent UI slice
 - 2026-06-06T17:53:30: Backend: cd backend && .venv/bin/pytest v2/tests -q => 970 passed, 3 warnings. Ruff: cd backend && .venv/bin/ruff check v2 => pass; ruff format --check v2 => pass. Frontend: cd frontend && pnpm typecheck => pass; pnpm lint => pass with no warnings.
 - 2026-06-06T18:17:16: Local stack smoke completed on blno.localhost:3001. scripts/local_test_stack.sh fresh seeded local DB, pathway program 01KTFJQ00FP9KA7DX6S3GV34NP, backfill apply placed 43. Dry-run after seed returned placed=0 skipped=43 unmappable=0. Browser verified admin pathway levels, admin roster pathway columns/skill counts, roster placement change for Shamshritha Shivanuri to L3 Serve and Lift, coach session progress, parent progress summary and skill list, admin profile edit form level field removal, and audit_logs placement row with actor/reason/timestamp. Automated checks: backend focused pytest 17 passed; ruff check/format passed on touched backend files; frontend pnpm typecheck and pnpm lint passed; scripts/local_test_stack.sh smoke passed.
 - 2026-06-06T19:42:12: Follow-up local-stack smoke verification after event handler/audit fix: final API placement moved Shamshritha Shivanuri to L4 Midcourt Speed, audit_logs recorded actor/reason/timestamp, no matching outbox_dead_letters remained, parent progress showed Midcourt Speed with 0/5 mastered, coach session progress showed Midcourt Speed with 0/5 skills passed. Focused pytest 17 passed; ruff check/format passed on touched backend files including event_handlers.py.
+- 2026-06-07T15:56:03: Admin skill update/test controls: backend focused pytest passed (12 passed); ruff check/format passed on admin progress route/tests; frontend pnpm typecheck and lint passed; Playwright browser smoke on blno.localhost:3001 verified Level Skills rows, Record Test form, and saving 1/1 test updated Netra progress from 0/6 to 1/6.
+- 2026-06-07T16:01:36: Coach skill update access: added Skill Progress header link and per-student Skills links from coach session attendance page, using session_id for progress/passport navigation. Verified frontend pnpm typecheck and lint passed. Playwright could not complete logged-in coach smoke because its browser context is authenticated as admin and redirects coach routes with access_denied=coach.
+- 2026-06-07T16:04:20: Attempts/Successes hover help: frontend pnpm typecheck passed; frontend pnpm lint passed.
 ## Reusable Lessons
 
 - None recorded yet.

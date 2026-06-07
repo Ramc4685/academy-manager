@@ -5,8 +5,7 @@ them to the real student_progress use cases backed by in-memory fakes. The
 curriculum side is seeded with the real Badminton pathway and read through the
 real ``CurriculumSkillLookupAdapter`` so the cross-context wiring is exercised.
 
-Routes are driven over HTTP (admin persona). Coach-only actions that have no
-admin route (recording test attempts, recommending a level-up) are driven
+Routes are driven over HTTP (admin persona). Coach recommendations are driven
 through the same shared use-case instances, so the whole flow runs against one
 consistent set of repositories.
 
@@ -55,6 +54,9 @@ from backend.v2.contexts.student_progress.application.use_cases.get_certificates
 from backend.v2.contexts.student_progress.application.use_cases.get_level_up_queue import (
     GetLevelUpQueue,
 )
+from backend.v2.contexts.student_progress.application.use_cases.get_passport import (
+    GetStudentPassport,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_progress_summary import (
     GetProgressSummary,
 )
@@ -74,6 +76,9 @@ from backend.v2.contexts.student_progress.application.use_cases.record_test_atte
 )
 from backend.v2.contexts.student_progress.application.use_cases.review_level_up import (
     ReviewLevelUpRecommendation,
+)
+from backend.v2.contexts.student_progress.application.use_cases.update_skill_status import (
+    UpdateSkillStatus,
 )
 from backend.v2.contexts.student_progress.infrastructure.curriculum_lookup_adapter import (
     CurriculumSkillLookupAdapter,
@@ -378,6 +383,10 @@ def env():
             skill_progress=skill_repo,
             skill_lookup=skill_lookup,
         ),
+        update_skill_status=UpdateSkillStatus(
+            level_progress=level_repo,
+            skill_progress=skill_repo,
+        ),
         record_test_attempt=RecordTestAttempt(
             level_progress=level_repo,
             skill_progress=skill_repo,
@@ -403,6 +412,12 @@ def env():
             recommendations=rec_repo,
             certificates=cert_repo,
             skill_lookup=skill_lookup,
+        ),
+        get_passport=GetStudentPassport(
+            level_progress=level_repo,
+            skill_progress=skill_repo,
+            skill_lookup=skill_lookup,
+            test_attempts=attempt_repo,
         ),
         get_progress_summary=GetProgressSummary(
             level_progress=level_repo,
@@ -630,6 +645,58 @@ def test_get_student_progress_resolves_default_program_when_omitted(env):
     assert response.status_code == 200, response.text
     assert response.json()["program_id"] == env.program_id
     assert response.json()["current_level_id"] == env.level1.level_id
+
+
+def test_admin_can_update_skill_status_and_record_test(env):
+    student_id = "st-admin-skill-update"
+    skill = env.level1_skills[0]
+    assert _place(env, student_id).status_code == 201
+
+    passport = env.client.get(
+        f"/api/v2/admin/students/{student_id}/passport",
+        params={"program_id": env.program_id},
+    )
+
+    assert passport.status_code == 200, passport.text
+    body = passport.json()
+    assert len(body["passport"]) == len(env.level1_skills)
+    assert body["passport"][0]["status"] == "NOT_STARTED"
+
+    status_response = env.client.post(
+        f"/api/v2/admin/students/{student_id}/skills/{skill.skill_id}/status",
+        json={
+            "program_id": env.program_id,
+            "level_id": env.level1.level_id,
+            "status": "PRACTICING",
+        },
+    )
+
+    assert status_response.status_code == 200, status_response.text
+    assert status_response.json()["status"] == "PRACTICING"
+
+    test_response = env.client.post(
+        f"/api/v2/admin/students/{student_id}/skills/{skill.skill_id}/test",
+        json={
+            "program_id": env.program_id,
+            "level_id": env.level1.level_id,
+            "attempts_count": 5,
+            "success_count": 5,
+            "notes": "Admin observed clean repeat attempts",
+        },
+    )
+
+    assert test_response.status_code == 201, test_response.text
+    assert test_response.json()["passed"] is True
+    assert test_response.json()["skill_status"] == "PASSED"
+
+    updated_passport = env.client.get(
+        f"/api/v2/admin/students/{student_id}/passport",
+        params={"program_id": env.program_id},
+    ).json()["passport"]
+    updated_skill = next(entry for entry in updated_passport if entry["skill_id"] == skill.skill_id)
+    assert updated_skill["status"] == "PASSED"
+    assert updated_skill["test_attempt_count"] == 1
+    assert updated_skill["last_test_passed"] is True
 
 
 def test_repeated_same_level_placement_returns_existing_active_placement(env):
