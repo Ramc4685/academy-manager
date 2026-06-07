@@ -20,8 +20,10 @@ from fastapi.testclient import TestClient
 from backend.v2.contexts.student_progress.application.use_cases.get_progress_summary import (
     ProgressSummaryRequest,
 )
-from backend.v2.contexts.student_progress.application.use_cases.get_student_progress import (
+from backend.v2.contexts.student_progress.application.use_cases.get_certificates import (
     GetStudentCertificates,
+)
+from backend.v2.contexts.student_progress.application.use_cases.get_student_progress import (
     GetStudentProgress,
 )
 from backend.v2.contexts.student_progress.domain.models import (

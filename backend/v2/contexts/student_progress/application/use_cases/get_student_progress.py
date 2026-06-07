@@ -137,4 +137,3 @@ class GetStudentPassport:
             )
 
         return sorted(entries, key=lambda e: e.sequence)
-
