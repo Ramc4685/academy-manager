@@ -17,11 +17,12 @@ from types import SimpleNamespace
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
-from backend.v2.contexts.student_progress.application.use_cases.get_progress_summary import (
-    ProgressSummaryRequest,
-)
 from backend.v2.contexts.student_progress.application.use_cases.get_certificates import (
     GetStudentCertificates,
+    GetStudentCertificatesCommand,
+)
+from backend.v2.contexts.student_progress.application.use_cases.get_progress_summary import (
+    ProgressSummaryRequest,
 )
 from backend.v2.contexts.student_progress.application.use_cases.get_student_progress import (
     GetStudentProgress,
@@ -254,7 +255,7 @@ def _build_parent_app(*, auth_parent_id: str = PARENT_ID) -> FastAPI:
     ) -> dict:
         claims: AuthClaims = app.dependency_overrides[get_auth_claims]()
         _check_owns_student(student_id, claims.user_id)
-        certs = await get_certs.execute(student_id)
+        certs = await get_certs.execute(GetStudentCertificatesCommand(student_id=student_id))
         return {"certificates": [c.model_dump(mode="json") for c in certs]}
 
     return app
