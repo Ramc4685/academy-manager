@@ -130,6 +130,8 @@ async def get_passport(
 ) -> object:
     await _require_assigned_to_student(use_cases, claims.user_id, student_id)
     resolved_program_id = await _resolve_program_id(use_cases, program_id)
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
     try:
         entries = await use_cases.student_progress.get_passport.execute(
             GetStudentPassportCommand(student_id=student_id, program_id=resolved_program_id)
@@ -148,6 +150,8 @@ async def update_skill_status(
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
     await _require_assigned_to_student(use_cases, claims.user_id, student_id)
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
     try:
         result = await use_cases.student_progress.update_skill_status.execute(
             UpdateSkillStatusCommand(
@@ -175,6 +179,8 @@ async def record_test(
     await _require_assigned_to_student(
         use_cases, claims.user_id, student_id, session_id=body.session_id
     )
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
     try:
         result = await use_cases.student_progress.record_test_attempt.execute(
             RecordTestAttemptCommand(
@@ -205,6 +211,8 @@ async def recommend_level_up(
 ) -> object:
     await _require_assigned_to_student(use_cases, claims.user_id, student_id)
     program_id = await _resolve_program_id(use_cases, body.program_id)
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
     try:
         rec = await use_cases.student_progress.recommend_level_up.execute(
             RecommendLevelUpCommand(
@@ -226,7 +234,9 @@ async def create_skill_note(
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
     session_id = await _require_assigned_to_student(use_cases, claims.user_id, student_id)
-    result = await use_cases.create_skill_note.execute(  # type: ignore[union-attr]
+    if use_cases.create_skill_note is None:
+        raise HTTPException(status_code=503, detail="Skill notes service not configured")
+    result = await use_cases.create_skill_note.execute(
         CreateSkillNoteCommand(
             student_id=student_id,
             skill_id=body.skill_id,
@@ -247,7 +257,9 @@ async def list_skill_notes(
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
     await _require_assigned_to_student(use_cases, claims.user_id, student_id)
-    results = await use_cases.list_skill_notes.execute(  # type: ignore[union-attr]
+    if use_cases.list_skill_notes is None:
+        raise HTTPException(status_code=503, detail="Skill notes service not configured")
+    results = await use_cases.list_skill_notes.execute(
         student_id=student_id,
         skill_id=skill_id,
     )

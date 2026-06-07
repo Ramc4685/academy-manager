@@ -32,7 +32,7 @@ export default function AdminLevelUpQueuePage() {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["admin", "level-up-queue"] }),
   });
 
-  const pending = (data ?? []).filter((r) => r.status === "pending");
+  const pending = (data ?? []).filter((r) => r.status === "RECOMMENDED");
 
   return (
     <section data-testid="admin-level-up-queue" className="space-y-6">
@@ -115,7 +115,7 @@ function QueueRow({
 }) {
   const [showReject, setShowReject] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
-  const isPending = rec.status === "pending";
+  const isPending = rec.status === "RECOMMENDED";
   const disabled = approvePending || rejectPending;
 
   function handleReject() {

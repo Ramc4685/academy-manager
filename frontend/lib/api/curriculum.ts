@@ -325,7 +325,7 @@ export function rejectLevelUp(
 ): Promise<{ rejected: boolean }> {
   return apiFetch<{ rejected: boolean }>(
     `/admin/level-up/${encodeURIComponent(recId)}/reject`,
-    { method: "POST", body: JSON.stringify({ reason }) },
+    { method: "POST", body: JSON.stringify({ rejection_reason: reason }) },
   );
 }
 

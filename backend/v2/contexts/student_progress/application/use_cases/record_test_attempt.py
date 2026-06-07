@@ -119,7 +119,7 @@ class RecordTestAttempt:
         now = datetime.now(UTC)
         attempt = TestAttempt(
             attempt_id=str(new_ulid()),
-            academy_id="",
+            academy_id=_resolve_academy_id(),
             student_id=cmd.student_id,
             skill_id=cmd.skill_id,
             level_id=cmd.level_id,
@@ -145,7 +145,7 @@ class RecordTestAttempt:
         if existing_prog is None:
             updated_prog = StudentSkillProgress(
                 skill_progress_id=str(new_ulid()),
-                academy_id="",
+                academy_id=_resolve_academy_id(),
                 student_id=cmd.student_id,
                 skill_id=cmd.skill_id,
                 level_id=cmd.level_id,

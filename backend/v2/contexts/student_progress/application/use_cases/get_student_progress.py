@@ -10,8 +10,6 @@ from backend.v2.contexts.student_progress.application.ports import (
     StudentSkillProgressRepository,
 )
 from backend.v2.contexts.student_progress.domain.models import (
-    LevelUpRecommendation,
-    SkillCertificate,
     SkillPassportEntry,
     StudentProgressSummary,
 )
@@ -140,22 +138,3 @@ class GetStudentPassport:
 
         return sorted(entries, key=lambda e: e.sequence)
 
-
-class GetLevelUpQueue:
-    def __init__(
-        self,
-        *,
-        recommendations: LevelUpRecommendationRepository,
-    ) -> None:
-        self._recs = recommendations
-
-    async def execute(self) -> list[LevelUpRecommendation]:
-        return await self._recs.list_pending()
-
-
-class GetStudentCertificates:
-    def __init__(self, *, certificates: CertificateRepository) -> None:
-        self._certs = certificates
-
-    async def execute(self, student_id: str) -> list[SkillCertificate]:
-        return await self._certs.list_for_student(student_id)

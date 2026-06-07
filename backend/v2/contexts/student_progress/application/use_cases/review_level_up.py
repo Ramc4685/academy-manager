@@ -97,7 +97,7 @@ class ReviewLevelUpRecommendation:
             if rec.to_level_id != rec.from_level_id:
                 new_progress = StudentLevelProgress(
                     progress_id=str(new_ulid()),
-                    academy_id="",
+                    academy_id=rec.academy_id,
                     student_id=rec.student_id,
                     program_id=rec.program_id,
                     level_id=rec.to_level_id,
@@ -114,7 +114,7 @@ class ReviewLevelUpRecommendation:
                 for skill in new_skills:
                     sp = StudentSkillProgress(
                         skill_progress_id=str(new_ulid()),
-                        academy_id="",
+                        academy_id=rec.academy_id,
                         student_id=rec.student_id,
                         skill_id=skill.skill_id,  # type: ignore[attr-defined]
                         level_id=rec.to_level_id,
@@ -134,7 +134,7 @@ class ReviewLevelUpRecommendation:
             )
             cert = SkillCertificate(
                 cert_id=cert_id,
-                academy_id="",
+                academy_id=rec.academy_id,
                 student_id=rec.student_id,
                 program_id=rec.program_id,
                 level_id=rec.from_level_id,
