@@ -45,6 +45,8 @@ Plan ownership/copyright/IP claim updates, remove customer-facing V2 language, a
 - 2026-06-08T15:07:36: Frontend passed: node --no-warnings --test lib/brand.node-test.mjs; pnpm typecheck; pnpm lint; pnpm build.
 - 2026-06-08T15:07:36: Backend passed: .venv/bin/pytest v2/tests/unit/test_healthz.py -q; .venv/bin/ruff check v2; .venv/bin/ruff format --check v2.
 - 2026-06-08T15:07:36: Browser smoke passed on http://localhost:3002 for /, /terms, /privacy, /security, /login, /register, including no console/page errors and no 390px landing horizontal overflow.
+- 2026-06-08T15:11:12: Pre-push script reached E2E after backend ruff/pytest and frontend unit/typecheck/lint passed, but default pnpm e2e failed to start because localhost:3001 was already occupied by PID 25820.
+- 2026-06-08T15:11:12: Reran failed E2E command with PLAYWRIGHT_PORT=3003 pnpm e2e: passed with 142 passed and 28 skipped.
 ## Reusable Lessons
 
 - None recorded yet.
