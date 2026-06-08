@@ -112,9 +112,7 @@ export function buildParentHomeModel(input: ParentHomeInput): ParentHomeModel {
     (enrollment) => enrollment.student_id === selectedChild.student_id,
   );
   const activeEnrollment =
-    childEnrollments.find((enrollment) => enrollment.status === "active") ??
-    childEnrollments[0] ??
-    null;
+    childEnrollments.find((enrollment) => enrollment.status === "active") ?? null;
   const childNotes = sortByDateDesc(
     input.notes.filter((note) => note.student_id === selectedChild.student_id),
     (note) => note.created_at,

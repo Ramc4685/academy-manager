@@ -170,6 +170,43 @@ test("handles no children with registration action", () => {
   assert.equal(model.primaryAction.kind, "register");
 });
 
+test("does not treat paused enrollment as next class", () => {
+  const model = buildParentHomeModel({
+    children: [
+      {
+        student_id: "s1",
+        full_name: "Rohan Rao",
+        status: "active",
+        active_session_count: 0,
+        attended_count: 0,
+        absent_count: 0,
+      },
+    ],
+    enrollments: [
+      {
+        enrollment_id: "e1",
+        student_id: "s1",
+        student_name: "Rohan Rao",
+        session_id: "session-1",
+        session_title: "Paused Badminton",
+        status: "paused",
+        payment_mode: "monthly",
+        subscription_status: "paused",
+      },
+    ],
+    attendance: [],
+    notes: [],
+    payments: [],
+    credits: { balance_cents: 0, credits: [] },
+    waiver: null,
+    progressRows: [],
+  });
+
+  assert.equal(model.nextEnrollment, null);
+  assert.equal(model.primaryAction.kind, "register");
+  assert.equal(model.hero.subtitle, "First skills will appear after coach assessment.");
+});
+
 test("formats money and progress percentages safely", () => {
   assert.equal(formatMoney(18000, "usd"), "$180.00");
   assert.equal(progressPercent(7, 10), 70);
