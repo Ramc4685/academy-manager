@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { JetBrains_Mono, Manrope, Outfit } from "next/font/google";
 import "./globals.css";
+import { brand } from "@/lib/brand";
 import { Providers } from "@/lib/providers";
 
 const manrope = Manrope({
@@ -23,13 +24,13 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Academy Manager",
-  description: "Badminton academy management for coaches, parents, and admins.",
+  title: brand.productName,
+  description: `${brand.productName} is a production operations platform for coaches, parents, and admins.`,
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Academy",
+    title: brand.productName,
   },
 };
 

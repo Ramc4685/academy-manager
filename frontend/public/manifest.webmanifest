@@ -1,7 +1,7 @@
 {
   "name": "Academy Manager",
   "short_name": "Academy",
-  "description": "Badminton academy management — coach, parent, admin.",
+  "description": "Production academy operations for coaches, parents, and admins.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

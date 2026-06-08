@@ -61,7 +61,7 @@ export async function stubMe(page: Page, user: MockUser): Promise<void> {
 }
 
 /**
- * Stub multi-membership endpoint. The v2 frontend may issue this as the
+ * Stub multi-membership endpoint. The frontend may issue this as the
  * user lands. We treat the response as the source of truth for which
  * academies the user can switch into.
  */
