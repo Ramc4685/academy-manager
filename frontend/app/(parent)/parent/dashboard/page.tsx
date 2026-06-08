@@ -245,7 +245,7 @@ function ProgressHero({
             {child.full_name[0]?.toUpperCase() ?? "S"}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate font-display text-[29px] font-bold leading-none">
+            <p className="font-display text-[25px] font-bold leading-tight sm:text-[29px]">
               {model.hero.title}
             </p>
             <p className="mt-1.5 truncate text-xs font-medium text-emerald-50/85">
@@ -394,7 +394,7 @@ function PrimaryActionCard({ action }: { action: ParentHomeAction }) {
   const Icon = theme.icon;
   return (
     <Link
-      href={action.href}
+      href={action.href as Parameters<typeof Link>[0]["href"]}
       className="flex items-center gap-3 rounded-xl border p-4 animate-fade-in-up transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]"
       style={{
         background: theme.background,
@@ -484,7 +484,7 @@ function InfoCard({
 }) {
   return (
     <Link
-      href={href}
+      href={href as Parameters<typeof Link>[0]["href"]}
       className="block rounded-xl border bg-white p-4 animate-fade-in-up transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]"
       style={{ borderColor: "var(--rally-line)", borderLeft: `4px solid ${accent}` }}
     >

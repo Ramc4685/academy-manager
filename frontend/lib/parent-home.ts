@@ -132,7 +132,7 @@ export function buildParentHomeModel(input: ParentHomeInput): ParentHomeModel {
       title:
         percent === null
           ? "Progress is getting ready"
-          : `${percent}% to next milestone`,
+          : `${percent}% complete`,
       subtitle:
         progressRow?.current_level_name ??
         activeEnrollment?.session_title ??

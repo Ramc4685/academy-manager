@@ -25,6 +25,7 @@ Design a frontend-only, progress-first parent home dashboard redesign using exis
 - 2026-06-08T14:46:28: Worktree baseline on origin/main passed before edits: cd frontend && pnpm typecheck; cd frontend && pnpm lint.
 - 2026-06-08T14:50:38: Task 1 parent home model test passed: cd frontend && node --no-warnings --test lib/parent-home.node-test.mjs => 4 passed.
 - 2026-06-08T14:53:28: Task 2 dashboard recomposition checks passed: parent-home node test 4 passed; pnpm typecheck passed; pnpm lint passed with no warnings/errors.
+- 2026-06-08T15:09:55: Final UI verification: worktree frontend ran on port 3018 with NEXT_PUBLIC_E2E_AUTH_BYPASS=1 and stubbed parent BFF responses. Mobile 393x852 and desktop 1024x900 dashboard smoke passed: progress hero, metrics, action card, recent activity, tenant name/logo fallback, and no console errors. Screenshots: /tmp/parent-progress-home-mobile.png and /tmp/parent-progress-home-desktop.png. Real local-auth smoke on alternate worktree port was blocked because /login submit stayed disabled before auth request; local seed refreshed successfully, so this is recorded as a local-auth/dev-server verification limitation, not a dashboard failure.
 ## Reusable Lessons
 
 - None recorded yet.
