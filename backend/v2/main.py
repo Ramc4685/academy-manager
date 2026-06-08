@@ -486,21 +486,25 @@ class _MongoPlatformRoleAdapter:
 class _AcademyLookupAdapter:
     """Adapt ``MongoAcademyRepository`` to ``AcademyLookupPort``.
 
-    The current ``academies`` collection does not yet store a ``slug`` or a
-    custom-domain mapping; lookups return ``None`` until those fields are
-    populated. The resolver therefore rejects unknown hosts, which is the
-    correct SaaS-mode behavior — never invent a tenant.
+    Tenant routing can be stored directly on the academy row or in the
+    ``academy_domains`` mapping written by platform bootstrap.
     """
 
     def __init__(self, academies: MongoAcademyRepository) -> None:
         self._collection = academies.collection
+        self._domains = academies.collection.database["academy_domains"]
 
     async def find_by_slug(self, slug: str) -> str | None:
         doc = await self._collection.find_one({"slug": slug})
         return doc.get("academy_id") if doc else None
 
     async def find_by_domain(self, domain: str) -> str | None:
-        doc = await self._collection.find_one({"custom_domain": domain})
+        doc = await self._collection.find_one(
+            {"$or": [{"custom_domain": domain}, {"primary_domain": domain}]}
+        )
+        if doc:
+            return doc.get("academy_id")
+        doc = await self._domains.find_one({"domain": domain, "status": "verified"})
         return doc.get("academy_id") if doc else None
 
 
