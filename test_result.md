@@ -11,6 +11,7 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-06-05-skill-pathway-progress-overview](docs/test-results/active/2026-06-05-skill-pathway-progress-overview.md)
 - [2026-06-06-blno-feature-user-testing](docs/test-results/active/2026-06-06-blno-feature-user-testing.md)
 - [2026-06-07-parent-portal-attractive-home](docs/test-results/active/2026-06-07-parent-portal-attractive-home.md)
+- [2026-06-08-marvy-labs-ip-protection-and-production-branding-plan](docs/test-results/active/2026-06-08-marvy-labs-ip-protection-and-production-branding-plan.md)
 
 ## Required Workflow
 
