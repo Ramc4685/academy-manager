@@ -1065,7 +1065,11 @@ function RosterTable({
                       Move
                     </Button>
                     <Link
-                      href={`/admin/students/${encodeURIComponent(e.student_id)}/progress` as Parameters<typeof Link>[0]["href"]}
+                      href={
+                        `/admin/students/${encodeURIComponent(e.student_id)}/progress${
+                          e.pathway_program_id ? `?program_id=${encodeURIComponent(e.pathway_program_id)}` : ""
+                        }` as Parameters<typeof Link>[0]["href"]
+                      }
                       className="inline-flex min-h-9 items-center justify-center rounded-md border border-rally-line bg-white px-3 py-1.5 text-sm font-semibold text-rally-ink shadow-sm transition-colors hover:bg-neutral-50"
                     >
                       Pathway

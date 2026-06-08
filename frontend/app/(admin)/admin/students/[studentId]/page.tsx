@@ -441,6 +441,8 @@ function TrainingSnapshot({ student }: { student: AdminStudentDetail }) {
     queryFn: () => listPrograms(academyId),
     enabled: Boolean(academyId),
   });
+  // TODO: derive programId from student.enrolled_sessions once AdminStudentSessionSummary
+  // exposes pathway_program_id — for now fall back to programs[0]
   const programId = programs?.[0]?.program_id ?? "";
   const { data: progress } = useQuery({
     queryKey: ["admin", "student-progress", student.student_id, programId],
