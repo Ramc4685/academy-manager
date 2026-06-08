@@ -75,6 +75,7 @@ class AdminStudentCurrentPaymentSummary(BaseModel):
     period: str | None = None
     payment_id: str | None = None
     session_id: str | None = None
+    session_title: str | None = None
 
 
 class AdminStudentRecentAttendance(BaseModel):
@@ -113,7 +114,6 @@ class UpdateAdminStudentCommand(BaseModel):
 
     full_name: str | None = Field(default=None, min_length=1, max_length=120)
     date_of_birth: date | None = None
-    level: str | None = Field(default=None, max_length=80)
     status: str | None = Field(default=None, max_length=32)
     parent_id: str | None = Field(default=None, min_length=1, max_length=120)
     notes: str | None = Field(default=None, max_length=2000)

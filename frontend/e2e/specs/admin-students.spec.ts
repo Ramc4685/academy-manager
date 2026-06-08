@@ -309,6 +309,10 @@ test.describe("admin students", () => {
         ],
       });
     });
+    await page.route("**/api/v2/admin/programs*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, { programs: [] });
+    });
     await page.route("**/api/v2/admin/students/student-1", (route) => {
       if (route.request().method() === "PATCH") {
         const requestBody = route.request().postDataJSON() as Record<string, unknown>;
@@ -323,6 +327,7 @@ test.describe("admin students", () => {
     });
 
     await page.goto("/admin/students/student-1");
+    await page.waitForLoadState("networkidle");
     await expect(page.getByTestId("admin-student-detail")).toContainText("Amit Rao");
     await expect(page.getByTestId("admin-student-summary-strip")).toContainText("$110");
     await expect(page.getByTestId("admin-student-summary-strip")).toContainText("91%");

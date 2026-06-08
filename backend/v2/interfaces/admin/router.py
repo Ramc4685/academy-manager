@@ -11,8 +11,10 @@ from .comms_routes import router as comms_router
 from .dashboard_routes import router as dashboard_router
 from .directory_routes import router as directory_router
 from .dues_routes import router as dues_router
+from .pathway_routes import router as pathway_router
 from .pause_routes import router as pause_router
 from .payout_period_routes import router as payout_period_router
+from .progress_routes import router as progress_router
 from .registration_routes import router as registration_router
 from .reports_routes import router as reports_router
 from .session_type_routes import router as session_type_router
@@ -36,3 +38,5 @@ router.include_router(payout_period_router)
 router.include_router(comms_router)
 router.include_router(academy_router)
 router.include_router(waiver_router)
+router.include_router(pathway_router)
+router.include_router(progress_router)

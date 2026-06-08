@@ -128,6 +128,16 @@ export interface AdminEnrollmentView {
   status: EnrollmentStatus;
   enrolled_at: string;
   level?: string | null;
+  pathway_program_id?: string | null;
+  pathway_level_id?: string | null;
+  pathway_level_sequence?: number | null;
+  pathway_level_name?: string | null;
+  pathway_placement_status?: string;
+  pathway_skills_total?: number;
+  pathway_skills_completed?: number;
+  pathway_skills_ready_for_test?: number;
+  pathway_completion_percentage?: number;
+  pathway_next_action?: string;
   dues_status?: "current" | "due" | "overdue";
 }
 

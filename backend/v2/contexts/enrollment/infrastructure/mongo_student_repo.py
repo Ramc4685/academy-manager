@@ -228,10 +228,6 @@ class MongoStudentRepository(TenantScopedRepository):
             set_doc["full_name"] = " ".join(command.full_name.split())
         if command.date_of_birth is not None:
             set_doc["date_of_birth"] = command.date_of_birth.isoformat()
-        if command.level is not None:
-            normalized_level = command.level.strip() or None
-            set_doc["level"] = normalized_level
-            set_doc["skill_level"] = normalized_level
         if command.status is not None:
             set_doc["status"] = command.status
         if command.parent_id is not None:
@@ -689,6 +685,7 @@ class MongoStudentRepository(TenantScopedRepository):
                     source="session_price",
                     status=enrollment.status,
                     session_id=enrollment.session_id,
+                    session_title=enrollment.session_title,
                 )
         return None
 

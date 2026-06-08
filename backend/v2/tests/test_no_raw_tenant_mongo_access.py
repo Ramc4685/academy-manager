@@ -45,6 +45,18 @@ TENANT_OWNED_COLLECTIONS = {
     "waiver_versions",
     "waivers",
     "waitlist",
+    # skill pathway collections
+    "skill_programs",
+    "skill_levels",
+    "skills",
+    "skill_criteria",
+    "external_lesson_refs",
+    "student_level_progress",
+    "student_skill_progress",
+    "test_attempts",
+    "level_up_recommendations",
+    "skill_certificates",
+    "coach_skill_notes",
 }
 
 MONGO_METHODS = {
@@ -78,6 +90,10 @@ APPROVED_COMPOSITION_EXCEPTIONS = {
     Path("composition/parent.py"): (
         "Transitional Parent BFF read-model composition while Agent A/B replace "
         "default-academy wiring with request tenant claims."
+    ),
+    Path("interfaces/admin/progress_routes.py"): (
+        "Transitional: fire-and-forget audit_logs.insert_one written inline as a "
+        "pathway-placement side effect until an AuditLogRepository is introduced."
     ),
 }
 

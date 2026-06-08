@@ -9,6 +9,7 @@ from fastapi import Request
 from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
 )
+from backend.v2.composition.pathway import CurriculumComposition, StudentProgressComposition
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscount,
     GenerateMonthlyPayments,
@@ -211,6 +212,8 @@ class AdminUseCases:
     get_coach_utilization: object | None = (
         None  # async (periods: list[str]) -> CoachUtilizationResult
     )
+    curriculum: CurriculumComposition | None = None
+    student_progress: StudentProgressComposition | None = None
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:

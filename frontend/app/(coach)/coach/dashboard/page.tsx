@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getCoachDashboard, getCoachToday } from "@/lib/api/coach";
 import { queryKeys } from "@/lib/query/keys";
 
+
 function todayISO(): string {
   const now = new Date();
   const year = now.getFullYear();
@@ -16,7 +17,7 @@ function todayISO(): string {
 
 export default function CoachDashboardPage() {
   const date = todayISO();
-  const { data, isLoading } = useQuery({
+  const { data } = useQuery({
     queryKey: queryKeys.coach.today(date),
     queryFn: () => getCoachToday(date),
     staleTime: 5 * 60 * 1000,
@@ -97,7 +98,8 @@ export default function CoachDashboardPage() {
               <li key={session.occurrence_id}>
                 <Link
                   href={
-                    `/coach/sessions/${encodeURIComponent(session.occurrence_id)}?date=${date}` as Parameters<
+                    // Use raw UTC date to match backend _day_bounds_utc.
+                    `/coach/sessions/${encodeURIComponent(session.occurrence_id)}?date=${session.start_at.slice(0, 10)}` as Parameters<
                       typeof Link
                     >[0]["href"]
                   }

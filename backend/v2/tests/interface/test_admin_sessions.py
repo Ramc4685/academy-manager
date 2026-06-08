@@ -287,6 +287,162 @@ async def test_admin_upcoming_sessions_include_recurring_templates_within_30_day
 
 
 @pytest.mark.asyncio
+async def test_admin_session_enrollments_include_pathway_placement_fields() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-session-pathway-roster"]
+    now = datetime(2026, 6, 6, 12, 0, tzinfo=UTC)
+    await db.sessions.insert_one(
+        {
+            "academy_id": "academy-b",
+            "session_id": "sess-pathway",
+            "title": "Pathway Session",
+            "coach_id": "coach-1",
+            "capacity": 8,
+            "status": "scheduled",
+            "start_at": now,
+            "end_at": now + timedelta(hours=1),
+        }
+    )
+    await db.students.insert_one(
+        {
+            "academy_id": "academy-b",
+            "student_id": "st-pathway",
+            "first_name": "Maya",
+            "last_name": "Raman",
+            "full_name": "Maya Raman",
+            "parent_id": "parent-1",
+            "status": "active",
+            "level": "7",
+            "is_deleted": False,
+            "created_at": now,
+        }
+    )
+    await db.enrollments.insert_one(
+        {
+            "academy_id": "academy-b",
+            "enrollment_id": "enr-pathway",
+            "session_id": "sess-pathway",
+            "student_id": "st-pathway",
+            "parent_id": "parent-1",
+            "status": "active",
+            "enrolled_at": now,
+            "created_at": now,
+        }
+    )
+    await db.skill_programs.insert_one(
+        {
+            "academy_id": "academy-b",
+            "program_id": "program-1",
+            "sport": "badminton",
+            "name": "Badminton Skill Pathway",
+            "description": "",
+            "is_active": True,
+            "created_at": now,
+            "updated_at": now,
+            "created_by": "admin-1",
+        }
+    )
+    await db.skill_levels.insert_one(
+        {
+            "academy_id": "academy-b",
+            "level_id": "level-2",
+            "program_id": "program-1",
+            "sequence": 2,
+            "name": "Rally Builder",
+            "description": "",
+            "completion_rule": "ALL_REQUIRED_SKILLS",
+            "requires_coach_recommendation": True,
+            "requires_admin_approval": False,
+            "is_active": True,
+            "created_at": now,
+            "updated_at": now,
+            "created_by": "admin-1",
+        }
+    )
+    await db.skills.insert_many(
+        [
+            {
+                "academy_id": "academy-b",
+                "skill_id": "skill-1",
+                "level_id": "level-2",
+                "program_id": "program-1",
+                "sequence": 1,
+                "name": "Serve",
+                "description": "",
+                "is_required": True,
+                "scoring_type": "ATTEMPT_BASED",
+                "pass_threshold_pct": 70.0,
+                "coach_override_allowed": False,
+                "is_active": True,
+                "created_at": now,
+                "updated_at": now,
+                "created_by": "admin-1",
+            },
+            {
+                "academy_id": "academy-b",
+                "skill_id": "skill-2",
+                "level_id": "level-2",
+                "program_id": "program-1",
+                "sequence": 2,
+                "name": "Clear",
+                "description": "",
+                "is_required": True,
+                "scoring_type": "ATTEMPT_BASED",
+                "pass_threshold_pct": 70.0,
+                "coach_override_allowed": False,
+                "is_active": True,
+                "created_at": now,
+                "updated_at": now,
+                "created_by": "admin-1",
+            },
+        ]
+    )
+    await db.student_level_progress.insert_one(
+        {
+            "academy_id": "academy-b",
+            "progress_id": "progress-1",
+            "student_id": "st-pathway",
+            "program_id": "program-1",
+            "level_id": "level-2",
+            "status": "active",
+            "started_at": now,
+            "completed_at": None,
+            "created_at": now,
+        }
+    )
+    await db.student_skill_progress.insert_one(
+        {
+            "academy_id": "academy-b",
+            "skill_progress_id": "skill-progress-1",
+            "student_id": "st-pathway",
+            "skill_id": "skill-1",
+            "level_id": "level-2",
+            "program_id": "program-1",
+            "status": "PASSED",
+            "introduced_at": None,
+            "last_updated_at": now,
+            "last_updated_by": "coach-1",
+        }
+    )
+
+    app = _mongo_admin_app(db)
+
+    with TestClient(app) as client:
+        response = client.get("/api/v2/admin/sessions/sess-pathway/enrollments")
+
+    assert response.status_code == 200, response.text
+    [row] = response.json()["enrollments"]
+    assert row["pathway_program_id"] == "program-1"
+    assert row["pathway_level_id"] == "level-2"
+    assert row["pathway_level_sequence"] == 2
+    assert row["pathway_level_name"] == "Rally Builder"
+    assert row["pathway_placement_status"] == "active"
+    assert row["pathway_skills_total"] == 2
+    assert row["pathway_skills_completed"] == 1
+    assert row["pathway_completion_percentage"] == 50
+
+
+@pytest.mark.asyncio
 async def test_admin_upcoming_sessions_collapses_duplicate_recurring_series(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

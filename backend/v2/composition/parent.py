@@ -9,6 +9,12 @@ from zoneinfo import ZoneInfo
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from backend.v2.composition.pathway import (
+    CurriculumComposition,
+    StudentProgressComposition,
+    compose_curriculum,
+    compose_student_progress,
+)
 from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.application.use_cases.enroll_child_in_session_type import (
     CancelBillingEnrollment,
@@ -159,6 +165,8 @@ class ParentComposition:
     get_parent_waiver_requirement: GetParentWaiverRequirement
     accept_parent_waiver: AcceptParentWaiver
     get_academy_info: object  # callable accepting academy_id
+    student_progress: StudentProgressComposition
+    curriculum: CurriculumComposition
 
 
 def compose_parent(
@@ -400,15 +408,42 @@ def compose_parent(
             ):
                 sessions_map[str(sdoc.get("session_id") or sdoc["_id"])] = sdoc
 
-        coach_cache: dict[str, str | None] = {}
+        # Batch-fetch all coaches up-front to avoid N serial DB round-trips in the loop.
+        unique_coach_ids = list(
+            {
+                str(a.get("marked_by") or a.get("coach_id"))
+                for a in attendance_rows
+                if a.get("marked_by") or a.get("coach_id")
+            }
+        )
+        coach_cache: dict[str, str | None] = {cid: None for cid in unique_coach_ids}
+        if unique_coach_ids:
+            async for user in db["users"].find(
+                {
+                    "academy_id": academy_id,
+                    "$or": [
+                        {"user_id": {"$in": unique_coach_ids}},
+                        {"firebase_uid": {"$in": unique_coach_ids}},
+                    ],
+                }
+            ):
+                uid = str(user.get("user_id") or user.get("firebase_uid") or "")
+                if uid not in coach_cache:
+                    continue
+                for field in ("full_name", "display_name", "name"):
+                    if user.get(field):
+                        coach_cache[uid] = str(user[field])
+                        break
+                else:
+                    name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+                    coach_cache[uid] = name or None
+
         rows: list[dict[str, Any]] = []
         for attendance in attendance_rows:
             student_id = str(attendance["student_id"])
             session = sessions_map.get(str(attendance["session_id"]))
-            coach_id = attendance.get("marked_by") or attendance.get("coach_id")
-            if coach_id not in coach_cache:
-                coach_cache[coach_id] = await _resolve_coach_name(coach_id)
-            coach_name = coach_cache[coach_id]
+            coach_id = str(attendance.get("marked_by") or attendance.get("coach_id") or "")
+            coach_name = coach_cache.get(coach_id)
             rows.append(
                 {
                     "attendance_id": str(attendance["attendance_id"]),
@@ -733,6 +768,9 @@ def compose_parent(
         stripe=stripe,
     )
 
+    sp_composition = compose_student_progress(db, outbox)
+    curriculum_composition = compose_curriculum(db)
+
     return ParentComposition(
         start_application=start_app,
         patch_application=patch_app,
@@ -762,6 +800,8 @@ def compose_parent(
         get_parent_waiver_requirement=get_waiver_req,
         accept_parent_waiver=accept_waiver,
         get_academy_info=get_academy_info,
+        student_progress=sp_composition,
+        curriculum=curriculum_composition,
     )
 
 

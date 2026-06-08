@@ -6,6 +6,11 @@ Applies to Claude Code, Codex, and any AI coding agent.
 
 This file is the root router. Detailed rules live in `docs/agent/`.
 
+Claude Code-specific automations may live under `.claude/` (hooks, skills,
+and subagents). Those automations support this file; they do not replace it.
+Non-Claude agents should treat `.claude/` content as optional supporting
+guidance, with `AGENTS.md` remaining the canonical cross-agent source of truth.
+
 ---
 
 ## Read First

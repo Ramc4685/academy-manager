@@ -40,6 +40,8 @@ import {
   type AdminStudentSessionSummary,
   type UpdateAdminStudentRequest,
 } from "@/lib/api/v2/students";
+import { getActiveAcademyId } from "@/lib/api/client";
+import { getStudentProgress, listPrograms } from "@/lib/api/curriculum";
 import { queryKeys } from "@/lib/query/keys";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
@@ -189,7 +191,10 @@ export default function AdminStudentDetailPage() {
                 }}
               />
             </Card>
-            <RecentAttendancePanel student={student} />
+            <div className="space-y-6">
+              <SkillPathwayPanel student={student} />
+              <RecentAttendancePanel student={student} />
+            </div>
           </div>
         </TabPanel>
       )}
@@ -430,15 +435,59 @@ function EngagementPanel({ student }: { student: AdminStudentDetail }) {
 }
 
 function TrainingSnapshot({ student }: { student: AdminStudentDetail }) {
+  const academyId = getActiveAcademyId() ?? "";
+  const { data: programs } = useQuery({
+    queryKey: ["admin", "programs", academyId],
+    queryFn: () => listPrograms(academyId),
+    enabled: Boolean(academyId),
+  });
+  // TODO: derive programId from student.enrolled_sessions once AdminStudentSessionSummary
+  // exposes pathway_program_id — for now fall back to programs[0]
+  const programId = programs?.[0]?.program_id ?? "";
+  const { data: progress } = useQuery({
+    queryKey: ["admin", "student-progress", student.student_id, programId],
+    queryFn: () => getStudentProgress(student.student_id, programId),
+    enabled: Boolean(programId),
+  });
+
   return (
     <div className="mt-3 rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-sm">
-      <div className="font-medium text-rally-ink">
-        {student.level || "Level not set"}
-      </div>
-      <p className="mt-1 text-rally-muted">
-        {student.previous_experience || "No prior experience recorded."}
-      </p>
+      <div className="font-medium text-rally-ink">Skill pathway placement</div>
+      {progress?.current_level_name ? (
+        <>
+          <p className="mt-1 text-rally-muted">
+            Level {progress.current_level_sequence}: {progress.current_level_name}
+          </p>
+          <p className="mt-0.5 text-xs text-rally-muted">
+            {progress.passed_skills} / {progress.total_skills} skills passed
+          </p>
+        </>
+      ) : (
+        <p className="mt-1 text-rally-muted">Not placed in a level yet.</p>
+      )}
     </div>
+  );
+}
+
+function SkillPathwayPanel({ student }: { student: AdminStudentDetail }) {
+  return (
+    <Card p={20}>
+      <div className="flex items-center gap-2">
+        <Activity className="size-4 text-rally-muted" aria-hidden="true" />
+        <Overline>Skill pathway</Overline>
+      </div>
+      <p className="mt-3 text-sm text-rally-muted">
+        Place this student in a curriculum level and review skill completion.
+      </p>
+      <div className="mt-4">
+        <Link
+          href={`/admin/students/${encodeURIComponent(student.student_id)}/progress` as Parameters<typeof Link>[0]["href"]}
+          className="inline-flex items-center justify-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+        >
+          Manage skill progress
+        </Link>
+      </div>
+    </Card>
   );
 }
 
@@ -550,7 +599,7 @@ function CurrentPaymentPanel({ student }: { student: AdminStudentDetail }) {
             rows={[
               { label: "Period", value: current.period ?? "—" },
               { label: "Payment", value: current.payment_id ?? "—" },
-              { label: "Session", value: current.session_id ?? "—" },
+              { label: "Session", value: current.session_title ?? current.session_id ?? "—" },
             ]}
           />
         </div>
@@ -1003,7 +1052,6 @@ function StudentEditForm({
 }) {
   const [fullName, setFullName] = useState(student.full_name);
   const [dateOfBirth, setDateOfBirth] = useState(student.date_of_birth ?? "");
-  const [level, setLevel] = useState(student.level ?? "");
   const [status, setStatus] = useState<EditableStatus>(
     (student.status as EditableStatus) ?? "active",
   );
@@ -1029,7 +1077,6 @@ function StudentEditForm({
   useEffect(() => {
     setFullName(student.full_name);
     setDateOfBirth(student.date_of_birth ?? "");
-    setLevel(student.level ?? "");
     setStatus((student.status as EditableStatus) ?? "active");
     setNotes(student.notes ?? "");
     setPreviousExperience(student.previous_experience ?? "");
@@ -1040,7 +1087,6 @@ function StudentEditForm({
   }, [
     student.full_name,
     student.date_of_birth,
-    student.level,
     student.status,
     student.notes,
     student.previous_experience,
@@ -1069,7 +1115,6 @@ function StudentEditForm({
   const dirtyFields = {
     fullName: fullName !== student.full_name,
     dateOfBirth: dateOfBirth !== (student.date_of_birth ?? ""),
-    level: level !== (student.level ?? ""),
     status: status !== student.status,
     notes: (notes ?? "") !== (student.notes ?? ""),
     previousExperience:
@@ -1086,7 +1131,6 @@ function StudentEditForm({
     mode === "overview"
       ? dirtyFields.fullName ||
         dirtyFields.dateOfBirth ||
-        dirtyFields.level ||
         dirtyFields.status ||
         dirtyFields.notes
       : mode === "training"
@@ -1099,7 +1143,6 @@ function StudentEditForm({
   const reset = () => {
     setFullName(student.full_name);
     setDateOfBirth(student.date_of_birth ?? "");
-    setLevel(student.level ?? "");
     setStatus((student.status as EditableStatus) ?? "active");
     setNotes(student.notes ?? "");
     setPreviousExperience(student.previous_experience ?? "");
@@ -1124,7 +1167,6 @@ function StudentEditForm({
           if (dirtyFields.fullName) payload.full_name = fullName;
           if (dirtyFields.dateOfBirth)
             payload.date_of_birth = dateOfBirth || null;
-          if (dirtyFields.level) payload.level = level || null;
           if (dirtyFields.status) payload.status = status;
           if (dirtyFields.notes) payload.notes = notes || null;
         }
@@ -1159,27 +1201,15 @@ function StudentEditForm({
             />
           </Field>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Date of birth" htmlFor="student-dob">
-              <input
-                id="student-dob"
-                type="date"
-                value={dateOfBirth}
-                onChange={(e) => setDateOfBirth(e.target.value)}
-                className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-              />
-            </Field>
-
-            <Field label="Level" htmlFor="student-level">
-              <input
-                id="student-level"
-                value={level}
-                onChange={(e) => setLevel(e.target.value)}
-                className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-                maxLength={80}
-              />
-            </Field>
-          </div>
+          <Field label="Date of birth" htmlFor="student-dob">
+            <input
+              id="student-dob"
+              type="date"
+              value={dateOfBirth}
+              onChange={(e) => setDateOfBirth(e.target.value)}
+              className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+            />
+          </Field>
 
           <Field label="Status" htmlFor="student-status">
             <select

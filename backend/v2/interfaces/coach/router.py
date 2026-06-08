@@ -12,6 +12,7 @@ from .notes_routes import router as notes_router
 from .profile_routes import router as profile_router
 from .roster_routes import router as roster_router
 from .sessions_routes import router as sessions_router
+from .skill_routes import router as skill_router
 from .today_routes import router as today_router
 
 router = APIRouter(prefix="/coach")
@@ -24,3 +25,4 @@ router.include_router(notes_router)
 router.include_router(roster_router)
 router.include_router(feedback_router)
 router.include_router(billing_enrollment_router)
+router.include_router(skill_router)

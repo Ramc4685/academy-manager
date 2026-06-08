@@ -1438,6 +1438,16 @@ async def main() -> None:
         "waiver_versions",
         "waiver_acceptances",
         "platform_roles",
+        "skill_programs",
+        "skill_levels",
+        "skills",
+        "skill_criteria",
+        "external_lesson_refs",
+        "student_level_progress",
+        "student_skill_progress",
+        "test_attempts",
+        "level_up_recommendations",
+        "skill_certificates",
     ):
         await db[col].drop()
     await db.users.delete_many({"email": {"$ne": admin_email}})

@@ -58,6 +58,7 @@ async def get_today(
             occurrence_id=s.occurrence_id,
             title=s.title,
             location=s.location,
+            timezone=s.timezone,
             start_at=s.start_at,
             end_at=s.end_at,
             roster=[

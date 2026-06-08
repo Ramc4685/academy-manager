@@ -20,10 +20,10 @@ export default function PostLoginPage() {
           .getIdToken()
           .then((idToken) => getCurrentUserWithToken(idToken))
           .then((currentUser) => {
-            router.replace(homeForRoles(currentUser.roles));
+            replaceLocation(router, homeForRoles(currentUser.roles));
           })
           .catch(() => {
-            router.replace("/login");
+            replaceLocation(router, "/login");
           });
       }),
     [router]
@@ -34,4 +34,16 @@ export default function PostLoginPage() {
       <p className="text-center text-neutral-500">Signing you in...</p>
     </main>
   );
+}
+
+function replaceLocation(
+  router: ReturnType<typeof useRouter>,
+  path: string,
+): void {
+  router.replace(path as Parameters<typeof router.replace>[0]);
+  window.setTimeout(() => {
+    if (window.location.pathname !== path) {
+      window.location.replace(path);
+    }
+  }, 500);
 }

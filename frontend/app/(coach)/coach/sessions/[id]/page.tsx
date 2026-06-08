@@ -14,6 +14,7 @@ import {
 } from "@/lib/api/coach";
 import { queryKeys } from "@/lib/query/keys";
 import { useOnline } from "@/lib/pwa/online";
+import { formatSessionTimeRange } from "@/lib/time/session-time";
 
 function todayISO(): string {
   const now = new Date();
@@ -46,11 +47,12 @@ function formatApiError(err: unknown): string {
 export default function SessionDetailPage({ params, searchParams }: PageProps) {
   const { id } = use(params);
   const { date: dateParam } = use(searchParams);
+  const decodedId = decodeURIComponent(id);
   const queryClient = useQueryClient();
   const online = useOnline();
 
   const date = dateParam ?? todayISO();
-  const { data: today, isLoading } = useQuery({
+  const { data: today, isLoading, isError } = useQuery({
     queryKey: queryKeys.coach.today(date),
     queryFn: () => getCoachToday(date),
     staleTime: 5 * 60 * 1000,
@@ -59,9 +61,9 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   const session = useMemo(
     () =>
       today?.sessions.find(
-        (s) => s.occurrence_id === id || s.session_id === id,
+        (s) => s.occurrence_id === decodedId || s.session_id === decodedId,
       ),
-    [today, id],
+    [today, decodedId],
   );
   const roster: CoachRosterEntry[] = session?.roster ?? [];
 
@@ -74,7 +76,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
 
   const noteMutation = useMutation({
     mutationFn: ({ studentId, body }: { studentId: string; body: string }) =>
-      createProgressNote(session?.session_id ?? id, {
+      createProgressNote(session?.session_id ?? decodedId, {
         student_id: studentId,
         body,
       }),
@@ -94,8 +96,8 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
     }) =>
       markAttendance({
         mutation_id: ulid(),
-        occurrence_id: session?.occurrence_id ?? id,
-        session_id: session?.session_id ?? id,
+        occurrence_id: session?.occurrence_id ?? decodedId,
+        session_id: session?.session_id ?? decodedId,
         student_id: vars.student_id,
         status: vars.status,
         client_app_version: "v2-w1b",
@@ -137,6 +139,17 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   if (isLoading)
     return <div className="text-neutral-500">Loading session…</div>;
 
+  if (isError) {
+    return (
+      <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+        Could not load session.{" "}
+        <Link className="underline" href="/coach/sessions">
+          Back to sessions
+        </Link>
+      </div>
+    );
+  }
+
   if (!session) {
     return (
       <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
@@ -148,19 +161,29 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
     );
   }
 
+  const progressHref = `/coach/sessions/${encodeURIComponent(session.session_id)}/progress`;
+
   return (
     <section data-testid="session-detail">
-      <header className="mb-4">
-        <h1
-          className="text-xl font-semibold"
-          style={{ color: "var(--rally-ink)" }}
+      <header className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1
+            className="text-xl font-semibold"
+            style={{ color: "var(--rally-ink)" }}
+          >
+            {session.title}
+          </h1>
+          <p className="text-sm" style={{ color: "var(--rally-muted)" }}>
+            {session.location} ·{" "}
+            {formatSessionTimeRange(session.start_at, session.end_at, session.timezone)}
+          </p>
+        </div>
+        <Link
+          href={progressHref as Parameters<typeof Link>[0]["href"]}
+          className="inline-flex min-h-9 items-center justify-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
         >
-          {session.title}
-        </h1>
-        <p className="text-sm" style={{ color: "var(--rally-muted)" }}>
-          {session.location} ·{" "}
-          {formatTimeRange(session.start_at, session.end_at)}
-        </p>
+          Skill Progress
+        </Link>
       </header>
 
       {!online && (
@@ -187,6 +210,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
               <RosterRow
                 key={student.student_id}
                 student={student}
+                sessionId={session.session_id}
                 local={localMarks[student.student_id]}
                 noteOpen={noteOpen === student.student_id}
                 noteText={noteTexts[student.student_id] ?? ""}
@@ -218,17 +242,9 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   );
 }
 
-function formatTimeRange(start: string, end: string): string {
-  const fmt = (v: string) =>
-    new Date(v).toLocaleTimeString(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  return `${fmt(start)} – ${fmt(end)}`;
-}
-
 function RosterRow({
   student,
+  sessionId,
   local,
   noteOpen,
   noteText,
@@ -240,6 +256,7 @@ function RosterRow({
   noteSaving,
 }: {
   student: CoachRosterEntry;
+  sessionId: string;
   local?: OptimisticEntry;
   noteOpen: boolean;
   noteText: string;
@@ -251,6 +268,11 @@ function RosterRow({
   noteSaving: boolean;
 }) {
   const marked = local?.status;
+  const passportParams = new URLSearchParams({
+    from_session: sessionId,
+    student_name: student.full_name,
+  });
+  const passportHref = `/coach/students/${encodeURIComponent(student.student_id)}/passport?${passportParams.toString()}`;
 
   return (
     <li
@@ -260,12 +282,22 @@ function RosterRow({
     >
       <div className="flex items-center justify-between gap-2">
         <p
-          className="font-medium text-sm"
+          className="min-w-0 flex-1 text-sm font-medium"
           style={{ color: "var(--rally-ink)" }}
         >
           {student.full_name}
         </p>
-        <div className="flex gap-1 shrink-0" role="group">
+        <div className="flex shrink-0 flex-wrap justify-end gap-1" role="group">
+          <Link
+            href={passportHref as Parameters<typeof Link>[0]["href"]}
+            className="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
+            style={{
+              borderColor: "var(--rally-line)",
+              color: "var(--rally-muted)",
+            }}
+          >
+            Skills
+          </Link>
           {/* Present */}
           <button
             data-testid={`mark-${student.student_id}-present`}

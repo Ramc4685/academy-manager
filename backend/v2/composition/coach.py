@@ -8,6 +8,12 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from backend.v2.composition.pathway import (
+    CurriculumComposition,
+    StudentProgressComposition,
+    compose_curriculum,
+    compose_student_progress,
+)
 from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     ListSessionTypes,
@@ -35,6 +41,10 @@ from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     ListLessonPlans,
     ListProgressNotes,
 )
+from backend.v2.contexts.coaching.application.use_cases.skill_notes import (
+    CreateSkillNote,
+    ListSkillNotes,
+)
 from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
     MongoAttendanceRepository,
 )
@@ -43,6 +53,9 @@ from backend.v2.contexts.coaching.infrastructure.mongo_session_feedback_repo imp
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_session_notes_repo import (
     MongoCoachingNotesRepository,
+)
+from backend.v2.contexts.coaching.infrastructure.mongo_skill_note_repo import (
+    MongoSkillNoteRepository,
 )
 from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes import (
     CoachAddStudentToRoster,
@@ -116,6 +129,11 @@ class CoachComposition:
     update_profile: (
         object  # Callable[[str, body, academy_id], Awaitable[CoachProfileResponse | None]]
     )
+    # Skill pathway surface
+    create_skill_note: CreateSkillNote
+    list_skill_notes: ListSkillNotes
+    student_progress: StudentProgressComposition
+    curriculum: CurriculumComposition
 
 
 class CoachAssignedSessionLookup:
@@ -181,6 +199,8 @@ def compose_coach(
     # Billing repos for session-type move surface
     session_type_repo = MongoSessionTypeRepository(db)
     billing_enrollment_repo = MongoStudentBillingEnrollmentRepository(db)
+    # Skill note repo
+    skill_note_repo = MongoSkillNoteRepository(db)
 
     async def get_dashboard_metrics(coach_id: str) -> dict[str, int | float]:
         today = datetime.now(UTC).date()
@@ -328,4 +348,9 @@ def compose_coach(
         ).execute,
         get_profile=get_profile,
         update_profile=update_profile,
+        # Skill pathway
+        create_skill_note=CreateSkillNote(notes=skill_note_repo),
+        list_skill_notes=ListSkillNotes(notes=skill_note_repo),
+        student_progress=compose_student_progress(db, outbox),
+        curriculum=compose_curriculum(db),
     )

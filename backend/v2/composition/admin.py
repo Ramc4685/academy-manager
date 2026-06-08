@@ -14,6 +14,10 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
 )
+from backend.v2.composition.pathway import (
+    compose_curriculum,
+    compose_student_progress,
+)
 from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscount,
@@ -218,6 +222,9 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import
 )
 from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_template_repo import (
     MongoWaiverTemplateRepository,
+)
+from backend.v2.contexts.student_progress.application.use_cases.get_pathway_placement import (
+    StudentPathwayPlacementRequest,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases
 from backend.v2.shared.comms import CommsService, MongoMessageRepository
@@ -838,6 +845,8 @@ def compose_admin(
     pause_requests = MongoPauseRequestRepository(db)
     scheduled_actions = MongoScheduledEnrollmentActionRepository(db)
     subscriptions_repo = MongoSubscriptionRepository(db)
+    curriculum = compose_curriculum(db)
+    student_progress = compose_student_progress(db, outbox)
 
     create_session = CreateSession(sessions=sessions_w, academy_id=academy_id)
     edit_session = EditSession(sessions=sessions_w)
@@ -1659,6 +1668,12 @@ def compose_admin(
         dues_status_by_id: dict[str, str] = {}
         if hasattr(students_r, "_dues_statuses"):
             dues_status_by_id = await students_r._dues_statuses(academy_id, student_ids)  # type: ignore[attr-defined]
+        default_program_id: str | None = None
+        try:
+            default_program = await curriculum.resolve_default_program.execute()
+            default_program_id = default_program.program_id
+        except Exception:
+            default_program_id = None
         out: list[dict] = []
         by_enrollment_id = {
             str(doc["enrollment_id"]): doc for doc in enrollment_docs if "enrollment_id" in doc
@@ -1668,6 +1683,37 @@ def compose_admin(
             s = by_id.get(e.student_id)
             full_name = s.full_name if s else "(unknown)"
             student_doc = student_detail_by_id.get(e.student_id, {})
+            placement_fields: dict[str, Any] = {
+                "pathway_program_id": default_program_id,
+                "pathway_level_id": None,
+                "pathway_level_sequence": None,
+                "pathway_level_name": None,
+                "pathway_placement_status": "unplaced",
+                "pathway_skills_total": 0,
+                "pathway_skills_completed": 0,
+                "pathway_skills_ready_for_test": 0,
+                "pathway_completion_percentage": 0,
+                "pathway_next_action": "place_in_level",
+            }
+            if default_program_id is not None:
+                placement = await student_progress.get_pathway_placement.execute(
+                    StudentPathwayPlacementRequest(
+                        student_id=e.student_id,
+                        program_id=default_program_id,
+                    )
+                )
+                placement_fields = {
+                    "pathway_program_id": placement.program_id,
+                    "pathway_level_id": placement.level_id,
+                    "pathway_level_sequence": placement.level_sequence,
+                    "pathway_level_name": placement.level_name,
+                    "pathway_placement_status": placement.placement_status,
+                    "pathway_skills_total": placement.skills_total,
+                    "pathway_skills_completed": placement.skills_completed,
+                    "pathway_skills_ready_for_test": placement.skills_ready_for_test,
+                    "pathway_completion_percentage": placement.completion_percentage,
+                    "pathway_next_action": placement.next_action,
+                }
             out.append(
                 {
                     "enrollment_id": e.enrollment_id,
@@ -1681,6 +1727,7 @@ def compose_admin(
                     # to created_at for any legacy docs that only have that.
                     "enrolled_at": doc.get("enrolled_at") or doc.get("created_at"),
                     "level": student_doc.get("level"),
+                    **placement_fields,
                     "dues_status": dues_status_by_id.get(e.student_id, "current"),
                 }
             )
@@ -2322,6 +2369,9 @@ def compose_admin(
         snapshot_repo=MongoCoachPayoutSnapshotReader(db),
         academy_id=academy_id,
     ).execute
+
+    admin.curriculum = curriculum  # type: ignore[attr-defined]
+    admin.student_progress = student_progress  # type: ignore[attr-defined]
 
     return admin
 

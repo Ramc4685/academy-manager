@@ -177,6 +177,7 @@ bootstrap_env_local() {
   cat >"${env_local}" <<EOF
 BFF_API_ORIGIN=${BACKEND_URL}
 NEXT_PUBLIC_API_BASE=/api/v2
+NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW=${NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW:-1}
 NEXT_PUBLIC_FIREBASE_API_KEY=${api_key}
 NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${FIREBASE_PROJECT_ID}.firebaseapp.com
 NEXT_PUBLIC_FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
@@ -196,7 +197,21 @@ start_mongo() {
   command -v mongod >/dev/null 2>&1 || die "mongod is not installed or not on PATH"
   log "Starting MongoDB on ${MONGO_HOST}:${MONGO_PORT}"
   mkdir -p "${MONGO_DBPATH}"
-  nohup mongod --dbpath "${MONGO_DBPATH}" --bind_ip "${MONGO_HOST}" --port "${MONGO_PORT}" >"${LOG_DIR}/mongo.log" 2>&1 &
+  # Watchdog subshell: restarts mongod if it exits unexpectedly.
+  # SIGTERM (sent by stop_started) kills the mongod child and exits the loop cleanly.
+  (
+    _mongod_pid=""
+    trap 'kill "${_mongod_pid:-}" 2>/dev/null; exit 0' TERM INT
+    while true; do
+      mongod --dbpath "${MONGO_DBPATH}" --bind_ip "${MONGO_HOST}" --port "${MONGO_PORT}" \
+        >>"${LOG_DIR}/mongo.log" 2>&1 &
+      _mongod_pid=$!
+      wait "${_mongod_pid}" || true
+      printf '[mongo-watchdog] mongod pid=%s exited, restarting in 2s\n' "${_mongod_pid}" \
+        >>"${LOG_DIR}/mongo.log"
+      sleep 2
+    done
+  ) &
   write_pid mongo "$!"
   wait_for_port "MongoDB" "${MONGO_PORT}" 30 || { tail -n 80 "${LOG_DIR}/mongo.log" >&2 || true; exit 1; }
 }
@@ -244,7 +259,7 @@ start_frontend() {
   api_key="$(firebase_api_key || true)"
   [ -n "${api_key}" ] || die "Missing NEXT_PUBLIC_FIREBASE_API_KEY. Add it to frontend/.env.local or export it."
   log "Starting frontend on ${FRONTEND_URL}"
-  frontend_cmd="cd '${ROOT_DIR}/frontend' && env BFF_API_ORIGIN='${BACKEND_URL}' NEXT_PUBLIC_API_BASE=/api/v2 NEXT_PUBLIC_FIREBASE_API_KEY='${api_key}' NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN='${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:-${FIREBASE_PROJECT_ID}.firebaseapp.com}' NEXT_PUBLIC_FIREBASE_PROJECT_ID='${NEXT_PUBLIC_FIREBASE_PROJECT_ID:-${FIREBASE_PROJECT_ID}}' NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET='${NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:-${FIREBASE_PROJECT_ID}.firebasestorage.app}' NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID='${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:-953230788846}' NEXT_PUBLIC_FIREBASE_APP_ID='${NEXT_PUBLIC_FIREBASE_APP_ID:-1:953230788846:web:1f2819c11418ecf5860bff}' NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID='${NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID:-G-Z6GS6WRZY8}' NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST='${NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST:-http://${FIREBASE_AUTH_EMULATOR_HOST}}' NEXT_PUBLIC_ACADEMY_SLUG=blno PORT='${FRONTEND_PORT}' pnpm dev >'${LOG_DIR}/frontend.log' 2>&1"
+  frontend_cmd="cd '${ROOT_DIR}/frontend' && env BFF_API_ORIGIN='${BACKEND_URL}' NEXT_PUBLIC_API_BASE=/api/v2 NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW='${NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW:-1}' NEXT_PUBLIC_FIREBASE_API_KEY='${api_key}' NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN='${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:-${FIREBASE_PROJECT_ID}.firebaseapp.com}' NEXT_PUBLIC_FIREBASE_PROJECT_ID='${NEXT_PUBLIC_FIREBASE_PROJECT_ID:-${FIREBASE_PROJECT_ID}}' NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET='${NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:-${FIREBASE_PROJECT_ID}.firebasestorage.app}' NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID='${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:-953230788846}' NEXT_PUBLIC_FIREBASE_APP_ID='${NEXT_PUBLIC_FIREBASE_APP_ID:-1:953230788846:web:1f2819c11418ecf5860bff}' NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID='${NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID:-G-Z6GS6WRZY8}' NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST='${NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST:-http://${FIREBASE_AUTH_EMULATOR_HOST}}' NEXT_PUBLIC_ACADEMY_SLUG=blno PORT='${FRONTEND_PORT}' pnpm dev >'${LOG_DIR}/frontend.log' 2>&1"
   if command -v screen >/dev/null 2>&1; then
     screen -S academy-frontend -X quit >/dev/null 2>&1 || true
     screen -dmS academy-frontend bash -lc "${frontend_cmd}"
@@ -279,9 +294,14 @@ smoke() {
 
 seed() {
   [ -f "${ROOT_DIR}/backend/scripts/seed_local.py" ] || die "Missing backend/scripts/seed_local.py"
+  [ -f "${ROOT_DIR}/scripts/dev/seed_badminton_pathway.py" ] || die "Missing scripts/dev/seed_badminton_pathway.py"
   [ -x "${ROOT_DIR}/backend/.venv/bin/python" ] || die "backend/.venv is missing"
   log "Seeding ${DB_NAME}"
   (cd "${ROOT_DIR}" && env MONGO_URL="${MONGO_URL}" DB_NAME="${DB_NAME}" FIREBASE_AUTH_ENABLED=true FIREBASE_PROJECT_ID="${FIREBASE_PROJECT_ID}" FIREBASE_AUTH_EMULATOR_HOST="${FIREBASE_AUTH_EMULATOR_HOST}" backend/.venv/bin/python backend/scripts/seed_local.py)
+  log "Seeding badminton skill pathway"
+  (cd "${ROOT_DIR}" && env PYTHONPATH="${ROOT_DIR}" MONGO_URL="${MONGO_URL}" DB_NAME="${DB_NAME}" ACADEMY_ID=blno backend/.venv/bin/python scripts/dev/seed_badminton_pathway.py)
+  log "Backfilling student pathway placements"
+  (cd "${ROOT_DIR}" && env PYTHONPATH="${ROOT_DIR}" MONGO_URL="${MONGO_URL}" DB_NAME="${DB_NAME}" backend/.venv/bin/python scripts/dev/backfill_student_pathway_placements.py --academy-id blno --apply)
 }
 
 run_tests() {

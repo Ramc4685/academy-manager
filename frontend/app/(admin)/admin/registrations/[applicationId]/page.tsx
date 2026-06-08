@@ -31,7 +31,10 @@ export default function AdminRegistrationDetailPage() {
     retry: false,
   });
 
-  const refresh = () => {
+  const refresh = (detail?: AdminRegistrationDetail) => {
+    if (detail) {
+      queryClient.setQueryData(queryKeys.admin.registrationDetail(applicationId), detail);
+    }
     void queryClient.invalidateQueries({ queryKey: queryKeys.admin.registrations() });
     void queryClient.invalidateQueries({ queryKey: queryKeys.admin.registrationDetail(applicationId) });
   };
