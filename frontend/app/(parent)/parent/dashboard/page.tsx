@@ -1,218 +1,648 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
+import {
+  Activity,
+  AlertCircle,
+  BookOpen,
+  CalendarDays,
+  ChevronRight,
+  CreditCard,
+  FileSignature,
+  Mail,
+  MapPin,
+  MessageSquare,
+  Phone,
+  Trophy,
+  UserPlus,
+} from "lucide-react";
 
-import { getParentAcademy, listParentChildren, listParentEnrollments } from "@/lib/api/parent";
+import {
+  getParentAcademy,
+  getParentCurrentWaiver,
+  listParentAttendance,
+  listParentChildren,
+  listParentCredits,
+  listParentEnrollments,
+  listParentPayments,
+  listParentProgress,
+  type ParentAcademy,
+} from "@/lib/api/parent";
+import { getParentProgressSummary } from "@/lib/api/curriculum";
+import {
+  buildParentHomeModel,
+  type ParentHomeAction,
+  type ParentHomeActivity,
+  type ParentHomeMetric,
+} from "@/lib/parent-home";
+
+const progressOverviewEnabled =
+  process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
 
 export default function ParentDashboardPage() {
-  const { data: childrenData, isLoading: loadingChildren } = useQuery({
-    queryKey: ["parent", "children"],
-    queryFn: listParentChildren,
-  });
-  const { data: enrollmentsData, isLoading: loadingEnrollments } = useQuery({
-    queryKey: ["parent", "enrollments"],
-    queryFn: listParentEnrollments,
-  });
-  const { data: academy, isLoading: loadingAcademy } = useQuery({
+  const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
+
+  const academyQuery = useQuery({
     queryKey: ["parent", "academy"],
     queryFn: getParentAcademy,
   });
+  const childrenQuery = useQuery({
+    queryKey: ["parent", "children"],
+    queryFn: listParentChildren,
+  });
+  const enrollmentsQuery = useQuery({
+    queryKey: ["parent", "enrollments"],
+    queryFn: listParentEnrollments,
+  });
+  const attendanceQuery = useQuery({
+    queryKey: ["parent", "attendance"],
+    queryFn: listParentAttendance,
+  });
+  const progressNotesQuery = useQuery({
+    queryKey: ["parent", "progress"],
+    queryFn: listParentProgress,
+  });
+  const paymentsQuery = useQuery({
+    queryKey: ["parent", "payments"],
+    queryFn: listParentPayments,
+  });
+  const creditsQuery = useQuery({
+    queryKey: ["parent", "credits"],
+    queryFn: listParentCredits,
+  });
+  const waiverQuery = useQuery({
+    queryKey: ["parent", "waivers", "current"],
+    queryFn: getParentCurrentWaiver,
+    retry: false,
+  });
+  const progressSummaryQuery = useQuery({
+    queryKey: ["parent", "progress-summary", "default"],
+    queryFn: () => getParentProgressSummary(),
+    enabled: progressOverviewEnabled,
+  });
 
-  const children = childrenData?.children ?? [];
-  const activeEnrollments = (enrollmentsData?.enrollments ?? []).filter((e) => e.status === "active");
+  const model = useMemo(
+    () =>
+      buildParentHomeModel({
+        selectedChildId,
+        children: childrenQuery.data?.children ?? [],
+        enrollments: enrollmentsQuery.data?.enrollments ?? [],
+        attendance: attendanceQuery.data?.records ?? [],
+        notes: progressNotesQuery.data?.notes ?? [],
+        payments: paymentsQuery.data?.payments ?? [],
+        credits: creditsQuery.data ?? null,
+        waiver: waiverQuery.data ?? null,
+        progressRows: progressSummaryQuery.data ?? [],
+      }),
+    [
+      attendanceQuery.data,
+      childrenQuery.data,
+      creditsQuery.data,
+      enrollmentsQuery.data,
+      paymentsQuery.data,
+      progressNotesQuery.data,
+      progressSummaryQuery.data,
+      selectedChildId,
+      waiverQuery.data,
+    ],
+  );
+
+  const optionalIssues = [
+    attendanceQuery.isError ? "Attendance unavailable" : null,
+    progressNotesQuery.isError ? "Coach notes unavailable" : null,
+    paymentsQuery.isError ? "Payments unavailable" : null,
+    creditsQuery.isError ? "Credits unavailable" : null,
+    waiverQuery.isError ? "Waiver status unavailable" : null,
+    progressSummaryQuery.isError ? "Skill progress unavailable" : null,
+  ].filter(Boolean) as string[];
+
+  const coreLoading = childrenQuery.isLoading || academyQuery.isLoading;
 
   return (
-    <section data-testid="parent-dashboard" className="space-y-5">
-      {/* Greeting */}
-      <div className="animate-fade-in-up">
-        <h1 className="font-display text-2xl font-bold tracking-tight" style={{ color: "var(--rally-ink)" }}>
-          {loadingAcademy ? (
-            <span className="inline-block h-7 w-40 rounded shimmer" />
-          ) : (
-            academy?.display_name ?? "Welcome"
-          )}
-        </h1>
-        <p className="mt-0.5 text-sm" style={{ color: "var(--rally-muted)" }}>
-          Your family&apos;s overview
-        </p>
-      </div>
-
-      {/* Metric cards */}
-      <div className="grid grid-cols-2 gap-3 stagger-children">
-        <GradientMetric
-          label="Students"
-          value={loadingChildren ? null : children.length}
-          gradient="linear-gradient(135deg,#2563eb 0%,#4f46e5 100%)"
-          icon={
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.8">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-              <circle cx="9" cy="7" r="4" />
-            </svg>
-          }
+    <section data-testid="parent-dashboard" className="space-y-4">
+      {coreLoading ? (
+        <DashboardSkeleton />
+      ) : model.selectedChild ? (
+        <ProgressHero
+          academy={academyQuery.data}
+          model={model}
+          selectedChildId={model.selectedChild.student_id}
+          onSelectChild={setSelectedChildId}
+          progressEnabled={progressOverviewEnabled}
         />
-        <GradientMetric
-          label="Enrollments"
-          value={loadingEnrollments ? null : activeEnrollments.length}
-          gradient="linear-gradient(135deg,#059669 0%,#0d9488 100%)"
-          icon={
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.8">
-              <polyline points="9 11 12 14 22 4" />
-              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-            </svg>
-          }
-        />
-      </div>
-
-      {/* Active sessions list */}
-      {activeEnrollments.length > 0 && (
-        <div
-          className="rounded-xl p-4 animate-fade-in-up"
-          style={{ background: "white", border: "1px solid var(--rally-line)", animationDelay: "80ms" }}
-        >
-          <p className="mb-3 text-[10px] font-bold uppercase tracking-widest" style={{ color: "var(--rally-cobalt)" }}>
-            Active sessions
-          </p>
-          <ul className="space-y-2.5 stagger-children">
-            {activeEnrollments.map((e) => (
-              <li key={e.enrollment_id} className="flex items-center gap-2.5 animate-fade-in-up">
-                <div
-                  className="h-7 w-7 rounded-lg flex items-center justify-center text-xs font-bold text-white shrink-0"
-                  style={{ background: nameGradient(e.student_name) }}
-                >
-                  {e.student_name[0]}
-                </div>
-                <span className="text-sm font-semibold flex-1" style={{ color: "var(--rally-ink)" }}>
-                  {e.student_name}
-                </span>
-                <span
-                  className="text-[11px] font-semibold rounded-full px-2 py-0.5 truncate max-w-[120px]"
-                  style={{ background: "var(--rally-cobalt-soft)", color: "var(--rally-cobalt)" }}
-                >
-                  {e.session_title}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
+      ) : (
+        <RegistrationHero academy={academyQuery.data} />
       )}
 
-      {/* Quick links */}
-      <div className="grid gap-2.5 stagger-children">
-        <ActionCard href="/parent/children" title="My children" body="Sessions, attendance & details" accentColor="#4f46e5"
-          icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>}
-        />
-        <ActionCard href="/parent/progress" title="Progress" body="Notes and feedback from coaches" accentColor="#059669"
-          icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>}
-        />
-        <ActionCard href="/parent/payments" title="Payments" body="Billing history and invoices" accentColor="#d97706"
-          icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>}
-        />
-        <ActionCard href="/parent/onboarding" title="Register a child" body="Start or resume onboarding" accentColor="#2563eb"
-          icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>}
-        />
-      </div>
+      {optionalIssues.length > 0 && <IssueStrip issues={optionalIssues} />}
 
-      {/* Academy contact */}
-      {!loadingAcademy && academy && (academy.contact_email || academy.contact_phone || academy.address) && (
-        <div
-          className="rounded-xl overflow-hidden animate-fade-in-up"
-          style={{ background: "white", border: "1px solid var(--rally-line)" }}
-        >
-          <div className="px-4 py-3" style={{ background: "linear-gradient(135deg,#0a0f1c 0%,#0f1d38 100%)" }}>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-white/50">Contact &amp; info</p>
-            <p className="text-sm font-semibold text-white mt-0.5">{academy.display_name}</p>
+      {model.selectedChild && (
+        <>
+          <MetricGrid metrics={model.metrics} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <LatestNoteCard note={model.latestNote} />
+            <NextClassCard action={model.primaryAction} enrollmentTitle={model.nextEnrollment?.session_title ?? null} />
           </div>
-          <div className="px-4 py-3 space-y-1 text-sm" style={{ color: "var(--rally-muted)" }}>
-            {academy.address && <p>{academy.address}</p>}
-            {academy.hours_text && <p>{academy.hours_text}</p>}
-            {(academy.contact_email || academy.contact_phone) && (
-              <div className="flex flex-wrap gap-2 pt-2">
-                {academy.contact_email && (
-                  <a
-                    href={`mailto:${academy.contact_email}`}
-                    className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-all duration-150 active:scale-95"
-                    style={{ background: "var(--rally-cobalt)" }}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
-                    Email
-                  </a>
-                )}
-                {academy.contact_phone && (
-                  <a
-                    href={`tel:${academy.contact_phone}`}
-                    className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all duration-150 active:scale-95"
-                    style={{ background: "#f0fdf4", color: "#059669", border: "1px solid #bbf7d0" }}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13.1a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 2.18h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 9.91a16 16 0 0 0 6.18 6.18l.95-.93a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21.73 17z"/></svg>
-                    {academy.contact_phone}
-                  </a>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
+          <PrimaryActionCard action={model.primaryAction} />
+          <RecentActivityCard activity={model.recentActivity} />
+        </>
       )}
+
+      <AcademyContact academy={academyQuery.data} />
     </section>
   );
 }
 
-function GradientMetric({ label, value, gradient, icon }: { label: string; value: number | null; gradient: string; icon: React.ReactNode }) {
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-3">
+      <div className="h-64 rounded-2xl shimmer" />
+      <div className="grid grid-cols-3 gap-2">
+        <div className="h-20 rounded-xl shimmer" />
+        <div className="h-20 rounded-xl shimmer" />
+        <div className="h-20 rounded-xl shimmer" />
+      </div>
+      <div className="h-28 rounded-xl shimmer" />
+    </div>
+  );
+}
+
+function ProgressHero({
+  academy,
+  model,
+  selectedChildId,
+  onSelectChild,
+  progressEnabled,
+}: {
+  academy?: ParentAcademy;
+  model: ReturnType<typeof buildParentHomeModel>;
+  selectedChildId: string;
+  onSelectChild: (studentId: string) => void;
+  progressEnabled: boolean;
+}) {
+  const child = model.selectedChild;
+  if (!child) return null;
+
   return (
     <div
-      className="rounded-xl p-4 animate-fade-in-up transition-all duration-200 active:scale-95"
-      style={{ background: gradient }}
+      className="overflow-hidden rounded-2xl animate-fade-in-up"
+      style={{
+        background: "linear-gradient(135deg,#042f2e 0%,#0f766e 42%,#2563eb 100%)",
+        boxShadow: "0 18px 45px rgba(15,23,42,0.18)",
+      }}
     >
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-widest text-white/70">{label}</p>
-          <p className="mt-1.5 font-display text-3xl font-bold text-white">
-            {value === null ? (
-              <span className="inline-block h-8 w-8 rounded shimmer opacity-40" />
-            ) : (
-              value
-            )}
-          </p>
+      <div className="px-4 py-4 text-white">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-100/80">
+              {academy?.display_name ?? "Academy"}
+            </p>
+            <h1 className="mt-1 truncate font-display text-[22px] font-bold leading-tight">
+              Family progress
+            </h1>
+          </div>
+          <AcademyMark academy={academy} />
         </div>
-        <div className="rounded-lg p-2" style={{ background: "rgba(255,255,255,0.15)" }}>{icon}</div>
+
+        <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
+          {model.childOptions.map((option) => {
+            const active = option.student_id === selectedChildId;
+            return (
+              <button
+                key={option.student_id}
+                type="button"
+                onClick={() => onSelectChild(option.student_id)}
+                className="min-h-touch shrink-0 rounded-full px-3 text-xs font-bold transition-all duration-200 active:scale-95"
+                style={
+                  active
+                    ? { background: "white", color: "#0f766e" }
+                    : { background: "rgba(255,255,255,0.14)", color: "white" }
+                }
+              >
+                {firstName(option.full_name)}
+              </button>
+            );
+          })}
+          <Link
+            href="/parent/onboarding"
+            className="min-h-touch shrink-0 rounded-full px-3 text-xs font-bold transition-all duration-200 active:scale-95"
+            style={{ background: "rgba(255,255,255,0.1)", color: "#d1fae5" }}
+          >
+            + Add
+          </Link>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <div
+            className="flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-2xl border text-3xl font-bold hero-pop"
+            style={{
+              background: "rgba(255,255,255,0.16)",
+              borderColor: "rgba(255,255,255,0.22)",
+            }}
+          >
+            {child.full_name[0]?.toUpperCase() ?? "S"}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate font-display text-[29px] font-bold leading-none">
+              {model.hero.title}
+            </p>
+            <p className="mt-1.5 truncate text-xs font-medium text-emerald-50/85">
+              {model.hero.subtitle}
+            </p>
+            <div
+              className="mt-3 h-2 overflow-hidden rounded-full"
+              style={{ background: "rgba(255,255,255,0.18)" }}
+            >
+              <div
+                className="h-full rounded-full progress-fill"
+                style={{
+                  width: `${model.hero.percent ?? 0}%`,
+                  background: "var(--rally-volt)",
+                }}
+              />
+            </div>
+            {!progressEnabled && (
+              <p className="mt-2 text-[11px] font-medium text-emerald-50/70">
+                Skill pathway preview appears after progress is enabled.
+              </p>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-function ActionCard({ href, title, body, accentColor, icon }: { href: string; title: string; body: string; accentColor: string; icon: React.ReactNode }) {
+function RegistrationHero({ academy }: { academy?: ParentAcademy }) {
+  return (
+    <div
+      className="rounded-2xl p-5 animate-fade-in-up"
+      style={{
+        background: "linear-gradient(135deg,#0a0f1c 0%,#1d4ed8 100%)",
+        color: "white",
+      }}
+    >
+      <div className="mb-6 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-blue-100/70">
+            {academy?.display_name ?? "Academy"}
+          </p>
+          <h1 className="mt-1 font-display text-2xl font-bold">
+            Start your academy journey
+          </h1>
+        </div>
+        <AcademyMark academy={academy} />
+      </div>
+      <p className="max-w-xs text-sm leading-6 text-blue-50/80">
+        Register a child to see classes, coach notes, payments, and progress in
+        one place.
+      </p>
+      <Link
+        href="/parent/onboarding"
+        className="mt-5 inline-flex min-h-touch items-center gap-2 rounded-xl bg-white px-4 text-sm font-bold text-blue-700 transition-all duration-200 active:scale-95"
+      >
+        <UserPlus size={16} />
+        Register a child
+      </Link>
+    </div>
+  );
+}
+
+function AcademyMark({ academy }: { academy?: ParentAcademy }) {
+  return (
+    <div
+      className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border-2 bg-white font-display text-base font-bold"
+      style={{ color: "#0f766e", borderColor: "rgba(255,255,255,0.55)" }}
+    >
+      {academy?.logo_url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={academy.logo_url}
+          alt=""
+          className="h-full w-full object-cover"
+        />
+      ) : (
+        (academy?.display_name?.[0] ?? "A").toUpperCase()
+      )}
+    </div>
+  );
+}
+
+function MetricGrid({ metrics }: { metrics: ParentHomeMetric[] }) {
+  return (
+    <div className="grid grid-cols-3 gap-2 stagger-children">
+      {metrics.map((metric) => (
+        <div
+          key={metric.label}
+          className="rounded-xl border bg-white px-3 py-3 text-center animate-fade-in-up"
+          style={{ borderColor: "var(--rally-line)" }}
+        >
+          <p
+            className="font-display text-xl font-bold"
+            style={{ color: metricColor(metric.tone) }}
+          >
+            {metric.value}
+          </p>
+          <p className="mt-0.5 text-[10px] font-semibold" style={{ color: "var(--rally-muted)" }}>
+            {metric.label}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LatestNoteCard({ note }: { note: ReturnType<typeof buildParentHomeModel>["latestNote"] }) {
+  return (
+    <InfoCard
+      overline="Latest coach note"
+      title={note ? "Coach feedback" : "Notes will appear here"}
+      body={note?.body ?? "Coach updates and encouragement will show up after class."}
+      meta={note ? `${note.coach_name ?? "Coach"} · ${formatShortDate(note.created_at)}` : "Progress"}
+      icon={<MessageSquare size={17} />}
+      accent="#059669"
+      href="/parent/progress"
+    />
+  );
+}
+
+function NextClassCard({
+  action,
+  enrollmentTitle,
+}: {
+  action: ParentHomeAction;
+  enrollmentTitle: string | null;
+}) {
+  const isNext = action.kind === "next_class" || Boolean(enrollmentTitle);
+  return (
+    <InfoCard
+      overline="Next up"
+      title={isNext ? "Class context" : "Stay on track"}
+      body={enrollmentTitle ?? action.body}
+      meta={isNext ? "Current enrollment" : action.title}
+      icon={<CalendarDays size={17} />}
+      accent="#2563eb"
+      href={isNext ? "/parent/children" : action.href}
+    />
+  );
+}
+
+function PrimaryActionCard({ action }: { action: ParentHomeAction }) {
+  const theme = actionTheme(action.kind);
+  const Icon = theme.icon;
   return (
     <Link
-      href={href as Parameters<typeof Link>[0]["href"]}
-      className="flex items-center gap-3 rounded-xl p-3.5 animate-fade-in-up transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]"
-      style={{ background: "white", border: "1px solid var(--rally-line)", borderLeft: `3px solid ${accentColor}` }}
+      href={action.href}
+      className="flex items-center gap-3 rounded-xl border p-4 animate-fade-in-up transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]"
+      style={{
+        background: theme.background,
+        borderColor: theme.border,
+        color: theme.color,
+      }}
     >
       <div
-        className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0"
-        style={{ background: `${accentColor}18`, color: accentColor }}
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+        style={{ background: theme.iconBackground }}
       >
-        {icon}
+        <Icon size={18} />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold" style={{ color: "var(--rally-ink)" }}>{title}</p>
-        <p className="text-xs mt-0.5 truncate" style={{ color: "var(--rally-muted)" }}>{body}</p>
+        <p className="text-sm font-bold">{action.title}</p>
+        <p className="mt-0.5 line-clamp-2 text-xs opacity-80">{action.body}</p>
       </div>
-      <svg className="ml-auto shrink-0" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--rally-subtle)" }}>
-        <polyline points="9 18 15 12 9 6" />
-      </svg>
+      <ChevronRight className="shrink-0" size={18} />
     </Link>
   );
 }
 
-const GRADIENTS = [
-  "linear-gradient(135deg,#2563eb,#4f46e5)",
-  "linear-gradient(135deg,#059669,#0d9488)",
-  "linear-gradient(135deg,#d97706,#f59e0b)",
-  "linear-gradient(135deg,#7c3aed,#db2777)",
-  "linear-gradient(135deg,#0891b2,#2563eb)",
-];
-function nameGradient(s: string) {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) & 0xffffffff;
-  return GRADIENTS[Math.abs(h) % GRADIENTS.length];
+function RecentActivityCard({ activity }: { activity: ParentHomeActivity[] }) {
+  return (
+    <div
+      className="rounded-xl border bg-white p-4 animate-fade-in-up"
+      style={{ borderColor: "var(--rally-line)" }}
+    >
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "var(--rally-cobalt)" }}>
+            Recent activity
+          </p>
+          <p className="mt-0.5 text-xs" style={{ color: "var(--rally-muted)" }}>
+            Notes, attendance, and billing updates
+          </p>
+        </div>
+        <Activity size={18} style={{ color: "var(--rally-cobalt)" }} />
+      </div>
+      {activity.length === 0 ? (
+        <p className="rounded-lg px-3 py-3 text-sm" style={{ background: "var(--rally-paper)", color: "var(--rally-muted)" }}>
+          Activity will appear after classes, notes, or payments are recorded.
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {activity.map((item) => (
+            <li key={item.id} className="flex items-center gap-3 text-sm">
+              <span
+                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ background: item.accent }}
+              />
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-semibold" style={{ color: "var(--rally-ink)" }}>
+                  {item.title}
+                </p>
+                <p className="truncate text-xs" style={{ color: "var(--rally-muted)" }}>
+                  {item.body}
+                </p>
+              </div>
+              <time className="shrink-0 text-[11px]" style={{ color: "var(--rally-subtle)" }}>
+                {formatShortDate(item.at)}
+              </time>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function InfoCard({
+  overline,
+  title,
+  body,
+  meta,
+  icon,
+  accent,
+  href,
+}: {
+  overline: string;
+  title: string;
+  body: string;
+  meta: string;
+  icon: React.ReactNode;
+  accent: string;
+  href: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="block rounded-xl border bg-white p-4 animate-fade-in-up transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]"
+      style={{ borderColor: "var(--rally-line)", borderLeft: `4px solid ${accent}` }}
+    >
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: accent }}>
+          {overline}
+        </p>
+        <span
+          className="flex h-8 w-8 items-center justify-center rounded-lg"
+          style={{ background: `${accent}18`, color: accent }}
+        >
+          {icon}
+        </span>
+      </div>
+      <p className="truncate text-sm font-bold" style={{ color: "var(--rally-ink)" }}>
+        {title}
+      </p>
+      <p className="mt-1 line-clamp-2 text-xs leading-5" style={{ color: "var(--rally-muted)" }}>
+        {body}
+      </p>
+      <p className="mt-2 text-[11px] font-semibold" style={{ color: "var(--rally-subtle)" }}>
+        {meta}
+      </p>
+    </Link>
+  );
+}
+
+function AcademyContact({ academy }: { academy?: ParentAcademy }) {
+  if (!academy || (!academy.contact_email && !academy.contact_phone && !academy.address)) {
+    return null;
+  }
+
+  return (
+    <div
+      className="rounded-xl border bg-white p-4 animate-fade-in-up"
+      style={{ borderColor: "var(--rally-line)" }}
+    >
+      <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "var(--rally-cobalt)" }}>
+        Academy
+      </p>
+      <p className="mt-1 text-sm font-bold" style={{ color: "var(--rally-ink)" }}>
+        {academy.display_name}
+      </p>
+      <div className="mt-3 space-y-2 text-xs" style={{ color: "var(--rally-muted)" }}>
+        {academy.address && (
+          <p className="flex gap-2">
+            <MapPin className="mt-0.5 shrink-0" size={14} />
+            <span>{academy.address}</span>
+          </p>
+        )}
+        {academy.hours_text && <p>{academy.hours_text}</p>}
+        <div className="flex flex-wrap gap-2 pt-1">
+          {academy.contact_email && (
+            <a
+              href={`mailto:${academy.contact_email}`}
+              className="inline-flex min-h-touch items-center gap-1.5 rounded-lg px-3 text-xs font-bold text-white"
+              style={{ background: "var(--rally-cobalt)" }}
+            >
+              <Mail size={13} />
+              Email
+            </a>
+          )}
+          {academy.contact_phone && (
+            <a
+              href={`tel:${academy.contact_phone}`}
+              className="inline-flex min-h-touch items-center gap-1.5 rounded-lg border px-3 text-xs font-bold"
+              style={{
+                background: "#f0fdf4",
+                borderColor: "#bbf7d0",
+                color: "#047857",
+              }}
+            >
+              <Phone size={13} />
+              {academy.contact_phone}
+            </a>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function IssueStrip({ issues }: { issues: string[] }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {issues.map((issue) => (
+        <span
+          key={issue}
+          className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold"
+          style={{ background: "#fff7ed", color: "#9a3412", border: "1px solid #fed7aa" }}
+        >
+          <AlertCircle size={12} />
+          {issue}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function actionTheme(kind: ParentHomeAction["kind"]) {
+  switch (kind) {
+    case "waiver":
+      return {
+        icon: FileSignature,
+        background: "#fff7ed",
+        border: "#fed7aa",
+        color: "#9a3412",
+        iconBackground: "#fed7aa",
+      };
+    case "credit":
+    case "payment":
+      return {
+        icon: CreditCard,
+        background: "#eff6ff",
+        border: "#bfdbfe",
+        color: "#1d4ed8",
+        iconBackground: "#dbeafe",
+      };
+    case "progress":
+      return {
+        icon: Trophy,
+        background: "#f0fdf4",
+        border: "#bbf7d0",
+        color: "#047857",
+        iconBackground: "#dcfce7",
+      };
+    case "next_class":
+      return {
+        icon: BookOpen,
+        background: "#eef2ff",
+        border: "#c7d2fe",
+        color: "#4338ca",
+        iconBackground: "#e0e7ff",
+      };
+    case "register":
+    default:
+      return {
+        icon: UserPlus,
+        background: "#fef9c3",
+        border: "#fde68a",
+        color: "#92400e",
+        iconBackground: "#fde68a",
+      };
+  }
+}
+
+function metricColor(tone: ParentHomeMetric["tone"]): string {
+  if (tone === "green") return "#059669";
+  if (tone === "amber") return "#d97706";
+  return "var(--rally-cobalt)";
+}
+
+function firstName(name: string): string {
+  return name.trim().split(/\s+/)[0] || name;
+}
+
+function formatShortDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
