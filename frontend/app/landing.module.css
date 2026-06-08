@@ -693,22 +693,26 @@
 
 /* Footer */
 .foot {
-  margin-top: 56px;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding-top: 22px;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 32px;
+  margin-top: 40px;
   border-top: 1px solid #e2e8f0;
+  color: #64748b;
   font-family: var(--font-mono), ui-monospace, monospace;
-  font-size: 10px;
-  color: #475569;
-  letter-spacing: 0.18em;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  font-weight: 600;
 }
 .foot .right {
   display: flex;
-  gap: 22px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 14px;
 }
 .foot a {
   text-decoration: none;

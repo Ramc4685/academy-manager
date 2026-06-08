@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { brand, copyrightNotice } from "@/lib/brand";
+
 import styles from "./landing.module.css";
 
 const arrowSvg = (
@@ -31,14 +33,14 @@ export default function LandingPage() {
             </svg>
           </div>
           <div className={styles.brandText}>
-            <span className={styles.b1}>Academy Manager</span>
+            <span className={styles.b1}>{brand.productName}</span>
             <span className={styles.b2}>Badminton - Operations</span>
           </div>
         </div>
         <div className={styles.topbarRight}>
           <span className={styles.verPill}>
             <span className={styles.dot} />
-            v2.0 - Online
+            Production - Online
           </span>
           <Link href="/login" className={styles.signinLink}>
             Sign in
@@ -61,7 +63,7 @@ export default function LandingPage() {
       <section className={styles.hero}>
         <div>
           <div className={styles.heroEyebrow}>
-            <span className={styles.badge}>v2.0</span>
+            <span className={styles.badge}>Live</span>
             Three roles - one operations platform
           </div>
           <h1 className={styles.heroTitle}>
@@ -74,7 +76,7 @@ export default function LandingPage() {
         </div>
         <aside className={styles.heroSide}>
           <p>
-            Academy Manager is the v2 frontend for coaches, parents, and admins. Mark
+            {brand.productName} gives coaches, parents, and admins one production workspace. Mark
             attendance, take payments, manage waitlists, and run the academy from one app.
           </p>
           <div className={styles.ctaRow}>
@@ -343,16 +345,19 @@ export default function LandingPage() {
         </div>
         <div className={styles.cell}>
           <div className={styles.l}>Single app</div>
-          <div className={styles.v}>Next v2</div>
-          <div className={styles.s}>The only frontend target after cutover</div>
+          <div className={styles.v}>Unified</div>
+          <div className={styles.s}>One web app for every academy role</div>
         </div>
       </section>
 
       <div className={styles.foot}>
-        <span>(c) 2026 - Academy Manager - v2.0</span>
+        <span>{copyrightNotice()}</span>
         <div className={styles.right}>
           <Link href="/register">Register</Link>
-          <a href="https://api.academy.courtmastr.com/api/v2/healthz">Status</a>
+          <Link href={brand.legalLinks.terms}>Terms</Link>
+          <Link href={brand.legalLinks.privacy}>Privacy</Link>
+          <Link href={brand.legalLinks.security}>Security</Link>
+          <a href={brand.statusUrl}>Status</a>
           <Link href="/login">Sign in</Link>
         </div>
       </div>
