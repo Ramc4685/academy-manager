@@ -4,7 +4,7 @@
 Run sessions, enrollments, attendance, billing, coach payouts, and parent
 communication from one place — on the web, on the court, and on your phone.
 
-> Proprietary software. © 2024–2026 CourtMastr. All rights reserved.
+> Proprietary software. Copyright (c) 2024-2026 Marvy Labs. All rights reserved.
 > Access to this repository does **not** grant a license to use, copy, or
 > redistribute the software. See [LICENSE](LICENSE).
 
@@ -168,5 +168,6 @@ Internal engineering notes live in [AGENTS.md](AGENTS.md) and
 
 ### Trademarks
 
-"CourtMastr", the CourtMastr logo, and "Academy Manager" are trademarks of
-the Licensor. All other marks belong to their respective owners.
+"Academy Manager", "CourtMastr", the CourtMastr logo, and related product
+names or marks are trademarks or service marks of Marvy Labs. All other marks
+belong to their respective owners.

@@ -1,6 +1,6 @@
 # frontend
 
-Next.js 15 App Router PWA for academy-manager v2. See [ADR-0002](../docs/adr/0002-nextjs-app-router.md).
+Next.js 15 App Router PWA for Academy Manager. See [ADR-0002](../docs/adr/0002-nextjs-app-router.md).
 
 This is the only frontend app in the repository. The old CRA app was removed
 after production cutover.
