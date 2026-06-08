@@ -26,7 +26,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from backend.v2.contexts.curriculum.application.use_cases.manage_levels import ListLevels
@@ -87,6 +87,7 @@ from backend.v2.interfaces.admin.deps import get_admin_use_cases
 from backend.v2.interfaces.admin.progress_routes import router as progress_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
+from backend.v2.shared.tenancy import tenant_scope
 
 ACADEMY_ID = "test-academy"
 
@@ -339,6 +340,12 @@ def _admin_claims() -> AuthClaims:
 def _build_app(use_cases, claims: AuthClaims) -> FastAPI:
     app = FastAPI()
     register_exception_handlers(app)
+
+    @app.middleware("http")
+    async def _tenant_ctx(request: Request, call_next):
+        with tenant_scope(claims.academy_id):
+            return await call_next(request)
+
     app.include_router(progress_router, prefix="/api/v2/admin")
     app.dependency_overrides[get_auth_claims] = lambda: claims
     app.dependency_overrides[get_admin_use_cases] = lambda: use_cases
@@ -506,33 +513,35 @@ def _get_default_progress(env, student_id: str):
 def _pass_all_level1_skills(env, student_id: str, coach_id: str = "coach-1") -> list:
     results = []
     for skill in env.level1_skills:
-        result = _run(
-            env.ns.record_test_attempt.execute(
-                RecordTestAttemptCommand(
-                    student_id=student_id,
-                    skill_id=skill.skill_id,
-                    level_id=env.level1.level_id,
-                    program_id=env.program_id,
-                    coach_id=coach_id,
-                    attempts_count=10,
-                    success_count=10,
+        with tenant_scope(ACADEMY_ID):
+            result = _run(
+                env.ns.record_test_attempt.execute(
+                    RecordTestAttemptCommand(
+                        student_id=student_id,
+                        skill_id=skill.skill_id,
+                        level_id=env.level1.level_id,
+                        program_id=env.program_id,
+                        coach_id=coach_id,
+                        attempts_count=10,
+                        success_count=10,
+                    )
                 )
             )
-        )
         results.append(result)
     return results
 
 
 def _recommend(env, student_id: str, coach_id: str = "coach-1"):
-    return _run(
-        env.ns.recommend_level_up.execute(
-            RecommendLevelUpCommand(
-                student_id=student_id,
-                program_id=env.program_id,
-                recommended_by=coach_id,
+    with tenant_scope(ACADEMY_ID):
+        return _run(
+            env.ns.recommend_level_up.execute(
+                RecommendLevelUpCommand(
+                    student_id=student_id,
+                    program_id=env.program_id,
+                    recommended_by=coach_id,
+                )
             )
         )
-    )
 
 
 # ---------------------------------------------------------------------------

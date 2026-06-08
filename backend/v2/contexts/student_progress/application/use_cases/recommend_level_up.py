@@ -26,14 +26,11 @@ from backend.v2.contexts.student_progress.domain.logic import check_level_comple
 from backend.v2.contexts.student_progress.domain.models import LevelUpRecommendation
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
-from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
+from backend.v2.shared.tenancy import current_academy_id
 
 
 def _resolve_academy_id() -> str:
-    try:
-        return current_academy_id()
-    except TenantContextUnset:
-        return ""
+    return current_academy_id()
 
 
 class RecommendLevelUpCommand(BaseModel):

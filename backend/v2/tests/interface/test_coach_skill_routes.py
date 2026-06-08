@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from backend.v2.contexts.enrollment.domain.models import RosterEntry
@@ -51,6 +51,7 @@ from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.tenancy import tenant_scope
 
 # ---------------------------------------------------------------------------
 # Fake repos
@@ -304,6 +305,12 @@ def _build_coach_app() -> FastAPI:
     )
 
     app = FastAPI()
+
+    @app.middleware("http")
+    async def _tenant_ctx(request: Request, call_next):
+        with tenant_scope(ACADEMY_ID):
+            return await call_next(request)
+
     app.dependency_overrides[get_auth_claims] = lambda: AuthClaims(
         user_id=COACH_ID,
         email="coach@example.com",
