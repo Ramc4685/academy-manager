@@ -24,17 +24,14 @@ from backend.v2.contexts.student_progress.domain.models import (
 )
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
-from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
+from backend.v2.shared.tenancy import current_academy_id
 
 # Statuses a coach can set (cannot set PASSED directly — use RecordTestAttempt)
 CoachSettableStatus = Literal["INTRODUCED", "LEARNING", "PRACTICING", "TEST_READY", "NEEDS_REVIEW"]
 
 
 def _resolve_academy_id() -> str:
-    try:
-        return current_academy_id()
-    except TenantContextUnset:
-        return ""
+    return current_academy_id()
 
 
 class UpdateSkillStatusCommand(BaseModel):
@@ -81,7 +78,7 @@ class UpdateSkillStatus:
         if existing is None:
             updated = StudentSkillProgress(
                 skill_progress_id=str(new_ulid()),
-                academy_id="",
+                academy_id=_resolve_academy_id(),
                 student_id=cmd.student_id,
                 skill_id=cmd.skill_id,
                 level_id=cmd.level_id,

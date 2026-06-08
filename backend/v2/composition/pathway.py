@@ -90,8 +90,8 @@ from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_re
 from backend.v2.contexts.student_progress.infrastructure.mongo_test_attempt_repo import (
     MongoTestAttemptRepository,
 )
-from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
+from backend.v2.shared.tenancy import current_academy_id
 
 # ---------------------------------------------------------------------------
 # SeedBadmintonPathway callable wrapper
@@ -109,18 +109,16 @@ class SeedBadmintonPathway:
         skills: MongoSkillRepository,
         criteria: MongoCriterionRepository,
         refs: MongoExternalRefRepository,
-        academy_id: str,
     ) -> None:
         self._programs = programs
         self._levels = levels
         self._skills = skills
         self._criteria = criteria
         self._refs = refs
-        self._academy_id = academy_id
 
     async def execute(self, *, created_by: str = "admin") -> object:
         return await seed_badminton_pathway(
-            academy_id=self._academy_id,
+            academy_id=current_academy_id(),
             programs=self._programs,
             levels=self._levels,
             skills=self._skills,
@@ -174,9 +172,6 @@ class StudentProgressComposition:
 
 
 def compose_curriculum(db: AsyncIOMotorDatabase[Any]) -> CurriculumComposition:
-    settings = get_settings()
-    academy_id = settings.default_academy_id
-
     programs_repo = MongoProgramRepository(db)
     levels_repo = MongoLevelRepository(db)
     skills_repo = MongoSkillRepository(db)
@@ -210,7 +205,6 @@ def compose_curriculum(db: AsyncIOMotorDatabase[Any]) -> CurriculumComposition:
             skills=skills_repo,
             criteria=criteria_repo,
             refs=refs_repo,
-            academy_id=academy_id,
         ),
     )
 
