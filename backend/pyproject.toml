@@ -1,7 +1,7 @@
 [project]
 name = "academy-manager-backend"
 version = "0.1.0"
-description = "Academy Manager v2 backend"
+description = "Academy Manager backend"
 requires-python = ">=3.12"
 
 [tool.ruff]

@@ -284,7 +284,7 @@ async def _scheduler_academy_ids(
 def create_app() -> FastAPI:
     get_settings()
     app = FastAPI(
-        title="Academy Manager v2",
+        title="Academy Manager API",
         version="2.0.0",
         lifespan=_lifespan,
     )

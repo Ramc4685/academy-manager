@@ -32,3 +32,8 @@ def test_healthz_returns_ok(app: FastAPI) -> None:
         r = client.get("/api/v2/healthz")
         assert r.status_code == 200
         assert r.json() == {"status": "ok"}
+
+
+def test_openapi_title_is_public_product_name(app: FastAPI) -> None:
+    assert app.title == "Academy Manager API"
+    assert app.version == "2.0.0"
