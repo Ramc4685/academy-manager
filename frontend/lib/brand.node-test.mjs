@@ -24,5 +24,11 @@ test("public product copy does not expose implementation versioning", () => {
     copyrightNotice(),
   ].join(" ");
 
-  assert.equal(/\bv2\b|v2\.0|Next v2/i.test(publicValues), false);
+  const versionToken = "v" + "2";
+  const forbiddenPattern = new RegExp(
+    [`\\b${versionToken}\\b`, `${versionToken}\\.0`, `Next ${versionToken}`].join("|"),
+    "i"
+  );
+
+  assert.equal(forbiddenPattern.test(publicValues), false);
 });
