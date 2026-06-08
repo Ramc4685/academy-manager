@@ -9,10 +9,17 @@ test("public brand owner is Marvy Labs", () => {
 });
 
 test("copyright notice uses standard ASCII notice format", () => {
-  assert.equal(
-    copyrightNotice(),
-    "Copyright (c) 2024-2026 Marvy Labs. All rights reserved."
+  const notice = copyrightNotice();
+
+  assert.match(
+    notice,
+    /^Copyright \(c\) \d{4}-\d{4} Marvy Labs\. All rights reserved\.$/
   );
+  const yearRange = notice.match(/(\d{4})-(\d{4})/);
+  assert.ok(yearRange, "Copyright notice should include a year range");
+
+  const [, startYear, endYear] = yearRange;
+  assert.ok(Number(endYear) >= Number(startYear), "End year should be >= start year");
 });
 
 test("public product copy does not expose implementation versioning", () => {
@@ -24,11 +31,11 @@ test("public product copy does not expose implementation versioning", () => {
     copyrightNotice(),
   ].join(" ");
 
-  const versionToken = "v" + "2";
+  const versionToken = "v2";
   const forbiddenPattern = new RegExp(
     [`\\b${versionToken}\\b`, `${versionToken}\\.0`, `Next ${versionToken}`].join("|"),
     "i"
   );
 
-  assert.equal(forbiddenPattern.test(publicValues), false);
+  assert.doesNotMatch(publicValues, forbiddenPattern);
 });

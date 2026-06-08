@@ -5,8 +5,8 @@ export const brand = {
   productDescriptor: "Badminton academy operations platform",
   copyrightYears: "2024-2026",
   legalOwner: "Marvy Labs",
-  supportEmail: "ramchand4685@gmail.com",
-  securityEmail: "ramchand4685@gmail.com",
+  supportEmail: "support@marvylabs.com",
+  securityEmail: "security@marvylabs.com",
   publicSiteUrl: "https://academy.courtmastr.com",
   statusUrl: "https://api.academy.courtmastr.com/api/v2/healthz",
   legalLinks: {
