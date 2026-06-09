@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 import withSerwistInit from "@serwist/next";
 
+import { CANONICAL_HOST_REDIRECTS } from "./lib/canonical-host";
+
 const withSerwist = withSerwistInit({
   swSrc: "app/sw.ts",
   swDest: "public/sw.js",
@@ -32,6 +34,14 @@ const config: NextConfig = {
         ],
       },
     ];
+  },
+  async redirects() {
+    return Object.entries(CANONICAL_HOST_REDIRECTS).map(([sourceHost, destinationHost]) => ({
+      source: "/:path*",
+      has: [{ type: "host" as const, value: sourceHost }],
+      destination: `https://${destinationHost}/:path*`,
+      permanent: true,
+    }));
   },
 };
 

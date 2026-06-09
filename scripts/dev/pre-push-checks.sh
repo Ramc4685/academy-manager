@@ -71,6 +71,7 @@ header "Frontend"
 cd "$FRONTEND"
 
 run_check "node unit tests" node --no-warnings --test \
+  lib/canonical-host.node-test.mjs \
   lib/api/proxy-headers.node-test.mjs \
   lib/api/auth-token.node-test.mjs \
   lib/auth/token-readiness.node-test.mjs
