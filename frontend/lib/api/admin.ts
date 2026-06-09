@@ -388,6 +388,32 @@ export interface AdminPayoutList {
   payouts: AdminPayoutView[];
 }
 
+export type CoachPayBillingUnit = "per_session" | "per_hour" | "percent_of_revenue";
+
+export interface AdminCoachPayRateView {
+  rate_id: string;
+  coach_id: string;
+  billing_unit: CoachPayBillingUnit;
+  amount_cents: number;
+  percent: number | null;
+  currency: string;
+  effective_from: string;
+  effective_until: string | null;
+  status: "active" | "superseded";
+}
+
+export interface AdminCoachPayRateList {
+  rates: AdminCoachPayRateView[];
+}
+
+export interface SetCoachPayRateRequest {
+  billing_unit: CoachPayBillingUnit;
+  amount_cents?: number;
+  percent?: number | null;
+  currency?: string;
+  effective_from?: string | null;
+}
+
 export interface AdminExpenseView {
   expense_id: string;
   category: string;
@@ -1237,6 +1263,26 @@ export function listPayouts(): Promise<AdminPayoutList> {
 
 export function listExpenses(): Promise<AdminExpenseList> {
   return apiFetch<AdminExpenseList>("/admin/finance/expenses", { method: "GET" });
+}
+
+export function listCoachPayRates(coachId: string): Promise<AdminCoachPayRateList> {
+  return apiFetch<AdminCoachPayRateList>(
+    `/admin/coaches/${encodeURIComponent(coachId)}/pay-rates`,
+    { method: "GET" }
+  );
+}
+
+export function setCoachPayRate(
+  coachId: string,
+  payload: SetCoachPayRateRequest
+): Promise<AdminCoachPayRateView> {
+  return apiFetch<AdminCoachPayRateView>(
+    `/admin/coaches/${encodeURIComponent(coachId)}/pay-rates`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
 }
 
 export function createExpense(payload: CreateExpenseRequest): Promise<AdminExpenseView> {

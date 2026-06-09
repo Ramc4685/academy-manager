@@ -70,6 +70,7 @@ def _occurrence(
     substitute_coach_id: str | None = None,
     academy_id: str = "acad-1",
     coach_attendance: list[CoachAttendanceForPayout] | None = None,
+    expected_revenue_minor: int | None = None,
 ) -> PayableOccurrence:
     return PayableOccurrence(
         occurrence_id=occurrence_id,
@@ -82,6 +83,7 @@ def _occurrence(
         substitute_coach_id=substitute_coach_id,
         is_payable=is_payable,
         coach_attendance=coach_attendance or [],
+        expected_revenue_minor=expected_revenue_minor,
     )
 
 
@@ -417,7 +419,7 @@ async def test_legacy_attendance_does_not_pay_before_occurrence_is_completed() -
 
 
 @pytest.mark.asyncio
-async def test_legacy_absent_attendance_does_not_override_scheduled_payout() -> None:
+async def test_absent_coach_is_not_paid_and_is_reported() -> None:
     rate = CoachRate(
         rate_id="cr-1",
         academy_id="acad-1",
@@ -453,8 +455,154 @@ async def test_legacy_absent_attendance_does_not_override_scheduled_payout() -> 
         period_start=_dt("2026-05-01T00:00:00"),
         period_end=_dt("2026-06-01T00:00:00"),
     )
+    assert statement.lines == []
+    assert statement.total_minor == 0
+    assert statement.absent_occurrence_ids == ["occ-1"]
+
+
+@pytest.mark.asyncio
+async def test_unmarked_attendance_still_pays_scheduled_coach() -> None:
+    # Policy: paid unless explicitly marked absent.
+    rate = CoachRate(
+        rate_id="cr-1",
+        academy_id="acad-1",
+        coach_id="coach-A",
+        billing_unit="per_session",
+        amount_minor=5000,
+        currency="USD",
+        effective_from=_dt("2026-01-01T00:00:00"),
+        effective_until=None,
+        status="active",
+    )
+    occ = _occurrence(
+        "occ-1",
+        start="2026-05-10T18:00:00",
+        end="2026-05-10T19:00:00",
+        scheduled_coach_id="coach-A",
+        coach_attendance=[],
+    )
+    use_case = ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery([occ]),
+        rates=FakeRateRepo([rate]),
+    )
+    statement = await use_case.execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
     assert statement.total_minor == 5000
-    assert statement.lines[0].basis == "scheduled"
+
+
+@pytest.mark.asyncio
+async def test_replacement_coach_paid_when_scheduled_coach_absent() -> None:
+    rates = [
+        CoachRate(
+            rate_id="cr-sub",
+            academy_id="acad-1",
+            coach_id="coach-replacement",
+            billing_unit="per_session",
+            amount_minor=4000,
+            currency="USD",
+            effective_from=_dt("2026-01-01T00:00:00"),
+            effective_until=None,
+            status="active",
+        ),
+        CoachRate(
+            rate_id="cr-sched",
+            academy_id="acad-1",
+            coach_id="coach-A",
+            billing_unit="per_session",
+            amount_minor=5000,
+            currency="USD",
+            effective_from=_dt("2026-01-01T00:00:00"),
+            effective_until=None,
+            status="active",
+        ),
+    ]
+    occ = _occurrence(
+        "occ-1",
+        start="2026-05-10T18:00:00",
+        end="2026-05-10T19:00:00",
+        scheduled_coach_id="coach-A",
+        actual_coach_id="coach-replacement",
+        coach_attendance=[
+            CoachAttendanceForPayout(
+                coach_id="coach-A",
+                status="absent",
+                role="lead",
+                rate_override_minor=None,
+            ),
+            CoachAttendanceForPayout(
+                coach_id="coach-replacement",
+                status="present",
+                role="lead",
+                rate_override_minor=None,
+            ),
+        ],
+    )
+    replacement_statement = await ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery([occ]),
+        rates=FakeRateRepo(rates),
+    ).execute(
+        coach_id="coach-replacement",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+    scheduled_statement = await ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery([occ]),
+        rates=FakeRateRepo(rates),
+    ).execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+    assert replacement_statement.total_minor == 4000
+    assert replacement_statement.lines[0].basis == "actual"
+    assert scheduled_statement.total_minor == 0
+    assert scheduled_statement.lines == []
+
+
+@pytest.mark.asyncio
+async def test_attendance_rate_override_takes_precedence_over_rate() -> None:
+    rate = CoachRate(
+        rate_id="cr-1",
+        academy_id="acad-1",
+        coach_id="coach-A",
+        billing_unit="per_session",
+        amount_minor=5000,
+        currency="USD",
+        effective_from=_dt("2026-01-01T00:00:00"),
+        effective_until=None,
+        status="active",
+    )
+    occ = _occurrence(
+        "occ-1",
+        start="2026-05-10T18:00:00",
+        end="2026-05-10T19:00:00",
+        scheduled_coach_id="coach-A",
+        coach_attendance=[
+            CoachAttendanceForPayout(
+                coach_id="coach-A",
+                status="present",
+                role="lead",
+                rate_override_minor=3000,
+            )
+        ],
+    )
+    statement = await ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery([occ]),
+        rates=FakeRateRepo([rate]),
+    ).execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+    assert statement.total_minor == 3000
+    assert statement.lines[0].rate_id == "attendance-override"
 
 
 @pytest.mark.asyncio
@@ -593,6 +741,123 @@ async def test_per_hour_rate_prorates_partial_hour() -> None:
     )
     assert statement.lines[0].amount_minor == 7500
     assert statement.lines[0].minutes == Decimal("90")
+
+
+@pytest.mark.asyncio
+async def test_percent_of_revenue_rate_pays_share_of_expected_revenue() -> None:
+    # 60% of $300.00 expected revenue -> $180.00 -> 18000 minor units
+    rate = CoachRate(
+        rate_id="cr-1",
+        academy_id="acad-1",
+        coach_id="coach-A",
+        billing_unit="percent_of_revenue",
+        amount_minor=0,
+        percent_bps=6000,
+        currency="USD",
+        effective_from=_dt("2026-01-01T00:00:00"),
+        effective_until=None,
+        status="active",
+    )
+    occ = _occurrence(
+        "occ-1",
+        start="2026-05-10T18:00:00",
+        end="2026-05-10T19:00:00",
+        expected_revenue_minor=30000,
+    )
+    statement = await ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery([occ]),
+        rates=FakeRateRepo([rate]),
+    ).execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+    assert statement.total_minor == 18000
+    assert statement.lines[0].percent_bps == 6000
+    assert statement.lines[0].expected_revenue_minor == 30000
+
+
+@pytest.mark.asyncio
+async def test_percent_rate_rounds_half_even() -> None:
+    # 33.33% of $100.01 -> 3333.3333 bps math -> 10001 * 3333 / 10000 = 3333.3333 -> 3333
+    rate = CoachRate(
+        rate_id="cr-1",
+        academy_id="acad-1",
+        coach_id="coach-A",
+        billing_unit="percent_of_revenue",
+        amount_minor=0,
+        percent_bps=3333,
+        currency="USD",
+        effective_from=_dt("2026-01-01T00:00:00"),
+        effective_until=None,
+        status="active",
+    )
+    occ = _occurrence(
+        "occ-1",
+        start="2026-05-10T18:00:00",
+        end="2026-05-10T19:00:00",
+        expected_revenue_minor=10001,
+    )
+    statement = await ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery([occ]),
+        rates=FakeRateRepo([rate]),
+    ).execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+    assert statement.total_minor == 3333
+
+
+@pytest.mark.asyncio
+async def test_percent_rate_without_expected_revenue_marks_unpaid() -> None:
+    rate = CoachRate(
+        rate_id="cr-1",
+        academy_id="acad-1",
+        coach_id="coach-A",
+        billing_unit="percent_of_revenue",
+        amount_minor=0,
+        percent_bps=6000,
+        currency="USD",
+        effective_from=_dt("2026-01-01T00:00:00"),
+        effective_until=None,
+        status="active",
+    )
+    occ = _occurrence(
+        "occ-1",
+        start="2026-05-10T18:00:00",
+        end="2026-05-10T19:00:00",
+        expected_revenue_minor=None,
+    )
+    statement = await ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery([occ]),
+        rates=FakeRateRepo([rate]),
+    ).execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+    assert statement.lines == []
+    assert statement.unpaid_occurrence_ids == ["occ-1"]
+
+
+def test_percent_rate_requires_percent_bps() -> None:
+    with pytest.raises(ValueError):
+        CoachRate(
+            rate_id="cr-1",
+            academy_id="acad-1",
+            coach_id="coach-A",
+            billing_unit="percent_of_revenue",
+            amount_minor=0,
+            percent_bps=None,
+            currency="USD",
+            effective_from=_dt("2026-01-01T00:00:00"),
+            effective_until=None,
+            status="active",
+        )
 
 
 @pytest.mark.asyncio

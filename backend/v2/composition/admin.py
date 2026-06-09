@@ -73,6 +73,10 @@ from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
 from backend.v2.contexts.coaching.application.use_cases.compute_payout import (
     ComputeCoachPayout,
 )
+from backend.v2.contexts.coaching.application.use_cases.manage_coach_rates import (
+    ListCoachPayRates,
+    SetCoachPayRate,
+)
 from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance import (
     MarkCoachAttendance,
 )
@@ -83,6 +87,9 @@ from backend.v2.contexts.coaching.domain.payout import (
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
     MongoCoachAttendanceRepository,
+)
+from backend.v2.contexts.coaching.infrastructure.mongo_coach_rate_repo import (
+    MongoCoachRateRepository,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     ChangeAdminStudentParent,
@@ -702,6 +709,7 @@ class _MongoPayableOccurrenceQuery:
         )
         docs = [doc async for doc in cursor]
         occurrence_ids = [str(doc["occurrence_id"]) for doc in docs]
+        revenue_by_session = await self._expected_revenue_by_session(academy_id, docs)
         attendance_by_occurrence: dict[str, list[CoachAttendanceForPayout]] = {
             occurrence_id: [] for occurrence_id in occurrence_ids
         }
@@ -740,9 +748,59 @@ class _MongoPayableOccurrenceQuery:
                 substitute_coach_id=_optional_str(doc.get("substitute_coach_id")),
                 is_payable=bool(doc.get("is_payable", True)),
                 coach_attendance=attendance_by_occurrence.get(str(doc["occurrence_id"]), []),
+                expected_revenue_minor=revenue_by_session.get(_occurrence_session_id(doc)),
             )
             for doc in docs
         ]
+
+    async def _expected_revenue_by_session(
+        self,
+        academy_id: str,
+        occurrence_docs: list[dict[str, Any]],
+    ) -> dict[str, int]:
+        """Expected revenue per session = session price x active enrollments.
+
+        Used as the basis for ``percent_of_revenue`` coach rates. Sessions
+        without a configured ``amount_cents`` are omitted, which surfaces
+        downstream as ``unpaid_occurrence_ids`` instead of silently paying 0.
+        """
+        session_ids = sorted(
+            {_occurrence_session_id(doc) for doc in occurrence_docs if _occurrence_session_id(doc)}
+        )
+        if not session_ids:
+            return {}
+
+        price_by_session: dict[str, int] = {}
+        session_cursor = self._db["sessions"].find(
+            {"academy_id": academy_id, "session_id": {"$in": session_ids}},
+            {"session_id": 1, "amount_cents": 1},
+        )
+        async for row in session_cursor:
+            amount = row.get("amount_cents")
+            if amount is not None:
+                price_by_session[str(row["session_id"])] = int(amount)
+
+        if not price_by_session:
+            return {}
+
+        enrolled_by_session: dict[str, int] = dict.fromkeys(price_by_session, 0)
+        enrollment_cursor = self._db["enrollments"].find(
+            {
+                "academy_id": academy_id,
+                "session_id": {"$in": list(price_by_session)},
+                "status": "active",
+                "is_deleted": {"$ne": True},
+            },
+            {"session_id": 1},
+        )
+        async for row in enrollment_cursor:
+            session_id = str(row["session_id"])
+            enrolled_by_session[session_id] = enrolled_by_session.get(session_id, 0) + 1
+
+        return {
+            session_id: price_by_session[session_id] * enrolled_by_session.get(session_id, 0)
+            for session_id in price_by_session
+        }
 
 
 class _MongoCoachRateRepository:
@@ -774,6 +832,7 @@ class _MongoCoachRateRepository:
             coach_id=str(doc["coach_id"]),
             billing_unit=doc.get("billing_unit", "per_session"),
             amount_minor=int(doc.get("amount_minor", doc.get("amount_cents", 0))),
+            percent_bps=(None if doc.get("percent_bps") is None else int(doc["percent_bps"])),
             currency=str(doc.get("currency", "USD")).upper(),
             effective_from=doc["effective_from"],
             effective_until=doc.get("effective_until"),
@@ -810,6 +869,8 @@ class _FinancePayoutCalculator:
                         amount_minor=line.amount_minor,
                         currency=line.currency,
                         rate_id=line.rate_id,
+                        percent_bps=line.percent_bps,
+                        expected_revenue_minor=line.expected_revenue_minor,
                     )
                     for line in statement.lines
                 ]
@@ -819,6 +880,12 @@ class _FinancePayoutCalculator:
 
 def _optional_str(value: object | None) -> str | None:
     return None if value is None else str(value)
+
+
+def _occurrence_session_id(doc: dict[str, Any]) -> str:
+    """Session the occurrence belongs to — enrollments reference the
+    template session, so prefer ``template_session_id`` when present."""
+    return str(doc.get("template_session_id") or doc.get("session_id") or "")
 
 
 def compose_admin(
@@ -988,6 +1055,9 @@ def compose_admin(
     )
     approve_payout_period = ApprovePayoutPeriod(repository=payout_periods_repo)
     mark_payout_paid = MarkPayoutPaid(repository=payout_periods_repo)
+    coach_rates_repo = MongoCoachRateRepository(db)
+    set_coach_pay_rate = SetCoachPayRate(rates=coach_rates_repo)
+    list_coach_pay_rates = ListCoachPayRates(rates=coach_rates_repo)
     record_expense = RecordExpense(expenses=expenses_repo, academy_id=academy_id)
     edit_expense = EditExpense(expenses=expenses_repo)
     delete_expense = DeleteExpense(expenses=expenses_repo)
@@ -2308,6 +2378,8 @@ def compose_admin(
         generate_payout_period=generate_payout_period,
         approve_payout_period=approve_payout_period,
         mark_payout_paid=mark_payout_paid,
+        set_coach_pay_rate=set_coach_pay_rate,
+        list_coach_pay_rates=list_coach_pay_rates,
         list_admin_sessions=list_admin_sessions,
         get_admin_session=get_admin_session,
         maintain_session_occurrences=maintain_session_occurrences,

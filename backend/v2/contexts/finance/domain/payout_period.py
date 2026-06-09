@@ -57,6 +57,8 @@ class PersistedPayoutLine(BaseModel):
     amount_minor: int = Field(ge=0)
     currency: str = Field(min_length=3, max_length=3)
     rate_id: str
+    percent_bps: int | None = Field(default=None, ge=0, le=10000)
+    expected_revenue_minor: int | None = Field(default=None, ge=0)
 
 
 class PayoutPeriod(BaseModel):

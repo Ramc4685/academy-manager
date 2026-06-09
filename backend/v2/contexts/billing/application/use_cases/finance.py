@@ -128,6 +128,10 @@ class MongoPayoutRepository(TenantScopedRepository):
             period_start=doc["period_start"],  # type: ignore[arg-type]
             period_end=doc["period_end"],  # type: ignore[arg-type]
             paid_at=doc.get("paid_at"),  # type: ignore[arg-type]
+            expected_revenue_cents=doc.get("expected_revenue_cents"),  # type: ignore[arg-type]
+            students_count=doc.get("students_count"),  # type: ignore[arg-type]
+            sessions_count=doc.get("sessions_count"),  # type: ignore[arg-type]
+            rule_label=doc.get("rule_label"),  # type: ignore[arg-type]
         )
 
     async def list_all(self) -> list[Payout]:
@@ -176,20 +180,47 @@ class MongoPayoutRepository(TenantScopedRepository):
                     str(row["student_id"])
                 )
 
+        # Coach payroll attendance: absent coaches are not paid; a row may
+        # carry a per-occurrence rate override. Same policy as
+        # coaching.ComputeCoachPayout.
+        absent_keys: set[tuple[str, str]] = set()
+        override_by_key: dict[tuple[str, str], int] = {}
+        coach_attendance_cursor = self._find_many_in_collection(
+            "coach_attendance",
+            {"occurrence_id": {"$in": occurrence_ids}},
+            {"occurrence_id": 1, "coach_id": 1, "status": 1, "rate_override_minor": 1},
+        )
+        async for row in coach_attendance_cursor:
+            key = (str(row["occurrence_id"]), str(row["coach_id"]))
+            if row.get("status") == "absent":
+                absent_keys.add(key)
+            elif row.get("rate_override_minor") is not None:
+                override_by_key[key] = int(row["rate_override_minor"])
+
+        revenue_by_session = await self._expected_revenue_by_session(occurrence_rows)
+
         grouped: dict[tuple[str, str], dict[str, object]] = {}
         for occurrence in occurrence_rows:
             occurrence_id = str(occurrence["occurrence_id"])
             coach_id = str(occurrence.get("actual_coach_id") or occurrence["scheduled_coach_id"])
+            if (occurrence_id, coach_id) in absent_keys:
+                continue
             start_at = occurrence["start_at"]
-            amount = await self._occurrence_amount_minor(coach_id, start_at, occurrence)
+            expected_revenue = revenue_by_session.get(_occurrence_session_id(occurrence))
+            amount = override_by_key.get((occurrence_id, coach_id))
+            if amount is None:
+                amount = await self._occurrence_amount_minor(
+                    coach_id, start_at, occurrence, expected_revenue
+                )
             if amount is None:
                 continue
             period = start_at.strftime("%Y-%m")
             bucket = grouped.setdefault(
                 (period, coach_id),
-                {"amount": 0, "students": set(), "occurrences": set()},
+                {"amount": 0, "students": set(), "occurrences": set(), "expected": 0},
             )
             bucket["amount"] = int(bucket["amount"]) + amount
+            bucket["expected"] = int(bucket["expected"]) + (expected_revenue or 0)
             bucket["occurrences"].add(occurrence_id)  # type: ignore[attr-defined]
             bucket["students"].update(students_by_occurrence.get(occurrence_id, set()))  # type: ignore[attr-defined]
 
@@ -199,6 +230,7 @@ class MongoPayoutRepository(TenantScopedRepository):
             if amount_cents <= 0:
                 continue
             period_start, period_end = _period_window(period)
+            expected_cents = int(bucket["expected"])
             payouts.append(
                 Payout(
                     payout_id=f"occurrence:{period}:{coach_id}",
@@ -207,6 +239,7 @@ class MongoPayoutRepository(TenantScopedRepository):
                     amount_cents=amount_cents,
                     period_start=period_start,
                     period_end=period_end,
+                    expected_revenue_cents=expected_cents if expected_cents > 0 else None,
                     students_count=len(bucket["students"]),  # type: ignore[arg-type]
                     sessions_count=len(bucket["occurrences"]),  # type: ignore[arg-type]
                     rule_label="Occurrence attribution",
@@ -214,11 +247,54 @@ class MongoPayoutRepository(TenantScopedRepository):
             )
         return sorted(payouts, key=lambda payout: payout.period_start, reverse=True)
 
+    async def _expected_revenue_by_session(
+        self, occurrence_rows: list[dict[str, object]]
+    ) -> dict[str, int]:
+        """Expected revenue per session = session price x active enrollments."""
+        session_ids = sorted(
+            {_occurrence_session_id(row) for row in occurrence_rows if _occurrence_session_id(row)}
+        )
+        if not session_ids:
+            return {}
+
+        price_by_session: dict[str, int] = {}
+        session_cursor = self._find_many_in_collection(
+            "sessions",
+            {"session_id": {"$in": session_ids}},
+            {"session_id": 1, "amount_cents": 1},
+        )
+        async for row in session_cursor:
+            if row.get("amount_cents") is not None:
+                price_by_session[str(row["session_id"])] = int(row["amount_cents"])  # type: ignore[arg-type]
+
+        if not price_by_session:
+            return {}
+
+        enrolled_by_session: dict[str, int] = dict.fromkeys(price_by_session, 0)
+        enrollment_cursor = self._find_many_in_collection(
+            "enrollments",
+            {
+                "session_id": {"$in": list(price_by_session)},
+                "status": "active",
+                "is_deleted": {"$ne": True},
+            },
+            {"session_id": 1},
+        )
+        async for row in enrollment_cursor:
+            session_id = str(row["session_id"])
+            enrolled_by_session[session_id] = enrolled_by_session.get(session_id, 0) + 1
+
+        return {
+            session_id: price_by_session[session_id] * enrolled_by_session.get(session_id, 0)
+            for session_id in price_by_session
+        }
+
     async def _occurrence_amount_minor(
         self,
         coach_id: str,
         start_at: datetime,
         occurrence: dict[str, object],
+        expected_revenue_minor: int | None = None,
     ) -> int | None:
         rate = await self._find_one_in_collection(
             "coach_rates",
@@ -237,8 +313,19 @@ class MongoPayoutRepository(TenantScopedRepository):
         if rate is None:
             return None
 
+        billing_unit = rate.get("billing_unit", "per_session")
+        if billing_unit == "percent_of_revenue":
+            percent_bps = rate.get("percent_bps")
+            if percent_bps is None or expected_revenue_minor is None:
+                return None
+            return int(
+                (
+                    Decimal(expected_revenue_minor) * Decimal(int(percent_bps)) / Decimal(10000)
+                ).quantize(Decimal("1"), rounding=ROUND_HALF_EVEN)
+            )
+
         amount_minor = int(rate.get("amount_minor", rate.get("amount_cents", 0)))
-        if rate.get("billing_unit", "per_session") == "per_session":
+        if billing_unit == "per_session":
             return amount_minor
 
         end_at = occurrence["end_at"]
@@ -248,6 +335,11 @@ class MongoPayoutRepository(TenantScopedRepository):
                 Decimal("1"), rounding=ROUND_HALF_EVEN
             )
         )
+
+
+def _occurrence_session_id(row: dict[str, object]) -> str:
+    """Enrollments reference the template session, so prefer it."""
+    return str(row.get("template_session_id") or row.get("session_id") or "")
 
 
 def _period_window(period: str) -> tuple[datetime, datetime]:

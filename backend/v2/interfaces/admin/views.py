@@ -713,6 +713,30 @@ class AdminPayoutPayslipView(BaseModel):
     lines: list[AdminPayoutPeriodLineView]
 
 
+class AdminCoachPayRateView(BaseModel):
+    rate_id: str
+    coach_id: str
+    billing_unit: Literal["per_session", "per_hour", "percent_of_revenue"]
+    amount_cents: int
+    percent: float | None = None
+    currency: str
+    effective_from: datetime
+    effective_until: datetime | None = None
+    status: Literal["active", "superseded"]
+
+
+class AdminCoachPayRateList(BaseModel):
+    rates: list[AdminCoachPayRateView]
+
+
+class SetCoachPayRateRequest(BaseModel):
+    billing_unit: Literal["per_session", "per_hour", "percent_of_revenue"]
+    amount_cents: int = Field(default=0, ge=0)
+    percent: float | None = Field(default=None, ge=0, le=100)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    effective_from: datetime | None = None
+
+
 class AdminExpenseView(BaseModel):  # FINANCE
     expense_id: str
     category: str

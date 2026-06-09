@@ -194,6 +194,8 @@ class AdminUseCases:
     generate_payout_period: GeneratePayoutPeriod | None = None
     approve_payout_period: ApprovePayoutPeriod | None = None
     mark_payout_paid: MarkPayoutPaid | None = None
+    set_coach_pay_rate: object | None = None  # SetCoachPayRate
+    list_coach_pay_rates: object | None = None  # ListCoachPayRates
     create_session_type: CreateSessionType | None = None
     list_session_types: ListSessionTypes | None = None
     update_session_type: UpdateSessionType | None = None
