@@ -23,6 +23,7 @@ GitHub Actions backend deployment failed; identify root cause from run logs, fix
 - No verification recorded yet.
 - 2026-06-08T18:05:38: Fixed Fly app state by destroying stopped unhealthy machine 5683ed0df35448 (no volume). Verification: flyctl machine list now shows one app machine, 781960b93e5d18, started with 1/1 checks; flyctl checks list shows servicecheck-00-http-8001 passing; production smoke script passed. GitHub run 27172413218 has backend validation/lint passing and is waiting on production approval, so the next deployment attempt has not run yet.
 - 2026-06-08T19:09:30: ruby -e 'require "yaml"; YAML.load_file(".github/workflows/production.yml")' parsed the production workflow after the workflow_dispatch deploy-gate patch.
+- 2026-06-08T19:31:08: Manual Production run 27175473230 completed successfully after PR #154 workflow_dispatch deploy-gate fix and production approval. Deploy Backend, Deploy Frontend, and Production Smoke passed; live Fly image label GH_SHA=a18a18c.
 ## Reusable Lessons
 
 - None recorded yet.
