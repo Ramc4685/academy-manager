@@ -758,7 +758,16 @@ type QueryFunctionContextArg = {
 export interface AdminPauseRequestView {
   pause_request_id: string;
   parent_id: string;
+  parent_name: string | null;
+  parent_email: string | null;
   enrollment_id: string;
+  student_id: string | null;
+  student_name: string | null;
+  session_id: string | null;
+  session_title: string | null;
+  session_location: string | null;
+  session_start_at: string | null;
+  session_end_at: string | null;
   period: string;
   pause_kind: "fixed" | "indefinite";
   resume_on: string | null;
