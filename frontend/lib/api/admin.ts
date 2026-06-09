@@ -24,6 +24,7 @@ export interface AdminSessionView {
   end_time: string | null;
   timezone: string | null;
   capacity: number;
+  amount_cents?: number | null;
   status: "scheduled" | "cancelled" | "completed";
   enrolled_count: number;
   waitlist_count: number;
@@ -101,6 +102,7 @@ export interface CreateSessionRequest {
   end_time?: string | null;
   timezone?: string | null;
   capacity: number;
+  amount_cents?: number | null;
 }
 
 export interface EditSessionRequest {
@@ -114,6 +116,7 @@ export interface EditSessionRequest {
   end_time?: string | null;
   timezone?: string | null;
   capacity?: number;
+  amount_cents?: number | null;
   reason?: string;
 }
 
@@ -243,6 +246,7 @@ export type AdminPaymentStatus = PaymentStatus | "partially_paid";
 export interface AdminPaymentView {
   payment_id: string;
   parent_id: string;
+  parent_name?: string | null;
   student_id: string | null;
   student_name: string | null;
   enrollment_id: string | null;

@@ -112,6 +112,27 @@ function sessionTimeRange(session: AdminSessionView): string {
   })}`;
 }
 
+function formatCurrencyCents(cents: number | null | undefined): string {
+  if (cents == null) return "—";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: cents % 100 === 0 ? 0 : 2,
+  }).format(cents / 100);
+}
+
+function centsToDollarsInput(cents: number | null | undefined): string {
+  if (cents == null) return "";
+  return cents % 100 === 0 ? String(cents / 100) : (cents / 100).toFixed(2);
+}
+
+function dollarsInputToCents(value: string): number | null {
+  if (value.trim() === "") return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.round(parsed * 100);
+}
+
 function hasRecurringSchedule(session: AdminSessionView): boolean {
   return Boolean(session.days_of_week.length && session.start_time && session.end_time);
 }
@@ -130,6 +151,7 @@ function buildEditSessionForm(session: AdminSessionView): EditSessionRequest {
     title: session.title,
     location: session.location,
     capacity: session.capacity,
+    amount_cents: session.amount_cents,
     reason: "",
   };
   if (hasRecurringSchedule(session)) {
@@ -303,6 +325,7 @@ export default function AdminSessionDetailPage() {
               <p className="mt-1 text-sm text-rally-muted">
                 {session.location} · {sessionTimeRange(session)}
                 {session.coach_name ? ` · Coach ${session.coach_name}` : ""}
+                {` · ${formatCurrencyCents(session.amount_cents)}/month`}
               </p>
             </>
           ) : (
@@ -870,6 +893,21 @@ function SessionEditDialog({
             />
           </Field>
         </div>
+        <Field label="Monthly fee">
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            value={centsToDollarsInput(form.amount_cents)}
+            onChange={(event) =>
+              setForm((f) => ({
+                ...f,
+                amount_cents: dollarsInputToCents(event.target.value),
+              }))
+            }
+            className={inputClass}
+          />
+        </Field>
         <Field label="Reason">
           <input
             value={form.reason ?? ""}

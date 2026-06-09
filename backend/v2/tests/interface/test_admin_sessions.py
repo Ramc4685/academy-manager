@@ -614,6 +614,54 @@ async def test_create_recurring_session_rejects_duplicate_series(
 
 
 @pytest.mark.asyncio
+async def test_admin_session_create_and_edit_persist_monthly_amount_cents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-session-monthly-fee"]
+
+    with TestClient(_mongo_admin_app(db)) as client:
+        create_response = client.post(
+            "/api/v2/admin/sessions",
+            json={
+                "coach_id": "coach-fee",
+                "title": "Beginner Monthly",
+                "location": "Court 1",
+                "days_of_week": ["Wed"],
+                "start_time": "18:00",
+                "end_time": "18:45",
+                "timezone": "America/Chicago",
+                "capacity": 15,
+                "amount_cents": 6000,
+            },
+        )
+
+    assert create_response.status_code == 200, create_response.text
+    created = create_response.json()
+    assert created["amount_cents"] == 6000
+    stored = await db.sessions.find_one(
+        {"academy_id": "academy-b", "session_id": created["session_id"]}
+    )
+    assert stored is not None
+    assert stored["amount_cents"] == 6000
+
+    with TestClient(_mongo_admin_app(db)) as client:
+        edit_response = client.patch(
+            f"/api/v2/admin/sessions/{created['session_id']}",
+            json={"amount_cents": 7500, "reason": "monthly fee updated"},
+        )
+
+    assert edit_response.status_code == 200, edit_response.text
+    assert edit_response.json()["amount_cents"] == 7500
+    updated = await db.sessions.find_one(
+        {"academy_id": "academy-b", "session_id": created["session_id"]}
+    )
+    assert updated is not None
+    assert updated["amount_cents"] == 7500
+
+
+@pytest.mark.asyncio
 async def test_edit_recurring_session_rejects_duplicate_series(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

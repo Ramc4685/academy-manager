@@ -25,6 +25,7 @@ import {
 } from "firebase/auth";
 import { shouldUseRedirectForGoogleSignIn } from "@/lib/auth/google-sign-in-mode";
 import { getReadyIdToken } from "@/lib/auth/token-readiness";
+import { clearBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -147,6 +148,7 @@ export async function sendPasswordReset(email: string): Promise<void> {
 }
 
 export async function signOutCurrent(): Promise<void> {
+  clearBffIdentityCookie();
   if (E2E_BYPASS) return;
   await signOut(auth());
 }

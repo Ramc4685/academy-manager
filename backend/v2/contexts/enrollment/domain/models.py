@@ -33,6 +33,7 @@ class Session(BaseModel):
     start_at: datetime
     end_at: datetime
     capacity: int = Field(ge=1)
+    amount_cents: int | None = Field(default=None, ge=0)
     status: SessionStatus = "scheduled"
     days_of_week: list[str] = Field(default_factory=list)
     start_time: str | None = None
