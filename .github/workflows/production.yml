@@ -358,7 +358,11 @@ jobs:
       needs.frontend-e2e-chromium.result != 'failure' &&
       needs.frontend-e2e-webkit.result != 'failure' &&
       needs.backend-advisory.result != 'failure' &&
-      (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true') &&
+      (
+        needs.changes.outputs.backend == 'true' ||
+        needs.changes.outputs.frontend == 'true' ||
+        github.event_name == 'workflow_dispatch'
+      ) &&
       github.ref == 'refs/heads/main' &&
       github.event_name != 'pull_request'
     environment: production
@@ -373,7 +377,7 @@ jobs:
     needs: [production-approval, changes]
     if: >
       needs.production-approval.result == 'success' &&
-      needs.changes.outputs.backend == 'true' &&
+      (needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch') &&
       github.ref == 'refs/heads/main' &&
       github.event_name != 'pull_request'
     steps:
@@ -396,7 +400,7 @@ jobs:
     needs: [production-approval, changes]
     if: >
       needs.production-approval.result == 'success' &&
-      needs.changes.outputs.frontend == 'true' &&
+      (needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch') &&
       github.ref == 'refs/heads/main' &&
       github.event_name != 'pull_request'
     defaults:
