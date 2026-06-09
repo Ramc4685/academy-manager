@@ -1,0 +1,799 @@
+{
+  "info": {
+    "_postman_id": "7a8406f1-71e7-4c9c-9961-0c12d8e7f001",
+    "name": "Academy Manager - Prod Skill Pathway Admin",
+    "description": "Production-safe Postman collection for CourtMastr Academy Manager Skill Pathway admin updates. Paste a Firebase admin ID token into the firebaseIdToken collection variable before running protected requests. Writes mutate production data.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{firebaseIdToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "let token = pm.variables.get('firebaseIdToken');",
+          "if (!token && !pm.info.requestName.includes('Health')) {",
+          "  throw new Error('Set collection variable firebaseIdToken to a Firebase ID token for an admin user before calling prod admin APIs.');",
+          "}",
+          "if (token) {",
+          "  const normalized = token.replace(/^Bearer\\s+/i, '').trim();",
+          "  if (pm.environment.get('firebaseIdToken')) {",
+          "    pm.environment.set('firebaseIdToken', normalized);",
+          "  } else {",
+          "    pm.collectionVariables.set('firebaseIdToken', normalized);",
+          "  }",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://api.academy.courtmastr.com",
+      "type": "string"
+    },
+    {
+      "key": "apiPrefix",
+      "value": "/api/v2",
+      "type": "string"
+    },
+    {
+      "key": "firebaseIdToken",
+      "value": "",
+      "type": "secret"
+    },
+    {
+      "key": "academyId",
+      "value": "blno",
+      "type": "string"
+    },
+    {
+      "key": "programId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "levelId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "skillId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "studentId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "recId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "00 - Auth and Smoke",
+      "item": [
+        {
+          "name": "Health - Prod API",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/healthz",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "healthz"
+              ]
+            },
+            "description": "Checks that the prod v2 API is reachable. No auth required."
+          }
+        },
+        {
+          "name": "Me - Verify Admin Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('authenticated', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('admin role present', () => pm.expect(body.roles).to.include('admin'));",
+                  "if (body.academy_id) pm.collectionVariables.set('academyId', body.academy_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/me",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "me"
+              ]
+            },
+            "description": "Use first after setting firebaseIdToken. Confirms the token resolves to an admin membership."
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 - Read Current Pathway",
+      "item": [
+        {
+          "name": "List Programs",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('programs listed', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "if (body.programs && body.programs[0]) {",
+                  "  pm.collectionVariables.set('programId', body.programs[0].program_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/admin/programs",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "admin",
+                "programs"
+              ]
+            },
+            "description": "Lists active pathway programs. The test script stores the first program_id into programId for convenience."
+          }
+        },
+        {
+          "name": "Get Full Pathway",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('pathway returned', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const firstLevel = body.levels && body.levels[0];",
+                  "if (firstLevel && firstLevel.level) pm.collectionVariables.set('levelId', firstLevel.level.level_id);",
+                  "const firstSkill = firstLevel && firstLevel.skills && firstLevel.skills[0];",
+                  "if (firstSkill && firstSkill.skill) pm.collectionVariables.set('skillId', firstSkill.skill.skill_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/admin/programs/{{programId}}/pathway",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "admin",
+                "programs",
+                "{{programId}}",
+                "pathway"
+              ]
+            },
+            "description": "Reads the selected program with levels, skills, criteria, and external references. Use this before any write."
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Write Curriculum - Use Carefully",
+      "description": "These requests mutate production curriculum records. Prefer read-before-write, make one change at a time, and verify after each write.",
+      "item": [
+        {
+          "name": "Create Program",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('program created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "if (body.program_id) pm.collectionVariables.set('programId', body.program_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sport\": \"badminton\",\n  \"name\": \"Badminton Skill Pathway\",\n  \"description\": \"Academy skill-based progression for badminton. Students advance by demonstrating mastered skills.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/admin/programs",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "admin",
+                "programs"
+              ]
+            },
+            "description": "Creates a new pathway program. Usually you should NOT need this if prod already has the BLNO badminton pathway."
+          }
+        },
+        {
+          "name": "Create Level",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('level created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "if (body.level_id) pm.collectionVariables.set('levelId', body.level_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sequence\": 7,\n  \"name\": \"L7 Example Level\",\n  \"description\": \"Replace this with the exact production level description.\",\n  \"completion_rule\": \"ALL_REQUIRED_SKILLS\",\n  \"requires_coach_recommendation\": true,\n  \"requires_admin_approval\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/admin/programs/{{programId}}/levels",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "admin",
+                "programs",
+                "{{programId}}",
+                "levels"
+              ]
+            },
+            "description": "Adds a new level to the selected program."
+          }
+        },
+        {
+          "name": "Update Level",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated Level Name\",\n  \"description\": \"Updated level description.\",\n  \"completion_rule\": \"ALL_REQUIRED_SKILLS\",\n  \"requires_coach_recommendation\": true,\n  \"requires_admin_approval\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/admin/levels/{{levelId}}",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "admin",
+                "levels",
+                "{{levelId}}"
+              ]
+            },
+            "description": "Updates metadata for an existing level. Omit fields you do not want to change."
+          }
+        },
+        {
+          "name": "Create Skill",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('skill created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "if (body.skill_id) pm.collectionVariables.set('skillId', body.skill_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"program_id\": \"{{programId}}\",\n  \"sequence\": 1,\n  \"name\": \"Example Skill\",\n  \"description\": \"Replace this with the exact production skill description.\",\n  \"is_required\": true,\n  \"scoring_type\": \"ATTEMPT_BASED\",\n  \"pass_threshold_pct\": 70,\n  \"coach_override_allowed\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/admin/levels/{{levelId}}/skills",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "admin",
+                "levels",
+                "{{levelId}}",
+                "skills"
+              ]
+            },
+            "description": "Adds a skill to the selected level."
+          }
+        },
+        {
+          "name": "Update Skill",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated Skill Name\",\n  \"description\": \"Updated skill description.\",\n  \"is_required\": true,\n  \"scoring_type\": \"ATTEMPT_BASED\",\n  \"pass_threshold_pct\": 70,\n  \"coach_override_allowed\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/admin/skills/{{skillId}}",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "admin",
+                "skills",
+                "{{skillId}}"
+              ]
+            },
+            "description": "Updates metadata for an existing skill. Omit fields you do not want to change."
+          }
+        },
+        {
+          "name": "Add Skill Criterion",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"level_id\": \"{{levelId}}\",\n  \"program_id\": \"{{programId}}\",\n  \"description\": \"Replace with the assessment criterion.\",\n  \"display_order\": 0\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/admin/skills/{{skillId}}/criteria",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "admin",
+                "skills",
+                "{{skillId}}",
+                "criteria"
+              ]
+            },
+            "description": "Adds a criterion to the selected skill. There is no update/delete criterion route in the current API, so use carefully."
+          }
+        },
+        {
+          "name": "Add External Reference",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"ACADEMY_CUSTOM\",\n  \"source_title\": \"Academy Custom\",\n  \"module_name\": \"Module name\",\n  \"lesson_range\": \"Lesson or drill range\",\n  \"reference_title\": \"Short reference title\",\n  \"page_hint\": null,\n  \"internal_note\": \"Metadata only. Do not paste copyrighted lesson text.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/admin/skills/{{skillId}}/external-refs",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "admin",
+                "skills",
+                "{{skillId}}",
+                "external-refs"
+              ]
+            },
+            "description": "Adds metadata-only reference material to a skill. Do not paste copied lesson body text."
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Student Progress and Placement",
+      "description": "Use these after curriculum structure is correct. Placement and test writes change student production progress.",
+      "item": [
+        {
+          "name": "Get Pathway Progress Overview",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/admin/pathway/progress?program_id={{programId}}",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "admin",
+                "pathway",
+                "progress"
+              ],
+              "query": [
+                {
+                  "key": "program_id",
+                  "value": "{{programId}}"
+                }
+              ]
+            },
+            "description": "Lists active students with progress status for the selected pathway."
+          }
+        },
+        {
+          "name": "Place Student In Level",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"program_id\": \"{{programId}}\",\n  \"level_id\": \"{{levelId}}\",\n  \"reason\": \"prod_admin_pathway_update\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/admin/students/{{studentId}}/pathway-placement",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "admin",
+                "students",
+                "{{studentId}}",
+                "pathway-placement"
+              ]
+            },
+            "description": "Places or moves one student into the selected level. This writes audit_logs with action student.pathway_placed."
+          }
+        },
+        {
+          "name": "Get Student Progress",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/admin/students/{{studentId}}/progress?program_id={{programId}}",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "admin",
+                "students",
+                "{{studentId}}",
+                "progress"
+              ],
+              "query": [
+                {
+                  "key": "program_id",
+                  "value": "{{programId}}"
+                }
+              ]
+            },
+            "description": "Reads one student's progress summary for the selected pathway."
+          }
+        },
+        {
+          "name": "Get Student Passport",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/admin/students/{{studentId}}/passport?program_id={{programId}}",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "admin",
+                "students",
+                "{{studentId}}",
+                "passport"
+              ],
+              "query": [
+                {
+                  "key": "program_id",
+                  "value": "{{programId}}"
+                }
+              ]
+            },
+            "description": "Reads the selected student's current-level skill passport."
+          }
+        },
+        {
+          "name": "Update Student Skill Status",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"program_id\": \"{{programId}}\",\n  \"level_id\": \"{{levelId}}\",\n  \"status\": \"PRACTICING\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/admin/students/{{studentId}}/skills/{{skillId}}/status",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "admin",
+                "students",
+                "{{studentId}}",
+                "skills",
+                "{{skillId}}",
+                "status"
+              ]
+            },
+            "description": "Sets one student's skill status. Allowed admin statuses: INTRODUCED, LEARNING, PRACTICING, TEST_READY, NEEDS_REVIEW."
+          }
+        },
+        {
+          "name": "Record Student Skill Test",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"program_id\": \"{{programId}}\",\n  \"level_id\": \"{{levelId}}\",\n  \"attempts_count\": 3,\n  \"success_count\": 3,\n  \"session_id\": null,\n  \"notes\": \"Recorded from Postman during prod admin update.\",\n  \"coach_override\": false,\n  \"override_reason\": null\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/admin/students/{{studentId}}/skills/{{skillId}}/test",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "admin",
+                "students",
+                "{{studentId}}",
+                "skills",
+                "{{skillId}}",
+                "test"
+              ]
+            },
+            "description": "Records a test attempt for one student skill. This may mark a skill PASSED and can affect level completion."
+          }
+        },
+        {
+          "name": "Get Level-Up Queue",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/admin/level-up-queue?program_id={{programId}}",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "admin",
+                "level-up-queue"
+              ],
+              "query": [
+                {
+                  "key": "program_id",
+                  "value": "{{programId}}"
+                }
+              ]
+            },
+            "description": "Lists pending level-up recommendations for the selected program."
+          }
+        },
+        {
+          "name": "Approve Level-Up",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/admin/level-up/{{recId}}/approve",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "admin",
+                "level-up",
+                "{{recId}}",
+                "approve"
+              ]
+            },
+            "description": "Approves one pending level-up recommendation and may issue a certificate."
+          }
+        },
+        {
+          "name": "Reject Level-Up",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rejection_reason\": \"Not ready yet.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/admin/level-up/{{recId}}/reject",
+              "host": [
+                "{{baseUrl}}{{apiPrefix}}"
+              ],
+              "path": [
+                "admin",
+                "level-up",
+                "{{recId}}",
+                "reject"
+              ]
+            },
+            "description": "Rejects one pending level-up recommendation."
+          }
+        }
+      ]
+    }
+  ]
+}
