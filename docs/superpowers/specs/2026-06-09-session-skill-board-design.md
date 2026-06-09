@@ -103,8 +103,7 @@ Response shape (persona DTO shaped at the BFF layer; values synthetic):
           "statuses": {
             "<skill_id>": {
               "status": "PRACTICING",
-              "test_attempt_count": 2,
-              "last_tested_at": "2026-06-08T17:00:00Z"
+              "last_updated_at": "2026-06-08T17:00:00Z"
             }
           },
           "required_passed": 2,
