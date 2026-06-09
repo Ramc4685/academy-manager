@@ -28,6 +28,10 @@ Verify shared progress summary and admin/coach/parent UI slice
 - 2026-06-07T16:04:20 main/working: Added hover/focus help text to Attempts and Successes fields in admin and coach Record Test forms.
 - 2026-06-07T16:15:11 main/working: Fixing coach passport header to display student full name instead of raw student_id.
 - 2026-06-09T08:58:51 main/working: Creating prod Postman collection for Skill Pathway admin updates using v2 API routes and Firebase bearer auth variables.
+- 2026-06-09T10:49:24 main/working: Added generated Postman folder for creating the local badminton pathway template in an empty prod program: levels, skills, criteria, and metadata refs.
+- 2026-06-09T12:04:37 main/working: User approved deleting prod curriculum-only pathway data for academy_id=blno across skill_programs, skill_levels, skills, skill_criteria, external_lesson_refs, preserving student progress. Checking safe execution path and credentials.
+- 2026-06-09T12:50:57 main/working: Investigating admin student progress return navigation and whether skill status updates auto-save from session/student entry flows.
+- 2026-06-09T13:01:49 main/working: Fixed admin student progress return context: session roster, student profile, and pathway overview links now pass return_to/return_label; progress page renders a safe context-aware back link. Confirmed skill status dropdown is auto-save via onChange mutation, while Record Test requires Save Test.
 ## Verification
 
 - No verification recorded yet.
@@ -58,6 +62,13 @@ Verify shared progress summary and admin/coach/parent UI slice
 - 2026-06-07T16:16:59: Coach passport student name display: links now pass student_name and passport page falls back to session progress lookup before showing raw id. Frontend pnpm typecheck and lint passed.
 - 2026-06-09T09:16:02: Created docs/postman/academy-manager-skill-pathway-prod.postman_collection.json and docs/postman/README.md. Verified collection JSON parses with node and new docs pass git diff --check via --no-index.
 - 2026-06-09T10:18:20: Updated Postman Skill Pathway collection pre-request script to resolve firebaseIdToken from environment/collection variable scope and normalize an accidental leading Bearer prefix. Verified collection JSON parses with node.
+- 2026-06-09T10:31:49: Updated Postman Skill Pathway collection pre-request script to upsert Authorization: Bearer <firebaseIdToken> directly, avoiding generated auth header ambiguity. Verified collection JSON parses with node.
+- 2026-06-09T10:35:19: Updated Postman Skill Pathway collection to include explicit tenant headers X-Internal-Academy-Id and X-Academy-Id from academyId for direct prod API calls. Verified collection JSON parses with node.
+- 2026-06-09T10:38:52: Updated Postman Skill Pathway collection to send X-Forwarded-Host from tenantHost so direct api.academy.courtmastr.com calls can resolve the same tenant host as the browser app. Verified collection JSON parses with node.
+- 2026-06-09T10:49:25: Postman local pathway template generation verified: collection JSON parses; generated folder counts 6 levels, 33 skills, 99 criteria, 6 external refs; git diff --check passed for Postman docs and ledger.
+- 2026-06-09T12:10:24: Production curriculum reset dry-run only: academy_id=blno has zero curriculum/progress records; read-only count shows actual prod tenant acad_blno_badminton has 1 skill_program, 3 skill_levels, 3 skills, 9 skill_criteria, 0 external_lesson_refs, and zero student progress/test records. No prod writes performed because approval named blno, not acad_blno_badminton.
+- 2026-06-09T12:33:16: Production curriculum reset/load completed after explicit approval for academy_id=acad_blno_badminton. Backup written on Fly machine to /tmp/academy-manager-prod-backups/prod-blno-pathway-curriculum-before-reset-20260609T173237Z.json. Deleted curriculum-only counts: skill_programs=1, skill_levels=3, skills=3, skill_criteria=9, external_lesson_refs=0. Reloaded local badminton seed; verified counts skill_programs=1, skill_levels=6, skills=33, skill_criteria=99, external_lesson_refs=6. Student progress/test/recommendation/certificate counts remained 0. Production healthz returned status ok.
+- 2026-06-09T13:01:49: Admin student progress return navigation verified. Focused test node --no-warnings --test frontend/lib/navigation/admin-student-progress-return.node-test.mjs passed; frontend pnpm typecheck passed; frontend pnpm lint passed; git diff --check on touched files passed. Browser on http://blno.localhost:3001 verified session detail Pathway link includes return_to session, progress page shows Back to session, clicking returns to same session roster; student profile Training link shows Back to student profile. Browser console errors/warnings: none. Browser screenshot capture timed out twice, so DOM/URL evidence used instead.
 ## Reusable Lessons
 
 - None recorded yet.
