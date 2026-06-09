@@ -1,15 +1,24 @@
-"""Admin comms routes — broadcast + DM + inbox."""
+"""Admin comms routes — broadcast + DM + inbox + email campaigns."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
+from backend.v2.contexts.communications.application.use_cases.send_campaign import (
+    SendCampaignCommand,
+)
+from backend.v2.contexts.communications.domain.models import (
+    AcademyAudience,
+    SessionAudience,
+)
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
     AdminMessageList,
     AdminMessageView,
     BroadcastRequest,
     DMRequest,
+    SendCampaignRequest,
+    SendCampaignResponse,
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.comms import Message
@@ -55,6 +64,45 @@ async def dm(
         body=body.body,
     )
     return _message_view(m)
+
+
+@router.post("/campaigns", response_model=SendCampaignResponse, status_code=201)
+async def send_email_campaign(
+    payload: SendCampaignRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> SendCampaignResponse:
+    if use_cases.send_campaign is None:
+        raise HTTPException(status_code=503, detail="Email campaign sending is not configured")
+
+    if payload.audience.type == "session":
+        if not payload.audience.session_id:
+            raise HTTPException(status_code=400, detail="session_id required for session audience")
+        audience = SessionAudience(session_id=payload.audience.session_id)
+    else:
+        audience = AcademyAudience(role=payload.audience.role)
+
+    from backend.v2.contexts.communications.domain.errors import EmptyAudienceError
+
+    try:
+        result = await use_cases.send_campaign.execute(
+            SendCampaignCommand(
+                academy_id=claims.academy_id,
+                sender_id=claims.user_id,
+                audience=audience,
+                subject=payload.subject,
+                body=payload.body,
+            )
+        )
+    except EmptyAudienceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return SendCampaignResponse(
+        campaign_id=result.campaign_id,
+        total_recipients=result.total_recipients,
+        sent_count=result.sent_count,
+        failed_count=result.failed_count,
+    )
 
 
 def _message_view(m: Message) -> AdminMessageView:

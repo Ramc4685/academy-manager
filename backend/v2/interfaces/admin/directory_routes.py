@@ -27,6 +27,9 @@ from backend.v2.interfaces.admin.views import (
     AdminUserDetailView,
     AdminUserList,
     AdminUserView,
+    BulkInviteRequest,
+    BulkInviteResponse,
+    BulkInviteResultItem,
     ChangeAdminStudentParentRequest,
     CreateAdminUserRequest,
     UpdateAdminStudentRequest,
@@ -83,6 +86,51 @@ async def create_user(
         academy_id=claims.academy_id,
     )
     return AdminUserDetailView(**user.model_dump())
+
+
+@router.post("/users/bulk-invite", response_model=BulkInviteResponse)
+async def bulk_invite_parents(
+    payload: BulkInviteRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> BulkInviteResponse:
+    from backend.v2.contexts.identity.domain.errors import UserEmailAlreadyExists
+
+    use_case = use_cases.create_admin_user
+    if use_case is None:
+        raise HTTPException(status_code=503, detail="Admin user creation is not configured")
+
+    results: list[BulkInviteResultItem] = []
+    created = skipped = failed = 0
+
+    for item in payload.users:
+        try:
+            user = await use_case.execute(
+                CreateAdminUserCommand(
+                    role="parent",
+                    email=item.email,
+                    display_name=item.display_name,
+                    actor_id=claims.user_id,
+                    reason=payload.reason,
+                ),
+                academy_id=claims.academy_id,
+            )
+            results.append(
+                BulkInviteResultItem(status="created", email=item.email, user_id=user.user_id)
+            )
+            created += 1
+        except UserEmailAlreadyExists:
+            results.append(
+                BulkInviteResultItem(
+                    status="skipped", email=item.email, detail="email already exists"
+                )
+            )
+            skipped += 1
+        except Exception as exc:
+            results.append(BulkInviteResultItem(status="failed", email=item.email, detail=str(exc)))
+            failed += 1
+
+    return BulkInviteResponse(created=created, skipped=skipped, failed=failed, results=results)
 
 
 @router.patch("/users/{user_id}", response_model=AdminUserDetailView)

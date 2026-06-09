@@ -1313,6 +1313,34 @@ export function sendDm(payload: DmRequest): Promise<AdminMessageView> {
   });
 }
 
+export interface CampaignAudiencePayload {
+  type: "academy" | "session";
+  role?: "parent" | "coach";
+  session_id?: string;
+}
+
+export interface SendEmailCampaignRequest {
+  subject: string;
+  body: string;
+  audience: CampaignAudiencePayload;
+}
+
+export interface SendEmailCampaignResponse {
+  campaign_id: string;
+  total_recipients: number;
+  sent_count: number;
+  failed_count: number;
+}
+
+export function sendEmailCampaign(
+  payload: SendEmailCampaignRequest,
+): Promise<SendEmailCampaignResponse> {
+  return apiFetch<SendEmailCampaignResponse>("/admin/campaigns", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function listAdminWaivers(): Promise<AdminWaiverList> {
   return apiFetch<AdminWaiverList>("/admin/waivers", { method: "GET" });
 }
@@ -1492,6 +1520,21 @@ export function updateAdminNotifications(
 
 export function getAdminGateway(): Promise<AdminGatewayView> {
   return apiFetch<AdminGatewayView>("/admin/academy/gateway", { method: "GET" });
+}
+
+export interface AdminGatewayConnectLinkView {
+  url: string;
+}
+
+export function startStripeConnect(): Promise<AdminGatewayConnectLinkView> {
+  return apiFetch<AdminGatewayConnectLinkView>(
+    "/admin/academy/gateway/stripe/connect-link",
+    { method: "POST" },
+  );
+}
+
+export function disconnectStripe(): Promise<void> {
+  return apiFetch<void>("/admin/academy/gateway/stripe/connect", { method: "DELETE" });
 }
 
 export interface CreateAdminUserRequest {

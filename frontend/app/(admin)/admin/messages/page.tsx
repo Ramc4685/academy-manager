@@ -12,9 +12,14 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
   listAdminMessages,
+  listAdminSessions,
+  getAdminAcademy,
   broadcastMessage,
   sendDm,
+  sendEmailCampaign,
   type AdminMessageView,
+  type AdminSessionView,
+  type AdminAcademyView,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -154,6 +159,11 @@ export default function AdminMessagesPage() {
           )}
         </Card>
       </div>
+
+      <Card p={20}>
+        <LaneHeader index="03" title="Email campaign" />
+        <EmailCampaignComposer />
+      </Card>
     </section>
   );
 }
@@ -315,5 +325,207 @@ function MessageSkeleton() {
         <li key={i} className="h-12 animate-pulse rounded-md bg-rally-line/40" />
       ))}
     </ul>
+  );
+}
+
+function buildEmailHtml(body: string, academy: AdminAcademyView | undefined): string {
+  const color = academy?.brand_color ?? "#1a56db";
+  const name = academy?.display_name ?? "Academy";
+  const logo = academy?.logo_url;
+  const lines = body.split("\n").map((l) => `<p style="margin:0 0 12px">${l || "&nbsp;"}</p>`).join("");
+  return `<!DOCTYPE html><html><body style="margin:0;padding:0;font-family:sans-serif;background:#f9fafb">
+<div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden">
+  <div style="background:${color};padding:24px;text-align:center">
+    ${logo ? `<img src="${logo}" alt="${name}" style="height:52px;margin-bottom:12px;display:block;margin-left:auto;margin-right:auto" />` : ""}
+    <h1 style="margin:0;color:#ffffff;font-size:20px;font-weight:700">${name}</h1>
+  </div>
+  <div style="padding:28px 32px;color:#111827;font-size:15px;line-height:1.6">${lines}</div>
+  <div style="padding:16px 32px;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280;text-align:center">
+    You received this email because you are a member of ${name}.
+  </div>
+</div></body></html>`;
+}
+
+function EmailCampaignComposer() {
+  const [audienceType, setAudienceType] = useState<"academy" | "session">("academy");
+  const [sessionId, setSessionId] = useState("");
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [result, setResult] = useState<{ sent: number; failed: number; total: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const { data: academyData } = useQuery({
+    queryKey: queryKeys.admin.academy(),
+    queryFn: getAdminAcademy,
+  });
+
+  const { data: sessionsData } = useQuery({
+    queryKey: queryKeys.admin.sessions(),
+    queryFn: () => listAdminSessions(undefined, { window: "upcoming" }),
+    enabled: audienceType === "session",
+  });
+
+  const sessions: AdminSessionView[] = sessionsData?.sessions ?? [];
+  const academy: AdminAcademyView | undefined = academyData;
+  const brandColor = academy?.brand_color ?? "#1a56db";
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      sendEmailCampaign({
+        subject,
+        body: buildEmailHtml(body, academy),
+        audience:
+          audienceType === "session"
+            ? { type: "session", session_id: sessionId }
+            : { type: "academy", role: "parent" },
+      }),
+    onSuccess: (r) => {
+      setResult({ sent: r.sent_count, failed: r.failed_count, total: r.total_recipients });
+      setSubject("");
+      setBody("");
+      setError(null);
+    },
+    onError: (err: Error) => {
+      setError(err.message ?? "Failed to send campaign.");
+    },
+  });
+
+  const canSend =
+    !mutation.isPending &&
+    subject.trim().length > 0 &&
+    body.trim().length > 0 &&
+    (audienceType === "academy" || sessionId.length > 0);
+
+  if (result) {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-md border border-green-200 bg-green-50 p-4">
+          <p className="font-semibold text-green-800">Campaign sent!</p>
+          <p className="mt-1 text-sm text-green-700">
+            {result.sent} of {result.total} delivered
+            {result.failed > 0 && ` · ${result.failed} failed`}
+          </p>
+        </div>
+        <Button variant="secondary" size="sm" onClick={() => setResult(null)}>
+          Send another
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Academy branding preview */}
+      <div
+        className="flex items-center gap-3 rounded-md px-4 py-3"
+        style={{ background: brandColor }}
+      >
+        {academy?.logo_url && (
+          <img src={academy.logo_url} alt={academy.display_name} className="h-8 w-auto object-contain" />
+        )}
+        <span className="font-semibold text-white text-sm">
+          {academy?.display_name ?? "Loading academy…"}
+        </span>
+        <span className="ml-auto text-xs text-white/70">Email header preview</span>
+      </div>
+
+      {/* Audience */}
+      <fieldset className="space-y-2">
+        <legend className="font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+          Audience
+        </legend>
+        <div className="flex gap-4">
+          <label className="flex items-center gap-2 cursor-pointer text-sm">
+            <input
+              type="radio"
+              name="audience"
+              value="academy"
+              checked={audienceType === "academy"}
+              onChange={() => setAudienceType("academy")}
+              className="accent-rally-cobalt"
+            />
+            All parents
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer text-sm">
+            <input
+              type="radio"
+              name="audience"
+              value="session"
+              checked={audienceType === "session"}
+              onChange={() => setAudienceType("session")}
+              className="accent-rally-cobalt"
+            />
+            By session
+          </label>
+        </div>
+
+        {audienceType === "session" && (
+          <select
+            value={sessionId}
+            onChange={(e) => setSessionId(e.target.value)}
+            className="w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30"
+            aria-label="Select session"
+          >
+            <option value="">— Select a session —</option>
+            {sessions.map((s) => (
+              <option key={s.session_id} value={s.session_id}>
+                {s.title} {s.start_time ? `· ${s.start_time}` : ""}
+              </option>
+            ))}
+          </select>
+        )}
+      </fieldset>
+
+      {/* Subject */}
+      <div className="space-y-1">
+        <label className="font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+          Subject
+        </label>
+        <input
+          type="text"
+          value={subject}
+          onChange={(e) => setSubject(e.target.value)}
+          placeholder="e.g. Introducing your parent portal"
+          className="w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30"
+          aria-label="Email subject"
+        />
+      </div>
+
+      {/* Body */}
+      <div className="space-y-1">
+        <label className="font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+          Message body
+        </label>
+        <textarea
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          placeholder="Write your message here. Use blank lines to separate paragraphs."
+          rows={7}
+          className="w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30 resize-none"
+          aria-label="Email body"
+        />
+        <p className="text-[11px] text-rally-subtle">
+          Your academy logo and brand color are added automatically to the email header.
+        </p>
+      </div>
+
+      {error && (
+        <p role="alert" className="rounded-md bg-red-50 p-2 text-sm text-red-700">
+          {error}
+        </p>
+      )}
+
+      <div className="flex justify-end">
+        <Button
+          type="button"
+          variant="primary"
+          size="sm"
+          disabled={!canSend}
+          onClick={() => mutation.mutate()}
+        >
+          {mutation.isPending ? "Sending…" : "Send email"}
+        </Button>
+      </div>
+    </div>
   );
 }

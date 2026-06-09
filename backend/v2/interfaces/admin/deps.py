@@ -39,6 +39,9 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
     ApproveWithdrawalCredit,
     PreviewWithdrawalCredit,
 )
+from backend.v2.contexts.communications.application.use_cases.send_campaign import (
+    SendCampaign,
+)
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     ChangeAdminStudentParent,
     GetAdminStudent,
@@ -98,6 +101,11 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     GetAdminUser,
     ListAdminUsers,
     UpdateAdminUser,
+)
+from backend.v2.contexts.identity.application.use_cases.stripe_connect import (
+    CompleteStripeConnectUseCase,
+    DisconnectStripeUseCase,
+    StartStripeConnectUseCase,
 )
 from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
     ManageAdminWaiverTemplates,
@@ -214,6 +222,10 @@ class AdminUseCases:
     )
     curriculum: CurriculumComposition | None = None
     student_progress: StudentProgressComposition | None = None
+    send_campaign: SendCampaign | None = None
+    start_stripe_connect_use_case: StartStripeConnectUseCase | None = None
+    complete_stripe_connect_use_case: CompleteStripeConnectUseCase | None = None
+    disconnect_stripe_use_case: DisconnectStripeUseCase | None = None
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:
