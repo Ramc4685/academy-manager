@@ -52,6 +52,7 @@ import {
   type EditSessionRequest,
 } from "@/lib/api/admin";
 import { getFullPathway, placeStudentInLevel, type Level } from "@/lib/api/curriculum";
+import { buildStudentProgressHref } from "@/lib/navigation/admin-student-progress-return";
 import { queryKeys } from "@/lib/query/keys";
 
 import { Avatar } from "@/components/ds/avatar";
@@ -413,12 +414,13 @@ export default function AdminSessionDetailPage() {
         ) : enrollments.length === 0 ? (
           <p className="text-sm text-rally-subtle" data-testid="roster-empty">No enrolled students.</p>
         ) : (
-              <RosterTable
-                enrollments={enrollments}
-                pathwayLevels={pathwayLevels}
-                updatingPlacementStudentId={
-                  placementMutation.isPending ? placementMutation.variables?.studentId : null
-                }
+          <RosterTable
+            enrollments={enrollments}
+            sessionId={sessionId}
+            pathwayLevels={pathwayLevels}
+            updatingPlacementStudentId={
+              placementMutation.isPending ? placementMutation.variables?.studentId : null
+            }
             onPathwayLevelChange={(enrollment, levelId) =>
               placementMutation.mutate({
                 studentId: enrollment.student_id,
@@ -1006,6 +1008,7 @@ function RosterMetric({
 
 function RosterTable({
   enrollments,
+  sessionId,
   pathwayLevels,
   updatingPlacementStudentId,
   onPathwayLevelChange,
@@ -1016,6 +1019,7 @@ function RosterTable({
   onWithdraw,
 }: {
   enrollments: AdminEnrollmentView[];
+  sessionId: string;
   pathwayLevels: Level[];
   updatingPlacementStudentId: string | null;
   onPathwayLevelChange: (enrollment: AdminEnrollmentView, levelId: string) => void;
@@ -1103,11 +1107,12 @@ function RosterTable({
                       Move
                     </Button>
                     <Link
-                      href={
-                        `/admin/students/${encodeURIComponent(e.student_id)}/progress${
-                          e.pathway_program_id ? `?program_id=${encodeURIComponent(e.pathway_program_id)}` : ""
-                        }` as Parameters<typeof Link>[0]["href"]
-                      }
+                      href={buildStudentProgressHref({
+                        studentId: e.student_id,
+                        programId: e.pathway_program_id,
+                        returnTo: `/admin/sessions/${encodeURIComponent(sessionId)}`,
+                        returnLabel: "Back to session",
+                      }) as Parameters<typeof Link>[0]["href"]}
                       className="inline-flex min-h-9 items-center justify-center rounded-md border border-rally-line bg-white px-3 py-1.5 text-sm font-semibold text-rally-ink shadow-sm transition-colors hover:bg-neutral-50"
                     >
                       Pathway

@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleHelp } from "lucide-react";
+import { ArrowLeft, CircleHelp } from "lucide-react";
 
 import {
   getAdminStudentCertificates,
@@ -19,6 +20,7 @@ import {
 } from "@/lib/api/curriculum";
 import { getAdminStudent } from "@/lib/api/v2/students";
 import { getActiveAcademyId } from "@/lib/api/client";
+import { resolveStudentProgressReturn } from "@/lib/navigation/admin-student-progress-return";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 
@@ -50,6 +52,10 @@ export default function AdminStudentProgressPage() {
   const academyId = getActiveAcademyId() ?? "";
 
   const programIdParam = searchParams.get("program_id") ?? "";
+  const returnLink = resolveStudentProgressReturn({
+    returnTo: searchParams.get("return_to"),
+    returnLabel: searchParams.get("return_label"),
+  });
   const [selectedProgramId, setSelectedProgramId] = useState(programIdParam);
   const [showPlaceForm, setShowPlaceForm] = useState(false);
   const [placeProgramId, setPlaceProgramId] = useState("");
@@ -137,6 +143,14 @@ export default function AdminStudentProgressPage() {
 
   return (
     <section data-testid="admin-student-progress" className="space-y-6">
+      <Link
+        href={returnLink.href as Parameters<typeof Link>[0]["href"]}
+        className="inline-flex items-center gap-1.5 rounded text-sm text-rally-muted hover:text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
+      >
+        <ArrowLeft className="size-4" aria-hidden="true" />
+        <span>{returnLink.label}</span>
+      </Link>
+
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">
