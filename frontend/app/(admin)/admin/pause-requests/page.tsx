@@ -47,7 +47,8 @@ export default function AdminPauseRequestsPage() {
             <table className="w-full min-w-[840px] text-sm">
               <thead>
                 <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
-                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Requested</th>
+                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Who</th>
+                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Session</th>
                   <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Pause</th>
                   <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Reason</th>
                   <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Status</th>
@@ -94,22 +95,20 @@ function PauseRow({
   return (
     <tr data-testid={`admin-pause-requests-row-${request.pause_request_id}`} className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
       <td className="px-2 py-3">
-        <div className="font-medium text-rally-base">
-          {new Date(request.created_at).toLocaleDateString(undefined, {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          })}
-        </div>
+        <div className="font-medium text-rally-base">{request.parent_name || request.parent_email || request.parent_id}</div>
         <div className="mt-1 text-xs text-rally-subtle">
-          Awaiting admin decision
+          Student: {request.student_name || request.student_id || "Unknown"}
+        </div>
+      </td>
+      <td className="px-2 py-3">
+        <div className="font-medium text-rally-base">{request.session_title || request.session_id || "Session pending"}</div>
+        <div className="mt-1 text-xs text-rally-subtle">
+          {sessionDetail(request)}
         </div>
       </td>
       <td className="px-2 py-3">
         <div className="font-medium text-rally-base">{pauseLabel(request)}</div>
-        <div className="mt-1 text-xs text-rally-subtle">
-          Releases seat, moves student to waitlist, and pauses billing.
-        </div>
+        <div className="mt-1 text-xs text-rally-subtle">Requested {formatDateTime(request.created_at)}</div>
       </td>
       <td className="px-2 py-3 text-rally-subtle">{request.reason || "—"}</td>
       <td className="px-2 py-3">
@@ -153,6 +152,23 @@ function formatDate(value: string): string {
     day: "numeric",
     year: "numeric",
   });
+}
+
+function formatDateTime(value: string): string {
+  return new Date(value).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function sessionDetail(request: AdminPauseRequestView): string {
+  const parts = [
+    request.session_location,
+    request.session_start_at ? formatDateTime(request.session_start_at) : null,
+    request.enrollment_id ? `Enrollment ${request.enrollment_id}` : null,
+  ].filter(Boolean);
+  return parts.join(" · ") || "No session details";
 }
 
 function Skeleton() {

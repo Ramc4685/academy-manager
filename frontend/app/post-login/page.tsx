@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { onAuthChange } from "@/lib/auth/firebase";
+import { clearBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
 import { getCurrentUserWithToken, homeForRoles } from "@/lib/api/me";
 
 export default function PostLoginPage() {
@@ -12,17 +13,19 @@ export default function PostLoginPage() {
     () =>
       onAuthChange((user) => {
         if (!user) {
+          clearBffIdentityCookie();
           router.replace("/login");
           return;
         }
 
         void user
-          .getIdToken()
+          .getIdToken(true)
           .then((idToken) => getCurrentUserWithToken(idToken))
           .then((currentUser) => {
             replaceLocation(router, homeForRoles(currentUser.roles));
           })
           .catch(() => {
+            clearBffIdentityCookie();
             replaceLocation(router, "/login");
           });
       }),

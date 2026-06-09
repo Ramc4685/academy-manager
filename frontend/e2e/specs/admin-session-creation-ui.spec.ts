@@ -37,6 +37,8 @@ async function stubAdminShell(page: Page) {
 }
 
 test.describe("admin session creation and fee settings UI", () => {
+  test.describe.configure({ mode: "serial" });
+
   test("create session dialog opens, fills form, and preserves the API payload", async ({
     page,
   }) => {
@@ -61,6 +63,7 @@ test.describe("admin session creation and fee settings UI", () => {
           end_time: "18:00",
           timezone: "America/Chicago",
           capacity: 12,
+          amount_cents: 8500,
           status: "scheduled",
           enrolled_count: 0,
           waitlist_count: 0,
@@ -94,6 +97,7 @@ test.describe("admin session creation and fee settings UI", () => {
     await page.getByLabel("Start time").fill("17:00");
     await page.getByLabel("End time").fill("18:00");
     await page.getByLabel("Capacity").fill("12");
+    await page.getByLabel("Monthly fee").fill("85");
     await page.getByRole("button", { name: "Create" }).click();
 
     await expect.poll(() => createPayload).toEqual({
@@ -105,10 +109,11 @@ test.describe("admin session creation and fee settings UI", () => {
       end_time: "18:00",
       timezone: "America/Chicago",
       capacity: 12,
+      amount_cents: 8500,
     });
   });
 
-  test("fee settings display raw cents and days, patch only changed fields", async ({ page }) => {
+  test("fee settings focus on late-payment policy instead of session tuition", async ({ page }) => {
     await stubAdminShell(page);
     let feePatch: unknown = null;
 
@@ -134,14 +139,66 @@ test.describe("admin session creation and fee settings UI", () => {
 
     await page.goto("/admin/settings?panel=fees");
 
-    await expect(page.getByLabel("Monthly cents")).toHaveValue("12000");
-    await expect(page.getByLabel("Late fee cents")).toHaveValue("1500");
+    await expect(page.getByLabel("Monthly cents")).toHaveCount(0);
+    await expect(page.getByLabel("Late fee ($)")).toHaveValue("15.00");
     await expect(page.getByLabel("Grace days")).toHaveValue("5");
 
-    await page.getByLabel("Monthly cents").fill("12550");
+    await page.getByLabel("Late fee ($)").fill("17.50");
     await page.getByRole("button", { name: "Save changes" }).click();
 
-    await expect.poll(() => feePatch).toEqual({ default_monthly_cents: 12550 });
+    await expect.poll(() => feePatch).toEqual({ late_fee_cents: 1750 });
+  });
+
+  test("dashboard recent payments show student and parent context", async ({ page }) => {
+    await stubAdminShell(page);
+
+    await page.route("**/api/v2/admin/sessions*", (route) =>
+      fulfillJson(route, { sessions: [] }),
+    );
+    await page.route("**/api/v2/admin/payments", (route) =>
+      fulfillJson(route, {
+        payments: [
+          {
+            payment_id: "pay_65bd7fae",
+            parent_id: "parent-1",
+            parent_name: "Abhishek Ajithkumar",
+            student_id: "stu-1",
+            student_name: "Aadhya Abhishek",
+            enrollment_id: "enr-1",
+            session_id: "session-1",
+            period: "2026-06",
+            amount_cents: 6000,
+            discount_cents: 0,
+            final_amount_cents: 6000,
+            amount_received_cents: 6000,
+            paid_amount_cents: 6000,
+            balance_due_cents: 0,
+            overpayment_credit_cents: 0,
+            currency: "usd",
+            status: "paid",
+            refunded_cents: 0,
+            invoice_number: "INV-2026-06-001",
+            payment_method: "cash",
+            stripe_linked: false,
+            created_at: "2026-06-01T12:00:00Z",
+          },
+        ],
+      }),
+    );
+    await page.route("**/api/v2/admin/finance/revenue", (route) =>
+      fulfillJson(route, { by_month: { "2026-06": 6000 } }),
+    );
+    await page.route("**/api/v2/admin/attention", (route) =>
+      fulfillJson(route, { items: [] }),
+    );
+
+    await page.goto("/admin");
+
+    const recentPayments = page.getByTestId("admin-dashboard-recent-payments");
+    await expect(recentPayments).toContainText("Aadhya Abhishek");
+    await expect(recentPayments).toContainText("Abhishek Ajithkumar");
+    await expect(recentPayments).toContainText("INV-2026-06-001");
+    await expect(recentPayments).not.toContainText("pay_65bd");
   });
 
   test("session detail adds replacement coach from a selected recurring date", async ({

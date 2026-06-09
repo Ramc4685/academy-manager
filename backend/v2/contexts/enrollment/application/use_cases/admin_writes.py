@@ -171,6 +171,7 @@ class CreateSessionCommand(BaseModel):
     start_at: datetime | None = None
     end_at: datetime | None = None
     capacity: int = Field(ge=1)
+    amount_cents: int | None = Field(default=None, ge=0)
     days_of_week: list[str] = Field(default_factory=list)
     start_time: str | None = None
     end_time: str | None = None
@@ -213,6 +214,7 @@ class CreateSession:
             start_at=start_at,
             end_at=end_at,
             capacity=cmd.capacity,
+            amount_cents=cmd.amount_cents,
             status="scheduled",
             days_of_week=cmd.days_of_week,
             start_time=cmd.start_time,
@@ -255,6 +257,7 @@ class EditSessionCommand(BaseModel):
     start_at: datetime | None = None
     end_at: datetime | None = None
     capacity: int | None = Field(default=None, ge=1)
+    amount_cents: int | None = Field(default=None, ge=0)
     days_of_week: list[str] | None = None
     start_time: str | None = None
     end_time: str | None = None
@@ -280,6 +283,7 @@ class EditSession:
             "start_at",
             "end_at",
             "capacity",
+            "amount_cents",
             "days_of_week",
             "start_time",
             "end_time",

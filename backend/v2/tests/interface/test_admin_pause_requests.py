@@ -16,6 +16,14 @@ def test_admin_pause_requests_include_pause_kind_and_resume_on(admin_client) -> 
         pause_request_id="pause-1",
         enrollment_id="enr-1",
         parent_id="parent-1",
+        parent_name="Abhishek Ajithkumar",
+        parent_email="abhishek@example.com",
+        student_id="student-1",
+        student_name="Aadhya Abhishek",
+        session_id="session-1",
+        session_title="Junior Foundations",
+        session_location="Court 2",
+        session_start_at=datetime(2026, 6, 4, 23, 0, tzinfo=UTC),
         pause_kind="fixed",
         resume_on=date(2026, 7, 15),
         reason="summer",
@@ -28,6 +36,12 @@ def test_admin_pause_requests_include_pause_kind_and_resume_on(admin_client) -> 
     [request] = response.json()["requests"]
     assert request["pause_kind"] == "fixed"
     assert request["resume_on"] == "2026-07-15"
+    assert request["parent_name"] == "Abhishek Ajithkumar"
+    assert request["parent_email"] == "abhishek@example.com"
+    assert request["student_name"] == "Aadhya Abhishek"
+    assert request["session_title"] == "Junior Foundations"
+    assert request["session_location"] == "Court 2"
+    assert request["session_start_at"] == "2026-06-04T23:00:00Z"
 
 
 def test_admin_approve_pause_request_response_includes_new_fields(admin_client) -> None:

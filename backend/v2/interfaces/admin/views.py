@@ -262,6 +262,7 @@ class AdminSessionView(BaseModel):
     start_at: datetime
     end_at: datetime
     capacity: int
+    amount_cents: int | None = None
     status: Literal["scheduled", "cancelled", "completed"]
     enrolled_count: int = 0
     waitlist_count: int = 0
@@ -328,6 +329,7 @@ class CreateSessionRequest(BaseModel):
     start_at: datetime | None = None
     end_at: datetime | None = None
     capacity: int
+    amount_cents: int | None = Field(default=None, ge=0)
     days_of_week: list[str] = Field(default_factory=list)
     start_time: str | None = None
     end_time: str | None = None
@@ -341,6 +343,7 @@ class EditSessionRequest(BaseModel):
     start_at: datetime | None = None
     end_at: datetime | None = None
     capacity: int | None = Field(default=None, ge=1)
+    amount_cents: int | None = Field(default=None, ge=0)
     days_of_week: list[str] | None = None
     start_time: str | None = None
     end_time: str | None = None
@@ -458,6 +461,15 @@ class AdminPauseRequestView(BaseModel):
     pause_request_id: str
     enrollment_id: str
     parent_id: str
+    parent_name: str | None = None
+    parent_email: str | None = None
+    student_id: str | None = None
+    student_name: str | None = None
+    session_id: str | None = None
+    session_title: str | None = None
+    session_location: str | None = None
+    session_start_at: datetime | None = None
+    session_end_at: datetime | None = None
     period: str
     pause_kind: str = "fixed"
     resume_on: date | None = None

@@ -36,6 +36,15 @@ class PauseRequest(BaseModel):
     pause_request_id: str
     enrollment_id: str
     parent_id: str
+    parent_name: str | None = None
+    parent_email: str | None = None
+    student_id: str | None = None
+    student_name: str | None = None
+    session_id: str | None = None
+    session_title: str | None = None
+    session_location: str | None = None
+    session_start_at: datetime | None = None
+    session_end_at: datetime | None = None
     period: str = ""
     pause_kind: PauseKind = "fixed"
     resume_on: date | None = None

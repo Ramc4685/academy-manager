@@ -43,6 +43,13 @@ const serwist = new Serwist({
   navigationPreload: true,
   runtimeCaching: [
     {
+      // Firebase auth helper (proxied via next.config.ts rewrites). A
+      // cached/stale response here breaks the OAuth redirect round-trip,
+      // and the STATIC rule below would otherwise cache-first its JS.
+      matcher: ({ url }) => url.pathname.startsWith("/__/auth"),
+      handler: new NetworkOnly(),
+    },
+    {
       matcher: ({ request, url }) => request.method === "GET" && COACH_API.test(url.pathname),
       handler: new StaleWhileRevalidate({
         cacheName: "coach-api-v1",

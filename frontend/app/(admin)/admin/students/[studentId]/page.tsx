@@ -42,6 +42,7 @@ import {
 } from "@/lib/api/v2/students";
 import { getActiveAcademyId } from "@/lib/api/client";
 import { getStudentProgress, listPrograms } from "@/lib/api/curriculum";
+import { buildStudentProgressHref } from "@/lib/navigation/admin-student-progress-return";
 import { queryKeys } from "@/lib/query/keys";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
@@ -481,7 +482,11 @@ function SkillPathwayPanel({ student }: { student: AdminStudentDetail }) {
       </p>
       <div className="mt-4">
         <Link
-          href={`/admin/students/${encodeURIComponent(student.student_id)}/progress` as Parameters<typeof Link>[0]["href"]}
+          href={buildStudentProgressHref({
+            studentId: student.student_id,
+            returnTo: `/admin/students/${encodeURIComponent(student.student_id)}`,
+            returnLabel: "Back to student profile",
+          }) as Parameters<typeof Link>[0]["href"]}
           className="inline-flex items-center justify-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
         >
           Manage skill progress

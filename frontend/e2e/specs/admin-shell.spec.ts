@@ -377,6 +377,52 @@ test.describe("Rally admin shell", () => {
     });
   }
 
+  test("pause requests identify parent, student, and session", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.route("**/api/v2/admin/pause-requests*", (route) =>
+      fulfillJson(route, {
+        requests: [
+          {
+            pause_request_id: "pause-1",
+            parent_id: "parent-1",
+            parent_name: "Abhishek Ajithkumar",
+            parent_email: "abhishek@example.com",
+            enrollment_id: "enr-1",
+            student_id: "student-1",
+            student_name: "Aadhya Abhishek",
+            session_id: "session-1",
+            session_title: "Junior Foundations",
+            session_location: "Court 2",
+            session_start_at: "2026-06-04T23:00:00Z",
+            session_end_at: "2026-06-05T00:00:00Z",
+            period: "2026-07",
+            pause_kind: "fixed",
+            resume_on: "2026-07-15",
+            reason: "Summer travel",
+            status: "pending",
+            created_at: "2026-06-03T10:00:00Z",
+            decided_at: null,
+            decided_by: null,
+          },
+        ],
+      }),
+    );
+
+    await page.goto("/admin/pause-requests");
+    const row = page.getByTestId("admin-pause-requests-row-pause-1");
+    await expect(row).toContainText("Abhishek Ajithkumar");
+    await expect(row).toContainText("Student: Aadhya Abhishek");
+    await expect(row).toContainText("Junior Foundations");
+    await expect(row).toContainText("Court 2");
+    await expect(row).toContainText("Resume Jul 15, 2026");
+    await expect(row).toContainText("Summer travel");
+    expect(
+      errors,
+      `App console errors on pause requests details: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
   test("payments renders legacy paid and waived statuses without crashing", async ({
     page,
   }) => {
