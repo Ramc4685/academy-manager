@@ -70,11 +70,20 @@ fi
 header "Frontend"
 cd "$FRONTEND"
 
-run_check "node unit tests" node --no-warnings --test \
+# Use Node 22+ (matches CI: actions/setup-node node-version: "22").
+# .ts imports in test files require Node's native strip-types support.
+NODE_BIN="node"
+if [ -f "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]; then
+  # shellcheck source=/dev/null
+  source "${NVM_DIR:-$HOME/.nvm}/nvm.sh" --no-use 2>/dev/null || true
+  NODE_BIN="$(nvm which 22 2>/dev/null || echo node)"
+fi
+run_check "node unit tests" "$NODE_BIN" --no-warnings --test \
   lib/canonical-host.node-test.mjs \
   lib/api/proxy-headers.node-test.mjs \
   lib/api/auth-token.node-test.mjs \
-  lib/auth/token-readiness.node-test.mjs
+  lib/auth/token-readiness.node-test.mjs \
+  lib/auth/auth-domain.node-test.mjs
 
 run_check "pnpm typecheck" pnpm typecheck
 run_check "pnpm lint"      pnpm lint
