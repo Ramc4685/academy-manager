@@ -113,6 +113,9 @@ services:
         # NOTE: frontend reaches the emulator via the host port, not the
         # docker-internal hostname, because this URL is used by the browser.
         NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST: "http://localhost:9099"
+        # "1" serves the Firebase sign-in helper first-party from the app
+        # host (mobile Google sign-in fix); see DEPLOYMENT.md before enabling.
+        NEXT_PUBLIC_FIREBASE_AUTH_PROXY: ${NEXT_PUBLIC_FIREBASE_AUTH_PROXY:-}
     environment:
       BFF_API_ORIGIN: http://backend:8001
       PORT: "3001"
