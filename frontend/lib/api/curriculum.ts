@@ -408,6 +408,7 @@ export function recordTestAttempt(
     attempts_count: number;
     success_count: number;
     notes?: string;
+    session_id?: string;
   },
 ): Promise<{ recorded: boolean }> {
   return apiFetch<{ recorded: boolean }>(
