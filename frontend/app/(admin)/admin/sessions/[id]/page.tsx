@@ -52,6 +52,7 @@ import {
   type EditSessionRequest,
 } from "@/lib/api/admin";
 import { getFullPathway, placeStudentInLevel, type Level } from "@/lib/api/curriculum";
+import { buildStudentProgressHref } from "@/lib/navigation/admin-student-progress-return";
 import { queryKeys } from "@/lib/query/keys";
 
 import { Avatar } from "@/components/ds/avatar";
@@ -112,6 +113,27 @@ function sessionTimeRange(session: AdminSessionView): string {
   })}`;
 }
 
+function formatCurrencyCents(cents: number | null | undefined): string {
+  if (cents == null) return "—";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: cents % 100 === 0 ? 0 : 2,
+  }).format(cents / 100);
+}
+
+function centsToDollarsInput(cents: number | null | undefined): string {
+  if (cents == null) return "";
+  return cents % 100 === 0 ? String(cents / 100) : (cents / 100).toFixed(2);
+}
+
+function dollarsInputToCents(value: string): number | null {
+  if (value.trim() === "") return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.round(parsed * 100);
+}
+
 function hasRecurringSchedule(session: AdminSessionView): boolean {
   return Boolean(session.days_of_week.length && session.start_time && session.end_time);
 }
@@ -130,6 +152,7 @@ function buildEditSessionForm(session: AdminSessionView): EditSessionRequest {
     title: session.title,
     location: session.location,
     capacity: session.capacity,
+    amount_cents: session.amount_cents,
     reason: "",
   };
   if (hasRecurringSchedule(session)) {
@@ -303,6 +326,7 @@ export default function AdminSessionDetailPage() {
               <p className="mt-1 text-sm text-rally-muted">
                 {session.location} · {sessionTimeRange(session)}
                 {session.coach_name ? ` · Coach ${session.coach_name}` : ""}
+                {` · ${formatCurrencyCents(session.amount_cents)}/month`}
               </p>
             </>
           ) : (
@@ -390,13 +414,13 @@ export default function AdminSessionDetailPage() {
         ) : enrollments.length === 0 ? (
           <p className="text-sm text-rally-subtle" data-testid="roster-empty">No enrolled students.</p>
         ) : (
-              <RosterTable
-                enrollments={enrollments}
-                pathwayLevels={pathwayLevels}
-                updatingPlacementStudentId={
-                  placementMutation.isPending ? placementMutation.variables?.studentId : null
-                }
-                sessionId={sessionId}
+          <RosterTable
+            enrollments={enrollments}
+            sessionId={sessionId}
+            pathwayLevels={pathwayLevels}
+            updatingPlacementStudentId={
+              placementMutation.isPending ? placementMutation.variables?.studentId : null
+            }
             onPathwayLevelChange={(enrollment, levelId) =>
               placementMutation.mutate({
                 studentId: enrollment.student_id,
@@ -871,6 +895,21 @@ function SessionEditDialog({
             />
           </Field>
         </div>
+        <Field label="Monthly fee">
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            value={centsToDollarsInput(form.amount_cents)}
+            onChange={(event) =>
+              setForm((f) => ({
+                ...f,
+                amount_cents: dollarsInputToCents(event.target.value),
+              }))
+            }
+            className={inputClass}
+          />
+        </Field>
         <Field label="Reason">
           <input
             value={form.reason ?? ""}
@@ -969,9 +1008,9 @@ function RosterMetric({
 
 function RosterTable({
   enrollments,
+  sessionId,
   pathwayLevels,
   updatingPlacementStudentId,
-  sessionId,
   onPathwayLevelChange,
   onDelete,
   onPause,
@@ -980,9 +1019,9 @@ function RosterTable({
   onWithdraw,
 }: {
   enrollments: AdminEnrollmentView[];
+  sessionId: string;
   pathwayLevels: Level[];
   updatingPlacementStudentId: string | null;
-  sessionId: string;
   onPathwayLevelChange: (enrollment: AdminEnrollmentView, levelId: string) => void;
   onDelete: (enrollment: AdminEnrollmentView) => void;
   onPause: (enrollment: AdminEnrollmentView) => void;
@@ -1081,11 +1120,12 @@ function RosterTable({
                       Move
                     </Button>
                     <Link
-                      href={
-                        `/admin/students/${encodeURIComponent(e.student_id)}/progress${
-                          e.pathway_program_id ? `?program_id=${encodeURIComponent(e.pathway_program_id)}` : ""
-                        }` as Parameters<typeof Link>[0]["href"]
-                      }
+                      href={buildStudentProgressHref({
+                        studentId: e.student_id,
+                        programId: e.pathway_program_id,
+                        returnTo: `/admin/sessions/${encodeURIComponent(sessionId)}`,
+                        returnLabel: "Back to session",
+                      }) as Parameters<typeof Link>[0]["href"]}
                       className="inline-flex min-h-9 items-center justify-center rounded-md border border-rally-line bg-white px-3 py-1.5 text-sm font-semibold text-rally-ink shadow-sm transition-colors hover:bg-neutral-50"
                     >
                       Pathway

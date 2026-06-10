@@ -51,6 +51,40 @@ NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=G-Z6GS6WRZY8
 Use exact origins for `FRONTEND_URL` and `CORS_ORIGINS`. Firebase Auth must also
 authorize the frontend host, currently `academy.courtmastr.com`.
 
+## Mobile Google sign-in (first-party auth proxy)
+
+With the default `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=academy-courtmastr.firebaseapp.com`,
+the Google OAuth round-trip depends on storage on the `firebaseapp.com` origin,
+which is **cross-site** from the tenant domains (`*.courtmastr.com`). Mobile
+browsers (all iOS browsers, Brave, Chrome with third-party cookie phase-out)
+block that storage, so popup sign-in errors and redirect sign-in silently
+bounces back to `/login`. Desktop Chrome happens to still allow it.
+
+Fix: serve the Firebase sign-in helper first-party. `next.config.ts` rewrites
+`/__/auth/*` on every tenant domain to the `firebaseapp.com` helper, and
+`NEXT_PUBLIC_FIREBASE_AUTH_PROXY=1` makes the SDK use the page's own host as
+`authDomain` (see `frontend/lib/auth/auth-domain.ts`; localhost is exempt).
+
+Rollout order — the flag must go last or Google sign-in breaks everywhere:
+
+1. Google Cloud Console → APIs & Services → Credentials → the OAuth 2.0 web
+   client auto-created by Firebase → add for EACH serving domain:
+   - Authorized redirect URI: `https://<tenant-host>/__/auth/handler`
+     (e.g. `https://blno-academy.courtmastr.com/__/auth/handler`)
+   - Authorized JavaScript origin: `https://<tenant-host>`
+2. Firebase Console → Authentication → Settings → Authorized domains:
+   confirm each tenant host is listed (required already for desktop popup).
+3. Verify the proxy is live: `curl -I https://<tenant-host>/__/auth/handler`
+   should return the Firebase helper page (200), not the app's 404.
+4. Set the GitHub repo variable `NEXT_PUBLIC_FIREBASE_AUTH_PROXY=1` (read by
+   `.github/workflows/production.yml`) and redeploy the frontend.
+5. Real-device test (BrowserStack or a phone): Google sign-in from iPhone
+   Safari must land on `/admin` (or the persona home), and the backend must
+   log a `GET /api/v2/me` for the session.
+
+New tenant domains need step 1 repeated. Onboarding automation should add the
+redirect URI alongside DNS/custom-domain setup.
+
 ## Phase 5 environment variables
 
 The following variables were introduced in Phase 5 and must be set in production. Firebase env vars are documented above.

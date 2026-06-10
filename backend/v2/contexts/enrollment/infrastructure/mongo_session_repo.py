@@ -121,6 +121,7 @@ class MongoSessionRepository(TenantScopedRepository):
             start_at=start_at,  # type: ignore[arg-type]
             end_at=end_at,  # type: ignore[arg-type]
             capacity=int(doc.get("capacity") or doc.get("max_students") or 15),  # type: ignore[arg-type]
+            amount_cents=_optional_amount_cents(doc),
             status=status,  # type: ignore[arg-type]
             days_of_week=list(doc.get("days_of_week") or []),
             start_time=None if doc.get("start_time") is None else str(doc.get("start_time")),
@@ -226,6 +227,16 @@ def _amount_cents(doc: dict[str, object], default_amount_cents: int) -> int:
     if doc.get("monthly_price") is not None:
         return round(float(doc["monthly_price"]) * 100)  # type: ignore[arg-type]
     return default_amount_cents
+
+
+def _optional_amount_cents(doc: dict[str, object]) -> int | None:
+    if doc.get("amount_cents") is not None:
+        return int(doc["amount_cents"])  # type: ignore[arg-type]
+    if doc.get("monthly_price_cents") is not None:
+        return int(doc["monthly_price_cents"])  # type: ignore[arg-type]
+    if doc.get("monthly_price") is not None:
+        return round(float(doc["monthly_price"]) * 100)  # type: ignore[arg-type]
+    return None
 
 
 def _representative_template_times(doc: dict[str, object]) -> tuple[datetime, datetime]:

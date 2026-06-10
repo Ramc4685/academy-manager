@@ -86,6 +86,70 @@ async def test_mongo_pause_request_round_trips_pause_kind_and_resume_on() -> Non
     assert loaded.period == "2026-07"
 
 
+@pytest.mark.asyncio
+async def test_mongo_pending_pause_requests_include_admin_context() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["pause-requests-admin-context"]
+    repo = MongoPauseRequestRepository(db)
+    request = PauseRequest(
+        pause_request_id="pause-1",
+        enrollment_id="enr-1",
+        parent_id="parent-1",
+        pause_kind="fixed",
+        resume_on=date(2026, 7, 15),
+        reason="summer travel",
+        created_at=datetime(2026, 6, 3, tzinfo=UTC),
+    )
+
+    with tenant_scope("acad-1"):
+        await db.enrollments.insert_one(
+            {
+                "academy_id": "acad-1",
+                "enrollment_id": "enr-1",
+                "student_id": "student-1",
+                "session_id": "session-1",
+                "status": "active",
+            }
+        )
+        await db.students.insert_one(
+            {
+                "academy_id": "acad-1",
+                "student_id": "student-1",
+                "parent_id": "parent-1",
+                "full_name": "Aadhya Abhishek",
+            }
+        )
+        await db.sessions.insert_one(
+            {
+                "academy_id": "acad-1",
+                "session_id": "session-1",
+                "title": "Junior Foundations",
+                "location": "Court 2",
+                "start_at": datetime(2026, 6, 4, 23, 0, tzinfo=UTC),
+                "end_at": datetime(2026, 6, 5, 0, 0, tzinfo=UTC),
+            }
+        )
+        await db.users.insert_one(
+            {
+                "academy_id": "acad-1",
+                "user_id": "parent-1",
+                "display_name": "Abhishek Ajithkumar",
+                "email": "abhishek@example.com",
+            }
+        )
+        await repo.add(request)
+        [loaded] = await repo.list_pending()
+
+    assert loaded.parent_name == "Abhishek Ajithkumar"
+    assert loaded.parent_email == "abhishek@example.com"
+    assert loaded.student_id == "student-1"
+    assert loaded.student_name == "Aadhya Abhishek"
+    assert loaded.session_id == "session-1"
+    assert loaded.session_title == "Junior Foundations"
+    assert loaded.session_location == "Court 2"
+    assert loaded.session_start_at == datetime(2026, 6, 4, 23, 0)
+
+
 class _FakePauseRequests:
     async def add(self, request: PauseRequest) -> None:
         self.request = request

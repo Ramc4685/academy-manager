@@ -16,6 +16,7 @@ Verify fixed/indefinite pause requests, scheduled resume actions, roster capacit
 
 - 2026-06-03T14:41:47 main/NA: Task ledger created.
 - 2026-06-03T14:41:55 main/working: Starting TDD implementation for pause resume autopay workflow in isolated worktree feat/pause-resume-autopay
+- 2026-06-09T08:06:20 main/working: Improving admin pause request details so rows identify parent, student, and session context.
 ## Verification
 
 - No verification recorded yet.
@@ -31,6 +32,7 @@ Verify fixed/indefinite pause requests, scheduled resume actions, roster capacit
 - 2026-06-03T15:02:17: scripts/dev/pre-push-checks.sh passed: backend ruff format/check, full backend pytest v2/tests, frontend node unit tests, typecheck, and lint. Script skipped e2e because changes are uncommitted; targeted e2e was run separately.
 - 2026-06-03T15:02:17: In-app browser opened worktree frontend /parent/payments on port 3011 but redirected to login because no auth/API stubs were available in that browser session; UI render coverage came from Playwright with mocked parent APIs.
 - 2026-06-03T15:05:21: After tenant-aware scheduler correction: backend ruff format/check passed; focused backend set including tenant raw Mongo guard passed 46 tests; scripts/dev/pre-push-checks.sh passed full backend pytest v2/tests plus frontend unit/typecheck/lint. E2E still separately verified with targeted Playwright run.
+- 2026-06-09T08:12:10: Focused verification passed for admin pause request details: backend pytest v2/tests/application/test_pause_requests.py v2/tests/interface/test_admin_pause_requests.py -q (8 passed); backend ruff check touched v2 files passed; frontend pnpm typecheck passed; frontend pnpm lint passed; Playwright admin-shell pause request regression passed on PLAYWRIGHT_PORT=3012 in chromium-mobile and webkit-mobile (2 passed). Initial Playwright run on reused port 3001 failed due login redirect from non-E2E dev server, then passed on isolated E2E server.
 ## Reusable Lessons
 
 - None recorded yet.

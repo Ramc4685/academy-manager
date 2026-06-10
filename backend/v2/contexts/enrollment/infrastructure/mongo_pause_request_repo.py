@@ -20,6 +20,15 @@ class MongoPauseRequestRepository(TenantScopedRepository):
             pause_request_id=str(doc["pause_request_id"]),
             enrollment_id=str(doc["enrollment_id"]),
             parent_id=str(doc["parent_id"]),
+            parent_name=_optional_str(doc.get("parent_name")),
+            parent_email=_optional_str(doc.get("parent_email")),
+            student_id=_optional_str(doc.get("student_id")),
+            student_name=_optional_str(doc.get("student_name")),
+            session_id=_optional_str(doc.get("session_id")),
+            session_title=_optional_str(doc.get("session_title")),
+            session_location=_optional_str(doc.get("session_location")),
+            session_start_at=doc.get("session_start_at"),  # type: ignore[arg-type]
+            session_end_at=doc.get("session_end_at"),  # type: ignore[arg-type]
             period=str(doc.get("period") or ""),
             pause_kind=doc.get("pause_kind", "fixed"),  # type: ignore[arg-type]
             resume_on=doc.get("resume_on"),  # type: ignore[arg-type]
@@ -54,7 +63,7 @@ class MongoPauseRequestRepository(TenantScopedRepository):
             sort=[("created_at", 1)],
             limit=200,
         )
-        return [self._to_domain(doc) async for doc in cursor]
+        return [await self._to_domain_with_context(doc) async for doc in cursor]
 
     async def approve(self, pause_request_id: str, *, admin_id: str) -> PauseRequest:
         request = await self.get(pause_request_id)
@@ -102,3 +111,87 @@ class MongoPauseRequestRepository(TenantScopedRepository):
         return bool(
             student and str(student.get("parent_id") or student.get("parent_user_id")) == parent_id
         )
+
+    async def _to_domain_with_context(self, doc: dict[str, object]) -> PauseRequest:
+        academy_id = current_academy_id()
+        request = self._to_domain(doc)
+        enrollment = await self._db["enrollments"].find_one(
+            {"academy_id": academy_id, "enrollment_id": request.enrollment_id}
+        )
+        student_id = _optional_str((enrollment or {}).get("student_id")) or request.student_id
+        session_id = _optional_str((enrollment or {}).get("session_id")) or request.session_id
+        parent_id = (
+            _optional_str((enrollment or {}).get("parent_id"))
+            or _optional_str((enrollment or {}).get("parent_user_id"))
+            or request.parent_id
+        )
+        student = None
+        if student_id:
+            student = await self._db["students"].find_one(
+                {"academy_id": academy_id, "student_id": student_id}
+            )
+            parent_id = (
+                _optional_str((student or {}).get("parent_id"))
+                or _optional_str((student or {}).get("parent_user_id"))
+                or parent_id
+            )
+        session = None
+        if session_id:
+            session = await self._db["sessions"].find_one(
+                {"academy_id": academy_id, "session_id": session_id}
+            )
+        parent = None
+        if parent_id:
+            parent = await self._db["users"].find_one(
+                {
+                    "academy_id": academy_id,
+                    "$or": [
+                        {"user_id": parent_id},
+                        {"parent_id": parent_id},
+                        {"firebase_uid": parent_id},
+                    ],
+                }
+            )
+
+        return request.model_copy(
+            update={
+                "parent_name": request.parent_name or _display_name(parent),
+                "parent_email": request.parent_email or _optional_str((parent or {}).get("email")),
+                "student_id": student_id,
+                "student_name": request.student_name or _student_name(student),
+                "session_id": session_id,
+                "session_title": request.session_title
+                or _optional_str((session or {}).get("title")),
+                "session_location": request.session_location
+                or _optional_str((session or {}).get("location")),
+                "session_start_at": request.session_start_at or (session or {}).get("start_at"),
+                "session_end_at": request.session_end_at or (session or {}).get("end_at"),
+            }
+        )
+
+
+def _optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _student_name(doc: dict[str, object] | None) -> str | None:
+    if not doc:
+        return None
+    first = str(doc.get("first_name") or "").strip()
+    last = str(doc.get("last_name") or "").strip()
+    return _optional_str(doc.get("full_name")) or _optional_str(f"{first} {last}")
+
+
+def _display_name(doc: dict[str, object] | None) -> str | None:
+    if not doc:
+        return None
+    first = str(doc.get("first_name") or "").strip()
+    last = str(doc.get("last_name") or "").strip()
+    return (
+        _optional_str(doc.get("display_name"))
+        or _optional_str(doc.get("name"))
+        or _optional_str(f"{first} {last}")
+    )

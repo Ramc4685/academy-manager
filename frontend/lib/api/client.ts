@@ -7,11 +7,11 @@
  */
 
 import { getIdToken } from "@/lib/auth/firebase";
+import { setBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
 import { resolveApiAuthToken } from "@/lib/api/auth-token";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/api/v2";
 const BFF_IDENTITY_HEADER = "X-CourtMastr-Identity";
-const BFF_IDENTITY_COOKIE = "__cm_identity";
 
 const inflight = new Map<string, Promise<Response>>();
 
@@ -107,14 +107,6 @@ export async function apiFetch<T>(
     clearTimeout(abortTimer);
     if (dedupKey) inflight.delete(dedupKey);
   }
-}
-
-function setBffIdentityCookie(token: string): void {
-  if (typeof document === "undefined") return;
-  const secure = window.location.protocol === "https:" ? "; Secure" : "";
-  document.cookie = `${BFF_IDENTITY_COOKIE}=${encodeURIComponent(
-    token
-  )}; Path=/; SameSite=Strict; Max-Age=3600${secure}`;
 }
 
 async function parseResponse<T>(res: Response): Promise<T> {

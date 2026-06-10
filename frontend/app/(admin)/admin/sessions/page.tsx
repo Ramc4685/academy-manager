@@ -75,6 +75,27 @@ function formatSessionTimeRange(session: AdminSessionView): string {
   return formatTimeRange(session.start_at, session.end_at);
 }
 
+function formatCurrencyCents(cents: number | null | undefined): string {
+  if (cents == null) return "—";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: cents % 100 === 0 ? 0 : 2,
+  }).format(cents / 100);
+}
+
+function centsToDollarsInput(cents: number | null | undefined): string {
+  if (cents == null) return "";
+  return cents % 100 === 0 ? String(cents / 100) : (cents / 100).toFixed(2);
+}
+
+function dollarsInputToCents(value: string): number | null {
+  if (value.trim() === "") return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.round(parsed * 100);
+}
+
 function hasRecurringSchedule(session: AdminSessionView): boolean {
   return Boolean(session.days_of_week.length && session.start_time && session.end_time);
 }
@@ -93,6 +114,7 @@ function buildEditSessionForm(session: AdminSessionView): EditSessionRequest {
     title: session.title,
     location: session.location,
     capacity: session.capacity,
+    amount_cents: session.amount_cents,
     reason: "",
   };
   if (hasRecurringSchedule(session)) {
@@ -293,6 +315,7 @@ function SessionList({
               <Th>Location</Th>
               <Th>Time</Th>
               <Th>Coach</Th>
+              <Th align="right">Fee</Th>
               <Th align="right">Fill</Th>
               <Th align="right">Waitlist</Th>
               <Th><span className="sr-only">Actions</span></Th>
@@ -326,6 +349,9 @@ function SessionList({
                         {s.coach_name || "Coach assigned"}
                       </span>
                     </div>
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono font-semibold tabular-nums text-rally-ink">
+                    {formatCurrencyCents(s.amount_cents)}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="inline-flex items-center gap-2 justify-end">
@@ -517,6 +543,21 @@ function EditSessionDialog({
                 />
               </Field>
             </div>
+            <Field label="Monthly fee">
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={centsToDollarsInput(form.amount_cents)}
+                onChange={(event) =>
+                  setForm((f) => ({
+                    ...f,
+                    amount_cents: dollarsInputToCents(event.target.value),
+                  }))
+                }
+                className={inputClass}
+              />
+            </Field>
             <Field label="Reason">
               <input
                 value={form.reason ?? ""}
@@ -583,6 +624,7 @@ const EMPTY_FORM: CreateSessionRequest = {
   end_time: "18:45",
   timezone: DEFAULT_TIMEZONE,
   capacity: 10,
+  amount_cents: null,
 };
 
 function CreateSessionDialog({
@@ -737,6 +779,22 @@ function CreateSessionDialog({
                 />
               </Field>
             </div>
+            <Field label="Monthly fee" required>
+              <input
+                type="number"
+                required
+                min={0}
+                step="0.01"
+                value={centsToDollarsInput(form.amount_cents)}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    amount_cents: dollarsInputToCents(e.target.value),
+                  }))
+                }
+                className={inputClass}
+              />
+            </Field>
 
             <div className="flex justify-end gap-2 pt-2">
               <Dialog.Close asChild>

@@ -16,10 +16,20 @@ import { Overline } from "@/components/ds/typography";
 
 type FeesForm = Record<keyof AdminFeesView, string>;
 
+function centsToDollarInput(cents: number | null | undefined): string {
+  if (cents === null || cents === undefined) return "";
+  return (cents / 100).toFixed(2);
+}
+
+function dollarsToCentsInput(dollars: string): number | null {
+  if (dollars === "") return null;
+  return Math.round(Number(dollars) * 100);
+}
+
 function normalize(data: AdminFeesView | null | undefined): FeesForm {
   return {
     default_monthly_cents: data?.default_monthly_cents?.toString() ?? "",
-    late_fee_cents: data?.late_fee_cents?.toString() ?? "",
+    late_fee_cents: centsToDollarInput(data?.late_fee_cents),
     grace_days: data?.grace_days?.toString() ?? "",
   };
 }
@@ -28,7 +38,12 @@ function toPayload(original: FeesForm, form: FeesForm): UpdateAdminFeesRequest {
   const payload: UpdateAdminFeesRequest = {};
   (Object.keys(form) as Array<keyof FeesForm>).forEach((key) => {
     if (form[key] !== original[key]) {
-      payload[key] = form[key] === "" ? null : Number(form[key]);
+      payload[key] =
+        key === "late_fee_cents"
+          ? dollarsToCentsInput(form[key])
+          : form[key] === ""
+            ? null
+            : Number(form[key]);
     }
   });
   return payload;
@@ -59,16 +74,12 @@ export function FeesPanel() {
   return (
     <section data-testid="admin-settings-fees">
       <Card p={24} className="max-w-3xl">
-        <Overline>Fees</Overline>
-        <div className="mt-5 grid gap-4 md:grid-cols-3">
+        <Overline>Late payments</Overline>
+        <div className="mt-5 grid gap-4 md:grid-cols-2">
           <NumberField
-            label="Monthly cents"
-            value={form.default_monthly_cents}
-            onChange={(value) => setForm((prev) => ({ ...prev, default_monthly_cents: value }))}
-          />
-          <NumberField
-            label="Late fee cents"
+            label="Late fee ($)"
             value={form.late_fee_cents}
+            step="0.01"
             onChange={(value) => setForm((prev) => ({ ...prev, late_fee_cents: value }))}
           />
           <NumberField
@@ -92,10 +103,12 @@ export function FeesPanel() {
 function NumberField({
   label,
   value,
+  step = "1",
   onChange,
 }: {
   label: string;
   value: string;
+  step?: string;
   onChange: (value: string) => void;
 }) {
   return (
@@ -104,6 +117,8 @@ function NumberField({
       <input
         type="number"
         min="0"
+        step={step}
+        inputMode={step === "0.01" ? "decimal" : "numeric"}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         className="h-10 rounded-md border border-rally-line bg-white px-3 font-mono text-sm tabular-nums outline-none focus:border-blue-500"
