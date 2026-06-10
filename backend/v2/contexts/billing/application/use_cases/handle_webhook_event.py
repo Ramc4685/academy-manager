@@ -17,6 +17,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from backend.v2.contexts.billing.application.ports import (
+    ParentStripeCustomerRepository,
     PaymentRepository,
     StripeEventDedup,
     StripeGateway,
@@ -64,6 +65,7 @@ class HandleWebhookEvent:
         academy_id: str,
         billing_enrollments: StudentBillingEnrollmentRepository | None = None,
         billing_ledger: Any | None = None,
+        parent_customers: ParentStripeCustomerRepository | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._stripe = stripe
@@ -72,6 +74,7 @@ class HandleWebhookEvent:
         self._subscriptions = subscriptions
         self._billing_enrollments = billing_enrollments
         self._billing_ledger = billing_ledger
+        self._parent_customers = parent_customers
         self._outbox = outbox
         self._academy_id = academy_id
         self._now = clock
@@ -126,6 +129,7 @@ class HandleWebhookEvent:
         obj = event["data"]["object"]
         checkout_id = obj["id"]
         payment = await self._payments.get_by_checkout_session(checkout_id)
+        await self._persist_checkout_customer(obj, payment=payment)
         if payment is None:
             log.warning("checkout.completed for unknown checkout_id=%s", checkout_id)
             return
@@ -153,6 +157,38 @@ class HandleWebhookEvent:
                 ),
             )
         )
+
+    async def _persist_checkout_customer(
+        self, checkout: dict[str, Any], *, payment: Payment | None
+    ) -> None:
+        if self._parent_customers is None:
+            return
+        stripe_customer_id = str(checkout.get("customer") or "")
+        if not stripe_customer_id:
+            return
+        parent_id = payment.parent_id if payment is not None else self._checkout_parent_id(checkout)
+        if not parent_id:
+            log.warning(
+                "checkout.completed customer present without parent_id checkout_id=%s",
+                checkout.get("id"),
+            )
+            return
+        await self._parent_customers.set_stripe_customer_id(
+            parent_id=parent_id,
+            stripe_customer_id=stripe_customer_id,
+        )
+
+    @staticmethod
+    def _checkout_parent_id(checkout: dict[str, Any]) -> str | None:
+        metadata = checkout.get("metadata")
+        if isinstance(metadata, dict):
+            parent_id = metadata.get("parent_id")
+            if parent_id:
+                return str(parent_id)
+        client_reference_id = checkout.get("client_reference_id")
+        if client_reference_id:
+            return str(client_reference_id)
+        return None
 
     async def _on_checkout_expired(self, event: dict[str, Any]) -> None:
         obj = event["data"]["object"]
