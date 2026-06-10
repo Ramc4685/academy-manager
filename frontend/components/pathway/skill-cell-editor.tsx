@@ -84,6 +84,7 @@ export function SkillCellEditor({
               <button
                 key={s.value}
                 disabled={isPending}
+                aria-pressed={target.status === s.value}
                 onClick={() => onSetStatus(s.value)}
                 className={`min-h-[44px] rounded-full border px-4 text-xs font-medium transition-colors ${
                   target.status === s.value
