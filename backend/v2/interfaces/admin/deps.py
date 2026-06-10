@@ -204,6 +204,7 @@ class AdminUseCases:
     reopen_payout_period: ReopenPayoutPeriod | None = None
     override_payout_line: OverridePayoutLine | None = None
     list_payout_audit_entries: ListPayoutAuditEntries | None = None
+    describe_payout_occurrences: object | None = None  # async (ids) -> dict[str, dict]
     set_coach_pay_rate: object | None = None  # SetCoachPayRate
     list_coach_pay_rates: object | None = None  # ListCoachPayRates
     create_session_type: CreateSessionType | None = None

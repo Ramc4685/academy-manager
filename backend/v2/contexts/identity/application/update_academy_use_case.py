@@ -36,4 +36,5 @@ class UpdateAcademyUseCase:
             address=doc.get("address"),
             logo_url=doc.get("logo_url"),
             brand_color=doc.get("brand_color"),
+            currency=str(doc.get("currency") or "USD"),
         )

@@ -843,6 +843,7 @@ export interface AdminAcademyView {
   address: string | null;
   logo_url: string | null;
   brand_color: string | null;
+  currency: string;
 }
 
 export type UpdateAdminAcademyRequest = Partial<{
@@ -854,6 +855,7 @@ export type UpdateAdminAcademyRequest = Partial<{
   address: string | null;
   logo_url: string | null;
   brand_color: string | null;
+  currency: string | null;
 }>;
 
 export interface AdminFeesView {

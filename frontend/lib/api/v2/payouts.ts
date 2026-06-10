@@ -12,7 +12,7 @@
  *
  * No SaaS page should call `/api/*` legacy routes.
  */
-import { apiFetch } from "../client";
+import { apiFetch, apiFetchBlob } from "../client";
 import { listPayouts } from "../admin";
 
 export type { AdminPayoutView } from "../admin";
@@ -35,6 +35,14 @@ export interface AdminPayoutPeriodLineView {
   expected_revenue_cents: number | null;
   original_amount_cents: number | null;
   adjustment_reason: string | null;
+  occurred_at: string | null;
+  session_title: string | null;
+}
+
+export interface AdminUnpaidOccurrenceView {
+  occurrence_id: string;
+  occurred_at: string | null;
+  session_title: string | null;
 }
 
 export interface AdminPayoutPeriodView {
@@ -47,6 +55,7 @@ export interface AdminPayoutPeriodView {
   total_amount_cents: number;
   lines: AdminPayoutPeriodLineView[];
   unpaid_occurrence_ids: string[];
+  unpaid_occurrences: AdminUnpaidOccurrenceView[];
   generated_at: string;
   approved_at: string | null;
   paid_at: string | null;
@@ -133,6 +142,13 @@ export async function overridePayoutLine(
     `/admin/payout-periods/${encodeURIComponent(periodId)}/lines/${encodeURIComponent(occurrenceId)}`,
     { method: "PATCH", body: JSON.stringify(input) },
   );
+}
+
+/** Download the period as an Excel workbook and hand back the Blob. */
+export async function exportPayoutPeriodXlsx(periodId: string): Promise<Blob> {
+  return apiFetchBlob(`/admin/payout-periods/${encodeURIComponent(periodId)}/export`, {
+    method: "GET",
+  });
 }
 
 export async function getPayoutAuditTrail(periodId: string): Promise<PayoutAuditTrailView> {

@@ -43,6 +43,7 @@ def test_get_academy_contract(admin_client):
         "address": None,
         "logo_url": "https://cdn.example.com/logo.png",
         "brand_color": "#2563eb",
+        "currency": "USD",
     }
     admin_client.use_cases.get_academy_use_case.execute.assert_awaited_once_with("acad")
 

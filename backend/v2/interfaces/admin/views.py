@@ -691,6 +691,22 @@ class AdminPayoutPeriodLineView(BaseModel):
     expected_revenue_cents: int | None = None
     original_amount_cents: int | None = None
     adjustment_reason: str | None = None
+    occurred_at: datetime | None = None
+    session_title: str | None = None
+
+
+class AdminUnpaidOccurrenceView(BaseModel):
+    """An occurrence in the window that produced no pay line.
+
+    Covers coach-marked-absent occurrences and occurrences whose pay
+    could not be computed (e.g. session price missing for a percent
+    rate). Rendered alongside the paid lines so the period reads as a
+    complete session log.
+    """
+
+    occurrence_id: str
+    occurred_at: datetime | None = None
+    session_title: str | None = None
 
 
 class AdminPayoutPeriodView(BaseModel):
@@ -703,6 +719,7 @@ class AdminPayoutPeriodView(BaseModel):
     total_amount_cents: int
     lines: list[AdminPayoutPeriodLineView]
     unpaid_occurrence_ids: list[str]
+    unpaid_occurrences: list[AdminUnpaidOccurrenceView] = Field(default_factory=list)
     generated_at: datetime
     approved_at: datetime | None = None
     paid_at: datetime | None = None
@@ -1065,6 +1082,7 @@ class AdminAcademyView(BaseModel):
     address: str | None = None
     logo_url: str | None = None
     brand_color: str | None = None
+    currency: str = "USD"
 
 
 class UpdateAdminAcademyRequest(BaseModel):
@@ -1076,6 +1094,7 @@ class UpdateAdminAcademyRequest(BaseModel):
     address: str | None = None
     logo_url: str | None = None
     brand_color: str | None = None
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
 
 
 class AdminFeesView(BaseModel):

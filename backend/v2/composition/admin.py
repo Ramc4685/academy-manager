@@ -1094,6 +1094,45 @@ def compose_admin(
         audit=payout_audit_log,
     )
     list_payout_audit_entries = ListPayoutAuditEntries(audit=payout_audit_log)
+
+    async def _describe_payout_occurrences(
+        occurrence_ids: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        """BFF display data for payout lines: when, and which session.
+
+        Returns ``{occurrence_id: {"occurred_at": datetime|None,
+        "session_title": str|None}}`` for the ids that exist. Missing
+        ids are simply absent from the result.
+        """
+        from backend.v2.shared.tenancy import current_academy_id
+
+        if not occurrence_ids:
+            return {}
+        request_academy_id = current_academy_id()
+        occ_cursor = db["session_occurrences"].find(
+            {"academy_id": request_academy_id, "occurrence_id": {"$in": occurrence_ids}},
+            {"occurrence_id": 1, "start_at": 1, "template_session_id": 1, "session_id": 1},
+        )
+        occ_docs = [doc async for doc in occ_cursor]
+        session_ids = sorted(
+            {_occurrence_session_id(doc) for doc in occ_docs if _occurrence_session_id(doc)}
+        )
+        titles: dict[str, str] = {}
+        if session_ids:
+            session_cursor = db["sessions"].find(
+                {"academy_id": request_academy_id, "session_id": {"$in": session_ids}},
+                {"session_id": 1, "title": 1, "name": 1},
+            )
+            async for row in session_cursor:
+                titles[str(row["session_id"])] = str(row.get("title") or row.get("name") or "")
+        return {
+            str(doc["occurrence_id"]): {
+                "occurred_at": doc.get("start_at"),
+                "session_title": titles.get(_occurrence_session_id(doc)) or None,
+            }
+            for doc in occ_docs
+        }
+
     coach_rates_repo = MongoCoachRateRepository(db)
     set_coach_pay_rate = SetCoachPayRate(rates=coach_rates_repo)
     list_coach_pay_rates = ListCoachPayRates(rates=coach_rates_repo)
@@ -2421,6 +2460,7 @@ def compose_admin(
         reopen_payout_period=reopen_payout_period,
         override_payout_line=override_payout_line,
         list_payout_audit_entries=list_payout_audit_entries,
+        describe_payout_occurrences=_describe_payout_occurrences,
         set_coach_pay_rate=set_coach_pay_rate,
         list_coach_pay_rates=list_coach_pay_rates,
         list_admin_sessions=list_admin_sessions,
