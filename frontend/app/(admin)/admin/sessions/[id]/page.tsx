@@ -396,6 +396,7 @@ export default function AdminSessionDetailPage() {
                 updatingPlacementStudentId={
                   placementMutation.isPending ? placementMutation.variables?.studentId : null
                 }
+                sessionId={sessionId}
             onPathwayLevelChange={(enrollment, levelId) =>
               placementMutation.mutate({
                 studentId: enrollment.student_id,
@@ -970,6 +971,7 @@ function RosterTable({
   enrollments,
   pathwayLevels,
   updatingPlacementStudentId,
+  sessionId,
   onPathwayLevelChange,
   onDelete,
   onPause,
@@ -980,6 +982,7 @@ function RosterTable({
   enrollments: AdminEnrollmentView[];
   pathwayLevels: Level[];
   updatingPlacementStudentId: string | null;
+  sessionId: string;
   onPathwayLevelChange: (enrollment: AdminEnrollmentView, levelId: string) => void;
   onDelete: (enrollment: AdminEnrollmentView) => void;
   onPause: (enrollment: AdminEnrollmentView) => void;
@@ -1035,9 +1038,22 @@ function RosterTable({
                     onChange={(levelId) => onPathwayLevelChange(e, levelId)}
                   />
                   <p className="mt-1 text-[11px] text-rally-muted">
-                    {e.pathway_level_name
-                      ? `${e.pathway_skills_completed ?? 0}/${e.pathway_skills_total ?? 0} skills`
-                      : "Placement needed"}
+                    {e.pathway_level_name ? (
+                      <Link
+                        href={
+                          `/admin/sessions/${sessionId}/skill-board${
+                            e.pathway_program_id
+                              ? `?program_id=${encodeURIComponent(e.pathway_program_id)}`
+                              : ""
+                          }` as Parameters<typeof Link>[0]["href"]
+                        }
+                        className="text-xs text-blue-600 underline-offset-2 hover:underline"
+                      >
+                        {e.pathway_skills_completed ?? 0}/{e.pathway_skills_total ?? 0} skills
+                      </Link>
+                    ) : (
+                      "Placement needed"
+                    )}
                   </p>
                 </td>
                 <td className="px-4 py-3">
