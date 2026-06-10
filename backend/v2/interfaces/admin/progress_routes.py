@@ -20,6 +20,10 @@ from backend.v2.contexts.student_progress.application.use_cases.get_passport imp
 from backend.v2.contexts.student_progress.application.use_cases.get_progress_summary import (
     ProgressSummaryRequest,
 )
+from backend.v2.contexts.student_progress.application.use_cases.get_skill_board import (
+    SkillBoardRequest,
+    SkillBoardStudentRef,
+)
 from backend.v2.contexts.student_progress.application.use_cases.place_student import (
     PlaceStudentInLevelCommand,
 )
@@ -493,3 +497,34 @@ async def get_certificates(
         GetStudentCertificatesCommand(student_id=student_id)
     )
     return {"certificates": [c.model_dump() for c in certs]}
+
+
+@router.get("/sessions/{session_id}/skill-board")
+async def get_session_skill_board(
+    session_id: str,
+    program_id: str | None = Query(None),
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> object:
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+
+    resolved_program_id = await _resolve_program_id(use_cases, program_id)
+    program_name = await _admin_program_name(use_cases, resolved_program_id)
+    rows = await use_cases.list_admin_enrollments_for_session(session_id)  # type: ignore[operator]
+    refs = tuple(
+        SkillBoardStudentRef(
+            student_id=str(row.get("student_id") or ""),
+            student_name=str(row.get("full_name") or row.get("student_name") or "(unknown)"),
+        )
+        for row in rows
+        if row.get("student_id")
+    )
+    board = await use_cases.student_progress.get_skill_board.execute(
+        SkillBoardRequest(
+            students=refs,
+            program_id=resolved_program_id,
+            program_name=program_name,
+        )
+    )
+    return board.model_dump(mode="json")
