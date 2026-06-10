@@ -34,12 +34,14 @@ export default function AdminSessionSkillBoardPage() {
       skillId: string;
       levelId: string;
       status: SkillStatus;
-    }) =>
-      updateAdminSkillStatus(args.studentId, args.skillId, {
-        program_id: board?.program_id ?? "",
+    }) => {
+      if (!board?.program_id) return Promise.reject(new Error("Board not loaded"));
+      return updateAdminSkillStatus(args.studentId, args.skillId, {
+        program_id: board.program_id,
         level_id: args.levelId,
         status: args.status,
-      }),
+      });
+    },
     onSettled: invalidate,
   });
 
@@ -51,14 +53,17 @@ export default function AdminSessionSkillBoardPage() {
       attempts: number;
       successes: number;
       notes: string;
-    }) =>
-      recordAdminTestAttempt(args.studentId, args.skillId, {
-        program_id: board?.program_id ?? "",
+    }) => {
+      if (!board?.program_id) return Promise.reject(new Error("Board not loaded"));
+      return recordAdminTestAttempt(args.studentId, args.skillId, {
+        program_id: board.program_id,
         level_id: args.levelId,
         attempts_count: args.attempts,
         success_count: args.successes,
         notes: args.notes || undefined,
-      }),
+        session_id: sessionId,
+      });
+    },
     onSettled: invalidate,
   });
 

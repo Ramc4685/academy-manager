@@ -32,12 +32,14 @@ export default function CoachSessionProgressPage() {
       skillId: string;
       levelId: string;
       status: SkillStatus;
-    }) =>
-      updateSkillStatus(args.studentId, args.skillId, {
-        program_id: board?.program_id ?? "",
+    }) => {
+      if (!board?.program_id) return Promise.reject(new Error("Board not loaded"));
+      return updateSkillStatus(args.studentId, args.skillId, {
+        program_id: board.program_id,
         level_id: args.levelId,
         status: args.status,
-      }),
+      });
+    },
     onSettled: invalidate,
   });
 
@@ -49,15 +51,17 @@ export default function CoachSessionProgressPage() {
       attempts: number;
       successes: number;
       notes: string;
-    }) =>
-      recordTestAttempt(args.studentId, args.skillId, {
-        program_id: board?.program_id ?? "",
+    }) => {
+      if (!board?.program_id) return Promise.reject(new Error("Board not loaded"));
+      return recordTestAttempt(args.studentId, args.skillId, {
+        program_id: board.program_id,
         level_id: args.levelId,
         attempts_count: args.attempts,
         success_count: args.successes,
         notes: args.notes || undefined,
         session_id: sessionId,
-      }),
+      });
+    },
     onSettled: invalidate,
   });
 

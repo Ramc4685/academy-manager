@@ -297,6 +297,7 @@ export function recordAdminTestAttempt(
     attempts_count: number;
     success_count: number;
     notes?: string;
+    session_id?: string;
   },
 ): Promise<RecordTestAttemptResult> {
   return apiFetch<RecordTestAttemptResult>(
