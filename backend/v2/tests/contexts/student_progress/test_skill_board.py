@@ -205,3 +205,24 @@ async def test_empty_roster_returns_empty_board() -> None:
     board = await use_case.execute(_request())
     assert board.groups == []
     assert board.unplaced == []
+
+
+@pytest.mark.asyncio
+async def test_level_with_no_skills_yields_empty_columns() -> None:
+    """A level whose skill lookup returns [] produces a group with skills=[] and zeroed counts."""
+    level_empty = "level-empty"
+    use_case = _use_case(
+        [_level_progress("stu-1", level_empty)],
+        [],
+    )
+    board = await use_case.execute(_request(("stu-1", "Netra")))
+
+    assert len(board.groups) == 1
+    group = board.groups[0]
+    assert group.level_id == level_empty
+    assert group.skills == []
+
+    row = group.students[0]
+    assert row.statuses == {}
+    assert row.total_count == 0
+    assert row.required_total == 0

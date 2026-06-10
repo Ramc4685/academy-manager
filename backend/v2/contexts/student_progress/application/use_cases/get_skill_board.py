@@ -80,13 +80,13 @@ class GetSkillBoard:
                     last_updated_at=row.last_updated_at,
                 )
 
+            required = [col for col in skill_cols if col.is_required]
             student_rows: list[SkillBoardStudentRow] = []
             for ref in refs:
                 cells = cells_by_student.get(ref.student_id, {})
                 statuses = {
                     col.skill_id: cells.get(col.skill_id, SkillBoardCell()) for col in skill_cols
                 }
-                required = [col for col in skill_cols if col.is_required]
                 rec = await self._recommendations.get_active_for_student(
                     ref.student_id, request.program_id
                 )
