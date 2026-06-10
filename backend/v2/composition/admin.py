@@ -742,7 +742,7 @@ class _MongoPayableOccurrenceQuery:
                 academy_id=str(doc["academy_id"]),
                 start_at=doc["start_at"],
                 end_at=doc["end_at"],
-                status=doc.get("status", "scheduled"),
+                status=_effective_occurrence_status(doc),
                 scheduled_coach_id=str(doc["scheduled_coach_id"]),
                 actual_coach_id=_optional_str(doc.get("actual_coach_id")),
                 substitute_coach_id=_optional_str(doc.get("substitute_coach_id")),
@@ -886,6 +886,21 @@ def _occurrence_session_id(doc: dict[str, Any]) -> str:
     """Session the occurrence belongs to — enrollments reference the
     template session, so prefer ``template_session_id`` when present."""
     return str(doc.get("template_session_id") or doc.get("session_id") or "")
+
+
+def _effective_occurrence_status(doc: dict[str, Any]) -> str:
+    """A scheduled occurrence whose end time has passed counts as completed.
+
+    Nothing in the app flips ``session_occurrences.status`` to "completed",
+    so payout eligibility derives completion from the clock instead.
+    Cancelled occurrences stay cancelled.
+    """
+    status = str(doc.get("status", "scheduled"))
+    if status != "scheduled":
+        return status
+    end_at = doc["end_at"]
+    end_utc = end_at if end_at.tzinfo else end_at.replace(tzinfo=UTC)
+    return "completed" if end_utc < datetime.now(UTC) else status
 
 
 def compose_admin(

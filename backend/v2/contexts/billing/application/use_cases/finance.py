@@ -147,13 +147,23 @@ class MongoPayoutRepository(TenantScopedRepository):
 
     async def _derive_from_completed_occurrences(self) -> list[Payout]:
         academy_id = current_academy_id()
+        # An occurrence counts as completed once its end time has passed,
+        # unless it was cancelled — nothing in the app flips the status
+        # field to "completed", so deriving completion keeps payouts real.
+        now = datetime.now(UTC)
         occurrence_rows = [
             doc
             async for doc in self._find_many_in_collection(
                 "session_occurrences",
                 {
                     "is_payable": {"$ne": False},
-                    "status": "completed",
+                    "$or": [
+                        {"status": "completed"},
+                        {
+                            "status": {"$nin": ["cancelled", "completed"]},
+                            "end_at": {"$lt": now},
+                        },
+                    ],
                 },
                 sort=[("start_at", 1)],
             )
