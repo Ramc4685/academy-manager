@@ -499,6 +499,7 @@ async def get_certificates(
     return {"certificates": [c.model_dump() for c in certs]}
 
 
+# Mirrors coach/skill_routes.py get_session_skill_board (per-persona twin).
 @router.get("/sessions/{session_id}/skill-board")
 async def get_session_skill_board(
     session_id: str,

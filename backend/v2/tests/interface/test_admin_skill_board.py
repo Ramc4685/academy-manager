@@ -202,7 +202,7 @@ def test_admin_session_skill_board_returns_groups(client: TestClient) -> None:
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["program_name"]
+    assert body["program_name"] == "Badminton Skill Pathway"
     assert body["groups"][0]["students"][0]["student_id"] == "stu-1"
 
 

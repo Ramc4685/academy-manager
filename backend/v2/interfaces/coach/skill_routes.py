@@ -301,6 +301,7 @@ async def get_session_students_progress(
     return {"rows": [row.model_dump(mode="json") for row in rows]}
 
 
+# Mirrors admin/progress_routes.py get_session_skill_board (per-persona twin).
 @router.get("/sessions/{session_id}/skill-board")
 async def get_session_skill_board(
     session_id: str,
