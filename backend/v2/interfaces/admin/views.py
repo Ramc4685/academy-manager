@@ -6,7 +6,7 @@ Admin-shaped — academy-wide read fields included. Per docs/security-matrix.md.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, EmailStr, Field, model_validator
 
@@ -687,6 +687,10 @@ class AdminPayoutPeriodLineView(BaseModel):
     amount_cents: int
     currency: str
     rate_id: str
+    percent_bps: int | None = None
+    expected_revenue_cents: int | None = None
+    original_amount_cents: int | None = None
+    adjustment_reason: str | None = None
 
 
 class AdminPayoutPeriodView(BaseModel):
@@ -711,6 +715,40 @@ class AdminPayoutPayslipView(BaseModel):
     printable: bool = True
     period: AdminPayoutPeriodView
     lines: list[AdminPayoutPeriodLineView]
+
+
+class ReopenPayoutPeriodRequest(BaseModel):
+    reason: str = Field(min_length=1)
+
+
+class OverridePayoutLineRequest(BaseModel):
+    amount_cents: int | None = Field(default=None, ge=0)
+    """New amount for the line; ``None`` clears an existing override."""
+    reason: str = Field(min_length=1)
+
+
+class PayoutAuditEntryView(BaseModel):
+    audit_id: str
+    period_id: str
+    occurrence_id: str | None = None
+    action: Literal[
+        "generated",
+        "recomputed",
+        "reopened",
+        "approved",
+        "marked_paid",
+        "line_overridden",
+        "line_override_cleared",
+    ]
+    actor_id: str
+    at: datetime
+    reason: str | None = None
+    before: dict[str, Any] | None = None
+    after: dict[str, Any] | None = None
+
+
+class PayoutAuditTrailView(BaseModel):
+    entries: list[PayoutAuditEntryView]
 
 
 class AdminCoachPayRateView(BaseModel):

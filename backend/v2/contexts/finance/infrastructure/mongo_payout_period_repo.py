@@ -41,6 +41,10 @@ def _line_to_doc(line: PersistedPayoutLine, *, period_id: str) -> dict[str, Any]
         "amount_minor": int(line.amount_minor),
         "currency": line.currency,
         "rate_id": line.rate_id,
+        "percent_bps": line.percent_bps,
+        "expected_revenue_minor": line.expected_revenue_minor,
+        "original_amount_minor": line.original_amount_minor,
+        "adjustment_reason": line.adjustment_reason,
     }
 
 
@@ -53,6 +57,10 @@ def _line_from_doc(doc: dict[str, Any]) -> PersistedPayoutLine:
         amount_minor=int(doc["amount_minor"]),
         currency=str(doc["currency"]),
         rate_id=str(doc["rate_id"]),
+        percent_bps=doc.get("percent_bps"),
+        expected_revenue_minor=doc.get("expected_revenue_minor"),
+        original_amount_minor=doc.get("original_amount_minor"),
+        adjustment_reason=doc.get("adjustment_reason"),
     )
 
 
@@ -175,4 +183,35 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
         stored = await self.find_by_id(period.period_id)
         if stored is None:  # pragma: no cover - defensive
             raise RuntimeError("payout period replace lost the document")
+        return stored
+
+    async def replace_with_lines(self, period: PayoutPeriod) -> PayoutPeriod:
+        """Replace the period document AND rewrite its line set.
+
+        Used by recompute and line-override flows, which legitimately
+        change lines (unlike ``replace``, which only moves the state
+        machine). Drafts only — callers enforce that rule.
+        """
+        result = await self._update_one(
+            {"period_id": period.period_id},
+            {"$set": _period_to_doc(period)},
+        )
+        if result.matched_count == 0:
+            raise LookupError(f"PayoutPeriod {period.period_id!r} not found")
+
+        academy_id = current_academy_id()
+        await self._db[self.LINES_COLLECTION].delete_many(
+            {"academy_id": academy_id, "period_id": period.period_id}
+        )
+        if period.lines:
+            await self._db[self.LINES_COLLECTION].insert_many(
+                [
+                    {**_line_to_doc(line, period_id=period.period_id), "academy_id": academy_id}
+                    for line in period.lines
+                ]
+            )
+
+        stored = await self.find_by_id(period.period_id)
+        if stored is None:  # pragma: no cover - defensive
+            raise RuntimeError("payout period replace_with_lines lost the document")
         return stored

@@ -178,6 +178,12 @@ from backend.v2.contexts.finance.application.use_cases.enrollment_funnel import 
 from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
     GeneratePayoutPeriod,
 )
+from backend.v2.contexts.finance.application.use_cases.manage_payout_period import (
+    ListPayoutAuditEntries,
+    OverridePayoutLine,
+    RecomputePayoutPeriod,
+    ReopenPayoutPeriod,
+)
 from backend.v2.contexts.finance.domain.payout_period import PersistedPayoutLine
 from backend.v2.contexts.finance.infrastructure.mongo_application_funnel_reader import (
     MongoApplicationFunnelReader,
@@ -187,6 +193,9 @@ from backend.v2.contexts.finance.infrastructure.mongo_attendance_snapshot_reader
 )
 from backend.v2.contexts.finance.infrastructure.mongo_coach_payout_snapshot_reader import (
     MongoCoachPayoutSnapshotReader,
+)
+from backend.v2.contexts.finance.infrastructure.mongo_payout_audit_log import (
+    MongoPayoutAuditLogRepository,
 )
 from backend.v2.contexts.finance.infrastructure.mongo_payout_period_repo import (
     MongoPayoutPeriodRepository,
@@ -1070,6 +1079,21 @@ def compose_admin(
     )
     approve_payout_period = ApprovePayoutPeriod(repository=payout_periods_repo)
     mark_payout_paid = MarkPayoutPaid(repository=payout_periods_repo)
+    payout_audit_log = MongoPayoutAuditLogRepository(db)
+    recompute_payout_period = RecomputePayoutPeriod(
+        calculator=coach_payout_calculator,
+        repository=payout_periods_repo,
+        audit=payout_audit_log,
+    )
+    reopen_payout_period = ReopenPayoutPeriod(
+        repository=payout_periods_repo,
+        audit=payout_audit_log,
+    )
+    override_payout_line = OverridePayoutLine(
+        repository=payout_periods_repo,
+        audit=payout_audit_log,
+    )
+    list_payout_audit_entries = ListPayoutAuditEntries(audit=payout_audit_log)
     coach_rates_repo = MongoCoachRateRepository(db)
     set_coach_pay_rate = SetCoachPayRate(rates=coach_rates_repo)
     list_coach_pay_rates = ListCoachPayRates(rates=coach_rates_repo)
@@ -2393,6 +2417,10 @@ def compose_admin(
         generate_payout_period=generate_payout_period,
         approve_payout_period=approve_payout_period,
         mark_payout_paid=mark_payout_paid,
+        recompute_payout_period=recompute_payout_period,
+        reopen_payout_period=reopen_payout_period,
+        override_payout_line=override_payout_line,
+        list_payout_audit_entries=list_payout_audit_entries,
         set_coach_pay_rate=set_coach_pay_rate,
         list_coach_pay_rates=list_coach_pay_rates,
         list_admin_sessions=list_admin_sessions,

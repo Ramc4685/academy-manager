@@ -15,6 +15,13 @@ from backend.v2.contexts.finance.application.use_cases.approve_payout_period imp
 from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
     GeneratePayoutPeriod,
 )
+from backend.v2.contexts.finance.application.use_cases.manage_payout_period import (
+    ListPayoutAuditEntries,
+    OverridePayoutLine,
+    RecomputePayoutPeriod,
+    ReopenPayoutPeriod,
+)
+from backend.v2.contexts.finance.domain.payout_period import PayoutPeriodStateError
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
     AdminPayoutPayslipView,
@@ -22,6 +29,10 @@ from backend.v2.interfaces.admin.views import (
     AdminPayoutPeriodView,
     GeneratePayoutPeriodRequest,
     MarkPayoutPeriodPaidRequest,
+    OverridePayoutLineRequest,
+    PayoutAuditEntryView,
+    PayoutAuditTrailView,
+    ReopenPayoutPeriodRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import DomainError, require_persona
@@ -48,6 +59,10 @@ def _line_view(line: Any) -> AdminPayoutPeriodLineView:
         amount_cents=line.amount_minor,
         currency=line.currency,
         rate_id=line.rate_id,
+        percent_bps=line.percent_bps,
+        expected_revenue_cents=line.expected_revenue_minor,
+        original_amount_cents=line.original_amount_minor,
+        adjustment_reason=line.adjustment_reason,
     )
 
 
@@ -96,6 +111,34 @@ def _mark_payout_paid(use_cases: AdminUseCases) -> MarkPayoutPaid:
     use_case = use_cases.mark_payout_paid
     if use_case is None:
         raise HTTPException(status_code=503, detail="Payout payment is not configured")
+    return use_case
+
+
+def _recompute_payout_period(use_cases: AdminUseCases) -> RecomputePayoutPeriod:
+    use_case = use_cases.recompute_payout_period
+    if use_case is None:
+        raise HTTPException(status_code=503, detail="Payout recompute is not configured")
+    return use_case
+
+
+def _reopen_payout_period(use_cases: AdminUseCases) -> ReopenPayoutPeriod:
+    use_case = use_cases.reopen_payout_period
+    if use_case is None:
+        raise HTTPException(status_code=503, detail="Payout reopen is not configured")
+    return use_case
+
+
+def _override_payout_line(use_cases: AdminUseCases) -> OverridePayoutLine:
+    use_case = use_cases.override_payout_line
+    if use_case is None:
+        raise HTTPException(status_code=503, detail="Payout line override is not configured")
+    return use_case
+
+
+def _list_payout_audit_entries(use_cases: AdminUseCases) -> ListPayoutAuditEntries:
+    use_case = use_cases.list_payout_audit_entries
+    if use_case is None:
+        raise HTTPException(status_code=503, detail="Payout audit trail is not configured")
     return use_case
 
 
@@ -165,6 +208,92 @@ async def mark_payout_period_paid(
     except ValueError as exc:
         raise PayoutPeriodInvalidTransition(str(exc)) from exc
     return _period_view(period)
+
+
+@router.post("/payout-periods/{period_id}/recompute", response_model=AdminPayoutPeriodView)
+async def recompute_payout_period(
+    period_id: str,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminPayoutPeriodView:
+    try:
+        period = await _recompute_payout_period(use_cases).execute(
+            period_id=period_id, actor_id=claims.user_id
+        )
+    except LookupError as exc:
+        raise PayoutPeriodNotFound(f"Payout period {period_id!r} not found") from exc
+    except PayoutPeriodStateError as exc:
+        raise PayoutPeriodInvalidTransition(str(exc)) from exc
+    return _period_view(period)
+
+
+@router.post("/payout-periods/{period_id}/reopen", response_model=AdminPayoutPeriodView)
+async def reopen_payout_period(
+    period_id: str,
+    body: ReopenPayoutPeriodRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminPayoutPeriodView:
+    try:
+        period = await _reopen_payout_period(use_cases).execute(
+            period_id=period_id, actor_id=claims.user_id, reason=body.reason
+        )
+    except LookupError as exc:
+        raise PayoutPeriodNotFound(f"Payout period {period_id!r} not found") from exc
+    except ValueError as exc:
+        raise PayoutPeriodInvalidTransition(str(exc)) from exc
+    return _period_view(period)
+
+
+@router.patch(
+    "/payout-periods/{period_id}/lines/{occurrence_id}",
+    response_model=AdminPayoutPeriodView,
+)
+async def override_payout_period_line(
+    period_id: str,
+    occurrence_id: str,
+    body: OverridePayoutLineRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminPayoutPeriodView:
+    try:
+        period = await _override_payout_line(use_cases).execute(
+            period_id=period_id,
+            occurrence_id=occurrence_id,
+            amount_minor=body.amount_cents,
+            reason=body.reason,
+            actor_id=claims.user_id,
+        )
+    except LookupError as exc:
+        raise PayoutPeriodNotFound(str(exc)) from exc
+    except ValueError as exc:
+        raise PayoutPeriodInvalidTransition(str(exc)) from exc
+    return _period_view(period)
+
+
+@router.get("/payout-periods/{period_id}/audit", response_model=PayoutAuditTrailView)
+async def get_payout_period_audit(
+    period_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> PayoutAuditTrailView:
+    entries = await _list_payout_audit_entries(use_cases).execute(period_id=period_id)
+    return PayoutAuditTrailView(
+        entries=[
+            PayoutAuditEntryView(
+                audit_id=e.audit_id,
+                period_id=e.period_id,
+                occurrence_id=e.occurrence_id,
+                action=e.action,
+                actor_id=e.actor_id,
+                at=e.at,
+                reason=e.reason,
+                before=e.before,
+                after=e.after,
+            )
+            for e in entries
+        ]
+    )
 
 
 @router.get("/payout-periods/{period_id}/payslip", response_model=AdminPayoutPayslipView)

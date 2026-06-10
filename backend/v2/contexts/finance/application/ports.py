@@ -23,6 +23,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol
 
+from backend.v2.contexts.finance.domain.payout_audit import PayoutAuditEntry
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
     PersistedPayoutLine,
@@ -70,6 +71,22 @@ class PayoutPeriodRepository(Protocol):
         Raises ``LookupError`` if no period matches ``period.period_id``.
         """
         ...
+
+    async def replace_with_lines(self, period: PayoutPeriod) -> PayoutPeriod:
+        """Replace an existing period AND rewrite its lines.
+
+        Used by recompute and line-override flows where the line set
+        itself changes. Raises ``LookupError`` if the period is missing.
+        """
+        ...
+
+
+class PayoutAuditLog(Protocol):
+    """Append-only audit trail of payout-period mutations."""
+
+    async def append(self, entry: PayoutAuditEntry) -> None: ...
+
+    async def list_for_period(self, period_id: str) -> list[PayoutAuditEntry]: ...
 
 
 class AcademyRevenueSnapshotRepository(Protocol):
@@ -241,6 +258,7 @@ __all__ = [
     "BillingPeriodTotals",
     "CoachPayoutSnapshotReader",
     "CoachPayoutSnapshotRepository",
+    "PayoutAuditLog",
     "PayoutCalculation",
     "PayoutCalculator",
     "PayoutPeriodRepository",
