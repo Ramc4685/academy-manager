@@ -194,9 +194,21 @@ class HandleWebhookEvent:
             return
         metadata = checkout.get("metadata")
         enrollment_id: str | None = None
-        if isinstance(metadata, dict) and metadata.get("enrollment_id"):
-            enrollment_id = str(metadata["enrollment_id"])
-        subscription = await self._subscriptions.get_by_stripe_sub(stripe_sub_id)
+        internal_sub_id: str | None = None
+        if isinstance(metadata, dict):
+            if metadata.get("enrollment_id"):
+                enrollment_id = str(metadata["enrollment_id"])
+            if metadata.get("subscription_id"):
+                internal_sub_id = str(metadata["subscription_id"])
+        # Prefer the pending row this exact checkout created (its internal id
+        # rides in the session metadata). A parent can start checkout several
+        # times for one enrollment, so latest_for_enrollment may point at a
+        # different pending row and is only a last-resort fallback.
+        subscription = None
+        if internal_sub_id:
+            subscription = await self._subscriptions.get(internal_sub_id)
+        if subscription is None:
+            subscription = await self._subscriptions.get_by_stripe_sub(stripe_sub_id)
         if subscription is None and enrollment_id:
             subscription = await self._subscriptions.latest_for_enrollment(enrollment_id)
         if subscription is not None:

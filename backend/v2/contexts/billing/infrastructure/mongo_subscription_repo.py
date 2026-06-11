@@ -42,6 +42,10 @@ class MongoSubscriptionRepository(TenantScopedRepository):
             upsert=True,
         )
 
+    async def get(self, subscription_id: str) -> Subscription | None:
+        doc = await self._find_one({"subscription_id": subscription_id})
+        return self._to_domain(doc) if doc else None
+
     async def get_by_stripe_sub(self, stripe_sub: str) -> Subscription | None:
         doc = await self._find_one({"stripe_subscription_id": stripe_sub})
         return self._to_domain(doc) if doc else None
