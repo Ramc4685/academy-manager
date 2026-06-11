@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from backend.v2.contexts.communications.application.errors import (
+    AcademyAudience,
+    EmptyAudienceError,
+    SessionAudience,
+)
 from backend.v2.contexts.communications.application.use_cases.send_campaign import (
     SendCampaignCommand,
-)
-from backend.v2.contexts.communications.domain.models import (
-    AcademyAudience,
-    SessionAudience,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
@@ -81,8 +82,6 @@ async def send_email_campaign(
         audience = SessionAudience(session_id=payload.audience.session_id)
     else:
         audience = AcademyAudience(role=payload.audience.role)
-
-    from backend.v2.contexts.communications.domain.errors import EmptyAudienceError
 
     try:
         result = await use_cases.send_campaign.execute(

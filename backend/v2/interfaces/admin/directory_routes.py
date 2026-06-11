@@ -96,7 +96,7 @@ async def bulk_invite_parents(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> BulkInviteResponse:
-    from backend.v2.contexts.identity.domain.errors import UserEmailAlreadyExists
+    from backend.v2.contexts.identity.application.errors import UserEmailAlreadyExists
 
     use_case = use_cases.create_admin_user
     if use_case is None:
