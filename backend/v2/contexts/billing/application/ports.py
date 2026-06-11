@@ -36,6 +36,20 @@ class ParentStripeCustomerRepository(Protocol):
     async def set_stripe_customer_id(self, *, parent_id: str, stripe_customer_id: str) -> None: ...
 
 
+class EnrollmentAutopayStateRepository(Protocol):
+    """Cross-context port: Billing pushes subscription lifecycle state onto
+    the Enrollment aggregate so parent-facing autopay status stays accurate.
+    """
+
+    async def set_autopay_state(
+        self,
+        *,
+        enrollment_id: str,
+        subscription_status: str,
+        stripe_subscription_id: str | None,
+    ) -> None: ...
+
+
 class CreditLedgerRepository(Protocol):
     async def create(self, entry: CreditLedgerEntry) -> None: ...
     async def list_for_parent(self, parent_id: str) -> list[CreditLedgerEntry]: ...

@@ -206,9 +206,12 @@ export default function ParentPaymentsPage() {
         ) : (
           <div className="space-y-3">
             {enrollments.map((enrollment) => {
+              // "incomplete" means Checkout was started but never finished
+              // (abandoned, or the webhook hasn't confirmed yet) — the parent
+              // must be able to retry, so it does NOT count as enabled.
               const enabled =
                 enrollment.payment_mode === "monthly" &&
-                ["active", "trialing", "past_due", "incomplete"].includes(
+                ["active", "trialing", "past_due"].includes(
                   enrollment.subscription_status ?? ""
                 );
               const starting = startingAutopayEnrollmentId === enrollment.enrollment_id;

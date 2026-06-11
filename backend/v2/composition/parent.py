@@ -221,6 +221,25 @@ def compose_parent(
                 },
             )
 
+    class _EnrollmentAutopayState:
+        async def set_autopay_state(
+            self,
+            *,
+            enrollment_id: str,
+            subscription_status: str,
+            stripe_subscription_id: str | None,
+        ) -> None:
+            await db["enrollments"].update_one(
+                {"academy_id": academy_id, "enrollment_id": enrollment_id},
+                {
+                    "$set": {
+                        "subscription_status": subscription_status,
+                        "stripe_subscription_id": stripe_subscription_id,
+                        "updated_at": datetime.now(UTC),
+                    }
+                },
+            )
+
     handle_webhook = HandleWebhookEvent(
         stripe=stripe,
         dedup=dedup,
@@ -229,6 +248,7 @@ def compose_parent(
         billing_enrollments=student_billing_enrollments,
         billing_ledger=billing_ledger_repo,
         parent_customers=_ParentStripeCustomers(),
+        enrollment_autopay=_EnrollmentAutopayState(),
         outbox=outbox,
         academy_id=academy_id,
     )

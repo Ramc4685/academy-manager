@@ -302,6 +302,8 @@ export interface MarkPaymentPaidRequest {
   amount_received_cents?: number;
   reference_number?: string;
   notes?: string;
+  /** ISO date (YYYY-MM-DD) the money was actually received. */
+  payment_date?: string;
 }
 
 export interface ApplyPaymentDiscountRequest {

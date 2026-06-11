@@ -54,15 +54,21 @@ class FakePaymentRepo:
 class FakeSubscriptionRepo:
     def __init__(self) -> None:
         self.by_stripe_sub: dict[str, Subscription] = {}
+        self.by_enrollment: dict[str, Subscription] = {}
 
     def seed(self, subscription: Subscription) -> None:
         self.by_stripe_sub[subscription.stripe_subscription_id] = subscription
+        if subscription.enrollment_id:
+            self.by_enrollment[subscription.enrollment_id] = subscription
 
     async def save(self, _):
         self.seed(_)
 
     async def get_by_stripe_sub(self, stripe_sub):
         return self.by_stripe_sub.get(stripe_sub)
+
+    async def latest_for_enrollment(self, enrollment_id):
+        return self.by_enrollment.get(enrollment_id)
 
 
 class FakeDedup:
@@ -105,13 +111,41 @@ class FakeParentStripeCustomers:
         self.saved.append({"parent_id": parent_id, "stripe_customer_id": stripe_customer_id})
 
 
-def _build(repo, outbox=None, dedup=None, subscriptions=None, parent_customers=None):
+class FakeEnrollmentAutopayState:
+    def __init__(self) -> None:
+        self.synced: list[dict[str, str | None]] = []
+
+    async def set_autopay_state(
+        self,
+        *,
+        enrollment_id: str,
+        subscription_status: str,
+        stripe_subscription_id: str | None,
+    ) -> None:
+        self.synced.append(
+            {
+                "enrollment_id": enrollment_id,
+                "subscription_status": subscription_status,
+                "stripe_subscription_id": stripe_subscription_id,
+            }
+        )
+
+
+def _build(
+    repo,
+    outbox=None,
+    dedup=None,
+    subscriptions=None,
+    parent_customers=None,
+    enrollment_autopay=None,
+):
     return HandleWebhookEvent(
         stripe=FakeStripeGateway(),
         dedup=dedup or FakeDedup(),
         payments=repo,
         subscriptions=subscriptions or FakeSubscriptionRepo(),
         parent_customers=parent_customers,
+        enrollment_autopay=enrollment_autopay,
         outbox=outbox or FakeOutbox(),
         academy_id="acad",
     )
@@ -337,6 +371,126 @@ async def test_charge_refunded_updates_cumulative_amount() -> None:
     await uc.execute(body, "test_signature")
     assert repo.by_id["pay-1"].refunded_cents == 5000
     assert repo.by_id["pay-1"].status == "partially_refunded"
+
+
+def _seed_incomplete_subscription(
+    subs: FakeSubscriptionRepo,
+    *,
+    stripe_subscription_id: str = "",
+    status: str = "incomplete",
+) -> Subscription:
+    now = datetime.now(UTC)
+    subscription = Subscription(
+        subscription_id="sub-1",
+        academy_id="acad",
+        parent_id="p1",
+        enrollment_id="enr-1",
+        session_id="s1",
+        stripe_subscription_id=stripe_subscription_id,
+        status=status,  # type: ignore[arg-type]
+        created_at=now,
+        updated_at=now,
+    )
+    subs.seed(subscription)
+    return subscription
+
+
+@pytest.mark.asyncio
+async def test_subscription_checkout_completed_activates_subscription_and_enrollment() -> None:
+    """Checkout completion must backfill the Stripe subscription id (null at
+    checkout-creation time) and flip both the subscription row and the
+    enrollment's autopay state to active — otherwise parents stay stuck at
+    'incomplete' forever."""
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    _seed_incomplete_subscription(subs)
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    uc = _build(repo, subscriptions=subs, enrollment_autopay=enrollment_autopay)
+    body = json.dumps(
+        {
+            "id": "evt_sub_checkout_done",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_sub_1",
+                    "customer": "cus_live_parent",
+                    "subscription": "sub_live_1",
+                    "metadata": {
+                        "parent_id": "p1",
+                        "subscription_id": "sub-1",
+                        "enrollment_id": "enr-1",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.execute(body, "test_signature")
+
+    updated = subs.by_stripe_sub["sub_live_1"]
+    assert updated.subscription_id == "sub-1"
+    assert updated.status == "active"
+    assert enrollment_autopay.synced == [
+        {
+            "enrollment_id": "enr-1",
+            "subscription_status": "active",
+            "stripe_subscription_id": "sub_live_1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_subscription_updated_syncs_enrollment_autopay_state() -> None:
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    _seed_incomplete_subscription(subs, stripe_subscription_id="sub_live_9", status="active")
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    uc = _build(repo, subscriptions=subs, enrollment_autopay=enrollment_autopay)
+    body = json.dumps(
+        {
+            "id": "evt_sub_updated",
+            "type": "customer.subscription.updated",
+            "data": {"object": {"id": "sub_live_9", "status": "past_due"}},
+        }
+    ).encode()
+
+    await uc.execute(body, "test_signature")
+
+    assert subs.by_stripe_sub["sub_live_9"].status == "past_due"
+    assert enrollment_autopay.synced == [
+        {
+            "enrollment_id": "enr-1",
+            "subscription_status": "past_due",
+            "stripe_subscription_id": "sub_live_9",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_subscription_deleted_syncs_enrollment_cancelled() -> None:
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    _seed_incomplete_subscription(subs, stripe_subscription_id="sub_live_9", status="active")
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    uc = _build(repo, subscriptions=subs, enrollment_autopay=enrollment_autopay)
+    body = json.dumps(
+        {
+            "id": "evt_sub_deleted",
+            "type": "customer.subscription.deleted",
+            "data": {"object": {"id": "sub_live_9", "status": "canceled"}},
+        }
+    ).encode()
+
+    await uc.execute(body, "test_signature")
+
+    assert subs.by_stripe_sub["sub_live_9"].status == "cancelled"
+    assert enrollment_autopay.synced == [
+        {
+            "enrollment_id": "enr-1",
+            "subscription_status": "cancelled",
+            "stripe_subscription_id": "sub_live_9",
+        }
+    ]
 
 
 @pytest.mark.asyncio

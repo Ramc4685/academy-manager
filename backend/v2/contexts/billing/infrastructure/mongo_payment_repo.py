@@ -617,6 +617,8 @@ class MongoPaymentRepository(TenantScopedRepository):
         notes: str,
         amount_received_cents: int | None,
         reference_number: str | None,
+        recorded_by: str | None = None,
+        payment_date: date | None = None,
     ) -> None:
         doc = await self._get_admin_payment_doc(payment_id)
         if str(doc.get("status") or "pending") not in {"pending", "failed", "partially_paid"}:
@@ -636,6 +638,11 @@ class MongoPaymentRepository(TenantScopedRepository):
         new_credit_cents = max(overpayment_credit_cents - previous_credit_cents, 0)
         status = "succeeded" if balance_due_cents == 0 else "partially_paid"
         now = datetime.now(UTC)
+        received_at = (
+            datetime(payment_date.year, payment_date.month, payment_date.day, tzinfo=UTC)
+            if payment_date is not None
+            else now
+        )
         await self._update_one(
             _payment_lookup(payment_id),
             {
@@ -644,12 +651,13 @@ class MongoPaymentRepository(TenantScopedRepository):
                     "payment_method": payment_method,
                     "notes": notes,
                     "reference_number": reference_number,
+                    "recorded_by": recorded_by,
                     "amount_received_cents": new_received_cents,
                     "paid_amount_cents": paid_amount_cents,
                     "balance_due_cents": balance_due_cents,
                     "overpayment_credit_cents": overpayment_credit_cents,
-                    "paid_at": now if status == "succeeded" else None,
-                    "payment_date": now,
+                    "paid_at": received_at if status == "succeeded" else None,
+                    "payment_date": received_at,
                     "updated_at": now,
                 }
             },

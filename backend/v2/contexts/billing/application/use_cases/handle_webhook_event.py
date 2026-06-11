@@ -17,6 +17,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from backend.v2.contexts.billing.application.ports import (
+    EnrollmentAutopayStateRepository,
     ParentStripeCustomerRepository,
     PaymentRepository,
     StripeEventDedup,
@@ -66,6 +67,7 @@ class HandleWebhookEvent:
         billing_enrollments: StudentBillingEnrollmentRepository | None = None,
         billing_ledger: Any | None = None,
         parent_customers: ParentStripeCustomerRepository | None = None,
+        enrollment_autopay: EnrollmentAutopayStateRepository | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._stripe = stripe
@@ -75,6 +77,7 @@ class HandleWebhookEvent:
         self._billing_enrollments = billing_enrollments
         self._billing_ledger = billing_ledger
         self._parent_customers = parent_customers
+        self._enrollment_autopay = enrollment_autopay
         self._outbox = outbox
         self._academy_id = academy_id
         self._now = clock
@@ -130,6 +133,7 @@ class HandleWebhookEvent:
         checkout_id = obj["id"]
         payment = await self._payments.get_by_checkout_session(checkout_id)
         await self._persist_checkout_customer(obj, payment=payment)
+        await self._sync_subscription_from_checkout(obj)
         if payment is None:
             log.warning("checkout.completed for unknown checkout_id=%s", checkout_id)
             return
@@ -177,6 +181,40 @@ class HandleWebhookEvent:
             parent_id=parent_id,
             stripe_customer_id=stripe_customer_id,
         )
+
+    async def _sync_subscription_from_checkout(self, checkout: dict[str, Any]) -> None:
+        """Backfill the Stripe subscription id captured only after Checkout
+        completes (it is null at session-creation time) and activate both the
+        subscription row and the enrollment's autopay state. Without this,
+        enrollments stay at subscription_status="incomplete" forever and
+        subscription webhooks can't find the row by stripe_subscription_id.
+        """
+        stripe_sub_id = str(checkout.get("subscription") or "")
+        if not stripe_sub_id:
+            return
+        metadata = checkout.get("metadata")
+        enrollment_id: str | None = None
+        if isinstance(metadata, dict) and metadata.get("enrollment_id"):
+            enrollment_id = str(metadata["enrollment_id"])
+        subscription = await self._subscriptions.get_by_stripe_sub(stripe_sub_id)
+        if subscription is None and enrollment_id:
+            subscription = await self._subscriptions.latest_for_enrollment(enrollment_id)
+        if subscription is not None:
+            updated = subscription.model_copy(
+                update={
+                    "stripe_subscription_id": stripe_sub_id,
+                    "status": "active",
+                    "updated_at": self._now(),
+                }
+            )
+            await self._subscriptions.save(updated)
+            enrollment_id = enrollment_id or updated.enrollment_id
+        if self._enrollment_autopay is not None and enrollment_id:
+            await self._enrollment_autopay.set_autopay_state(
+                enrollment_id=enrollment_id,
+                subscription_status="active",
+                stripe_subscription_id=stripe_sub_id,
+            )
 
     @staticmethod
     def _checkout_parent_id(checkout: dict[str, Any]) -> str | None:
@@ -326,6 +364,12 @@ class HandleWebhookEvent:
         status = self._normalize_status(sub.get("status", "incomplete"))
         updated = existing.model_copy(update={"status": status, "updated_at": self._now()})
         await self._subscriptions.save(updated)
+        if self._enrollment_autopay is not None and updated.enrollment_id:
+            await self._enrollment_autopay.set_autopay_state(
+                enrollment_id=updated.enrollment_id,
+                subscription_status=status,
+                stripe_subscription_id=stripe_sub_id,
+            )
         await self._outbox.append(
             SubscriptionUpdated(
                 aggregate_id=updated.subscription_id,

@@ -1187,6 +1187,8 @@ class FakePaymentRepo:
         notes,
         amount_received_cents=None,
         reference_number=None,
+        recorded_by=None,
+        payment_date=None,
     ):
         p = self.rows.get(payment_id)
         if p is None:
@@ -1211,6 +1213,8 @@ class FakePaymentRepo:
             "paid_amount_cents": paid_amount,
             "balance_due_cents": balance_due,
             "overpayment_credit_cents": overpayment,
+            "recorded_by": recorded_by,
+            "payment_date": payment_date,
         }
         if overpayment and not any(c["payment_id"] == payment_id for c in self.credits):
             self.credits.append(
