@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 from typing import Literal
 
-logger = logging.getLogger(__name__)
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
@@ -42,6 +40,7 @@ from backend.v2.interfaces.admin.views import (
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["admin.directory"])
 
 
@@ -131,7 +130,11 @@ async def bulk_invite_parents(
             skipped += 1
         except Exception as exc:
             logger.exception("bulk invite failed for %s", item.email, exc_info=exc)
-            results.append(BulkInviteResultItem(status="failed", email=item.email, detail="user creation failed"))
+            results.append(
+                BulkInviteResultItem(
+                    status="failed", email=item.email, detail="user creation failed"
+                )
+            )
             failed += 1
 
     return BulkInviteResponse(created=created, skipped=skipped, failed=failed, results=results)
