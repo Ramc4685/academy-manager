@@ -84,6 +84,24 @@ from backend.v2.contexts.coaching.domain.payout import (
 from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
     MongoCoachAttendanceRepository,
 )
+from backend.v2.contexts.communications.application.use_cases.send_campaign import (
+    SendCampaign,
+)
+from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver import (
+    MongoAudienceResolver,
+)
+from backend.v2.contexts.communications.infrastructure.mongo_campaign_repo import (
+    MongoCampaignRepository,
+)
+from backend.v2.contexts.communications.infrastructure.mongo_delivery_repo import (
+    MongoDeliveryRepository,
+)
+from backend.v2.contexts.communications.infrastructure.resend_send_port import (
+    ResendEmailSendPort,
+)
+from backend.v2.contexts.communications.infrastructure.stub_send_port import (
+    StubEmailSendPort,
+)
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     ChangeAdminStudentParent,
     GetAdminStudent,
@@ -205,6 +223,11 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     GetAdminUser,
     ListAdminUsers,
     UpdateAdminUser,
+)
+from backend.v2.contexts.identity.application.use_cases.stripe_connect import (
+    CompleteStripeConnectUseCase,
+    DisconnectStripeUseCase,
+    StartStripeConnectUseCase,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
@@ -996,6 +1019,23 @@ def compose_admin(
     # Comms
     messages_repo = MongoMessageRepository(db)
     comms = CommsService(messages=messages_repo, academy_id=academy_id)
+
+    _s = settings
+    _from_addr = (
+        f"noreply@{_s.frontend_url.replace('https://', '').replace('http://', '').split('/')[0]}"
+        if _s.frontend_url
+        else "noreply@academy.app"
+    )
+    if _s.email_delivery_enabled and _s.resend_api_key:
+        _email_sender = ResendEmailSendPort(api_key=_s.resend_api_key, from_address=_from_addr)
+    else:
+        _email_sender = StubEmailSendPort()
+    send_campaign = SendCampaign(
+        campaigns=MongoCampaignRepository(db),
+        deliveries=MongoDeliveryRepository(db),
+        resolver=MongoAudienceResolver(db=db),
+        sender=_email_sender,
+    )
     waivers_repo = MongoAdminWaiverRepository(db)
     list_admin_waivers = ListAdminWaivers(waivers_repo)
     waiver_templates_repo = MongoWaiverTemplateRepository(db)
@@ -1019,6 +1059,19 @@ def compose_admin(
     get_academy_notifications_use_case = GetAcademyNotificationsUseCase(academy_repo)
     update_academy_notifications_use_case = UpdateAcademyNotificationsUseCase(academy_repo)
     get_academy_gateway_use_case = GetAcademyGatewayUseCase(academy_repo)
+    _connect_callback_uri = settings.stripe_connect_callback_uri or ""
+    _state_secret = settings.stripe_connect_state_secret or settings.stripe_webhook_secret or ""
+    start_stripe_connect_use_case = StartStripeConnectUseCase(
+        gateway=stripe,
+        state_secret=_state_secret,
+        redirect_uri=_connect_callback_uri,
+    )
+    complete_stripe_connect_use_case = CompleteStripeConnectUseCase(
+        gateway=stripe,
+        repo=academy_repo,
+        state_secret=_state_secret,
+    )
+    disconnect_stripe_use_case = DisconnectStripeUseCase(repo=academy_repo)
     change_user_role = ChangeUserRole(users_r)
 
     list_admin_users = ListAdminUsers(users_r)
@@ -2325,6 +2378,7 @@ def compose_admin(
         get_reports_kpis=_make_reports_kpis(db),
         list_enrollment_events=_make_list_enrollment_events(db),
         comms=comms,
+        send_campaign=send_campaign,
         list_admin_waivers=list_admin_waivers,
         admin_registration_review=admin_registration_review,
         manage_admin_waiver_templates=manage_admin_waiver_templates,
@@ -2335,6 +2389,9 @@ def compose_admin(
         get_academy_notifications_use_case=get_academy_notifications_use_case,
         update_academy_notifications_use_case=update_academy_notifications_use_case,
         get_academy_gateway_use_case=get_academy_gateway_use_case,
+        start_stripe_connect_use_case=start_stripe_connect_use_case,
+        complete_stripe_connect_use_case=complete_stripe_connect_use_case,
+        disconnect_stripe_use_case=disconnect_stripe_use_case,
         change_user_role=change_user_role,
         get_admin_user=get_admin_user,
         update_admin_user=update_admin_user,

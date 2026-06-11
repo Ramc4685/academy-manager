@@ -143,6 +143,14 @@ class StripeGateway(Protocol):
         proration invoice. Returns the resulting Stripe invoice id.
         """
 
+    def create_connect_link(self, *, redirect_uri: str, state: str) -> str:
+        """Return Stripe OAuth authorize URL for Express onboarding."""
+        ...
+
+    async def exchange_connect_code(self, code: str) -> str:
+        """Exchange OAuth authorization code for stripe_user_id (connected account ID)."""
+        ...
+
 
 class CapacityReservation(Protocol):
     """Cross-context port: Billing uses this to ask Enrollment whether a

@@ -14,6 +14,7 @@ Tickets are written **one wave at a time**. The next wave's tickets are authored
 | [Wave 2 — Parent Checkout](wave-2-parent-checkout.md) | Code landed | W2-01 … W2-22 (22) | ~3 weeks |
 | [Wave 3 — Admin Control Plane](wave-3-admin-control-plane.md) | Code landed | W3-01 … W3-18 (18) | ~3–4 weeks |
 | [Wave 4 — Decommission](wave-4-decommission.md) | Code + runbook landed | W4-01 … W4-12 (12) | ~1 week + 30d soak |
+| [Post-MVP Admin Multi-Role Users](post-mvp-admin-multi-role-backlog.md) | Backlog | AMR-01 … AMR-06 (6) | ~3–4 days |
 
 "Code landed" means the file scaffolding, application logic, tests, migrations, and runbooks are committed. Production cutover for each wave remains gated by its exit checklist and the soak windows defined in [the plan](/.claude/plans/write-a-detailed-plan-curried-trinket.md).
 

@@ -167,6 +167,30 @@ class CreateAdminUserRequest(BaseModel):
     reason: str = Field(default="manual user creation", min_length=1, max_length=500)
 
 
+class BulkInviteItem(BaseModel):
+    email: str = Field(min_length=1, max_length=254)
+    display_name: str = Field(min_length=1, max_length=120)
+
+
+class BulkInviteRequest(BaseModel):
+    users: list[BulkInviteItem] = Field(min_length=1, max_length=100)
+    reason: str = Field(default="bulk parent invite", min_length=1, max_length=500)
+
+
+class BulkInviteResultItem(BaseModel):
+    email: str
+    status: Literal["created", "skipped", "failed"]
+    user_id: str | None = None
+    detail: str | None = None
+
+
+class BulkInviteResponse(BaseModel):
+    created: int
+    skipped: int
+    failed: int
+    results: list[BulkInviteResultItem]
+
+
 # --- Session Type Billing ---
 
 
@@ -1059,6 +1083,10 @@ class AdminGatewayView(BaseModel):
     manual_methods: list[str]
 
 
+class AdminGatewayConnectLinkView(BaseModel):
+    url: str
+
+
 class ReportsKpiResponse(BaseModel):
     active_students: int = 0
     attendance_rate_30d: float = 0.0
@@ -1200,3 +1228,25 @@ class EnrollmentEventDto(BaseModel):
 class EnrollmentEventsResponse(BaseModel):
     enrollment_id: str
     events: list[EnrollmentEventDto]
+
+
+# --- Email Campaigns ---
+
+
+class SendCampaignAudience(BaseModel):
+    type: Literal["academy", "session"]
+    role: Literal["parent", "coach"] = "parent"
+    session_id: str | None = None
+
+
+class SendCampaignRequest(BaseModel):
+    subject: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=50000)
+    audience: SendCampaignAudience
+
+
+class SendCampaignResponse(BaseModel):
+    campaign_id: str
+    total_recipients: int
+    sent_count: int
+    failed_count: int

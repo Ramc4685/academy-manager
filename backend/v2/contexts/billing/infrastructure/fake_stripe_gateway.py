@@ -23,6 +23,8 @@ class FakeStripeGateway(StripeGateway):
         self.paused_subscriptions: list[dict[str, Any]] = []
         self.resumed_subscriptions: list[dict[str, Any]] = []
         self.subscription_prorations: list[dict[str, Any]] = []
+        self.connect_links: list[dict[str, str]] = []
+        self.connect_codes: list[str] = []
 
     async def create_checkout_session(
         self,
@@ -153,3 +155,11 @@ class FakeStripeGateway(StripeGateway):
             }
         )
         return f"in_proration_{new_ulid()}"
+
+    def create_connect_link(self, *, redirect_uri: str, state: str) -> str:
+        self.connect_links.append({"redirect_uri": redirect_uri, "state": state})
+        return f"https://fake-stripe-connect.example.com/oauth?state={state}&redirect_uri={redirect_uri}"
+
+    async def exchange_connect_code(self, code: str) -> str:
+        self.connect_codes.append(code)
+        return f"acct_fake_{code}"

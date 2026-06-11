@@ -45,7 +45,7 @@ function formatDateInput(value: Date): string {
 
 function nextWednesdayDateInput(): string {
   const value = new Date();
-  const daysUntilWednesday = (3 - value.getDay() + 7) || 7;
+  const daysUntilWednesday = ((3 - value.getDay() + 7) % 7) || 7;
   value.setDate(value.getDate() + daysUntilWednesday);
   return formatDateInput(value);
 }
