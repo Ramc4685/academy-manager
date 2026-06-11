@@ -73,9 +73,24 @@ class MongoAudienceResolver(AudienceResolver):
 
     async def resolve_coach_audience(self, audience: CoachAudience) -> list[ResolvedRecipient]:
         if audience.session_id:
-            return await self.resolve_session_audience(
-                SessionAudience(session_id=audience.session_id)
+            academy_id = current_academy_id()
+            session_doc = await self.db["sessions"].find_one(
+                {"academy_id": academy_id, "session_id": audience.session_id},
+                {"coach_id": 1},
             )
+            if not session_doc or not session_doc.get("coach_id"):
+                return []
+            coach_id = str(session_doc["coach_id"])
+            user_doc = await self.db["users"].find_one(
+                {
+                    "academy_id": academy_id,
+                    "$or": [{"user_id": coach_id}, {"auth_uid": coach_id}],
+                },
+                {"user_id": 1, "email": 1, "display_name": 1, "name": 1},
+            )
+            if not user_doc:
+                return []
+            return [self._user_to_recipient(user_doc)]
         return await self.resolve_academy_audience(AcademyAudience(role="coach"))
 
     async def resolve_selected_audience(

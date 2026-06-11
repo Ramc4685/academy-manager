@@ -6,8 +6,11 @@ import base64
 import hashlib
 import hmac
 import secrets
+import time
 from dataclasses import dataclass
 from typing import Any, Protocol
+
+_STATE_TTL_SECONDS = 600  # 10 minutes
 
 
 class _AcademyRepo(Protocol):
@@ -23,22 +26,25 @@ class _StripeConnectGateway(Protocol):
 
 def _build_state(academy_id: str, secret: str) -> str:
     nonce = secrets.token_hex(16)
-    payload = f"{academy_id}:{nonce}"
+    timestamp = int(time.time())
+    payload = f"{academy_id}:{nonce}:{timestamp}"
     sig = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
     raw = f"{payload}:{sig}"
     return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
 
 
 def _verify_state(state: str, secret: str) -> str:
-    """Return academy_id or raise ValueError if state is invalid."""
+    """Return academy_id or raise ValueError if state is invalid or expired."""
     try:
         padded = state + "=" * (-len(state) % 4)
         raw = base64.urlsafe_b64decode(padded.encode()).decode()
-        parts = raw.rsplit(":", 2)
-        if len(parts) != 3:
+        parts = raw.rsplit(":", 3)
+        if len(parts) != 4:
             raise ValueError("wrong part count")
-        academy_id, nonce, sig = parts
-        payload = f"{academy_id}:{nonce}"
+        academy_id, nonce, timestamp_str, sig = parts
+        if time.time() - int(timestamp_str) > _STATE_TTL_SECONDS:
+            raise ValueError("state expired")
+        payload = f"{academy_id}:{nonce}:{timestamp_str}"
         expected = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expected, sig):
             raise ValueError("bad signature")
@@ -59,11 +65,11 @@ class StartStripeConnectUseCase:
         self,
         *,
         gateway: _StripeConnectGateway,
-        webhook_secret: str,
+        state_secret: str,
         redirect_uri: str,
     ) -> None:
         self._gateway = gateway
-        self._secret = webhook_secret
+        self._secret = state_secret
         self._redirect_uri = redirect_uri
 
     async def execute(self, academy_id: str) -> StartStripeConnectOutput:
@@ -81,17 +87,21 @@ class CompleteStripeConnectUseCase:
         *,
         gateway: _StripeConnectGateway,
         repo: _AcademyRepo,
-        webhook_secret: str,
+        state_secret: str,
     ) -> None:
         self._gateway = gateway
         self._repo = repo
-        self._secret = webhook_secret
+        self._secret = state_secret
 
     async def execute(self, *, code: str, state: str) -> str:
         """Exchange OAuth code for account ID, persist it, and return academy_id."""
         academy_id = _verify_state(state, self._secret)
         stripe_account_id = await self._gateway.exchange_connect_code(code)
-        await self._repo.update_by_id(academy_id, {"stripe_account_id": stripe_account_id})
+        result = await self._repo.update_by_id(academy_id, {"stripe_account_id": stripe_account_id})
+        if result is None:
+            raise ValueError(
+                f"Academy {academy_id} not found; stripe_account_id {stripe_account_id} not persisted"
+            )
         return academy_id
 
 
@@ -100,4 +110,6 @@ class DisconnectStripeUseCase:
         self._repo = repo
 
     async def execute(self, academy_id: str) -> None:
-        await self._repo.update_by_id(academy_id, {"stripe_account_id": None})
+        result = await self._repo.update_by_id(academy_id, {"stripe_account_id": None})
+        if result is None:
+            raise ValueError(f"Academy {academy_id} not found")

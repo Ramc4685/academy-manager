@@ -1060,15 +1060,16 @@ def compose_admin(
     update_academy_notifications_use_case = UpdateAcademyNotificationsUseCase(academy_repo)
     get_academy_gateway_use_case = GetAcademyGatewayUseCase(academy_repo)
     _connect_callback_uri = settings.stripe_connect_callback_uri or ""
+    _state_secret = settings.stripe_connect_state_secret or settings.stripe_webhook_secret or ""
     start_stripe_connect_use_case = StartStripeConnectUseCase(
         gateway=stripe,
-        webhook_secret=settings.stripe_webhook_secret or "",
+        state_secret=_state_secret,
         redirect_uri=_connect_callback_uri,
     )
     complete_stripe_connect_use_case = CompleteStripeConnectUseCase(
         gateway=stripe,
         repo=academy_repo,
-        webhook_secret=settings.stripe_webhook_secret or "",
+        state_secret=_state_secret,
     )
     disconnect_stripe_use_case = DisconnectStripeUseCase(repo=academy_repo)
     change_user_role = ChangeUserRole(users_r)

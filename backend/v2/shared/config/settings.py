@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     stripe_webhook_secret: str | None = Field(default=None)
     stripe_connect_client_id: str | None = Field(default=None)
     stripe_connect_callback_uri: str | None = Field(default=None)
+    stripe_connect_state_secret: str | None = Field(default=None)
     stripe_use_fake_gateway: bool = Field(default=True)
     firebase_project_id: str | None = Field(default=None)
     cors_origins: str = Field(default="")

@@ -7,6 +7,8 @@ All other environments use StubEmailSendPort.
 
 from __future__ import annotations
 
+import asyncio
+
 import resend
 
 from backend.v2.contexts.communications.application.ports import (
@@ -37,7 +39,7 @@ class ResendEmailSendPort(EmailSendPort):
                 "subject": subject,
                 "html": body,
             }
-            response = resend.Emails.send(params)
+            response = await asyncio.to_thread(resend.Emails.send, params)
             msg_id = response.get("id") if isinstance(response, dict) else str(response)
             return SendOutcome(ok=True, provider_message_id=msg_id, failed_reason=None)
         except Exception as exc:

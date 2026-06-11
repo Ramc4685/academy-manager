@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Literal
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -127,7 +130,8 @@ async def bulk_invite_parents(
             )
             skipped += 1
         except Exception as exc:
-            results.append(BulkInviteResultItem(status="failed", email=item.email, detail=str(exc)))
+            logger.exception("bulk invite failed for %s", item.email, exc_info=exc)
+            results.append(BulkInviteResultItem(status="failed", email=item.email, detail="user creation failed"))
             failed += 1
 
     return BulkInviteResponse(created=created, skipped=skipped, failed=failed, results=results)

@@ -49,14 +49,20 @@ class MongoCampaignRepository(TenantScopedRepository, CampaignRepository):
 
     @staticmethod
     def _from_doc(doc: dict[str, Any]) -> Campaign:
+        raw_filter = doc.get("audience_filter")
+        if raw_filter is None:
+            audience_type = doc.get("audience_type", "academy")
+            if audience_type == "session":
+                raise ValueError(
+                    f"campaign {doc.get('campaign_id')}: missing audience_filter for session audience"
+                )
+            raw_filter = {"type": audience_type}
         return Campaign(
             campaign_id=str(doc["campaign_id"]),
             academy_id=str(doc["academy_id"]),
             sender_id=str(doc["sender_id"]),
             channel=doc.get("channel", "email"),
-            audience=parse_audience(
-                doc.get("audience_filter", {"type": doc.get("audience_type", "academy")})
-            ),
+            audience=parse_audience(raw_filter),
             subject=str(doc.get("subject", "")),
             body=str(doc.get("body", "")),
             status=CampaignStatus(doc.get("status", "draft")),

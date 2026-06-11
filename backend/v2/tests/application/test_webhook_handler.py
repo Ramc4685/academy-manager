@@ -97,12 +97,21 @@ class FakeOutbox:
         pass
 
 
-def _build(repo, outbox=None, dedup=None, subscriptions=None):
+class FakeParentStripeCustomers:
+    def __init__(self) -> None:
+        self.saved: list[dict[str, str]] = []
+
+    async def set_stripe_customer_id(self, *, parent_id: str, stripe_customer_id: str) -> None:
+        self.saved.append({"parent_id": parent_id, "stripe_customer_id": stripe_customer_id})
+
+
+def _build(repo, outbox=None, dedup=None, subscriptions=None, parent_customers=None):
     return HandleWebhookEvent(
         stripe=FakeStripeGateway(),
         dedup=dedup or FakeDedup(),
         payments=repo,
         subscriptions=subscriptions or FakeSubscriptionRepo(),
+        parent_customers=parent_customers,
         outbox=outbox or FakeOutbox(),
         academy_id="acad",
     )
@@ -143,6 +152,33 @@ async def test_checkout_completed_marks_payment_succeeded_and_emits_event() -> N
     assert repo.by_id["pay-1"].status == "succeeded"
     assert repo.by_id["pay-1"].stripe_payment_intent_id == "pi_1"
     assert [e.name for e in outbox.events] == ["Billing.PaymentSucceeded"]
+
+
+@pytest.mark.asyncio
+async def test_subscription_checkout_completed_saves_parent_stripe_customer() -> None:
+    repo = FakePaymentRepo()
+    customers = FakeParentStripeCustomers()
+    uc = _build(repo, parent_customers=customers)
+    body = json.dumps(
+        {
+            "id": "evt_subscription_checkout",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_subscription",
+                    "customer": "cus_live_parent",
+                    "subscription": "sub_live_parent",
+                    "client_reference_id": "p1",
+                    "metadata": {"parent_id": "p1", "subscription_id": "sub-1"},
+                }
+            },
+        }
+    ).encode()
+
+    res = await uc.execute(body, "test_signature")
+
+    assert res["received"] is True
+    assert customers.saved == [{"parent_id": "p1", "stripe_customer_id": "cus_live_parent"}]
 
 
 @pytest.mark.asyncio

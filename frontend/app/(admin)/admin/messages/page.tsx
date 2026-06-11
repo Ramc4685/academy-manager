@@ -328,15 +328,29 @@ function MessageSkeleton() {
   );
 }
 
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (ch) => {
+    switch (ch) {
+      case "&": return "&amp;";
+      case "<": return "&lt;";
+      case ">": return "&gt;";
+      case '"': return "&quot;";
+      case "'": return "&#039;";
+      default: return ch;
+    }
+  });
+}
+
 function buildEmailHtml(body: string, academy: AdminAcademyView | undefined): string {
   const color = academy?.brand_color ?? "#1a56db";
-  const name = academy?.display_name ?? "Academy";
+  const name = escapeHtml(academy?.display_name ?? "Academy");
   const logo = academy?.logo_url;
-  const lines = body.split("\n").map((l) => `<p style="margin:0 0 12px">${l || "&nbsp;"}</p>`).join("");
+  const safeLogo = logo && logo.startsWith("https://") ? logo : undefined;
+  const lines = body.split("\n").map((l) => `<p style="margin:0 0 12px">${escapeHtml(l) || "&nbsp;"}</p>`).join("");
   return `<!DOCTYPE html><html><body style="margin:0;padding:0;font-family:sans-serif;background:#f9fafb">
 <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden">
   <div style="background:${color};padding:24px;text-align:center">
-    ${logo ? `<img src="${logo}" alt="${name}" style="height:52px;margin-bottom:12px;display:block;margin-left:auto;margin-right:auto" />` : ""}
+    ${safeLogo ? `<img src="${safeLogo}" alt="${name}" style="height:52px;margin-bottom:12px;display:block;margin-left:auto;margin-right:auto" />` : ""}
     <h1 style="margin:0;color:#ffffff;font-size:20px;font-weight:700">${name}</h1>
   </div>
   <div style="padding:28px 32px;color:#111827;font-size:15px;line-height:1.6">${lines}</div>

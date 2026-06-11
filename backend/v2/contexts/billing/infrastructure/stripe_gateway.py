@@ -14,7 +14,9 @@ from backend.v2.contexts.billing.application.ports import StripeGateway
 
 
 class RealStripeGateway(StripeGateway):
-    def __init__(self, *, api_key: str, webhook_secret: str) -> None:
+    def __init__(
+        self, *, api_key: str, webhook_secret: str, connect_client_id: str | None = None
+    ) -> None:
         # Lazy import keeps the rest of the app importable without stripe
         # installed (tests use a fake gateway).
         import stripe  # type: ignore[import-not-found]
@@ -22,6 +24,7 @@ class RealStripeGateway(StripeGateway):
         stripe.api_key = api_key
         self._stripe = stripe
         self._webhook_secret = webhook_secret
+        self._connect_client_id = connect_client_id
 
     async def create_checkout_session(
         self,
