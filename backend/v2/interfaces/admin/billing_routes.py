@@ -290,7 +290,7 @@ async def generate_monthly_payments(
 async def mark_payment_paid(
     payment_id: str,
     body: MarkPaymentPaidRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, bool]:
     await use_cases.mark_payment_paid.execute(
@@ -300,6 +300,8 @@ async def mark_payment_paid(
             amount_received_cents=body.amount_received_cents,
             reference_number=body.reference_number,
             notes=body.notes,
+            recorded_by=claims.user_id,
+            payment_date=body.payment_date,
         )
     )
     return {"ok": True}

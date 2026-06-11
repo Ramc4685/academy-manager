@@ -205,6 +205,41 @@ def compose_parent(
         outbox=outbox,
         idempotency_store=idempotency_store,
     )
+
+    class _ParentStripeCustomers:
+        async def set_stripe_customer_id(self, *, parent_id: str, stripe_customer_id: str) -> None:
+            await db["users"].update_one(
+                {
+                    "academy_id": academy_id,
+                    "$or": [{"user_id": parent_id}, {"firebase_uid": parent_id}],
+                },
+                {
+                    "$set": {
+                        "stripe_customer_id": stripe_customer_id,
+                        "updated_at": datetime.now(UTC),
+                    }
+                },
+            )
+
+    class _EnrollmentAutopayState:
+        async def set_autopay_state(
+            self,
+            *,
+            enrollment_id: str,
+            subscription_status: str,
+            stripe_subscription_id: str | None,
+        ) -> None:
+            await db["enrollments"].update_one(
+                {"academy_id": academy_id, "enrollment_id": enrollment_id},
+                {
+                    "$set": {
+                        "subscription_status": subscription_status,
+                        "stripe_subscription_id": stripe_subscription_id,
+                        "updated_at": datetime.now(UTC),
+                    }
+                },
+            )
+
     handle_webhook = HandleWebhookEvent(
         stripe=stripe,
         dedup=dedup,
@@ -212,6 +247,8 @@ def compose_parent(
         subscriptions=subscriptions_repo,
         billing_enrollments=student_billing_enrollments,
         billing_ledger=billing_ledger_repo,
+        parent_customers=_ParentStripeCustomers(),
+        enrollment_autopay=_EnrollmentAutopayState(),
         outbox=outbox,
         academy_id=academy_id,
     )
