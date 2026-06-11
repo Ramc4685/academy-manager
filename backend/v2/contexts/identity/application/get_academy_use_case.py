@@ -22,6 +22,7 @@ class GetAcademyOutput:
     address: str | None = None
     logo_url: str | None = None
     brand_color: str | None = None
+    currency: str = "USD"
 
 
 class GetAcademyUseCase:
@@ -42,4 +43,5 @@ class GetAcademyUseCase:
             address=doc.get("address"),
             logo_url=doc.get("logo_url"),
             brand_color=doc.get("brand_color"),
+            currency=str(doc.get("currency") or "USD"),
         )

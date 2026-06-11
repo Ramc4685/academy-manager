@@ -10,12 +10,15 @@ import {
   getAdminUser,
   listAdminSessions,
   listAdminSessionsByCoach,
+  listCoachPayRates,
+  setCoachPayRate,
   updateAdminSession,
   updateAdminUser,
   updateAdminUserRole,
   type AdminSessionView,
   type AdminUserDetail,
   type AdminUserRole,
+  type CoachPayBillingUnit,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { Avatar } from "@/components/ds/avatar";
@@ -85,9 +88,168 @@ export default function AdminUserDetailPage() {
           <RoleChangePanel user={user} onSaved={invalidate} />
         </Card>
       </div>
+      {isCoach && <CoachPayRatePanel coachId={user.user_id} />}
       {isCoach && <CoachSessionsPanel user={user} onAssigned={invalidate} />}
     </section>
   );
+}
+
+function CoachPayRatePanel({ coachId }: { coachId: string }) {
+  const queryClient = useQueryClient();
+  const ratesQuery = useQuery({
+    queryKey: ["admin", "coaches", coachId, "pay-rates"],
+    queryFn: () => listCoachPayRates(coachId),
+    enabled: Boolean(coachId),
+  });
+
+  const [billingUnit, setBillingUnit] = useState<CoachPayBillingUnit>("percent_of_revenue");
+  const [percent, setPercent] = useState("");
+  const [amount, setAmount] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      setCoachPayRate(coachId, {
+        billing_unit: billingUnit,
+        percent: billingUnit === "percent_of_revenue" ? Number(percent) : null,
+        amount_cents:
+          billingUnit === "percent_of_revenue" ? 0 : Math.round(Number(amount) * 100),
+      }),
+    onSuccess: () => {
+      setError(null);
+      setPercent("");
+      setAmount("");
+      void queryClient.invalidateQueries({
+        queryKey: ["admin", "coaches", coachId, "pay-rates"],
+      });
+    },
+    onError: (err: unknown) => {
+      setError(err instanceof Error ? err.message : "Could not save pay rate.");
+    },
+  });
+
+  const rates = ratesQuery.data?.rates ?? [];
+  const active = rates.find((rate) => rate.status === "active") ?? null;
+  const isPercent = billingUnit === "percent_of_revenue";
+  const valueInvalid = isPercent
+    ? !(Number(percent) > 0 && Number(percent) <= 100)
+    : !(Number(amount) > 0);
+
+  return (
+    <Card p={20} data-testid="admin-coach-pay-rate">
+      <Overline>Pay rate</Overline>
+      <div className="mt-3 space-y-4">
+        <p className="text-sm text-neutral-600 dark:text-neutral-300">
+          {ratesQuery.isLoading
+            ? "Loading current pay rate…"
+            : active
+              ? describeRate(active)
+              : "No pay rate set — this coach's sessions will show as unpaid until one is allocated."}
+        </p>
+
+        <form
+          className="flex flex-wrap items-end gap-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!valueInvalid) mutation.mutate();
+          }}
+        >
+          <label className="flex flex-col gap-1 text-xs font-medium text-neutral-500">
+            Pay type
+            <select
+              value={billingUnit}
+              onChange={(event) => setBillingUnit(event.target.value as CoachPayBillingUnit)}
+              className="rounded-md border border-neutral-200 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+              data-testid="coach-pay-rate-unit"
+            >
+              <option value="percent_of_revenue">% of session revenue</option>
+              <option value="per_session">Fixed per session</option>
+              <option value="per_hour">Fixed per hour</option>
+            </select>
+          </label>
+          {isPercent ? (
+            <label className="flex flex-col gap-1 text-xs font-medium text-neutral-500">
+              Percent
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step="0.5"
+                value={percent}
+                onChange={(event) => setPercent(event.target.value)}
+                placeholder="60"
+                className="w-24 rounded-md border border-neutral-200 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+                data-testid="coach-pay-rate-percent"
+              />
+            </label>
+          ) : (
+            <label className="flex flex-col gap-1 text-xs font-medium text-neutral-500">
+              Amount (USD)
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={amount}
+                onChange={(event) => setAmount(event.target.value)}
+                placeholder="50.00"
+                className="w-28 rounded-md border border-neutral-200 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+                data-testid="coach-pay-rate-amount"
+              />
+            </label>
+          )}
+          <Button
+            type="submit"
+            disabled={valueInvalid || mutation.isPending}
+            data-testid="coach-pay-rate-save"
+          >
+            {mutation.isPending ? "Saving…" : "Set pay rate"}
+          </Button>
+        </form>
+
+        {error ? (
+          <p role="alert" className="text-sm text-red-600">
+            {error}
+          </p>
+        ) : null}
+
+        {rates.length > 0 ? (
+          <div className="border-t border-neutral-100 pt-3 dark:border-neutral-800">
+            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-500">
+              History
+            </p>
+            <ul className="space-y-1 text-xs text-neutral-500">
+              {rates.map((rate) => (
+                <li key={rate.rate_id}>
+                  {describeRate(rate)} · from{" "}
+                  {new Date(rate.effective_from).toLocaleDateString()}
+                  {rate.effective_until
+                    ? ` until ${new Date(rate.effective_until).toLocaleDateString()}`
+                    : ""}{" "}
+                  · {rate.status}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+    </Card>
+  );
+}
+
+function describeRate(rate: {
+  billing_unit: CoachPayBillingUnit;
+  percent: number | null;
+  amount_cents: number;
+  currency: string;
+}): string {
+  if (rate.billing_unit === "percent_of_revenue") {
+    return `${rate.percent ?? 0}% of session revenue`;
+  }
+  const amount = (rate.amount_cents / 100).toLocaleString("en-US", {
+    style: "currency",
+    currency: rate.currency || "USD",
+  });
+  return rate.billing_unit === "per_session" ? `${amount} per session` : `${amount} per hour`;
 }
 
 function StateCard({

@@ -109,6 +109,42 @@ export async function apiFetch<T>(
   }
 }
 
+/**
+ * Authenticated fetch for binary downloads (xlsx, pdf).
+ *
+ * Same auth/tenant headers as `apiFetch`, but returns the raw Blob
+ * instead of parsing JSON — `parseResponse` would corrupt binary
+ * bodies by reading them as text.
+ */
+export async function apiFetchBlob(
+  path: string,
+  init: RequestInit & { authToken?: string | null } = {}
+): Promise<Blob> {
+  const usesSameOriginBff = !path.startsWith("http");
+  const url = path.startsWith("http") ? path : `${API_BASE}${path}`;
+  const { authToken, ...requestInit } = init;
+  const token = await resolveApiAuthToken(authToken, getIdToken);
+  const headers = new Headers(init.headers);
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+    if (usesSameOriginBff) {
+      headers.set(BFF_IDENTITY_HEADER, token);
+      setBffIdentityCookie(token);
+    }
+  }
+  if (!headers.has("X-Academy-Id")) {
+    const activeAcademy = getActiveAcademyId();
+    if (activeAcademy) headers.set("X-Academy-Id", activeAcademy);
+  }
+  const res = await fetch(url, { ...requestInit, headers });
+  if (!res.ok) {
+    const contentType = res.headers.get("content-type") ?? "";
+    const body = contentType.includes("application/json") ? await res.json() : await res.text();
+    throw makeError(res.status, body);
+  }
+  return res.blob();
+}
+
 async function parseResponse<T>(res: Response): Promise<T> {
   const contentType = res.headers.get("content-type") ?? "";
   // 204 No Content (and any empty-body response) must not be passed to

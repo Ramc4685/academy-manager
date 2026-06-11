@@ -80,6 +80,12 @@ from backend.v2.contexts.finance.application.use_cases.approve_payout_period imp
 from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
     GeneratePayoutPeriod,
 )
+from backend.v2.contexts.finance.application.use_cases.manage_payout_period import (
+    ListPayoutAuditEntries,
+    OverridePayoutLine,
+    RecomputePayoutPeriod,
+    ReopenPayoutPeriod,
+)
 from backend.v2.contexts.identity.application.change_user_role_use_case import ChangeUserRole
 from backend.v2.contexts.identity.application.get_academy_fees_use_case import GetAcademyFeesUseCase
 from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
@@ -202,6 +208,13 @@ class AdminUseCases:
     generate_payout_period: GeneratePayoutPeriod | None = None
     approve_payout_period: ApprovePayoutPeriod | None = None
     mark_payout_paid: MarkPayoutPaid | None = None
+    recompute_payout_period: RecomputePayoutPeriod | None = None
+    reopen_payout_period: ReopenPayoutPeriod | None = None
+    override_payout_line: OverridePayoutLine | None = None
+    list_payout_audit_entries: ListPayoutAuditEntries | None = None
+    describe_payout_occurrences: object | None = None  # async (ids) -> dict[str, dict]
+    set_coach_pay_rate: object | None = None  # SetCoachPayRate
+    list_coach_pay_rates: object | None = None  # ListCoachPayRates
     create_session_type: CreateSessionType | None = None
     list_session_types: ListSessionTypes | None = None
     update_session_type: UpdateSessionType | None = None

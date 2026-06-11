@@ -57,6 +57,12 @@ class PersistedPayoutLine(BaseModel):
     amount_minor: int = Field(ge=0)
     currency: str = Field(min_length=3, max_length=3)
     rate_id: str
+    percent_bps: int | None = Field(default=None, ge=0, le=10000)
+    expected_revenue_minor: int | None = Field(default=None, ge=0)
+    original_amount_minor: int | None = Field(default=None, ge=0)
+    """Set when an admin overrode this line's amount; holds the computed
+    amount the override replaced. ``None`` means the line is unadjusted."""
+    adjustment_reason: str | None = None
 
 
 class PayoutPeriod(BaseModel):
@@ -127,6 +133,30 @@ def approve(period: PayoutPeriod, *, at: datetime) -> PayoutPeriod:
             f"cannot approve payout period {period.period_id!r} in status 'paid'"
         )
     return period.model_copy(update={"status": "approved", "approved_at": at})
+
+
+def reopen(period: PayoutPeriod) -> PayoutPeriod:
+    """Return a new ``PayoutPeriod`` back in status=draft.
+
+    Used by admins to correct an approved or paid period: reopen, fix
+    attendance/lines, recompute, re-approve. The audit log (not this
+    function) records who reopened and why. Reopening a draft raises
+    ``PayoutPeriodStateError``.
+    """
+    if period.status == "draft":
+        raise PayoutPeriodStateError(
+            f"payout period {period.period_id!r} is already in status 'draft'"
+        )
+    return period.model_copy(
+        update={
+            "status": "draft",
+            "approved_at": None,
+            "paid_at": None,
+            "paid_method": None,
+            "paid_amount_minor": None,
+            "paid_reference": None,
+        }
+    )
 
 
 def mark_paid(

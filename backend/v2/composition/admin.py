@@ -73,6 +73,10 @@ from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
 from backend.v2.contexts.coaching.application.use_cases.compute_payout import (
     ComputeCoachPayout,
 )
+from backend.v2.contexts.coaching.application.use_cases.manage_coach_rates import (
+    ListCoachPayRates,
+    SetCoachPayRate,
+)
 from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance import (
     MarkCoachAttendance,
 )
@@ -83,6 +87,9 @@ from backend.v2.contexts.coaching.domain.payout import (
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
     MongoCoachAttendanceRepository,
+)
+from backend.v2.contexts.coaching.infrastructure.mongo_coach_rate_repo import (
+    MongoCoachRateRepository,
 )
 from backend.v2.contexts.communications.application.use_cases.send_campaign import (
     SendCampaign,
@@ -189,6 +196,12 @@ from backend.v2.contexts.finance.application.use_cases.enrollment_funnel import 
 from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
     GeneratePayoutPeriod,
 )
+from backend.v2.contexts.finance.application.use_cases.manage_payout_period import (
+    ListPayoutAuditEntries,
+    OverridePayoutLine,
+    RecomputePayoutPeriod,
+    ReopenPayoutPeriod,
+)
 from backend.v2.contexts.finance.domain.payout_period import PersistedPayoutLine
 from backend.v2.contexts.finance.infrastructure.mongo_application_funnel_reader import (
     MongoApplicationFunnelReader,
@@ -198,6 +211,9 @@ from backend.v2.contexts.finance.infrastructure.mongo_attendance_snapshot_reader
 )
 from backend.v2.contexts.finance.infrastructure.mongo_coach_payout_snapshot_reader import (
     MongoCoachPayoutSnapshotReader,
+)
+from backend.v2.contexts.finance.infrastructure.mongo_payout_audit_log import (
+    MongoPayoutAuditLogRepository,
 )
 from backend.v2.contexts.finance.infrastructure.mongo_payout_period_repo import (
     MongoPayoutPeriodRepository,
@@ -725,6 +741,7 @@ class _MongoPayableOccurrenceQuery:
         )
         docs = [doc async for doc in cursor]
         occurrence_ids = [str(doc["occurrence_id"]) for doc in docs]
+        revenue_by_session = await self._expected_revenue_by_session(academy_id, docs)
         attendance_by_occurrence: dict[str, list[CoachAttendanceForPayout]] = {
             occurrence_id: [] for occurrence_id in occurrence_ids
         }
@@ -757,15 +774,65 @@ class _MongoPayableOccurrenceQuery:
                 academy_id=str(doc["academy_id"]),
                 start_at=doc["start_at"],
                 end_at=doc["end_at"],
-                status=doc.get("status", "scheduled"),
+                status=_effective_occurrence_status(doc),
                 scheduled_coach_id=str(doc["scheduled_coach_id"]),
                 actual_coach_id=_optional_str(doc.get("actual_coach_id")),
                 substitute_coach_id=_optional_str(doc.get("substitute_coach_id")),
                 is_payable=bool(doc.get("is_payable", True)),
                 coach_attendance=attendance_by_occurrence.get(str(doc["occurrence_id"]), []),
+                expected_revenue_minor=revenue_by_session.get(_occurrence_session_id(doc)),
             )
             for doc in docs
         ]
+
+    async def _expected_revenue_by_session(
+        self,
+        academy_id: str,
+        occurrence_docs: list[dict[str, Any]],
+    ) -> dict[str, int]:
+        """Expected revenue per session = session price x active enrollments.
+
+        Used as the basis for ``percent_of_revenue`` coach rates. Sessions
+        without a configured ``amount_cents`` are omitted, which surfaces
+        downstream as ``unpaid_occurrence_ids`` instead of silently paying 0.
+        """
+        session_ids = sorted(
+            {_occurrence_session_id(doc) for doc in occurrence_docs if _occurrence_session_id(doc)}
+        )
+        if not session_ids:
+            return {}
+
+        price_by_session: dict[str, int] = {}
+        session_cursor = self._db["sessions"].find(
+            {"academy_id": academy_id, "session_id": {"$in": session_ids}},
+            {"session_id": 1, "amount_cents": 1},
+        )
+        async for row in session_cursor:
+            amount = row.get("amount_cents")
+            if amount is not None:
+                price_by_session[str(row["session_id"])] = int(amount)
+
+        if not price_by_session:
+            return {}
+
+        enrolled_by_session: dict[str, int] = dict.fromkeys(price_by_session, 0)
+        enrollment_cursor = self._db["enrollments"].find(
+            {
+                "academy_id": academy_id,
+                "session_id": {"$in": list(price_by_session)},
+                "status": "active",
+                "is_deleted": {"$ne": True},
+            },
+            {"session_id": 1},
+        )
+        async for row in enrollment_cursor:
+            session_id = str(row["session_id"])
+            enrolled_by_session[session_id] = enrolled_by_session.get(session_id, 0) + 1
+
+        return {
+            session_id: price_by_session[session_id] * enrolled_by_session.get(session_id, 0)
+            for session_id in price_by_session
+        }
 
 
 class _MongoCoachRateRepository:
@@ -785,7 +852,6 @@ class _MongoCoachRateRepository:
                     {"effective_until": None},
                     {"effective_until": {"$gt": at_time}},
                 ],
-                "status": {"$ne": "superseded"},
             },
             sort=[("effective_from", -1)],
         )
@@ -797,6 +863,7 @@ class _MongoCoachRateRepository:
             coach_id=str(doc["coach_id"]),
             billing_unit=doc.get("billing_unit", "per_session"),
             amount_minor=int(doc.get("amount_minor", doc.get("amount_cents", 0))),
+            percent_bps=(None if doc.get("percent_bps") is None else int(doc["percent_bps"])),
             currency=str(doc.get("currency", "USD")).upper(),
             effective_from=doc["effective_from"],
             effective_until=doc.get("effective_until"),
@@ -833,6 +900,8 @@ class _FinancePayoutCalculator:
                         amount_minor=line.amount_minor,
                         currency=line.currency,
                         rate_id=line.rate_id,
+                        percent_bps=line.percent_bps,
+                        expected_revenue_minor=line.expected_revenue_minor,
                     )
                     for line in statement.lines
                 ]
@@ -842,6 +911,27 @@ class _FinancePayoutCalculator:
 
 def _optional_str(value: object | None) -> str | None:
     return None if value is None else str(value)
+
+
+def _occurrence_session_id(doc: dict[str, Any]) -> str:
+    """Session the occurrence belongs to — enrollments reference the
+    template session, so prefer ``template_session_id`` when present."""
+    return str(doc.get("template_session_id") or doc.get("session_id") or "")
+
+
+def _effective_occurrence_status(doc: dict[str, Any]) -> str:
+    """A scheduled occurrence whose end time has passed counts as completed.
+
+    Nothing in the app flips ``session_occurrences.status`` to "completed",
+    so payout eligibility derives completion from the clock instead.
+    Cancelled occurrences stay cancelled.
+    """
+    status = str(doc.get("status", "scheduled"))
+    if status != "scheduled":
+        return status
+    end_at = doc["end_at"]
+    end_utc = end_at if end_at.tzinfo else end_at.replace(tzinfo=UTC)
+    return "completed" if end_utc < datetime.now(UTC) else status
 
 
 def compose_admin(
@@ -1011,6 +1101,63 @@ def compose_admin(
     )
     approve_payout_period = ApprovePayoutPeriod(repository=payout_periods_repo)
     mark_payout_paid = MarkPayoutPaid(repository=payout_periods_repo)
+    payout_audit_log = MongoPayoutAuditLogRepository(db)
+    recompute_payout_period = RecomputePayoutPeriod(
+        calculator=coach_payout_calculator,
+        repository=payout_periods_repo,
+        audit=payout_audit_log,
+    )
+    reopen_payout_period = ReopenPayoutPeriod(
+        repository=payout_periods_repo,
+        audit=payout_audit_log,
+    )
+    override_payout_line = OverridePayoutLine(
+        repository=payout_periods_repo,
+        audit=payout_audit_log,
+    )
+    list_payout_audit_entries = ListPayoutAuditEntries(audit=payout_audit_log)
+
+    async def _describe_payout_occurrences(
+        occurrence_ids: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        """BFF display data for payout lines: when, and which session.
+
+        Returns ``{occurrence_id: {"occurred_at": datetime|None,
+        "session_title": str|None}}`` for the ids that exist. Missing
+        ids are simply absent from the result.
+        """
+        from backend.v2.shared.tenancy import current_academy_id
+
+        if not occurrence_ids:
+            return {}
+        request_academy_id = current_academy_id()
+        occ_cursor = db["session_occurrences"].find(
+            {"academy_id": request_academy_id, "occurrence_id": {"$in": occurrence_ids}},
+            {"occurrence_id": 1, "start_at": 1, "template_session_id": 1, "session_id": 1},
+        )
+        occ_docs = [doc async for doc in occ_cursor]
+        session_ids = sorted(
+            {_occurrence_session_id(doc) for doc in occ_docs if _occurrence_session_id(doc)}
+        )
+        titles: dict[str, str] = {}
+        if session_ids:
+            session_cursor = db["sessions"].find(
+                {"academy_id": request_academy_id, "session_id": {"$in": session_ids}},
+                {"session_id": 1, "title": 1, "name": 1},
+            )
+            async for row in session_cursor:
+                titles[str(row["session_id"])] = str(row.get("title") or row.get("name") or "")
+        return {
+            str(doc["occurrence_id"]): {
+                "occurred_at": doc.get("start_at"),
+                "session_title": titles.get(_occurrence_session_id(doc)) or None,
+            }
+            for doc in occ_docs
+        }
+
+    coach_rates_repo = MongoCoachRateRepository(db)
+    set_coach_pay_rate = SetCoachPayRate(rates=coach_rates_repo)
+    list_coach_pay_rates = ListCoachPayRates(rates=coach_rates_repo)
     record_expense = RecordExpense(expenses=expenses_repo, academy_id=academy_id)
     edit_expense = EditExpense(expenses=expenses_repo)
     delete_expense = DeleteExpense(expenses=expenses_repo)
@@ -2361,6 +2508,13 @@ def compose_admin(
         generate_payout_period=generate_payout_period,
         approve_payout_period=approve_payout_period,
         mark_payout_paid=mark_payout_paid,
+        recompute_payout_period=recompute_payout_period,
+        reopen_payout_period=reopen_payout_period,
+        override_payout_line=override_payout_line,
+        list_payout_audit_entries=list_payout_audit_entries,
+        describe_payout_occurrences=_describe_payout_occurrences,
+        set_coach_pay_rate=set_coach_pay_rate,
+        list_coach_pay_rates=list_coach_pay_rates,
         list_admin_sessions=list_admin_sessions,
         get_admin_session=get_admin_session,
         maintain_session_occurrences=maintain_session_occurrences,

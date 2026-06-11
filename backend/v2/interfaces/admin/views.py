@@ -6,7 +6,7 @@ Admin-shaped — academy-wide read fields included. Per docs/security-matrix.md.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, EmailStr, Field, model_validator
 
@@ -724,6 +724,26 @@ class AdminPayoutPeriodLineView(BaseModel):
     amount_cents: int
     currency: str
     rate_id: str
+    percent_bps: int | None = None
+    expected_revenue_cents: int | None = None
+    original_amount_cents: int | None = None
+    adjustment_reason: str | None = None
+    occurred_at: datetime | None = None
+    session_title: str | None = None
+
+
+class AdminUnpaidOccurrenceView(BaseModel):
+    """An occurrence in the window that produced no pay line.
+
+    Covers coach-marked-absent occurrences and occurrences whose pay
+    could not be computed (e.g. session price missing for a percent
+    rate). Rendered alongside the paid lines so the period reads as a
+    complete session log.
+    """
+
+    occurrence_id: str
+    occurred_at: datetime | None = None
+    session_title: str | None = None
 
 
 class AdminPayoutPeriodView(BaseModel):
@@ -736,6 +756,7 @@ class AdminPayoutPeriodView(BaseModel):
     total_amount_cents: int
     lines: list[AdminPayoutPeriodLineView]
     unpaid_occurrence_ids: list[str]
+    unpaid_occurrences: list[AdminUnpaidOccurrenceView] = Field(default_factory=list)
     generated_at: datetime
     approved_at: datetime | None = None
     paid_at: datetime | None = None
@@ -748,6 +769,64 @@ class AdminPayoutPayslipView(BaseModel):
     printable: bool = True
     period: AdminPayoutPeriodView
     lines: list[AdminPayoutPeriodLineView]
+
+
+class ReopenPayoutPeriodRequest(BaseModel):
+    reason: str = Field(min_length=1)
+
+
+class OverridePayoutLineRequest(BaseModel):
+    amount_cents: int | None = Field(default=None, ge=0)
+    """New amount for the line; ``None`` clears an existing override."""
+    reason: str = Field(min_length=1)
+
+
+class PayoutAuditEntryView(BaseModel):
+    audit_id: str
+    period_id: str
+    occurrence_id: str | None = None
+    action: Literal[
+        "generated",
+        "recomputed",
+        "reopened",
+        "approved",
+        "marked_paid",
+        "line_overridden",
+        "line_override_cleared",
+    ]
+    actor_id: str
+    at: datetime
+    reason: str | None = None
+    before: dict[str, Any] | None = None
+    after: dict[str, Any] | None = None
+
+
+class PayoutAuditTrailView(BaseModel):
+    entries: list[PayoutAuditEntryView]
+
+
+class AdminCoachPayRateView(BaseModel):
+    rate_id: str
+    coach_id: str
+    billing_unit: Literal["per_session", "per_hour", "percent_of_revenue"]
+    amount_cents: int
+    percent: float | None = None
+    currency: str
+    effective_from: datetime
+    effective_until: datetime | None = None
+    status: Literal["active", "superseded"]
+
+
+class AdminCoachPayRateList(BaseModel):
+    rates: list[AdminCoachPayRateView]
+
+
+class SetCoachPayRateRequest(BaseModel):
+    billing_unit: Literal["per_session", "per_hour", "percent_of_revenue"]
+    amount_cents: int = Field(default=0, ge=0)
+    percent: float | None = Field(default=None, ge=0, le=100)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    effective_from: datetime | None = None
 
 
 class AdminExpenseView(BaseModel):  # FINANCE
@@ -1040,6 +1119,7 @@ class AdminAcademyView(BaseModel):
     address: str | None = None
     logo_url: str | None = None
     brand_color: str | None = None
+    currency: str = "USD"
 
 
 class UpdateAdminAcademyRequest(BaseModel):
@@ -1051,6 +1131,7 @@ class UpdateAdminAcademyRequest(BaseModel):
     address: str | None = None
     logo_url: str | None = None
     brand_color: str | None = None
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
 
 
 class AdminFeesView(BaseModel):
