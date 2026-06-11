@@ -15,6 +15,10 @@ from backend.v2.contexts.student_progress.application.use_cases.get_passport imp
 from backend.v2.contexts.student_progress.application.use_cases.get_progress_summary import (
     ProgressSummaryRequest,
 )
+from backend.v2.contexts.student_progress.application.use_cases.get_skill_board import (
+    SkillBoardRequest,
+    SkillBoardStudentRef,
+)
 from backend.v2.contexts.student_progress.application.use_cases.recommend_level_up import (
     RecommendLevelUpCommand,
 )
@@ -295,3 +299,32 @@ async def get_session_students_progress(
         for entry in roster
     ]
     return {"rows": [row.model_dump(mode="json") for row in rows]}
+
+
+# Mirrors admin/progress_routes.py get_session_skill_board (per-persona twin).
+@router.get("/sessions/{session_id}/skill-board")
+async def get_session_skill_board(
+    session_id: str,
+    program_id: str | None = Query(None),
+    claims: AuthClaims = Depends(require_persona("coach")),
+    use_cases: CoachUseCases = Depends(get_coach_use_cases),
+) -> object:
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    if not await use_cases.assigned_sessions.is_coach_assigned(claims.user_id, session_id):
+        raise HTTPException(status_code=404, detail="session not found")
+
+    resolved_program_id = await _resolve_program_id(use_cases, program_id)
+    program_name = await _program_name(use_cases, resolved_program_id)
+    roster = await use_cases.get_roster.execute(session_id)
+    board = await use_cases.student_progress.get_skill_board.execute(
+        SkillBoardRequest(
+            students=tuple(
+                SkillBoardStudentRef(student_id=entry.student_id, student_name=entry.full_name)
+                for entry in roster
+            ),
+            program_id=resolved_program_id,
+            program_name=program_name,
+        )
+    )
+    return board.model_dump(mode="json")

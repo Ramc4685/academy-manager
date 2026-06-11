@@ -36,7 +36,6 @@ class RealStripeGateway(StripeGateway):
         def _create() -> Any:
             return self._stripe.checkout.Session.create(
                 mode="payment",
-                payment_method_types=["card"],
                 line_items=[
                     {
                         "price_data": {
@@ -69,7 +68,6 @@ class RealStripeGateway(StripeGateway):
         def _create() -> Any:
             return self._stripe.checkout.Session.create(
                 mode="subscription",
-                payment_method_types=["card"],
                 line_items=[
                     {
                         "price_data": {
@@ -87,7 +85,6 @@ class RealStripeGateway(StripeGateway):
                 metadata=metadata,
                 subscription_data={
                     "metadata": metadata | {"enrollment_id": enrollment_id},
-                    "proration_behavior": "none",
                 },
             )
 

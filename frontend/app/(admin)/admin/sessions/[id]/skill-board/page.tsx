@@ -1,26 +1,28 @@
 "use client";
 
+import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft } from "lucide-react";
 
 import {
-  getCoachSessionSkillBoard,
-  recordTestAttempt,
-  updateSkillStatus,
+  getAdminSessionSkillBoard,
+  recordAdminTestAttempt,
+  updateAdminSkillStatus,
   type SkillStatus,
 } from "@/lib/api/curriculum";
 import { SkillBoardView, type SkillBoardActions } from "@/components/pathway/skill-board";
 
-export default function CoachSessionProgressPage() {
+export default function AdminSessionSkillBoardPage() {
   const { id: sessionId } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const programId = searchParams.get("program_id") ?? "";
   const queryClient = useQueryClient();
 
-  const boardKey = ["coach", "skill-board", sessionId, programId || "default"];
+  const boardKey = ["admin", "skill-board", sessionId, programId || "default"];
   const { data: board, isLoading, isError } = useQuery({
     queryKey: boardKey,
-    queryFn: () => getCoachSessionSkillBoard(sessionId, programId || undefined),
+    queryFn: () => getAdminSessionSkillBoard(sessionId, programId || undefined),
     enabled: Boolean(sessionId),
   });
 
@@ -34,7 +36,7 @@ export default function CoachSessionProgressPage() {
       status: SkillStatus;
     }) => {
       if (!board?.program_id) return Promise.reject(new Error("Board not loaded"));
-      return updateSkillStatus(args.studentId, args.skillId, {
+      return updateAdminSkillStatus(args.studentId, args.skillId, {
         program_id: board.program_id,
         level_id: args.levelId,
         status: args.status,
@@ -53,7 +55,7 @@ export default function CoachSessionProgressPage() {
       notes: string;
     }) => {
       if (!board?.program_id) return Promise.reject(new Error("Board not loaded"));
-      return recordTestAttempt(args.studentId, args.skillId, {
+      return recordAdminTestAttempt(args.studentId, args.skillId, {
         program_id: board.program_id,
         level_id: args.levelId,
         attempts_count: args.attempts,
@@ -73,9 +75,16 @@ export default function CoachSessionProgressPage() {
   };
 
   return (
-    <section data-testid="coach-session-progress" className="space-y-4">
+    <section data-testid="admin-session-skill-board" className="space-y-4">
+      <Link
+        href={`/admin/sessions/${sessionId}` as Parameters<typeof Link>[0]["href"]}
+        className="inline-flex items-center gap-1.5 text-sm text-rally-muted hover:text-rally-ink"
+      >
+        <ArrowLeft className="size-4" aria-hidden="true" />
+        <span>Back to session</span>
+      </Link>
       <div>
-        <h1 className="text-xl font-semibold">Session skill board</h1>
+        <h1 className="text-2xl font-semibold">Skill board</h1>
         <p className="text-sm text-neutral-500">{board?.program_name ?? ""}</p>
       </div>
 
@@ -85,16 +94,24 @@ export default function CoachSessionProgressPage() {
         </p>
       )}
       {isLoading ? (
-        <div className="space-y-2">
-          {[0, 1, 2].map((i) => (
-            <div
-              key={i}
-              className="h-20 animate-pulse rounded-xl bg-neutral-100 dark:bg-neutral-800"
-            />
-          ))}
-        </div>
+        <div className="h-40 animate-pulse rounded-xl bg-neutral-100 dark:bg-neutral-800" />
       ) : board ? (
-        <SkillBoardView board={board} actions={actions} />
+        <SkillBoardView
+          board={board}
+          actions={actions}
+          renderUnplacedAction={(student) => (
+            <Link
+              href={
+                `/admin/students/${student.student_id}/progress?return_to=${encodeURIComponent(
+                  `/admin/sessions/${sessionId}/skill-board`,
+                )}` as Parameters<typeof Link>[0]["href"]
+              }
+              className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50"
+            >
+              Place in level
+            </Link>
+          )}
+        />
       ) : null}
     </section>
   );
