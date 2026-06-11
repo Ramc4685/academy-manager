@@ -17,7 +17,7 @@ class MongoSubscriptionRepository(TenantScopedRepository):
             parent_id=str(doc["parent_id"]),
             enrollment_id=doc.get("enrollment_id"),  # type: ignore[arg-type]
             session_id=doc.get("session_id"),  # type: ignore[arg-type]
-            stripe_subscription_id=str(doc["stripe_subscription_id"]),
+            stripe_subscription_id=str(doc.get("stripe_subscription_id") or ""),
             status=doc.get("status", "incomplete"),  # type: ignore[arg-type]
             payment_mode=doc.get("payment_mode", "monthly"),  # type: ignore[arg-type]
             created_at=doc["created_at"],  # type: ignore[arg-type]
@@ -26,9 +26,19 @@ class MongoSubscriptionRepository(TenantScopedRepository):
 
     async def save(self, subscription: Subscription) -> None:
         doc = subscription.model_dump(mode="python")
+        fields = {k: v for k, v in doc.items() if k != "academy_id"}
+        update: dict[str, object] = {"$set": fields}
+        # Stripe assigns the subscription id only after Checkout completes;
+        # until then the domain model carries "". The stripe_sub_unique
+        # partial index covers every string value including "", so a second
+        # pending row would raise DuplicateKeyError — keep the field unset
+        # instead so pending rows never enter the unique index.
+        if not fields.get("stripe_subscription_id"):
+            fields.pop("stripe_subscription_id", None)
+            update["$unset"] = {"stripe_subscription_id": ""}
         await self._update_one(
             {"subscription_id": subscription.subscription_id},
-            {"$set": {k: v for k, v in doc.items() if k != "academy_id"}},
+            update,
             upsert=True,
         )
 
