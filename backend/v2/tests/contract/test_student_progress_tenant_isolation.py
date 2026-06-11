@@ -112,6 +112,28 @@ async def test_skill_progress_repo_isolates_tenants(db) -> None:
 
 
 @pytest.mark.asyncio
+async def test_skill_progress_repo_list_for_students_isolates_tenants(db) -> None:
+    """list_for_students is the query path used by GetSkillBoard.
+
+    Data written under academy-a must not appear when the same call is
+    issued under academy-b, even with the same student_ids / level_id.
+    """
+    repo = MongoStudentSkillProgressRepository(db)
+    with tenant_scope("academy-a"):
+        await repo.upsert(_skill_progress("stu-a"))
+
+    # academy-A sees its own row via the batch method.
+    with tenant_scope("academy-a"):
+        rows = await repo.list_for_students(["stu-a"], "lvl-1")
+        assert [r.skill_progress_id for r in rows] == ["sp-stu-a"]
+
+    # academy-B must see nothing even for the same student_id + level_id.
+    with tenant_scope("academy-b"):
+        rows = await repo.list_for_students(["stu-a"], "lvl-1")
+        assert rows == []
+
+
+@pytest.mark.asyncio
 async def test_certificate_repo_isolates_tenants(db) -> None:
     repo = MongoSkillCertificateRepository(db)
     with tenant_scope("academy-a"):

@@ -220,3 +220,70 @@ class SkillPassportEntry(BaseModel):
     last_test_passed: bool | None
     last_tested_at: datetime | None
     test_attempt_count: int
+
+
+class SkillBoardStudentRef(BaseModel):
+    """Minimal student identity passed into / out of the skill board query."""
+
+    model_config = {"frozen": True}
+
+    student_id: str
+    student_name: str
+
+
+class SkillBoardCell(BaseModel):
+    """One student x skill cell."""
+
+    model_config = {"frozen": True}
+
+    status: SkillStatus = "NOT_STARTED"
+    last_updated_at: datetime | None = None
+
+
+class SkillBoardSkill(BaseModel):
+    """Skill column metadata for one level group."""
+
+    model_config = {"frozen": True}
+
+    skill_id: str
+    name: str
+    sequence: int
+    is_required: bool
+
+
+class SkillBoardStudentRow(BaseModel):
+    """One student row inside a level group."""
+
+    model_config = {"frozen": True}
+
+    student_id: str
+    student_name: str
+    statuses: dict[str, SkillBoardCell]
+    required_passed: int
+    required_total: int
+    total_passed: int
+    total_count: int
+    level_up_status: LevelUpStatus | None = None
+
+
+class SkillBoardLevelGroup(BaseModel):
+    """All students currently in one level, with that level's skills."""
+
+    model_config = {"frozen": True}
+
+    level_id: str
+    level_name: str
+    sequence: int
+    skills: list[SkillBoardSkill]
+    students: list[SkillBoardStudentRow]
+
+
+class SkillBoardResult(BaseModel):
+    """Full session skill board."""
+
+    model_config = {"frozen": True}
+
+    program_id: str
+    program_name: str
+    groups: list[SkillBoardLevelGroup]
+    unplaced: list[SkillBoardStudentRef]
