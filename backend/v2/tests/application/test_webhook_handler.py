@@ -53,16 +53,21 @@ class FakePaymentRepo:
 
 class FakeSubscriptionRepo:
     def __init__(self) -> None:
+        self.by_id: dict[str, Subscription] = {}
         self.by_stripe_sub: dict[str, Subscription] = {}
         self.by_enrollment: dict[str, Subscription] = {}
 
     def seed(self, subscription: Subscription) -> None:
+        self.by_id[subscription.subscription_id] = subscription
         self.by_stripe_sub[subscription.stripe_subscription_id] = subscription
         if subscription.enrollment_id:
             self.by_enrollment[subscription.enrollment_id] = subscription
 
     async def save(self, _):
         self.seed(_)
+
+    async def get(self, subscription_id):
+        return self.by_id.get(subscription_id)
 
     async def get_by_stripe_sub(self, stripe_sub):
         return self.by_stripe_sub.get(stripe_sub)
@@ -437,6 +442,59 @@ async def test_subscription_checkout_completed_activates_subscription_and_enroll
             "stripe_subscription_id": "sub_live_1",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_checkout_completed_binds_stripe_id_to_its_own_pending_subscription() -> None:
+    """Two pending rows for one enrollment: completion must attach the Stripe
+    id to the row named in the checkout's metadata.subscription_id, not to
+    whichever row is newest for the enrollment."""
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    first = Subscription(
+        subscription_id="sub-first",
+        academy_id="acad",
+        parent_id="p1",
+        enrollment_id="enr-1",
+        session_id="s1",
+        stripe_subscription_id="",
+        status="incomplete",
+        created_at=now,
+        updated_at=now,
+    )
+    newer = first.model_copy(update={"subscription_id": "sub-newer"})
+    subs.seed(first)
+    subs.seed(newer)  # latest_for_enrollment would return this one
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    uc = _build(repo, subscriptions=subs, enrollment_autopay=enrollment_autopay)
+    body = json.dumps(
+        {
+            "id": "evt_sub_checkout_first",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_first",
+                    "customer": "cus_live_parent",
+                    "subscription": "sub_live_first",
+                    "metadata": {
+                        "parent_id": "p1",
+                        "subscription_id": "sub-first",
+                        "enrollment_id": "enr-1",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.execute(body, "test_signature")
+
+    bound = subs.by_stripe_sub["sub_live_first"]
+    assert bound.subscription_id == "sub-first"
+    assert bound.status == "active"
+    # The unrelated newer pending row must remain untouched.
+    assert subs.by_id["sub-newer"].stripe_subscription_id == ""
+    assert subs.by_id["sub-newer"].status == "incomplete"
 
 
 @pytest.mark.asyncio

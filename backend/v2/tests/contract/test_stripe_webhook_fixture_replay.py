@@ -74,7 +74,13 @@ class FakeSubscriptionRepo:
     async def save(self, _):
         pass
 
+    async def get(self, _):
+        return None
+
     async def get_by_stripe_sub(self, _):
+        return None
+
+    async def latest_for_enrollment(self, _):
         return None
 
 
