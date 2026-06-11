@@ -10,11 +10,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from backend.v2.contexts.coaching.application.use_cases.manage_coach_rates import (
+    CoachRate,
     ListCoachPayRates,
     SetCoachPayRate,
     SetCoachPayRateCommand,
 )
-from backend.v2.contexts.coaching.domain.payout import CoachRate
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
     AdminCoachPayRateList,

@@ -18,10 +18,10 @@ from backend.v2.contexts.finance.application.use_cases.generate_payout_period im
 from backend.v2.contexts.finance.application.use_cases.manage_payout_period import (
     ListPayoutAuditEntries,
     OverridePayoutLine,
+    PayoutPeriodStateError,
     RecomputePayoutPeriod,
     ReopenPayoutPeriod,
 )
-from backend.v2.contexts.finance.domain.payout_period import PayoutPeriodStateError
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
     AdminPayoutPayslipView,
