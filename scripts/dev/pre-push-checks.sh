@@ -63,7 +63,7 @@ if ! source .venv/bin/activate 2>/dev/null; then
 else
   run_check "ruff format --check v2" ruff format --check v2
   run_check "ruff check v2"          ruff check v2
-  run_check "pytest v2/tests"        pytest v2/tests -q --tb=short
+  run_check "pytest v2/tests"        pytest v2/tests -n auto -q --tb=short
 fi
 
 # ── Frontend ──────────────────────────────────────────────────────────────────
@@ -80,10 +80,16 @@ if [ -f "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]; then
 fi
 run_check "node unit tests" "$NODE_BIN" --no-warnings --test \
   lib/canonical-host.node-test.mjs \
-  lib/api/proxy-headers.node-test.mjs \
+  lib/brand.node-test.mjs \
+  lib/parent-home.node-test.mjs \
+  lib/api/auth-bridge-cookie.node-test.mjs \
   lib/api/auth-token.node-test.mjs \
+  lib/api/proxy-headers.node-test.mjs \
+  lib/api/token-readiness.node-test.mjs \
+  lib/auth/auth-domain.node-test.mjs \
+  lib/auth/google-sign-in-mode.node-test.mjs \
   lib/auth/token-readiness.node-test.mjs \
-  lib/auth/auth-domain.node-test.mjs
+  lib/navigation/admin-student-progress-return.node-test.mjs
 
 run_check "pnpm typecheck" pnpm typecheck
 run_check "pnpm lint"      pnpm lint
