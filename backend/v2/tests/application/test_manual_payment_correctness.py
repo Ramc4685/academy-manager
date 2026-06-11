@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 
 import pytest
 
@@ -27,6 +28,8 @@ class CapturingPaymentOps:
         notes: str,
         amount_received_cents: int | None,
         reference_number: str | None,
+        recorded_by: str | None = None,
+        payment_date: date | None = None,
     ) -> None:
         self.recorded.append(
             {
@@ -35,6 +38,8 @@ class CapturingPaymentOps:
                 "notes": notes,
                 "amount_received_cents": amount_received_cents,
                 "reference_number": reference_number,
+                "recorded_by": recorded_by,
+                "payment_date": payment_date,
             }
         )
 
@@ -76,6 +81,37 @@ async def test_manual_payment_records_actual_amount_method_and_reference() -> No
             "notes": "Parent paid half at the desk",
             "amount_received_cents": 4_000,
             "reference_number": "ZELLE-77",
+            "recorded_by": None,
+            "payment_date": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_manual_payment_records_admin_actor_and_payment_date() -> None:
+    ops = CapturingPaymentOps()
+    use_case = MarkPaymentPaid(payments=ops)
+
+    await use_case.execute(
+        MarkPaymentPaidCommand(
+            payment_id="pay-2",
+            payment_method="cash",
+            amount_received_cents=7_000,
+            notes="Paid in full",
+            recorded_by="user_admin_1",
+            payment_date=date(2026, 6, 11),
+        )
+    )
+
+    assert ops.recorded == [
+        {
+            "payment_id": "pay-2",
+            "payment_method": "cash",
+            "notes": "Paid in full",
+            "amount_received_cents": 7_000,
+            "reference_number": None,
+            "recorded_by": "user_admin_1",
+            "payment_date": date(2026, 6, 11),
         }
     ]
 

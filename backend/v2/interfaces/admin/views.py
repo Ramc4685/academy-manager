@@ -548,6 +548,7 @@ class MarkPaymentPaidRequest(BaseModel):
     amount_received_cents: int | None = Field(default=None, gt=0)
     reference_number: str | None = None
     notes: str = ""
+    payment_date: date | None = None
 
 
 class ApplyPaymentDiscountRequest(BaseModel):
