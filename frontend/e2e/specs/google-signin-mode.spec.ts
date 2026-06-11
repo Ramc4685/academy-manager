@@ -35,9 +35,13 @@ test.describe("google sign-in mode on mobile devices", () => {
     );
 
     await page.goto("/login");
-    await page.getByTestId("login-google").click();
-
-    await page.waitForURL("**/__/auth/handler**");
+    // On slow CI WebKit the first click can land before React hydration
+    // attaches the onClick handler, leaving the page inert on /login.
+    // Retry the click until the navigation actually happens.
+    await expect(async () => {
+      await page.getByTestId("login-google").click();
+      await page.waitForURL("**/__/auth/handler**", { timeout: 3_000 });
+    }).toPass({ timeout: 20_000 });
     const url = new URL(page.url());
     expect(url.pathname).toBe("/__/auth/handler");
     expect(url.searchParams.get("authType")).toBe("signInViaRedirect");
