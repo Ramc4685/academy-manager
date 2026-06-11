@@ -13,6 +13,11 @@ import {
   startAutopay,
 } from "@/lib/api/parent";
 
+const BILLING_PORTAL_PREREQUISITE =
+  "Billing portal is not set up yet. Start autopay for an enrollment first to get portal access.";
+const AUTOPAY_START_FAILED =
+  "Autopay could not start. Please try again. If it still does not open, contact the academy.";
+
 function money(cents: number, currency = "USD"): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
 }
@@ -23,6 +28,10 @@ export default function ParentPaymentsPage() {
   const [resumeOn, setResumeOn] = useState(currentDate());
   const [pauseReason, setPauseReason] = useState("");
   const [portalError, setPortalError] = useState<string | null>(null);
+  const [autopayError, setAutopayError] = useState<string | null>(null);
+  const [startingAutopayEnrollmentId, setStartingAutopayEnrollmentId] = useState<string | null>(
+    null,
+  );
   const paymentsQuery = useQuery({
     queryKey: ["parent", "payments"],
     queryFn: listParentPayments,
@@ -54,9 +63,11 @@ export default function ParentPaymentsPage() {
     onError: (error) => {
       const detail = error instanceof Error ? error.message : "Request failed";
       if (detail.includes("Stripe customer") || detail.includes("autopay setup")) {
-        setPortalError(
-          "Billing portal will be available after your first successful autopay setup. Use Start autopay for an enrollment first.",
-        );
+        setPortalError(BILLING_PORTAL_PREREQUISITE);
+        return;
+      }
+      if (detail === "Request failed") {
+        setPortalError(BILLING_PORTAL_PREREQUISITE);
         return;
       }
       setPortalError(`Billing portal could not open. ${detail}`);
@@ -69,8 +80,26 @@ export default function ParentPaymentsPage() {
         success_url: `${window.location.origin}/parent/payments?autopay=success`,
         cancel_url: `${window.location.origin}/parent/payments?autopay=cancelled`,
       }),
+    onMutate: (enrollmentId) => {
+      setPortalError(null);
+      setAutopayError(null);
+      setStartingAutopayEnrollmentId(enrollmentId);
+    },
     onSuccess: (res) => {
+      if (!res.redirect_url) {
+        setAutopayError("Autopay could not start because Stripe did not return a checkout link.");
+        return;
+      }
       window.location.href = res.redirect_url;
+    },
+    onError: (error) => {
+      const detail = error instanceof Error ? error.message : "Request failed";
+      setAutopayError(
+        detail === "Request failed" ? AUTOPAY_START_FAILED : `Autopay could not start. ${detail}`,
+      );
+    },
+    onSettled: () => {
+      setStartingAutopayEnrollmentId(null);
     },
   });
   const pauseMutation = useMutation({
@@ -163,16 +192,29 @@ export default function ParentPaymentsPage() {
 
       <section>
         <h2 className="mb-3 text-lg font-semibold">Autopay</h2>
+        {autopayError && (
+          <p
+            role="alert"
+            data-testid="autopay-error"
+            className="mb-3 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-100"
+          >
+            {autopayError}
+          </p>
+        )}
         {enrollments.length === 0 ? (
           <p className="text-sm text-neutral-500">No active enrollments.</p>
         ) : (
           <div className="space-y-3">
             {enrollments.map((enrollment) => {
+              // "incomplete" means Checkout was started but never finished
+              // (abandoned, or the webhook hasn't confirmed yet) — the parent
+              // must be able to retry, so it does NOT count as enabled.
               const enabled =
                 enrollment.payment_mode === "monthly" &&
-                ["active", "trialing", "past_due", "incomplete"].includes(
+                ["active", "trialing", "past_due"].includes(
                   enrollment.subscription_status ?? ""
                 );
+              const starting = startingAutopayEnrollmentId === enrollment.enrollment_id;
               return (
                 <div
                   key={enrollment.enrollment_id}
@@ -194,7 +236,7 @@ export default function ParentPaymentsPage() {
                       onClick={() => autopayMutation.mutate(enrollment.enrollment_id)}
                       className="min-h-touch rounded-md border border-blue-300 px-3 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-700 dark:text-blue-300"
                     >
-                      {enabled ? "Autopay on" : "Start autopay"}
+                      {enabled ? "Autopay on" : starting ? "Starting..." : "Start autopay"}
                     </button>
                     <button
                       type="button"

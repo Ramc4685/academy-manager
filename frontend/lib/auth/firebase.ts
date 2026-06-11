@@ -23,8 +23,10 @@ import {
   signOut,
   type User,
 } from "firebase/auth";
+import { resolveAuthDomain } from "@/lib/auth/auth-domain";
 import { shouldUseRedirectForGoogleSignIn } from "@/lib/auth/google-sign-in-mode";
 import { getReadyIdToken } from "@/lib/auth/token-readiness";
+import { clearBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -34,6 +36,7 @@ const firebaseConfig = {
 };
 
 const firebaseAuthEmulatorHost = process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST ?? "";
+const authProxyEnabled = process.env.NEXT_PUBLIC_FIREBASE_AUTH_PROXY === "1";
 
 let _app: FirebaseApp | null = null;
 let _auth: Auth | null = null;
@@ -41,7 +44,17 @@ let _emulatorConnected = false;
 
 function app(): FirebaseApp {
   if (_app) return _app;
-  _app = getApps()[0] ?? initializeApp(firebaseConfig as Record<string, string>);
+  const existing = getApps()[0];
+  if (existing) {
+    _app = existing;
+    return _app;
+  }
+  const authDomain = resolveAuthDomain({
+    configuredAuthDomain: firebaseConfig.authDomain,
+    proxyEnabled: authProxyEnabled,
+    pageHost: typeof window === "undefined" ? undefined : window.location.host,
+  });
+  _app = initializeApp({ ...firebaseConfig, authDomain } as Record<string, string>);
   return _app;
 }
 
@@ -126,20 +139,62 @@ function shouldUseGoogleRedirect(): boolean {
   });
 }
 
+// Marks that this tab left for a Google redirect sign-in, so the return
+// trip can tell "nothing happened" apart from "the redirect came back
+// empty". getRedirectResult() resolving null after a real redirect is how
+// blocked third-party storage manifests — without the marker it is a
+// silent bounce back to /login with no error for the user or for us.
+const GOOGLE_REDIRECT_PENDING_KEY = "am.googleRedirectPending";
+
+function markGoogleRedirectPending(): void {
+  try {
+    window.sessionStorage.setItem(GOOGLE_REDIRECT_PENDING_KEY, "1");
+  } catch {
+    // Storage unavailable — lose the diagnostic, not the sign-in.
+  }
+}
+
+function consumeGoogleRedirectPending(): boolean {
+  try {
+    const pending =
+      window.sessionStorage.getItem(GOOGLE_REDIRECT_PENDING_KEY) === "1";
+    window.sessionStorage.removeItem(GOOGLE_REDIRECT_PENDING_KEY);
+    return pending;
+  } catch {
+    return false;
+  }
+}
+
 export async function signInWithGoogle(): Promise<User | null> {
   const provider = googleProvider();
   if (shouldUseGoogleRedirect()) {
+    markGoogleRedirectPending();
+    if (E2E_BYPASS) {
+      const url = new URL("/__/auth/handler", window.location.origin);
+      url.searchParams.set("authType", "signInViaRedirect");
+      url.searchParams.set("providerId", "google.com");
+      window.location.assign(url.toString());
+      return null;
+    }
     await signInWithRedirect(auth(), provider);
     return null;
   }
+  if (E2E_BYPASS) return fakeE2EUser("google@example.com", true);
   const { user } = await signInWithPopup(auth(), provider);
   return user;
 }
 
 export async function completeGoogleRedirectSignIn(): Promise<User | null> {
   if (E2E_BYPASS) return null;
+  const wasPending = consumeGoogleRedirectPending();
   const result = await getRedirectResult(auth());
-  return result?.user ?? null;
+  if (result?.user) return result.user;
+  if (wasPending) {
+    throw new Error(
+      "Google sign-in could not complete on this browser. Please try again, or sign in with your email and password."
+    );
+  }
+  return null;
 }
 
 export async function sendPasswordReset(email: string): Promise<void> {
@@ -147,6 +202,7 @@ export async function sendPasswordReset(email: string): Promise<void> {
 }
 
 export async function signOutCurrent(): Promise<void> {
+  clearBffIdentityCookie();
   if (E2E_BYPASS) return;
   await signOut(auth());
 }

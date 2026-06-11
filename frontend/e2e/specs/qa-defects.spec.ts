@@ -98,7 +98,7 @@ test.describe("QA defect regressions", () => {
       if (route.request().method() !== "POST") return route.fallback();
       return fulfillJson(
         route,
-        { error: { message: "parent raw-id has no Stripe customer" } },
+        { detail: "Billing portal will be available after the first successful autopay setup." },
         409,
       );
     });
@@ -107,10 +107,90 @@ test.describe("QA defect regressions", () => {
     await page.getByRole("button", { name: "Billing portal" }).click();
 
     await expect(page.getByTestId("billing-portal-error")).toContainText(
-      "available after your first successful autopay setup",
+      "Start autopay for an enrollment first",
     );
-    await expect(page.getByTestId("billing-portal-error")).not.toContainText("raw-id");
+    await expect(page.getByTestId("billing-portal-error")).not.toContainText("Request failed");
     await expect(page).toHaveURL(/\/parent\/payments$/);
+  });
+
+  test("autopay checkout failures are visible to parents", async ({ page }) => {
+    await stubParentShell(page);
+    await page.route("**/api/v2/parent/payments", (route) =>
+      fulfillJson(route, { payments: [] }),
+    );
+    await page.route("**/api/v2/parent/enrollments", (route) =>
+      fulfillJson(route, {
+        enrollments: [
+          {
+            enrollment_id: "enr-qa-1",
+            student_id: "student-qa-1",
+            student_name: "Nila Rao",
+            session_id: "session-qa-1",
+            session_title: "Thursday Beginner",
+            status: "active",
+            payment_mode: null,
+            subscription_status: null,
+          },
+        ],
+      }),
+    );
+    await page.route("**/api/v2/parent/pause-requests", (route) =>
+      fulfillJson(route, { requests: [] }),
+    );
+    await page.route("**/api/v2/parent/credits", (route) =>
+      fulfillJson(route, { balance_cents: 0, credits: [] }),
+    );
+    await page.route("**/api/v2/parent/autopay/start", (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      return fulfillJson(route, { detail: "checkout session could not be created" }, 502);
+    });
+
+    await page.goto("/parent/payments");
+    await page.getByRole("button", { name: "Start autopay" }).click();
+
+    await expect(page.getByTestId("autopay-error")).toContainText(
+      "Autopay could not start",
+    );
+    await expect(page.getByTestId("autopay-error")).not.toContainText("Request failed");
+    await expect(page).toHaveURL(/\/parent\/payments$/);
+  });
+
+  test("incomplete autopay setup can be retried", async ({ page }) => {
+    // Regression: an abandoned Stripe Checkout used to leave the enrollment at
+    // subscription_status="incomplete", which rendered a disabled "Autopay on"
+    // button and locked parents out of autopay forever.
+    await stubParentShell(page);
+    await page.route("**/api/v2/parent/payments", (route) =>
+      fulfillJson(route, { payments: [] }),
+    );
+    await page.route("**/api/v2/parent/enrollments", (route) =>
+      fulfillJson(route, {
+        enrollments: [
+          {
+            enrollment_id: "enr-qa-2",
+            student_id: "student-qa-1",
+            student_name: "Nila Rao",
+            session_id: "session-qa-1",
+            session_title: "Thursday Beginner",
+            status: "active",
+            payment_mode: "monthly",
+            subscription_status: "incomplete",
+          },
+        ],
+      }),
+    );
+    await page.route("**/api/v2/parent/pause-requests", (route) =>
+      fulfillJson(route, { requests: [] }),
+    );
+    await page.route("**/api/v2/parent/credits", (route) =>
+      fulfillJson(route, { balance_cents: 0, credits: [] }),
+    );
+
+    await page.goto("/parent/payments");
+
+    const startButton = page.getByRole("button", { name: "Start autopay" });
+    await expect(startButton).toBeVisible();
+    await expect(startButton).toBeEnabled();
   });
 
   test("parent pause request sends resume date contract", async ({ page }) => {

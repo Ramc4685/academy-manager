@@ -480,6 +480,7 @@ function MarkPaidDialog({
 }) {
   const [method, setMethod] = useState("cash");
   const [amountInput, setAmountInput] = useState("");
+  const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [referenceNumber, setReferenceNumber] = useState("");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -490,9 +491,11 @@ function MarkPaidDialog({
         amount_received_cents: amountInput ? Math.round(Number(amountInput) * 100) : undefined,
         reference_number: referenceNumber || undefined,
         notes,
+        payment_date: paymentDate || undefined,
       }),
     onSuccess: () => {
       setAmountInput("");
+      setPaymentDate(new Date().toISOString().slice(0, 10));
       setReferenceNumber("");
       setNotes("");
       setError(null);
@@ -545,6 +548,15 @@ function MarkPaidDialog({
             <option value="bank_transfer">Bank transfer</option>
             <option value="other">Other</option>
           </select>
+        </Field>
+        <Field label="Payment date" required>
+          <input
+            type="date"
+            required
+            value={paymentDate}
+            onChange={(event) => setPaymentDate(event.target.value)}
+            className={inputClass}
+          />
         </Field>
         <Field label="Reference">
           <input

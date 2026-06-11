@@ -66,11 +66,19 @@ class Settings(BaseSettings):
 
     stripe_api_key: str | None = Field(default=None)
     stripe_webhook_secret: str | None = Field(default=None)
+    stripe_connect_client_id: str | None = Field(default=None)
+    stripe_connect_callback_uri: str | None = Field(default=None)
+    stripe_connect_state_secret: str | None = Field(default=None)
     stripe_use_fake_gateway: bool = Field(default=True)
     firebase_project_id: str | None = Field(default=None)
     cors_origins: str = Field(default="")
     frontend_url: str | None = Field(default=None)
     scheduler_tz: str = Field(default="UTC")
+    resend_api_key: str | None = Field(default=None)
+    email_delivery_enabled: bool = Field(
+        default=False,
+        description="When True and resend_api_key is set, emails are sent via Resend. Stub adapter used otherwise.",
+    )
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -107,6 +115,14 @@ class Settings(BaseSettings):
         if "V2_STRIPE_WEBHOOK_SECRET" not in os.environ:
             self.stripe_webhook_secret = os.environ.get(
                 "STRIPE_WEBHOOK_SECRET", self.stripe_webhook_secret
+            )
+        if "V2_STRIPE_CONNECT_CLIENT_ID" not in os.environ:
+            self.stripe_connect_client_id = os.environ.get(
+                "STRIPE_CONNECT_CLIENT_ID", self.stripe_connect_client_id
+            )
+        if "V2_STRIPE_CONNECT_CALLBACK_URI" not in os.environ:
+            self.stripe_connect_callback_uri = os.environ.get(
+                "STRIPE_CONNECT_CALLBACK_URI", self.stripe_connect_callback_uri
             )
         if "V2_FIREBASE_PROJECT_ID" not in os.environ:
             self.firebase_project_id = os.environ.get(

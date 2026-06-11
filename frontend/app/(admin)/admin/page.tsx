@@ -186,7 +186,7 @@ export default function AdminDashboardPage() {
               <thead>
                 <tr className="border-b border-rally-line text-left">
                   <th className="pb-2 pr-4 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
-                    ID
+                    Payment
                   </th>
                   <th className="pb-2 pr-4 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
                     Amount
@@ -203,10 +203,21 @@ export default function AdminDashboardPage() {
                 {recentPayments.map((p) => {
                   const variant = PAYMENT_CHIP[p.status];
                   const label = PAYMENT_LABEL[p.status];
+                  const primary = p.student_name ?? p.parent_name ?? p.invoice_number ?? "Payment";
+                  const secondary = [
+                    p.invoice_number,
+                    p.student_name ? p.parent_name : null,
+                    p.period,
+                  ].filter(Boolean);
                   return (
                     <tr key={p.payment_id} className="border-b border-rally-line/60 last:border-0">
-                      <td className="py-2.5 pr-4 font-mono text-xs text-rally-muted">
-                        {p.payment_id.slice(0, 8)}…
+                      <td className="py-2.5 pr-4">
+                        <div className="font-medium text-rally-ink">{primary}</div>
+                        {secondary.length > 0 && (
+                          <div className="mt-0.5 text-xs text-rally-muted">
+                            {secondary.join(" · ")}
+                          </div>
+                        )}
                       </td>
                       <td className="py-2.5 pr-4 font-mono font-semibold tabular-nums text-rally-ink">
                         {formatCents(p.amount_cents)}

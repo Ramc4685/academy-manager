@@ -16,6 +16,7 @@ import {
   clearPendingParentRegistration,
   consumePendingParentRegistration,
 } from "@/lib/auth/parent-registration-continuation";
+import { clearBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
 import { brand } from "@/lib/brand";
 
 const HERO_IMAGE =
@@ -35,6 +36,7 @@ export default function LoginPage() {
   useEffect(() => {
     setHydrated(true);
     let cancelled = false;
+    clearBffIdentityCookie();
 
     completeGoogleRedirectSignIn()
       .then((user) => {
@@ -61,6 +63,7 @@ export default function LoginPage() {
     setError(null);
     setNotice(null);
     try {
+      clearBffIdentityCookie();
       const user = await signInWithEmail(email, password);
       if (consumePendingParentRegistration(user.email)) {
         if (!user.emailVerified) {
@@ -87,6 +90,7 @@ export default function LoginPage() {
     setError(null);
     setNotice(null);
     try {
+      clearBffIdentityCookie();
       const user = await signInWithGoogle();
       if (user) router.push("/post-login");
     } catch (err) {

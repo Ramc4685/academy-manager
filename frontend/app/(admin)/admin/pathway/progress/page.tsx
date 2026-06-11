@@ -11,6 +11,7 @@ import {
   type StudentProgressOverview,
 } from "@/lib/api/curriculum";
 import { getActiveAcademyId } from "@/lib/api/client";
+import { buildStudentProgressHref } from "@/lib/navigation/admin-student-progress-return";
 import { Card } from "@/components/ds/card";
 
 const progressOverviewEnabled = process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
@@ -185,7 +186,12 @@ function ProgressTable({ rows }: { rows: StudentProgressOverview[] }) {
           <tbody className="divide-y divide-neutral-100">
             {rows.map((row) => {
               const requiredPct = percent(row.required_skills_passed, row.required_skill_count);
-              const detailHref = `/admin/students/${encodeURIComponent(row.student_id)}/progress?program_id=${encodeURIComponent(row.program_id)}`;
+              const detailHref = buildStudentProgressHref({
+                studentId: row.student_id,
+                programId: row.program_id,
+                returnTo: "/admin/pathway/progress",
+                returnLabel: "Back to pathway progress",
+              });
               return (
                 <tr key={row.student_id} className="hover:bg-neutral-50">
                   <td className="px-4 py-3">

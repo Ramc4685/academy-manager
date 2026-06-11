@@ -32,6 +32,24 @@ class SubscriptionRepository(Protocol):
     async def latest_for_enrollment(self, enrollment_id: str) -> Subscription | None: ...
 
 
+class ParentStripeCustomerRepository(Protocol):
+    async def set_stripe_customer_id(self, *, parent_id: str, stripe_customer_id: str) -> None: ...
+
+
+class EnrollmentAutopayStateRepository(Protocol):
+    """Cross-context port: Billing pushes subscription lifecycle state onto
+    the Enrollment aggregate so parent-facing autopay status stays accurate.
+    """
+
+    async def set_autopay_state(
+        self,
+        *,
+        enrollment_id: str,
+        subscription_status: str,
+        stripe_subscription_id: str | None,
+    ) -> None: ...
+
+
 class CreditLedgerRepository(Protocol):
     async def create(self, entry: CreditLedgerEntry) -> None: ...
     async def list_for_parent(self, parent_id: str) -> list[CreditLedgerEntry]: ...
@@ -124,6 +142,14 @@ class StripeGateway(Protocol):
         Uses ``proration_behavior="create_prorations"`` so Stripe generates the
         proration invoice. Returns the resulting Stripe invoice id.
         """
+
+    def create_connect_link(self, *, redirect_uri: str, state: str) -> str:
+        """Return Stripe OAuth authorize URL for Express onboarding."""
+        ...
+
+    async def exchange_connect_code(self, code: str) -> str:
+        """Exchange OAuth authorization code for stripe_user_id (connected account ID)."""
+        ...
 
 
 class CapacityReservation(Protocol):

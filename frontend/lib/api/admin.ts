@@ -24,6 +24,7 @@ export interface AdminSessionView {
   end_time: string | null;
   timezone: string | null;
   capacity: number;
+  amount_cents?: number | null;
   status: "scheduled" | "cancelled" | "completed";
   enrolled_count: number;
   waitlist_count: number;
@@ -101,6 +102,7 @@ export interface CreateSessionRequest {
   end_time?: string | null;
   timezone?: string | null;
   capacity: number;
+  amount_cents?: number | null;
 }
 
 export interface EditSessionRequest {
@@ -114,6 +116,7 @@ export interface EditSessionRequest {
   end_time?: string | null;
   timezone?: string | null;
   capacity?: number;
+  amount_cents?: number | null;
   reason?: string;
 }
 
@@ -243,6 +246,7 @@ export type AdminPaymentStatus = PaymentStatus | "partially_paid";
 export interface AdminPaymentView {
   payment_id: string;
   parent_id: string;
+  parent_name?: string | null;
   student_id: string | null;
   student_name: string | null;
   enrollment_id: string | null;
@@ -298,6 +302,8 @@ export interface MarkPaymentPaidRequest {
   amount_received_cents?: number;
   reference_number?: string;
   notes?: string;
+  /** ISO date (YYYY-MM-DD) the money was actually received. */
+  payment_date?: string;
 }
 
 export interface ApplyPaymentDiscountRequest {
@@ -784,7 +790,16 @@ type QueryFunctionContextArg = {
 export interface AdminPauseRequestView {
   pause_request_id: string;
   parent_id: string;
+  parent_name: string | null;
+  parent_email: string | null;
   enrollment_id: string;
+  student_id: string | null;
+  student_name: string | null;
+  session_id: string | null;
+  session_title: string | null;
+  session_location: string | null;
+  session_start_at: string | null;
+  session_end_at: string | null;
   period: string;
   pause_kind: "fixed" | "indefinite";
   resume_on: string | null;
@@ -1348,6 +1363,34 @@ export function sendDm(payload: DmRequest): Promise<AdminMessageView> {
   });
 }
 
+export interface CampaignAudiencePayload {
+  type: "academy" | "session";
+  role?: "parent" | "coach";
+  session_id?: string;
+}
+
+export interface SendEmailCampaignRequest {
+  subject: string;
+  body: string;
+  audience: CampaignAudiencePayload;
+}
+
+export interface SendEmailCampaignResponse {
+  campaign_id: string;
+  total_recipients: number;
+  sent_count: number;
+  failed_count: number;
+}
+
+export function sendEmailCampaign(
+  payload: SendEmailCampaignRequest,
+): Promise<SendEmailCampaignResponse> {
+  return apiFetch<SendEmailCampaignResponse>("/admin/campaigns", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function listAdminWaivers(): Promise<AdminWaiverList> {
   return apiFetch<AdminWaiverList>("/admin/waivers", { method: "GET" });
 }
@@ -1527,6 +1570,21 @@ export function updateAdminNotifications(
 
 export function getAdminGateway(): Promise<AdminGatewayView> {
   return apiFetch<AdminGatewayView>("/admin/academy/gateway", { method: "GET" });
+}
+
+export interface AdminGatewayConnectLinkView {
+  url: string;
+}
+
+export function startStripeConnect(): Promise<AdminGatewayConnectLinkView> {
+  return apiFetch<AdminGatewayConnectLinkView>(
+    "/admin/academy/gateway/stripe/connect-link",
+    { method: "POST" },
+  );
+}
+
+export function disconnectStripe(): Promise<void> {
+  return apiFetch<void>("/admin/academy/gateway/stripe/connect", { method: "DELETE" });
 }
 
 export interface CreateAdminUserRequest {

@@ -167,6 +167,30 @@ class CreateAdminUserRequest(BaseModel):
     reason: str = Field(default="manual user creation", min_length=1, max_length=500)
 
 
+class BulkInviteItem(BaseModel):
+    email: str = Field(min_length=1, max_length=254)
+    display_name: str = Field(min_length=1, max_length=120)
+
+
+class BulkInviteRequest(BaseModel):
+    users: list[BulkInviteItem] = Field(min_length=1, max_length=100)
+    reason: str = Field(default="bulk parent invite", min_length=1, max_length=500)
+
+
+class BulkInviteResultItem(BaseModel):
+    email: str
+    status: Literal["created", "skipped", "failed"]
+    user_id: str | None = None
+    detail: str | None = None
+
+
+class BulkInviteResponse(BaseModel):
+    created: int
+    skipped: int
+    failed: int
+    results: list[BulkInviteResultItem]
+
+
 # --- Session Type Billing ---
 
 
@@ -262,6 +286,7 @@ class AdminSessionView(BaseModel):
     start_at: datetime
     end_at: datetime
     capacity: int
+    amount_cents: int | None = None
     status: Literal["scheduled", "cancelled", "completed"]
     enrolled_count: int = 0
     waitlist_count: int = 0
@@ -328,6 +353,7 @@ class CreateSessionRequest(BaseModel):
     start_at: datetime | None = None
     end_at: datetime | None = None
     capacity: int
+    amount_cents: int | None = Field(default=None, ge=0)
     days_of_week: list[str] = Field(default_factory=list)
     start_time: str | None = None
     end_time: str | None = None
@@ -341,6 +367,7 @@ class EditSessionRequest(BaseModel):
     start_at: datetime | None = None
     end_at: datetime | None = None
     capacity: int | None = Field(default=None, ge=1)
+    amount_cents: int | None = Field(default=None, ge=0)
     days_of_week: list[str] | None = None
     start_time: str | None = None
     end_time: str | None = None
@@ -458,6 +485,15 @@ class AdminPauseRequestView(BaseModel):
     pause_request_id: str
     enrollment_id: str
     parent_id: str
+    parent_name: str | None = None
+    parent_email: str | None = None
+    student_id: str | None = None
+    student_name: str | None = None
+    session_id: str | None = None
+    session_title: str | None = None
+    session_location: str | None = None
+    session_start_at: datetime | None = None
+    session_end_at: datetime | None = None
     period: str
     pause_kind: str = "fixed"
     resume_on: date | None = None
@@ -536,6 +572,7 @@ class MarkPaymentPaidRequest(BaseModel):
     amount_received_cents: int | None = Field(default=None, gt=0)
     reference_number: str | None = None
     notes: str = ""
+    payment_date: date | None = None
 
 
 class ApplyPaymentDiscountRequest(BaseModel):
@@ -1127,6 +1164,10 @@ class AdminGatewayView(BaseModel):
     manual_methods: list[str]
 
 
+class AdminGatewayConnectLinkView(BaseModel):
+    url: str
+
+
 class ReportsKpiResponse(BaseModel):
     active_students: int = 0
     attendance_rate_30d: float = 0.0
@@ -1268,3 +1309,25 @@ class EnrollmentEventDto(BaseModel):
 class EnrollmentEventsResponse(BaseModel):
     enrollment_id: str
     events: list[EnrollmentEventDto]
+
+
+# --- Email Campaigns ---
+
+
+class SendCampaignAudience(BaseModel):
+    type: Literal["academy", "session"]
+    role: Literal["parent", "coach"] = "parent"
+    session_id: str | None = None
+
+
+class SendCampaignRequest(BaseModel):
+    subject: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=50000)
+    audience: SendCampaignAudience
+
+
+class SendCampaignResponse(BaseModel):
+    campaign_id: str
+    total_recipients: int
+    sent_count: int
+    failed_count: int

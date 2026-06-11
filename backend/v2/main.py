@@ -327,6 +327,7 @@ def _build_stripe(settings: Settings) -> StripeGateway:
     return RealStripeGateway(
         api_key=settings.stripe_api_key,
         webhook_secret=settings.stripe_webhook_secret,
+        connect_client_id=settings.stripe_connect_client_id,
     )
 
 

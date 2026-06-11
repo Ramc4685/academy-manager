@@ -11,6 +11,10 @@ const withSerwist = withSerwistInit({
   disable: process.env.NODE_ENV === "development",
 });
 
+const FIREBASE_AUTH_HELPER_ORIGIN = `https://${
+  process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "academy-courtmastr"
+}.firebaseapp.com`;
+
 const config: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
@@ -32,6 +36,18 @@ const config: NextConfig = {
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
           { key: "Cross-Origin-Opener-Policy", value: "same-origin-allow-popups" },
         ],
+      },
+      {
+        source: "/__/auth/:path*",
+        headers: [{ key: "X-Frame-Options", value: "SAMEORIGIN" }],
+      },
+    ];
+  },
+  async rewrites() {
+    return [
+      {
+        source: "/__/auth/:path*",
+        destination: `${FIREBASE_AUTH_HELPER_ORIGIN}/__/auth/:path*`,
       },
     ];
   },

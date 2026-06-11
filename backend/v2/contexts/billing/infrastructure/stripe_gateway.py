@@ -7,6 +7,7 @@ Tests fake this entirely via the StripeGateway Protocol.
 from __future__ import annotations
 
 import asyncio
+import urllib.parse
 from datetime import datetime
 from typing import Any, Literal
 
@@ -14,7 +15,9 @@ from backend.v2.contexts.billing.application.ports import StripeGateway
 
 
 class RealStripeGateway(StripeGateway):
-    def __init__(self, *, api_key: str, webhook_secret: str) -> None:
+    def __init__(
+        self, *, api_key: str, webhook_secret: str, connect_client_id: str | None = None
+    ) -> None:
         # Lazy import keeps the rest of the app importable without stripe
         # installed (tests use a fake gateway).
         import stripe  # type: ignore[import-not-found]
@@ -22,6 +25,7 @@ class RealStripeGateway(StripeGateway):
         stripe.api_key = api_key
         self._stripe = stripe
         self._webhook_secret = webhook_secret
+        self._connect_client_id = connect_client_id
 
     async def create_checkout_session(
         self,
@@ -36,7 +40,6 @@ class RealStripeGateway(StripeGateway):
         def _create() -> Any:
             return self._stripe.checkout.Session.create(
                 mode="payment",
-                payment_method_types=["card"],
                 line_items=[
                     {
                         "price_data": {
@@ -69,7 +72,6 @@ class RealStripeGateway(StripeGateway):
         def _create() -> Any:
             return self._stripe.checkout.Session.create(
                 mode="subscription",
-                payment_method_types=["card"],
                 line_items=[
                     {
                         "price_data": {
@@ -87,7 +89,6 @@ class RealStripeGateway(StripeGateway):
                 metadata=metadata,
                 subscription_data={
                     "metadata": metadata | {"enrollment_id": enrollment_id},
-                    "proration_behavior": "none",
                 },
             )
 
@@ -204,3 +205,30 @@ class RealStripeGateway(StripeGateway):
             return str(finalized["id"])
 
         return await asyncio.to_thread(_update)
+
+    def create_connect_link(self, *, redirect_uri: str, state: str) -> str:
+        if not self._connect_client_id:
+            raise ValueError("Stripe Connect client ID is not configured")
+        params = urllib.parse.urlencode(
+            {
+                "client_id": self._connect_client_id,
+                "response_type": "code",
+                "scope": "read_write",
+                "redirect_uri": redirect_uri,
+                "state": state,
+            }
+        )
+        return f"https://connect.stripe.com/oauth/authorize?{params}"
+
+    async def exchange_connect_code(self, code: str) -> str:
+        def _exchange() -> str:
+            try:
+                response = self._stripe.OAuth.token(grant_type="authorization_code", code=code)
+            except self._stripe.StripeError as exc:
+                raise ValueError(f"Stripe Connect code exchange failed: {exc}") from exc
+            account_id = response.get("stripe_user_id")
+            if not account_id:
+                raise ValueError("Stripe Connect code exchange returned no stripe_user_id")
+            return str(account_id)
+
+        return await asyncio.to_thread(_exchange)

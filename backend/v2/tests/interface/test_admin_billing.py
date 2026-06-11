@@ -95,10 +95,14 @@ def test_mark_payment_paid(admin_client):
     _seed_payment(admin_client.seed, "pay-manual", status="pending", stripe=False)
     r = admin_client.post(
         "/api/v2/admin/payments/pay-manual/mark-paid",
-        json={"payment_method": "cash", "notes": "desk"},
+        json={"payment_method": "cash", "notes": "desk", "payment_date": "2026-06-11"},
     )
     assert r.status_code == 200, r.text
     assert admin_client.seed["payments"].rows["pay-manual"].status == "succeeded"
+    record = admin_client.seed["payments"].manual_records["pay-manual"]
+    # Audit trail: the authenticated admin and the entered payment date are persisted.
+    assert record["recorded_by"] == "u-admin"
+    assert str(record["payment_date"]) == "2026-06-11"
 
 
 def test_apply_payment_discount(admin_client):

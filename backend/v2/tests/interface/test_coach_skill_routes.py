@@ -916,3 +916,225 @@ def test_real_skill_router_session_students_progress_unassigned_returns_404_befo
     assert spies.assigned_sessions.calls == [(COACH_ID, SESSION_ID)]
     assert spies.get_program.calls == 0
     assert spies.get_progress_summary.calls == 0
+
+
+# ---------------------------------------------------------------------------
+# Task 3: session skill-board route
+# ---------------------------------------------------------------------------
+
+
+import pytest
+
+from backend.v2.contexts.student_progress.application.use_cases.get_skill_board import (
+    GetSkillBoard,
+)
+
+
+class _FakeLevelProgressRepoBoard:
+    """Minimal fake for GetSkillBoard — supports get_active only."""
+
+    def __init__(self, rows: list[StudentLevelProgress]) -> None:
+        self._rows = rows
+
+    async def get_active(self, student_id: str, program_id: str) -> StudentLevelProgress | None:
+        for row in self._rows:
+            if row.student_id == student_id and row.program_id == program_id:
+                return row
+        return None
+
+
+class _FakeSkillProgressRepoBoard:
+    """Fake skill-progress repo with list_for_students for GetSkillBoard."""
+
+    async def list_for_students(self, student_ids: list[str], level_id: str) -> list[object]:
+        return []
+
+
+class _FakeRecommendationRepoBoard:
+    async def get_active_for_student(self, student_id: str, program_id: str) -> object | None:
+        return None
+
+
+class _FakeSkillLookupBoard:
+    def __init__(self) -> None:
+        self._levels = {
+            LEVEL_ID: SimpleNamespace(level_id=LEVEL_ID, name="Level 1", sequence=1),
+        }
+        self._skills = {
+            LEVEL_ID: [
+                SimpleNamespace(skill_id=SKILL_ID, name="Skill 001", sequence=1, is_required=True),
+            ],
+        }
+
+    async def get_level(self, level_id: str) -> object | None:
+        return self._levels.get(level_id)
+
+    async def list_skills_for_level(self, level_id: str) -> list[object]:
+        return self._skills.get(level_id, [])
+
+
+def _build_real_router_app_with_board(
+    *,
+    assigned: bool,
+    coach_persona: bool = True,
+) -> FastAPI:
+    """Build a real-router app wired with GetSkillBoard for skill-board tests."""
+    assigned_sessions = _AssignedSessions({SESSION_ID} if assigned else set())
+
+    now = datetime.now(UTC)
+    active_level = StudentLevelProgress(
+        progress_id="lp-board-001",
+        academy_id=ACADEMY_ID,
+        student_id=STUDENT_ID,
+        program_id=PROGRAM_ID,
+        level_id=LEVEL_ID,
+        status="active",
+        started_at=now,
+        created_at=now,
+    )
+    level_progress_repo = _FakeLevelProgressRepoBoard([active_level])
+    skill_progress_repo = _FakeSkillProgressRepoBoard()
+    recommendation_repo = _FakeRecommendationRepoBoard()
+    skill_lookup = _FakeSkillLookupBoard()
+
+    get_skill_board = GetSkillBoard(
+        level_progress=level_progress_repo,  # type: ignore[arg-type]
+        skill_progress=skill_progress_repo,  # type: ignore[arg-type]
+        recommendations=recommendation_repo,  # type: ignore[arg-type]
+        skill_lookup=skill_lookup,  # type: ignore[arg-type]
+    )
+
+    student_progress = SimpleNamespace(
+        get_passport=_SpyUseCase([_Dumpable(skill_id=SKILL_ID)]),
+        update_skill_status=_SpyUseCase(_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)),
+        record_test_attempt=_SpyUseCase(_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)),
+        recommend_level_up=_SpyUseCase(_Dumpable(student_id=STUDENT_ID)),
+        get_progress_summary=_SpyUseCase(
+            StudentProgressOverview(
+                student_id=STUDENT_ID,
+                student_name="Student One",
+                program_id=PROGRAM_ID,
+                program_name="Badminton Skill Pathway",
+                next_action="continue_practice",
+            )
+        ),
+        get_skill_board=get_skill_board,
+    )
+    curriculum = SimpleNamespace(
+        get_program=_SpyUseCase(_Dumpable(program_id=PROGRAM_ID, name="Badminton Skill Pathway")),
+        resolve_default_program=_SpyUseCase(
+            _Dumpable(program_id=PROGRAM_ID, name="Badminton Skill Pathway")
+        ),
+    )
+
+    get_roster = _SpyUseCase(
+        [
+            RosterEntry(
+                enrollment_id="enrollment-001",
+                student_id=STUDENT_ID,
+                full_name="Student One",
+                status="active",
+            )
+        ]
+    )
+
+    async def active_session_enrollments_for_student(student_id: str) -> list[SimpleNamespace]:
+        if student_id != STUDENT_ID:
+            return []
+        return [SimpleNamespace(session_id=SESSION_ID)]
+
+    use_cases = CoachUseCases(
+        list_today=AsyncMock(),  # type: ignore[arg-type]
+        get_roster=get_roster,  # type: ignore[arg-type]
+        mark_attendance=AsyncMock(),  # type: ignore[arg-type]
+        bulk_mark_attendance=AsyncMock(),  # type: ignore[arg-type]
+        get_dashboard_metrics=AsyncMock(),  # type: ignore[arg-type]
+        create_lesson_plan=AsyncMock(),  # type: ignore[arg-type]
+        list_lesson_plans=AsyncMock(),  # type: ignore[arg-type]
+        create_progress_note=AsyncMock(),  # type: ignore[arg-type]
+        list_progress_notes=AsyncMock(),  # type: ignore[arg-type]
+        assigned_sessions=assigned_sessions,  # type: ignore[arg-type]
+        add_student_to_roster=AsyncMock(),  # type: ignore[arg-type]
+        remove_student_from_roster=AsyncMock(),  # type: ignore[arg-type]
+        create_feedback=AsyncMock(),  # type: ignore[arg-type]
+        list_feedback=AsyncMock(),  # type: ignore[arg-type]
+        list_billing_enrollments=AsyncMock(),  # type: ignore[arg-type]
+        preview_student_session_type_move=AsyncMock(),  # type: ignore[arg-type]
+        move_student_session_type=AsyncMock(),  # type: ignore[arg-type]
+        list_session_types=AsyncMock(),  # type: ignore[arg-type]
+        get_billing_enrollment=AsyncMock(),
+        get_active_session_enrollments_for_student=active_session_enrollments_for_student,
+        list_all_sessions=AsyncMock(),
+        get_profile=AsyncMock(),
+        update_profile=AsyncMock(),
+        student_progress=student_progress,  # type: ignore[arg-type]
+        create_skill_note=_SpyUseCase(_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)),
+        list_skill_notes=_SpyUseCase([_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)]),
+    )
+    use_cases.curriculum = curriculum  # type: ignore[assignment]
+
+    app = FastAPI()
+    app.include_router(coach_router, prefix="/api/v2")
+
+    if coach_persona:
+        app.dependency_overrides[get_auth_claims] = _real_router_claims
+    else:
+        # Wrong persona: parent
+        app.dependency_overrides[get_auth_claims] = lambda: AuthClaims(
+            user_id="parent-001",
+            email="parent@example.com",
+            academy_id=ACADEMY_ID,
+            roles=("parent",),
+        )
+
+    app.dependency_overrides[get_coach_use_cases] = lambda: use_cases
+
+    @app.middleware("http")
+    async def _tenant_ctx(request: Request, call_next):
+        with tenant_scope(ACADEMY_ID):
+            return await call_next(request)
+
+    return app
+
+
+@pytest.fixture()
+def client() -> TestClient:
+    app = _build_real_router_app_with_board(assigned=True)
+    return TestClient(app)
+
+
+@pytest.fixture()
+def client_unassigned() -> TestClient:
+    app = _build_real_router_app_with_board(assigned=False)
+    return TestClient(app)
+
+
+@pytest.fixture()
+def client_parent_persona() -> TestClient:
+    app = _build_real_router_app_with_board(assigned=True, coach_persona=False)
+    return TestClient(app)
+
+
+def test_session_skill_board_returns_groups(client: TestClient) -> None:
+    response = client.get(
+        f"/api/v2/coach/sessions/{SESSION_ID}/skill-board?program_id={PROGRAM_ID}"
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["program_id"] == PROGRAM_ID
+    assert isinstance(body["groups"], list)
+    assert isinstance(body["unplaced"], list)
+    group = body["groups"][0]
+    assert {"level_id", "level_name", "sequence", "skills", "students"} <= set(group)
+    student = group["students"][0]
+    assert {"student_id", "student_name", "statuses", "required_passed"} <= set(student)
+
+
+def test_session_skill_board_unassigned_coach_404(client_unassigned: TestClient) -> None:
+    response = client_unassigned.get(f"/api/v2/coach/sessions/{SESSION_ID}/skill-board")
+    assert response.status_code == 404
+
+
+def test_session_skill_board_wrong_persona_rejected(client_parent_persona: TestClient) -> None:
+    response = client_parent_persona.get(f"/api/v2/coach/sessions/{SESSION_ID}/skill-board")
+    assert response.status_code in (401, 403, 404)
