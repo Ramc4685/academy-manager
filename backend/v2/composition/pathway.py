@@ -54,6 +54,9 @@ from backend.v2.contexts.student_progress.application.use_cases.get_pathway_plac
 from backend.v2.contexts.student_progress.application.use_cases.get_progress_summary import (
     GetProgressSummary,
 )
+from backend.v2.contexts.student_progress.application.use_cases.get_skill_board import (
+    GetSkillBoard,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_student_progress import (
     GetStudentProgress,
 )
@@ -164,6 +167,7 @@ class StudentProgressComposition:
     get_passport: GetStudentPassport
     get_level_up_queue: GetLevelUpQueue
     get_certificates: GetStudentCertificates
+    get_skill_board: GetSkillBoard
 
 
 # ---------------------------------------------------------------------------
@@ -289,4 +293,10 @@ def compose_student_progress(
             skill_lookup=skill_lookup,
         ),
         get_certificates=GetStudentCertificates(certificates=certificate_repo),
+        get_skill_board=GetSkillBoard(
+            level_progress=level_progress_repo,
+            skill_progress=skill_progress_repo,
+            recommendations=recommendation_repo,
+            skill_lookup=skill_lookup,
+        ),
     )
