@@ -829,7 +829,6 @@ class _MongoCoachRateRepository:
                     {"effective_until": None},
                     {"effective_until": {"$gt": at_time}},
                 ],
-                "status": {"$ne": "superseded"},
             },
             sort=[("effective_from", -1)],
         )

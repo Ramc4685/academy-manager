@@ -76,6 +76,8 @@ class CoachRateRepository(Protocol):
 
 def _paying_coach(occ: PayableOccurrence) -> tuple[str, PayoutBasis]:
     if occ.actual_coach_id:
+        if occ.actual_coach_id != occ.scheduled_coach_id:
+            return occ.actual_coach_id, "substitute"
         return occ.actual_coach_id, "actual"
     return occ.scheduled_coach_id, "scheduled"
 

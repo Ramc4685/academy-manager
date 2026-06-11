@@ -316,7 +316,6 @@ class MongoPayoutRepository(TenantScopedRepository):
                     {"effective_until": None},
                     {"effective_until": {"$gt": start_at}},
                 ],
-                "status": {"$ne": "superseded"},
             },
             sort=[("effective_from", -1)],
         )

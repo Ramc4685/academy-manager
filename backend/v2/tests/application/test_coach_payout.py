@@ -229,7 +229,7 @@ async def test_actual_coach_id_takes_precedence_over_substitute_and_scheduled() 
         period_end=_dt("2026-06-01T00:00:00"),
     )
     assert len(statement.lines) == 1
-    assert statement.lines[0].basis == "actual"
+    assert statement.lines[0].basis == "substitute"
     assert statement.total_minor == 5000
 
 
@@ -560,7 +560,7 @@ async def test_replacement_coach_paid_when_scheduled_coach_absent() -> None:
         period_end=_dt("2026-06-01T00:00:00"),
     )
     assert replacement_statement.total_minor == 4000
-    assert replacement_statement.lines[0].basis == "actual"
+    assert replacement_statement.lines[0].basis == "substitute"
     assert scheduled_statement.total_minor == 0
     assert scheduled_statement.lines == []
 
