@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
@@ -75,7 +75,8 @@ async def start_stripe_connect(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminGatewayConnectLinkView:
-    assert use_cases.start_stripe_connect_use_case is not None
+    if use_cases.start_stripe_connect_use_case is None:
+        raise HTTPException(status_code=503, detail="Stripe Connect is not configured")
     out = await use_cases.start_stripe_connect_use_case.execute(claims.academy_id)
     return AdminGatewayConnectLinkView(url=out.url)
 
@@ -88,10 +89,14 @@ async def stripe_connect_callback(
 ) -> RedirectResponse:
     settings = get_settings()
     frontend = settings.frontend_url or ""
+    if use_cases.complete_stripe_connect_use_case is None:
+        return RedirectResponse(
+            url=f"{frontend}/admin/settings?panel=gateway&stripe=error",
+            status_code=302,
+        )
     try:
-        assert use_cases.complete_stripe_connect_use_case is not None
         await use_cases.complete_stripe_connect_use_case.execute(code=code, state=state)
-    except (ValueError, AssertionError):
+    except ValueError:
         return RedirectResponse(
             url=f"{frontend}/admin/settings?panel=gateway&stripe=error",
             status_code=302,
@@ -107,7 +112,8 @@ async def disconnect_stripe(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
-    assert use_cases.disconnect_stripe_use_case is not None
+    if use_cases.disconnect_stripe_use_case is None:
+        raise HTTPException(status_code=503, detail="Stripe Connect is not configured")
     await use_cases.disconnect_stripe_use_case.execute(claims.academy_id)
 
 

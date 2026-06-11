@@ -7,6 +7,7 @@ Tests fake this entirely via the StripeGateway Protocol.
 from __future__ import annotations
 
 import asyncio
+import urllib.parse
 from datetime import datetime
 from typing import Any, Literal
 
@@ -204,3 +205,30 @@ class RealStripeGateway(StripeGateway):
             return str(finalized["id"])
 
         return await asyncio.to_thread(_update)
+
+    def create_connect_link(self, *, redirect_uri: str, state: str) -> str:
+        if not self._connect_client_id:
+            raise ValueError("Stripe Connect client ID is not configured")
+        params = urllib.parse.urlencode(
+            {
+                "client_id": self._connect_client_id,
+                "response_type": "code",
+                "scope": "read_write",
+                "redirect_uri": redirect_uri,
+                "state": state,
+            }
+        )
+        return f"https://connect.stripe.com/oauth/authorize?{params}"
+
+    async def exchange_connect_code(self, code: str) -> str:
+        def _exchange() -> str:
+            try:
+                response = self._stripe.OAuth.token(grant_type="authorization_code", code=code)
+            except self._stripe.StripeError as exc:
+                raise ValueError(f"Stripe Connect code exchange failed: {exc}") from exc
+            account_id = response.get("stripe_user_id")
+            if not account_id:
+                raise ValueError("Stripe Connect code exchange returned no stripe_user_id")
+            return str(account_id)
+
+        return await asyncio.to_thread(_exchange)
