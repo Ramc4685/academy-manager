@@ -27,6 +27,10 @@ from backend.v2.contexts.curriculum.application.use_cases.manage_skills import (
     CreateSkillCommand,
     UpdateSkillCommand,
 )
+from backend.v2.contexts.curriculum.application.use_cases.seed_lesson_cards import (
+    LessonCardSeedError,
+    PathwayNotSeededError,
+)
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
@@ -321,3 +325,27 @@ async def seed_badminton(
         raise HTTPException(status_code=503, detail="Curriculum service not configured")
     program = await use_cases.curriculum.seed_badminton.execute(created_by=claims.user_id)
     return {"program_id": program.program_id, "name": program.name}  # type: ignore[union-attr]
+
+
+@router.post("/seed-lesson-cards")
+async def seed_lesson_cards_route(
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> object:
+    if use_cases.curriculum is None:
+        raise HTTPException(status_code=503, detail="Curriculum service not configured")
+    try:
+        result = await use_cases.curriculum.seed_lesson_cards.execute(created_by=claims.user_id)
+    except PathwayNotSeededError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LessonCardSeedError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "program_id": result.program_id,
+        "cards_created": result.cards_created,
+        "cards_updated": result.cards_updated,
+        "cards_unchanged": result.cards_unchanged,
+        "video_refs_created": result.video_refs_created,
+        "video_refs_updated": result.video_refs_updated,
+        "video_refs_unchanged": result.video_refs_unchanged,
+    }

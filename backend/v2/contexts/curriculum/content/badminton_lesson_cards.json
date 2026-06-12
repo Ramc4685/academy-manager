@@ -1,0 +1,545 @@
+{
+  "_license_note": "ALL teaching content in this file is ORIGINAL academy wording authored for this product. It must NEVER contain text copied verbatim from BWF Shuttle Time or any other source. The source/module/lesson_range/page_hint fields and PDF_REFERENCE links are CITATION METADATA ONLY: we do not host, link, or reproduce the Shuttle Time PDF. PDF_REFERENCE resource links always carry url=null (citation chip). YouTube coverage is best-effort; only the public BWF Shuttle Time video playlist URL is referenced, at level scope. Curated per-lesson/per-skill clips may be added later by editing this file and re-running the seed.",
+  "source": "BWF_SHUTTLE_TIME",
+  "source_title": "BWF Shuttle Time",
+  "video_playlist_url": "https://www.youtube.com/playlist?list=PLYqPBxMmvqpLGSmMr4a7GZTmxBLlV78B1",
+  "cards": [
+    {
+      "slug": "bwf-st-lesson-01",
+      "lesson_number": 1,
+      "level_sequence": 1,
+      "skill_sequences": [1, 2, 3],
+      "display_order": 1,
+      "title": "Grips and grip changes",
+      "goal_summary": "Players hold the racket with a relaxed forehand and backhand grip and can switch between them on demand.",
+      "teaching_points": [
+        "Hold the handle like a friendly handshake, fingers spread and relaxed, not squeezed tight.",
+        "Forehand grip: the V of thumb and forefinger sits on top of the handle so the palm faces the shuttle on contact.",
+        "Backhand grip: roll the thumb flat onto the wider back of the handle for extra push.",
+        "Practise rolling between the two grips without looking at the hand."
+      ],
+      "equipment": ["One racket per player", "A few shuttles per pair"],
+      "activity_summary": "In pairs, players call out 'forehand' or 'backhand' and their partner switches to the matching grip, then gently taps a hand-fed shuttle back. Rotate so everyone feeds and hits.",
+      "safety_notes": ["Keep at least one arm-span between players when swinging.", "No running with rackets at head height."],
+      "module_name": "Starter Lessons",
+      "lesson_range": "1-2",
+      "page_hint": "p.9-15",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 1 · p.9-15", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-02",
+      "lesson_number": 2,
+      "level_sequence": 1,
+      "skill_sequences": [4, 5, 6],
+      "display_order": 2,
+      "title": "Ready position and shuttle control",
+      "goal_summary": "Players stand in a balanced ready position and keep a gentle rally going by controlling the shuttle.",
+      "teaching_points": [
+        "Ready position: feet a little wider than the shoulders, knees soft, racket up in front of the body.",
+        "Watch the shuttle all the way onto the strings.",
+        "Tap the shuttle upward with a small, controlled action rather than a big swing.",
+        "Reset back to the middle and ready position after every hit."
+      ],
+      "equipment": ["One racket per player", "One shuttle per pair", "Markers for the middle spot"],
+      "activity_summary": "Players keep the shuttle up to themselves for as many taps as they can, then progress to gentle cooperative rallies with a partner, counting how many hits they reach.",
+      "safety_notes": ["Spread pairs out so swings cannot reach a neighbour.", "Pick up loose shuttles between attempts to avoid slips."],
+      "module_name": "Starter Lessons",
+      "lesson_range": "1-2",
+      "page_hint": "p.9-15",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 2 · p.9-15", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-03",
+      "lesson_number": 3,
+      "level_sequence": 2,
+      "skill_sequences": [1, 2],
+      "display_order": 3,
+      "title": "Split step and lunge",
+      "goal_summary": "Players time a small split step as the shuttle is hit and reach the shuttle with a balanced lunge.",
+      "teaching_points": [
+        "Split step: a tiny bounce that lands just as the opponent strikes the shuttle, ready to push off either way.",
+        "Lunge: step out with the racket-side foot, knee over the toes, back straight.",
+        "Push back to the middle from the lunge using the front leg.",
+        "Stay light on the balls of the feet between movements."
+      ],
+      "equipment": ["One racket per player", "Cones or markers", "Shuttles for feeding"],
+      "activity_summary": "Coach or partner points or feeds to a corner; the player split steps, lunges to touch the marker or take the shuttle, and recovers to the middle. Build from walking pace to game pace.",
+      "safety_notes": ["Warm up ankles and knees before lunging.", "Keep lunge distance sensible to protect young joints."],
+      "module_name": "Starter Lessons",
+      "lesson_range": "3-6",
+      "page_hint": "p.16-30",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 3 · p.16-30", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-04",
+      "lesson_number": 4,
+      "level_sequence": 2,
+      "skill_sequences": [3],
+      "display_order": 4,
+      "title": "Moving to the forecourt",
+      "goal_summary": "Players move smoothly from the middle to the net and back without crossing their feet awkwardly.",
+      "teaching_points": [
+        "Lead with the racket-side foot when moving forward to the net.",
+        "Keep the racket up and in front while travelling.",
+        "Take small adjusting steps near the net, then a final lunge to the shuttle.",
+        "Recover backwards to the middle facing the net, not turning the back to play."
+      ],
+      "equipment": ["One racket per player", "Shuttles", "Net or net line", "Markers"],
+      "activity_summary": "Players shadow the forecourt movement to four net targets, then add a hand-fed shuttle to touch at full stretch before recovering. Count clean recoveries to the middle.",
+      "safety_notes": ["Check the floor is dry near the net.", "One player moves at a time in shared lanes."],
+      "module_name": "Starter Lessons",
+      "lesson_range": "3-6",
+      "page_hint": "p.16-30",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 4 · p.16-30", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-05",
+      "lesson_number": 5,
+      "level_sequence": 2,
+      "skill_sequences": [4, 5],
+      "display_order": 5,
+      "title": "Net shots",
+      "goal_summary": "Players play gentle forehand and backhand net shots that drop just over the net.",
+      "teaching_points": [
+        "Take the shuttle early and high, close to the top of the net.",
+        "Use a soft, relaxed grip and a gentle pushing action, not a hit.",
+        "Let the shuttle tumble or drop close to the net tape on the other side.",
+        "Recover the racket back up after the shot."
+      ],
+      "equipment": ["One racket per player", "Shuttles", "Net"],
+      "activity_summary": "From a hand feed at the net, players alternate forehand and backhand net shots aiming to land in a target zone just over the net. Progress to soft net-shot exchanges with a partner.",
+      "safety_notes": ["Do not reach over or touch the net.", "Keep fingers clear of the net cord."],
+      "module_name": "Starter Lessons",
+      "lesson_range": "3-6",
+      "page_hint": "p.16-30",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 5 · p.16-30", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-06",
+      "lesson_number": 6,
+      "level_sequence": 2,
+      "skill_sequences": [6],
+      "display_order": 6,
+      "title": "Net rallies",
+      "goal_summary": "Players keep a cooperative net rally going, combining movement and gentle net shots.",
+      "teaching_points": [
+        "Return to a net-ready position after each shot.",
+        "Keep shots soft and just clearing the net.",
+        "Move feet to the shuttle rather than reaching with the arm only.",
+        "Communicate and count rallies to encourage control over power."
+      ],
+      "equipment": ["One racket per player", "Shuttles", "Net"],
+      "activity_summary": "Pairs rally only with net shots, counting consecutive successful exchanges and trying to beat their score. Add a small target zone for accuracy.",
+      "safety_notes": ["Maintain spacing between courts.", "Reset dropped shuttles quickly to avoid trip hazards."],
+      "module_name": "Starter Lessons",
+      "lesson_range": "3-6",
+      "page_hint": "p.16-30",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 6 · p.16-30", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-07",
+      "lesson_number": 7,
+      "level_sequence": 3,
+      "skill_sequences": [1],
+      "display_order": 7,
+      "title": "Backhand low serve",
+      "goal_summary": "Players deliver a backhand low serve that skims the net and lands near the front service line.",
+      "teaching_points": [
+        "Stand close behind the front service line with the racket-side foot forward.",
+        "Hold the shuttle by the feathers in front of the racket.",
+        "Use a short pushing action from the forearm so the shuttle just clears the net.",
+        "Aim for the shuttle to fall near the receiver's front service line."
+      ],
+      "equipment": ["One racket per player", "Plenty of shuttles", "Net", "Target markers"],
+      "activity_summary": "Players serve repeatedly to a target zone near the front service line, scoring a point each time the shuttle skims the net and lands in the zone. Track best out of ten.",
+      "safety_notes": ["Wait until the area ahead is clear before serving.", "Collect shuttles only when all servers pause."],
+      "module_name": "Starter Lessons",
+      "lesson_range": "7-10",
+      "page_hint": "p.31-45",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 7 · p.31-45", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-08",
+      "lesson_number": 8,
+      "level_sequence": 3,
+      "skill_sequences": [2],
+      "display_order": 8,
+      "title": "Forehand high serve",
+      "goal_summary": "Players hit a forehand high serve that travels deep and drops steeply near the back line.",
+      "teaching_points": [
+        "Side-on stance with weight starting on the back foot.",
+        "Drop the shuttle in front and swing up and through with a long action.",
+        "Transfer weight from back foot to front foot during the swing.",
+        "Aim high and deep so the shuttle falls near the back boundary."
+      ],
+      "equipment": ["One racket per player", "Plenty of shuttles", "Net", "Deep target markers"],
+      "activity_summary": "Players serve high and deep to a target zone near the back line, scoring on height and depth. Progress to choosing between a low and high serve on a coach's call.",
+      "safety_notes": ["Check overhead space is clear.", "Keep a safe gap between servers swinging fully."],
+      "module_name": "Starter Lessons",
+      "lesson_range": "7-10",
+      "page_hint": "p.31-45",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 8 · p.31-45", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-09",
+      "lesson_number": 9,
+      "level_sequence": 3,
+      "skill_sequences": [3, 4],
+      "display_order": 9,
+      "title": "Lifting from the net",
+      "goal_summary": "Players lift the shuttle from the forecourt high and deep to the back of the court on both sides.",
+      "teaching_points": [
+        "Reach to the shuttle with a lunge and the racket-side leg forward.",
+        "Get under the shuttle and swing upward to send it high and deep.",
+        "Forehand lift uses the V grip; backhand lift uses the thumb grip.",
+        "Recover to the middle after lifting to be ready for the reply."
+      ],
+      "equipment": ["One racket per player", "Shuttles", "Net", "Deep target markers"],
+      "activity_summary": "From a net feed, players lift alternately forehand and backhand to a deep target zone, then recover. Count lifts that reach the back third.",
+      "safety_notes": ["Lunge within a comfortable range.", "Keep clear of neighbouring players' swings."],
+      "module_name": "Starter Lessons",
+      "lesson_range": "7-10",
+      "page_hint": "p.31-45",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 9 · p.31-45", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-10",
+      "lesson_number": 10,
+      "level_sequence": 3,
+      "skill_sequences": [5],
+      "display_order": 10,
+      "title": "Starting the rally",
+      "goal_summary": "Players put serve, return and movement together to begin and sustain a simple rally.",
+      "teaching_points": [
+        "Choose a serve, then move straight back to the middle ready position.",
+        "Receiver reads the serve and either lifts or plays a net reply.",
+        "Keep the rally going with controlled shots rather than trying to win early.",
+        "Reset to the middle after every shot."
+      ],
+      "equipment": ["One racket per player", "Shuttles", "Net"],
+      "activity_summary": "Pairs play cooperative rallies that always begin with a proper serve, aiming for a target number of shots before anyone tries to win the point.",
+      "safety_notes": ["Agree who serves to avoid two players moving into the same space.", "Clear shuttles between rallies."],
+      "module_name": "Starter Lessons",
+      "lesson_range": "7-10",
+      "page_hint": "p.31-45",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 10 · p.31-45", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-11",
+      "lesson_number": 11,
+      "level_sequence": 4,
+      "skill_sequences": [1, 2, 3],
+      "display_order": 11,
+      "title": "Midcourt drives",
+      "goal_summary": "Players hit flat, fast forehand and backhand drives and keep a flat rally going across the midcourt.",
+      "teaching_points": [
+        "Take the shuttle early and flat at about shoulder height.",
+        "Use a short, sharp action from the forearm and wrist, not a full swing.",
+        "Keep the racket up between shots to react quickly.",
+        "Aim the drive flat and just over the net toward the opponent's midcourt."
+      ],
+      "equipment": ["One racket per player", "Shuttles", "Net"],
+      "activity_summary": "Pairs stand at midcourt and rally with flat drives, alternating forehand and backhand, counting how many fast exchanges they sustain before the shuttle drops.",
+      "safety_notes": ["Keep protective spacing because drives travel fast.", "Eye-level shots: ensure no one stands close behind a player."],
+      "module_name": "Swing and Throw",
+      "lesson_range": "11-12",
+      "page_hint": "p.49-55",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Swing and Throw · Lesson 11 · p.49-55", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-12",
+      "lesson_number": 12,
+      "level_sequence": 4,
+      "skill_sequences": [4, 5],
+      "display_order": 12,
+      "title": "Racket speed and blocking",
+      "goal_summary": "Players generate quick racket-head speed for drives and use a soft block to defend a fast shot.",
+      "teaching_points": [
+        "Relax the grip and squeeze only at the moment of contact to add speed.",
+        "Short backswing, fast forward snap, then relax again.",
+        "Block: meet a fast shot with a still, soft racket so the shuttle drops short over the net.",
+        "Stay low and balanced when defending."
+      ],
+      "equipment": ["One racket per player", "Shuttles", "Net"],
+      "activity_summary": "One partner drives firmly while the other practises soft blocks that fall near the net; then swap. Progress to a drive-versus-block rally.",
+      "safety_notes": ["Defender keeps eyes on the shuttle at all times.", "Drives stay firm but controlled, not at full power indoors with juniors."],
+      "module_name": "Swing and Throw",
+      "lesson_range": "11-12",
+      "page_hint": "p.49-55",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Swing and Throw · Lesson 12 · p.49-55", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-13",
+      "lesson_number": 13,
+      "level_sequence": 5,
+      "skill_sequences": [1],
+      "display_order": 13,
+      "title": "Forehand clear",
+      "goal_summary": "Players hit a forehand overhead clear that sends the shuttle high and deep to the back of the court.",
+      "teaching_points": [
+        "Turn side-on and point the non-racket hand at the shuttle.",
+        "Reach up to a high contact point in front of the body.",
+        "Throw the racket up at the shuttle, like throwing a ball a long way.",
+        "Follow through and recover to the middle."
+      ],
+      "equipment": ["One racket per player", "Shuttles", "Net", "Deep target markers"],
+      "activity_summary": "From a deep feed, players clear to a back-court target zone, scoring on height and depth, then recover to the middle. Track best out of ten.",
+      "safety_notes": ["Warm up shoulders before overhead work.", "Keep a clear arc overhead, away from other players."],
+      "module_name": "Throw and Hit",
+      "lesson_range": "13-18",
+      "page_hint": "p.59-82",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Throw and Hit · Lesson 13 · p.59-82", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-14",
+      "lesson_number": 14,
+      "level_sequence": 5,
+      "skill_sequences": [2],
+      "display_order": 14,
+      "title": "Forehand drop",
+      "goal_summary": "Players disguise a forehand drop from the same overhead preparation as the clear, landing it near the net.",
+      "teaching_points": [
+        "Prepare exactly like a clear so the shot is disguised.",
+        "Slow the racket at contact and guide the shuttle gently downward.",
+        "Aim for the shuttle to land just over the net in the forecourt.",
+        "Recover forward, ready for a possible net reply."
+      ],
+      "equipment": ["One racket per player", "Shuttles", "Net", "Forecourt target markers"],
+      "activity_summary": "Players alternate clear and drop from the same preparation to keep the feeder guessing, scoring drops that land in the forecourt target. Progress to a clear-or-drop choice on call.",
+      "safety_notes": ["Shoulders warmed up before overhead shots.", "Maintain overhead spacing between players."],
+      "module_name": "Throw and Hit",
+      "lesson_range": "13-18",
+      "page_hint": "p.59-82",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Throw and Hit · Lesson 14 · p.59-82", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-15",
+      "lesson_number": 15,
+      "level_sequence": 5,
+      "skill_sequences": [3],
+      "display_order": 15,
+      "title": "Forehand smash",
+      "goal_summary": "Players hit a steep, powerful forehand smash from a high contact point and recover for the reply.",
+      "teaching_points": [
+        "Get behind and under the shuttle with a side-on, balanced stance.",
+        "Contact the shuttle high and slightly in front, hitting steeply downward.",
+        "Snap the forearm and wrist down through the shuttle for power.",
+        "Recover quickly because a good defender may block it back."
+      ],
+      "equipment": ["One racket per player", "Shuttles", "Net"],
+      "activity_summary": "From a high feed, players smash downward into a midcourt target and recover. Then pair smash with a partner who practises blocking it back.",
+      "safety_notes": ["Thorough shoulder warm-up is essential before smashing.", "Never smash toward a player who is not ready and watching."],
+      "module_name": "Throw and Hit",
+      "lesson_range": "13-18",
+      "page_hint": "p.59-82",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Throw and Hit · Lesson 15 · p.59-82", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-16",
+      "lesson_number": 16,
+      "level_sequence": 5,
+      "skill_sequences": [4],
+      "display_order": 16,
+      "title": "Blocking the smash",
+      "goal_summary": "Players defend an incoming smash with a controlled block that drops the shuttle short over the net.",
+      "teaching_points": [
+        "Adopt a low, wide defensive stance with the racket out in front.",
+        "Watch the shuttle early and keep the racket still at contact.",
+        "Cushion the pace so the shuttle falls softly over the net.",
+        "Reset to the defensive base after the block."
+      ],
+      "equipment": ["One racket per player", "Shuttles", "Net", "Net target zone"],
+      "activity_summary": "One partner smashes at a sensible pace while the other blocks into a net target zone, then swap. Build into a smash-and-block rally.",
+      "safety_notes": ["Defender must be set and watching before each smash.", "Agree a pace that is safe for the group's level."],
+      "module_name": "Throw and Hit",
+      "lesson_range": "13-18",
+      "page_hint": "p.59-82",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Throw and Hit · Lesson 16 · p.59-82", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-17",
+      "lesson_number": 17,
+      "level_sequence": 5,
+      "skill_sequences": [5],
+      "display_order": 17,
+      "title": "Scissor jump",
+      "goal_summary": "Players use a scissor-kick jump to hit overhead shots from deep while moving back, landing balanced.",
+      "teaching_points": [
+        "Move back side-on and jump off the non-racket foot.",
+        "Swap the legs in the air like scissors to turn the body through the shot.",
+        "Hit the overhead at full height while airborne.",
+        "Land softly on the racket-side foot and push forward to recover."
+      ],
+      "equipment": ["One racket per player", "Shuttles", "Net"],
+      "activity_summary": "Players shadow the scissor jump first, then add a deep feed and play a clear or smash with the jump, focusing on a balanced landing and recovery.",
+      "safety_notes": ["Warm up legs and shoulders before jumping.", "Ensure a clear, dry landing area and good footwear."],
+      "module_name": "Throw and Hit",
+      "lesson_range": "13-18",
+      "page_hint": "p.59-82",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Throw and Hit · Lesson 17 · p.59-82", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-18",
+      "lesson_number": 18,
+      "level_sequence": 5,
+      "skill_sequences": [1, 2, 3, 4, 5],
+      "display_order": 18,
+      "title": "Rearcourt combination",
+      "goal_summary": "Players combine clear, drop, smash and defensive blocks in a connected rearcourt sequence.",
+      "teaching_points": [
+        "Use the same overhead preparation for clear, drop and smash to stay unpredictable.",
+        "Choose the shot based on the shuttle's height and the opponent's position.",
+        "Recover to the middle after every rearcourt shot.",
+        "Defend with a block when caught out of position."
+      ],
+      "equipment": ["One racket per player", "Shuttles", "Net", "Target markers"],
+      "activity_summary": "Players run a set sequence (clear, drop, smash, block) on feeds, then play a conditioned rally where only rearcourt shots and blocks score. Reset to the middle each time.",
+      "safety_notes": ["Full warm-up before overhead and jumping work.", "Keep safe spacing during fast exchanges."],
+      "module_name": "Throw and Hit",
+      "lesson_range": "13-18",
+      "page_hint": "p.59-82",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Throw and Hit · Lesson 18 · p.59-82", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-19",
+      "lesson_number": 19,
+      "level_sequence": 6,
+      "skill_sequences": [1],
+      "display_order": 19,
+      "title": "Singles scoring",
+      "goal_summary": "Players call the score correctly and serve from the right court throughout a singles game.",
+      "teaching_points": [
+        "Server's score even means serve from the right court; odd means serve from the left.",
+        "Always call the server's score first.",
+        "A rally is won by the side that makes the last good shot.",
+        "Understand reaching twenty-all and playing on by two points."
+      ],
+      "equipment": ["One racket per player", "Shuttles", "Net", "Scoreboard or cards"],
+      "activity_summary": "Players play short singles games to eleven, pausing to call the score and check the correct service court before each serve. Coach spot-checks scoring decisions.",
+      "safety_notes": ["Agree game boundaries to avoid collisions.", "Rotate rest periods to manage fatigue."],
+      "module_name": "Learn to Win",
+      "lesson_range": "19-22",
+      "page_hint": "p.86-102",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Learn to Win · Lesson 19 · p.86-102", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-20",
+      "lesson_number": 20,
+      "level_sequence": 6,
+      "skill_sequences": [2],
+      "display_order": 20,
+      "title": "Using the open court",
+      "goal_summary": "Players move the opponent by hitting purposefully into open space rather than straight back.",
+      "teaching_points": [
+        "Look at where the opponent is before choosing the target.",
+        "Send the shuttle to the space they have just left.",
+        "Mix deep clears with short drops to move them front and back.",
+        "Be able to explain why a shot was chosen."
+      ],
+      "equipment": ["One racket per player", "Shuttles", "Net", "Court-zone markers"],
+      "activity_summary": "In conditioned singles, a point counts double when it ends with the shuttle landing in clearly open space. Players briefly explain one good choice to the coach.",
+      "safety_notes": ["Keep awareness of the partner's position to avoid clashes.", "Hydration breaks during longer rallies."],
+      "module_name": "Learn to Win",
+      "lesson_range": "19-22",
+      "page_hint": "p.86-102",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Learn to Win · Lesson 20 · p.86-102", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-21",
+      "lesson_number": 21,
+      "level_sequence": 6,
+      "skill_sequences": [3, 4],
+      "display_order": 21,
+      "title": "Doubles basics",
+      "goal_summary": "Players set up correctly for a doubles serve and shift between attacking and defending formations.",
+      "teaching_points": [
+        "Serve from the correct court based on the score and stand ready close to the front line.",
+        "Attacking formation: one player front, one player back.",
+        "Defending formation: both players side by side covering half the court each.",
+        "Rotate smoothly between front-back and side-by-side as the rally changes."
+      ],
+      "equipment": ["Rackets for four players", "Shuttles", "Net"],
+      "activity_summary": "Pairs practise serve and return, then run rotation drills moving between front-back attack and side-by-side defence on the coach's call, before playing conditioned doubles rallies.",
+      "safety_notes": ["Partners call for the shuttle to avoid two players swinging together.", "Keep clear spacing in the midcourt."],
+      "module_name": "Learn to Win",
+      "lesson_range": "19-22",
+      "page_hint": "p.86-102",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Learn to Win · Lesson 21 · p.86-102", "url": null}
+      ]
+    },
+    {
+      "slug": "bwf-st-lesson-22",
+      "lesson_number": 22,
+      "level_sequence": 6,
+      "skill_sequences": [5, 6],
+      "display_order": 22,
+      "title": "Match play",
+      "goal_summary": "Players read attacking, neutral and defensive situations and play a full game independently.",
+      "teaching_points": [
+        "Attack when the shuttle is above net height; defend when it is below.",
+        "Play a neutral shot to reset when neither attacking nor defending.",
+        "Apply scoring, serving and footwork without prompting.",
+        "Show respect to opponents and partners for the whole game."
+      ],
+      "equipment": ["Rackets", "Shuttles", "Net", "Scoreboard"],
+      "activity_summary": "Players play full singles or doubles games to twenty-one, managing their own scoring and serving. Coach observes shot-choice in attacking, neutral and defensive moments.",
+      "safety_notes": ["Manage rest and hydration across full games.", "Agree clear court boundaries between adjacent matches."],
+      "module_name": "Learn to Win",
+      "lesson_range": "19-22",
+      "page_hint": "p.86-102",
+      "resource_links": [
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Learn to Win · Lesson 22 · p.86-102", "url": null}
+      ]
+    }
+  ],
+  "level_videos": [
+    {"level_sequence": 1, "title": "BWF Shuttle Time video playlist", "url": "https://www.youtube.com/playlist?list=PLYqPBxMmvqpLGSmMr4a7GZTmxBLlV78B1", "display_order": 1},
+    {"level_sequence": 2, "title": "BWF Shuttle Time video playlist", "url": "https://www.youtube.com/playlist?list=PLYqPBxMmvqpLGSmMr4a7GZTmxBLlV78B1", "display_order": 1},
+    {"level_sequence": 3, "title": "BWF Shuttle Time video playlist", "url": "https://www.youtube.com/playlist?list=PLYqPBxMmvqpLGSmMr4a7GZTmxBLlV78B1", "display_order": 1},
+    {"level_sequence": 4, "title": "BWF Shuttle Time video playlist", "url": "https://www.youtube.com/playlist?list=PLYqPBxMmvqpLGSmMr4a7GZTmxBLlV78B1", "display_order": 1},
+    {"level_sequence": 5, "title": "BWF Shuttle Time video playlist", "url": "https://www.youtube.com/playlist?list=PLYqPBxMmvqpLGSmMr4a7GZTmxBLlV78B1", "display_order": 1},
+    {"level_sequence": 6, "title": "BWF Shuttle Time video playlist", "url": "https://www.youtube.com/playlist?list=PLYqPBxMmvqpLGSmMr4a7GZTmxBLlV78B1", "display_order": 1}
+  ],
+  "skill_videos": []
+}
