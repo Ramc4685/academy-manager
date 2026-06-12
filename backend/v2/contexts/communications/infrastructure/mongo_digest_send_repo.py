@@ -1,0 +1,86 @@
+"""Mongo-backed coach digest-send repository.
+
+``try_claim`` is an insert-first lock: it writes a QUEUED row against the unique
+``(academy_id, coach_id, digest_date)`` index. A duplicate-key error means a row
+already exists for that coach/day, so the claim is refused (returns ``None``).
+That single guard makes the daily digest idempotent across scheduler retries.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any
+
+from pymongo.errors import DuplicateKeyError
+
+from backend.v2.contexts.communications.application.ports import DigestSendRepository
+from backend.v2.contexts.communications.domain.models import DigestSend, DigestSendStatus
+from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.tenancy import TenantScopedRepository
+
+
+class MongoDigestSendRepository(TenantScopedRepository, DigestSendRepository):
+    collection_name = "coach_digest_sends"
+
+    async def try_claim(
+        self, academy_id: str, coach_id: str, digest_date: str
+    ) -> DigestSend | None:
+        digest = DigestSend.queued(
+            digest_id=new_ulid(),
+            academy_id=academy_id,
+            coach_id=coach_id,
+            coach_email=None,
+            digest_date=digest_date,
+            created_at=datetime.now(UTC),
+        )
+        try:
+            await self.collection.insert_one(self._to_doc(digest))
+        except DuplicateKeyError:
+            return None
+        return digest
+
+    async def mark_sent(self, digest_id: str, provider_message_id: str | None) -> None:
+        await self.collection.update_one(
+            {"digest_id": digest_id},
+            {
+                "$set": {
+                    "status": str(DigestSendStatus.SENT),
+                    "provider_message_id": provider_message_id,
+                    "sent_at": datetime.now(UTC).isoformat(),
+                    "failed_reason": None,
+                }
+            },
+        )
+
+    async def mark_failed(self, digest_id: str, reason: str) -> None:
+        await self.collection.update_one(
+            {"digest_id": digest_id},
+            {
+                "$set": {
+                    "status": str(DigestSendStatus.FAILED),
+                    "failed_reason": reason,
+                    "provider_message_id": None,
+                }
+            },
+        )
+
+    async def mark_skipped_empty(self, digest_id: str) -> None:
+        await self.collection.update_one(
+            {"digest_id": digest_id},
+            {"$set": {"status": str(DigestSendStatus.SKIPPED_EMPTY)}},
+        )
+
+    @staticmethod
+    def _to_doc(d: DigestSend) -> dict[str, Any]:
+        return {
+            "digest_id": d.digest_id,
+            "academy_id": d.academy_id,
+            "coach_id": d.coach_id,
+            "coach_email": d.coach_email,
+            "digest_date": d.digest_date,
+            "status": str(d.status),
+            "provider_message_id": d.provider_message_id,
+            "sent_at": d.sent_at,
+            "failed_reason": d.failed_reason,
+            "created_at": d.created_at,
+        }

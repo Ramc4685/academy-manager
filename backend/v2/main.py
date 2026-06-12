@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
@@ -22,10 +23,14 @@ from starlette.middleware.cors import CORSMiddleware
 
 from backend.v2.composition.admin import compose_admin
 from backend.v2.composition.coach import compose_coach
+from backend.v2.composition.digests import compose_send_coach_daily_digest
 from backend.v2.composition.parent import compose_parent
 from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
+)
+from backend.v2.contexts.communications.application.use_cases.send_coach_daily_digest import (
+    SendCoachDailyDigestCommand,
 )
 from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import (
     BootstrapAcademy,
@@ -241,6 +246,33 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if totals["processed"]:
             log.info("scheduled_resume_actions_processed", extra=totals)
 
+    async def _send_coach_daily_digests() -> None:
+        on_date = datetime.now(UTC).date()
+        totals = {
+            "academy_count": 0,
+            "coaches": 0,
+            "sent": 0,
+            "skipped_empty": 0,
+            "failed": 0,
+            "already_claimed": 0,
+        }
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            settings.default_academy_id,
+        ):
+            with tenant_scope(academy_id):
+                result = await app.state.coach_digest.execute(
+                    SendCoachDailyDigestCommand(academy_id=academy_id, digest_date=on_date)
+                )
+            totals["academy_count"] += 1
+            totals["coaches"] += result.total_coaches
+            totals["sent"] += result.sent
+            totals["skipped_empty"] += result.skipped_empty
+            totals["failed"] += result.failed
+            totals["already_claimed"] += result.already_claimed
+        if totals["coaches"]:
+            log.info("coach_daily_digests_processed", extra=totals)
+
     scheduler = AsyncIOScheduler(timezone=settings.scheduler_tz)
     scheduler.add_job(
         _process_scheduled_resumes,
@@ -250,6 +282,20 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         id="process_scheduled_resume_actions",
         replace_existing=True,
     )
+    # Coach daily teaching-plan digest — opt-in (default off). With the flag
+    # unset the job is never registered, so no digest can be sent locally; the
+    # composed sender is also the stub unless email delivery is explicitly on.
+    if settings.coach_digest_enabled:
+        app.state.coach_digest = compose_send_coach_daily_digest(db)
+        scheduler.add_job(
+            _send_coach_daily_digests,
+            "cron",
+            hour=settings.coach_digest_hour,
+            minute=0,
+            id="send_coach_daily_digests",
+            replace_existing=True,
+            max_instances=1,
+        )
     scheduler.start()
     app.state.scheduler = scheduler
 

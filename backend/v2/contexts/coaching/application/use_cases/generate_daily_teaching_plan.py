@@ -43,9 +43,7 @@ class RosterGetter(Protocol):
 
 
 class TeachingFocusGetter(Protocol):
-    async def for_students(
-        self, students: list[tuple[str, str]], program_id: str
-    ) -> Any: ...
+    async def for_students(self, students: list[tuple[str, str]], program_id: str) -> Any: ...
 
 
 class LessonCardReader(Protocol):

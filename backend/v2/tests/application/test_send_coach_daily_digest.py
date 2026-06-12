@@ -1,0 +1,295 @@
+"""SendCoachDailyDigest use case + renderer behaviour.
+
+A stub send port is used so no real provider is ever contacted. The plan is a
+synthetic stand-in for the coaching context's *Today's Teaching Plan* DTO —
+the digest reads it purely by duck typing (ADR-0005: no cross-context import).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from backend.v2.contexts.communications.application.digest_renderer import render_coach_digest
+from backend.v2.contexts.communications.application.ports import (
+    AudienceResolver,
+    ResolvedRecipient,
+    SendOutcome,
+)
+from backend.v2.contexts.communications.application.use_cases.send_coach_daily_digest import (
+    SendCoachDailyDigest,
+    SendCoachDailyDigestCommand,
+)
+from backend.v2.contexts.communications.domain.models import (
+    AcademyAudience,
+    DigestSend,
+    DigestSendStatus,
+)
+
+ACADEMY_ID = "acad-1"
+DIGEST_DATE = date(2026, 6, 12)
+
+# EN DASH (U+2013) — matches the lesson-card data shape ("Lessons 3-6", "p.16-30")
+# built via chr() so there is no ambiguous dash literal in source (RUF001).
+_EN = chr(0x2013)
+
+CARD_YOUTUBE = "https://youtu.be/card-clip"
+SKILL_YOUTUBE = "https://youtu.be/forehand-clear"
+LEVEL_YOUTUBE = "https://youtu.be/level-1-playlist"
+
+
+# ---------------------------------------------------------------------------
+# Fakes
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FakeDigestSendRepository:
+    claimed: dict[tuple[str, str, str], DigestSend] = field(default_factory=dict)
+    by_id: dict[str, DigestSend] = field(default_factory=dict)
+    _counter: int = 0
+
+    async def try_claim(
+        self, academy_id: str, coach_id: str, digest_date: str
+    ) -> DigestSend | None:
+        key = (academy_id, coach_id, digest_date)
+        if key in self.claimed:
+            return None
+        self._counter += 1
+        from datetime import UTC, datetime
+
+        digest = DigestSend.queued(
+            digest_id=f"dg-{self._counter:04d}",
+            academy_id=academy_id,
+            coach_id=coach_id,
+            coach_email=None,
+            digest_date=digest_date,
+            created_at=datetime(2026, 6, 12, tzinfo=UTC),
+        )
+        self.claimed[key] = digest
+        self.by_id[digest.digest_id] = digest
+        return digest
+
+    async def mark_sent(self, digest_id: str, provider_message_id: str | None) -> None:
+        d = self.by_id[digest_id]
+        self.by_id[digest_id] = d.mark_sent(provider_message_id=provider_message_id, sent_at="now")
+
+    async def mark_failed(self, digest_id: str, reason: str) -> None:
+        d = self.by_id[digest_id]
+        self.by_id[digest_id] = d.mark_failed(reason=reason)
+
+    async def mark_skipped_empty(self, digest_id: str) -> None:
+        d = self.by_id[digest_id]
+        self.by_id[digest_id] = d.mark_skipped_empty()
+
+
+@dataclass
+class FakeCoachResolver(AudienceResolver):
+    coaches: list[ResolvedRecipient] = field(default_factory=list)
+
+    async def resolve_academy_audience(self, audience: AcademyAudience) -> list[ResolvedRecipient]:
+        assert audience.role == "coach"
+        return list(self.coaches)
+
+    async def resolve_session_audience(self, audience: Any) -> list[ResolvedRecipient]:
+        return []
+
+    async def resolve_coach_audience(self, audience: Any) -> list[ResolvedRecipient]:
+        return []
+
+    async def resolve_selected_audience(self, audience: Any) -> list[ResolvedRecipient]:
+        return []
+
+    async def resolve_payment_risk_audience(self, audience: Any) -> list[ResolvedRecipient]:
+        return []
+
+
+@dataclass
+class StubSendPort:
+    sent: list[dict[str, Any]] = field(default_factory=list)
+
+    async def send(self, *, recipient: ResolvedRecipient, subject: str, body: str) -> SendOutcome:
+        self.sent.append({"email": recipient.email, "subject": subject, "body": body})
+        return SendOutcome(
+            ok=True, provider_message_id=f"stub-{len(self.sent)}", failed_reason=None
+        )
+
+
+@dataclass
+class FakePlanProvider:
+    plan_by_coach: dict[str, Any] = field(default_factory=dict)
+    calls: list[tuple[str, date]] = field(default_factory=list)
+
+    async def execute(self, coach_id: str, on_date: date) -> Any | None:
+        self.calls.append((coach_id, on_date))
+        return self.plan_by_coach.get(coach_id)
+
+
+# ---------------------------------------------------------------------------
+# Plan builders (synthetic DTO stand-ins)
+# ---------------------------------------------------------------------------
+
+
+def _populated_plan() -> Any:
+    next_skill = SimpleNamespace(
+        name="Forehand Clear",
+        status="PRACTICING",
+        youtube_links=[SimpleNamespace(title="Clear drill", url=SKILL_YOUTUBE)],
+    )
+    student = SimpleNamespace(student_name="Alice", focus="Forehand Clear", next_skill=next_skill)
+    card = SimpleNamespace(
+        title="Backhand Lift",
+        source="BWF_SHUTTLE_TIME",
+        module_name="Starter Lessons",
+        lesson_range=f"Lessons 3{_EN}6",
+        page_hint=f"16{_EN}30",
+        resource_links=[
+            SimpleNamespace(kind="YOUTUBE", title="Lesson clip", url=CARD_YOUTUBE),
+            SimpleNamespace(kind="PDF_REFERENCE", title="Shuttle Time PDF", url=None),
+        ],
+    )
+    group = SimpleNamespace(
+        level_name="Level 1",
+        youtube_links=[SimpleNamespace(title="Level playlist", url=LEVEL_YOUTUBE)],
+        lesson_card=card,
+        students=[student],
+    )
+    session = SimpleNamespace(
+        title="Tuesday Juniors",
+        location="Court A",
+        start_at=None,
+        end_at=None,
+        groups=[group],
+        unplaced=[SimpleNamespace(student_id="st-9", student_name="Bob")],
+    )
+    return SimpleNamespace(
+        date="2026-06-12",
+        program_name="Badminton",
+        pathway_configured=True,
+        sessions=[session],
+    )
+
+
+def _empty_plan() -> Any:
+    return SimpleNamespace(
+        date="2026-06-12", program_name="Badminton", pathway_configured=True, sessions=[]
+    )
+
+
+# ---------------------------------------------------------------------------
+# Renderer
+# ---------------------------------------------------------------------------
+
+
+def test_renderer_includes_sessions_students_skills_youtube_and_pdf_citation() -> None:
+    subject, body = render_coach_digest(_populated_plan())
+
+    assert "2026-06-12" in subject
+    assert "Tuesday Juniors" in body
+    assert "Court A" in body
+    assert "Level 1" in body
+    assert "Backhand Lift" in body
+    assert "Alice — Forehand Clear (practicing)" in body
+    assert "Bob" in body  # unplaced student listed
+    # YouTube URLs verbatim, every scope.
+    assert SKILL_YOUTUBE in body
+    assert CARD_YOUTUBE in body
+    assert LEVEL_YOUTUBE in body
+    # PDF is citation text only — present as a reference, never as a link.
+    assert f"Shuttle Time, Starter Lessons, Lessons 3{_EN}6, p.16{_EN}30" in body
+    assert "Shuttle Time PDF" not in body  # PDF resource link title not rendered
+
+
+# ---------------------------------------------------------------------------
+# Use case
+# ---------------------------------------------------------------------------
+
+
+def _build(coaches, plans):
+    digests = FakeDigestSendRepository()
+    resolver = FakeCoachResolver(coaches=coaches)
+    sender = StubSendPort()
+    provider = FakePlanProvider(plan_by_coach=plans)
+    use_case = SendCoachDailyDigest(
+        digests=digests, resolver=resolver, sender=sender, plan_provider=provider
+    )
+    return use_case, digests, sender, provider
+
+
+@pytest.mark.asyncio
+async def test_sends_personalized_digest_per_coach() -> None:
+    use_case, digests, sender, _ = _build(
+        coaches=[ResolvedRecipient(user_id="coach-1", email="c1@example.test")],
+        plans={"coach-1": _populated_plan()},
+    )
+
+    result = await use_case.execute(
+        SendCoachDailyDigestCommand(academy_id=ACADEMY_ID, digest_date=DIGEST_DATE)
+    )
+
+    assert result.sent == 1
+    assert result.skipped_empty == 0
+    assert result.failed == 0
+    assert len(sender.sent) == 1
+    assert sender.sent[0]["email"] == "c1@example.test"
+    assert "Forehand Clear" in sender.sent[0]["body"]
+    assert digests.by_id["dg-0001"].status == DigestSendStatus.SENT
+
+
+@pytest.mark.asyncio
+async def test_empty_plan_is_skipped_with_no_email() -> None:
+    use_case, digests, sender, _ = _build(
+        coaches=[ResolvedRecipient(user_id="coach-1", email="c1@example.test")],
+        plans={"coach-1": _empty_plan()},
+    )
+
+    result = await use_case.execute(
+        SendCoachDailyDigestCommand(academy_id=ACADEMY_ID, digest_date=DIGEST_DATE)
+    )
+
+    assert result.skipped_empty == 1
+    assert result.sent == 0
+    assert sender.sent == []  # zero EmailSendPort calls
+    assert digests.by_id["dg-0001"].status == DigestSendStatus.SKIPPED_EMPTY
+
+
+@pytest.mark.asyncio
+async def test_second_run_same_date_sends_zero() -> None:
+    use_case, _digests, sender, _ = _build(
+        coaches=[ResolvedRecipient(user_id="coach-1", email="c1@example.test")],
+        plans={"coach-1": _populated_plan()},
+    )
+
+    first = await use_case.execute(
+        SendCoachDailyDigestCommand(academy_id=ACADEMY_ID, digest_date=DIGEST_DATE)
+    )
+    second = await use_case.execute(
+        SendCoachDailyDigestCommand(academy_id=ACADEMY_ID, digest_date=DIGEST_DATE)
+    )
+
+    assert first.sent == 1
+    assert second.sent == 0
+    assert second.already_claimed == 1
+    # Only the first run reached the send port.
+    assert len(sender.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_coach_without_email_is_marked_failed_not_sent() -> None:
+    use_case, digests, sender, _ = _build(
+        coaches=[ResolvedRecipient(user_id="coach-1", email=None)],
+        plans={"coach-1": _populated_plan()},
+    )
+
+    result = await use_case.execute(
+        SendCoachDailyDigestCommand(academy_id=ACADEMY_ID, digest_date=DIGEST_DATE)
+    )
+
+    assert result.failed == 1
+    assert result.sent == 0
+    assert sender.sent == []
+    assert digests.by_id["dg-0001"].status == DigestSendStatus.FAILED
