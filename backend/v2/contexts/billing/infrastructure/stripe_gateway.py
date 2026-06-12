@@ -124,29 +124,32 @@ class RealStripeGateway(StripeGateway):
         def _retrieve() -> Any:
             return self._stripe.checkout.Session.retrieve(checkout_session_id)
 
-        result = await asyncio.to_thread(_retrieve)
-        return result.to_dict_recursive()  # type: ignore[no-any-return]
+        result = await self._run_stripe_retrieve(
+            _retrieve,
+            label="Stripe Checkout Session",
+        )
+        return _stripe_object_to_dict(result)
 
     async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
         def _retrieve() -> Any:
             return self._stripe.Invoice.retrieve(stripe_invoice_id)
 
-        result = await asyncio.to_thread(_retrieve)
-        return result.to_dict_recursive()  # type: ignore[no-any-return]
+        result = await self._run_stripe_retrieve(_retrieve, label="Stripe Invoice")
+        return _stripe_object_to_dict(result)
 
     async def retrieve_subscription(self, stripe_subscription_id: str) -> dict[str, Any]:
         def _retrieve() -> Any:
             return self._stripe.Subscription.retrieve(stripe_subscription_id)
 
-        result = await asyncio.to_thread(_retrieve)
-        return result.to_dict_recursive()  # type: ignore[no-any-return]
+        result = await self._run_stripe_retrieve(_retrieve, label="Stripe Subscription")
+        return _stripe_object_to_dict(result)
 
     async def retrieve_payment_intent(self, stripe_payment_intent_id: str) -> dict[str, Any]:
         def _retrieve() -> Any:
             return self._stripe.PaymentIntent.retrieve(stripe_payment_intent_id)
 
-        result = await asyncio.to_thread(_retrieve)
-        return result.to_dict_recursive()  # type: ignore[no-any-return]
+        result = await self._run_stripe_retrieve(_retrieve, label="Stripe PaymentIntent")
+        return _stripe_object_to_dict(result)
 
     async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
         def _create() -> Any:
@@ -260,3 +263,21 @@ class RealStripeGateway(StripeGateway):
             return str(account_id)
 
         return await asyncio.to_thread(_exchange)
+
+    async def _run_stripe_retrieve(self, fn: Any, *, label: str) -> Any:
+        try:
+            return await asyncio.to_thread(fn)
+        except self._stripe.StripeError as exc:
+            raise ValueError(f"{label} lookup failed: {exc}") from exc
+
+
+def _stripe_object_to_dict(result: Any) -> dict[str, Any]:
+    if isinstance(result, dict):
+        return result
+    to_dict = getattr(result, "to_dict_recursive", None)
+    if callable(to_dict):
+        return to_dict()
+    private_to_dict = getattr(result, "_to_dict_recursive", None)
+    if callable(private_to_dict):
+        return private_to_dict()
+    return dict(result)
