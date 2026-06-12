@@ -21,6 +21,7 @@ test.describe("google sign-in mode on mobile devices", () => {
   test("continue-with-google does a full-page redirect, not a popup", async ({
     page,
   }) => {
+    test.setTimeout(60_000);
     const popups: string[] = [];
     page.on("popup", (popup) => popups.push(popup.url()));
 
@@ -35,13 +36,17 @@ test.describe("google sign-in mode on mobile devices", () => {
     );
 
     await page.goto("/login");
+    const googleButton = page.getByTestId("login-google");
+    await expect(googleButton).toBeEnabled({ timeout: 15_000 });
     // On slow CI WebKit the first click can land before React hydration
     // attaches the onClick handler, leaving the page inert on /login.
     // Retry the click until the navigation actually happens.
     await expect(async () => {
-      await page.getByTestId("login-google").click();
-      await page.waitForURL("**/__/auth/handler**", { timeout: 3_000 });
-    }).toPass({ timeout: 20_000 });
+      await Promise.all([
+        page.waitForURL("**/__/auth/handler**", { timeout: 5_000 }),
+        googleButton.click(),
+      ]);
+    }).toPass({ timeout: 45_000 });
     const url = new URL(page.url());
     expect(url.pathname).toBe("/__/auth/handler");
     expect(url.searchParams.get("authType")).toBe("signInViaRedirect");

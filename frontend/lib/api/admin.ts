@@ -333,6 +333,7 @@ export interface ReconcileStripeBillingResponse {
   stripe_checkout_session_id: string | null;
   stripe_subscription_id: string | null;
   stripe_invoice_id: string | null;
+  stripe_payment_intent_id: string | null;
   audit_id: string | null;
 }
 

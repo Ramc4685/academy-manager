@@ -127,6 +127,7 @@ class FakeStripeGateway(StripeGateway):
             "status": "paid",
             "amount_paid": 0,
             "currency": "usd",
+            "payment_intent": f"pi_fake_{stripe_invoice_id}",
         }
 
     async def retrieve_subscription(self, stripe_subscription_id: str) -> dict[str, Any]:

@@ -80,6 +80,7 @@ class StripeEventDedup(Protocol):
     async def claim_next(
         self,
         *,
+        academy_id: str,
         processor_id: str,
         lock_seconds: int = 300,
     ) -> dict[str, Any] | None: ...

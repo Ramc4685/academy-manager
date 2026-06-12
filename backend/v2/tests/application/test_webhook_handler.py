@@ -126,9 +126,11 @@ class FakeDedup:
         }
         return True
 
-    async def claim_next(self, *, processor_id, lock_seconds=300):
+    async def claim_next(self, *, academy_id, processor_id, lock_seconds=300):
         now = datetime.now(UTC)
         for event in self.events.values():
+            if event.get("academy_id") != academy_id:
+                continue
             retry_at = event.get("next_retry_at")
             if isinstance(retry_at, datetime) and retry_at > now:
                 continue
@@ -408,10 +410,48 @@ async def test_tenant_mismatch_event_is_quarantined() -> None:
     repo = FakePaymentRepo()
     _seed_pending_payment(repo)
     dedup = FakeDedup()
-    uc = _build(repo, dedup=dedup)
+
+    class MismatchedStripeGateway(FakeStripeGateway):
+        async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, Any]:
+            return {
+                "id": checkout_session_id,
+                "object": "checkout.session",
+                "status": "complete",
+                "payment_status": "paid",
+                "metadata": {"academy_id": "other-academy"},
+            }
+
+    uc = _build(repo, dedup=dedup, stripe=MismatchedStripeGateway())
     body = json.dumps(
         {
             "id": "evt_wrong_tenant",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_1",
+                    "metadata": {"academy_id": "acad"},
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["status"] == "quarantined"
+    assert dedup.events["evt_wrong_tenant"]["status"] == "quarantined"
+    assert repo.by_id["pay-1"].status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_process_next_does_not_claim_other_academy_events() -> None:
+    repo = FakePaymentRepo()
+    _seed_pending_payment(repo)
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup)
+    body = json.dumps(
+        {
+            "id": "evt_other_academy_pending",
             "type": "checkout.session.completed",
             "data": {
                 "object": {
@@ -425,8 +465,8 @@ async def test_tenant_mismatch_event_is_quarantined() -> None:
     await uc.accept(body, "test_signature")
     res = await uc.process_next(processor_id="test-worker")
 
-    assert res["status"] == "quarantined"
-    assert dedup.events["evt_wrong_tenant"]["status"] == "quarantined"
+    assert res == {"processed": False, "empty": True}
+    assert dedup.events["evt_other_academy_pending"]["status"] == "received"
     assert repo.by_id["pay-1"].status == "pending"
 
 

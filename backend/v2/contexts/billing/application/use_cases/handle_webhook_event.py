@@ -116,6 +116,7 @@ class HandleWebhookEvent:
     ) -> dict[str, Any]:
         with tenant_scope(self._academy_id):
             event_doc = await self._dedup.claim_next(
+                academy_id=self._academy_id,
                 processor_id=processor_id,
                 lock_seconds=lock_seconds,
             )

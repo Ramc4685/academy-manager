@@ -342,8 +342,10 @@ async def reconcile_stripe_billing(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> ReconcileStripeBillingResponse:
+    if use_cases.reconcile_stripe_billing is None:
+        raise HTTPException(status_code=503, detail="Stripe billing reconciliation unavailable")
     try:
-        result = await use_cases.reconcile_stripe_billing(  # type: ignore[operator]
+        result = await use_cases.reconcile_stripe_billing(
             parent_id=body.parent_id,
             enrollment_id=body.enrollment_id,
             stripe_customer_id=body.stripe_customer_id,

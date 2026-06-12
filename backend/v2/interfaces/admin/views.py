@@ -597,6 +597,7 @@ class ReconcileStripeBillingResponse(BaseModel):
     stripe_checkout_session_id: str | None = None
     stripe_subscription_id: str | None = None
     stripe_invoice_id: str | None = None
+    stripe_payment_intent_id: str | None = None
     audit_id: str
 
 

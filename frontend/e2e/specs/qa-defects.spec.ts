@@ -188,9 +188,10 @@ test.describe("QA defect regressions", () => {
 
     await page.goto("/parent/payments");
 
-    const startButton = page.getByRole("button", { name: "Start autopay" });
-    await expect(startButton).toBeVisible();
-    await expect(startButton).toBeEnabled();
+    await expect(page.getByText("Payment setup pending")).toBeVisible();
+    const retryButton = page.getByRole("button", { name: "Retry autopay" });
+    await expect(retryButton).toBeVisible();
+    await expect(retryButton).toBeEnabled();
   });
 
   test("parent pause request sends resume date contract", async ({ page }) => {

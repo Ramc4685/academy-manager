@@ -14,6 +14,10 @@ import pytest
 from backend.v2.contexts.billing.infrastructure.stripe_gateway import RealStripeGateway
 
 
+class _FakeStripeError(Exception):
+    pass
+
+
 class _FakeCheckoutSession:
     calls: ClassVar[list[dict[str, object]]] = []
 
@@ -25,6 +29,17 @@ class _FakeCheckoutSession:
             url="https://checkout.stripe.test/session",
             subscription="sub_test_request_shape",
         )
+
+    @classmethod
+    def retrieve(cls, checkout_session_id: str) -> object:
+        if checkout_session_id == "cs_missing":
+            raise _FakeStripeError("No such checkout.session")
+
+        class _StripeObject:
+            def _to_dict_recursive(self) -> dict[str, object]:
+                return {"id": checkout_session_id, "object": "checkout.session"}
+
+        return _StripeObject()
 
 
 @pytest.fixture(autouse=True)
@@ -38,6 +53,7 @@ def fake_stripe_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
         Refund=SimpleNamespace(),
         Subscription=SimpleNamespace(),
         Invoice=SimpleNamespace(),
+        StripeError=_FakeStripeError,
     )
     monkeypatch.setitem(sys.modules, "stripe", fake_stripe)
 
@@ -83,3 +99,20 @@ async def test_payment_checkout_uses_dynamic_payment_methods() -> None:
     request = _FakeCheckoutSession.calls[-1]
     assert request["mode"] == "payment"
     assert "payment_method_types" not in request
+
+
+@pytest.mark.asyncio
+async def test_retrieve_checkout_session_serializes_current_stripe_objects() -> None:
+    gateway = RealStripeGateway(api_key="sk_test_fake", webhook_secret="whsec_fake")
+
+    result = await gateway.retrieve_checkout_session("cs_test_request_shape")
+
+    assert result == {"id": "cs_test_request_shape", "object": "checkout.session"}
+
+
+@pytest.mark.asyncio
+async def test_retrieve_checkout_session_converts_stripe_errors_to_value_error() -> None:
+    gateway = RealStripeGateway(api_key="sk_test_fake", webhook_secret="whsec_fake")
+
+    with pytest.raises(ValueError, match="Stripe Checkout Session lookup failed"):
+        await gateway.retrieve_checkout_session("cs_missing")

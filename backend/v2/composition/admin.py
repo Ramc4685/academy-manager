@@ -2196,8 +2196,12 @@ def compose_admin(
         customer_id = str(stripe_customer_id or checkout.get("customer") or "")
         stripe_subscription_id = str(checkout.get("subscription") or "")
         stripe_invoice_id = str(checkout.get("invoice") or "")
+        stripe_payment_intent_id = str(checkout.get("payment_intent") or "")
         payment_status = str(checkout.get("payment_status") or "")
         checkout_status = str(checkout.get("status") or "")
+        if not stripe_payment_intent_id and stripe_invoice_id:
+            invoice = await stripe.retrieve_invoice(stripe_invoice_id)
+            stripe_payment_intent_id = str(invoice.get("payment_intent") or "")
         if customer_id:
             await db["users"].update_one(
                 {
@@ -2284,6 +2288,7 @@ def compose_admin(
                                 "stripe_checkout_session_id": stripe_checkout_session_id,
                                 "stripe_subscription_id": stripe_subscription_id or None,
                                 "stripe_invoice_id": stripe_invoice_id or None,
+                                "stripe_payment_intent_id": stripe_payment_intent_id or None,
                                 "amount_received_cents": amount_total or final_amount,
                                 "paid_amount_cents": amount_total or final_amount,
                                 "balance_due_cents": 0,
@@ -2313,6 +2318,7 @@ def compose_admin(
                     "stripe_checkout_session_id": stripe_checkout_session_id,
                     "stripe_subscription_id": stripe_subscription_id,
                     "stripe_invoice_id": stripe_invoice_id,
+                    "stripe_payment_intent_id": stripe_payment_intent_id,
                     "payment_status": payment_status,
                     "checkout_status": checkout_status,
                     "mismatch_state": mismatch_state,
@@ -2327,6 +2333,7 @@ def compose_admin(
             "stripe_checkout_session_id": stripe_checkout_session_id,
             "stripe_subscription_id": stripe_subscription_id or None,
             "stripe_invoice_id": stripe_invoice_id or None,
+            "stripe_payment_intent_id": stripe_payment_intent_id or None,
             "audit_id": audit_id,
         }
 

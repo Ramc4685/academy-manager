@@ -169,14 +169,86 @@ class ParentComposition:
     curriculum: CurriculumComposition
 
 
+def compose_parent_webhook_handler(
+    db: AsyncIOMotorDatabase[Any],
+    outbox: Outbox,
+    stripe: StripeGateway,
+    *,
+    academy_id: str | None = None,
+) -> HandleWebhookEvent:
+    settings = get_settings()
+    academy_id = academy_id or settings.default_academy_id
+
+    credits_repo = MongoCreditLedgerRepository(db)
+    billing_ledger_repo = MongoBillingLedgerRepository(db)
+    payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
+    subscriptions_repo = MongoSubscriptionRepository(db)
+    student_billing_enrollments = MongoStudentBillingEnrollmentRepository(db)
+    dedup = MongoStripeEventDedup(db)
+
+    class _ParentStripeCustomers:
+        async def set_stripe_customer_id(self, *, parent_id: str, stripe_customer_id: str) -> None:
+            await db["users"].update_one(
+                {
+                    "academy_id": academy_id,
+                    "$or": [{"user_id": parent_id}, {"firebase_uid": parent_id}],
+                },
+                {
+                    "$set": {
+                        "stripe_customer_id": stripe_customer_id,
+                        "updated_at": datetime.now(UTC),
+                    }
+                },
+            )
+
+    class _EnrollmentAutopayState:
+        async def set_autopay_state(
+            self,
+            *,
+            enrollment_id: str,
+            subscription_status: str,
+            stripe_subscription_id: str | None,
+        ) -> None:
+            await db["enrollments"].update_one(
+                {"academy_id": academy_id, "enrollment_id": enrollment_id},
+                {
+                    "$set": {
+                        "subscription_status": subscription_status,
+                        "stripe_subscription_id": stripe_subscription_id,
+                        "updated_at": datetime.now(UTC),
+                    }
+                },
+            )
+
+    return HandleWebhookEvent(
+        stripe=stripe,
+        dedup=dedup,
+        payments=payments_repo,
+        subscriptions=subscriptions_repo,
+        billing_enrollments=student_billing_enrollments,
+        billing_ledger=billing_ledger_repo,
+        parent_customers=_ParentStripeCustomers(),
+        enrollment_autopay=_EnrollmentAutopayState(),
+        outbox=outbox,
+        academy_id=academy_id,
+        expected_livemode=True
+        if settings.env == "prod"
+        else False
+        if settings.env == "test"
+        else None,
+    )
+
+
 def compose_parent(
     db: AsyncIOMotorDatabase[Any],
     outbox: Outbox,
     idempotency_store: IdempotencyStore,
     stripe: StripeGateway,
+    *,
+    academy_id: str | None = None,
 ) -> ParentComposition:
     settings = get_settings()
-    academy_id = settings.default_academy_id
+    academy_id = academy_id or settings.default_academy_id
 
     # Billing
     credits_repo = MongoCreditLedgerRepository(db)

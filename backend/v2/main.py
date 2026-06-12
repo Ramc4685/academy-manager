@@ -24,7 +24,7 @@ from starlette.middleware.cors import CORSMiddleware
 from backend.v2.composition.admin import compose_admin
 from backend.v2.composition.coach import compose_coach
 from backend.v2.composition.digests import compose_send_coach_daily_digest
-from backend.v2.composition.parent import compose_parent
+from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
@@ -218,6 +218,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Parent BFF wiring (Wave 2). Cross-context event handlers are registered
     # by compose_parent via install_handlers().
     app.state.parent = compose_parent(db, outbox, idempotency_store, stripe_gw)
+    stripe_webhook_processors = {settings.default_academy_id: app.state.parent.handle_webhook_event}
 
     # Admin BFF wiring (Wave 3).
     app.state.admin = compose_admin(db, outbox, idempotency_store, stripe_gw)
@@ -248,16 +249,29 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     async def _process_stripe_webhook_events() -> None:
         totals = {"processed": 0, "failed": 0}
-        for _ in range(25):
-            result = await app.state.parent.handle_webhook_event.process_next(
-                processor_id="scheduler-stripe-webhook-worker"
-            )
-            if result.get("empty"):
-                break
-            if result.get("processed"):
-                totals["processed"] += 1
-            else:
-                totals["failed"] += 1
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            settings.default_academy_id,
+        ):
+            processor = stripe_webhook_processors.get(academy_id)
+            if processor is None:
+                processor = compose_parent_webhook_handler(
+                    db,
+                    outbox,
+                    stripe_gw,
+                    academy_id=academy_id,
+                )
+                stripe_webhook_processors[academy_id] = processor
+            for _ in range(25):
+                result = await processor.process_next(
+                    processor_id=f"scheduler-stripe-webhook-worker:{academy_id}"
+                )
+                if result.get("empty"):
+                    break
+                if result.get("processed"):
+                    totals["processed"] += 1
+                else:
+                    totals["failed"] += 1
         if totals["processed"] or totals["failed"]:
             log.info("stripe_webhook_events_processed", extra=totals)
 

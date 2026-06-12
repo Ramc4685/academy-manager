@@ -149,6 +149,7 @@ class MongoStripeEventDedup:
     async def claim_next(
         self,
         *,
+        academy_id: str,
         processor_id: str,
         lock_seconds: int = 300,
     ) -> dict[str, Any] | None:
@@ -156,6 +157,7 @@ class MongoStripeEventDedup:
         lock_until = now + timedelta(seconds=lock_seconds)
         return await self._coll.find_one_and_update(
             {
+                "academy_id": academy_id,
                 "$or": [
                     {
                         "$and": [
@@ -175,7 +177,7 @@ class MongoStripeEventDedup:
                             {"processing_locked_until": {"$lt": now}},
                         ]
                     },
-                ]
+                ],
             },
             {
                 "$set": {
