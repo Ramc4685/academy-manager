@@ -31,6 +31,78 @@ export interface MockState {
     status: number;
     body: Record<string, unknown>;
   };
+  // Phase 3: coach daily teaching plan.
+  teachingPlan: TeachingPlanFixture;
+  statusCalls: Array<{
+    studentId: string;
+    skillId: string;
+    body: Record<string, unknown>;
+  }>;
+  testCalls: Array<{
+    studentId: string;
+    skillId: string;
+    body: Record<string, unknown>;
+  }>;
+  // When true, GET /coach/today/plan returns 500 (the app retries 5xx 3×, so a
+  // single failure would recover on its own). Specs set this true to exercise
+  // the error state, then flip it false before clicking Retry.
+  failTeachingPlan: boolean;
+}
+
+interface TeachingPlanFixture {
+  date: string;
+  program_id: string;
+  program_name: string;
+  pathway_configured: boolean;
+  sessions: Array<{
+    session_id: string;
+    occurrence_id: string | null;
+    title: string;
+    location: string;
+    start_at: string | null;
+    end_at: string | null;
+    groups: Array<{
+      level_id: string;
+      level_name: string;
+      level_sequence: number;
+      youtube_links: Array<{ title: string; url: string }>;
+      lesson_card: {
+        card_id: string;
+        lesson_number: number;
+        title: string;
+        goal_summary: string;
+        teaching_points: string[];
+        equipment: string[];
+        activity_summary: string;
+        safety_notes: string[];
+        source: string;
+        module_name: string;
+        lesson_range: string;
+        page_hint: string | null;
+        resource_links: Array<{
+          kind: "YOUTUBE" | "PDF_REFERENCE";
+          title: string;
+          url: string | null;
+        }>;
+      } | null;
+      students: Array<{
+        student_id: string;
+        student_name: string;
+        focus: "practice" | "review" | "ready_for_level_up";
+        next_skill: {
+          skill_id: string;
+          name: string;
+          sequence: number;
+          level_id: string;
+          status: string;
+          is_review: boolean;
+          criteria: string[];
+          youtube_links: Array<{ title: string; url: string }>;
+        } | null;
+      }>;
+    }>;
+    unplaced: Array<{ student_id: string; student_name: string }>;
+  }>;
 }
 
 export const test = base.extend<{
@@ -65,6 +137,96 @@ export const test = base.extend<{
         ],
       },
       attendanceCalls: [],
+      statusCalls: [],
+      testCalls: [],
+      failTeachingPlan: false,
+      teachingPlan: {
+        date: new Date().toISOString().slice(0, 10),
+        program_id: "prog-badminton",
+        program_name: "Badminton",
+        pathway_configured: true,
+        sessions: [
+          {
+            session_id: "s-today-1",
+            occurrence_id: "occ-today-1",
+            title: "Junior A",
+            location: "Court 1",
+            start_at: `${new Date().toISOString().slice(0, 10)}T09:00:00Z`,
+            end_at: `${new Date().toISOString().slice(0, 10)}T10:30:00Z`,
+            groups: [
+              {
+                level_id: "lvl-1",
+                level_name: "Starter",
+                level_sequence: 1,
+                youtube_links: [
+                  { title: "Level 1 intro", url: "https://youtu.be/level1" },
+                ],
+                lesson_card: {
+                  card_id: "card-3",
+                  lesson_number: 3,
+                  title: "Overhead Clear",
+                  goal_summary: "Hit a clear to the back of the court.",
+                  teaching_points: ["Side-on stance", "Throwing action"],
+                  equipment: ["Rackets", "Shuttles"],
+                  activity_summary: "Feed shuttles for repeated clears.",
+                  safety_notes: ["Keep spacing between players"],
+                  source: "BWF_SHUTTLE_TIME",
+                  module_name: "Starter Lessons",
+                  lesson_range: "3-6",
+                  page_hint: "p.16-30",
+                  resource_links: [
+                    {
+                      kind: "YOUTUBE",
+                      title: "Overhead clear demo",
+                      url: "https://youtu.be/clear-demo",
+                    },
+                    {
+                      kind: "PDF_REFERENCE",
+                      title: "Shuttle Time · Starter Lessons · L3–6 · p.16–30",
+                      url: null,
+                    },
+                  ],
+                },
+                students: [
+                  {
+                    student_id: "st1",
+                    student_name: "Alice",
+                    focus: "practice",
+                    next_skill: {
+                      skill_id: "sk-1",
+                      name: "Forehand Clear",
+                      sequence: 2,
+                      level_id: "lvl-1",
+                      status: "PRACTICING",
+                      is_review: false,
+                      criteria: ["Reaches the back line"],
+                      youtube_links: [
+                        { title: "Forehand clear", url: "https://youtu.be/fh-clear" },
+                      ],
+                    },
+                  },
+                  {
+                    student_id: "st2",
+                    student_name: "Bob",
+                    focus: "review",
+                    next_skill: {
+                      skill_id: "sk-2",
+                      name: "Backhand Serve",
+                      sequence: 1,
+                      level_id: "lvl-1",
+                      status: "NEEDS_REVIEW",
+                      is_review: true,
+                      criteria: ["Lands in the service box"],
+                      youtube_links: [],
+                    },
+                  },
+                ],
+              },
+            ],
+            unplaced: [],
+          },
+        ],
+      },
     };
 
     await page.route("**/api/v2/me", async (route: Route) => {
@@ -136,6 +298,73 @@ export const test = base.extend<{
           status: 200,
           contentType: "application/json",
           body: JSON.stringify({ notes: [] }),
+        });
+      },
+    );
+
+    // Phase 3: daily teaching plan. Registered after `coach/today*` so it
+    // wins for `/coach/today/plan` (Playwright matches most-recent route first).
+    await page.route(
+      "**/api/v2/coach/today/plan*",
+      async (route: Route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        if (state.failTeachingPlan) {
+          return route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            body: JSON.stringify({
+              error: { code: "Internal", message: "boom", details: {} },
+            }),
+          });
+        }
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.teachingPlan),
+        });
+      },
+    );
+
+    await page.route(
+      "**/api/v2/coach/students/*/skills/*/status",
+      async (route: Route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        const m = route
+          .request()
+          .url()
+          .match(/students\/([^/]+)\/skills\/([^/?]+)\/status/);
+        const body = JSON.parse(route.request().postData() ?? "{}");
+        state.statusCalls.push({
+          studentId: m?.[1] ?? "",
+          skillId: m?.[2] ?? "",
+          body,
+        });
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ updated: true }),
+        });
+      },
+    );
+
+    await page.route(
+      "**/api/v2/coach/students/*/skills/*/test",
+      async (route: Route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        const m = route
+          .request()
+          .url()
+          .match(/students\/([^/]+)\/skills\/([^/?]+)\/test/);
+        const body = JSON.parse(route.request().postData() ?? "{}");
+        state.testCalls.push({
+          studentId: m?.[1] ?? "",
+          skillId: m?.[2] ?? "",
+          body,
+        });
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ recorded: true }),
         });
       },
     );
