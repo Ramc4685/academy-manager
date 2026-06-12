@@ -246,6 +246,21 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if totals["processed"]:
             log.info("scheduled_resume_actions_processed", extra=totals)
 
+    async def _process_stripe_webhook_events() -> None:
+        totals = {"processed": 0, "failed": 0}
+        for _ in range(25):
+            result = await app.state.parent.handle_webhook_event.process_next(
+                processor_id="scheduler-stripe-webhook-worker"
+            )
+            if result.get("empty"):
+                break
+            if result.get("processed"):
+                totals["processed"] += 1
+            else:
+                totals["failed"] += 1
+        if totals["processed"] or totals["failed"]:
+            log.info("stripe_webhook_events_processed", extra=totals)
+
     async def _send_coach_daily_digests() -> None:
         on_date = datetime.now(UTC).date()
         totals = {
@@ -281,6 +296,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         minute=0,
         id="process_scheduled_resume_actions",
         replace_existing=True,
+    )
+    scheduler.add_job(
+        _process_stripe_webhook_events,
+        "interval",
+        seconds=60,
+        id="process_stripe_webhook_events",
+        replace_existing=True,
+        max_instances=1,
     )
     # Coach daily teaching-plan digest — opt-in (default off). With the flag
     # unset the job is never registered, so no digest can be sent locally; the

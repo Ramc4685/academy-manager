@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscountCommand,
@@ -48,6 +48,8 @@ from backend.v2.interfaces.admin.views import (
     InvoicesResponse,
     IssueRefundRequest,
     MarkPaymentPaidRequest,
+    ReconcileStripeBillingRequest,
+    ReconcileStripeBillingResponse,
     RecordExpenseRequest,
     WithdrawalCreditApproveRequest,
     WithdrawalCreditApproveResponse,
@@ -332,6 +334,26 @@ async def undo_payment_paid(
 ) -> dict[str, bool]:
     await use_cases.undo_payment_paid.execute(UndoPaymentPaidCommand(payment_id=payment_id))
     return {"ok": True}
+
+
+@router.post("/billing/reconcile", response_model=ReconcileStripeBillingResponse)
+async def reconcile_stripe_billing(
+    body: ReconcileStripeBillingRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> ReconcileStripeBillingResponse:
+    try:
+        result = await use_cases.reconcile_stripe_billing(  # type: ignore[operator]
+            parent_id=body.parent_id,
+            enrollment_id=body.enrollment_id,
+            stripe_customer_id=body.stripe_customer_id,
+            stripe_checkout_session_id=body.stripe_checkout_session_id,
+            reason=body.reason,
+            actor_id=claims.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ReconcileStripeBillingResponse(**result)
 
 
 # --- # FINANCE ---

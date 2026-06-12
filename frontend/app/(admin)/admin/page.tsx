@@ -12,7 +12,7 @@ import dynamic from "next/dynamic";
 import { useQuery } from "@tanstack/react-query";
 
 import { listAdminSessions, listAdminPayments, getRevenue, listAdminAttention } from "@/lib/api/admin";
-import type { AdminAttentionSeverity, PaymentStatus } from "@/lib/api/admin";
+import type { AdminAttentionSeverity, AdminPaymentStatus } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 
 import { Card } from "@/components/ds/card";
@@ -41,10 +41,11 @@ function formatCents(cents: number): string {
   }).format(cents / 100);
 }
 
-const PAYMENT_CHIP: Record<PaymentStatus, ChipVariant> = {
+const PAYMENT_CHIP: Record<AdminPaymentStatus, ChipVariant> = {
   succeeded: "paid",
   paid: "paid",
   pending: "pending",
+  partially_paid: "partial",
   refunded: "refunded",
   partially_refunded: "partial",
   failed: "failed",
@@ -52,10 +53,11 @@ const PAYMENT_CHIP: Record<PaymentStatus, ChipVariant> = {
   waived: "waived",
 };
 
-const PAYMENT_LABEL: Record<PaymentStatus, string> = {
+const PAYMENT_LABEL: Record<AdminPaymentStatus, string> = {
   succeeded: "PAID",
   paid: "PAID",
   pending: "PENDING",
+  partially_paid: "PARTIAL",
   refunded: "REFUNDED",
   partially_refunded: "PARTIAL",
   failed: "FAILED",

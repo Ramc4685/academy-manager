@@ -120,6 +120,34 @@ class RealStripeGateway(StripeGateway):
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, object]:
         return self._stripe.Webhook.construct_event(payload, signature, self._webhook_secret)  # type: ignore[no-any-return]
 
+    async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, Any]:
+        def _retrieve() -> Any:
+            return self._stripe.checkout.Session.retrieve(checkout_session_id)
+
+        result = await asyncio.to_thread(_retrieve)
+        return result.to_dict_recursive()  # type: ignore[no-any-return]
+
+    async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
+        def _retrieve() -> Any:
+            return self._stripe.Invoice.retrieve(stripe_invoice_id)
+
+        result = await asyncio.to_thread(_retrieve)
+        return result.to_dict_recursive()  # type: ignore[no-any-return]
+
+    async def retrieve_subscription(self, stripe_subscription_id: str) -> dict[str, Any]:
+        def _retrieve() -> Any:
+            return self._stripe.Subscription.retrieve(stripe_subscription_id)
+
+        result = await asyncio.to_thread(_retrieve)
+        return result.to_dict_recursive()  # type: ignore[no-any-return]
+
+    async def retrieve_payment_intent(self, stripe_payment_intent_id: str) -> dict[str, Any]:
+        def _retrieve() -> Any:
+            return self._stripe.PaymentIntent.retrieve(stripe_payment_intent_id)
+
+        result = await asyncio.to_thread(_retrieve)
+        return result.to_dict_recursive()  # type: ignore[no-any-return]
+
     async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
         def _create() -> Any:
             kwargs: dict[str, Any] = {"payment_intent": payment_intent_id}

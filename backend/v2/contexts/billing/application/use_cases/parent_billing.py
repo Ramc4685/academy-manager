@@ -76,6 +76,9 @@ class StartSubscriptionCheckout:
                 cancel_url=cmd.cancel_url,
                 metadata={
                     "academy_id": self._academy_id,
+                    "app_subscription_id": subscription_id,
+                    # Legacy key retained so older deployed code and any
+                    # already-created Checkout Sessions keep reconciling.
                     "subscription_id": subscription_id,
                     "parent_id": cmd.parent_id,
                     "enrollment_id": cmd.enrollment_id,

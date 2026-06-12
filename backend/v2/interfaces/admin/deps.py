@@ -159,6 +159,7 @@ class AdminUseCases:
     mark_payment_paid: MarkPaymentPaid
     apply_payment_discount: ApplyPaymentDiscount
     undo_payment_paid: UndoPaymentPaid
+    reconcile_stripe_billing: object  # callable
     # finance (# FINANCE)
     record_expense: RecordExpense
     edit_expense: EditExpense

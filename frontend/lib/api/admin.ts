@@ -260,11 +260,17 @@ export interface AdminPaymentView {
   balance_due_cents: number | null;
   overpayment_credit_cents: number;
   currency: string;
-  status: PaymentStatus;
+  status: AdminPaymentStatus;
   refunded_cents: number;
   invoice_number: string | null;
   payment_method: string | null;
   stripe_linked: boolean;
+  stripe_customer_id?: string | null;
+  stripe_checkout_session_id?: string | null;
+  stripe_subscription_id?: string | null;
+  stripe_invoice_id?: string | null;
+  stripe_payment_intent_id?: string | null;
+  reconciliation_status?: string | null;
   created_at: string;
 }
 
@@ -309,6 +315,25 @@ export interface MarkPaymentPaidRequest {
 export interface ApplyPaymentDiscountRequest {
   discount_cents: number;
   reason: string;
+}
+
+export interface ReconcileStripeBillingRequest {
+  parent_id: string;
+  enrollment_id: string;
+  stripe_customer_id?: string | null;
+  stripe_checkout_session_id: string;
+  reason: string;
+}
+
+export interface ReconcileStripeBillingResponse {
+  ok: boolean;
+  mismatch_state: string | null;
+  payment_id: string | null;
+  stripe_customer_id: string | null;
+  stripe_checkout_session_id: string | null;
+  stripe_subscription_id: string | null;
+  stripe_invoice_id: string | null;
+  audit_id: string | null;
 }
 
 export interface InvoiceLineView {
@@ -1248,6 +1273,15 @@ export function applyPaymentDiscount(
 
 export function undoPaymentPaid(paymentId: string): Promise<void> {
   return apiFetch<void>(`/admin/payments/${paymentId}/undo-paid`, { method: "POST" });
+}
+
+export function reconcileStripeBilling(
+  payload: ReconcileStripeBillingRequest,
+): Promise<ReconcileStripeBillingResponse> {
+  return apiFetch<ReconcileStripeBillingResponse>("/admin/billing/reconcile", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function getAdminInvoiceDetail(invoiceId: string): Promise<AdminInvoiceDetail> {

@@ -16,7 +16,10 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-06-08-marvy-labs-ip-protection-and-production-branding-plan](docs/test-results/active/2026-06-08-marvy-labs-ip-protection-and-production-branding-plan.md)
 - [2026-06-09-coach-payroll-percentage-rules](docs/test-results/active/2026-06-09-coach-payroll-percentage-rules.md)
 - [2026-06-09-prod-stripe-billing-portal-failure](docs/test-results/active/2026-06-09-prod-stripe-billing-portal-failure.md)
+- [2026-06-09-session-skill-board](docs/test-results/active/2026-06-09-session-skill-board.md)
 - [2026-06-10-coach-parent-role-resolution](docs/test-results/active/2026-06-10-coach-parent-role-resolution.md)
+- [2026-06-11-billing-invoice-ledger-requirements](docs/test-results/active/2026-06-11-billing-invoice-ledger-requirements.md)
+- [2026-06-11-coach-daily-lesson-guidance](docs/test-results/active/2026-06-11-coach-daily-lesson-guidance.md)
 
 ## Required Workflow
 

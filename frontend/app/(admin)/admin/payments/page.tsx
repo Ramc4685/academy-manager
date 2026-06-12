@@ -8,7 +8,7 @@
  * payment isn't eligible.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 
@@ -19,10 +19,12 @@ import {
   getAdminInvoiceDetail,
   listAdminPayments,
   markPaymentPaid,
+  reconcileStripeBilling,
   refundPayment,
   undoPaymentPaid,
   type AdminPaymentStatus,
   type AdminPaymentView,
+  type ReconcileStripeBillingRequest,
   type RefundRequest,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
@@ -87,11 +89,37 @@ function methodChip(payment: AdminPaymentView): { variant: ChipVariant; label: s
   return null;
 }
 
+function stripeIdSummary(payment: AdminPaymentView): string | null {
+  const ids = [
+    payment.stripe_checkout_session_id,
+    payment.stripe_invoice_id,
+    payment.stripe_payment_intent_id,
+    payment.stripe_subscription_id,
+  ].filter(Boolean);
+  if (ids.length === 0) return null;
+  return ids.join(" · ");
+}
+
+function reconciliationLabel(payment: AdminPaymentView): string | null {
+  if (payment.reconciliation_status) {
+    return payment.reconciliation_status.replaceAll("_", " ");
+  }
+  if (
+    (payment.status === "pending" || payment.status === "partially_paid") &&
+    payment.stripe_linked
+  ) {
+    return "Stripe linked, app ledger pending";
+  }
+  return null;
+}
+
 export default function AdminPaymentsPage() {
   const [refundTarget, setRefundTarget] = useState<AdminPaymentView | null>(null);
   const [paidTarget, setPaidTarget] = useState<AdminPaymentView | null>(null);
   const [discountTarget, setDiscountTarget] = useState<AdminPaymentView | null>(null);
   const [invoiceTarget, setInvoiceTarget] = useState<AdminPaymentView | null>(null);
+  const [syncTarget, setSyncTarget] = useState<AdminPaymentView | null>(null);
+  const [syncOpen, setSyncOpen] = useState(false);
   const [generateOpen, setGenerateOpen] = useState(false);
   const queryClient = useQueryClient();
 
@@ -116,6 +144,16 @@ export default function AdminPaymentsPage() {
   return (
     <section data-testid="admin-payments" className="space-y-5">
       <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => {
+            setSyncTarget(null);
+            setSyncOpen(true);
+          }}
+        >
+          Sync Stripe
+        </Button>
         <Button variant="primary" size="sm" onClick={() => setGenerateOpen(true)}>
           Generate monthly
         </Button>
@@ -167,6 +205,8 @@ export default function AdminPaymentsPage() {
                   const chip = statusChip(p.status);
                   const method = methodChip(p);
                   const rowPaidCents = paidCents(p);
+                  const stripeSummary = stripeIdSummary(p);
+                  const reconciliation = reconciliationLabel(p);
                   return (
                     <tr
                       key={p.payment_id}
@@ -180,6 +220,20 @@ export default function AdminPaymentsPage() {
                         <div className="mt-0.5 text-xs text-rally-subtle">
                           Created {new Date(p.created_at).toLocaleDateString()}
                         </div>
+                        {(stripeSummary || reconciliation) && (
+                          <div className="mt-1 max-w-[280px] space-y-0.5 text-xs text-rally-subtle">
+                            {stripeSummary && (
+                              <div className="truncate font-mono" title={stripeSummary}>
+                                {stripeSummary}
+                              </div>
+                            )}
+                            {reconciliation && (
+                              <div className="font-medium text-amber-700">
+                                {reconciliation}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-display font-semibold text-rally-ink">
@@ -210,6 +264,10 @@ export default function AdminPaymentsPage() {
                           onInvoice={() => setInvoiceTarget(p)}
                           onPaid={() => setPaidTarget(p)}
                           onRefund={() => setRefundTarget(p)}
+                          onSync={() => {
+                            setSyncTarget(p);
+                            setSyncOpen(true);
+                          }}
                           onUndo={() => undoMutation.mutate(p.payment_id)}
                           undoPending={undoMutation.isPending}
                         />
@@ -253,6 +311,19 @@ export default function AdminPaymentsPage() {
         }}
       />
       <InvoiceDialog payment={invoiceTarget} onClose={() => setInvoiceTarget(null)} />
+      <SyncStripeDialog
+        open={syncOpen}
+        payment={syncTarget}
+        onClose={() => {
+          setSyncOpen(false);
+          setSyncTarget(null);
+        }}
+        onSynced={() => {
+          setSyncOpen(false);
+          setSyncTarget(null);
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.payments() });
+        }}
+      />
     </section>
   );
 }
@@ -276,6 +347,7 @@ function PaymentActions({
   onInvoice,
   onPaid,
   onRefund,
+  onSync,
   onUndo,
   undoPending,
 }: {
@@ -284,6 +356,7 @@ function PaymentActions({
   onInvoice: () => void;
   onPaid: () => void;
   onRefund: () => void;
+  onSync: () => void;
   onUndo: () => void;
   undoPending: boolean;
 }) {
@@ -300,6 +373,7 @@ function PaymentActions({
   return (
     <div className="flex justify-end gap-2">
       <Button variant="secondary" size="sm" onClick={onInvoice}>Invoice</Button>
+      <Button variant="secondary" size="sm" onClick={onSync}>Sync</Button>
       {isPending && (
         <>
           <Button variant="secondary" size="sm" onClick={onDiscount}>Discount</Button>
@@ -657,6 +731,146 @@ function InvoiceDialog({
             </Button>
           </div>
         </div>
+      )}
+    </RallyDialog>
+  );
+}
+
+function SyncStripeDialog({
+  open,
+  payment,
+  onClose,
+  onSynced,
+}: {
+  open: boolean;
+  payment: AdminPaymentView | null;
+  onClose: () => void;
+  onSynced: () => void;
+}) {
+  const [parentId, setParentId] = useState("");
+  const [enrollmentId, setEnrollmentId] = useState("");
+  const [checkoutSessionId, setCheckoutSessionId] = useState("");
+  const [customerId, setCustomerId] = useState("");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+  const mutation = useMutation({
+    mutationFn: (payload: ReconcileStripeBillingRequest) => reconcileStripeBilling(payload),
+    onSuccess: (res) => {
+      const status = res.mismatch_state ? `Sync finished: ${res.mismatch_state}.` : "Stripe sync complete.";
+      setResult(status);
+      setError(null);
+    },
+    onError: (err: Error) => setError(err.message ?? "Stripe sync failed."),
+  });
+
+  const reset = () => {
+    setParentId("");
+    setEnrollmentId("");
+    setCheckoutSessionId("");
+    setCustomerId("");
+    setReason("");
+    setError(null);
+    setResult(null);
+  };
+  const close = () => {
+    reset();
+    onClose();
+  };
+
+  useEffect(() => {
+    if (!open || !payment) return;
+    setParentId(payment.parent_id);
+    setEnrollmentId(payment.enrollment_id ?? "");
+    setCheckoutSessionId(payment.stripe_checkout_session_id ?? "");
+    setCustomerId(payment.stripe_customer_id ?? "");
+  }, [open, payment]);
+
+  return (
+    <RallyDialog
+      open={open}
+      onOpenChange={(nextOpen) => !nextOpen && close()}
+      overline="Stripe"
+      title="Sync billing from Stripe"
+      description="Fetches the live Checkout Session and updates Mongo after tenant validation."
+    >
+      {result ? (
+        <div className="space-y-4">
+          <Alert tone="green">{result}</Alert>
+          <div className="flex justify-end">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                onSynced();
+                reset();
+              }}
+            >
+              Done
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <form
+          className="space-y-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            mutation.mutate({
+              parent_id: parentId.trim(),
+              enrollment_id: enrollmentId.trim(),
+              stripe_checkout_session_id: checkoutSessionId.trim(),
+              stripe_customer_id: customerId.trim() || null,
+              reason: reason.trim(),
+            });
+          }}
+        >
+          {error && <Alert tone="red">{error}</Alert>}
+          <Field label="Parent ID" required>
+            <input
+              required
+              value={parentId}
+              onChange={(event) => setParentId(event.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Enrollment ID" required>
+            <input
+              required
+              value={enrollmentId}
+              onChange={(event) => setEnrollmentId(event.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Stripe Checkout Session ID" required>
+            <input
+              required
+              value={checkoutSessionId}
+              onChange={(event) => setCheckoutSessionId(event.target.value)}
+              className={inputClass}
+              placeholder="cs_live_..."
+            />
+          </Field>
+          <Field label="Stripe Customer ID">
+            <input
+              value={customerId}
+              onChange={(event) => setCustomerId(event.target.value)}
+              className={inputClass}
+              placeholder="cus_..."
+            />
+          </Field>
+          <Field label="Audit reason" required>
+            <textarea
+              required
+              minLength={8}
+              rows={3}
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              className={`${inputClass} min-h-24 py-2`}
+              placeholder="Backfill confirmed Stripe payment for ..."
+            />
+          </Field>
+          <DialogActions onCancel={close} submitLabel={mutation.isPending ? "Syncing..." : "Sync"} />
+        </form>
       )}
     </RallyDialog>
   );

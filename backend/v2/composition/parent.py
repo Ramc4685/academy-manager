@@ -251,6 +251,11 @@ def compose_parent(
         enrollment_autopay=_EnrollmentAutopayState(),
         outbox=outbox,
         academy_id=academy_id,
+        expected_livemode=True
+        if settings.env == "prod"
+        else False
+        if settings.env == "test"
+        else None,
     )
     quote_enrollment_uc = QuoteEnrollment(
         sessions=payments_repo,
