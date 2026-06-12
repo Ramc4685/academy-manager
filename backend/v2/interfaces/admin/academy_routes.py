@@ -77,7 +77,10 @@ async def start_stripe_connect(
 ) -> AdminGatewayConnectLinkView:
     if use_cases.start_stripe_connect_use_case is None:
         raise HTTPException(status_code=503, detail="Stripe Connect is not configured")
-    out = await use_cases.start_stripe_connect_use_case.execute(claims.academy_id)
+    try:
+        out = await use_cases.start_stripe_connect_use_case.execute(claims.academy_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return AdminGatewayConnectLinkView(url=out.url)
 
 

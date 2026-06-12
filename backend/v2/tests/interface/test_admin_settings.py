@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 from backend.v2.contexts.identity.application.change_user_role_use_case import (
     ChangeUserRoleCommand,
 )
@@ -144,6 +147,17 @@ def test_get_gateway_contract(admin_client):
         "manual_methods": ["cash", "check"],
     }
     admin_client.use_cases.get_academy_gateway_use_case.execute.assert_awaited_once_with("acad")
+
+
+def test_start_stripe_connect_returns_clear_error_when_not_configured(admin_client):
+    admin_client.use_cases.start_stripe_connect_use_case = SimpleNamespace(
+        execute=AsyncMock(side_effect=ValueError("Stripe Connect client ID is not configured"))
+    )
+
+    response = admin_client.post("/api/v2/admin/academy/gateway/stripe/connect-link")
+
+    assert response.status_code == 503, response.text
+    assert response.json() == {"detail": "Stripe Connect client ID is not configured"}
 
 
 def test_patch_user_role_contract(admin_client):
