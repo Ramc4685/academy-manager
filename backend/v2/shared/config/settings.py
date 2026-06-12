@@ -79,6 +79,16 @@ class Settings(BaseSettings):
         default=False,
         description="When True and resend_api_key is set, emails are sent via Resend. Stub adapter used otherwise.",
     )
+    coach_digest_enabled: bool = Field(
+        default=False,
+        description="When True, the daily coach teaching-plan digest cron job is registered.",
+    )
+    coach_digest_hour: int = Field(
+        default=6,
+        ge=0,
+        le=23,
+        description="Hour (scheduler TZ) at which the daily coach digest job runs.",
+    )
 
     @field_validator("cors_origins", mode="before")
     @classmethod

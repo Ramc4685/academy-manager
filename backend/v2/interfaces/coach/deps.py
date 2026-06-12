@@ -82,6 +82,9 @@ class CoachUseCases:
     curriculum: CurriculumComposition | None = None
     create_skill_note: object | None = None  # CreateSkillNote
     list_skill_notes: object | None = None  # ListSkillNotes
+    # Coach daily teaching plan (lesson guidance). Optional for backward compat
+    # with test fixtures that predate it; real coach composition always sets it.
+    generate_daily_teaching_plan: object | None = None  # GenerateDailyTeachingPlan
 
 
 def get_coach_use_cases(request: Request) -> CoachUseCases:

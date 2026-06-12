@@ -9,6 +9,10 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from backend.v2.contexts.curriculum.application.use_cases.get_pathway import GetFullPathway
 from backend.v2.contexts.curriculum.application.use_cases.manage_criteria import AddSkillCriterion
+from backend.v2.contexts.curriculum.application.use_cases.manage_lesson_cards import (
+    GetLessonCardForSkill,
+    ListLessonCards,
+)
 from backend.v2.contexts.curriculum.application.use_cases.manage_levels import (
     CreateLevel,
     ListLevels,
@@ -29,16 +33,26 @@ from backend.v2.contexts.curriculum.application.use_cases.manage_skills import (
 from backend.v2.contexts.curriculum.application.use_cases.seed_curriculum import (
     seed_badminton_pathway,
 )
+from backend.v2.contexts.curriculum.application.use_cases.seed_lesson_cards import (
+    LessonCardSeedResult,
+    seed_lesson_cards,
+)
 from backend.v2.contexts.curriculum.infrastructure.mongo_criterion_repo import (
     MongoCriterionRepository,
 )
 from backend.v2.contexts.curriculum.infrastructure.mongo_ext_ref_repo import (
     MongoExternalRefRepository,
 )
+from backend.v2.contexts.curriculum.infrastructure.mongo_lesson_card_repo import (
+    MongoLessonCardRepository,
+)
 from backend.v2.contexts.curriculum.infrastructure.mongo_level_repo import MongoLevelRepository
 from backend.v2.contexts.curriculum.infrastructure.mongo_pathway_query import MongoPathwayQuery
 from backend.v2.contexts.curriculum.infrastructure.mongo_program_repo import MongoProgramRepository
 from backend.v2.contexts.curriculum.infrastructure.mongo_skill_repo import MongoSkillRepository
+from backend.v2.contexts.curriculum.infrastructure.mongo_video_ref_repo import (
+    MongoCurriculumVideoRefRepository,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_certificates import (
     GetStudentCertificates,
 )
@@ -59,6 +73,9 @@ from backend.v2.contexts.student_progress.application.use_cases.get_skill_board 
 )
 from backend.v2.contexts.student_progress.application.use_cases.get_student_progress import (
     GetStudentProgress,
+)
+from backend.v2.contexts.student_progress.application.use_cases.get_teaching_focus import (
+    GetTeachingFocus,
 )
 from backend.v2.contexts.student_progress.application.use_cases.place_student import (
     PlaceStudentInLevel,
@@ -131,6 +148,36 @@ class SeedBadmintonPathway:
         )
 
 
+class SeedLessonCards:
+    """Thin callable wrapper around seed_lesson_cards."""
+
+    def __init__(
+        self,
+        *,
+        programs: MongoProgramRepository,
+        levels: MongoLevelRepository,
+        skills: MongoSkillRepository,
+        cards: MongoLessonCardRepository,
+        video_refs: MongoCurriculumVideoRefRepository,
+    ) -> None:
+        self._programs = programs
+        self._levels = levels
+        self._skills = skills
+        self._cards = cards
+        self._video_refs = video_refs
+
+    async def execute(self, *, created_by: str = "admin") -> LessonCardSeedResult:
+        return await seed_lesson_cards(
+            academy_id=current_academy_id(),
+            programs=self._programs,
+            levels=self._levels,
+            skills=self._skills,
+            cards=self._cards,
+            video_refs=self._video_refs,
+            created_by=created_by,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Dataclasses
 # ---------------------------------------------------------------------------
@@ -152,6 +199,9 @@ class CurriculumComposition:
     add_external_ref: AddExternalReference
     get_full_pathway: GetFullPathway
     seed_badminton: SeedBadmintonPathway
+    seed_lesson_cards: SeedLessonCards
+    list_lesson_cards: ListLessonCards
+    get_lesson_card_for_skill: GetLessonCardForSkill
 
 
 @dataclass
@@ -168,6 +218,7 @@ class StudentProgressComposition:
     get_level_up_queue: GetLevelUpQueue
     get_certificates: GetStudentCertificates
     get_skill_board: GetSkillBoard
+    get_teaching_focus: GetTeachingFocus
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +232,8 @@ def compose_curriculum(db: AsyncIOMotorDatabase[Any]) -> CurriculumComposition:
     skills_repo = MongoSkillRepository(db)
     criteria_repo = MongoCriterionRepository(db)
     refs_repo = MongoExternalRefRepository(db)
+    lesson_card_repo = MongoLessonCardRepository(db)
+    video_ref_repo = MongoCurriculumVideoRefRepository(db)
     pathway_query = MongoPathwayQuery(
         programs_repo,
         levels_repo,
@@ -210,6 +263,15 @@ def compose_curriculum(db: AsyncIOMotorDatabase[Any]) -> CurriculumComposition:
             criteria=criteria_repo,
             refs=refs_repo,
         ),
+        seed_lesson_cards=SeedLessonCards(
+            programs=programs_repo,
+            levels=levels_repo,
+            skills=skills_repo,
+            cards=lesson_card_repo,
+            video_refs=video_ref_repo,
+        ),
+        list_lesson_cards=ListLessonCards(cards=lesson_card_repo),
+        get_lesson_card_for_skill=GetLessonCardForSkill(cards=lesson_card_repo),
     )
 
 
@@ -297,6 +359,11 @@ def compose_student_progress(
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,
             recommendations=recommendation_repo,
+            skill_lookup=skill_lookup,
+        ),
+        get_teaching_focus=GetTeachingFocus(
+            level_progress=level_progress_repo,
+            skill_progress=skill_progress_repo,
             skill_lookup=skill_lookup,
         ),
     )

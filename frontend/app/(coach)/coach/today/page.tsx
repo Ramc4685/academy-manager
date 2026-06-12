@@ -65,7 +65,7 @@ export default function CoachTodayPage() {
 
       <ul className="space-y-3" data-testid="session-list">
         {sessions.map((s) => (
-          <li key={s.occurrence_id}>
+          <li key={s.occurrence_id} className="space-y-2">
             <Link
               href={
                 `/coach/sessions/${encodeURIComponent(s.occurrence_id)}?date=${date}` as Parameters<
@@ -88,6 +88,17 @@ export default function CoachTodayPage() {
                 {s.roster.length}{" "}
                 {s.roster.length === 1 ? "student" : "students"}
               </p>
+            </Link>
+            <Link
+              href={
+                `/coach/today/plan?date=${date}` as Parameters<
+                  typeof Link
+                >[0]["href"]
+              }
+              data-testid={`view-teaching-plan-${s.session_id}`}
+              className="block min-h-touch rounded-lg border border-rally-base/30 px-4 py-2 text-center text-sm font-semibold text-rally-base hover:bg-rally-base/5"
+            >
+              View teaching plan
             </Link>
           </li>
         ))}

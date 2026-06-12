@@ -207,3 +207,131 @@ export async function updateCoachProfile(
     body: JSON.stringify(payload),
   });
 }
+
+// ---------------------------------------------------------------------------
+// Daily teaching plan (Phase 3: coach lesson guidance)
+//
+// Shapes mirror the backend DTOs in
+// backend/v2/contexts/coaching/application/use_cases/generate_daily_teaching_plan.py
+// (serialized via `model_dump(mode="json")`). Hand-declared until the
+// openapi-typescript generator lands.
+// ---------------------------------------------------------------------------
+
+export interface VideoLink {
+  title: string;
+  url: string;
+}
+
+export type ResourceLinkKind = "YOUTUBE" | "PDF_REFERENCE";
+
+/**
+ * A lesson-card resource. `url` is `null` for `PDF_REFERENCE` (citation chip
+ * only — the Shuttle Time PDF is not hosted; render as non-interactive text).
+ */
+export interface ResourceLink {
+  kind: ResourceLinkKind;
+  title: string;
+  url: string | null;
+}
+
+export interface LessonCard {
+  card_id: string;
+  lesson_number: number;
+  title: string;
+  goal_summary: string;
+  teaching_points: string[];
+  equipment: string[];
+  activity_summary: string;
+  safety_notes: string[];
+  source: string;
+  module_name: string;
+  lesson_range: string;
+  page_hint: string | null;
+  resource_links: ResourceLink[];
+}
+
+export type TeachingFocus = "practice" | "review" | "ready_for_level_up";
+
+export interface NextSkill {
+  skill_id: string;
+  name: string;
+  sequence: number;
+  level_id: string;
+  status: string;
+  is_review: boolean;
+  criteria: string[];
+  youtube_links: VideoLink[];
+}
+
+export interface TeachingStudentFocus {
+  student_id: string;
+  student_name: string;
+  /** `null` when `focus === "ready_for_level_up"`. */
+  next_skill: NextSkill | null;
+  focus: TeachingFocus;
+}
+
+export interface TeachingUnplacedStudent {
+  student_id: string;
+  student_name: string;
+}
+
+export interface LevelTeachingGroup {
+  level_id: string;
+  level_name: string;
+  level_sequence: number;
+  youtube_links: VideoLink[];
+  /** `null` for level-up-ready groups. */
+  lesson_card: LessonCard | null;
+  students: TeachingStudentFocus[];
+}
+
+export interface SessionTeachingPlan {
+  session_id: string;
+  occurrence_id: string | null;
+  title: string;
+  location: string;
+  start_at: string | null;
+  end_at: string | null;
+  groups: LevelTeachingGroup[];
+  unplaced: TeachingUnplacedStudent[];
+}
+
+export interface TeachingPlanResponse {
+  date: string; // YYYY-MM-DD
+  program_id: string;
+  program_name: string;
+  pathway_configured: boolean;
+  sessions: SessionTeachingPlan[];
+}
+
+export interface SessionTeachingPlanResponse {
+  program_id: string;
+  program_name: string;
+  pathway_configured: boolean;
+  session_id: string;
+  groups: LevelTeachingGroup[];
+  unplaced: TeachingUnplacedStudent[];
+}
+
+/** Coach's teaching plan for every assigned session on a date (default today UTC). */
+export async function getCoachTodayPlan(
+  date?: string,
+): Promise<TeachingPlanResponse> {
+  const q = date ? `?date=${encodeURIComponent(date)}` : "";
+  return apiFetch<TeachingPlanResponse>(`/coach/today/plan${q}`, {
+    method: "GET",
+  });
+}
+
+/** Teaching plan for a single session (no title/times — the page already has them). */
+export async function getSessionTeachingPlan(
+  sessionId: string,
+  programId?: string,
+): Promise<SessionTeachingPlanResponse> {
+  const q = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
+  return apiFetch<SessionTeachingPlanResponse>(
+    `/coach/sessions/${encodeURIComponent(sessionId)}/teaching-plan${q}`,
+    { method: "GET" },
+  );
+}

@@ -1,0 +1,134 @@
+"""SendCoachDailyDigest use case.
+
+Resolves the academy's coaches, claims one digest per coach per day (the claim
+is the idempotency guard — a second run sends zero), generates that coach's
+personalised teaching plan, and e-mails a plain-text digest through the shared
+``EmailSendPort``. A coach with nothing to teach is recorded ``skipped_empty``
+and receives no e-mail.
+
+*Why not SendCampaign*: campaigns send one shared body to every recipient; this
+digest is personalised per coach. Reusing the port + resolver keeps the
+Resend/Stub safety gating and recipient resolution without contorting the
+campaign model.
+
+The plan is provided through a duck-typed ``PlanProvider`` protocol wired in the
+composition root, so communications imports nothing from the coaching context
+(ADR-0005).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime
+from typing import Any, Protocol
+
+from backend.v2.contexts.communications.application.digest_renderer import render_coach_digest
+from backend.v2.contexts.communications.application.ports import (
+    AudienceResolver,
+    DigestSendRepository,
+    EmailSendPort,
+    ResolvedRecipient,
+)
+from backend.v2.contexts.communications.domain.models import AcademyAudience
+
+
+class PlanProvider(Protocol):
+    """Produces a coach's *Today's Teaching Plan* for a date (duck-typed)."""
+
+    async def execute(self, coach_id: str, on_date: date) -> Any | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class SendCoachDailyDigestCommand:
+    academy_id: str
+    digest_date: date
+
+
+@dataclass(frozen=True, slots=True)
+class SendCoachDailyDigestResult:
+    total_coaches: int
+    claimed: int
+    already_claimed: int
+    sent: int
+    skipped_empty: int
+    failed: int
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+def plan_is_empty(plan: Any) -> bool:
+    """A plan with no sessions — or only sessions with no students at all — has
+    nothing worth e-mailing."""
+    if plan is None:
+        return True
+    sessions = getattr(plan, "sessions", None) or []
+    if not sessions:
+        return True
+    for session in sessions:
+        if (getattr(session, "groups", None) or []) or (getattr(session, "unplaced", None) or []):
+            return False
+    return True
+
+
+@dataclass
+class SendCoachDailyDigest:
+    digests: DigestSendRepository
+    resolver: AudienceResolver
+    sender: EmailSendPort
+    plan_provider: PlanProvider
+    now: Callable[[], datetime] = field(default=_utcnow)
+
+    async def execute(self, command: SendCoachDailyDigestCommand) -> SendCoachDailyDigestResult:
+        digest_date = command.digest_date.isoformat()
+        coaches = await self.resolver.resolve_academy_audience(AcademyAudience(role="coach"))
+
+        claimed = already_claimed = sent = skipped_empty = failed = 0
+        for coach in coaches:
+            claim = await self.digests.try_claim(command.academy_id, coach.user_id, digest_date)
+            if claim is None:
+                already_claimed += 1
+                continue
+            claimed += 1
+
+            try:
+                plan = await self.plan_provider.execute(coach.user_id, command.digest_date)
+            except Exception as exc:  # plan generation must never crash the run
+                await self.digests.mark_failed(claim.digest_id, f"plan generation failed: {exc}")
+                failed += 1
+                continue
+
+            if plan_is_empty(plan):
+                await self.digests.mark_skipped_empty(claim.digest_id)
+                skipped_empty += 1
+                continue
+
+            if not coach.email:
+                await self.digests.mark_failed(claim.digest_id, "no email address")
+                failed += 1
+                continue
+
+            subject, body = render_coach_digest(plan)
+            recipient = ResolvedRecipient(
+                user_id=coach.user_id,
+                email=coach.email,
+                display_name=coach.display_name,
+            )
+            outcome = await self.sender.send(recipient=recipient, subject=subject, body=body)
+            if outcome.ok:
+                await self.digests.mark_sent(claim.digest_id, outcome.provider_message_id)
+                sent += 1
+            else:
+                await self.digests.mark_failed(claim.digest_id, outcome.failed_reason or "unknown")
+                failed += 1
+
+        return SendCoachDailyDigestResult(
+            total_coaches=len(coaches),
+            claimed=claimed,
+            already_claimed=already_claimed,
+            sent=sent,
+            skipped_empty=skipped_empty,
+            failed=failed,
+        )
