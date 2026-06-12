@@ -178,8 +178,9 @@ async def test_seed_creates_all_cards_and_level_videos() -> None:
     assert result.cards_created == 22
     assert result.cards_updated == 0
     assert result.cards_unchanged == 0
-    assert result.video_refs_created == 6
-    assert all(r.scope == "LEVEL" for r in videos.saved)
+    assert result.video_refs_created == 107
+    assert any(r.scope == "LEVEL" for r in videos.saved)
+    assert any(r.scope == "SKILL" for r in videos.saved)
     assert len(cards.saved) == 22
 
 
@@ -217,9 +218,9 @@ async def test_reseed_is_a_noop() -> None:
     assert second.cards_updated == 0
     assert second.cards_unchanged == 22
     assert second.video_refs_created == 0
-    assert second.video_refs_unchanged == 6
+    assert second.video_refs_unchanged == 107
     assert len(cards.saved) == 22
-    assert len(videos.saved) == 6
+    assert len(videos.saved) == 107
 
 
 async def test_content_hash_change_updates_in_place_keeping_id() -> None:

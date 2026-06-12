@@ -71,7 +71,7 @@ async def test_seed_lesson_cards_via_mongo_repos_roundtrip_and_idempotent() -> N
             created_by="admin",
         )
         assert first.cards_created == 22
-        assert first.video_refs_created == 6
+        assert first.video_refs_created == 107
 
         stored = await cards.list_for_program(first.program_id)
         assert len(stored) == 22
@@ -95,7 +95,7 @@ async def test_seed_lesson_cards_via_mongo_repos_roundtrip_and_idempotent() -> N
         )
         assert second.cards_created == 0
         assert second.cards_unchanged == 22
-        assert second.video_refs_unchanged == 6
+        assert second.video_refs_unchanged == 107
 
         assert await db.lesson_cards.count_documents({}) == 22
-        assert await db.curriculum_video_refs.count_documents({}) == 6
+        assert await db.curriculum_video_refs.count_documents({}) == 107

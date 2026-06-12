@@ -1,5 +1,5 @@
 {
-  "_license_note": "ALL teaching content in this file is ORIGINAL academy wording authored for this product. It must NEVER contain text copied verbatim from BWF Shuttle Time or any other source. The source/module/lesson_range/page_hint fields and PDF_REFERENCE links are CITATION METADATA ONLY: we do not host, link, or reproduce the Shuttle Time PDF. PDF_REFERENCE resource links always carry url=null (citation chip). YouTube coverage is best-effort; only the public BWF Shuttle Time video playlist URL is referenced, at level scope. Curated per-lesson/per-skill clips may be added later by editing this file and re-running the seed.",
+  "_license_note": "ALL teaching content in this file is ORIGINAL academy wording authored for this product. It must NEVER contain text copied verbatim from BWF Shuttle Time or any other source. The source/module/lesson_range/page_hint fields and PDF_REFERENCE links are CITATION METADATA ONLY: we do not host, link, or reproduce the Shuttle Time PDF. PDF_REFERENCE resource links always carry url=null (citation chip). YouTube URLs are public BWF Shuttle Time playlist clips cited by URL only — no video content is reproduced. ORIGINAL authorship confirmed.",
   "source": "BWF_SHUTTLE_TIME",
   "source_title": "BWF Shuttle Time",
   "video_playlist_url": "https://www.youtube.com/playlist?list=PLYqPBxMmvqpLGSmMr4a7GZTmxBLlV78B1",
@@ -25,7 +25,10 @@
       "lesson_range": "1-2",
       "page_hint": "p.9-15",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 1 · p.9-15", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 1 · p.9-15", "url": null},
+        {"kind": "YOUTUBE", "title": "Backhand Thumb Grip with Balloon Tap", "url": "https://youtu.be/OLmKsS5tCuM"},
+        {"kind": "YOUTUBE", "title": "Forehand Basic Grip With Balloon", "url": "https://youtu.be/8oD2CLubc7g"},
+        {"kind": "YOUTUBE", "title": "Grip Change With Balloon", "url": "https://youtu.be/PWwqgt6EM0s"}
       ]
     },
     {
@@ -49,7 +52,10 @@
       "lesson_range": "1-2",
       "page_hint": "p.9-15",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 2 · p.9-15", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 2 · p.9-15", "url": null},
+        {"kind": "YOUTUBE", "title": "Grip Change Tic Toc", "url": "https://youtu.be/kiy6JG1vROw"},
+        {"kind": "YOUTUBE", "title": "Grip Change with Shuttle", "url": "https://youtu.be/Wt01jO1mgjk"},
+        {"kind": "YOUTUBE", "title": "Hitting Targets With Change of Grips", "url": "https://youtu.be/sM52YCczxrc"}
       ]
     },
     {
@@ -73,7 +79,10 @@
       "lesson_range": "3-6",
       "page_hint": "p.16-30",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 3 · p.16-30", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 3 · p.16-30", "url": null},
+        {"kind": "YOUTUBE", "title": "Having a Lunge", "url": "https://youtu.be/TBh5a11amKk"},
+        {"kind": "YOUTUBE", "title": "Introduction net shots – Backhand & Forehand Side", "url": "https://youtu.be/TVNW9S7o0Bk"},
+        {"kind": "YOUTUBE", "title": "Playing a net rally", "url": "https://youtu.be/v7ygOafVKQU"}
       ]
     },
     {
@@ -97,7 +106,9 @@
       "lesson_range": "3-6",
       "page_hint": "p.16-30",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 4 · p.16-30", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 4 · p.16-30", "url": null},
+        {"kind": "YOUTUBE", "title": "Chasse Steps for Net Play", "url": "https://youtu.be/a32nviFZHlc"},
+        {"kind": "YOUTUBE", "title": "Playing a Net Rally", "url": "https://youtu.be/rDX1TgLAG8Y"}
       ]
     },
     {
@@ -121,7 +132,10 @@
       "lesson_range": "3-6",
       "page_hint": "p.16-30",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 5 · p.16-30", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 5 · p.16-30", "url": null},
+        {"kind": "YOUTUBE", "title": "Chasse and Hit - Forehand side", "url": "https://youtu.be/Lon-Q7bn0lE"},
+        {"kind": "YOUTUBE", "title": "Chasse and Hit - Backhand side", "url": "https://youtu.be/nZgl0skF0sI"},
+        {"kind": "YOUTUBE", "title": "Group feed with choice", "url": "https://youtu.be/zj_1K8L7L6E"}
       ]
     },
     {
@@ -145,79 +159,90 @@
       "lesson_range": "3-6",
       "page_hint": "p.16-30",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 6 · p.16-30", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 6 · p.16-30", "url": null},
+        {"kind": "YOUTUBE", "title": "Net King 1", "url": "https://youtu.be/rDo5Yz_wzDY"},
+        {"kind": "YOUTUBE", "title": "Table Tennis Style Net Doubles", "url": "https://youtu.be/t8OgIDq7o6A"},
+        {"kind": "YOUTUBE", "title": "Merry-Go-Round", "url": "https://youtu.be/OImQBqMni3Y"}
       ]
     },
     {
       "slug": "bwf-st-lesson-07",
       "lesson_number": 7,
       "level_sequence": 3,
-      "skill_sequences": [1],
+      "skill_sequences": [1, 2],
       "display_order": 7,
-      "title": "Backhand low serve",
-      "goal_summary": "Players deliver a backhand low serve that skims the net and lands near the front service line.",
+      "title": "Backhand and forehand serves",
+      "goal_summary": "Players deliver a backhand low serve that skims the net and a forehand high serve that travels deep.",
       "teaching_points": [
-        "Stand close behind the front service line with the racket-side foot forward.",
-        "Hold the shuttle by the feathers in front of the racket.",
-        "Use a short pushing action from the forearm so the shuttle just clears the net.",
-        "Aim for the shuttle to fall near the receiver's front service line."
+        "Backhand low serve: stand close to the front service line, push the shuttle just over the net with a short forearm action.",
+        "Forehand high serve: side-on stance with weight on the back foot, swing up through the shuttle to send it high and deep.",
+        "Both serves start from a controlled position — hold the shuttle still before releasing.",
+        "Choose the serve based on where the receiver is standing."
       ],
       "equipment": ["One racket per player", "Plenty of shuttles", "Net", "Target markers"],
-      "activity_summary": "Players serve repeatedly to a target zone near the front service line, scoring a point each time the shuttle skims the net and lands in the zone. Track best out of ten.",
+      "activity_summary": "Players practise each serve to a target zone, then mix both types, choosing which serve to play before stepping up to the line.",
       "safety_notes": ["Wait until the area ahead is clear before serving.", "Collect shuttles only when all servers pause."],
       "module_name": "Starter Lessons",
       "lesson_range": "7-10",
       "page_hint": "p.31-45",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 7 · p.31-45", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 7 · p.31-45", "url": null},
+        {"kind": "YOUTUBE", "title": "Backhand Short Serve", "url": "https://youtu.be/RqEsdMSq7pg"},
+        {"kind": "YOUTUBE", "title": "Backhand Short Serve Team Competition", "url": "https://youtu.be/yur3G5qMcps"},
+        {"kind": "YOUTUBE", "title": "Net Singles", "url": "https://youtu.be/CnOem_nX5HM"}
       ]
     },
     {
       "slug": "bwf-st-lesson-08",
       "lesson_number": 8,
       "level_sequence": 3,
-      "skill_sequences": [2],
+      "skill_sequences": [3],
       "display_order": 8,
-      "title": "Forehand high serve",
-      "goal_summary": "Players hit a forehand high serve that travels deep and drops steeply near the back line.",
+      "title": "Backhand lift",
+      "goal_summary": "Players lift the shuttle from the forecourt on the backhand side high and deep to the back of the court.",
       "teaching_points": [
-        "Side-on stance with weight starting on the back foot.",
-        "Drop the shuttle in front and swing up and through with a long action.",
-        "Transfer weight from back foot to front foot during the swing.",
-        "Aim high and deep so the shuttle falls near the back boundary."
+        "Move to the shuttle with a lunge, leading with the racket-side foot.",
+        "Use the backhand thumb grip to push the racket face under and through the shuttle.",
+        "Swing upward with a full action to send the shuttle high and deep behind the opponent.",
+        "Recover to the middle after each lift, ready for the reply."
       ],
-      "equipment": ["One racket per player", "Plenty of shuttles", "Net", "Deep target markers"],
-      "activity_summary": "Players serve high and deep to a target zone near the back line, scoring on height and depth. Progress to choosing between a low and high serve on a coach's call.",
-      "safety_notes": ["Check overhead space is clear.", "Keep a safe gap between servers swinging fully."],
+      "equipment": ["One racket per player", "Shuttles", "Net", "Deep target markers"],
+      "activity_summary": "From a net feed on the backhand side, players lunge and lift the shuttle to a deep target zone. Progress to the merry-go-round circuit where players rotate positions after each lift.",
+      "safety_notes": ["Lunge within a comfortable range to protect the knee.", "Keep clear of neighbouring players' swings."],
       "module_name": "Starter Lessons",
       "lesson_range": "7-10",
       "page_hint": "p.31-45",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 8 · p.31-45", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 8 · p.31-45", "url": null},
+        {"kind": "YOUTUBE", "title": "Backhand Lift", "url": "https://youtu.be/UXhneWqy0Zw"},
+        {"kind": "YOUTUBE", "title": "Backhand Lift Merry Go Round", "url": "https://youtu.be/68V01FCdOZE"}
       ]
     },
     {
       "slug": "bwf-st-lesson-09",
       "lesson_number": 9,
       "level_sequence": 3,
-      "skill_sequences": [3, 4],
+      "skill_sequences": [4],
       "display_order": 9,
-      "title": "Lifting from the net",
-      "goal_summary": "Players lift the shuttle from the forecourt high and deep to the back of the court on both sides.",
+      "title": "Forehand lift",
+      "goal_summary": "Players lift the shuttle from the forecourt on the forehand side high and deep to the back of the court.",
       "teaching_points": [
-        "Reach to the shuttle with a lunge and the racket-side leg forward.",
-        "Get under the shuttle and swing upward to send it high and deep.",
-        "Forehand lift uses the V grip; backhand lift uses the thumb grip.",
-        "Recover to the middle after lifting to be ready for the reply."
+        "Lead with the racket-side foot and lunge toward the shuttle.",
+        "Get the racket face below the shuttle and swing upward with a relaxed, full action.",
+        "Aim high and deep so the shuttle drops near the back boundary.",
+        "Push back to the middle from the lunge and return to the ready position."
       ],
       "equipment": ["One racket per player", "Shuttles", "Net", "Deep target markers"],
-      "activity_summary": "From a net feed, players lift alternately forehand and backhand to a deep target zone, then recover. Count lifts that reach the back third.",
-      "safety_notes": ["Lunge within a comfortable range.", "Keep clear of neighbouring players' swings."],
+      "activity_summary": "From a net feed on the forehand side, players lunge and lift to a deep target zone, then recover. Progress to the merry-go-round drill and a golf-style points game.",
+      "safety_notes": ["Lunge within a comfortable range to protect the knee.", "Keep clear of neighbouring players' swings."],
       "module_name": "Starter Lessons",
       "lesson_range": "7-10",
       "page_hint": "p.31-45",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 9 · p.31-45", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 9 · p.31-45", "url": null},
+        {"kind": "YOUTUBE", "title": "Forehand Lift", "url": "https://youtu.be/ZDfaUrR0RY0"},
+        {"kind": "YOUTUBE", "title": "Forehand Lift Merry Go Round", "url": "https://youtu.be/eN4L_qxMwjE"},
+        {"kind": "YOUTUBE", "title": "The Golf Game", "url": "https://youtu.be/adEZEm9eLOg"}
       ]
     },
     {
@@ -241,7 +266,9 @@
       "lesson_range": "7-10",
       "page_hint": "p.31-45",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 10 · p.31-45", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Starter Lessons · Lesson 10 · p.31-45", "url": null},
+        {"kind": "YOUTUBE", "title": "Forehand and Backhand Lift Merry-Go-Round", "url": "https://youtu.be/pUczOHafngQ"},
+        {"kind": "YOUTUBE", "title": "Net Shot And Lift Rally", "url": "https://youtu.be/O2eeEvdpg-s"}
       ]
     },
     {
@@ -265,7 +292,9 @@
       "lesson_range": "11-12",
       "page_hint": "p.49-55",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Swing and Throw · Lesson 11 · p.49-55", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Swing and Throw · Lesson 11 · p.49-55", "url": null},
+        {"kind": "YOUTUBE", "title": "Introducing Racket Speed", "url": "https://youtu.be/nvKStTGuhVk"},
+        {"kind": "YOUTUBE", "title": "Flat Play", "url": "https://youtu.be/SrHbGSWEU54"}
       ]
     },
     {
@@ -289,7 +318,9 @@
       "lesson_range": "11-12",
       "page_hint": "p.49-55",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Swing and Throw · Lesson 12 · p.49-55", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Swing and Throw · Lesson 12 · p.49-55", "url": null},
+        {"kind": "YOUTUBE", "title": "Midcourt Game with Body Hits", "url": "https://youtu.be/SmbzNq3LFPs"},
+        {"kind": "YOUTUBE", "title": "How Many Shots per Minute", "url": "https://youtu.be/02rrsYcy4F0"}
       ]
     },
     {
@@ -313,7 +344,9 @@
       "lesson_range": "13-18",
       "page_hint": "p.59-82",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Throw and Hit · Lesson 13 · p.59-82", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Throw and Hit · Lesson 13 · p.59-82", "url": null},
+        {"kind": "YOUTUBE", "title": "Forehand Clear", "url": "https://youtu.be/PpEuZmHTVsM"},
+        {"kind": "YOUTUBE", "title": "Forehand Clear Rally", "url": "https://youtu.be/k1OnuFnpMr8"}
       ]
     },
     {
@@ -337,7 +370,10 @@
       "lesson_range": "13-18",
       "page_hint": "p.59-82",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Throw and Hit · Lesson 14 · p.59-82", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Throw and Hit · Lesson 14 · p.59-82", "url": null},
+        {"kind": "YOUTUBE", "title": "Forehand Clear Rally with Tricks", "url": "https://youtu.be/KPAeQMdPFgE"},
+        {"kind": "YOUTUBE", "title": "Forehand Clear Practice", "url": "https://youtu.be/ypqHLPEioRg"},
+        {"kind": "YOUTUBE", "title": "Forehand Clear Game", "url": "https://youtu.be/UvUwncESVqw"}
       ]
     },
     {
@@ -361,7 +397,9 @@
       "lesson_range": "13-18",
       "page_hint": "p.59-82",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Throw and Hit · Lesson 15 · p.59-82", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Throw and Hit · Lesson 15 · p.59-82", "url": null},
+        {"kind": "YOUTUBE", "title": "Overhead Drop Shot", "url": "https://youtu.be/6whrMThtZEE"},
+        {"kind": "YOUTUBE", "title": "Lifts and Drops", "url": "https://youtu.be/hbrQtQfy2qE"}
       ]
     },
     {
@@ -385,7 +423,10 @@
       "lesson_range": "13-18",
       "page_hint": "p.59-82",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Throw and Hit · Lesson 16 · p.59-82", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Throw and Hit · Lesson 16 · p.59-82", "url": null},
+        {"kind": "YOUTUBE", "title": "Lift-Drop-Net", "url": "https://youtu.be/T9zLjhkmqhY"},
+        {"kind": "YOUTUBE", "title": "Lift-Drop-Net Variations", "url": "https://youtu.be/1l2Hri0_NjY"},
+        {"kind": "YOUTUBE", "title": "Half Court Singles With No Go Area", "url": "https://youtu.be/2Opxo9g50iA"}
       ]
     },
     {
@@ -409,7 +450,10 @@
       "lesson_range": "13-18",
       "page_hint": "p.59-82",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Throw and Hit · Lesson 17 · p.59-82", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Throw and Hit · Lesson 17 · p.59-82", "url": null},
+        {"kind": "YOUTUBE", "title": "The Smash", "url": "https://youtu.be/2J4V37Qf9FY"},
+        {"kind": "YOUTUBE", "title": "Block Defence", "url": "https://youtu.be/u-diuyaBu9I"},
+        {"kind": "YOUTUBE", "title": "Smash And Block Defence Practice", "url": "https://youtu.be/IOtB-Ago0DE"}
       ]
     },
     {
@@ -433,7 +477,9 @@
       "lesson_range": "13-18",
       "page_hint": "p.59-82",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Throw and Hit · Lesson 18 · p.59-82", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Throw and Hit · Lesson 18 · p.59-82", "url": null},
+        {"kind": "YOUTUBE", "title": "Lift-Smash-Block", "url": "https://youtu.be/P06HRqj-EqM"},
+        {"kind": "YOUTUBE", "title": "Half Court Singles With Smash", "url": "https://youtu.be/Ny2wc-vM41s"}
       ]
     },
     {
@@ -457,7 +503,10 @@
       "lesson_range": "19-22",
       "page_hint": "p.86-102",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Learn to Win · Lesson 19 · p.86-102", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Learn to Win · Lesson 19 · p.86-102", "url": null},
+        {"kind": "YOUTUBE", "title": "Half Court Singles with Tactics 1", "url": "https://youtu.be/038vxWYwhsA"},
+        {"kind": "YOUTUBE", "title": "Half court singles with tactics 2", "url": "https://youtu.be/0kydq6jrehA"},
+        {"kind": "YOUTUBE", "title": "Half or Full Court Singles with Tactics", "url": "https://youtu.be/Y5r3SPdOkpY"}
       ]
     },
     {
@@ -481,7 +530,9 @@
       "lesson_range": "19-22",
       "page_hint": "p.86-102",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Learn to Win · Lesson 20 · p.86-102", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Learn to Win · Lesson 20 · p.86-102", "url": null},
+        {"kind": "YOUTUBE", "title": "Half Court Team Game", "url": "https://youtu.be/c_knU-VA8yc"},
+        {"kind": "YOUTUBE", "title": "Half Court Singles Team Game", "url": "https://youtu.be/4B0U_fmbPko"}
       ]
     },
     {
@@ -505,7 +556,9 @@
       "lesson_range": "19-22",
       "page_hint": "p.86-102",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Learn to Win · Lesson 21 · p.86-102", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Learn to Win · Lesson 21 · p.86-102", "url": null},
+        {"kind": "YOUTUBE", "title": "Midcourt and Front Court Play", "url": "https://youtu.be/mnXvV-bDAZU"},
+        {"kind": "YOUTUBE", "title": "Positional Play for Doubles", "url": "https://youtu.be/zzAy9x4Q9pY"}
       ]
     },
     {
@@ -529,17 +582,122 @@
       "lesson_range": "19-22",
       "page_hint": "p.86-102",
       "resource_links": [
-        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Learn to Win · Lesson 22 · p.86-102", "url": null}
+        {"kind": "PDF_REFERENCE", "title": "Shuttle Time · Learn to Win · Lesson 22 · p.86-102", "url": null},
+        {"kind": "YOUTUBE", "title": "Midcourt Game 1", "url": "https://youtu.be/9ulMB82tyFg"},
+        {"kind": "YOUTUBE", "title": "Midcourt Game 2", "url": "https://youtu.be/1gQ0WRXE2Mg"},
+        {"kind": "YOUTUBE", "title": "Doubles Exercise and Game", "url": "https://youtu.be/YXm4BJ5NjVg"}
       ]
     }
   ],
   "level_videos": [
-    {"level_sequence": 1, "title": "BWF Shuttle Time video playlist", "url": "https://www.youtube.com/playlist?list=PLYqPBxMmvqpLGSmMr4a7GZTmxBLlV78B1", "display_order": 1},
-    {"level_sequence": 2, "title": "BWF Shuttle Time video playlist", "url": "https://www.youtube.com/playlist?list=PLYqPBxMmvqpLGSmMr4a7GZTmxBLlV78B1", "display_order": 1},
-    {"level_sequence": 3, "title": "BWF Shuttle Time video playlist", "url": "https://www.youtube.com/playlist?list=PLYqPBxMmvqpLGSmMr4a7GZTmxBLlV78B1", "display_order": 1},
-    {"level_sequence": 4, "title": "BWF Shuttle Time video playlist", "url": "https://www.youtube.com/playlist?list=PLYqPBxMmvqpLGSmMr4a7GZTmxBLlV78B1", "display_order": 1},
-    {"level_sequence": 5, "title": "BWF Shuttle Time video playlist", "url": "https://www.youtube.com/playlist?list=PLYqPBxMmvqpLGSmMr4a7GZTmxBLlV78B1", "display_order": 1},
-    {"level_sequence": 6, "title": "BWF Shuttle Time video playlist", "url": "https://www.youtube.com/playlist?list=PLYqPBxMmvqpLGSmMr4a7GZTmxBLlV78B1", "display_order": 1}
+    {"level_sequence": 1, "title": "Forehand Basic Grip With Balloon", "url": "https://youtu.be/8oD2CLubc7g", "display_order": 1},
+    {"level_sequence": 1, "title": "Grip Change With Balloon", "url": "https://youtu.be/PWwqgt6EM0s", "display_order": 2},
+    {"level_sequence": 1, "title": "Grip Change Tic Toc", "url": "https://youtu.be/kiy6JG1vROw", "display_order": 3},
+    {"level_sequence": 1, "title": "Balloon Tap", "url": "https://youtu.be/BkYeLf4gpVc", "display_order": 10},
+    {"level_sequence": 1, "title": "Balloon Tap Relay Game", "url": "https://youtu.be/4kNc4pDE91E", "display_order": 11},
+    {"level_sequence": 1, "title": "Mirror Chase", "url": "https://youtu.be/X8qvU1kl3BY", "display_order": 12},
+    {"level_sequence": 1, "title": "Mirror Chase With Throwing", "url": "https://youtu.be/qE-wY5XnDkg", "display_order": 13},
+    {"level_sequence": 2, "title": "Chasse Steps for Net Play", "url": "https://youtu.be/a32nviFZHlc", "display_order": 1},
+    {"level_sequence": 2, "title": "Introduction net shots – Backhand & Forehand Side", "url": "https://youtu.be/TVNW9S7o0Bk", "display_order": 2},
+    {"level_sequence": 2, "title": "Net King 1", "url": "https://youtu.be/rDo5Yz_wzDY", "display_order": 3},
+    {"level_sequence": 2, "title": "Balance and Throw", "url": "https://youtu.be/2KrWJcnshcA", "display_order": 10},
+    {"level_sequence": 2, "title": "Balancing Shuttles", "url": "https://youtu.be/dpksnZFW9dc", "display_order": 11},
+    {"level_sequence": 2, "title": "Balance Exercise", "url": "https://youtu.be/BiKbqbHiRcI", "display_order": 12},
+    {"level_sequence": 2, "title": "Happy Feet", "url": "https://youtu.be/gL0WdN20zOw", "display_order": 13},
+    {"level_sequence": 2, "title": "Tag Game", "url": "https://youtu.be/_z9dSZAamvg", "display_order": 14},
+    {"level_sequence": 2, "title": "Chasse Game", "url": "https://youtu.be/54TW-fl8ed8", "display_order": 15},
+    {"level_sequence": 2, "title": "Statues", "url": "https://youtu.be/U7OHymIejwI", "display_order": 16},
+    {"level_sequence": 3, "title": "Backhand Short Serve", "url": "https://youtu.be/RqEsdMSq7pg", "display_order": 1},
+    {"level_sequence": 3, "title": "Backhand Lift", "url": "https://youtu.be/UXhneWqy0Zw", "display_order": 2},
+    {"level_sequence": 3, "title": "Forehand Lift", "url": "https://youtu.be/ZDfaUrR0RY0", "display_order": 3},
+    {"level_sequence": 3, "title": "Racket and Shuttle Relays", "url": "https://youtu.be/lLL5yB07Twg", "display_order": 10},
+    {"level_sequence": 3, "title": "Keep the Shuttle Up Thumb Grip", "url": "https://youtu.be/zJBHfRbwaR8", "display_order": 11},
+    {"level_sequence": 3, "title": "Shuttle Run Team Game", "url": "https://youtu.be/czNR2toobBQ", "display_order": 12},
+    {"level_sequence": 3, "title": "Dynamic Balance", "url": "https://youtu.be/9Glg6CNoX74", "display_order": 13},
+    {"level_sequence": 3, "title": "Calf Touching", "url": "https://youtu.be/ptzRNwMKTKg", "display_order": 14},
+    {"level_sequence": 3, "title": "Balance the Racket", "url": "https://youtu.be/qOz9cZ8iSeo", "display_order": 15},
+    {"level_sequence": 3, "title": "Dice Run Game", "url": "https://youtu.be/UeHezQuiYG8", "display_order": 16},
+    {"level_sequence": 3, "title": "Balancing Shuttles", "url": "https://youtu.be/Bip5uYM3zr0", "display_order": 17},
+    {"level_sequence": 4, "title": "Introducing Racket Speed", "url": "https://youtu.be/nvKStTGuhVk", "display_order": 1},
+    {"level_sequence": 4, "title": "Flat Play", "url": "https://youtu.be/SrHbGSWEU54", "display_order": 2},
+    {"level_sequence": 4, "title": "Throwing Game 1", "url": "https://youtu.be/4h5PfiGCtqo", "display_order": 10},
+    {"level_sequence": 4, "title": "Keep Your Court Free", "url": "https://youtu.be/7csTi0_XvKw", "display_order": 11},
+    {"level_sequence": 4, "title": "Throwing Team Game", "url": "https://youtu.be/bY1_YcPY1ZY", "display_order": 12},
+    {"level_sequence": 4, "title": "Relay Games Run & Throw", "url": "https://youtu.be/aTnVo7MODRA", "display_order": 13},
+    {"level_sequence": 5, "title": "Forehand Clear", "url": "https://youtu.be/PpEuZmHTVsM", "display_order": 1},
+    {"level_sequence": 5, "title": "The Smash", "url": "https://youtu.be/2J4V37Qf9FY", "display_order": 2},
+    {"level_sequence": 5, "title": "Overhead Drop Shot", "url": "https://youtu.be/6whrMThtZEE", "display_order": 3},
+    {"level_sequence": 5, "title": "Scissor Jump", "url": "https://youtu.be/8geOFd1z-us", "display_order": 10},
+    {"level_sequence": 5, "title": "Scissor Jump Practice", "url": "https://youtu.be/3iWn6CoWdLo", "display_order": 11},
+    {"level_sequence": 5, "title": "Throwing Game with Scissor Jump", "url": "https://youtu.be/Ds4AnqmfT1E", "display_order": 12},
+    {"level_sequence": 5, "title": "Mobility Exercises", "url": "https://youtu.be/DrobFettOFc", "display_order": 13},
+    {"level_sequence": 5, "title": "Scissor Jump - Revision", "url": "https://youtu.be/eYXvxlHPuhU", "display_order": 14},
+    {"level_sequence": 5, "title": "Shuttle Chase", "url": "https://youtu.be/4JVMWaO5Uu4", "display_order": 15},
+    {"level_sequence": 5, "title": "Plank Exercises - Core Stability", "url": "https://youtu.be/JTC44FKIwRY", "display_order": 16},
+    {"level_sequence": 5, "title": "Fast Feet", "url": "https://youtu.be/pC-4_kSO8GE", "display_order": 17},
+    {"level_sequence": 5, "title": "Group Agility", "url": "https://youtu.be/p5fg2PCEOCk", "display_order": 18},
+    {"level_sequence": 6, "title": "Half Court Singles with Tactics 1", "url": "https://youtu.be/038vxWYwhsA", "display_order": 1},
+    {"level_sequence": 6, "title": "Positional Play for Doubles", "url": "https://youtu.be/zzAy9x4Q9pY", "display_order": 2},
+    {"level_sequence": 6, "title": "Agility Ladder 1", "url": "https://youtu.be/9wat-UtUFM0", "display_order": 10},
+    {"level_sequence": 6, "title": "Agility Ladder 2", "url": "https://youtu.be/ePBYKruTR80", "display_order": 11},
+    {"level_sequence": 6, "title": "Half Court Team Game", "url": "https://youtu.be/c_knU-VA8yc", "display_order": 12}
   ],
-  "skill_videos": []
+  "skill_videos": [
+    {"level_sequence": 1, "skill_sequence": 1, "title": "Forehand Basic Grip With Balloon", "url": "https://youtu.be/8oD2CLubc7g", "display_order": 1},
+    {"level_sequence": 1, "skill_sequence": 1, "title": "Grip Change With Balloon", "url": "https://youtu.be/PWwqgt6EM0s", "display_order": 2},
+    {"level_sequence": 1, "skill_sequence": 2, "title": "Backhand Thumb Grip with Balloon Tap", "url": "https://youtu.be/OLmKsS5tCuM", "display_order": 1},
+    {"level_sequence": 1, "skill_sequence": 3, "title": "Grip Change Tic Toc", "url": "https://youtu.be/kiy6JG1vROw", "display_order": 1},
+    {"level_sequence": 1, "skill_sequence": 3, "title": "Grip Change with Shuttle", "url": "https://youtu.be/Wt01jO1mgjk", "display_order": 2},
+    {"level_sequence": 1, "skill_sequence": 5, "title": "Hitting Targets With Change of Grips", "url": "https://youtu.be/sM52YCczxrc", "display_order": 1},
+    {"level_sequence": 2, "skill_sequence": 2, "title": "Having a Lunge", "url": "https://youtu.be/TBh5a11amKk", "display_order": 1},
+    {"level_sequence": 2, "skill_sequence": 3, "title": "Chasse Steps for Net Play", "url": "https://youtu.be/a32nviFZHlc", "display_order": 1},
+    {"level_sequence": 2, "skill_sequence": 4, "title": "Introduction net shots – Backhand & Forehand Side", "url": "https://youtu.be/TVNW9S7o0Bk", "display_order": 1},
+    {"level_sequence": 2, "skill_sequence": 4, "title": "Chasse and Hit - Forehand side", "url": "https://youtu.be/Lon-Q7bn0lE", "display_order": 2},
+    {"level_sequence": 2, "skill_sequence": 5, "title": "Chasse and Hit - Backhand side", "url": "https://youtu.be/nZgl0skF0sI", "display_order": 1},
+    {"level_sequence": 2, "skill_sequence": 5, "title": "Group feed with choice", "url": "https://youtu.be/zj_1K8L7L6E", "display_order": 2},
+    {"level_sequence": 2, "skill_sequence": 6, "title": "Playing a net rally", "url": "https://youtu.be/v7ygOafVKQU", "display_order": 1},
+    {"level_sequence": 2, "skill_sequence": 6, "title": "Playing a Net Rally", "url": "https://youtu.be/rDX1TgLAG8Y", "display_order": 2},
+    {"level_sequence": 2, "skill_sequence": 6, "title": "Net King 1", "url": "https://youtu.be/rDo5Yz_wzDY", "display_order": 3},
+    {"level_sequence": 3, "skill_sequence": 1, "title": "Backhand Short Serve", "url": "https://youtu.be/RqEsdMSq7pg", "display_order": 1},
+    {"level_sequence": 3, "skill_sequence": 1, "title": "Backhand Short Serve Team Competition", "url": "https://youtu.be/yur3G5qMcps", "display_order": 2},
+    {"level_sequence": 3, "skill_sequence": 3, "title": "Backhand Lift", "url": "https://youtu.be/UXhneWqy0Zw", "display_order": 1},
+    {"level_sequence": 3, "skill_sequence": 3, "title": "Backhand Lift Merry Go Round", "url": "https://youtu.be/68V01FCdOZE", "display_order": 2},
+    {"level_sequence": 3, "skill_sequence": 3, "title": "Forehand and Backhand Lift Merry-Go-Round", "url": "https://youtu.be/pUczOHafngQ", "display_order": 3},
+    {"level_sequence": 3, "skill_sequence": 4, "title": "Forehand Lift", "url": "https://youtu.be/ZDfaUrR0RY0", "display_order": 1},
+    {"level_sequence": 3, "skill_sequence": 4, "title": "Forehand Lift Merry Go Round", "url": "https://youtu.be/eN4L_qxMwjE", "display_order": 2},
+    {"level_sequence": 3, "skill_sequence": 4, "title": "Forehand and Backhand Lift Merry-Go-Round", "url": "https://youtu.be/pUczOHafngQ", "display_order": 3},
+    {"level_sequence": 3, "skill_sequence": 5, "title": "Net Shot And Lift Rally", "url": "https://youtu.be/O2eeEvdpg-s", "display_order": 1},
+    {"level_sequence": 4, "skill_sequence": 3, "title": "Introducing Racket Speed", "url": "https://youtu.be/nvKStTGuhVk", "display_order": 1},
+    {"level_sequence": 4, "skill_sequence": 3, "title": "Flat Play", "url": "https://youtu.be/SrHbGSWEU54", "display_order": 2},
+    {"level_sequence": 4, "skill_sequence": 4, "title": "Introducing Racket Speed", "url": "https://youtu.be/nvKStTGuhVk", "display_order": 1},
+    {"level_sequence": 4, "skill_sequence": 5, "title": "Midcourt Game with Body Hits", "url": "https://youtu.be/SmbzNq3LFPs", "display_order": 1},
+    {"level_sequence": 4, "skill_sequence": 5, "title": "How Many Shots per Minute", "url": "https://youtu.be/02rrsYcy4F0", "display_order": 2},
+    {"level_sequence": 5, "skill_sequence": 1, "title": "Forehand Clear", "url": "https://youtu.be/PpEuZmHTVsM", "display_order": 1},
+    {"level_sequence": 5, "skill_sequence": 1, "title": "Forehand Clear Rally", "url": "https://youtu.be/k1OnuFnpMr8", "display_order": 2},
+    {"level_sequence": 5, "skill_sequence": 1, "title": "Forehand Clear Rally with Tricks", "url": "https://youtu.be/KPAeQMdPFgE", "display_order": 3},
+    {"level_sequence": 5, "skill_sequence": 1, "title": "Forehand Clear Practice", "url": "https://youtu.be/ypqHLPEioRg", "display_order": 4},
+    {"level_sequence": 5, "skill_sequence": 1, "title": "Forehand Clear Game", "url": "https://youtu.be/UvUwncESVqw", "display_order": 5},
+    {"level_sequence": 5, "skill_sequence": 2, "title": "Overhead Drop Shot", "url": "https://youtu.be/6whrMThtZEE", "display_order": 1},
+    {"level_sequence": 5, "skill_sequence": 2, "title": "Lifts and Drops", "url": "https://youtu.be/hbrQtQfy2qE", "display_order": 2},
+    {"level_sequence": 5, "skill_sequence": 2, "title": "Lift-Drop-Net", "url": "https://youtu.be/T9zLjhkmqhY", "display_order": 3},
+    {"level_sequence": 5, "skill_sequence": 2, "title": "Lift-Drop-Net Variations", "url": "https://youtu.be/1l2Hri0_NjY", "display_order": 4},
+    {"level_sequence": 5, "skill_sequence": 3, "title": "The Smash", "url": "https://youtu.be/2J4V37Qf9FY", "display_order": 1},
+    {"level_sequence": 5, "skill_sequence": 3, "title": "Smash And Block Defence Practice", "url": "https://youtu.be/IOtB-Ago0DE", "display_order": 2},
+    {"level_sequence": 5, "skill_sequence": 3, "title": "Lift-Smash-Block", "url": "https://youtu.be/P06HRqj-EqM", "display_order": 3},
+    {"level_sequence": 5, "skill_sequence": 4, "title": "Block Defence", "url": "https://youtu.be/u-diuyaBu9I", "display_order": 1},
+    {"level_sequence": 5, "skill_sequence": 4, "title": "Smash And Block Defence Practice", "url": "https://youtu.be/IOtB-Ago0DE", "display_order": 2},
+    {"level_sequence": 5, "skill_sequence": 5, "title": "Scissor Jump", "url": "https://youtu.be/8geOFd1z-us", "display_order": 1},
+    {"level_sequence": 5, "skill_sequence": 5, "title": "Scissor Jump Practice", "url": "https://youtu.be/3iWn6CoWdLo", "display_order": 2},
+    {"level_sequence": 5, "skill_sequence": 5, "title": "Scissor Jump - Revision", "url": "https://youtu.be/eYXvxlHPuhU", "display_order": 3},
+    {"level_sequence": 6, "skill_sequence": 1, "title": "Half Court Singles with Tactics 1", "url": "https://youtu.be/038vxWYwhsA", "display_order": 1},
+    {"level_sequence": 6, "skill_sequence": 1, "title": "Half court singles with tactics 2", "url": "https://youtu.be/0kydq6jrehA", "display_order": 2},
+    {"level_sequence": 6, "skill_sequence": 1, "title": "Half or Full Court Singles with Tactics", "url": "https://youtu.be/Y5r3SPdOkpY", "display_order": 3},
+    {"level_sequence": 6, "skill_sequence": 2, "title": "Half Court Team Game", "url": "https://youtu.be/c_knU-VA8yc", "display_order": 1},
+    {"level_sequence": 6, "skill_sequence": 2, "title": "Half Court Singles Team Game", "url": "https://youtu.be/4B0U_fmbPko", "display_order": 2},
+    {"level_sequence": 6, "skill_sequence": 3, "title": "Positional Play for Doubles", "url": "https://youtu.be/zzAy9x4Q9pY", "display_order": 1},
+    {"level_sequence": 6, "skill_sequence": 4, "title": "Positional Play for Doubles", "url": "https://youtu.be/zzAy9x4Q9pY", "display_order": 1},
+    {"level_sequence": 6, "skill_sequence": 5, "title": "Midcourt Game 1", "url": "https://youtu.be/9ulMB82tyFg", "display_order": 1},
+    {"level_sequence": 6, "skill_sequence": 5, "title": "Midcourt Game 2", "url": "https://youtu.be/1gQ0WRXE2Mg", "display_order": 2},
+    {"level_sequence": 6, "skill_sequence": 6, "title": "Doubles Exercise and Game", "url": "https://youtu.be/YXm4BJ5NjVg", "display_order": 1}
+  ]
 }
