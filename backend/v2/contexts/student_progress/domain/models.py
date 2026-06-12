@@ -287,3 +287,55 @@ class SkillBoardResult(BaseModel):
     program_name: str
     groups: list[SkillBoardLevelGroup]
     unplaced: list[SkillBoardStudentRef]
+
+
+# ---------------------------------------------------------------------------
+# Teaching focus read models (next-skill selection per student)
+# ---------------------------------------------------------------------------
+
+TeachingFocusKind = Literal["practice", "review", "ready_for_level_up"]
+
+
+class TeachingFocusSkill(BaseModel):
+    """The single skill a coach should work on with a student next."""
+
+    model_config = {"frozen": True}
+
+    skill_id: str
+    name: str
+    sequence: int
+    level_id: str
+    status: SkillStatus
+    is_review: bool = False
+
+
+class StudentTeachingFocus(BaseModel):
+    """One student's next-skill focus inside a level group."""
+
+    model_config = {"frozen": True}
+
+    student_id: str
+    student_name: str
+    focus: TeachingFocusKind
+    next_skill: TeachingFocusSkill | None = None
+
+
+class TeachingFocusLevelGroup(BaseModel):
+    """All placed students currently on one level, with their focus."""
+
+    model_config = {"frozen": True}
+
+    level_id: str
+    level_name: str
+    level_sequence: int
+    students: list[StudentTeachingFocus]
+
+
+class TeachingFocusResult(BaseModel):
+    """Per-student next-skill selection for a roster, grouped by level."""
+
+    model_config = {"frozen": True}
+
+    program_id: str
+    groups: list[TeachingFocusLevelGroup]
+    unplaced: list[SkillBoardStudentRef]

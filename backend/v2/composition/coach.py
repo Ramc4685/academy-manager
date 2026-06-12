@@ -30,6 +30,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_student_billing_enrollment
 from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import (
     BulkMarkAttendance,
 )
+from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_plan import (
+    GenerateDailyTeachingPlan,
+)
 from backend.v2.contexts.coaching.application.use_cases.mark_attendance import MarkAttendance
 from backend.v2.contexts.coaching.application.use_cases.session_feedback import (
     CreateSessionFeedback,
@@ -56,6 +59,15 @@ from backend.v2.contexts.coaching.infrastructure.mongo_session_notes_repo import
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_skill_note_repo import (
     MongoSkillNoteRepository,
+)
+from backend.v2.contexts.curriculum.infrastructure.mongo_criterion_repo import (
+    MongoCriterionRepository,
+)
+from backend.v2.contexts.curriculum.infrastructure.mongo_lesson_card_repo import (
+    MongoLessonCardRepository,
+)
+from backend.v2.contexts.curriculum.infrastructure.mongo_video_ref_repo import (
+    MongoCurriculumVideoRefRepository,
 )
 from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes import (
     CoachAddStudentToRoster,
@@ -134,6 +146,8 @@ class CoachComposition:
     list_skill_notes: ListSkillNotes
     student_progress: StudentProgressComposition
     curriculum: CurriculumComposition
+    # Coach daily teaching plan (lesson guidance)
+    generate_daily_teaching_plan: GenerateDailyTeachingPlan
 
 
 class CoachAssignedSessionLookup:
@@ -276,6 +290,18 @@ def compose_coach(
             phone=result.phone,
         )
 
+    student_progress_comp = compose_student_progress(db, outbox)
+    generate_daily_teaching_plan = GenerateDailyTeachingPlan(
+        occurrences=ListCoachOccurrencesForDate(
+            occurrences=occurrences_repo, sessions=sessions_repo
+        ),
+        get_roster=GetSessionRoster(enrollments=enrollments_repo, students=students_repo),
+        teaching_focus=student_progress_comp.get_teaching_focus,
+        lesson_cards=MongoLessonCardRepository(db),
+        video_refs=MongoCurriculumVideoRefRepository(db),
+        criteria=MongoCriterionRepository(db),
+    )
+
     return CoachComposition(
         list_today=ListCoachOccurrencesForDate(
             occurrences=occurrences_repo, sessions=sessions_repo
@@ -351,6 +377,7 @@ def compose_coach(
         # Skill pathway
         create_skill_note=CreateSkillNote(notes=skill_note_repo),
         list_skill_notes=ListSkillNotes(notes=skill_note_repo),
-        student_progress=compose_student_progress(db, outbox),
+        student_progress=student_progress_comp,
         curriculum=compose_curriculum(db),
+        generate_daily_teaching_plan=generate_daily_teaching_plan,
     )

@@ -11,6 +11,27 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_plan import (
+    DailyTeachingPlan,
+    LevelTeachingGroup,
+    UnplacedStudent,
+)
+
+# Today's teaching plan across all of the coach's sessions for a date
+# (GET /api/v2/coach/today/plan). Shape is plan section 4.
+CoachTeachingPlanResponse = DailyTeachingPlan
+
+
+class CoachSessionTeachingPlanResponse(BaseModel):
+    """Teaching plan for a single session (GET /sessions/{id}/teaching-plan)."""
+
+    program_id: str = ""
+    program_name: str = ""
+    pathway_configured: bool = False
+    session_id: str
+    groups: list[LevelTeachingGroup] = []
+    unplaced: list[UnplacedStudent] = []
+
 
 class CoachRosterEntry(BaseModel):
     student_id: str

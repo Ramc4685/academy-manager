@@ -74,6 +74,9 @@ from backend.v2.contexts.student_progress.application.use_cases.get_skill_board 
 from backend.v2.contexts.student_progress.application.use_cases.get_student_progress import (
     GetStudentProgress,
 )
+from backend.v2.contexts.student_progress.application.use_cases.get_teaching_focus import (
+    GetTeachingFocus,
+)
 from backend.v2.contexts.student_progress.application.use_cases.place_student import (
     PlaceStudentInLevel,
 )
@@ -215,6 +218,7 @@ class StudentProgressComposition:
     get_level_up_queue: GetLevelUpQueue
     get_certificates: GetStudentCertificates
     get_skill_board: GetSkillBoard
+    get_teaching_focus: GetTeachingFocus
 
 
 # ---------------------------------------------------------------------------
@@ -355,6 +359,11 @@ def compose_student_progress(
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,
             recommendations=recommendation_repo,
+            skill_lookup=skill_lookup,
+        ),
+        get_teaching_focus=GetTeachingFocus(
+            level_progress=level_progress_repo,
+            skill_progress=skill_progress_repo,
             skill_lookup=skill_lookup,
         ),
     )
