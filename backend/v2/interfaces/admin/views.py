@@ -533,6 +533,12 @@ class AdminPaymentView(BaseModel):
     invoice_number: str | None = None
     payment_method: str | None = None
     stripe_linked: bool = False
+    stripe_customer_id: str | None = None
+    stripe_checkout_session_id: str | None = None
+    stripe_subscription_id: str | None = None
+    stripe_invoice_id: str | None = None
+    stripe_payment_intent_id: str | None = None
+    reconciliation_status: str | None = None
     created_at: datetime
 
 
@@ -573,6 +579,26 @@ class MarkPaymentPaidRequest(BaseModel):
     reference_number: str | None = None
     notes: str = ""
     payment_date: date | None = None
+
+
+class ReconcileStripeBillingRequest(BaseModel):
+    parent_id: str
+    enrollment_id: str
+    stripe_customer_id: str | None = None
+    stripe_checkout_session_id: str
+    reason: str = Field(min_length=8)
+
+
+class ReconcileStripeBillingResponse(BaseModel):
+    ok: bool
+    mismatch_state: str | None = None
+    payment_id: str | None = None
+    stripe_customer_id: str | None = None
+    stripe_checkout_session_id: str | None = None
+    stripe_subscription_id: str | None = None
+    stripe_invoice_id: str | None = None
+    stripe_payment_intent_id: str | None = None
+    audit_id: str
 
 
 class ApplyPaymentDiscountRequest(BaseModel):

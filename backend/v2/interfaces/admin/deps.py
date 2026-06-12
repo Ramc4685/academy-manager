@@ -192,6 +192,7 @@ class AdminUseCases:
     update_academy_notifications_use_case: UpdateAcademyNotificationsUseCase
     get_academy_gateway_use_case: GetAcademyGatewayUseCase
     change_user_role: ChangeUserRole
+    reconcile_stripe_billing: object | None = None  # callable
     get_admin_user: GetAdminUser | None = None
     update_admin_user: UpdateAdminUser | None = None
     create_admin_user: CreateAdminUser | None = None

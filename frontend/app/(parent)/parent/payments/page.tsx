@@ -22,6 +22,33 @@ function money(cents: number, currency = "USD"): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
 }
 
+function autopayStatusText(enrollment: { payment_mode: string | null; subscription_status: string | null }) {
+  const status = enrollment.subscription_status ?? "";
+  if (enrollment.payment_mode !== "monthly") return "Manual payment";
+  if (["active", "trialing"].includes(status)) return `Autopay ${status}`;
+  if (status === "past_due") return "Autopay active, payment issue";
+  if (status === "incomplete") return "Payment setup pending";
+  if (status === "incomplete_expired") return "Payment setup expired";
+  if (status === "unpaid") return "Payment blocked";
+  if (status === "canceled") return "Autopay off";
+  return "Autopay pending";
+}
+
+function autopayHelperText(enrollment: { payment_mode: string | null; subscription_status: string | null }) {
+  const status = enrollment.subscription_status ?? "";
+  if (enrollment.payment_mode !== "monthly") return null;
+  if (status === "incomplete") {
+    return "If Checkout was completed, the account update may still be pending. You can retry without creating duplicate billing.";
+  }
+  if (status === "past_due" || status === "unpaid") {
+    return "Open the billing portal to update the payment method.";
+  }
+  if (status === "incomplete_expired") {
+    return "Start autopay again to create a fresh Stripe checkout.";
+  }
+  return null;
+}
+
 export default function ParentPaymentsPage() {
   const [pauseEnrollmentId, setPauseEnrollmentId] = useState("");
   const [pauseKind, setPauseKind] = useState<"fixed" | "indefinite">("fixed");
@@ -157,6 +184,20 @@ export default function ParentPaymentsPage() {
           {portalMutation.isPending ? "Opening..." : "Billing portal"}
         </button>
       </div>
+      {enrollments.some(
+        (enrollment) =>
+          enrollment.payment_mode === "monthly" &&
+          enrollment.subscription_status === "incomplete",
+      ) && (
+        <p
+          role="status"
+          data-testid="payment-update-pending"
+          className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"
+        >
+          Payment received in Stripe may take a moment to update this page. If it does not update,
+          retry autopay or contact the academy.
+        </p>
+      )}
       {portalError && (
         <p
           role="alert"
@@ -214,6 +255,7 @@ export default function ParentPaymentsPage() {
                 ["active", "trialing", "past_due"].includes(
                   enrollment.subscription_status ?? ""
                 );
+              const helperText = autopayHelperText(enrollment);
               const starting = startingAutopayEnrollmentId === enrollment.enrollment_id;
               return (
                 <div
@@ -225,10 +267,13 @@ export default function ParentPaymentsPage() {
                       <p className="font-medium">{enrollment.student_name}</p>
                       <p className="text-sm text-neutral-500">{enrollment.session_title}</p>
                       <p className="mt-1 text-xs text-neutral-500">
-                        {enabled
-                          ? `Autopay ${enrollment.subscription_status}`
-                          : "Manual payment"}
+                        {autopayStatusText(enrollment)}
                       </p>
+                      {helperText && (
+                        <p className="mt-1 max-w-xl text-xs text-amber-700 dark:text-amber-300">
+                          {helperText}
+                        </p>
+                      )}
                     </div>
                     <button
                       type="button"
@@ -236,7 +281,13 @@ export default function ParentPaymentsPage() {
                       onClick={() => autopayMutation.mutate(enrollment.enrollment_id)}
                       className="min-h-touch rounded-md border border-blue-300 px-3 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-700 dark:text-blue-300"
                     >
-                      {enabled ? "Autopay on" : starting ? "Starting..." : "Start autopay"}
+                      {enabled
+                        ? "Autopay on"
+                        : starting
+                          ? "Starting..."
+                          : enrollment.subscription_status === "incomplete"
+                            ? "Retry autopay"
+                            : "Start autopay"}
                     </button>
                     <button
                       type="button"

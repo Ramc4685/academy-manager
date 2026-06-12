@@ -101,6 +101,47 @@ class FakeStripeGateway(StripeGateway):
             raise ValueError("invalid signature")
         return json.loads(payload.decode("utf-8"))
 
+    async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, Any]:
+        for record in self.subscription_checkouts + self.checkouts:
+            if record["checkout_id"] == checkout_session_id:
+                metadata = dict(record.get("metadata") or {})
+                return {
+                    "id": checkout_session_id,
+                    "object": "checkout.session",
+                    "status": "complete",
+                    "payment_status": "paid",
+                    "amount_total": record.get("amount_cents"),
+                    "currency": "usd",
+                    "customer": "cus_fake_parent",
+                    "subscription": record.get("stripe_subscription_id"),
+                    "invoice": f"in_fake_{checkout_session_id}",
+                    "client_reference_id": record.get("parent_id"),
+                    "metadata": metadata,
+                }
+        return {"id": checkout_session_id, "object": "checkout.session"}
+
+    async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
+        return {
+            "id": stripe_invoice_id,
+            "object": "invoice",
+            "status": "paid",
+            "amount_paid": 0,
+            "currency": "usd",
+            "payment_intent": f"pi_fake_{stripe_invoice_id}",
+        }
+
+    async def retrieve_subscription(self, stripe_subscription_id: str) -> dict[str, Any]:
+        return {
+            "id": stripe_subscription_id,
+            "object": "subscription",
+        }
+
+    async def retrieve_payment_intent(self, stripe_payment_intent_id: str) -> dict[str, Any]:
+        return {
+            "id": stripe_payment_intent_id,
+            "object": "payment_intent",
+        }
+
     async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
         refund_id = f"re_test_{new_ulid()}"
         self.refunds.append(

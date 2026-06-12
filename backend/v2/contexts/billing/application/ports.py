@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment, Subscription
 from backend.v2.contexts.billing.domain.proration import (
@@ -70,8 +70,23 @@ class StripeEventDedup(Protocol):
     """
 
     async def claim(self, event_id: str, event_type: str) -> bool: ...
+    async def store_received(
+        self,
+        event: dict[str, Any],
+        *,
+        raw_payload: bytes,
+        academy_id: str,
+    ) -> bool: ...
+    async def claim_next(
+        self,
+        *,
+        academy_id: str,
+        processor_id: str,
+        lock_seconds: int = 300,
+    ) -> dict[str, Any] | None: ...
     async def mark_processed(self, event_id: str) -> None: ...
     async def mark_failed(self, event_id: str, error: str) -> None: ...
+    async def mark_quarantined(self, event_id: str, error: str) -> None: ...
 
 
 class StripeGateway(Protocol):
@@ -110,6 +125,18 @@ class StripeGateway(Protocol):
         """Returns portal redirect URL."""
 
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, object]: ...
+
+    async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, Any]:
+        """Fetch current Stripe Checkout Session state for reconciliation."""
+
+    async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
+        """Fetch current Stripe invoice state for reconciliation."""
+
+    async def retrieve_subscription(self, stripe_subscription_id: str) -> dict[str, Any]:
+        """Fetch current Stripe subscription state for reconciliation."""
+
+    async def retrieve_payment_intent(self, stripe_payment_intent_id: str) -> dict[str, Any]:
+        """Fetch current Stripe PaymentIntent state for reconciliation."""
 
     async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
         """Returns Stripe refund id."""

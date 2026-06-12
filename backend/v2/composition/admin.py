@@ -2155,6 +2155,188 @@ def compose_admin(
     async def list_payments_recent():
         return await payments_repo.list_recent_admin()
 
+    async def reconcile_stripe_billing(
+        *,
+        parent_id: str,
+        enrollment_id: str,
+        stripe_customer_id: str | None,
+        stripe_checkout_session_id: str,
+        reason: str,
+        actor_id: str,
+    ) -> dict[str, Any]:
+        reason = reason.strip()
+        if not reason:
+            raise ValueError("reason is required")
+        checkout = await stripe.retrieve_checkout_session(stripe_checkout_session_id)
+        metadata = checkout.get("metadata") if isinstance(checkout.get("metadata"), dict) else {}
+        metadata = metadata or {}
+        checkout_academy_id = metadata.get("academy_id")
+        if checkout_academy_id and str(checkout_academy_id) != academy_id:
+            raise ValueError("Stripe Checkout Session belongs to a different academy")
+        checkout_parent_id = str(
+            metadata.get("parent_id") or checkout.get("client_reference_id") or ""
+        )
+        if checkout_parent_id and checkout_parent_id != parent_id:
+            raise ValueError("Stripe Checkout Session belongs to a different parent")
+        checkout_enrollment_id = str(metadata.get("enrollment_id") or "")
+        if checkout_enrollment_id and checkout_enrollment_id != enrollment_id:
+            raise ValueError("Stripe Checkout Session belongs to a different enrollment")
+
+        enrollment = await db["enrollments"].find_one(
+            {
+                "academy_id": academy_id,
+                "enrollment_id": enrollment_id,
+                "$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}],
+            }
+        )
+        if enrollment is None:
+            raise ValueError("enrollment not found for parent in this academy")
+
+        now = datetime.now(UTC)
+        customer_id = str(stripe_customer_id or checkout.get("customer") or "")
+        stripe_subscription_id = str(checkout.get("subscription") or "")
+        stripe_invoice_id = str(checkout.get("invoice") or "")
+        stripe_payment_intent_id = str(checkout.get("payment_intent") or "")
+        payment_status = str(checkout.get("payment_status") or "")
+        checkout_status = str(checkout.get("status") or "")
+        if not stripe_payment_intent_id and stripe_invoice_id:
+            invoice = await stripe.retrieve_invoice(stripe_invoice_id)
+            stripe_payment_intent_id = str(invoice.get("payment_intent") or "")
+        if customer_id:
+            await db["users"].update_one(
+                {
+                    "academy_id": academy_id,
+                    "$or": [{"user_id": parent_id}, {"firebase_uid": parent_id}],
+                },
+                {"$set": {"stripe_customer_id": customer_id, "updated_at": now}},
+            )
+
+        app_subscription_id = str(
+            metadata.get("app_subscription_id") or metadata.get("subscription_id") or ""
+        )
+        if stripe_subscription_id:
+            subscription_filter: dict[str, Any] = {"academy_id": academy_id}
+            if app_subscription_id:
+                subscription_filter["subscription_id"] = app_subscription_id
+            else:
+                subscription_filter["enrollment_id"] = enrollment_id
+            await db["subscriptions"].update_one(
+                subscription_filter,
+                {
+                    "$set": {
+                        "academy_id": academy_id,
+                        "parent_id": parent_id,
+                        "enrollment_id": enrollment_id,
+                        "session_id": str(enrollment.get("session_id") or ""),
+                        "stripe_subscription_id": stripe_subscription_id,
+                        "status": "active" if payment_status == "paid" else "incomplete",
+                        "payment_mode": "monthly",
+                        "updated_at": now,
+                    },
+                    "$setOnInsert": {
+                        "subscription_id": app_subscription_id or str(new_ulid()),
+                        "created_at": now,
+                    },
+                },
+                upsert=True,
+            )
+            await db["enrollments"].update_one(
+                {"academy_id": academy_id, "enrollment_id": enrollment_id},
+                {
+                    "$set": {
+                        "payment_mode": "monthly",
+                        "subscription_status": "active"
+                        if payment_status == "paid"
+                        else "incomplete",
+                        "stripe_subscription_id": stripe_subscription_id,
+                        "updated_at": now,
+                    }
+                },
+            )
+
+        payment_id: str | None = None
+        mismatch_state: str | None = None
+        if payment_status == "paid" and checkout_status == "complete":
+            amount_total = int(checkout.get("amount_total") or 0)
+            payment = await db["payments"].find_one(
+                {
+                    "academy_id": academy_id,
+                    "enrollment_id": enrollment_id,
+                    "status": {"$in": ["pending", "partially_paid"]},
+                    "is_deleted": {"$ne": True},
+                },
+                sort=[("created_at", -1), ("payment_id", 1)],
+            )
+            if payment is not None:
+                final_amount = int(
+                    payment.get(
+                        "final_amount_cents",
+                        int(payment.get("amount_cents") or payment.get("gross_amount_cents") or 0)
+                        - int(payment.get("discount_cents") or 0),
+                    )
+                )
+                if amount_total and final_amount and amount_total != final_amount:
+                    mismatch_state = "Mongo pending amount differs from Stripe paid amount"
+                else:
+                    payment_id = str(payment.get("payment_id") or payment.get("_id"))
+                    await db["payments"].update_one(
+                        {"_id": payment["_id"]},
+                        {
+                            "$set": {
+                                "status": "succeeded",
+                                "payment_method": "stripe",
+                                "stripe_checkout_session_id": stripe_checkout_session_id,
+                                "stripe_subscription_id": stripe_subscription_id or None,
+                                "stripe_invoice_id": stripe_invoice_id or None,
+                                "stripe_payment_intent_id": stripe_payment_intent_id or None,
+                                "amount_received_cents": amount_total or final_amount,
+                                "paid_amount_cents": amount_total or final_amount,
+                                "balance_due_cents": 0,
+                                "paid_at": now,
+                                "updated_at": now,
+                            }
+                        },
+                    )
+            else:
+                mismatch_state = "Stripe paid but no pending Mongo payment found"
+
+        audit_id = str(new_ulid())
+        await db["audit_logs"].insert_one(
+            {
+                "audit_id": audit_id,
+                "academy_id": academy_id,
+                "actor_id": actor_id,
+                "action": "billing.stripe_reconcile",
+                "entity_type": "enrollment",
+                "entity_id": enrollment_id,
+                "created_at": now,
+                "reason": reason,
+                "metadata": {
+                    "parent_id": parent_id,
+                    "payment_id": payment_id,
+                    "stripe_customer_id": customer_id,
+                    "stripe_checkout_session_id": stripe_checkout_session_id,
+                    "stripe_subscription_id": stripe_subscription_id,
+                    "stripe_invoice_id": stripe_invoice_id,
+                    "stripe_payment_intent_id": stripe_payment_intent_id,
+                    "payment_status": payment_status,
+                    "checkout_status": checkout_status,
+                    "mismatch_state": mismatch_state,
+                },
+            }
+        )
+        return {
+            "ok": True,
+            "mismatch_state": mismatch_state,
+            "payment_id": payment_id,
+            "stripe_customer_id": customer_id or None,
+            "stripe_checkout_session_id": stripe_checkout_session_id,
+            "stripe_subscription_id": stripe_subscription_id or None,
+            "stripe_invoice_id": stripe_invoice_id or None,
+            "stripe_payment_intent_id": stripe_payment_intent_id or None,
+            "audit_id": audit_id,
+        }
+
     _quote_enrollment_uc = QuoteEnrollment(
         sessions=payments_repo,
         snapshots=payments_repo,
@@ -2498,6 +2680,7 @@ def compose_admin(
         mark_payment_paid=mark_payment_paid,
         apply_payment_discount=apply_payment_discount,
         undo_payment_paid=undo_payment_paid,
+        reconcile_stripe_billing=reconcile_stripe_billing,
         record_expense=record_expense,
         edit_expense=edit_expense,
         delete_expense=delete_expense,
