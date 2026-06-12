@@ -323,8 +323,29 @@ class MongoPaymentRepository(TenantScopedRepository):
             "invoice_number": doc.get("invoice_number"),
             "payment_method": doc.get("payment_method"),
             "stripe_linked": cls._is_stripe_linked(doc),
+            "stripe_customer_id": doc.get("stripe_customer_id"),
+            "stripe_checkout_session_id": doc.get("stripe_checkout_session_id"),
+            "stripe_subscription_id": doc.get("stripe_subscription_id"),
+            "stripe_invoice_id": doc.get("stripe_invoice_id"),
+            "stripe_payment_intent_id": doc.get("stripe_payment_intent_id")
+            or doc.get("stripe_payment_intent"),
+            "reconciliation_status": cls._reconciliation_status(doc),
             "created_at": created_at,
         }
+
+    @classmethod
+    def _reconciliation_status(cls, doc: dict[str, object]) -> str | None:
+        status = str(doc.get("status") or "")
+        if status in {"pending", "partially_paid"} and cls._is_stripe_linked(doc):
+            return "stripe_linked_pending"
+        if status in {
+            "succeeded",
+            "paid",
+            "partially_refunded",
+            "refunded",
+        } and cls._is_stripe_linked(doc):
+            return "stripe_synced"
+        return None
 
     async def generate_monthly_payments(self, period: str) -> GenerateMonthlyPaymentsResult:
         academy_id = current_academy_id()

@@ -8,7 +8,7 @@ which use real Stripe fixture JSON).
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -27,6 +27,7 @@ class FakePaymentRepo:
         self.by_id: dict[str, Payment] = {}
         self.by_checkout: dict[str, Payment] = {}
         self.by_pi: dict[str, Payment] = {}
+        self.fail_next_save = False
 
     def seed(self, p: Payment) -> None:
         self.by_id[p.payment_id] = p
@@ -36,6 +37,9 @@ class FakePaymentRepo:
             self.by_pi[p.stripe_payment_intent_id] = p
 
     async def save(self, p: Payment) -> None:
+        if self.fail_next_save:
+            self.fail_next_save = False
+            raise RuntimeError("transient payment write failed")
         self.seed(p)
 
     async def get(self, pid):
@@ -80,6 +84,7 @@ class FakeDedup:
     def __init__(self) -> None:
         self.claimed: set[str] = set()
         self.processed: set[str] = set()
+        self.events: dict[str, dict[str, Any]] = {}
 
     async def claim(self, event_id, _type):
         if event_id in self.claimed:
@@ -89,9 +94,53 @@ class FakeDedup:
 
     async def mark_processed(self, event_id):
         self.processed.add(event_id)
+        if event_id in self.events:
+            self.events[event_id]["status"] = "processed"
+            self.events[event_id]["processed_at"] = datetime.now(UTC)
 
     async def mark_failed(self, event_id, error):
-        pass
+        if event_id in self.events:
+            self.events[event_id]["status"] = "failed"
+            self.events[event_id]["error_message"] = error
+
+    async def mark_quarantined(self, event_id, error):
+        if event_id in self.events:
+            self.events[event_id]["status"] = "quarantined"
+            self.events[event_id]["error_message"] = error
+
+    async def store_received(self, event, *, raw_payload, academy_id):
+        event_id = str(event["id"])
+        if event_id in self.events:
+            return False
+        obj = event.get("data", {}).get("object", {})
+        metadata = obj.get("metadata") if isinstance(obj, dict) else None
+        self.events[event_id] = {
+            "event_id": event_id,
+            "event_type": str(event["type"]),
+            "academy_id": (metadata or {}).get("academy_id") or academy_id,
+            "livemode": bool(event.get("livemode", False)),
+            "status": "received",
+            "retry_count": 0,
+            "raw_payload": raw_payload,
+            "received_at": datetime.now(UTC),
+        }
+        return True
+
+    async def claim_next(self, *, academy_id, processor_id, lock_seconds=300):
+        now = datetime.now(UTC)
+        for event in self.events.values():
+            if event.get("academy_id") != academy_id:
+                continue
+            retry_at = event.get("next_retry_at")
+            if isinstance(retry_at, datetime) and retry_at > now:
+                continue
+            if event["status"] in {"received", "failed"}:
+                event["status"] = "processing"
+                event["processor_id"] = processor_id
+                event["processing_started_at"] = now
+                event["processing_locked_until"] = now + timedelta(seconds=lock_seconds)
+                return dict(event)
+        return None
 
 
 class FakeOutbox:
@@ -143,9 +192,11 @@ def _build(
     subscriptions=None,
     parent_customers=None,
     enrollment_autopay=None,
+    stripe=None,
+    expected_livemode=None,
 ):
     return HandleWebhookEvent(
-        stripe=FakeStripeGateway(),
+        stripe=stripe or FakeStripeGateway(),
         dedup=dedup or FakeDedup(),
         payments=repo,
         subscriptions=subscriptions or FakeSubscriptionRepo(),
@@ -153,6 +204,7 @@ def _build(
         enrollment_autopay=enrollment_autopay,
         outbox=outbox or FakeOutbox(),
         academy_id="acad",
+        expected_livemode=expected_livemode,
     )
 
 
@@ -171,6 +223,275 @@ def _seed_pending_payment(repo: FakePaymentRepo) -> Payment:
     )
     repo.seed(p)
     return p
+
+
+@pytest.mark.asyncio
+async def test_accept_stores_webhook_event_without_business_side_effects() -> None:
+    repo = FakePaymentRepo()
+    _seed_pending_payment(repo)
+    outbox = FakeOutbox()
+    dedup = FakeDedup()
+    uc = _build(repo, outbox=outbox, dedup=dedup)
+    body = json.dumps(
+        {
+            "id": "evt_async_accept",
+            "type": "checkout.session.completed",
+            "livemode": True,
+            "data": {
+                "object": {
+                    "id": "cs_1",
+                    "payment_intent": "pi_1",
+                    "metadata": {"academy_id": "acad"},
+                }
+            },
+        }
+    ).encode()
+
+    res = await uc.accept(body, "test_signature")
+
+    assert res == {"received": True, "stored": True, "type": "checkout.session.completed"}
+    assert dedup.events["evt_async_accept"]["status"] == "received"
+    assert repo.by_id["pay-1"].status == "pending"
+    assert outbox.events == []
+
+
+@pytest.mark.asyncio
+async def test_process_next_projects_stored_event_and_marks_processed() -> None:
+    repo = FakePaymentRepo()
+    _seed_pending_payment(repo)
+    outbox = FakeOutbox()
+    dedup = FakeDedup()
+    uc = _build(repo, outbox=outbox, dedup=dedup)
+    body = json.dumps(
+        {
+            "id": "evt_async_process",
+            "type": "checkout.session.completed",
+            "data": {"object": {"id": "cs_1", "payment_intent": "pi_1"}},
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res == {
+        "processed": True,
+        "event_id": "evt_async_process",
+        "type": "checkout.session.completed",
+    }
+    assert repo.by_id["pay-1"].status == "succeeded"
+    assert repo.by_id["pay-1"].stripe_payment_intent_id == "pi_1"
+    assert dedup.events["evt_async_process"]["status"] == "processed"
+    assert [e.name for e in outbox.events] == ["Billing.PaymentSucceeded"]
+
+
+@pytest.mark.asyncio
+async def test_process_next_fetches_current_checkout_before_projection() -> None:
+    repo = FakePaymentRepo()
+    _seed_pending_payment(repo)
+    subscriptions = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subscriptions.seed(
+        Subscription(
+            subscription_id="app-sub-1",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="pending:cs_1",
+            status="incomplete",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    stripe = FakeStripeGateway()
+    stripe.subscription_checkouts.append(
+        {
+            "checkout_id": "cs_1",
+            "stripe_subscription_id": "sub_live_1",
+            "parent_id": "p1",
+            "enrollment_id": "enr-1",
+            "session_id": "s1",
+            "amount_cents": 15000,
+            "metadata": {
+                "academy_id": "acad",
+                "parent_id": "p1",
+                "enrollment_id": "enr-1",
+                "app_subscription_id": "app-sub-1",
+            },
+        }
+    )
+    parent_customers = FakeParentStripeCustomers()
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    dedup = FakeDedup()
+    uc = _build(
+        repo,
+        dedup=dedup,
+        subscriptions=subscriptions,
+        parent_customers=parent_customers,
+        enrollment_autopay=enrollment_autopay,
+        stripe=stripe,
+    )
+    body = json.dumps(
+        {
+            "id": "evt_hydrate_checkout",
+            "type": "checkout.session.completed",
+            "data": {"object": {"id": "cs_1"}},
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    assert repo.by_id["pay-1"].status == "succeeded"
+    assert parent_customers.saved == [{"parent_id": "p1", "stripe_customer_id": "cus_fake_parent"}]
+    assert subscriptions.by_id["app-sub-1"].stripe_subscription_id == "sub_live_1"
+    assert subscriptions.by_id["app-sub-1"].status == "active"
+    assert enrollment_autopay.synced == [
+        {
+            "enrollment_id": "enr-1",
+            "subscription_status": "active",
+            "stripe_subscription_id": "sub_live_1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_failed_stored_event_can_be_retried_later() -> None:
+    repo = FakePaymentRepo()
+    _seed_pending_payment(repo)
+    repo.fail_next_save = True
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup)
+    body = json.dumps(
+        {
+            "id": "evt_async_retry",
+            "type": "checkout.session.completed",
+            "data": {"object": {"id": "cs_1", "payment_intent": "pi_1"}},
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    failed = await uc.process_next(processor_id="test-worker")
+    retried = await uc.process_next(processor_id="test-worker")
+
+    assert failed["processed"] is False
+    assert failed["status"] == "failed"
+    assert dedup.events["evt_async_retry"]["status"] == "processed"
+    assert retried["processed"] is True
+    assert repo.by_id["pay-1"].status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_wrong_livemode_event_is_quarantined() -> None:
+    repo = FakePaymentRepo()
+    _seed_pending_payment(repo)
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup, expected_livemode=True)
+    body = json.dumps(
+        {
+            "id": "evt_wrong_mode",
+            "type": "checkout.session.completed",
+            "livemode": False,
+            "data": {"object": {"id": "cs_1"}},
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["status"] == "quarantined"
+    assert dedup.events["evt_wrong_mode"]["status"] == "quarantined"
+    assert repo.by_id["pay-1"].status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_tenant_mismatch_event_is_quarantined() -> None:
+    repo = FakePaymentRepo()
+    _seed_pending_payment(repo)
+    dedup = FakeDedup()
+
+    class MismatchedStripeGateway(FakeStripeGateway):
+        async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, Any]:
+            return {
+                "id": checkout_session_id,
+                "object": "checkout.session",
+                "status": "complete",
+                "payment_status": "paid",
+                "metadata": {"academy_id": "other-academy"},
+            }
+
+    uc = _build(repo, dedup=dedup, stripe=MismatchedStripeGateway())
+    body = json.dumps(
+        {
+            "id": "evt_wrong_tenant",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_1",
+                    "metadata": {"academy_id": "acad"},
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["status"] == "quarantined"
+    assert dedup.events["evt_wrong_tenant"]["status"] == "quarantined"
+    assert repo.by_id["pay-1"].status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_process_next_does_not_claim_other_academy_events() -> None:
+    repo = FakePaymentRepo()
+    _seed_pending_payment(repo)
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup)
+    body = json.dumps(
+        {
+            "id": "evt_other_academy_pending",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_1",
+                    "metadata": {"academy_id": "other-academy"},
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res == {"processed": False, "empty": True}
+    assert dedup.events["evt_other_academy_pending"]["status"] == "received"
+    assert repo.by_id["pay-1"].status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_payment_intent_succeeded_marks_payment_succeeded() -> None:
+    repo = FakePaymentRepo()
+    payment = _seed_pending_payment(repo)
+    repo.seed(payment.model_copy(update={"stripe_payment_intent_id": "pi_1"}))
+    outbox = FakeOutbox()
+    dedup = FakeDedup()
+    uc = _build(repo, outbox=outbox, dedup=dedup)
+    body = json.dumps(
+        {
+            "id": "evt_pi_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {"object": {"id": "pi_1"}},
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    assert repo.by_id["pay-1"].status == "succeeded"
+    assert [e.name for e in outbox.events] == ["Billing.PaymentSucceeded"]
 
 
 @pytest.mark.asyncio

@@ -23,4 +23,4 @@ async def stripe_webhook(
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> dict[str, object]:
     payload = await request.body()
-    return await use_cases.handle_webhook_event.execute(payload, stripe_signature)
+    return await use_cases.handle_webhook_event.accept(payload, stripe_signature)

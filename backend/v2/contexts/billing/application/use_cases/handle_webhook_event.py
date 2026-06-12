@@ -12,6 +12,7 @@ each case in isolation.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -54,6 +55,10 @@ from backend.v2.shared.tenancy import tenant_scope
 log = logging.getLogger(__name__)
 
 
+class _QuarantineStripeEvent(Exception):
+    """Stored event is valid Stripe input but unsafe to project into Mongo."""
+
+
 class HandleWebhookEvent:
     def __init__(
         self,
@@ -68,6 +73,7 @@ class HandleWebhookEvent:
         billing_ledger: Any | None = None,
         parent_customers: ParentStripeCustomerRepository | None = None,
         enrollment_autopay: EnrollmentAutopayStateRepository | None = None,
+        expected_livemode: bool | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._stripe = stripe
@@ -78,20 +84,78 @@ class HandleWebhookEvent:
         self._billing_ledger = billing_ledger
         self._parent_customers = parent_customers
         self._enrollment_autopay = enrollment_autopay
+        self._expected_livemode = expected_livemode
         self._outbox = outbox
         self._academy_id = academy_id
         self._now = clock
 
-    async def execute(self, payload: bytes, signature: str) -> dict[str, Any]:
-        try:
-            event = self._stripe.verify_webhook(payload, signature)
-        except Exception as exc:
-            raise InvalidWebhookSignature(str(exc)) from exc
+    async def accept(self, payload: bytes, signature: str) -> dict[str, Any]:
+        """Verify and persist a Stripe event, then return quickly.
 
-        event_id = str(event.get("id", ""))
-        event_type = str(event.get("type", ""))
-        if not event_id or not event_type:
-            raise InvalidWebhookSignature("event missing id or type")
+        Business projection happens later via ``process_next`` so Stripe
+        delivery is not blocked on Mongo ledger/customer/subscription writes.
+        """
+        event = self._verify(payload, signature)
+        event_id, event_type = self._event_identity(event)
+
+        with tenant_scope(self._academy_id):
+            stored = await self._dedup.store_received(
+                event,
+                raw_payload=payload,
+                academy_id=self._academy_id,
+            )
+        if not stored:
+            log.info("stripe_webhook_already_stored event_id=%s", event_id)
+        return {"received": True, "stored": stored, "type": event_type}
+
+    async def process_next(
+        self,
+        *,
+        processor_id: str,
+        lock_seconds: int = 300,
+    ) -> dict[str, Any]:
+        with tenant_scope(self._academy_id):
+            event_doc = await self._dedup.claim_next(
+                academy_id=self._academy_id,
+                processor_id=processor_id,
+                lock_seconds=lock_seconds,
+            )
+            if event_doc is None:
+                return {"processed": False, "empty": True}
+
+            event_id = str(event_doc.get("event_id") or "")
+            event_type = str(event_doc.get("event_type") or "")
+            try:
+                event = self._event_from_stored_payload(event_doc)
+                event_type = event_type or str(event.get("type", ""))
+                self._validate_livemode(event)
+                event = await self._hydrate_current_stripe_object(event_type, event)
+                self._validate_event_guards(event)
+                await self._dispatch(event_type, event)
+                await self._dedup.mark_processed(event_id)
+                return {"processed": True, "event_id": event_id, "type": event_type}
+            except _QuarantineStripeEvent as exc:
+                await self._dedup.mark_quarantined(event_id, str(exc))
+                return {
+                    "processed": False,
+                    "event_id": event_id,
+                    "type": event_type,
+                    "status": "quarantined",
+                    "error": str(exc),
+                }
+            except Exception as exc:
+                await self._dedup.mark_failed(event_id, str(exc))
+                return {
+                    "processed": False,
+                    "event_id": event_id,
+                    "type": event_type,
+                    "status": "failed",
+                    "error": str(exc),
+                }
+
+    async def execute(self, payload: bytes, signature: str) -> dict[str, Any]:
+        event = self._verify(payload, signature)
+        event_id, event_type = self._event_identity(event)
 
         with tenant_scope(self._academy_id):
             claimed = await self._dedup.claim(event_id, event_type)
@@ -107,11 +171,110 @@ class HandleWebhookEvent:
                 await self._dedup.mark_failed(event_id, str(exc))
                 raise
 
+    def _verify(self, payload: bytes, signature: str) -> dict[str, Any]:
+        try:
+            event = self._stripe.verify_webhook(payload, signature)
+        except Exception as exc:
+            raise InvalidWebhookSignature(str(exc)) from exc
+        if not isinstance(event, dict):
+            raise InvalidWebhookSignature("event payload did not parse to object")
+        self._event_identity(event)
+        return event
+
+    @staticmethod
+    def _event_identity(event: dict[str, Any]) -> tuple[str, str]:
+        event_id = str(event.get("id", ""))
+        event_type = str(event.get("type", ""))
+        if not event_id or not event_type:
+            raise InvalidWebhookSignature("event missing id or type")
+        return event_id, event_type
+
+    @staticmethod
+    def _event_from_stored_payload(event_doc: dict[str, Any]) -> dict[str, Any]:
+        raw_payload = event_doc.get("raw_payload")
+        if isinstance(raw_payload, bytes):
+            decoded = raw_payload.decode("utf-8")
+        elif isinstance(raw_payload, str):
+            decoded = raw_payload
+        elif isinstance(raw_payload, dict):
+            return raw_payload
+        else:
+            raise ValueError("stored Stripe event missing raw payload")
+        parsed = json.loads(decoded)
+        if not isinstance(parsed, dict):
+            raise ValueError("stored Stripe event raw payload is not an object")
+        return parsed
+
+    def _validate_event_guards(self, event: dict[str, Any]) -> None:
+        self._validate_livemode(event)
+        metadata = self._event_metadata(event)
+        academy_id = metadata.get("academy_id")
+        if academy_id and academy_id != self._academy_id:
+            raise _QuarantineStripeEvent(
+                f"academy mismatch: event={academy_id} expected={self._academy_id}"
+            )
+
+    def _validate_livemode(self, event: dict[str, Any]) -> None:
+        if self._expected_livemode is not None:
+            livemode = bool(event.get("livemode", False))
+            if livemode != self._expected_livemode:
+                raise _QuarantineStripeEvent(
+                    f"livemode mismatch: event={livemode} expected={self._expected_livemode}"
+                )
+
+    @staticmethod
+    def _event_metadata(event: dict[str, Any]) -> dict[str, str]:
+        obj = event.get("data", {}).get("object", {})
+        if not isinstance(obj, dict):
+            return {}
+        metadata = obj.get("metadata")
+        if not isinstance(metadata, dict):
+            return {}
+        return {str(k): str(v) for k, v in metadata.items() if v is not None}
+
+    async def _hydrate_current_stripe_object(
+        self,
+        event_type: str,
+        event: dict[str, Any],
+    ) -> dict[str, Any]:
+        obj = event.get("data", {}).get("object", {})
+        if not isinstance(obj, dict):
+            return event
+        object_id = str(obj.get("id") or "")
+        if not object_id:
+            return event
+        current: dict[str, Any] | None = None
+        if event_type in ("checkout.session.completed", "checkout.session.expired"):
+            current = await self._stripe.retrieve_checkout_session(object_id)
+        elif event_type in ("invoice.paid", "invoice.payment_failed"):
+            current = await self._stripe.retrieve_invoice(object_id)
+        elif event_type in (
+            "customer.subscription.created",
+            "customer.subscription.updated",
+            "customer.subscription.deleted",
+        ):
+            current = await self._stripe.retrieve_subscription(object_id)
+        elif event_type in ("payment_intent.succeeded", "payment_intent.payment_failed"):
+            current = await self._stripe.retrieve_payment_intent(object_id)
+        if not current:
+            return event
+        merged = dict(obj)
+        for key, value in current.items():
+            if value not in (None, "", {}, []):
+                merged[key] = value
+        hydrated = dict(event)
+        data = dict(hydrated.get("data") or {})
+        data["object"] = merged
+        hydrated["data"] = data
+        return hydrated
+
     async def _dispatch(self, event_type: str, event: dict[str, Any]) -> None:
         if event_type == "checkout.session.completed":
             await self._on_checkout_completed(event)
         elif event_type == "checkout.session.expired":
             await self._on_checkout_expired(event)
+        elif event_type == "payment_intent.succeeded":
+            await self._on_payment_succeeded(event)
         elif event_type == "payment_intent.payment_failed":
             await self._on_payment_failed(event)
         elif event_type == "invoice.paid":
@@ -121,6 +284,7 @@ class HandleWebhookEvent:
         elif event_type == "charge.refunded":
             await self._on_charge_refunded(event)
         elif event_type in (
+            "customer.subscription.created",
             "customer.subscription.updated",
             "customer.subscription.deleted",
         ):
@@ -198,8 +362,10 @@ class HandleWebhookEvent:
         if isinstance(metadata, dict):
             if metadata.get("enrollment_id"):
                 enrollment_id = str(metadata["enrollment_id"])
+            if metadata.get("app_subscription_id"):
+                internal_sub_id = str(metadata["app_subscription_id"])
             if metadata.get("subscription_id"):
-                internal_sub_id = str(metadata["subscription_id"])
+                internal_sub_id = internal_sub_id or str(metadata["subscription_id"])
         # Prefer the pending row this exact checkout created (its internal id
         # rides in the session metadata). A parent can start checkout several
         # times for one enrollment, so latest_for_enrollment may point at a
@@ -277,6 +443,36 @@ class HandleWebhookEvent:
                     parent_id=updated.parent_id,
                     session_id=updated.session_id,
                     reason=str(pi.get("last_payment_error", {}).get("message", "unknown")),
+                ),
+            )
+        )
+
+    async def _on_payment_succeeded(self, event: dict[str, Any]) -> None:
+        pi = event["data"]["object"]
+        pi_id = pi["id"]
+        payment = await self._payments.get_by_stripe_pi(pi_id)
+        if payment is None:
+            return
+        if payment.status == "succeeded":
+            return
+        updated = payment.model_copy(
+            update={
+                "status": "succeeded",
+                "updated_at": self._now(),
+            }
+        )
+        await self._payments.save(updated)
+        await self._outbox.append(
+            PaymentSucceeded(
+                aggregate_id=updated.payment_id,
+                academy_id=updated.academy_id,
+                payload=PaymentSucceededPayload(
+                    payment_id=updated.payment_id,
+                    parent_id=updated.parent_id,
+                    session_id=updated.session_id,
+                    amount_cents=updated.amount_cents,
+                    currency=updated.currency,
+                    succeeded_at=updated.updated_at,
                 ),
             )
         )
