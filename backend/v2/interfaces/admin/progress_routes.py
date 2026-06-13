@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -88,6 +88,21 @@ class RecordTestBody(BaseModel):
     override_reason: str | None = None
 
 
+class CoachEngagementStatsRow(BaseModel):
+    coach_id: str
+    outcomes_recorded: int
+
+
+class CoachEngagementStatsResponse(BaseModel):
+    rows: list[CoachEngagementStatsRow]
+
+
+def _field(row: object, name: str) -> object:
+    if isinstance(row, dict):
+        return row[name]
+    return getattr(row, name)
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -102,6 +117,28 @@ async def place_student(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> object:
     return await _place_student_in_pathway(student_id, body, request, claims, use_cases)
+
+
+@router.get("/progress/coach-engagement", response_model=CoachEngagementStatsResponse)
+async def get_coach_engagement_stats(
+    start_date: date = Query(..., description="Inclusive start date, YYYY-MM-DD"),
+    end_date: date = Query(..., description="Inclusive end date, YYYY-MM-DD"),
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> CoachEngagementStatsResponse:
+    use_case = getattr(use_cases, "get_coach_engagement_stats", None)
+    if use_case is None:
+        raise HTTPException(status_code=503, detail="Coach engagement stats not configured")
+    rows = await use_case.execute(start_date=start_date, end_date=end_date)
+    return CoachEngagementStatsResponse(
+        rows=[
+            CoachEngagementStatsRow(
+                coach_id=str(_field(row, "coach_id")),
+                outcomes_recorded=int(_field(row, "outcomes_recorded")),
+            )
+            for row in rows
+        ]
+    )
 
 
 @router.post("/students/{student_id}/pathway-placement", status_code=201)
