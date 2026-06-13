@@ -361,6 +361,9 @@ async def reconcile_stripe_billing(
 # --- # FINANCE ---
 
 
+# DEPRECATED — retire after feat/coach-payroll-month-first ships.
+# Replaced by: GET /admin/payroll/{month} in payroll_routes.py
+# No UI surface should call this route once Phase 2 is merged.
 @router.get("/finance/payouts", response_model=AdminPayoutList)  # FINANCE
 async def list_payouts(
     _claims: AuthClaims = Depends(require_persona("admin")),

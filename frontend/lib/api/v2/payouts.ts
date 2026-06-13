@@ -17,6 +17,11 @@ import { listPayouts } from "../admin";
 
 export type { AdminPayoutView } from "../admin";
 
+/**
+ * @deprecated Use `listMonthlyPayroll()` from `v2/payroll.ts` instead.
+ * Calls the legacy derived-list route which will be removed after
+ * feat/coach-payroll-month-first ships.
+ */
 export async function listAdminPayouts() {
   return listPayouts();
 }
