@@ -909,6 +909,54 @@ class _FinancePayoutCalculator:
         )
 
 
+class _MonthlyCoachOccurrenceReaderAdapter:
+    """Groups session_occurrences by paying coach for a calendar month.
+
+    Paying coach = actual_coach_id when set, else scheduled_coach_id.
+    Clock-derived completion: end_at < now OR status == 'completed'.
+    """
+
+    def __init__(self, collection: Any) -> None:
+        self._col = collection
+
+    async def coaches_with_occurrences(
+        self,
+        *,
+        academy_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> list[Any]:
+        from dataclasses import dataclass
+
+        @dataclass(frozen=True)
+        class _Row:
+            coach_id: str
+            session_count: int
+
+        now = datetime.now(tz=UTC)
+        pipeline = [
+            {
+                "$match": {
+                    "academy_id": academy_id,
+                    "start_at": {"$gte": period_start, "$lt": period_end},
+                    "is_payable": {"$ne": False},
+                    "status": {"$ne": "cancelled"},
+                    "$or": [{"status": "completed"}, {"end_at": {"$lt": now}}],
+                }
+            },
+            {
+                "$project": {
+                    "coach": {"$ifNull": ["$actual_coach_id", "$scheduled_coach_id"]}
+                }
+            },
+            {"$group": {"_id": "$coach", "session_count": {"$sum": 1}}},
+        ]
+        return [
+            _Row(coach_id=str(doc["_id"]), session_count=int(doc["session_count"]))
+            async for doc in self._col.aggregate(pipeline)
+        ]
+
+
 def _optional_str(value: object | None) -> str | None:
     return None if value is None else str(value)
 
