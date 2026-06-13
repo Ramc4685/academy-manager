@@ -39,6 +39,9 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
     ApproveWithdrawalCredit,
     PreviewWithdrawalCredit,
 )
+from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_plan import (
+    GenerateDailyTeachingPlan,
+)
 from backend.v2.contexts.communications.application.use_cases.send_campaign import (
     SendCampaign,
 )
@@ -118,6 +121,9 @@ from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates
 )
 from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
     ListAdminWaivers,
+)
+from backend.v2.contexts.student_progress.application.use_cases.get_coach_engagement_stats import (
+    GetCoachEngagementStats,
 )
 from backend.v2.shared.comms import CommsService
 
@@ -236,6 +242,9 @@ class AdminUseCases:
     )
     curriculum: CurriculumComposition | None = None
     student_progress: StudentProgressComposition | None = None
+    generate_daily_teaching_plan: GenerateDailyTeachingPlan | None = None
+    get_session_occurrence: object | None = None  # async (occurrence_id: str) -> occurrence | None
+    get_coach_engagement_stats: GetCoachEngagementStats | None = None
     send_campaign: SendCampaign | None = None
     start_stripe_connect_use_case: StartStripeConnectUseCase | None = None
     complete_stripe_connect_use_case: CompleteStripeConnectUseCase | None = None

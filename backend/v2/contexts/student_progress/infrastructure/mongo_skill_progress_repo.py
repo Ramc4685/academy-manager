@@ -2,8 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from backend.v2.contexts.student_progress.domain.models import StudentSkillProgress
 from backend.v2.shared.tenancy import TenantScopedRepository
+
+_RECORDED_OUTCOME_STATUSES = [
+    "INTRODUCED",
+    "LEARNING",
+    "PRACTICING",
+    "TEST_READY",
+    "PASSED",
+    "NEEDS_REVIEW",
+]
 
 
 class MongoStudentSkillProgressRepository(TenantScopedRepository):
@@ -93,3 +104,28 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
             sort=[("student_id", 1), ("skill_id", 1)],
         )
         return [self._to_domain(doc) async for doc in cursor]
+
+    async def count_updates_by_coach(
+        self, *, start_at: datetime, end_at: datetime
+    ) -> list[dict[str, object]]:
+        pipeline = [
+            {
+                "$match": self._scoped(
+                    {
+                        "last_updated_at": {"$gte": start_at, "$lte": end_at},
+                        "last_updated_by": {"$nin": [None, ""]},
+                        "status": {"$in": _RECORDED_OUTCOME_STATUSES},
+                    }
+                )
+            },
+            {"$group": {"_id": "$last_updated_by", "outcomes_recorded": {"$sum": 1}}},
+            {"$sort": {"outcomes_recorded": -1, "_id": 1}},
+        ]
+        cursor = self.collection.aggregate(pipeline)
+        return [
+            {
+                "coach_id": str(doc["_id"]),
+                "outcomes_recorded": int(doc.get("outcomes_recorded", 0)),
+            }
+            async for doc in cursor
+        ]

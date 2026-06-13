@@ -2,7 +2,7 @@
 
 import { ExternalLink, FileText } from "lucide-react";
 
-import type { LessonCard, VideoLink } from "@/lib/api/coach";
+import type { LessonCard, VideoLink } from "@/components/teaching/types";
 
 /**
  * Lesson card for the coach daily teaching plan.

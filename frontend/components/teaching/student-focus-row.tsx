@@ -3,7 +3,7 @@
 import { ExternalLink } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import type { TeachingStudentFocus } from "@/lib/api/coach";
+import type { TeachingStudentFocus } from "@/components/teaching/types";
 import {
   recordTestAttempt,
   updateSkillStatus,
@@ -143,70 +143,13 @@ export function StudentFocusRow({
     : null;
   const hasError = statusMutation.isError || testMutation.isError;
 
-  // Level-up-ready: no next skill, no outcome buttons.
-  if (!skill) {
-    return (
-      <li
-        data-testid={`student-focus-${student.student_id}`}
-        className="flex items-center justify-between gap-2 rounded-xl border border-green-200 bg-green-50 p-3 dark:border-green-900 dark:bg-green-950"
-      >
-        <span className="text-sm font-semibold">{student.student_name}</span>
-        <span
-          data-testid={`student-ready-${student.student_id}`}
-          className="rounded-full bg-green-600 px-2.5 py-1 text-xs font-semibold text-white"
-        >
-          Ready to level up
-        </span>
-      </li>
-    );
-  }
+  if (!skill) return <ReadyForLevelUpRow student={student} />;
 
-  const isReview = skill.is_review || skill.status === "NEEDS_REVIEW";
-  const youtube = skill.youtube_links[0];
+  const { isReview, youtube } = focusRowMeta(student);
 
   return (
-    <li
-      data-testid={`student-focus-${student.student_id}`}
-      className={`space-y-2 rounded-xl border p-3 dark:bg-neutral-900 ${
-        isReview
-          ? "border-red-200 bg-red-50/50 dark:border-red-900 dark:bg-red-950/30"
-          : "border-neutral-200 bg-white dark:border-neutral-800"
-      }`}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-sm font-semibold">{student.student_name}</p>
-          <div className="mt-1 flex flex-wrap items-center gap-1.5">
-            <span className="text-xs text-neutral-500">Next: {skill.name}</span>
-            <span
-              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                STATUS_BADGE[skill.status] ?? STATUS_BADGE.NOT_STARTED
-              }`}
-            >
-              {STATUS_LABEL[skill.status] ?? skill.status}
-            </span>
-            {isReview && (
-              <span className="rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-semibold text-white">
-                Review
-              </span>
-            )}
-          </div>
-        </div>
-
-        {youtube && (
-          <a
-            href={youtube.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            data-testid={`student-youtube-${student.student_id}`}
-            aria-label={`Video for ${skill.name}`}
-            className="inline-flex min-h-touch shrink-0 items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 text-xs font-medium text-red-700 hover:bg-red-100 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
-          >
-            <ExternalLink className="size-3.5" aria-hidden="true" />
-            Video
-          </a>
-        )}
-      </div>
+    <li data-testid={`student-focus-${student.student_id}`} className={focusRowClass(isReview)}>
+      <StudentFocusHeader student={student} youtube={youtube} isReview={isReview} />
 
       {doneLabel && (
         <p
@@ -247,5 +190,101 @@ export function StudentFocusRow({
         })}
       </div>
     </li>
+  );
+}
+
+export function StudentFocusReadOnlyRow({
+  student,
+}: {
+  student: TeachingStudentFocus;
+}) {
+  if (!student.next_skill) return <ReadyForLevelUpRow student={student} />;
+
+  const { isReview, youtube } = focusRowMeta(student);
+  return (
+    <li data-testid={`student-focus-${student.student_id}`} className={focusRowClass(isReview)}>
+      <StudentFocusHeader student={student} youtube={youtube} isReview={isReview} />
+    </li>
+  );
+}
+
+function ReadyForLevelUpRow({ student }: { student: TeachingStudentFocus }) {
+  return (
+    <li
+      data-testid={`student-focus-${student.student_id}`}
+      className="flex items-center justify-between gap-2 rounded-xl border border-green-200 bg-green-50 p-3 dark:border-green-900 dark:bg-green-950"
+    >
+      <span className="text-sm font-semibold">{student.student_name}</span>
+      <span
+        data-testid={`student-ready-${student.student_id}`}
+        className="rounded-full bg-green-600 px-2.5 py-1 text-xs font-semibold text-white"
+      >
+        Ready to level up
+      </span>
+    </li>
+  );
+}
+
+function focusRowMeta(student: TeachingStudentFocus) {
+  const skill = student.next_skill!;
+  return {
+    isReview: skill.is_review || skill.status === "NEEDS_REVIEW",
+    youtube: skill.youtube_links[0],
+  };
+}
+
+function focusRowClass(isReview: boolean): string {
+  return `space-y-2 rounded-xl border p-3 dark:bg-neutral-900 ${
+    isReview
+      ? "border-red-200 bg-red-50/50 dark:border-red-900 dark:bg-red-950/30"
+      : "border-neutral-200 bg-white dark:border-neutral-800"
+  }`;
+}
+
+function StudentFocusHeader({
+  student,
+  youtube,
+  isReview,
+}: {
+  student: TeachingStudentFocus;
+  youtube?: { url: string };
+  isReview: boolean;
+}) {
+  const skill = student.next_skill!;
+  return (
+    <div className="flex items-start justify-between gap-2">
+      <div className="min-w-0">
+        <p className="text-sm font-semibold">{student.student_name}</p>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-neutral-500">Next: {skill.name}</span>
+          <span
+            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+              STATUS_BADGE[skill.status] ?? STATUS_BADGE.NOT_STARTED
+            }`}
+          >
+            {STATUS_LABEL[skill.status] ?? skill.status}
+          </span>
+          {isReview && (
+            <span className="rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-semibold text-white">
+              Review
+            </span>
+          )}
+        </div>
+      </div>
+
+      {youtube && (
+        <a
+          href={youtube.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          data-testid={`student-youtube-${student.student_id}`}
+          aria-label={`Video for ${skill.name}`}
+          className="inline-flex min-h-touch shrink-0 items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 text-xs font-medium text-red-700 hover:bg-red-100 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+        >
+          <ExternalLink className="size-3.5" aria-hidden="true" />
+          Video
+        </a>
+      )}
+    </div>
   );
 }
