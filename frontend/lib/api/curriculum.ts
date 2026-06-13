@@ -278,13 +278,11 @@ export function listLessonCards(programId: string): Promise<LessonCardsList> {
   );
 }
 
-// The backend seed route currently seeds the canonical badminton program and
-// does not take a program_id in the path; the argument is accepted so callers
-// can stay symmetric with listLessonCards and the seeded query key.
-export function seedLessonCards(_programId: string): Promise<SeedLessonCardsResult> {
-  return apiFetch<SeedLessonCardsResult>("/admin/seed-lesson-cards", {
-    method: "POST",
-  });
+export function seedLessonCards(programId: string): Promise<SeedLessonCardsResult> {
+  return apiFetch<SeedLessonCardsResult>(
+    `/admin/programs/${encodeURIComponent(programId)}/lesson-cards/seed`,
+    { method: "POST" },
+  );
 }
 
 // ---------------------------------------------------------------------------

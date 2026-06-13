@@ -24,6 +24,9 @@ from fastapi.testclient import TestClient
 from backend.v2.contexts.curriculum.application.use_cases.seed_curriculum import (
     seed_badminton_pathway,
 )
+from backend.v2.contexts.curriculum.application.use_cases.seed_lesson_cards import (
+    LessonCardSeedResult,
+)
 from backend.v2.contexts.curriculum.domain.models import (
     ExternalLessonReference,
     FullPathway,
@@ -396,6 +399,31 @@ def test_list_lesson_cards_returns_summary_shape():
     assert first["skill_ids"] == ["skill-a", "skill-b"]
     # use case called with the path program_id
     curriculum.list_lesson_cards.execute.assert_awaited_once_with("prog-1")
+
+
+def test_seed_lesson_cards_uses_path_program_id():
+    seed = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=LessonCardSeedResult(
+                program_id="prog-1",
+                cards_created=2,
+                cards_updated=0,
+                cards_unchanged=0,
+                video_refs_created=1,
+                video_refs_updated=0,
+                video_refs_unchanged=0,
+            )
+        )
+    )
+    curriculum = SimpleNamespace(seed_lesson_cards=seed)
+    app = _build_real_router_app(curriculum=curriculum)
+    client = TestClient(app)
+
+    r = client.post("/api/v2/admin/programs/prog-1/lesson-cards/seed")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["program_id"] == "prog-1"
+    seed.execute.assert_awaited_once_with(program_id="prog-1", created_by="admin-1")
 
 
 def test_list_lesson_cards_empty_reports_zero_count():
