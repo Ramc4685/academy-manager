@@ -362,9 +362,7 @@ def _build_real_router_app(*, curriculum: Any) -> FastAPI:
         academy_id="test-academy",
         roles=("admin",),
     )
-    app.dependency_overrides[get_admin_use_cases] = lambda: SimpleNamespace(
-        curriculum=curriculum
-    )
+    app.dependency_overrides[get_admin_use_cases] = lambda: SimpleNamespace(curriculum=curriculum)
     return app
 
 
