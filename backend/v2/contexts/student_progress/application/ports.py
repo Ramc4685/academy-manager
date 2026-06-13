@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 
 from backend.v2.contexts.student_progress.domain.models import (
@@ -34,6 +35,9 @@ class StudentSkillProgressRepository(Protocol):
     async def list_for_students(
         self, student_ids: list[str], level_id: str
     ) -> list[StudentSkillProgress]: ...
+    async def count_updates_by_coach(
+        self, *, start_at: datetime, end_at: datetime
+    ) -> list[object]: ...
 
 
 class TestAttemptRepository(Protocol):
