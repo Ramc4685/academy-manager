@@ -150,6 +150,104 @@ async def test_mongo_pending_pause_requests_include_admin_context() -> None:
     assert loaded.session_start_at == datetime(2026, 6, 4, 23, 0)
 
 
+@pytest.mark.asyncio
+async def test_mongo_pending_pause_requests_resolves_parent_without_academy_id() -> None:
+    """Regression: parent lookup previously included academy_id which excluded
+    cross-academy user documents that lack the field."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["pause-requests-parent-no-academy"]
+    repo = MongoPauseRequestRepository(db)
+    request = PauseRequest(
+        pause_request_id="pause-2",
+        enrollment_id="enr-2",
+        parent_id="firebase-uid-abc",
+        pause_kind="fixed",
+        resume_on=date(2026, 7, 15),
+        reason="summer",
+        created_at=datetime(2026, 6, 3, tzinfo=UTC),
+    )
+
+    with tenant_scope("acad-1"):
+        await db.enrollments.insert_one(
+            {
+                "academy_id": "acad-1",
+                "enrollment_id": "enr-2",
+                "student_id": "student-2",
+                "session_id": "session-2",
+                "status": "active",
+            }
+        )
+        await db.students.insert_one(
+            {
+                "academy_id": "acad-1",
+                "student_id": "student-2",
+                "parent_id": "firebase-uid-abc",
+                "full_name": "Test Student",
+            }
+        )
+        # User doc has NO academy_id — mirrors production cross-academy users collection.
+        await db.users.insert_one(
+            {
+                "firebase_uid": "firebase-uid-abc",
+                "display_name": "Real Parent Name",
+                "email": "realparent@example.com",
+            }
+        )
+        await repo.add(request)
+        [loaded] = await repo.list_pending()
+
+    assert loaded.parent_name == "Real Parent Name"
+    assert loaded.parent_email == "realparent@example.com"
+
+
+@pytest.mark.asyncio
+async def test_mongo_pending_pause_requests_falls_back_to_billing_enrollment() -> None:
+    """Regression: only enrollments was checked; billing-flow pause requests store
+    enrollment_id from student_billing_enrollments which was never joined."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["pause-requests-billing-fallback"]
+    repo = MongoPauseRequestRepository(db)
+    request = PauseRequest(
+        pause_request_id="pause-3",
+        enrollment_id="billing-enr-1",
+        parent_id="parent-3",
+        pause_kind="indefinite",
+        reason="surgery",
+        created_at=datetime(2026, 6, 3, tzinfo=UTC),
+    )
+
+    with tenant_scope("acad-1"):
+        # No row in enrollments — only in student_billing_enrollments.
+        await db.student_billing_enrollments.insert_one(
+            {
+                "academy_id": "acad-1",
+                "enrollment_id": "billing-enr-1",
+                "student_id": "student-3",
+                "session_type_id": "st-1",
+            }
+        )
+        await db.students.insert_one(
+            {
+                "academy_id": "acad-1",
+                "student_id": "student-3",
+                "full_name": "Aadhya Abhishek",
+            }
+        )
+        await db.session_types.insert_one(
+            {
+                "academy_id": "acad-1",
+                "session_type_id": "st-1",
+                "name": "Junior Foundations",
+            }
+        )
+        await repo.add(request)
+        [loaded] = await repo.list_pending()
+
+    assert loaded.student_name == "Aadhya Abhishek"
+    assert loaded.session_title == "Junior Foundations"
+    assert loaded.student_id == "student-3"
+
+
 class _FakePauseRequests:
     async def add(self, request: PauseRequest) -> None:
         self.request = request

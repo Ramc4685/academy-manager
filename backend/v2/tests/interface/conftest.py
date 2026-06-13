@@ -1844,6 +1844,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         update_academy_notifications_use_case=AsyncMock(),
         get_academy_gateway_use_case=AsyncMock(),
         change_user_role=AsyncMock(),
+        reconcile_stripe_billing=AsyncMock(return_value={}),
     )
 
 

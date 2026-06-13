@@ -76,14 +76,20 @@ async def seed_lesson_cards(
     video_refs: CurriculumVideoRefRepository,
     created_by: str = "system",
     content_path: Path | None = None,
+    program_id: str | None = None,
 ) -> LessonCardSeedResult:
     content = load_content(content_path)
 
-    program = None
-    for prog in await programs.list_active():
-        if prog.sport == "badminton":
-            program = prog
-            break
+    if program_id:
+        program = await programs.get(program_id)
+        if program is not None and (not program.is_active or program.sport != "badminton"):
+            program = None
+    else:
+        program = None
+        for prog in await programs.list_active():
+            if prog.sport == "badminton":
+                program = prog
+                break
     if program is None:
         raise PathwayNotSeededError(
             "No active badminton program found. Seed the pathway before lesson cards."
@@ -120,7 +126,7 @@ async def seed_lesson_cards(
             skill_ids.append(skill_id)
 
         content_hash = _hash(entry)
-        existing = await cards.get_by_slug(entry["slug"])
+        existing = await cards.get_by_slug(program.program_id, entry["slug"])
         card = LessonCard(
             card_id=existing.card_id if existing else str(new_ulid()),
             academy_id=academy_id,
