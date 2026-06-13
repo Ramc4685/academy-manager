@@ -5,6 +5,8 @@ from __future__ import annotations
 from backend.v2.contexts.student_progress.domain.models import StudentSkillProgress
 from backend.v2.shared.tenancy import TenantScopedRepository
 
+_IN_PROGRESS_STATUSES = ["INTRODUCED", "LEARNING", "PRACTICING", "TEST_READY", "NEEDS_REVIEW"]
+
 
 class MongoStudentSkillProgressRepository(TenantScopedRepository):
     collection_name = "student_skill_progress"
@@ -90,6 +92,13 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
             {"student_id": student_id},
             sort=[("last_updated_at", -1)],
             limit=limit,
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
+    async def list_in_progress_for_student(self, student_id: str) -> list[StudentSkillProgress]:
+        cursor = self._find_many(
+            {"student_id": student_id, "status": {"$in": _IN_PROGRESS_STATUSES}},
+            sort=[("last_updated_at", -1)],
         )
         return [self._to_domain(doc) async for doc in cursor]
 

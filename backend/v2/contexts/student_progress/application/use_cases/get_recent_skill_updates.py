@@ -48,3 +48,31 @@ class GetRecentSkillUpdates:
                 )
             )
         return updates
+
+
+class GetInProgressSkills:
+    def __init__(
+        self,
+        *,
+        skill_progress: StudentSkillProgressRepository,
+        skill_lookup: SkillLookup,
+    ) -> None:
+        self._skill_progress = skill_progress
+        self._skill_lookup = skill_lookup
+
+    async def execute(self, student_id: str) -> list[RecentSkillUpdate]:
+        rows = await self._skill_progress.list_in_progress_for_student(student_id)
+        sorted_rows = sorted(rows, key=lambda row: row.last_updated_at, reverse=True)
+
+        updates: list[RecentSkillUpdate] = []
+        for row in sorted_rows:
+            skill = await self._skill_lookup.get_skill(row.skill_id)
+            updates.append(
+                RecentSkillUpdate(
+                    skill_id=row.skill_id,
+                    skill_name=str(getattr(skill, "name", row.skill_id)),
+                    status=row.status,
+                    updated_at=row.last_updated_at,
+                )
+            )
+        return updates

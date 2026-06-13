@@ -362,6 +362,7 @@ def _build_real_parent_progress_app(
     children: list[dict[str, object]],
     program: object | None = None,
     recent_updates: list[object] | None = None,
+    in_progress_skills: list[object] | None = None,
     lesson_card: object | None = None,
 ) -> tuple[FastAPI, SimpleNamespace]:
     list_children = _CallableSpy(children)
@@ -383,6 +384,7 @@ def _build_real_parent_progress_app(
         )
     )
     get_recent_skill_updates = _ExecuteSpy(recent_updates or [])
+    get_in_progress_skills = _ExecuteSpy(in_progress_skills or [])
     get_lesson_card_for_skill = _ExecuteSpy(
         lesson_card
         if lesson_card is not None
@@ -406,6 +408,7 @@ def _build_real_parent_progress_app(
         student_progress=SimpleNamespace(
             get_progress_summary=get_progress_summary,
             get_recent_skill_updates=get_recent_skill_updates,
+            get_in_progress_skills=get_in_progress_skills,
         ),
     )
 
@@ -420,6 +423,7 @@ def _build_real_parent_progress_app(
         resolve_default_program=resolve_default_program,
         get_progress_summary=get_progress_summary,
         get_recent_skill_updates=get_recent_skill_updates,
+        get_in_progress_skills=get_in_progress_skills,
         get_lesson_card_for_skill=get_lesson_card_for_skill,
     )
 
@@ -592,19 +596,13 @@ def test_parent_skill_updates_unknown_child_returns_404_without_querying_updates
 def test_parent_practice_resources_returns_only_video_links_for_in_progress_skills() -> None:
     app, spies = _build_real_parent_progress_app(
         children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
-        recent_updates=[
+        in_progress_skills=[
             _Dumpable(
                 skill_id="skill-1",
                 skill_name="Ready stance",
                 status="PRACTICING",
                 updated_at=datetime(2026, 6, 13, 15, 30, tzinfo=UTC),
-            ),
-            _Dumpable(
-                skill_id="skill-2",
-                skill_name="Completed grip",
-                status="PASSED",
-                updated_at=datetime(2026, 6, 12, 15, 30, tzinfo=UTC),
-            ),
+            )
         ],
     )
     client = TestClient(app)
@@ -631,5 +629,50 @@ def test_parent_practice_resources_returns_only_video_links_for_in_progress_skil
     assert "teaching_points" not in dumped
     assert "safety_notes" not in dumped
     assert "goal_summary" not in dumped
-    assert spies.get_recent_skill_updates.calls == [((OWN_STUDENT_ID,), {})]
+    assert spies.get_recent_skill_updates.calls == []
+    assert spies.get_in_progress_skills.calls == [((OWN_STUDENT_ID,), {})]
     assert spies.get_lesson_card_for_skill.calls == [(("skill-1",), {})]
+
+
+def test_parent_practice_resources_include_in_progress_skills_outside_recent_window() -> None:
+    app, spies = _build_real_parent_progress_app(
+        children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
+        recent_updates=[
+            _Dumpable(
+                skill_id=f"recent-passed-{idx}",
+                skill_name=f"Recent passed {idx}",
+                status="PASSED",
+                updated_at=datetime(2026, 6, 13, 15, idx, tzinfo=UTC),
+            )
+            for idx in range(10)
+        ],
+        in_progress_skills=[
+            _Dumpable(
+                skill_id="older-practice",
+                skill_name="Older practice skill",
+                status="PRACTICING",
+                updated_at=datetime(2026, 5, 30, 15, 30, tzinfo=UTC),
+            )
+        ],
+    )
+    client = TestClient(app)
+
+    response = client.get(f"/api/v2/parent/students/{OWN_STUDENT_ID}/practice-resources")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["resources"] == [
+        {
+            "skill_id": "older-practice",
+            "skill_name": "Older practice skill",
+            "resource_links": [
+                {
+                    "kind": "YOUTUBE",
+                    "title": "Grip practice",
+                    "url": "https://youtu.be/grip",
+                }
+            ],
+        }
+    ]
+    assert spies.get_recent_skill_updates.calls == []
+    assert spies.get_in_progress_skills.calls == [((OWN_STUDENT_ID,), {})]
+    assert spies.get_lesson_card_for_skill.calls == [(("older-practice",), {})]

@@ -23,8 +23,6 @@ from backend.v2.shared.http import require_persona
 
 router = APIRouter(tags=["parent-progress"])
 
-_IN_PROGRESS_STATUSES = {"INTRODUCED", "LEARNING", "PRACTICING", "TEST_READY", "NEEDS_REVIEW"}
-
 
 async def _verify_child_ownership(
     parent_id: str,
@@ -144,12 +142,10 @@ async def get_practice_resources(
     if use_cases.curriculum is None:
         raise HTTPException(status_code=503, detail="Curriculum service not configured")
 
-    updates = await use_cases.student_progress.get_recent_skill_updates.execute(student_id)
+    updates = await use_cases.student_progress.get_in_progress_skills.execute(student_id)
     resources: list[dict[str, object]] = []
     for update in updates:
         update_data = _public_skill_update(update)
-        if update_data["status"] not in _IN_PROGRESS_STATUSES:
-            continue
         card = await use_cases.curriculum.get_lesson_card_for_skill.execute(
             str(update_data["skill_id"])
         )
