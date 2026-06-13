@@ -249,6 +249,9 @@ class AdminUseCases:
     start_stripe_connect_use_case: StartStripeConnectUseCase | None = None
     complete_stripe_connect_use_case: CompleteStripeConnectUseCase | None = None
     disconnect_stripe_use_case: DisconnectStripeUseCase | None = None
+    # Coach teaching-plan digest: test-send + delivery log (Stream 2 C/D).
+    send_coach_digest_test: object | None = None  # SendCoachDigestTest
+    get_digest_delivery_log: object | None = None  # GetDigestDeliveryLog
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:

@@ -35,12 +35,31 @@ class MongoAudienceResolver(AudienceResolver):
             "$or": [{"role": role}, {"roles": role}],
         }
 
+    def _membership_role_filter(self, role: str) -> dict[str, Any]:
+        return {
+            "academy_id": current_academy_id(),
+            "status": "active",
+            "$or": [{"role": role}, {"roles": role}],
+        }
+
     async def resolve_academy_audience(self, audience: AcademyAudience) -> list[ResolvedRecipient]:
-        cursor = self.db["users"].find(
+        membership_cursor = self.db["academy_memberships"].find(
+            self._membership_role_filter(audience.role),
+            {"user_id": 1},
+        )
+        user_ids = [str(doc["user_id"]) async for doc in membership_cursor if doc.get("user_id")]
+        if user_ids:
+            cursor = self.db["users"].find(
+                {"$or": [{"user_id": {"$in": user_ids}}, {"auth_uid": {"$in": user_ids}}]},
+                {"user_id": 1, "email": 1, "display_name": 1, "name": 1},
+            )
+            return [self._user_to_recipient(doc) async for doc in cursor]
+
+        legacy_cursor = self.db["users"].find(
             self._role_filter(audience.role),
             {"user_id": 1, "email": 1, "display_name": 1, "name": 1},
         )
-        return [self._user_to_recipient(doc) async for doc in cursor]
+        return [self._user_to_recipient(doc) async for doc in legacy_cursor]
 
     async def resolve_session_audience(self, audience: SessionAudience) -> list[ResolvedRecipient]:
         academy_id = current_academy_id()

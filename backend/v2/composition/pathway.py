@@ -166,7 +166,9 @@ class SeedLessonCards:
         self._cards = cards
         self._video_refs = video_refs
 
-    async def execute(self, *, created_by: str = "admin") -> LessonCardSeedResult:
+    async def execute(
+        self, *, program_id: str | None = None, created_by: str = "admin"
+    ) -> LessonCardSeedResult:
         return await seed_lesson_cards(
             academy_id=current_academy_id(),
             programs=self._programs,
@@ -175,6 +177,7 @@ class SeedLessonCards:
             cards=self._cards,
             video_refs=self._video_refs,
             created_by=created_by,
+            program_id=program_id,
         )
 
 
