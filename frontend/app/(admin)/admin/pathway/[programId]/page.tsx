@@ -8,11 +8,15 @@ import {
   createLevel,
   createSkill,
   getFullPathway,
+  listLessonCards,
+  seedLessonCards,
   type PathwayLevel,
+  type SeedLessonCardsResult,
   type Skill,
 } from "@/lib/api/curriculum";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
+import { queryKeys } from "@/lib/query/keys";
 
 export default function AdminPathwayDetailPage() {
   const { programId } = useParams<{ programId: string }>();
@@ -68,6 +72,8 @@ export default function AdminPathwayDetailPage() {
         </Button>
       </div>
 
+      <LessonCardsPanel programId={programId} />
+
       {showAddLevel && (
         <Card p={20}>
           <h2 className="mb-3 text-sm font-semibold">New Level</h2>
@@ -122,6 +128,79 @@ export default function AdminPathwayDetailPage() {
         </div>
       )}
     </section>
+  );
+}
+
+function LessonCardsPanel({ programId }: { programId: string }) {
+  const queryClient = useQueryClient();
+
+  const { data, isLoading } = useQuery({
+    queryKey: queryKeys.admin.lessonCards(programId),
+    queryFn: () => listLessonCards(programId),
+    enabled: Boolean(programId),
+  });
+
+  const [lastResult, setLastResult] = useState<SeedLessonCardsResult | null>(null);
+
+  const seedMutation = useMutation({
+    mutationFn: () => seedLessonCards(programId),
+    onSuccess: (result) => {
+      setLastResult(result);
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.admin.lessonCards(programId),
+      });
+    },
+  });
+
+  const count = data?.count ?? 0;
+  const seeded = count > 0;
+
+  return (
+    <Card p={20}>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold">Lesson cards</h2>
+            {isLoading ? (
+              <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-400 dark:bg-neutral-800">
+                Loading…
+              </span>
+            ) : (
+              <span
+                className={
+                  seeded
+                    ? "rounded-full bg-green-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-green-700"
+                    : "rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-neutral-500 dark:bg-neutral-800"
+                }
+              >
+                {seeded ? `${count} cards seeded` : "Not seeded"}
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-xs text-neutral-500">
+            Original-wording teaching cards mapping lessons to skills. Seeding is
+            idempotent.
+          </p>
+          {lastResult && (
+            <p className="mt-1 text-xs text-neutral-600" role="status">
+              {lastResult.cards_created} created · {lastResult.cards_updated} updated
+              · {lastResult.cards_unchanged} unchanged
+            </p>
+          )}
+          {seedMutation.isError && (
+            <p className="mt-1 text-xs text-red-600">Failed to seed lesson cards.</p>
+          )}
+        </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={seedMutation.isPending}
+          onClick={() => seedMutation.mutate()}
+        >
+          {seedMutation.isPending ? "Seeding…" : "Seed lesson cards"}
+        </Button>
+      </div>
+    </Card>
   );
 }
 
