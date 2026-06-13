@@ -75,8 +75,8 @@ async def seed_lesson_cards(
     cards: LessonCardRepository,
     video_refs: CurriculumVideoRefRepository,
     created_by: str = "system",
-    content_path: Path | None = None,
     program_id: str | None = None,
+    content_path: Path | None = None,
 ) -> LessonCardSeedResult:
     content = load_content(content_path)
 

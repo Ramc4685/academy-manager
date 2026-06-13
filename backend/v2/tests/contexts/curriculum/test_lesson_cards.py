@@ -42,7 +42,7 @@ class FakeLessonCardRepository:
         self._cards = cards
 
     async def get_by_slug(self, program_id: str, slug: str) -> LessonCard | None:
-        return next((c for c in self._cards if c.slug == slug), None)
+        return next((c for c in self._cards if c.program_id == program_id and c.slug == slug), None)
 
     async def save(self, card: LessonCard) -> None:  # pragma: no cover - unused here
         self._cards.append(card)

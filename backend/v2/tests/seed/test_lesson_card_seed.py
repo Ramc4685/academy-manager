@@ -139,6 +139,7 @@ async def _seed_cards(
     levels: FakeLevelRepository,
     skills: FakeSkillRepository,
     *,
+    program_id: str | None = None,
     content_path=None,
 ):
     cards = FakeLessonCardRepository()
@@ -151,6 +152,7 @@ async def _seed_cards(
         cards=cards,  # type: ignore[arg-type]
         video_refs=videos,  # type: ignore[arg-type]
         created_by="admin",
+        program_id=program_id,
         content_path=content_path,
     )
     return result, cards, videos
@@ -225,27 +227,32 @@ async def test_reseed_is_a_noop() -> None:
 
 async def test_seed_for_second_program_creates_separate_cards_for_same_slugs() -> None:
     programs, levels, skills = await _seed_pathway()
-    first_program = programs.saved[0]
-    second_program = first_program.model_copy(update={"program_id": "second-program"})
-    programs.saved.append(second_program)
+    original_program = programs.saved[0]
+    second_program_id = "program-second"
+    programs.saved.append(original_program.model_copy(update={"program_id": second_program_id}))
+
+    original_level_ids = {
+        level.level_id: f"{second_program_id}-{level.sequence}" for level in levels.saved
+    }
     for level in list(levels.saved):
-        second_level = level.model_copy(
-            update={
-                "level_id": f"second-{level.level_id}",
-                "program_id": second_program.program_id,
-            }
-        )
-        levels.saved.append(second_level)
-        for skill in [s for s in skills.saved if s.level_id == level.level_id]:
-            skills.saved.append(
-                skill.model_copy(
-                    update={
-                        "skill_id": f"second-{skill.skill_id}",
-                        "level_id": second_level.level_id,
-                        "program_id": second_program.program_id,
-                    }
-                )
+        levels.saved.append(
+            level.model_copy(
+                update={
+                    "level_id": original_level_ids[level.level_id],
+                    "program_id": second_program_id,
+                }
             )
+        )
+    for skill in list(skills.saved):
+        skills.saved.append(
+            skill.model_copy(
+                update={
+                    "skill_id": f"{second_program_id}-{skill.skill_id}",
+                    "program_id": second_program_id,
+                    "level_id": original_level_ids[skill.level_id],
+                }
+            )
+        )
 
     cards = FakeLessonCardRepository()
     videos = FakeVideoRefRepository()
@@ -259,14 +266,26 @@ async def test_seed_for_second_program_creates_separate_cards_for_same_slugs() -
         created_by="admin",
     )
 
-    first = await seed_lesson_cards(program_id=first_program.program_id, **common)  # type: ignore[arg-type]
-    second = await seed_lesson_cards(program_id=second_program.program_id, **common)  # type: ignore[arg-type]
+    first = await seed_lesson_cards(**common, program_id=original_program.program_id)  # type: ignore[arg-type]
+    second = await seed_lesson_cards(**common, program_id=second_program_id)  # type: ignore[arg-type]
 
     assert first.cards_created == 22
     assert second.cards_created == 22
     assert second.cards_updated == 0
-    assert second.cards_unchanged == 0
     assert len(cards.saved) == 44
+    assert (
+        len(
+            [
+                card
+                for card in cards.saved.values()
+                if card.program_id == original_program.program_id
+            ]
+        )
+        == 22
+    )
+    assert (
+        len([card for card in cards.saved.values() if card.program_id == second_program_id]) == 22
+    )
 
 
 async def test_content_hash_change_updates_in_place_keeping_id() -> None:
