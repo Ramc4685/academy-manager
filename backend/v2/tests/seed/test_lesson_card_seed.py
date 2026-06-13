@@ -62,16 +62,16 @@ ALLOWED_VIDEO_REF_FIELDS = {
 
 class FakeLessonCardRepository:
     def __init__(self) -> None:
-        self.saved: dict[str, LessonCard] = {}
+        self.saved: dict[tuple[str, str], LessonCard] = {}
 
-    async def get_by_slug(self, slug: str) -> LessonCard | None:
-        return self.saved.get(slug)
+    async def get_by_slug(self, program_id: str, slug: str) -> LessonCard | None:
+        return self.saved.get((program_id, slug))
 
     async def save(self, card: LessonCard) -> None:
-        self.saved[card.slug] = card
+        self.saved[(card.program_id, card.slug)] = card
 
     async def replace(self, card: LessonCard) -> None:
-        self.saved[card.slug] = card
+        self.saved[(card.program_id, card.slug)] = card
 
     async def list_for_program(self, program_id: str) -> list[LessonCard]:
         return [c for c in self.saved.values() if c.program_id == program_id]
@@ -139,6 +139,7 @@ async def _seed_cards(
     levels: FakeLevelRepository,
     skills: FakeSkillRepository,
     *,
+    program_id: str | None = None,
     content_path=None,
 ):
     cards = FakeLessonCardRepository()
@@ -151,6 +152,7 @@ async def _seed_cards(
         cards=cards,  # type: ignore[arg-type]
         video_refs=videos,  # type: ignore[arg-type]
         created_by="admin",
+        program_id=program_id,
         content_path=content_path,
     )
     return result, cards, videos
@@ -223,6 +225,69 @@ async def test_reseed_is_a_noop() -> None:
     assert len(videos.saved) == 107
 
 
+async def test_seed_for_second_program_creates_separate_cards_for_same_slugs() -> None:
+    programs, levels, skills = await _seed_pathway()
+    original_program = programs.saved[0]
+    second_program_id = "program-second"
+    programs.saved.append(original_program.model_copy(update={"program_id": second_program_id}))
+
+    original_level_ids = {
+        level.level_id: f"{second_program_id}-{level.sequence}" for level in levels.saved
+    }
+    for level in list(levels.saved):
+        levels.saved.append(
+            level.model_copy(
+                update={
+                    "level_id": original_level_ids[level.level_id],
+                    "program_id": second_program_id,
+                }
+            )
+        )
+    for skill in list(skills.saved):
+        skills.saved.append(
+            skill.model_copy(
+                update={
+                    "skill_id": f"{second_program_id}-{skill.skill_id}",
+                    "program_id": second_program_id,
+                    "level_id": original_level_ids[skill.level_id],
+                }
+            )
+        )
+
+    cards = FakeLessonCardRepository()
+    videos = FakeVideoRefRepository()
+    common = dict(
+        academy_id=ACADEMY_ID,
+        programs=programs,
+        levels=levels,
+        skills=skills,
+        cards=cards,
+        video_refs=videos,
+        created_by="admin",
+    )
+
+    first = await seed_lesson_cards(**common, program_id=original_program.program_id)  # type: ignore[arg-type]
+    second = await seed_lesson_cards(**common, program_id=second_program_id)  # type: ignore[arg-type]
+
+    assert first.cards_created == 22
+    assert second.cards_created == 22
+    assert second.cards_updated == 0
+    assert len(cards.saved) == 44
+    assert (
+        len(
+            [
+                card
+                for card in cards.saved.values()
+                if card.program_id == original_program.program_id
+            ]
+        )
+        == 22
+    )
+    assert (
+        len([card for card in cards.saved.values() if card.program_id == second_program_id]) == 22
+    )
+
+
 async def test_content_hash_change_updates_in_place_keeping_id() -> None:
     programs, levels, skills = await _seed_pathway()
     cards = FakeLessonCardRepository()
@@ -238,14 +303,17 @@ async def test_content_hash_change_updates_in_place_keeping_id() -> None:
     )
     await seed_lesson_cards(**common)  # type: ignore[arg-type]
 
-    target = cards.saved["bwf-st-lesson-01"]
+    program_id = programs.saved[0].program_id
+    target = cards.saved[(program_id, "bwf-st-lesson-01")]
     original_id = target.card_id
-    cards.saved["bwf-st-lesson-01"] = target.model_copy(update={"content_hash": "stale"})
+    cards.saved[(program_id, "bwf-st-lesson-01")] = target.model_copy(
+        update={"content_hash": "stale"}
+    )
 
     result = await seed_lesson_cards(**common)  # type: ignore[arg-type]
     assert result.cards_updated == 1
     assert result.cards_unchanged == 21
-    assert cards.saved["bwf-st-lesson-01"].card_id == original_id
+    assert cards.saved[(program_id, "bwf-st-lesson-01")].card_id == original_id
 
 
 async def test_pdf_references_stay_pointer_only() -> None:
