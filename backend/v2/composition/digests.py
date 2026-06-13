@@ -13,6 +13,7 @@ contacting a provider.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
@@ -26,8 +27,14 @@ from backend.v2.composition.pathway import (
 from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_plan import (
     GenerateDailyTeachingPlan,
 )
+from backend.v2.contexts.communications.application.use_cases.get_digest_delivery_log import (
+    GetDigestDeliveryLog,
+)
 from backend.v2.contexts.communications.application.use_cases.send_coach_daily_digest import (
     SendCoachDailyDigest,
+)
+from backend.v2.contexts.communications.application.use_cases.send_coach_digest_test import (
+    SendCoachDigestTest,
 )
 from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver import (
     MongoAudienceResolver,
@@ -69,6 +76,42 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
     MongoStudentRepository,
 )
 from backend.v2.shared.config import get_settings
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedDigestSchedule:
+    """Effective coach-digest schedule for one academy.
+
+    ``enabled``/``hour`` are the *effective* values the hourly scheduler acts on
+    after merging the per-academy notification override with the env fallback.
+    """
+
+    enabled: bool
+    hour: int
+
+
+def resolve_digest_schedule(
+    *,
+    academy_enabled: bool | None,
+    academy_hour: int | None,
+    env_enabled: bool,
+    env_hour: int,
+) -> ResolvedDigestSchedule:
+    """Merge a per-academy override with the deprecated env fallback.
+
+    Pure (no I/O, no APScheduler) so the resolution rule is unit-testable in
+    isolation. The per-academy value wins when present; otherwise we fall back
+    to the env default, preserving the original behaviour for any deployment
+    that has not yet saved per-academy values.
+
+    Note: ``hour`` is interpreted in the *scheduler* timezone, not the academy's
+    local timezone — interpreting it per-academy is explicit future work.
+    """
+    enabled = env_enabled if academy_enabled is None else academy_enabled
+    hour = env_hour if academy_hour is None else academy_hour
+    if not (0 <= hour <= 23):
+        hour = env_hour
+    return ResolvedDigestSchedule(enabled=bool(enabled), hour=int(hour))
 
 
 def _id_of(program: Any) -> str:
@@ -126,7 +169,17 @@ class _CoachDigestPlanProvider:
         return program_id, name
 
 
-def compose_send_coach_daily_digest(db: AsyncIOMotorDatabase[Any]) -> SendCoachDailyDigest:
+@dataclass(frozen=True, slots=True)
+class _DigestParts:
+    """Shared collaborators for the daily + test coach-digest use cases."""
+
+    digests: MongoDigestSendRepository
+    resolver: MongoAudienceResolver
+    sender: Any
+    plan_provider: _CoachDigestPlanProvider
+
+
+def _build_digest_parts(db: AsyncIOMotorDatabase[Any]) -> _DigestParts:
     settings = get_settings()
 
     occurrences_repo = MongoSessionOccurrenceRepository(db)
@@ -160,9 +213,33 @@ def compose_send_coach_daily_digest(db: AsyncIOMotorDatabase[Any]) -> SendCoachD
     else:
         sender = StubEmailSendPort()
 
-    return SendCoachDailyDigest(
+    return _DigestParts(
         digests=MongoDigestSendRepository(db),
         resolver=MongoAudienceResolver(db=db),
         sender=sender,
         plan_provider=plan_provider,
     )
+
+
+def compose_send_coach_daily_digest(db: AsyncIOMotorDatabase[Any]) -> SendCoachDailyDigest:
+    parts = _build_digest_parts(db)
+    return SendCoachDailyDigest(
+        digests=parts.digests,
+        resolver=parts.resolver,
+        sender=parts.sender,
+        plan_provider=parts.plan_provider,
+    )
+
+
+def compose_send_coach_digest_test(db: AsyncIOMotorDatabase[Any]) -> SendCoachDigestTest:
+    parts = _build_digest_parts(db)
+    return SendCoachDigestTest(
+        digests=parts.digests,
+        resolver=parts.resolver,
+        sender=parts.sender,
+        plan_provider=parts.plan_provider,
+    )
+
+
+def compose_get_digest_delivery_log(db: AsyncIOMotorDatabase[Any]) -> GetDigestDeliveryLog:
+    return GetDigestDeliveryLog(digests=MongoDigestSendRepository(db))

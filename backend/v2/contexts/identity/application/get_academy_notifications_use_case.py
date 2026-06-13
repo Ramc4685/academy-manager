@@ -16,6 +16,30 @@ class GetAcademyNotificationsOutput:
     dues_reminders: bool = False
     attendance_alerts: bool = False
     daily_digest_to_admin: bool = False
+    # Per-academy override for the coach teaching-plan digest. ``coach_digest_hour``
+    # is interpreted in the scheduler timezone (see scheduler refactor in main.py),
+    # not the academy's local timezone.
+    coach_digest_enabled: bool = False
+    coach_digest_hour: int = 6
+
+
+def _coerce_hour(value: Any, default: int = 6) -> int:
+    """Clamp a stored hour into 0-23; fall back to ``default`` on bad data."""
+    try:
+        hour = int(value)
+    except (TypeError, ValueError):
+        return default
+    return hour if 0 <= hour <= 23 else default
+
+
+def _notifications_output(notifs: dict[str, Any]) -> GetAcademyNotificationsOutput:
+    return GetAcademyNotificationsOutput(
+        dues_reminders=bool(notifs.get("dues_reminders", False)),
+        attendance_alerts=bool(notifs.get("attendance_alerts", False)),
+        daily_digest_to_admin=bool(notifs.get("daily_digest_to_admin", False)),
+        coach_digest_enabled=bool(notifs.get("coach_digest_enabled", False)),
+        coach_digest_hour=_coerce_hour(notifs.get("coach_digest_hour", 6)),
+    )
 
 
 class GetAcademyNotificationsUseCase:
@@ -27,8 +51,4 @@ class GetAcademyNotificationsUseCase:
         if not doc:
             doc = await self._repo.upsert_defaults(academy_id)
         notifs = doc.get("notifications") or doc
-        return GetAcademyNotificationsOutput(
-            dues_reminders=bool(notifs.get("dues_reminders", False)),
-            attendance_alerts=bool(notifs.get("attendance_alerts", False)),
-            daily_digest_to_admin=bool(notifs.get("daily_digest_to_admin", False)),
-        )
+        return _notifications_output(notifs)

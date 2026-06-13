@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
@@ -23,7 +23,10 @@ from starlette.middleware.cors import CORSMiddleware
 
 from backend.v2.composition.admin import compose_admin
 from backend.v2.composition.coach import compose_coach
-from backend.v2.composition.digests import compose_send_coach_daily_digest
+from backend.v2.composition.digests import (
+    compose_send_coach_daily_digest,
+    resolve_digest_schedule,
+)
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
@@ -276,7 +279,21 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             log.info("stripe_webhook_events_processed", extra=totals)
 
     async def _send_coach_daily_digests() -> None:
-        on_date = datetime.now(UTC).date()
+        # Hourly tick. The job runs every hour and only sends for academies whose
+        # *effective* digest hour matches the current scheduler-TZ hour. The env
+        # vars (settings.coach_digest_enabled/hour) are now deprecated defaults:
+        # they only apply until an admin saves per-academy values, so existing
+        # deployments keep their original single daily send with no behaviour
+        # change. Idempotency is preserved by the existing per-(academy, coach,
+        # date) try_claim — re-running the same hour sends nothing.
+        #
+        # NOTE: ``coach_digest_hour`` is interpreted in the scheduler timezone
+        # (settings.scheduler_tz), NOT each academy's local timezone. Honouring
+        # the academy's own TZ is explicit future work.
+        now = datetime.now(scheduler.timezone)
+        current_hour = now.hour
+        on_date = now.date()
+        academy_repo = MongoAcademyRepository(db)
         totals = {
             "academy_count": 0,
             "coaches": 0,
@@ -286,9 +303,21 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             "already_claimed": 0,
         }
         for academy_id in await _scheduler_academy_ids(
-            MongoAcademyRepository(db),
+            academy_repo,
             settings.default_academy_id,
         ):
+            # Read the raw notifications subdoc so an *unset* override falls back
+            # to the env default (key present but False is a deliberate opt-out).
+            doc = await academy_repo.find_by_id(academy_id)
+            notifs = (doc or {}).get("notifications") or {}
+            schedule = resolve_digest_schedule(
+                academy_enabled=notifs.get("coach_digest_enabled"),
+                academy_hour=notifs.get("coach_digest_hour"),
+                env_enabled=settings.coach_digest_enabled,
+                env_hour=settings.coach_digest_hour,
+            )
+            if not (schedule.enabled and schedule.hour == current_hour):
+                continue
             with tenant_scope(academy_id):
                 result = await app.state.coach_digest.execute(
                     SendCoachDailyDigestCommand(academy_id=academy_id, digest_date=on_date)
@@ -319,20 +348,23 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         replace_existing=True,
         max_instances=1,
     )
-    # Coach daily teaching-plan digest — opt-in (default off). With the flag
-    # unset the job is never registered, so no digest can be sent locally; the
-    # composed sender is also the stub unless email delivery is explicitly on.
-    if settings.coach_digest_enabled:
-        app.state.coach_digest = compose_send_coach_daily_digest(db)
-        scheduler.add_job(
-            _send_coach_daily_digests,
-            "cron",
-            hour=settings.coach_digest_hour,
-            minute=0,
-            id="send_coach_daily_digests",
-            replace_existing=True,
-            max_instances=1,
-        )
+    # Coach teaching-plan digest. The sender is composed unconditionally so the
+    # per-academy override (and the test-send use case) work regardless of the
+    # env flag; the composed sender is still the stub unless email delivery is
+    # explicitly on. The cron is now ALWAYS hourly: each tick the job resolves
+    # the effective per-academy schedule and only sends for academies whose
+    # effective hour matches the current scheduler-TZ hour (env flag = deprecated
+    # default — ZERO behaviour change until an admin saves per-academy values).
+    app.state.coach_digest = compose_send_coach_daily_digest(db)
+    scheduler.add_job(
+        _send_coach_daily_digests,
+        "cron",
+        hour="*",
+        minute=0,
+        id="send_coach_daily_digests",
+        replace_existing=True,
+        max_instances=1,
+    )
     scheduler.start()
     app.state.scheduler = scheduler
 

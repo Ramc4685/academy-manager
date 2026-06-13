@@ -14,6 +14,10 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
 )
+from backend.v2.composition.digests import (
+    compose_get_digest_delivery_log,
+    compose_send_coach_digest_test,
+)
 from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
@@ -2725,6 +2729,8 @@ def compose_admin(
         update_academy_fees_use_case=update_academy_fees_use_case,
         get_academy_notifications_use_case=get_academy_notifications_use_case,
         update_academy_notifications_use_case=update_academy_notifications_use_case,
+        send_coach_digest_test=compose_send_coach_digest_test(db),
+        get_digest_delivery_log=compose_get_digest_delivery_log(db),
         get_academy_gateway_use_case=get_academy_gateway_use_case,
         start_stripe_connect_use_case=start_stripe_connect_use_case,
         complete_stripe_connect_use_case=complete_stripe_connect_use_case,
