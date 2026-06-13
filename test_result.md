@@ -21,6 +21,7 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-06-11-billing-invoice-ledger-requirements](docs/test-results/active/2026-06-11-billing-invoice-ledger-requirements.md)
 - [2026-06-11-coach-daily-lesson-guidance](docs/test-results/active/2026-06-11-coach-daily-lesson-guidance.md)
 - [2026-06-12-stripe-payment-hotfix](docs/test-results/active/2026-06-12-stripe-payment-hotfix.md)
+- [2026-06-13-parent-skill-updates](docs/test-results/active/2026-06-13-parent-skill-updates.md)
 - [2026-06-13-admin-teaching-plan-visibility](docs/test-results/active/2026-06-13-admin-teaching-plan-visibility.md)
 
 ## Required Workflow

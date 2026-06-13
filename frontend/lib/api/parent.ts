@@ -1,4 +1,5 @@
 import { apiFetch } from "./client";
+import type { SkillStatus } from "./curriculum";
 
 export interface ParentProfile {
   first_name: string;
@@ -125,6 +126,25 @@ export interface ParentProgressNote {
   coach_name: string | null;
   body: string;
   created_at: string;
+}
+
+export interface ParentSkillUpdate {
+  skill_id: string;
+  skill_name: string;
+  status: SkillStatus;
+  updated_at: string;
+}
+
+export interface ParentPracticeResourceLink {
+  kind: "YOUTUBE";
+  title: string;
+  url: string;
+}
+
+export interface ParentPracticeResource {
+  skill_id: string;
+  skill_name: string;
+  resource_links: ParentPracticeResourceLink[];
 }
 
 export interface ParentScheduleEntry {
@@ -271,6 +291,22 @@ export function listParentAttendance(): Promise<{
 
 export function listParentProgress(): Promise<{ notes: ParentProgressNote[] }> {
   return apiFetch("/parent/progress", { method: "GET" });
+}
+
+export function listSkillUpdates(studentId: string): Promise<ParentSkillUpdate[]> {
+  return apiFetch<{ updates: ParentSkillUpdate[] }>(
+    `/parent/students/${encodeURIComponent(studentId)}/skill-updates`,
+    { method: "GET" },
+  ).then((d) => d.updates);
+}
+
+export function listPracticeResources(
+  studentId: string,
+): Promise<ParentPracticeResource[]> {
+  return apiFetch<{ resources: ParentPracticeResource[] }>(
+    `/parent/students/${encodeURIComponent(studentId)}/practice-resources`,
+    { method: "GET" },
+  ).then((d) => d.resources);
 }
 
 export function listParentPauseRequests(): Promise<{
