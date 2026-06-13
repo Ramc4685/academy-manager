@@ -76,6 +76,12 @@ def _assigned_coach_id(occurrence: Any) -> str:
     )
 
 
+def _teaching_plan_session_id(occurrence: Any) -> str:
+    return str(
+        getattr(occurrence, "template_session_id", None) or getattr(occurrence, "session_id", "")
+    )
+
+
 @router.get(
     "/sessions/{occurrence_id}/teaching-plan",
     response_model=AdminOccurrenceTeachingPlanResponse,
@@ -97,7 +103,7 @@ async def get_occurrence_teaching_plan(
         raise HTTPException(status_code=404, detail="Occurrence not found")
 
     resolved_id, program_name = await _resolve_program_graceful(use_cases, program_id)
-    session_id = str(getattr(occurrence, "session_id", ""))
+    session_id = _teaching_plan_session_id(occurrence)
     groups = await plan_use_case.build_session_groups(
         session_id=session_id,
         program_id=resolved_id,

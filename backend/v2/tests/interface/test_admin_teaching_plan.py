@@ -20,6 +20,7 @@ from backend.v2.shared.tenancy import tenant_scope
 ACADEMY_ID = "test-academy"
 OCCURRENCE_ID = "occ-001"
 SESSION_ID = "session-001"
+TEMPLATE_SESSION_ID = "template-session-001"
 SCHEDULED_COACH_ID = "coach-scheduled"
 REPLACEMENT_COACH_ID = "coach-replacement"
 PROGRAM_ID = "prog-001"
@@ -70,7 +71,12 @@ def _curriculum() -> SimpleNamespace:
     )
 
 
-def _build_app(*, persona: str = "admin", occurrence_exists: bool = True) -> FastAPI:
+def _build_app(
+    *,
+    persona: str = "admin",
+    occurrence_exists: bool = True,
+    template_session_id: str | None = None,
+) -> FastAPI:
     teaching_plan = _FakeGenerateTeachingPlan()
 
     async def get_occurrence(occurrence_id: str):
@@ -79,6 +85,7 @@ def _build_app(*, persona: str = "admin", occurrence_exists: bool = True) -> Fas
         return SimpleNamespace(
             occurrence_id=OCCURRENCE_ID,
             session_id=SESSION_ID,
+            template_session_id=template_session_id,
             scheduled_coach_id=SCHEDULED_COACH_ID,
             actual_coach_id=REPLACEMENT_COACH_ID,
             substitute_coach_id=None,
@@ -128,6 +135,23 @@ def test_admin_occurrence_teaching_plan_returns_coach_plan_shape() -> None:
     assert body["program_id"] == PROGRAM_ID
     assert body["groups"][0]["students"][0]["student_id"] == "student-1"
     assert app.state.teaching_plan.calls == [{"session_id": SESSION_ID, "program_id": PROGRAM_ID}]
+
+
+def test_admin_occurrence_teaching_plan_uses_template_session_for_roster_plan() -> None:
+    app = _build_app(template_session_id=TEMPLATE_SESSION_ID)
+    client = TestClient(app)
+
+    response = client.get(
+        f"/api/v2/admin/sessions/{OCCURRENCE_ID}/teaching-plan?program_id={PROGRAM_ID}"
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["occurrence_id"] == OCCURRENCE_ID
+    assert body["session_id"] == TEMPLATE_SESSION_ID
+    assert app.state.teaching_plan.calls == [
+        {"session_id": TEMPLATE_SESSION_ID, "program_id": PROGRAM_ID}
+    ]
 
 
 def test_admin_occurrence_teaching_plan_unknown_occurrence_returns_404() -> None:
