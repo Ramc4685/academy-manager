@@ -79,15 +79,18 @@ class MongoLessonCardRepository(TenantScopedRepository):
             "created_by": card.created_by,
         }
 
-    async def get_by_slug(self, slug: str) -> LessonCard | None:
-        doc = await self._find_one({"slug": slug})
+    async def get_by_slug(self, program_id: str, slug: str) -> LessonCard | None:
+        doc = await self._find_one({"program_id": program_id, "slug": slug})
         return self._to_domain(doc) if doc else None
 
     async def save(self, card: LessonCard) -> None:
         await self._insert_one(self._to_doc(card))
 
     async def replace(self, card: LessonCard) -> None:
-        await self._update_one({"slug": card.slug}, {"$set": self._to_doc(card)})
+        await self._update_one(
+            {"program_id": card.program_id, "slug": card.slug},
+            {"$set": self._to_doc(card)},
+        )
 
     async def list_for_program(self, program_id: str) -> list[LessonCard]:
         cursor = self._find_many({"program_id": program_id}, sort=[("display_order", 1)])

@@ -78,6 +78,7 @@
   "pnpm": {
     "overrides": {
       "@grpc/grpc-js": "1.9.16",
+      "esbuild": "0.28.1",
       "tmp": "0.2.6"
     },
     "onlyBuiltDependencies": [
