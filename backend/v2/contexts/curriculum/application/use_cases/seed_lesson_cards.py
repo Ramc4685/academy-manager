@@ -80,12 +80,12 @@ async def seed_lesson_cards(
 ) -> LessonCardSeedResult:
     content = load_content(content_path)
 
-    program = None
     if program_id:
         program = await programs.get(program_id)
         if program is not None and (not program.is_active or program.sport != "badminton"):
             program = None
     else:
+        program = None
         for prog in await programs.list_active():
             if prog.sport == "badminton":
                 program = prog
