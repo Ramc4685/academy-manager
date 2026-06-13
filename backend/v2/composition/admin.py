@@ -1207,8 +1207,16 @@ def compose_admin(
     update_academy_use_case = UpdateAcademyUseCase(academy_repo)
     get_academy_fees_use_case = GetAcademyFeesUseCase(academy_repo)
     update_academy_fees_use_case = UpdateAcademyFeesUseCase(academy_repo)
-    get_academy_notifications_use_case = GetAcademyNotificationsUseCase(academy_repo)
-    update_academy_notifications_use_case = UpdateAcademyNotificationsUseCase(academy_repo)
+    get_academy_notifications_use_case = GetAcademyNotificationsUseCase(
+        academy_repo,
+        default_coach_digest_enabled=settings.coach_digest_enabled,
+        default_coach_digest_hour=settings.coach_digest_hour,
+    )
+    update_academy_notifications_use_case = UpdateAcademyNotificationsUseCase(
+        academy_repo,
+        default_coach_digest_enabled=settings.coach_digest_enabled,
+        default_coach_digest_hour=settings.coach_digest_hour,
+    )
     get_academy_gateway_use_case = GetAcademyGatewayUseCase(academy_repo)
     _connect_callback_uri = settings.stripe_connect_callback_uri or ""
     _state_secret = settings.stripe_connect_state_secret or settings.stripe_webhook_secret or ""

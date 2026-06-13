@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -33,9 +34,19 @@ from backend.v2.interfaces.admin.views import (
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.comms import Message
+from backend.v2.shared.config import get_settings
 from backend.v2.shared.http import require_persona
 
 router = APIRouter(tags=["admin.comms"])
+
+
+def _scheduler_today() -> date:
+    settings = get_settings()
+    try:
+        scheduler_tz = ZoneInfo(settings.scheduler_tz)
+    except ZoneInfoNotFoundError:
+        scheduler_tz = UTC
+    return datetime.now(UTC).astimezone(scheduler_tz).date()
 
 
 @router.get("/messages", response_model=AdminMessageList)
@@ -132,7 +143,7 @@ async def send_coach_digest_test(
             SendCoachDigestTestCommand(
                 academy_id=claims.academy_id,
                 target_user_id=target_user_id,
-                on_date=datetime.now(UTC).date(),
+                on_date=_scheduler_today(),
             )
         )
     except CoachDigestTargetNotFound as exc:

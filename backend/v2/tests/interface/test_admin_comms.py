@@ -11,6 +11,8 @@ from backend.v2.contexts.communications.application.use_cases.send_coach_digest_
     CoachDigestTargetNotFound,
     SendCoachDigestTestResult,
 )
+from backend.v2.interfaces.admin import comms_routes
+from backend.v2.shared.config.settings import get_settings
 
 
 def test_broadcast_creates_announcement(admin_client):
@@ -126,6 +128,28 @@ def test_digest_test_send_to_named_coach(admin_client):
     assert body["coach_id"] == "coach-1"
     assert fake.calls[0].target_user_id == "coach-1"
     assert fake.calls[0].academy_id == "acad"
+
+
+def test_digest_test_send_uses_scheduler_timezone_date(admin_client, monkeypatch):
+    class _FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = datetime(2026, 6, 14, 4, 30, tzinfo=UTC)
+            return value if tz is None else value.astimezone(tz)
+
+    fake = _FakeTestSend()
+    admin_client.use_cases.send_coach_digest_test = fake
+    monkeypatch.setenv("SCHEDULER_TZ", "America/Chicago")
+    get_settings.cache_clear()
+    monkeypatch.setattr(comms_routes, "datetime", _FixedDateTime)
+
+    try:
+        r = admin_client.post("/api/v2/admin/comms/digests/test-send", json={"coach_id": "coach-1"})
+    finally:
+        get_settings.cache_clear()
+
+    assert r.status_code == 200, r.text
+    assert fake.calls[0].on_date.isoformat() == "2026-06-13"
 
 
 def test_digest_test_send_to_self_uses_admin_user_id(admin_client):

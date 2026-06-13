@@ -18,8 +18,16 @@ class AcademyWriteRepo(Protocol):
 
 
 class UpdateAcademyNotificationsUseCase:
-    def __init__(self, academy_repo: AcademyWriteRepo) -> None:
+    def __init__(
+        self,
+        academy_repo: AcademyWriteRepo,
+        *,
+        default_coach_digest_enabled: bool = False,
+        default_coach_digest_hour: int = 6,
+    ) -> None:
         self._repo = academy_repo
+        self._default_coach_digest_enabled = default_coach_digest_enabled
+        self._default_coach_digest_hour = default_coach_digest_hour
 
     async def execute(
         self, academy_id: str, fields: dict[str, Any]
@@ -37,4 +45,8 @@ class UpdateAcademyNotificationsUseCase:
         if not doc:
             raise LookupError(f"academy {academy_id} not found")
         notifs = doc.get("notifications") or doc
-        return _notifications_output(notifs)
+        return _notifications_output(
+            notifs,
+            default_coach_digest_enabled=self._default_coach_digest_enabled,
+            default_coach_digest_hour=self._default_coach_digest_hour,
+        )
