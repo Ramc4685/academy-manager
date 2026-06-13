@@ -57,6 +57,7 @@ export const queryKeys = {
     fees: () => ["admin", "academy", "fees"] as const,
     notifications: () => ["admin", "academy", "notifications"] as const,
     gateway: () => ["admin", "academy", "gateway"] as const,
+    coachDigestLog: () => ["admin", "comms", "digests", "log"] as const,
   },
 } as const;
 

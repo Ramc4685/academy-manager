@@ -39,6 +39,31 @@ class MongoDigestSendRepository(TenantScopedRepository, DigestSendRepository):
             return None
         return digest
 
+    async def record_test_send(
+        self, academy_id: str, coach_id: str, digest_date: str
+    ) -> DigestSend:
+        """Record an admin-triggered test send.
+
+        A test send must NOT consume the daily claim, so the unique
+        ``(academy_id, coach_id, digest_date)`` index must not block it. We store
+        the row against a synthetic, always-unique ``digest_date`` (the real date
+        plus a ``#test:<ulid>`` suffix) while keeping ``kind="test"``; the
+        display date is recovered in ``list_recent`` by splitting on ``#``. This
+        sidesteps the unique index without a partial-index migration (and works
+        identically under mongomock).
+        """
+        digest = DigestSend.queued(
+            digest_id=new_ulid(),
+            academy_id=academy_id,
+            coach_id=coach_id,
+            coach_email=None,
+            digest_date=f"{digest_date}#test:{new_ulid()}",
+            created_at=datetime.now(UTC),
+            kind="test",
+        )
+        await self.collection.insert_one(self._to_doc(digest))
+        return digest
+
     async def mark_sent(self, digest_id: str, provider_message_id: str | None) -> None:
         await self.collection.update_one(
             {"digest_id": digest_id},
@@ -70,6 +95,14 @@ class MongoDigestSendRepository(TenantScopedRepository, DigestSendRepository):
             {"$set": {"status": str(DigestSendStatus.SKIPPED_EMPTY)}},
         )
 
+    async def list_recent(self, academy_id: str, limit: int) -> list[DigestSend]:
+        cursor = (
+            self.collection.find({"academy_id": academy_id})
+            .sort("created_at", -1)
+            .limit(max(0, limit))
+        )
+        return [self._from_doc(doc) async for doc in cursor]
+
     @staticmethod
     def _to_doc(d: DigestSend) -> dict[str, Any]:
         return {
@@ -83,4 +116,25 @@ class MongoDigestSendRepository(TenantScopedRepository, DigestSendRepository):
             "sent_at": d.sent_at,
             "failed_reason": d.failed_reason,
             "created_at": d.created_at,
+            "kind": d.kind,
         }
+
+    @staticmethod
+    def _from_doc(doc: dict[str, Any]) -> DigestSend:
+        # Test sends store a synthetic "<date>#test:<ulid>" digest_date; surface
+        # only the human date for the delivery log.
+        raw_date = str(doc.get("digest_date") or "")
+        digest_date = raw_date.split("#", 1)[0]
+        return DigestSend(
+            digest_id=str(doc.get("digest_id") or ""),
+            academy_id=str(doc.get("academy_id") or ""),
+            coach_id=str(doc.get("coach_id") or ""),
+            coach_email=doc.get("coach_email"),
+            digest_date=digest_date,
+            status=DigestSendStatus(str(doc.get("status") or DigestSendStatus.QUEUED)),
+            provider_message_id=doc.get("provider_message_id"),
+            sent_at=doc.get("sent_at"),
+            failed_reason=doc.get("failed_reason"),
+            created_at=doc.get("created_at"),
+            kind=str(doc.get("kind") or "daily"),
+        )
