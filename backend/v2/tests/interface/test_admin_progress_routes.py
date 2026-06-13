@@ -383,6 +383,17 @@ def test_coach_engagement_stats_route_returns_counts_for_date_range() -> None:
     assert kwargs["end_date"].isoformat() == "2026-06-13"
 
 
+def test_coach_engagement_stats_repo_ignores_not_started_placement_rows() -> None:
+    from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_repo import (
+        _RECORDED_OUTCOME_STATUSES,
+    )
+
+    assert "NOT_STARTED" not in _RECORDED_OUTCOME_STATUSES
+    assert {"INTRODUCED", "PRACTICING", "PASSED", "NEEDS_REVIEW"}.issubset(
+        set(_RECORDED_OUTCOME_STATUSES)
+    )
+
+
 @pytest.fixture()
 def env():
     # --- curriculum: seed the real badminton pathway into fakes ---

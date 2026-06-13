@@ -7,6 +7,15 @@ from datetime import datetime
 from backend.v2.contexts.student_progress.domain.models import StudentSkillProgress
 from backend.v2.shared.tenancy import TenantScopedRepository
 
+_RECORDED_OUTCOME_STATUSES = [
+    "INTRODUCED",
+    "LEARNING",
+    "PRACTICING",
+    "TEST_READY",
+    "PASSED",
+    "NEEDS_REVIEW",
+]
+
 
 class MongoStudentSkillProgressRepository(TenantScopedRepository):
     collection_name = "student_skill_progress"
@@ -105,6 +114,7 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
                     {
                         "last_updated_at": {"$gte": start_at, "$lte": end_at},
                         "last_updated_by": {"$nin": [None, ""]},
+                        "status": {"$in": _RECORDED_OUTCOME_STATUSES},
                     }
                 )
             },
