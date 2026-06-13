@@ -157,3 +157,20 @@ export async function getPayoutAuditTrail(periodId: string): Promise<PayoutAudit
     { method: "GET" },
   );
 }
+
+export interface MarkPayoutPaidInput {
+  method: "bank_transfer" | "cash" | "check" | "other";
+  paid_at: string;
+  amount_cents: number;
+  reference?: string | null;
+}
+
+export async function markPayoutPeriodPaid(
+  periodId: string,
+  input: MarkPayoutPaidInput,
+): Promise<AdminPayoutPeriodView> {
+  return apiFetch<AdminPayoutPeriodView>(
+    `/admin/payout-periods/${encodeURIComponent(periodId)}/mark-paid`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+}
