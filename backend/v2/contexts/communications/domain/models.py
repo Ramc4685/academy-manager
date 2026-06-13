@@ -306,6 +306,9 @@ class DigestSend:
     sent_at: str | None
     failed_reason: str | None
     created_at: datetime
+    # "daily" for the scheduled run, "test" for an admin-triggered test send.
+    # Test sends bypass the unique (academy, coach, date) idempotency claim.
+    kind: str = "daily"
 
     @classmethod
     def queued(
@@ -317,6 +320,7 @@ class DigestSend:
         coach_email: str | None,
         digest_date: str,
         created_at: datetime,
+        kind: str = "daily",
     ) -> DigestSend:
         return cls(
             digest_id=digest_id,
@@ -329,6 +333,7 @@ class DigestSend:
             sent_at=None,
             failed_reason=None,
             created_at=created_at,
+            kind=kind,
         )
 
     def mark_sent(self, *, provider_message_id: str | None, sent_at: str) -> DigestSend:

@@ -136,6 +136,29 @@ async def test_get_academy_notifications():
 
 
 @pytest.mark.asyncio
+async def test_get_academy_notifications_uses_digest_env_fallback_when_override_unset():
+    repo = AsyncMock()
+    repo.find_by_id.return_value = {
+        "_id": "acad-1",
+        "notifications": {
+            "dues_reminders": False,
+            "attendance_alerts": False,
+            "daily_digest_to_admin": False,
+        },
+    }
+    use_case = GetAcademyNotificationsUseCase(
+        academy_repo=repo,
+        default_coach_digest_enabled=True,
+        default_coach_digest_hour=18,
+    )
+
+    output = await use_case.execute("acad-1")
+
+    assert output.coach_digest_enabled is True
+    assert output.coach_digest_hour == 18
+
+
+@pytest.mark.asyncio
 async def test_update_academy_notifications():
     repo = AsyncMock()
     repo.update_by_id.return_value = {
