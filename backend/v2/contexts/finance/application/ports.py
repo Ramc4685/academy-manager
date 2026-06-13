@@ -80,6 +80,16 @@ class PayoutPeriodRepository(Protocol):
         """
         ...
 
+    async def list_for_window(
+        self,
+        *,
+        academy_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> list[PayoutPeriod]:
+        """All periods for this academy whose window exactly matches [period_start, period_end)."""
+        ...
+
 
 class PayoutAuditLog(Protocol):
     """Append-only audit trail of payout-period mutations."""
