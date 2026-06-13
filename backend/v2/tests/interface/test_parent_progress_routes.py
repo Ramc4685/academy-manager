@@ -361,6 +361,8 @@ def _build_real_parent_progress_app(
     *,
     children: list[dict[str, object]],
     program: object | None = None,
+    recent_updates: list[object] | None = None,
+    lesson_card: object | None = None,
 ) -> tuple[FastAPI, SimpleNamespace]:
     list_children = _CallableSpy(children)
     get_program = _ExecuteSpy(
@@ -380,13 +382,31 @@ def _build_real_parent_progress_app(
             next_action="continue_practice",
         )
     )
+    get_recent_skill_updates = _ExecuteSpy(recent_updates or [])
+    get_lesson_card_for_skill = _ExecuteSpy(
+        lesson_card
+        if lesson_card is not None
+        else _Dumpable(
+            resource_links=[
+                {"kind": "YOUTUBE", "title": "Grip practice", "url": "https://youtu.be/grip"},
+                {"kind": "PDF_REFERENCE", "title": "Coach manual p. 1", "url": None},
+            ],
+            teaching_points=["internal cue"],
+            safety_notes=["internal safety"],
+            goal_summary="internal goal",
+        )
+    )
     use_cases = SimpleNamespace(
         list_children_for_parent=list_children,
         curriculum=SimpleNamespace(
             get_program=get_program,
             resolve_default_program=resolve_default_program,
+            get_lesson_card_for_skill=get_lesson_card_for_skill,
         ),
-        student_progress=SimpleNamespace(get_progress_summary=get_progress_summary),
+        student_progress=SimpleNamespace(
+            get_progress_summary=get_progress_summary,
+            get_recent_skill_updates=get_recent_skill_updates,
+        ),
     )
 
     app = FastAPI()
@@ -399,6 +419,8 @@ def _build_real_parent_progress_app(
         get_program=get_program,
         resolve_default_program=resolve_default_program,
         get_progress_summary=get_progress_summary,
+        get_recent_skill_updates=get_recent_skill_updates,
+        get_lesson_card_for_skill=get_lesson_card_for_skill,
     )
 
 
@@ -514,3 +536,100 @@ def test_parent_progress_summary_unknown_program_returns_404() -> None:
 
     assert response.status_code == 404, response.text
     assert spies.get_progress_summary.calls == []
+
+
+def test_parent_skill_updates_returns_recent_parent_safe_updates() -> None:
+    updated_at = datetime(2026, 6, 13, 15, 30, tzinfo=UTC)
+    app, spies = _build_real_parent_progress_app(
+        children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
+        recent_updates=[
+            _Dumpable(
+                skill_id="skill-1",
+                skill_name="Ready stance",
+                status="TEST_READY",
+                updated_at=updated_at,
+                teaching_points=["must never leak"],
+                safety_notes=["must never leak"],
+                goal_summary="must never leak",
+            )
+        ],
+    )
+    client = TestClient(app)
+
+    response = client.get(f"/api/v2/parent/students/{OWN_STUDENT_ID}/skill-updates")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "updates": [
+            {
+                "skill_id": "skill-1",
+                "skill_name": "Ready stance",
+                "status": "TEST_READY",
+                "updated_at": "2026-06-13T15:30:00Z",
+            }
+        ]
+    }
+    dumped = response.json()["updates"][0]
+    assert "teaching_points" not in dumped
+    assert "safety_notes" not in dumped
+    assert "goal_summary" not in dumped
+    assert spies.list_children.calls == [((PARENT_ID,), {})]
+    assert spies.get_recent_skill_updates.calls == [((OWN_STUDENT_ID,), {})]
+
+
+def test_parent_skill_updates_unknown_child_returns_404_without_querying_updates() -> None:
+    app, spies = _build_real_parent_progress_app(
+        children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
+    )
+    client = TestClient(app)
+
+    response = client.get(f"/api/v2/parent/students/{OTHER_STUDENT_ID}/skill-updates")
+
+    assert response.status_code == 404, response.text
+    assert spies.get_recent_skill_updates.calls == []
+
+
+def test_parent_practice_resources_returns_only_video_links_for_in_progress_skills() -> None:
+    app, spies = _build_real_parent_progress_app(
+        children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
+        recent_updates=[
+            _Dumpable(
+                skill_id="skill-1",
+                skill_name="Ready stance",
+                status="PRACTICING",
+                updated_at=datetime(2026, 6, 13, 15, 30, tzinfo=UTC),
+            ),
+            _Dumpable(
+                skill_id="skill-2",
+                skill_name="Completed grip",
+                status="PASSED",
+                updated_at=datetime(2026, 6, 12, 15, 30, tzinfo=UTC),
+            ),
+        ],
+    )
+    client = TestClient(app)
+
+    response = client.get(f"/api/v2/parent/students/{OWN_STUDENT_ID}/practice-resources")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "resources": [
+            {
+                "skill_id": "skill-1",
+                "skill_name": "Ready stance",
+                "resource_links": [
+                    {
+                        "kind": "YOUTUBE",
+                        "title": "Grip practice",
+                        "url": "https://youtu.be/grip",
+                    }
+                ],
+            }
+        ]
+    }
+    dumped = response.json()["resources"][0]
+    assert "teaching_points" not in dumped
+    assert "safety_notes" not in dumped
+    assert "goal_summary" not in dumped
+    assert spies.get_recent_skill_updates.calls == [((OWN_STUDENT_ID,), {})]
+    assert spies.get_lesson_card_for_skill.calls == [(("skill-1",), {})]

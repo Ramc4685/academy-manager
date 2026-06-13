@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.v2.contexts.student_progress.application.errors import StudentNotPlaced
@@ -19,6 +22,8 @@ from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
 router = APIRouter(tags=["parent-progress"])
+
+_IN_PROGRESS_STATUSES = {"INTRODUCED", "LEARNING", "PRACTICING", "TEST_READY", "NEEDS_REVIEW"}
 
 
 async def _verify_child_ownership(
@@ -61,6 +66,41 @@ async def _resolve_program_id(use_cases: ParentUseCases, program_id: str | None)
     return program.program_id
 
 
+def _model_dict(value: object) -> dict[str, Any]:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")  # type: ignore[no-any-return,union-attr]
+    if isinstance(value, dict):
+        return value
+    return dict(getattr(value, "__dict__", {}))
+
+
+def _json_datetime(value: object) -> object:
+    if isinstance(value, datetime):
+        return value.isoformat().replace("+00:00", "Z")
+    return value
+
+
+def _public_skill_update(update: object) -> dict[str, object]:
+    data = _model_dict(update)
+    return {
+        "skill_id": data["skill_id"],
+        "skill_name": data["skill_name"],
+        "status": data["status"],
+        "updated_at": _json_datetime(data["updated_at"]),
+    }
+
+
+def _public_resource_link(link: object) -> dict[str, object] | None:
+    data = _model_dict(link)
+    if data.get("kind") != "YOUTUBE" or not data.get("url"):
+        return None
+    return {
+        "kind": data["kind"],
+        "title": data["title"],
+        "url": data["url"],
+    }
+
+
 @router.get("/students/{student_id}/skill-progress")
 async def get_skill_progress(
     student_id: str,
@@ -77,6 +117,60 @@ async def get_skill_progress(
     except StudentNotPlaced as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"passport": [e.model_dump() for e in entries]}
+
+
+@router.get("/students/{student_id}/skill-updates")
+async def get_skill_updates(
+    student_id: str,
+    claims: AuthClaims = Depends(require_persona("parent")),
+    use_cases: ParentUseCases = Depends(get_parent_use_cases),
+) -> object:
+    await _verify_child_ownership(claims.user_id, student_id, use_cases)
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    updates = await use_cases.student_progress.get_recent_skill_updates.execute(student_id)
+    return {"updates": [_public_skill_update(update) for update in updates]}
+
+
+@router.get("/students/{student_id}/practice-resources")
+async def get_practice_resources(
+    student_id: str,
+    claims: AuthClaims = Depends(require_persona("parent")),
+    use_cases: ParentUseCases = Depends(get_parent_use_cases),
+) -> object:
+    await _verify_child_ownership(claims.user_id, student_id, use_cases)
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    if use_cases.curriculum is None:
+        raise HTTPException(status_code=503, detail="Curriculum service not configured")
+
+    updates = await use_cases.student_progress.get_recent_skill_updates.execute(student_id)
+    resources: list[dict[str, object]] = []
+    for update in updates:
+        update_data = _public_skill_update(update)
+        if update_data["status"] not in _IN_PROGRESS_STATUSES:
+            continue
+        card = await use_cases.curriculum.get_lesson_card_for_skill.execute(
+            str(update_data["skill_id"])
+        )
+        if card is None:
+            continue
+        card_data = _model_dict(card)
+        video_links = [
+            public_link
+            for link in card_data.get("resource_links", [])
+            if (public_link := _public_resource_link(link)) is not None
+        ]
+        if not video_links:
+            continue
+        resources.append(
+            {
+                "skill_id": update_data["skill_id"],
+                "skill_name": update_data["skill_name"],
+                "resource_links": video_links,
+            }
+        )
+    return {"resources": resources}
 
 
 @router.get("/students/{student_id}/certificates")
