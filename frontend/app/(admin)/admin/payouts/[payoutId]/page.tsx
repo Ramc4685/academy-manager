@@ -17,6 +17,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CorrectionDrawer } from "../_components/CorrectionDrawer";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -191,7 +192,14 @@ export default function AdminPayoutReviewPage() {
         onChanged={refresh}
       />
       <SummaryCards period={period} />
-      <PayLog period={period} onChanged={refresh} />
+      <PayLog
+        period={period}
+        coaches={(coachesQuery.data?.users ?? []).map((u) => ({
+          id: u.user_id,
+          name: u.display_name || u.email,
+        }))}
+        onChanged={refresh}
+      />
       <AuditTrail entries={auditQuery.data?.entries ?? []} loading={auditQuery.isPending} />
     </section>
   );
@@ -463,81 +471,112 @@ const TH = "px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overlin
 
 function PayLog({
   period,
+  coaches,
   onChanged,
 }: {
   period: AdminPayoutPeriodView;
+  coaches: { id: string; name: string }[];
   onChanged: (updated: AdminPayoutPeriodView) => void;
 }) {
+  const [correctingOccurrenceId, setCorrectingOccurrenceId] = useState<string | null>(null);
+
+  const handleCorrectionApplied = async () => {
+    const updated = await recomputePayoutPeriod(period.period_id);
+    setCorrectingOccurrenceId(null);
+    onChanged(updated);
+  };
+
   return (
-    <Card p={0}>
-      <div className="border-b border-rally-line px-5 py-4">
-        <Overline>
-          Session pay log ({period.lines.length + period.unpaid_occurrences.length})
-        </Overline>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[760px] text-sm">
-          <thead>
-            <tr className="border-b border-rally-line text-left">
-              <th className={`${TH} pl-5`}>Date</th>
-              <th className={TH}>Session</th>
-              <th className={TH}>Role</th>
-              <th className={TH}>Status</th>
-              <th className={`${TH} text-right`}>%</th>
-              <th className={`${TH} text-right`}>Pay</th>
-              <th className="px-3 py-3" aria-label="Line actions" />
-            </tr>
-          </thead>
-          <tbody>
-            {period.lines.map((line) => (
-              <PaidRow key={line.occurrence_id} period={period} line={line} onChanged={onChanged} />
-            ))}
-            {period.unpaid_occurrences.map((occ) => (
-              <tr key={occ.occurrence_id} className="border-b border-rally-line last:border-0 bg-neutral-50/50">
-                <td className="px-3 py-3 pl-5 font-mono text-xs text-rally-muted">
-                  {occ.occurred_at ? new Date(occ.occurred_at).toLocaleDateString() : "—"}
+    <>
+      <Card p={0}>
+        <div className="border-b border-rally-line px-5 py-4">
+          <Overline>
+            Session pay log ({period.lines.length + period.unpaid_occurrences.length})
+          </Overline>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm">
+            <thead>
+              <tr className="border-b border-rally-line text-left">
+                <th className={`${TH} pl-5`}>Date</th>
+                <th className={TH}>Session</th>
+                <th className={TH}>Role</th>
+                <th className={TH}>Status</th>
+                <th className={`${TH} text-right`}>%</th>
+                <th className={`${TH} text-right`}>Pay</th>
+                <th className="px-3 py-3" aria-label="Line actions" />
+              </tr>
+            </thead>
+            <tbody>
+              {period.lines.map((line) => (
+                <PaidRow
+                  key={line.occurrence_id}
+                  period={period}
+                  line={line}
+                  onChanged={onChanged}
+                  onCorrect={() => setCorrectingOccurrenceId(line.occurrence_id)}
+                />
+              ))}
+              {period.unpaid_occurrences.map((occ) => (
+                <tr key={occ.occurrence_id} className="border-b border-rally-line last:border-0 bg-neutral-50/50">
+                  <td className="px-3 py-3 pl-5 font-mono text-xs text-rally-muted">
+                    {occ.occurred_at ? new Date(occ.occurred_at).toLocaleDateString() : "—"}
+                  </td>
+                  <td className="px-3 py-3 text-rally-muted">
+                    {occ.session_title || occ.occurrence_id}
+                  </td>
+                  <td className="px-3 py-3 text-xs text-rally-muted">—</td>
+                  <td className="px-3 py-3">
+                    <span className="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-amber-800">
+                      Not paid
+                    </span>
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono text-rally-muted">—</td>
+                  <td className="px-3 py-3 text-right font-mono tabular-nums text-rally-muted line-through">
+                    {money(0, period.currency)}
+                  </td>
+                  <td />
+                </tr>
+              ))}
+              {period.lines.length === 0 && period.unpaid_occurrences.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-5 py-6 text-center text-sm text-rally-muted">
+                    No sessions in this period.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+            <tfoot>
+              <tr className="bg-neutral-50">
+                <td
+                  className="px-5 py-3 font-mono text-[11px] font-bold uppercase tracking-overline text-rally-muted"
+                  colSpan={5}
+                >
+                  Total
                 </td>
-                <td className="px-3 py-3 text-rally-muted">
-                  {occ.session_title || occ.occurrence_id}
-                </td>
-                <td className="px-3 py-3 text-xs text-rally-muted">—</td>
-                <td className="px-3 py-3">
-                  <span className="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-amber-800">
-                    Not paid
-                  </span>
-                </td>
-                <td className="px-3 py-3 text-right font-mono text-rally-muted">—</td>
-                <td className="px-3 py-3 text-right font-mono tabular-nums text-rally-muted line-through">
-                  {money(0, period.currency)}
+                <td className="px-3 py-3 text-right font-mono font-semibold tabular-nums">
+                  {money(period.total_amount_cents, period.currency)}
                 </td>
                 <td />
               </tr>
-            ))}
-            {period.lines.length === 0 && period.unpaid_occurrences.length === 0 && (
-              <tr>
-                <td colSpan={7} className="px-5 py-6 text-center text-sm text-rally-muted">
-                  No sessions in this period.
-                </td>
-              </tr>
-            )}
-          </tbody>
-          <tfoot>
-            <tr className="bg-neutral-50">
-              <td
-                className="px-5 py-3 font-mono text-[11px] font-bold uppercase tracking-overline text-rally-muted"
-                colSpan={5}
-              >
-                Total
-              </td>
-              <td className="px-3 py-3 text-right font-mono font-semibold tabular-nums">
-                {money(period.total_amount_cents, period.currency)}
-              </td>
-              <td />
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-    </Card>
+            </tfoot>
+          </table>
+        </div>
+      </Card>
+      {correctingOccurrenceId && (
+        <CorrectionDrawer
+          occurrenceId={correctingOccurrenceId}
+          scheduledCoachId={
+            period.lines.find((l) => l.occurrence_id === correctingOccurrenceId)?.coach_id ?? ""
+          }
+          actualCoachId={null}
+          attendanceStatus={null}
+          coaches={coaches}
+          onApplied={() => void handleCorrectionApplied()}
+          onClose={() => setCorrectingOccurrenceId(null)}
+        />
+      )}
+    </>
   );
 }
 
@@ -545,10 +584,12 @@ function PaidRow({
   period,
   line,
   onChanged,
+  onCorrect,
 }: {
   period: AdminPayoutPeriodView;
   line: AdminPayoutPeriodLineView;
   onChanged: (updated: AdminPayoutPeriodView) => void;
+  onCorrect: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const override = useMutation({
@@ -636,7 +677,7 @@ function PaidRow({
         )}
       </td>
       <td className="px-3 py-3 text-right whitespace-nowrap">
-        {editable && (
+        {editable ? (
           <span className="inline-flex items-center gap-1">
             <button
               type="button"
@@ -660,6 +701,19 @@ function PaidRow({
                 <span className="sr-only">Clear override</span>
               </button>
             )}
+            <button
+              type="button"
+              title="Correct attendance, coach, or replacement for this occurrence"
+              onClick={onCorrect}
+              aria-label="Correct this line"
+              className="rounded p-1 text-rally-muted hover:text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
+            >
+              ✎
+            </button>
+          </span>
+        ) : (
+          <span className="text-xs italic text-muted-foreground">
+            {period.status === "approved" ? "Reopen to correct" : "Locked"}
           </span>
         )}
       </td>
