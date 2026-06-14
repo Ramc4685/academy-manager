@@ -123,7 +123,9 @@ async def test_allocation_overpayment_credit_is_idempotent(db, acad) -> None:
 
     assert first == second
     invoice = await db["invoices"].find_one({"academy_id": acad, "invoice_id": "inv-overpay"})
-    payment = await db["payments"].find_one({"academy_id": acad, "payment_id": "pay-overpay"})
+    payment = await db["ledger_payments"].find_one(
+        {"academy_id": acad, "payment_id": "pay-overpay"}
+    )
     assert invoice is not None
     assert payment is not None
     assert invoice["balance_due_cents"] == 0

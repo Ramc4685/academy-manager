@@ -99,7 +99,7 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         idempotency_key: str,
     ) -> LedgerPayment:
         academy_id = current_academy_id()
-        existing = await self._db["payments"].find_one(
+        existing = await self._db["ledger_payments"].find_one(
             {"academy_id": academy_id, "ledger_idempotency_key": idempotency_key}
         )
         if existing is not None:
@@ -107,10 +107,10 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
 
         doc = _mongo_doc(payment)
         doc["ledger_idempotency_key"] = idempotency_key
-        await self._db["payments"].insert_one(
+        await self._db["ledger_payments"].insert_one(
             {**{k: v for k, v in doc.items() if k != "academy_id"}, "academy_id": academy_id}
         )
-        stored = await self._db["payments"].find_one(
+        stored = await self._db["ledger_payments"].find_one(
             {"academy_id": academy_id, "payment_id": payment.payment_id}
         )
         if stored is None:
@@ -133,7 +133,7 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             return await self._existing_allocation_result(existing)
 
         invoice_doc = await self._find_one({"invoice_id": invoice_id})
-        payment_doc = await self._db["payments"].find_one(
+        payment_doc = await self._db["ledger_payments"].find_one(
             {"academy_id": academy_id, "payment_id": payment_id}
         )
         if invoice_doc is None:
@@ -168,7 +168,7 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
                 }
             },
         )
-        await self._db["payments"].update_one(
+        await self._db["ledger_payments"].update_one(
             {"academy_id": academy_id, "payment_id": payment_id},
             {
                 "$set": {
@@ -225,13 +225,24 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         return [self._invoice_from_doc(doc) async for doc in cursor]
 
+    async def list_payments_for_parent(
+        self, parent_id: str, *, limit: int = 100
+    ) -> list[LedgerPayment]:
+        academy_id = current_academy_id()
+        cursor = self._db["ledger_payments"].find(
+            {"academy_id": academy_id, "parent_id": parent_id},
+            sort=[("created_at", -1)],
+            limit=limit,
+        )
+        return [self._payment_from_doc(doc) async for doc in cursor]
+
     async def _existing_allocation_result(
         self, allocation_doc: dict[str, object]
     ) -> LedgerAllocationResult:
         academy_id = current_academy_id()
         allocation = self._allocation_from_doc(allocation_doc)
         invoice_doc = await self._find_one({"invoice_id": allocation.invoice_id})
-        payment_doc = await self._db["payments"].find_one(
+        payment_doc = await self._db["ledger_payments"].find_one(
             {"academy_id": academy_id, "payment_id": allocation.payment_id}
         )
         if invoice_doc is None or payment_doc is None:
