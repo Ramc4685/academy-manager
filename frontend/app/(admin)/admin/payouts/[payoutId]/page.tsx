@@ -29,11 +29,10 @@ import {
 
 import { listAdminUsers, listCoachPayRates, type AdminCoachPayRateView } from "@/lib/api/admin";
 import {
-  generatePayoutPeriod,
   approvePayoutPeriod,
   exportPayoutPeriodXlsx,
   getPayoutAuditTrail,
-  listAdminPayouts,
+  getPayoutPeriod,
   markPayoutPeriodPaid,
   overridePayoutLine,
   recomputePayoutPeriod,
@@ -76,37 +75,27 @@ export default function AdminPayoutReviewPage() {
   const payoutId = params?.payoutId ?? "";
   const queryClient = useQueryClient();
 
-  // The payouts list row carries the coach + window for this payout.
-  const listQuery = useQuery({
-    queryKey: ["admin", "finance", "payouts"],
-    queryFn: listAdminPayouts,
-  });
-  const coachesQuery = useQuery({
-    queryKey: ["admin", "users", "coach"],
-    queryFn: () => listAdminUsers("coach"),
-  });
-
-  const summary = useMemo(
-    () => listQuery.data?.payouts.find((p) => p.payout_id === payoutId) ?? null,
-    [listQuery.data, payoutId],
-  );
-
   const periodQuery = useQuery({
-    queryKey: ["admin", "payout-periods", summary?.coach_id, summary?.period_start, summary?.period_end],
-    queryFn: () =>
-      generatePayoutPeriod({
-        coach_id: summary!.coach_id,
-        period_start: summary!.period_start,
-        period_end: summary!.period_end,
-      }),
-    enabled: Boolean(summary),
+    queryKey: ["admin", "payout-period", payoutId],
+    queryFn: () => getPayoutPeriod(payoutId),
+    enabled: Boolean(payoutId),
+    retry: (failureCount, err) => {
+      if ((err as { status?: number })?.status === 404) return false;
+      return failureCount < 2;
+    },
   });
   const period = periodQuery.data ?? null;
 
+  const coachesQuery = useQuery({
+    queryKey: ["admin", "users", "coach"],
+    queryFn: () => listAdminUsers("coach"),
+    enabled: Boolean(period),
+  });
+
   const ratesQuery = useQuery({
-    queryKey: ["admin", "coach-pay-rates", summary?.coach_id],
-    queryFn: () => listCoachPayRates(summary!.coach_id),
-    enabled: Boolean(summary),
+    queryKey: ["admin", "coach-pay-rates", period?.coach_id],
+    queryFn: () => listCoachPayRates(period!.coach_id),
+    enabled: Boolean(period),
   });
   const activeRate = useMemo(
     () => ratesQuery.data?.rates.find((rate) => rate.status === "active") ?? null,
@@ -120,19 +109,16 @@ export default function AdminPayoutReviewPage() {
   });
 
   const refresh = (updated: AdminPayoutPeriodView) => {
-    queryClient.setQueryData(
-      ["admin", "payout-periods", summary?.coach_id, summary?.period_start, summary?.period_end],
-      updated,
-    );
+    queryClient.setQueryData(["admin", "payout-period", payoutId], updated);
     void queryClient.invalidateQueries({
       queryKey: ["admin", "payout-periods", updated.period_id, "audit"],
     });
-    void queryClient.invalidateQueries({ queryKey: ["admin", "finance", "payouts"] });
+    void queryClient.invalidateQueries({ queryKey: ["admin", "payroll"] });
   };
 
   const coach = useMemo(
-    () => coachesQuery.data?.users.find((user) => user.user_id === summary?.coach_id) ?? null,
-    [coachesQuery.data, summary?.coach_id],
+    () => coachesQuery.data?.users.find((user) => user.user_id === period?.coach_id) ?? null,
+    [coachesQuery.data, period?.coach_id],
   );
   const coachName = coach?.display_name || coach?.email || "Coach";
 
@@ -147,7 +133,7 @@ export default function AdminPayoutReviewPage() {
     );
   }
 
-  if (listQuery.isPending) {
+  if (periodQuery.isPending) {
     return (
       <section className="space-y-4">
         <BackLink />
@@ -156,13 +142,31 @@ export default function AdminPayoutReviewPage() {
     );
   }
 
-  if (listQuery.isError || !summary) {
+  if (periodQuery.error && (periodQuery.error as { status?: number })?.status === 404) {
+    return (
+      <section className="space-y-4">
+        <BackLink />
+        <Card p={20}>
+          <div className="space-y-3">
+            <p className="text-sm text-rally-muted">
+              This payout link is outdated. Use the month-first payroll view to find it.
+            </p>
+            <a href="/admin/payouts" className="text-sm text-primary underline">
+              Go to Coach Payroll →
+            </a>
+          </div>
+        </Card>
+      </section>
+    );
+  }
+
+  if (periodQuery.isError || !period) {
     return (
       <section className="space-y-4">
         <BackLink />
         <Card p={20}>
           <p role="alert" className="text-sm text-red-700">
-            Payout not found.
+            Could not load the payout period.
           </p>
         </Card>
       </section>
@@ -181,26 +185,14 @@ export default function AdminPayoutReviewPage() {
         coachEmail={coach?.email ?? null}
         payRule={payRuleLabel(activeRate)}
         period={period}
-        fallbackAmountCents={summary.amount_cents}
-        periodStart={summary.period_start}
-        periodEnd={summary.period_end}
+        fallbackAmountCents={period.total_amount_cents}
+        periodStart={period.period_start}
+        periodEnd={period.period_end}
         onChanged={refresh}
       />
-      {periodQuery.isPending ? (
-        <Skeleton />
-      ) : periodQuery.isError || !period ? (
-        <Card p={20}>
-          <p role="alert" className="text-sm text-red-700">
-            Could not load the payout period.
-          </p>
-        </Card>
-      ) : (
-        <>
-          <SummaryCards period={period} />
-          <PayLog period={period} onChanged={refresh} />
-          <AuditTrail entries={auditQuery.data?.entries ?? []} loading={auditQuery.isPending} />
-        </>
-      )}
+      <SummaryCards period={period} />
+      <PayLog period={period} onChanged={refresh} />
+      <AuditTrail entries={auditQuery.data?.entries ?? []} loading={auditQuery.isPending} />
     </section>
   );
 }
