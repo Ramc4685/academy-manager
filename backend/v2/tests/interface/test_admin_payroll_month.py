@@ -1,10 +1,9 @@
 """Interface tests for GET/POST /admin/payroll/{month}/... routes."""
+
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import datetime, timezone
-from dataclasses import dataclass, field
-from typing import Any
+from datetime import datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -12,20 +11,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.v2.contexts.finance.application.use_cases.bulk_payroll import (
-    BulkGeneratePayroll,
     BulkGenerateResult,
-    BulkRecomputePayroll,
     BulkRecomputeResult,
 )
 from backend.v2.contexts.finance.application.use_cases.list_monthly_payroll import (
-    ListMonthlyPayroll,
     MonthlyPayrollRow,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
-
 
 # ---------------------------------------------------------------------------
 # Minimal fakes
@@ -64,6 +59,7 @@ class _FakeBulkRecomputePayroll:
 # ---------------------------------------------------------------------------
 # Minimal AdminUseCases with only payroll fields wired
 # ---------------------------------------------------------------------------
+
 
 def _minimal_admin_use_cases(
     list_monthly_payroll=None,

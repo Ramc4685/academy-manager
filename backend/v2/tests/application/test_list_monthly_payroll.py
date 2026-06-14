@@ -67,15 +67,11 @@ class FakePayoutPeriodRepository:
         return next((p for p in self._periods if p.period_id == period_id), None)
 
     async def replace(self, period: PayoutPeriod) -> PayoutPeriod:
-        self._periods = [
-            period if p.period_id == period.period_id else p for p in self._periods
-        ]
+        self._periods = [period if p.period_id == period.period_id else p for p in self._periods]
         return period
 
     async def replace_with_lines(self, period: PayoutPeriod) -> PayoutPeriod:
-        self._periods = [
-            period if p.period_id == period.period_id else p for p in self._periods
-        ]
+        self._periods = [period if p.period_id == period.period_id else p for p in self._periods]
         return period
 
     async def list_for_window(
@@ -105,9 +101,15 @@ JULY_END = datetime(2026, 8, 1, tzinfo=UTC_)
 @pytest.mark.asyncio
 async def test_list_for_window_returns_only_matching_month() -> None:
     repo = FakePayoutPeriodRepository()
-    p_june_a = make_fake_period(coach_id="c1", period_start=JUNE_START, period_end=JUNE_END, academy_id="a1")
-    p_june_b = make_fake_period(coach_id="c2", period_start=JUNE_START, period_end=JUNE_END, academy_id="a1")
-    p_july = make_fake_period(coach_id="c1", period_start=JULY_START, period_end=JULY_END, academy_id="a1")
+    p_june_a = make_fake_period(
+        coach_id="c1", period_start=JUNE_START, period_end=JUNE_END, academy_id="a1"
+    )
+    p_june_b = make_fake_period(
+        coach_id="c2", period_start=JUNE_START, period_end=JUNE_END, academy_id="a1"
+    )
+    p_july = make_fake_period(
+        coach_id="c1", period_start=JULY_START, period_end=JULY_END, academy_id="a1"
+    )
     for p in [p_june_a, p_june_b, p_july]:
         await repo.save(p)
 
@@ -121,8 +123,16 @@ async def test_list_for_window_returns_only_matching_month() -> None:
 @pytest.mark.asyncio
 async def test_list_for_window_tenant_scoped() -> None:
     repo = FakePayoutPeriodRepository()
-    await repo.save(make_fake_period(coach_id="c1", period_start=JUNE_START, period_end=JUNE_END, academy_id="a1"))
-    await repo.save(make_fake_period(coach_id="c1", period_start=JUNE_START, period_end=JUNE_END, academy_id="a2"))
+    await repo.save(
+        make_fake_period(
+            coach_id="c1", period_start=JUNE_START, period_end=JUNE_END, academy_id="a1"
+        )
+    )
+    await repo.save(
+        make_fake_period(
+            coach_id="c1", period_start=JUNE_START, period_end=JUNE_END, academy_id="a2"
+        )
+    )
 
     results = await repo.list_for_window(
         academy_id="a1", period_start=JUNE_START, period_end=JUNE_END
@@ -137,7 +147,6 @@ async def test_list_for_window_tenant_scoped() -> None:
 
 from backend.v2.contexts.finance.application.use_cases.list_monthly_payroll import (
     ListMonthlyPayroll,
-    MonthlyPayrollRow,
 )
 
 
@@ -146,7 +155,9 @@ class _FakeOccurrenceReader:
         self._rows = rows
         self.last_academy_id: str | None = None
 
-    async def coaches_with_occurrences(self, *, academy_id: str, period_start: datetime, period_end: datetime):
+    async def coaches_with_occurrences(
+        self, *, academy_id: str, period_start: datetime, period_end: datetime
+    ):
         self.last_academy_id = academy_id
         from dataclasses import dataclass
 
@@ -162,7 +173,9 @@ class _FakeCalculator:
     def __init__(self, totals: dict[str, tuple[int, str]]) -> None:
         self._totals = totals  # coach_id -> (total_minor, currency)
 
-    async def calculate(self, *, coach_id: str, academy_id: str, period_start: datetime, period_end: datetime):
+    async def calculate(
+        self, *, coach_id: str, academy_id: str, period_start: datetime, period_end: datetime
+    ):
         from dataclasses import dataclass
 
         @dataclass(frozen=True)
@@ -173,8 +186,8 @@ class _FakeCalculator:
             unpaid_occurrence_ids: list = None
 
             def __post_init__(self):
-                object.__setattr__(self, 'lines', self.lines or [])
-                object.__setattr__(self, 'unpaid_occurrence_ids', self.unpaid_occurrence_ids or [])
+                object.__setattr__(self, "lines", self.lines or [])
+                object.__setattr__(self, "unpaid_occurrence_ids", self.unpaid_occurrence_ids or [])
 
         total, currency = self._totals.get(coach_id, (0, "MYR"))
         return _Calc(total_minor=total, currency=currency)
@@ -185,10 +198,16 @@ async def test_lists_generated_and_ungenerated_coaches() -> None:
     reader = _FakeOccurrenceReader([("c1", 4), ("c2", 2)])
     repo = FakePayoutPeriodRepository()
     # c1 has an approved period
-    await repo.save(make_fake_period(
-        coach_id="c1", period_start=JUNE_START, period_end=JUNE_END,
-        academy_id="a1", status="approved", total_minor=40000,
-    ))
+    await repo.save(
+        make_fake_period(
+            coach_id="c1",
+            period_start=JUNE_START,
+            period_end=JUNE_END,
+            academy_id="a1",
+            status="approved",
+            total_minor=40000,
+        )
+    )
     calc = _FakeCalculator({"c2": (18000, "MYR")})
 
     uc = ListMonthlyPayroll(reader=reader, periods=repo, calculator=calc)

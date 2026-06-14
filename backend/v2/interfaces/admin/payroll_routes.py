@@ -1,7 +1,8 @@
 """Admin month-scoped payroll routes (GET/POST /admin/payroll/{month}/...)."""
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -23,10 +24,10 @@ def _month_window(month: str) -> tuple[datetime, datetime]:
         year, mon = int(year_s), int(mon_s)
         if not 1 <= mon <= 12:
             raise ValueError
-        start = datetime(year, mon, 1, tzinfo=timezone.utc)
+        start = datetime(year, mon, 1, tzinfo=UTC)
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail="month must be YYYY-MM") from exc
-    end = datetime(year + (1 if mon == 12 else 0), (mon % 12) + 1, 1, tzinfo=timezone.utc)
+    end = datetime(year + (1 if mon == 12 else 0), (mon % 12) + 1, 1, tzinfo=UTC)
     return start, end
 
 
@@ -123,11 +124,13 @@ async def export_monthly_payroll_xlsx(
         ws.append([f"Coach: {period.coach_id}", f"Status: {period.status}"])
         ws.append(["Occurrence", "Role", "Pay"])
         for line in period.lines:
-            ws.append([
-                line.occurrence_id,
-                "Replacement" if line.basis == "substitute" else "Scheduled",
-                line.amount_minor / 100,
-            ])
+            ws.append(
+                [
+                    line.occurrence_id,
+                    "Replacement" if line.basis == "substitute" else "Scheduled",
+                    line.amount_minor / 100,
+                ]
+            )
         ws.append(["", "Subtotal", period.total_minor / 100])
         grand_total += period.total_minor
         ws.append([])

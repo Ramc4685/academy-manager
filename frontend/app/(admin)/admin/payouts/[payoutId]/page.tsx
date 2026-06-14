@@ -152,9 +152,9 @@ export default function AdminPayoutReviewPage() {
             <p className="text-sm text-rally-muted">
               This payout link is outdated. Use the month-first payroll view to find it.
             </p>
-            <a href="/admin/payouts" className="text-sm text-primary underline">
+            <Link href="/admin/payouts" className="text-sm text-primary underline">
               Go to Coach Payroll →
-            </a>
+            </Link>
           </div>
         </Card>
       </section>

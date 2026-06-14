@@ -1,9 +1,14 @@
 """List one row per coach with occurrences in a month, sourced from PayoutPeriod."""
+
 from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime
+
 from backend.v2.contexts.finance.application.ports import (
-    MonthlyCoachOccurrenceReader, PayoutPeriodRepository, PayoutCalculator,
+    MonthlyCoachOccurrenceReader,
+    PayoutCalculator,
+    PayoutPeriodRepository,
 )
 
 
@@ -19,8 +24,11 @@ class MonthlyPayrollRow:
 
 class ListMonthlyPayroll:
     def __init__(
-        self, *, reader: MonthlyCoachOccurrenceReader,
-        periods: PayoutPeriodRepository, calculator: PayoutCalculator,
+        self,
+        *,
+        reader: MonthlyCoachOccurrenceReader,
+        periods: PayoutPeriodRepository,
+        calculator: PayoutCalculator,
     ) -> None:
         self._reader = reader
         self._periods = periods
@@ -42,19 +50,31 @@ class ListMonthlyPayroll:
         for c in coaches:
             period = existing.get(c.coach_id)
             if period is not None:
-                rows.append(MonthlyPayrollRow(
-                    coach_id=c.coach_id, session_count=c.session_count,
-                    total_minor=period.total_minor, currency=period.currency,
-                    status=period.status, period_id=period.period_id,
-                ))
+                rows.append(
+                    MonthlyPayrollRow(
+                        coach_id=c.coach_id,
+                        session_count=c.session_count,
+                        total_minor=period.total_minor,
+                        currency=period.currency,
+                        status=period.status,
+                        period_id=period.period_id,
+                    )
+                )
             else:
                 calc = await self._calculator.calculate(
-                    coach_id=c.coach_id, academy_id=academy_id,
-                    period_start=period_start, period_end=period_end,
+                    coach_id=c.coach_id,
+                    academy_id=academy_id,
+                    period_start=period_start,
+                    period_end=period_end,
                 )
-                rows.append(MonthlyPayrollRow(
-                    coach_id=c.coach_id, session_count=c.session_count,
-                    total_minor=calc.total_minor, currency=calc.currency,
-                    status="not_generated", period_id=None,
-                ))
+                rows.append(
+                    MonthlyPayrollRow(
+                        coach_id=c.coach_id,
+                        session_count=c.session_count,
+                        total_minor=calc.total_minor,
+                        currency=calc.currency,
+                        status="not_generated",
+                        period_id=None,
+                    )
+                )
         return sorted(rows, key=lambda r: r.coach_id)

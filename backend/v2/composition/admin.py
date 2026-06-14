@@ -187,19 +187,21 @@ from backend.v2.contexts.finance.application.use_cases.approve_payout_period imp
 from backend.v2.contexts.finance.application.use_cases.attendance_trends import (
     GetAttendanceTrends,
 )
+from backend.v2.contexts.finance.application.use_cases.bulk_payroll import (
+    BulkGeneratePayroll,
+    BulkRecomputePayroll,
+)
 from backend.v2.contexts.finance.application.use_cases.coach_utilization import (
     GetCoachUtilization,
 )
 from backend.v2.contexts.finance.application.use_cases.enrollment_funnel import (
     GetEnrollmentFunnel,
 )
-from backend.v2.contexts.finance.application.use_cases.bulk_payroll import (
-    BulkGeneratePayroll,
-    BulkRecomputePayroll,
-)
-from backend.v2.contexts.finance.application.use_cases.list_monthly_payroll import ListMonthlyPayroll
 from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
     GeneratePayoutPeriod,
+)
+from backend.v2.contexts.finance.application.use_cases.list_monthly_payroll import (
+    ListMonthlyPayroll,
 )
 from backend.v2.contexts.finance.application.use_cases.manage_payout_period import (
     ListPayoutAuditEntries,
@@ -949,11 +951,7 @@ class _MonthlyCoachOccurrenceReaderAdapter:
                     "$or": [{"status": "completed"}, {"end_at": {"$lt": now}}],
                 }
             },
-            {
-                "$project": {
-                    "coach": {"$ifNull": ["$actual_coach_id", "$scheduled_coach_id"]}
-                }
-            },
+            {"$project": {"coach": {"$ifNull": ["$actual_coach_id", "$scheduled_coach_id"]}}},
             {"$group": {"_id": "$coach", "session_count": {"$sum": 1}}},
         ]
         return [
