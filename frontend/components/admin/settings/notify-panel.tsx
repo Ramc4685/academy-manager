@@ -156,6 +156,8 @@ export function NotifyPanel() {
 
 function CoachDigestTools() {
   const [coachId, setCoachId] = useState<string>("self");
+  const [testDate, setTestDate] = useState<string>(() => dateInputValue(new Date()));
+  const [testDateTouched, setTestDateTouched] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
 
   const coaches = useQuery({
@@ -170,7 +172,10 @@ function CoachDigestTools() {
 
   const testSend = useMutation({
     mutationFn: () =>
-      sendCoachDigestTest({ coach_id: coachId === "self" ? null : coachId }),
+      sendCoachDigestTest({
+        coach_id: coachId === "self" ? null : coachId,
+        ...(testDateTouched && testDate ? { on_date: testDate } : {}),
+      }),
     onSuccess: (res: CoachDigestTestSendResponse) => {
       setFeedback(describeTestResult(res));
       void log.refetch();
@@ -201,6 +206,19 @@ function CoachDigestTools() {
               </option>
             ))}
           </select>
+        </label>
+        <label className="text-sm font-medium text-rally-ink">
+          Date
+          <input
+            data-testid="coach-digest-test-date"
+            type="date"
+            value={testDate}
+            onChange={(event) => {
+              setTestDateTouched(true);
+              setTestDate(event.target.value);
+            }}
+            className="ml-2 rounded-md border border-rally-line bg-white px-2 py-1 text-sm"
+          />
         </label>
         <Button
           variant="secondary"
@@ -287,6 +305,13 @@ function statusClass(status: string): string {
     default:
       return "font-medium text-rally-ink/70";
   }
+}
+
+function dateInputValue(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function Toggle({

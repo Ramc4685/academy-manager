@@ -143,7 +143,7 @@ async def send_coach_digest_test(
             SendCoachDigestTestCommand(
                 academy_id=claims.academy_id,
                 target_user_id=target_user_id,
-                on_date=_scheduler_today(),
+                on_date=payload.on_date or _scheduler_today(),
             )
         )
     except CoachDigestTargetNotFound as exc:

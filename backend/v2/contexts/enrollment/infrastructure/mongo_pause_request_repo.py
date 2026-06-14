@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from bson import ObjectId as BsonObjectId
+
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     PauseRequest,
 )
@@ -123,7 +125,15 @@ class MongoPauseRequestRepository(TenantScopedRepository):
         billing_enrollment = None
         if enrollment is None:
             billing_enrollment = await self._db["student_billing_enrollments"].find_one(
-                {"academy_id": academy_id, "enrollment_id": request.enrollment_id}
+                {
+                    "academy_id": academy_id,
+                    "$or": _id_or_value_filters(
+                        request.enrollment_id,
+                        "enrollment_id",
+                        "billing_enrollment_id",
+                        "student_billing_enrollment_id",
+                    ),
+                }
             )
 
         source = enrollment or billing_enrollment or {}
@@ -139,7 +149,10 @@ class MongoPauseRequestRepository(TenantScopedRepository):
         student = None
         if student_id:
             student = await self._db["students"].find_one(
-                {"academy_id": academy_id, "student_id": student_id}
+                {
+                    "academy_id": academy_id,
+                    "$or": _id_or_value_filters(student_id, "student_id"),
+                }
             )
             parent_id = (
                 _optional_str((student or {}).get("parent_id"))
@@ -150,14 +163,20 @@ class MongoPauseRequestRepository(TenantScopedRepository):
         session = None
         if session_id:
             session = await self._db["sessions"].find_one(
-                {"academy_id": academy_id, "session_id": session_id}
+                {
+                    "academy_id": academy_id,
+                    "$or": _id_or_value_filters(session_id, "session_id"),
+                }
             )
 
         # For billing enrollments with no session, use the session type name as title.
         session_type = None
         if session is None and session_type_id:
             session_type = await self._db["session_types"].find_one(
-                {"academy_id": academy_id, "session_type_id": session_type_id}
+                {
+                    "academy_id": academy_id,
+                    "$or": _id_or_value_filters(session_type_id, "session_type_id"),
+                }
             )
 
         # Users collection is intentionally unscoped — do not filter by academy_id.
@@ -165,11 +184,14 @@ class MongoPauseRequestRepository(TenantScopedRepository):
         if parent_id:
             parent = await self._db["users"].find_one(
                 {
-                    "$or": [
-                        {"user_id": parent_id},
-                        {"parent_id": parent_id},
-                        {"firebase_uid": parent_id},
-                    ],
+                    "$or": _id_or_value_filters(
+                        parent_id,
+                        "user_id",
+                        "parent_id",
+                        "firebase_uid",
+                        "auth_uid",
+                        "uid",
+                    ),
                 }
             )
 
@@ -200,6 +222,15 @@ def _optional_str(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _id_or_value_filters(value: str, *fields: str) -> list[dict[str, object]]:
+    filters: list[dict[str, object]] = [{field: value} for field in fields]
+    id_values: list[object] = [value]
+    if BsonObjectId.is_valid(value):
+        id_values.append(BsonObjectId(value))
+    filters.append({"_id": {"$in": id_values}})
+    return filters
 
 
 def _student_name(doc: dict[str, object] | None) -> str | None:

@@ -152,6 +152,20 @@ def test_digest_test_send_uses_scheduler_timezone_date(admin_client, monkeypatch
     assert fake.calls[0].on_date.isoformat() == "2026-06-13"
 
 
+def test_digest_test_send_accepts_explicit_test_date(admin_client):
+    fake = _FakeTestSend()
+    admin_client.use_cases.send_coach_digest_test = fake
+
+    r = admin_client.post(
+        "/api/v2/admin/comms/digests/test-send",
+        json={"coach_id": "coach-1", "on_date": "2026-06-20"},
+    )
+
+    assert r.status_code == 200, r.text
+    assert fake.calls[0].target_user_id == "coach-1"
+    assert fake.calls[0].on_date.isoformat() == "2026-06-20"
+
+
 def test_digest_test_send_to_self_uses_admin_user_id(admin_client):
     fake = _FakeTestSend(
         result=SendCoachDigestTestResult(status="sent", coach_id="u-admin", email="admin@x.test")

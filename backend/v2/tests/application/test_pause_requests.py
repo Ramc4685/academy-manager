@@ -248,6 +248,66 @@ async def test_mongo_pending_pause_requests_falls_back_to_billing_enrollment() -
     assert loaded.student_id == "student-3"
 
 
+@pytest.mark.asyncio
+async def test_mongo_pending_pause_requests_resolves_legacy_billing_context() -> None:
+    """Regression: production pause requests can reference a billing enrollment
+    by stored _id and a parent user by auth_uid."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["pause-requests-legacy-billing-context"]
+    repo = MongoPauseRequestRepository(db)
+    request = PauseRequest(
+        pause_request_id="pause-4",
+        enrollment_id="01KT4PG7VT6ESV722TEDWQDQ3M",
+        parent_id="TqPnkjCF1N83ooMGZioq74yeqgHB",
+        pause_kind="fixed",
+        resume_on=date(2026, 7, 15),
+        reason="travel",
+        created_at=datetime(2026, 6, 2, tzinfo=UTC),
+    )
+
+    with tenant_scope("acad-1"):
+        await db.student_billing_enrollments.insert_one(
+            {
+                "_id": "01KT4PG7VT6ESV722TEDWQDQ3M",
+                "academy_id": "acad-1",
+                "student_id": "student-4",
+                "parent_id": "TqPnkjCF1N83ooMGZioq74yeqgHB",
+                "session_type_id": "st-4",
+            }
+        )
+        await db.students.insert_one(
+            {
+                "academy_id": "acad-1",
+                "student_id": "student-4",
+                "parent_user_id": "TqPnkjCF1N83ooMGZioq74yeqgHB",
+                "first_name": "Viha",
+                "last_name": "Ramchand",
+            }
+        )
+        await db.session_types.insert_one(
+            {
+                "academy_id": "acad-1",
+                "session_type_id": "st-4",
+                "name": "BLNO Intermediate",
+            }
+        )
+        await db.users.insert_one(
+            {
+                "auth_uid": "TqPnkjCF1N83ooMGZioq74yeqgHB",
+                "display_name": "Ram Parent",
+                "email": "parent@example.test",
+            }
+        )
+        await repo.add(request)
+        [loaded] = await repo.list_pending()
+
+    assert loaded.parent_name == "Ram Parent"
+    assert loaded.parent_email == "parent@example.test"
+    assert loaded.student_id == "student-4"
+    assert loaded.student_name == "Viha Ramchand"
+    assert loaded.session_title == "BLNO Intermediate"
+
+
 class _FakePauseRequests:
     async def add(self, request: PauseRequest) -> None:
         self.request = request
