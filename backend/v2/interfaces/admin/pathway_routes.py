@@ -349,3 +349,54 @@ async def seed_lesson_cards_route(
         "video_refs_updated": result.video_refs_updated,
         "video_refs_unchanged": result.video_refs_unchanged,
     }
+
+
+@router.post("/programs/{program_id}/lesson-cards/seed")
+async def seed_program_lesson_cards_route(
+    program_id: str,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> object:
+    if use_cases.curriculum is None:
+        raise HTTPException(status_code=503, detail="Curriculum service not configured")
+    try:
+        result = await use_cases.curriculum.seed_lesson_cards.execute(
+            program_id=program_id, created_by=claims.user_id
+        )
+    except PathwayNotSeededError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LessonCardSeedError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "program_id": result.program_id,
+        "cards_created": result.cards_created,
+        "cards_updated": result.cards_updated,
+        "cards_unchanged": result.cards_unchanged,
+        "video_refs_created": result.video_refs_created,
+        "video_refs_updated": result.video_refs_updated,
+        "video_refs_unchanged": result.video_refs_unchanged,
+    }
+
+
+@router.get("/programs/{program_id}/lesson-cards")
+async def list_lesson_cards_route(
+    program_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> object:
+    if use_cases.curriculum is None:
+        raise HTTPException(status_code=503, detail="Curriculum service not configured")
+    cards = await use_cases.curriculum.list_lesson_cards.execute(program_id)
+    summaries = [
+        {
+            "card_id": card.card_id,
+            "slug": card.slug,
+            "lesson_number": card.lesson_number,
+            "title": card.title,
+            "module_name": card.module_name,
+            "lesson_range": card.lesson_range,
+            "skill_ids": list(card.skill_ids),
+        }
+        for card in cards
+    ]
+    return {"count": len(summaries), "cards": summaries}

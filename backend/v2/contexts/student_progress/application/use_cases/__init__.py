@@ -14,6 +14,11 @@ from backend.v2.contexts.student_progress.application.use_cases.get_passport imp
     GetStudentPassport,
     GetStudentPassportCommand,
 )
+from backend.v2.contexts.student_progress.application.use_cases.get_recent_skill_updates import (
+    GetInProgressSkills,
+    GetRecentSkillUpdates,
+    RecentSkillUpdate,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_student_progress import (
     GetStudentProgress,
 )
@@ -47,12 +52,15 @@ __all__ = [
     "GetStudentCertificatesCommand",
     "GetStudentPassport",
     "GetStudentPassportCommand",
+    "GetInProgressSkills",
+    "GetRecentSkillUpdates",
     "GetStudentProgress",
     "PlaceStudentInLevel",
     "PlaceStudentInLevelCommand",
     "RecordTestAttempt",
     "RecordTestAttemptCommand",
     "RecordTestAttemptResult",
+    "RecentSkillUpdate",
     "RecommendLevelUp",
     "RecommendLevelUpCommand",
     "ReviewLevelUpCommand",

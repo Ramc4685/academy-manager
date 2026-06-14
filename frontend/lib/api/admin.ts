@@ -911,9 +911,39 @@ export interface AdminNotificationsView {
   dues_reminders: boolean;
   attendance_alerts: boolean;
   daily_digest_to_admin: boolean;
+  coach_digest_enabled: boolean;
+  coach_digest_hour: number;
 }
 
 export type UpdateAdminNotificationsRequest = Partial<AdminNotificationsView>;
+
+export interface CoachDigestTestSendRequest {
+  coach_id?: string | null;
+  on_date?: string | null;
+}
+
+export interface CoachDigestTestSendResponse {
+  status: "sent" | "skipped_empty" | "failed";
+  coach_id: string;
+  email: string | null;
+  detail: string | null;
+}
+
+export interface CoachDigestLogEntryView {
+  digest_id: string;
+  coach_id: string;
+  coach_email: string | null;
+  digest_date: string;
+  status: string;
+  kind: string;
+  sent_at: string | null;
+  failed_reason: string | null;
+  created_at: string | null;
+}
+
+export interface CoachDigestLogView {
+  entries: CoachDigestLogEntryView[];
+}
 
 export interface AdminGatewayView {
   stripe_connected: boolean;
@@ -1600,6 +1630,21 @@ export function updateAdminNotifications(
   return apiFetch<AdminNotificationsView>("/admin/academy/notifications", {
     method: "PATCH",
     body: JSON.stringify(payload),
+  });
+}
+
+export function sendCoachDigestTest(
+  payload: CoachDigestTestSendRequest
+): Promise<CoachDigestTestSendResponse> {
+  return apiFetch<CoachDigestTestSendResponse>("/admin/comms/digests/test-send", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getCoachDigestLog(limit = 20): Promise<CoachDigestLogView> {
+  return apiFetch<CoachDigestLogView>(`/admin/comms/digests/log?limit=${limit}`, {
+    method: "GET",
   });
 }
 

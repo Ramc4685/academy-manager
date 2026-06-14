@@ -1201,12 +1201,46 @@ class AdminNotificationsView(BaseModel):
     dues_reminders: bool = False
     attendance_alerts: bool = False
     daily_digest_to_admin: bool = False
+    coach_digest_enabled: bool = False
+    coach_digest_hour: int = 6
 
 
 class UpdateAdminNotificationsRequest(BaseModel):
     dues_reminders: bool | None = None
     attendance_alerts: bool | None = None
     daily_digest_to_admin: bool | None = None
+    coach_digest_enabled: bool | None = None
+    coach_digest_hour: int | None = Field(default=None, ge=0, le=23)
+
+
+class CoachDigestTestSendRequest(BaseModel):
+    # Target a specific coach by user_id, or omit/"self" to send to the admin.
+    coach_id: str | None = None
+    # Date to build the teaching-plan digest for. Omitted uses scheduler-local today.
+    on_date: date | None = None
+
+
+class CoachDigestTestSendResponse(BaseModel):
+    status: Literal["sent", "skipped_empty", "failed"]
+    coach_id: str
+    email: str | None = None
+    detail: str | None = None
+
+
+class CoachDigestLogEntryView(BaseModel):
+    digest_id: str
+    coach_id: str
+    coach_email: str | None = None
+    digest_date: str
+    status: str
+    kind: str
+    sent_at: str | None = None
+    failed_reason: str | None = None
+    created_at: datetime | None = None
+
+
+class CoachDigestLogView(BaseModel):
+    entries: list[CoachDigestLogEntryView]
 
 
 class AdminGatewayView(BaseModel):

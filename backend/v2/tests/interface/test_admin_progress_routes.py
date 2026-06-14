@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI, Request
@@ -350,6 +351,47 @@ def _build_app(use_cases, claims: AuthClaims) -> FastAPI:
     app.dependency_overrides[get_auth_claims] = lambda: claims
     app.dependency_overrides[get_admin_use_cases] = lambda: use_cases
     return app
+
+
+def test_coach_engagement_stats_route_returns_counts_for_date_range() -> None:
+    execute = AsyncMock(
+        return_value=[
+            {"coach_id": "coach-1", "outcomes_recorded": 4},
+            {"coach_id": "coach-2", "outcomes_recorded": 2},
+        ]
+    )
+    use_cases = SimpleNamespace(
+        get_coach_engagement_stats=SimpleNamespace(execute=execute),
+    )
+    client = TestClient(_build_app(use_cases, _admin_claims()))
+
+    response = client.get(
+        "/api/v2/admin/progress/coach-engagement",
+        params={"start_date": "2026-06-01", "end_date": "2026-06-13"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "rows": [
+            {"coach_id": "coach-1", "outcomes_recorded": 4},
+            {"coach_id": "coach-2", "outcomes_recorded": 2},
+        ]
+    }
+    execute.assert_awaited_once()
+    kwargs = execute.await_args.kwargs
+    assert kwargs["start_date"].isoformat() == "2026-06-01"
+    assert kwargs["end_date"].isoformat() == "2026-06-13"
+
+
+def test_coach_engagement_stats_repo_ignores_not_started_placement_rows() -> None:
+    from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_repo import (
+        _RECORDED_OUTCOME_STATUSES,
+    )
+
+    assert "NOT_STARTED" not in _RECORDED_OUTCOME_STATUSES
+    assert {"INTRODUCED", "PRACTICING", "PASSED", "NEEDS_REVIEW"}.issubset(
+        set(_RECORDED_OUTCOME_STATUSES)
+    )
 
 
 @pytest.fixture()
