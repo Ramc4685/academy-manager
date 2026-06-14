@@ -25,6 +25,7 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
 from backend.v2.contexts.billing.application.use_cases.issue_refund import (
     IssueRefundCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.send_invoice import SendInvoice
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
     ApproveWithdrawalCreditCommand,
     PreviewWithdrawalCreditCommand,
@@ -62,6 +63,7 @@ from backend.v2.interfaces.admin.views import (
     ReconcileStripeBillingRequest,
     ReconcileStripeBillingResponse,
     RecordExpenseRequest,
+    SendInvoiceResponse,
     WithdrawalCreditApproveRequest,
     WithdrawalCreditApproveResponse,
     WithdrawalCreditPreviewRequest,
@@ -143,6 +145,9 @@ async def get_billing_invoice_detail(
         ],
         invoice_pdf_artifact_id=raw.get("invoice_pdf_artifact_id"),  # type: ignore[arg-type]
         receipt_artifact_id=raw.get("receipt_artifact_id"),  # type: ignore[arg-type]
+        delivery_status=str(raw.get("delivery_status") or "not_sent"),
+        sent_at=raw.get("sent_at"),  # type: ignore[arg-type]
+        last_sent_at=raw.get("last_sent_at"),  # type: ignore[arg-type]
     )
 
 
@@ -520,6 +525,35 @@ class CreateStudentInvoiceRequest(BaseModel):
 
 def _get_ledger_repo(request: Request) -> MongoBillingLedgerRepository:
     return MongoBillingLedgerRepository(request.app.state.db)
+
+
+@router.post(
+    "/billing/invoices/{invoice_id}/send",
+    response_model=SendInvoiceResponse,
+)
+async def send_billing_invoice(
+    invoice_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
+) -> SendInvoiceResponse:
+    """Send (or re-send) an invoice to the parent.
+
+    - Finalizes draft invoices before sending (draft → open).
+    - Records delivery status (delivery axis only — financial status unchanged).
+    - Returns a Stripe Checkout URL when a balance is outstanding (stubbed if
+      Stripe is not configured in the current environment).
+    """
+    use_case = SendInvoice(ledger=ledger)
+    try:
+        result = await use_case.execute(invoice_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return SendInvoiceResponse(
+        invoice_id=result.invoice.invoice_id,
+        delivery_status=result.invoice.delivery_status,
+        last_sent_at=result.invoice.last_sent_at,
+        checkout_url=result.checkout_url,
+    )
 
 
 @router.post(

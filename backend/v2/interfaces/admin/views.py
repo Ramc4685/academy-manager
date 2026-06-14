@@ -697,6 +697,17 @@ class InvoiceDetailResponse(BaseModel):
     credit_usage: list[InvoiceCreditUsageDto] = []
     invoice_pdf_artifact_id: str | None = None
     receipt_artifact_id: str | None = None
+    # delivery axis (separate from financial status)
+    delivery_status: str = "not_sent"
+    sent_at: datetime | None = None
+    last_sent_at: datetime | None = None
+
+
+class SendInvoiceResponse(BaseModel):
+    invoice_id: str
+    delivery_status: str
+    last_sent_at: datetime | None = None
+    checkout_url: str | None = None
 
 
 class GenerateInvoiceArtifactRequest(BaseModel):

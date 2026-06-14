@@ -270,7 +270,11 @@ class HandleWebhookEvent:
 
     async def _dispatch(self, event_type: str, event: dict[str, Any]) -> None:
         if event_type == "checkout.session.completed":
-            await self._on_checkout_completed(event)
+            metadata = self._event_metadata(event)
+            if metadata.get("source") == "invoice_pay_link" or metadata.get("invoice_id"):
+                await self._handle_invoice_checkout_completed(event)
+            else:
+                await self._on_checkout_completed(event)
         elif event_type == "checkout.session.expired":
             await self._on_checkout_expired(event)
         elif event_type == "payment_intent.succeeded":
@@ -291,6 +295,77 @@ class HandleWebhookEvent:
             await self._on_subscription_changed(event)
         else:
             log.info("stripe_webhook_ignored type=%s", event_type)
+
+    async def _handle_invoice_checkout_completed(self, event: dict[str, Any]) -> None:
+        """Handle checkout.session.completed from an invoice pay-link.
+
+        Idempotent by checkout_session_id: if a ledger payment already exists
+        for this session, the record_payment call returns the existing row and
+        allocation is skipped via its own idempotency_key.
+        """
+        if self._billing_ledger is None:
+            log.warning("invoice_checkout_completed: billing_ledger not configured — skipping")
+            return
+
+        obj = event["data"]["object"]
+        checkout_session_id: str = str(obj.get("id") or "")
+        metadata = obj.get("metadata") or {}
+        invoice_id = str(metadata.get("invoice_id") or "")
+        if not invoice_id:
+            log.warning(
+                "invoice_checkout_completed: no invoice_id in metadata session=%s",
+                checkout_session_id,
+            )
+            return
+
+        payment_intent_id: str | None = obj.get("payment_intent") or None
+        if payment_intent_id:
+            payment_intent_id = str(payment_intent_id)
+        amount_total = int(obj.get("amount_total") or 0)
+        currency = str(obj.get("currency") or "usd").lower()
+
+        now = self._now()
+        idempotency_key = f"invoice-checkout:{checkout_session_id}"
+        ledger_payment_id = f"ledger-pay-cs:{checkout_session_id}"
+
+        payment = await self._billing_ledger.record_payment(
+            LedgerPayment(
+                payment_id=ledger_payment_id,
+                academy_id=self._academy_id,
+                parent_id=str(metadata.get("parent_id") or "unknown"),
+                amount_cents=amount_total,
+                unapplied_amount_cents=amount_total,
+                currency=currency,
+                status="succeeded",
+                payment_method="stripe_checkout",
+                stripe_payment_intent_id=payment_intent_id,
+                paid_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            idempotency_key=idempotency_key,
+        )
+
+        if amount_total > 0:
+            try:
+                await self._billing_ledger.allocate_payment(
+                    payment_id=payment.payment_id,
+                    invoice_id=invoice_id,
+                    amount_cents=amount_total,
+                    idempotency_key=f"invoice-checkout-alloc:{checkout_session_id}",
+                )
+                log.info(
+                    "invoice_checkout_completed: allocated payment=%s to invoice=%s amount=%d",
+                    payment.payment_id,
+                    invoice_id,
+                    amount_total,
+                )
+            except ValueError as exc:
+                log.warning(
+                    "invoice_checkout_completed: allocation skipped invoice=%s err=%s",
+                    invoice_id,
+                    exc,
+                )
 
     async def _on_checkout_completed(self, event: dict[str, Any]) -> None:
         obj = event["data"]["object"]
