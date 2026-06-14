@@ -92,6 +92,19 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         doc = await self._find_one({"invoice_id": invoice_id})
         return self._invoice_from_doc(doc) if doc else None
 
+    async def get_open_invoice_for_student(
+        self, student_id: str, period: str
+    ) -> LedgerInvoice | None:
+        """Return the first open/draft/partially-paid invoice for a student in a period."""
+        doc = await self._find_one(
+            {
+                "student_id": student_id,
+                "period": period,
+                "status": {"$in": ["open", "draft", "partially_paid"]},
+            }
+        )
+        return self._invoice_from_doc(doc) if doc else None
+
     async def record_payment(
         self,
         payment: LedgerPayment,
