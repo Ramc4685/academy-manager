@@ -29,12 +29,11 @@ async def up(db: AsyncIOMotorDatabase) -> None:
         partialFilterExpression={"ledger_idempotency_key": {"$type": "string"}},
     )
 
-    # payment_id lookup — unique per academy; partial so docs without it are excluded.
+    # payment_id lookup — full unique constraint; payment_id is required on every doc.
     await coll.create_index(
         [("academy_id", 1), ("payment_id", 1)],
         unique=True,
         name="academy_ledger_payment_id_unique",
-        partialFilterExpression={"payment_id": {"$type": "string"}},
     )
 
     # parent_id (e.g. parent/student account) — supports per-parent history queries.
