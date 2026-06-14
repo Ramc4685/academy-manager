@@ -34,11 +34,13 @@ import {
   exportPayoutPeriodXlsx,
   getPayoutAuditTrail,
   listAdminPayouts,
+  markPayoutPeriodPaid,
   overridePayoutLine,
   recomputePayoutPeriod,
   reopenPayoutPeriod,
   type AdminPayoutPeriodLineView,
   type AdminPayoutPeriodView,
+  type MarkPayoutPaidInput,
   type PayoutAuditEntryView,
 } from "@/lib/api/v2/payouts";
 import { Avatar } from "@/components/ds/avatar";
@@ -303,6 +305,7 @@ function Actions({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [showPaid, setShowPaid] = useState(false);
 
   const recompute = useMutation({
     mutationFn: () => recomputePayoutPeriod(period.period_id),
@@ -324,6 +327,15 @@ function Actions({
     mutationFn: (reason: string) => reopenPayoutPeriod(period.period_id, reason),
     onSuccess: (updated) => {
       setError(null);
+      onChanged(updated);
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+  const markPaid = useMutation({
+    mutationFn: (input: MarkPayoutPaidInput) => markPayoutPeriodPaid(period.period_id, input),
+    onSuccess: (updated) => {
+      setError(null);
+      setShowPaid(false);
       onChanged(updated);
     },
     onError: (err: Error) => setError(err.message),
@@ -354,7 +366,7 @@ function Actions({
     }
   };
 
-  const busy = recompute.isPending || approve.isPending || reopen.isPending;
+  const busy = recompute.isPending || approve.isPending || reopen.isPending || markPaid.isPending;
 
   return (
     <div className="space-y-2">
@@ -385,6 +397,16 @@ function Actions({
             primary
           />
         )}
+        {period.status === "approved" && (
+          <ActionButton
+            icon={<CheckCircle2 className="size-4" aria-hidden="true" />}
+            label="Mark paid"
+            title="Record that this approved payout has been paid out."
+            disabled={markPaid.isPending}
+            onClick={() => setShowPaid(true)}
+            primary
+          />
+        )}
         {period.status !== "draft" && (
           <ActionButton
             icon={<RotateCcw className="size-4" aria-hidden="true" />}
@@ -399,6 +421,14 @@ function Actions({
         <p role="alert" className="text-sm text-red-700">
           {error}
         </p>
+      )}
+      {showPaid && (
+        <MarkPaidDialog
+          defaultAmountCents={period.total_amount_cents}
+          pending={markPaid.isPending}
+          onCancel={() => setShowPaid(false)}
+          onSubmit={(input) => markPaid.mutate(input)}
+        />
       )}
     </div>
   );
@@ -694,6 +724,104 @@ function AuditTrail({
         </ul>
       )}
     </Card>
+  );
+}
+
+function MarkPaidDialog({
+  defaultAmountCents,
+  pending,
+  onCancel,
+  onSubmit,
+}: {
+  defaultAmountCents: number;
+  pending: boolean;
+  onCancel: () => void;
+  onSubmit: (input: MarkPayoutPaidInput) => void;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [method, setMethod] = useState<MarkPayoutPaidInput["method"]>("bank_transfer");
+  const [paidAt, setPaidAt] = useState(today);
+  const [amount, setAmount] = useState((defaultAmountCents / 100).toFixed(2));
+  const [reference, setReference] = useState("");
+
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    onSubmit({
+      method,
+      paid_at: new Date(paidAt).toISOString(),
+      amount_cents: Math.round(parseFloat(amount) * 100),
+      reference: reference || null,
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <form
+        onSubmit={handleSubmit}
+        className="w-full max-w-sm rounded-lg bg-background p-6 shadow-lg space-y-4"
+      >
+        <h2 className="text-base font-semibold">Record payment</h2>
+        <div className="space-y-3">
+          <div>
+            <label className="text-sm font-medium">Method</label>
+            <select
+              value={method}
+              onChange={(e) => setMethod(e.target.value as MarkPayoutPaidInput["method"])}
+              className="mt-1 w-full rounded border px-2 py-1.5 text-sm"
+            >
+              <option value="bank_transfer">Bank transfer</option>
+              <option value="cash">Cash</option>
+              <option value="check">Check</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium">Date paid</label>
+            <input
+              type="date"
+              value={paidAt}
+              onChange={(e) => setPaidAt(e.target.value)}
+              required
+              className="mt-1 w-full rounded border px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Amount</label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              required
+              className="mt-1 w-full rounded border px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Reference (optional)</label>
+            <input
+              type="text"
+              value={reference}
+              onChange={(e) => setReference(e.target.value)}
+              placeholder="e.g. transaction ID"
+              className="mt-1 w-full rounded border px-2 py-1.5 text-sm"
+            />
+          </div>
+        </div>
+        <div className="flex gap-2 justify-end">
+          <button type="button" onClick={onCancel} className="rounded border px-3 py-1.5 text-sm">
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={pending}
+            className="rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
+          >
+            {pending ? "Saving…" : "Confirm payment"}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 
