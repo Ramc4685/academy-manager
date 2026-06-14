@@ -15,6 +15,7 @@ from .dues_routes import router as dues_router
 from .pathway_routes import router as pathway_router
 from .pause_routes import router as pause_router
 from .payout_period_routes import router as payout_period_router
+from .payroll_routes import router as payroll_router
 from .progress_routes import router as progress_router
 from .registration_routes import router as registration_router
 from .reports_routes import router as reports_router
@@ -38,6 +39,7 @@ router.include_router(session_type_router)
 router.include_router(waitlist_router)
 router.include_router(billing_router)
 router.include_router(payout_period_router)
+router.include_router(payroll_router)
 router.include_router(coach_pay_rate_router)
 router.include_router(comms_router)
 router.include_router(academy_router)

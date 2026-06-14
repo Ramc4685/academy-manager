@@ -209,6 +209,10 @@ from backend.v2.contexts.finance.application.use_cases.approve_payout_period imp
 from backend.v2.contexts.finance.application.use_cases.attendance_trends import (
     GetAttendanceTrends,
 )
+from backend.v2.contexts.finance.application.use_cases.bulk_payroll import (
+    BulkGeneratePayroll,
+    BulkRecomputePayroll,
+)
 from backend.v2.contexts.finance.application.use_cases.coach_utilization import (
     GetCoachUtilization,
 )
@@ -217,6 +221,9 @@ from backend.v2.contexts.finance.application.use_cases.enrollment_funnel import 
 )
 from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
     GeneratePayoutPeriod,
+)
+from backend.v2.contexts.finance.application.use_cases.list_monthly_payroll import (
+    ListMonthlyPayroll,
 )
 from backend.v2.contexts.finance.application.use_cases.manage_payout_period import (
     ListPayoutAuditEntries,
@@ -935,6 +942,50 @@ class _FinancePayoutCalculator:
                 ]
             }
         )
+
+
+class _MonthlyCoachOccurrenceReaderAdapter:
+    """Groups session_occurrences by paying coach for a calendar month.
+
+    Paying coach = actual_coach_id when set, else scheduled_coach_id.
+    Clock-derived completion: end_at < now OR status == 'completed'.
+    """
+
+    def __init__(self, collection: Any) -> None:
+        self._col = collection
+
+    async def coaches_with_occurrences(
+        self,
+        *,
+        academy_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> list[Any]:
+        from dataclasses import dataclass
+
+        @dataclass(frozen=True)
+        class _Row:
+            coach_id: str
+            session_count: int
+
+        now = datetime.now(tz=UTC)
+        pipeline = [
+            {
+                "$match": {
+                    "academy_id": academy_id,
+                    "start_at": {"$gte": period_start, "$lt": period_end},
+                    "is_payable": {"$ne": False},
+                    "status": {"$ne": "cancelled"},
+                    "$or": [{"status": "completed"}, {"end_at": {"$lt": now}}],
+                }
+            },
+            {"$project": {"coach": {"$ifNull": ["$actual_coach_id", "$scheduled_coach_id"]}}},
+            {"$group": {"_id": "$coach", "session_count": {"$sum": 1}}},
+        ]
+        return [
+            _Row(coach_id=str(doc["_id"]), session_count=int(doc["session_count"]))
+            async for doc in self._col.aggregate(pipeline)
+        ]
 
 
 def _optional_str(value: object | None) -> str | None:
@@ -2738,6 +2789,20 @@ def compose_admin(
         payouts=payouts_repo,
         revenue_query=revenue_query,
         payout_periods=payout_periods_repo,
+        list_monthly_payroll=ListMonthlyPayroll(
+            reader=_MonthlyCoachOccurrenceReaderAdapter(db["session_occurrences"]),
+            periods=payout_periods_repo,
+            calculator=coach_payout_calculator,
+        ),
+        bulk_generate_payroll=BulkGeneratePayroll(
+            reader=_MonthlyCoachOccurrenceReaderAdapter(db["session_occurrences"]),
+            periods=payout_periods_repo,
+            generate=generate_payout_period,
+        ),
+        bulk_recompute_payroll=BulkRecomputePayroll(
+            periods=payout_periods_repo,
+            recompute=recompute_payout_period,
+        ),
         generate_payout_period=generate_payout_period,
         approve_payout_period=approve_payout_period,
         mark_payout_paid=mark_payout_paid,

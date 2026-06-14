@@ -185,6 +185,19 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
             raise RuntimeError("payout period replace lost the document")
         return stored
 
+    async def list_for_window(
+        self,
+        *,
+        academy_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> list[PayoutPeriod]:
+        cursor = self._find_many(
+            {"period_start": period_start, "period_end": period_end},
+            sort=[("coach_id", 1)],
+        )
+        return [await self._hydrate(doc) async for doc in cursor]
+
     async def replace_with_lines(self, period: PayoutPeriod) -> PayoutPeriod:
         """Replace the period document AND rewrite its line set.
 

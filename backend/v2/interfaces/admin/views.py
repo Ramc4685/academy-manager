@@ -797,6 +797,31 @@ class AdminPayoutPayslipView(BaseModel):
     lines: list[AdminPayoutPeriodLineView]
 
 
+class AdminMonthlyPayrollRow(BaseModel):
+    coach_id: str
+    coach_name: str | None = None
+    session_count: int
+    total_amount_cents: int
+    currency: str
+    status: str  # not_generated|draft|approved|paid
+    period_id: str | None = None
+
+
+class AdminMonthlyPayrollView(BaseModel):
+    month: str
+    period_start: datetime
+    period_end: datetime
+    rows: list[AdminMonthlyPayrollRow]
+    total_amount_cents: int
+
+
+class BulkPayrollResultView(BaseModel):
+    month: str
+    generated: int = 0
+    skipped: int = 0
+    recomputed: int = 0
+
+
 class ReopenPayoutPeriodRequest(BaseModel):
     reason: str = Field(min_length=1)
 

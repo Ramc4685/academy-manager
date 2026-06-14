@@ -80,6 +80,16 @@ class PayoutPeriodRepository(Protocol):
         """
         ...
 
+    async def list_for_window(
+        self,
+        *,
+        academy_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> list[PayoutPeriod]:
+        """All periods for this academy whose window exactly matches [period_start, period_end)."""
+        ...
+
 
 class PayoutAuditLog(Protocol):
     """Append-only audit trail of payout-period mutations."""
@@ -233,6 +243,29 @@ class AttendanceSnapshotReader(Protocol):
     ) -> list[SessionAttendanceSnapshot]: ...
 
 
+class CoachMonthOccurrences(Protocol):
+    """Shape of one row returned by MonthlyCoachOccurrenceReader."""
+
+    @property
+    def coach_id(self) -> str: ...
+
+    @property
+    def session_count(self) -> int: ...
+
+
+class MonthlyCoachOccurrenceReader(Protocol):
+    """Coaches with payable, non-cancelled occurrences in a month window.
+
+    Paying coach = actual_coach_id when set, else scheduled_coach_id.
+    Clock-derived completion: end_at < now OR status == 'completed'.
+    Never filters on stored status == 'completed' alone.
+    """
+
+    async def coaches_with_occurrences(
+        self, *, academy_id: str, period_start: datetime, period_end: datetime
+    ) -> list[CoachMonthOccurrences]: ...
+
+
 class CoachPayoutSnapshotReader(Protocol):
     """Read ``CoachPayoutSnapshot`` records for a set of periods.
 
@@ -256,8 +289,10 @@ __all__ = [
     "AttendanceSnapshotReader",
     "BillingLedgerReader",
     "BillingPeriodTotals",
+    "CoachMonthOccurrences",
     "CoachPayoutSnapshotReader",
     "CoachPayoutSnapshotRepository",
+    "MonthlyCoachOccurrenceReader",
     "PayoutAuditLog",
     "PayoutCalculation",
     "PayoutCalculator",

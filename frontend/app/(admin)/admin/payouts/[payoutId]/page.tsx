@@ -17,6 +17,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CorrectionDrawer } from "../_components/CorrectionDrawer";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -29,16 +30,17 @@ import {
 
 import { listAdminUsers, listCoachPayRates, type AdminCoachPayRateView } from "@/lib/api/admin";
 import {
-  generatePayoutPeriod,
   approvePayoutPeriod,
   exportPayoutPeriodXlsx,
   getPayoutAuditTrail,
-  listAdminPayouts,
+  getPayoutPeriod,
+  markPayoutPeriodPaid,
   overridePayoutLine,
   recomputePayoutPeriod,
   reopenPayoutPeriod,
   type AdminPayoutPeriodLineView,
   type AdminPayoutPeriodView,
+  type MarkPayoutPaidInput,
   type PayoutAuditEntryView,
 } from "@/lib/api/v2/payouts";
 import { Avatar } from "@/components/ds/avatar";
@@ -74,37 +76,27 @@ export default function AdminPayoutReviewPage() {
   const payoutId = params?.payoutId ?? "";
   const queryClient = useQueryClient();
 
-  // The payouts list row carries the coach + window for this payout.
-  const listQuery = useQuery({
-    queryKey: ["admin", "finance", "payouts"],
-    queryFn: listAdminPayouts,
-  });
-  const coachesQuery = useQuery({
-    queryKey: ["admin", "users", "coach"],
-    queryFn: () => listAdminUsers("coach"),
-  });
-
-  const summary = useMemo(
-    () => listQuery.data?.payouts.find((p) => p.payout_id === payoutId) ?? null,
-    [listQuery.data, payoutId],
-  );
-
   const periodQuery = useQuery({
-    queryKey: ["admin", "payout-periods", summary?.coach_id, summary?.period_start, summary?.period_end],
-    queryFn: () =>
-      generatePayoutPeriod({
-        coach_id: summary!.coach_id,
-        period_start: summary!.period_start,
-        period_end: summary!.period_end,
-      }),
-    enabled: Boolean(summary),
+    queryKey: ["admin", "payout-period", payoutId],
+    queryFn: () => getPayoutPeriod(payoutId),
+    enabled: Boolean(payoutId),
+    retry: (failureCount, err) => {
+      if ((err as { status?: number })?.status === 404) return false;
+      return failureCount < 2;
+    },
   });
   const period = periodQuery.data ?? null;
 
+  const coachesQuery = useQuery({
+    queryKey: ["admin", "users", "coach"],
+    queryFn: () => listAdminUsers("coach"),
+    enabled: Boolean(period),
+  });
+
   const ratesQuery = useQuery({
-    queryKey: ["admin", "coach-pay-rates", summary?.coach_id],
-    queryFn: () => listCoachPayRates(summary!.coach_id),
-    enabled: Boolean(summary),
+    queryKey: ["admin", "coach-pay-rates", period?.coach_id],
+    queryFn: () => listCoachPayRates(period!.coach_id),
+    enabled: Boolean(period),
   });
   const activeRate = useMemo(
     () => ratesQuery.data?.rates.find((rate) => rate.status === "active") ?? null,
@@ -118,19 +110,16 @@ export default function AdminPayoutReviewPage() {
   });
 
   const refresh = (updated: AdminPayoutPeriodView) => {
-    queryClient.setQueryData(
-      ["admin", "payout-periods", summary?.coach_id, summary?.period_start, summary?.period_end],
-      updated,
-    );
+    queryClient.setQueryData(["admin", "payout-period", payoutId], updated);
     void queryClient.invalidateQueries({
       queryKey: ["admin", "payout-periods", updated.period_id, "audit"],
     });
-    void queryClient.invalidateQueries({ queryKey: ["admin", "finance", "payouts"] });
+    void queryClient.invalidateQueries({ queryKey: ["admin", "payroll"] });
   };
 
   const coach = useMemo(
-    () => coachesQuery.data?.users.find((user) => user.user_id === summary?.coach_id) ?? null,
-    [coachesQuery.data, summary?.coach_id],
+    () => coachesQuery.data?.users.find((user) => user.user_id === period?.coach_id) ?? null,
+    [coachesQuery.data, period?.coach_id],
   );
   const coachName = coach?.display_name || coach?.email || "Coach";
 
@@ -145,7 +134,7 @@ export default function AdminPayoutReviewPage() {
     );
   }
 
-  if (listQuery.isPending) {
+  if (periodQuery.isPending) {
     return (
       <section className="space-y-4">
         <BackLink />
@@ -154,13 +143,31 @@ export default function AdminPayoutReviewPage() {
     );
   }
 
-  if (listQuery.isError || !summary) {
+  if (periodQuery.error && (periodQuery.error as { status?: number })?.status === 404) {
+    return (
+      <section className="space-y-4">
+        <BackLink />
+        <Card p={20}>
+          <div className="space-y-3">
+            <p className="text-sm text-rally-muted">
+              This payout link is outdated. Use the month-first payroll view to find it.
+            </p>
+            <Link href="/admin/payouts" className="text-sm text-primary underline">
+              Go to Coach Payroll →
+            </Link>
+          </div>
+        </Card>
+      </section>
+    );
+  }
+
+  if (periodQuery.isError || !period) {
     return (
       <section className="space-y-4">
         <BackLink />
         <Card p={20}>
           <p role="alert" className="text-sm text-red-700">
-            Payout not found.
+            Could not load the payout period.
           </p>
         </Card>
       </section>
@@ -179,26 +186,21 @@ export default function AdminPayoutReviewPage() {
         coachEmail={coach?.email ?? null}
         payRule={payRuleLabel(activeRate)}
         period={period}
-        fallbackAmountCents={summary.amount_cents}
-        periodStart={summary.period_start}
-        periodEnd={summary.period_end}
+        fallbackAmountCents={period.total_amount_cents}
+        periodStart={period.period_start}
+        periodEnd={period.period_end}
         onChanged={refresh}
       />
-      {periodQuery.isPending ? (
-        <Skeleton />
-      ) : periodQuery.isError || !period ? (
-        <Card p={20}>
-          <p role="alert" className="text-sm text-red-700">
-            Could not load the payout period.
-          </p>
-        </Card>
-      ) : (
-        <>
-          <SummaryCards period={period} />
-          <PayLog period={period} onChanged={refresh} />
-          <AuditTrail entries={auditQuery.data?.entries ?? []} loading={auditQuery.isPending} />
-        </>
-      )}
+      <SummaryCards period={period} />
+      <PayLog
+        period={period}
+        coaches={(coachesQuery.data?.users ?? []).map((u) => ({
+          id: u.user_id,
+          name: u.display_name || u.email,
+        }))}
+        onChanged={refresh}
+      />
+      <AuditTrail entries={auditQuery.data?.entries ?? []} loading={auditQuery.isPending} />
     </section>
   );
 }
@@ -303,6 +305,7 @@ function Actions({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [showPaid, setShowPaid] = useState(false);
 
   const recompute = useMutation({
     mutationFn: () => recomputePayoutPeriod(period.period_id),
@@ -324,6 +327,15 @@ function Actions({
     mutationFn: (reason: string) => reopenPayoutPeriod(period.period_id, reason),
     onSuccess: (updated) => {
       setError(null);
+      onChanged(updated);
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+  const markPaid = useMutation({
+    mutationFn: (input: MarkPayoutPaidInput) => markPayoutPeriodPaid(period.period_id, input),
+    onSuccess: (updated) => {
+      setError(null);
+      setShowPaid(false);
       onChanged(updated);
     },
     onError: (err: Error) => setError(err.message),
@@ -354,7 +366,7 @@ function Actions({
     }
   };
 
-  const busy = recompute.isPending || approve.isPending || reopen.isPending;
+  const busy = recompute.isPending || approve.isPending || reopen.isPending || markPaid.isPending;
 
   return (
     <div className="space-y-2">
@@ -385,6 +397,16 @@ function Actions({
             primary
           />
         )}
+        {period.status === "approved" && (
+          <ActionButton
+            icon={<CheckCircle2 className="size-4" aria-hidden="true" />}
+            label="Mark paid"
+            title="Record that this approved payout has been paid out."
+            disabled={markPaid.isPending}
+            onClick={() => setShowPaid(true)}
+            primary
+          />
+        )}
         {period.status !== "draft" && (
           <ActionButton
             icon={<RotateCcw className="size-4" aria-hidden="true" />}
@@ -399,6 +421,14 @@ function Actions({
         <p role="alert" className="text-sm text-red-700">
           {error}
         </p>
+      )}
+      {showPaid && (
+        <MarkPaidDialog
+          defaultAmountCents={period.total_amount_cents}
+          pending={markPaid.isPending}
+          onCancel={() => setShowPaid(false)}
+          onSubmit={(input) => markPaid.mutate(input)}
+        />
       )}
     </div>
   );
@@ -441,81 +471,112 @@ const TH = "px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overlin
 
 function PayLog({
   period,
+  coaches,
   onChanged,
 }: {
   period: AdminPayoutPeriodView;
+  coaches: { id: string; name: string }[];
   onChanged: (updated: AdminPayoutPeriodView) => void;
 }) {
+  const [correctingOccurrenceId, setCorrectingOccurrenceId] = useState<string | null>(null);
+
+  const handleCorrectionApplied = async () => {
+    const updated = await recomputePayoutPeriod(period.period_id);
+    setCorrectingOccurrenceId(null);
+    onChanged(updated);
+  };
+
   return (
-    <Card p={0}>
-      <div className="border-b border-rally-line px-5 py-4">
-        <Overline>
-          Session pay log ({period.lines.length + period.unpaid_occurrences.length})
-        </Overline>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[760px] text-sm">
-          <thead>
-            <tr className="border-b border-rally-line text-left">
-              <th className={`${TH} pl-5`}>Date</th>
-              <th className={TH}>Session</th>
-              <th className={TH}>Role</th>
-              <th className={TH}>Status</th>
-              <th className={`${TH} text-right`}>%</th>
-              <th className={`${TH} text-right`}>Pay</th>
-              <th className="px-3 py-3" aria-label="Line actions" />
-            </tr>
-          </thead>
-          <tbody>
-            {period.lines.map((line) => (
-              <PaidRow key={line.occurrence_id} period={period} line={line} onChanged={onChanged} />
-            ))}
-            {period.unpaid_occurrences.map((occ) => (
-              <tr key={occ.occurrence_id} className="border-b border-rally-line last:border-0 bg-neutral-50/50">
-                <td className="px-3 py-3 pl-5 font-mono text-xs text-rally-muted">
-                  {occ.occurred_at ? new Date(occ.occurred_at).toLocaleDateString() : "—"}
+    <>
+      <Card p={0}>
+        <div className="border-b border-rally-line px-5 py-4">
+          <Overline>
+            Session pay log ({period.lines.length + period.unpaid_occurrences.length})
+          </Overline>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm">
+            <thead>
+              <tr className="border-b border-rally-line text-left">
+                <th className={`${TH} pl-5`}>Date</th>
+                <th className={TH}>Session</th>
+                <th className={TH}>Role</th>
+                <th className={TH}>Status</th>
+                <th className={`${TH} text-right`}>%</th>
+                <th className={`${TH} text-right`}>Pay</th>
+                <th className="px-3 py-3" aria-label="Line actions" />
+              </tr>
+            </thead>
+            <tbody>
+              {period.lines.map((line) => (
+                <PaidRow
+                  key={line.occurrence_id}
+                  period={period}
+                  line={line}
+                  onChanged={onChanged}
+                  onCorrect={() => setCorrectingOccurrenceId(line.occurrence_id)}
+                />
+              ))}
+              {period.unpaid_occurrences.map((occ) => (
+                <tr key={occ.occurrence_id} className="border-b border-rally-line last:border-0 bg-neutral-50/50">
+                  <td className="px-3 py-3 pl-5 font-mono text-xs text-rally-muted">
+                    {occ.occurred_at ? new Date(occ.occurred_at).toLocaleDateString() : "—"}
+                  </td>
+                  <td className="px-3 py-3 text-rally-muted">
+                    {occ.session_title || occ.occurrence_id}
+                  </td>
+                  <td className="px-3 py-3 text-xs text-rally-muted">—</td>
+                  <td className="px-3 py-3">
+                    <span className="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-amber-800">
+                      Not paid
+                    </span>
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono text-rally-muted">—</td>
+                  <td className="px-3 py-3 text-right font-mono tabular-nums text-rally-muted line-through">
+                    {money(0, period.currency)}
+                  </td>
+                  <td />
+                </tr>
+              ))}
+              {period.lines.length === 0 && period.unpaid_occurrences.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-5 py-6 text-center text-sm text-rally-muted">
+                    No sessions in this period.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+            <tfoot>
+              <tr className="bg-neutral-50">
+                <td
+                  className="px-5 py-3 font-mono text-[11px] font-bold uppercase tracking-overline text-rally-muted"
+                  colSpan={5}
+                >
+                  Total
                 </td>
-                <td className="px-3 py-3 text-rally-muted">
-                  {occ.session_title || occ.occurrence_id}
-                </td>
-                <td className="px-3 py-3 text-xs text-rally-muted">—</td>
-                <td className="px-3 py-3">
-                  <span className="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-amber-800">
-                    Not paid
-                  </span>
-                </td>
-                <td className="px-3 py-3 text-right font-mono text-rally-muted">—</td>
-                <td className="px-3 py-3 text-right font-mono tabular-nums text-rally-muted line-through">
-                  {money(0, period.currency)}
+                <td className="px-3 py-3 text-right font-mono font-semibold tabular-nums">
+                  {money(period.total_amount_cents, period.currency)}
                 </td>
                 <td />
               </tr>
-            ))}
-            {period.lines.length === 0 && period.unpaid_occurrences.length === 0 && (
-              <tr>
-                <td colSpan={7} className="px-5 py-6 text-center text-sm text-rally-muted">
-                  No sessions in this period.
-                </td>
-              </tr>
-            )}
-          </tbody>
-          <tfoot>
-            <tr className="bg-neutral-50">
-              <td
-                className="px-5 py-3 font-mono text-[11px] font-bold uppercase tracking-overline text-rally-muted"
-                colSpan={5}
-              >
-                Total
-              </td>
-              <td className="px-3 py-3 text-right font-mono font-semibold tabular-nums">
-                {money(period.total_amount_cents, period.currency)}
-              </td>
-              <td />
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-    </Card>
+            </tfoot>
+          </table>
+        </div>
+      </Card>
+      {correctingOccurrenceId && (
+        <CorrectionDrawer
+          occurrenceId={correctingOccurrenceId}
+          scheduledCoachId={
+            period.lines.find((l) => l.occurrence_id === correctingOccurrenceId)?.coach_id ?? ""
+          }
+          actualCoachId={null}
+          attendanceStatus={null}
+          coaches={coaches}
+          onApplied={() => void handleCorrectionApplied()}
+          onClose={() => setCorrectingOccurrenceId(null)}
+        />
+      )}
+    </>
   );
 }
 
@@ -523,10 +584,12 @@ function PaidRow({
   period,
   line,
   onChanged,
+  onCorrect,
 }: {
   period: AdminPayoutPeriodView;
   line: AdminPayoutPeriodLineView;
   onChanged: (updated: AdminPayoutPeriodView) => void;
+  onCorrect: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const override = useMutation({
@@ -614,7 +677,7 @@ function PaidRow({
         )}
       </td>
       <td className="px-3 py-3 text-right whitespace-nowrap">
-        {editable && (
+        {editable ? (
           <span className="inline-flex items-center gap-1">
             <button
               type="button"
@@ -638,6 +701,19 @@ function PaidRow({
                 <span className="sr-only">Clear override</span>
               </button>
             )}
+            <button
+              type="button"
+              title="Correct attendance, coach, or replacement for this occurrence"
+              onClick={onCorrect}
+              aria-label="Correct this line"
+              className="rounded p-1 text-rally-muted hover:text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
+            >
+              ✎
+            </button>
+          </span>
+        ) : (
+          <span className="text-xs italic text-muted-foreground">
+            {period.status === "approved" ? "Reopen to correct" : "Locked"}
           </span>
         )}
       </td>
@@ -694,6 +770,104 @@ function AuditTrail({
         </ul>
       )}
     </Card>
+  );
+}
+
+function MarkPaidDialog({
+  defaultAmountCents,
+  pending,
+  onCancel,
+  onSubmit,
+}: {
+  defaultAmountCents: number;
+  pending: boolean;
+  onCancel: () => void;
+  onSubmit: (input: MarkPayoutPaidInput) => void;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [method, setMethod] = useState<MarkPayoutPaidInput["method"]>("bank_transfer");
+  const [paidAt, setPaidAt] = useState(today);
+  const [amount, setAmount] = useState((defaultAmountCents / 100).toFixed(2));
+  const [reference, setReference] = useState("");
+
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    onSubmit({
+      method,
+      paid_at: new Date(paidAt).toISOString(),
+      amount_cents: Math.round(parseFloat(amount) * 100),
+      reference: reference || null,
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <form
+        onSubmit={handleSubmit}
+        className="w-full max-w-sm rounded-lg bg-background p-6 shadow-lg space-y-4"
+      >
+        <h2 className="text-base font-semibold">Record payment</h2>
+        <div className="space-y-3">
+          <div>
+            <label className="text-sm font-medium">Method</label>
+            <select
+              value={method}
+              onChange={(e) => setMethod(e.target.value as MarkPayoutPaidInput["method"])}
+              className="mt-1 w-full rounded border px-2 py-1.5 text-sm"
+            >
+              <option value="bank_transfer">Bank transfer</option>
+              <option value="cash">Cash</option>
+              <option value="check">Check</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium">Date paid</label>
+            <input
+              type="date"
+              value={paidAt}
+              onChange={(e) => setPaidAt(e.target.value)}
+              required
+              className="mt-1 w-full rounded border px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Amount</label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              required
+              className="mt-1 w-full rounded border px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Reference (optional)</label>
+            <input
+              type="text"
+              value={reference}
+              onChange={(e) => setReference(e.target.value)}
+              placeholder="e.g. transaction ID"
+              className="mt-1 w-full rounded border px-2 py-1.5 text-sm"
+            />
+          </div>
+        </div>
+        <div className="flex gap-2 justify-end">
+          <button type="button" onClick={onCancel} className="rounded border px-3 py-1.5 text-sm">
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={pending}
+            className="rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
+          >
+            {pending ? "Saving…" : "Confirm payment"}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 

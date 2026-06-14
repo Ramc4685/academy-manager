@@ -17,6 +17,11 @@ import { listPayouts } from "../admin";
 
 export type { AdminPayoutView } from "../admin";
 
+/**
+ * @deprecated Use `listMonthlyPayroll()` from `v2/payroll.ts` instead.
+ * Calls the legacy derived-list route which will be removed after
+ * feat/coach-payroll-month-first ships.
+ */
 export async function listAdminPayouts() {
   return listPayouts();
 }
@@ -155,5 +160,22 @@ export async function getPayoutAuditTrail(periodId: string): Promise<PayoutAudit
   return apiFetch<PayoutAuditTrailView>(
     `/admin/payout-periods/${encodeURIComponent(periodId)}/audit`,
     { method: "GET" },
+  );
+}
+
+export interface MarkPayoutPaidInput {
+  method: "bank_transfer" | "cash" | "check" | "other";
+  paid_at: string;
+  amount_cents: number;
+  reference?: string | null;
+}
+
+export async function markPayoutPeriodPaid(
+  periodId: string,
+  input: MarkPayoutPaidInput,
+): Promise<AdminPayoutPeriodView> {
+  return apiFetch<AdminPayoutPeriodView>(
+    `/admin/payout-periods/${encodeURIComponent(periodId)}/mark-paid`,
+    { method: "POST", body: JSON.stringify(input) },
   );
 }
