@@ -17,6 +17,9 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     MarkPaymentPaidCommand,
     UndoPaymentPaidCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopay import (
+    ChargeInvoiceViaAutopay,
+)
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
     DeleteExpenseCommand,
     EditExpenseCommand,
@@ -46,6 +49,7 @@ from backend.v2.interfaces.admin.views import (
     AdminPayoutView,
     AdminRevenueResponse,
     ApplyPaymentDiscountRequest,
+    ChargeAutopayResponse,
     DeleteExpenseRequest,
     EditExpenseRequest,
     GenerateInvoiceArtifactRequest,
@@ -554,6 +558,42 @@ async def send_billing_invoice(
         sent_at=result.invoice.sent_at,
         last_sent_at=result.invoice.last_sent_at,
         checkout_url=result.checkout_url,
+    )
+
+
+@router.post(
+    "/billing/invoices/{invoice_id}/charge-autopay",
+    response_model=ChargeAutopayResponse,
+)
+async def charge_invoice_via_autopay(
+    invoice_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
+) -> ChargeAutopayResponse:
+    """Charge the invoice balance via the parent's saved Stripe payment method (off-session).
+
+    - Returns success=True when the PI succeeds immediately and the ledger is updated.
+    - Returns success=False with decline_code on card declines (invoice status unchanged).
+    - Returns success=False with requires_action=True when 3DS is needed (invoice unchanged).
+    - Raises 404 when the invoice is not found.
+    - Raises 409 when the invoice is not chargeable (paid/void/draft with zero balance)
+      or the parent has no saved payment method.
+    """
+    use_case = ChargeInvoiceViaAutopay(ledger=ledger)
+    try:
+        result = await use_case.execute(invoice_id)
+    except ValueError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=409, detail=msg) from exc
+    return ChargeAutopayResponse(
+        invoice_id=result.invoice_id,
+        success=result.success,
+        status=result.status,
+        balance_due_cents=result.balance_due_cents,
+        requires_action=result.requires_action,
+        decline_code=result.decline_code,
     )
 
 

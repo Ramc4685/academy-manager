@@ -278,9 +278,17 @@ class HandleWebhookEvent:
         elif event_type == "checkout.session.expired":
             await self._on_checkout_expired(event)
         elif event_type == "payment_intent.succeeded":
-            await self._on_payment_succeeded(event)
+            metadata = self._event_metadata(event)
+            if metadata.get("source") == "autopay" or metadata.get("invoice_id"):
+                await self._handle_autopay_pi_succeeded(event)
+            else:
+                await self._on_payment_succeeded(event)
         elif event_type == "payment_intent.payment_failed":
-            await self._on_payment_failed(event)
+            metadata = self._event_metadata(event)
+            if metadata.get("source") == "autopay" or metadata.get("invoice_id"):
+                await self._handle_autopay_pi_failed(event)
+            else:
+                await self._on_payment_failed(event)
         elif event_type == "invoice.paid":
             await self._on_invoice_paid(event)
         elif event_type == "invoice.payment_failed":
@@ -499,6 +507,91 @@ class HandleWebhookEvent:
                     session_id=updated.session_id,
                 ),
             )
+        )
+
+    async def _handle_autopay_pi_succeeded(self, event: dict[str, Any]) -> None:
+        """Handle payment_intent.succeeded from an autopay charge.
+
+        Idempotent by pi_id via idempotency_key ``autopay-pi:{pi_id}``.
+        Records a LedgerPayment and allocates it to the invoice.
+        """
+        if self._billing_ledger is None:
+            log.warning("autopay_pi_succeeded: billing_ledger not configured — skipping")
+            return
+
+        pi = event["data"]["object"]
+        pi_id: str = str(pi.get("id") or "")
+        metadata = pi.get("metadata") or {}
+        invoice_id = str(metadata.get("invoice_id") or "")
+        parent_id = str(metadata.get("parent_id") or "")
+
+        if not invoice_id:
+            log.warning("autopay_pi_succeeded: no invoice_id in metadata pi=%s", pi_id)
+            return
+
+        amount_cents = int(pi.get("amount") or 0)
+        currency = str(pi.get("currency") or "usd").lower()
+        now = self._now()
+        idempotency_key = f"autopay-pi:{pi_id}"
+        ledger_payment_id = f"ledger-pay-autopay:{pi_id}"
+
+        payment = await self._billing_ledger.record_payment(
+            LedgerPayment(
+                payment_id=ledger_payment_id,
+                academy_id=self._academy_id,
+                parent_id=parent_id,
+                amount_cents=amount_cents,
+                unapplied_amount_cents=amount_cents,
+                currency=currency,
+                status="succeeded",
+                payment_method="stripe_autopay",
+                stripe_payment_intent_id=pi_id,
+                paid_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            idempotency_key=idempotency_key,
+        )
+
+        if amount_cents > 0:
+            try:
+                await self._billing_ledger.allocate_payment(
+                    payment_id=payment.payment_id,
+                    invoice_id=invoice_id,
+                    amount_cents=amount_cents,
+                    idempotency_key=f"autopay-alloc:{pi_id}",
+                )
+                log.info(
+                    "autopay_pi_succeeded: allocated payment=%s to invoice=%s pi=%s amount=%d",
+                    payment.payment_id,
+                    invoice_id,
+                    pi_id,
+                    amount_cents,
+                )
+            except ValueError as exc:
+                log.warning(
+                    "autopay_pi_succeeded: allocation skipped invoice=%s pi=%s err=%s",
+                    invoice_id,
+                    pi_id,
+                    exc,
+                )
+
+    async def _handle_autopay_pi_failed(self, event: dict[str, Any]) -> None:
+        """Handle payment_intent.payment_failed from an autopay charge.
+
+        Per spec: log the decline, do NOT change invoice status.
+        """
+        pi = event["data"]["object"]
+        pi_id: str = str(pi.get("id") or "")
+        metadata = pi.get("metadata") or {}
+        invoice_id = str(metadata.get("invoice_id") or "")
+        last_error = pi.get("last_payment_error") or {}
+        decline_code = str(last_error.get("decline_code") or last_error.get("code") or "unknown")
+        log.warning(
+            "autopay_pi_failed: pi=%s invoice=%s decline_code=%s — invoice status unchanged",
+            pi_id,
+            invoice_id,
+            decline_code,
         )
 
     async def _on_payment_failed(self, event: dict[str, Any]) -> None:

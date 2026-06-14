@@ -711,6 +711,15 @@ class SendInvoiceResponse(BaseModel):
     checkout_url: str | None = None
 
 
+class ChargeAutopayResponse(BaseModel):
+    invoice_id: str
+    success: bool
+    status: str
+    balance_due_cents: int
+    requires_action: bool = False
+    decline_code: str | None = None
+
+
 class GenerateInvoiceArtifactRequest(BaseModel):
     artifact_type: Literal["invoice_pdf", "receipt"]
 

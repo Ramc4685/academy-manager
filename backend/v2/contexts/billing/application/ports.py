@@ -5,7 +5,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
-from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
+from backend.v2.contexts.billing.domain.ledger import (
+    InvoiceLine,
+    LedgerAllocationResult,
+    LedgerInvoice,
+    LedgerPayment,
+)
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment, Subscription
 from backend.v2.contexts.billing.domain.proration import (
     BillingCalculationSnapshot,
@@ -293,3 +298,19 @@ class LedgerRepository(Protocol):
         lines: list[InvoiceLine],
         idempotency_key: str,
     ) -> LedgerInvoice: ...
+
+    async def record_payment(
+        self,
+        payment: LedgerPayment,
+        *,
+        idempotency_key: str,
+    ) -> LedgerPayment: ...
+
+    async def allocate_payment(
+        self,
+        *,
+        payment_id: str,
+        invoice_id: str,
+        amount_cents: int,
+        idempotency_key: str,
+    ) -> LedgerAllocationResult: ...
