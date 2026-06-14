@@ -84,8 +84,8 @@ Specifically:
 
 ## Action Items
 
-1. [ ] Write ADR acceptance into the Phase 1 task list of the convergence plan.
-2. [ ] Point `MongoBillingLedgerRepository` `LedgerPayment` reads/writes at `ledger_payments`.
-3. [ ] Implement idempotent migration `payments` → `ledger_payments` with dry-run + count reconciliation.
-4. [ ] Add indexes on `ledger_payments` (`academy_id` leading, plus existing lookup keys).
+1. [x] Write ADR acceptance into the Phase 1 task list of the convergence plan.
+2. [x] Point `MongoBillingLedgerRepository` `LedgerPayment` reads/writes at `ledger_payments`.
+3. [x] Implement idempotent migration `payments` → `ledger_payments` with dry-run + count reconciliation.
+4. [x] Add indexes on `ledger_payments` (`academy_id` leading, plus existing lookup keys).
 5. [ ] Run billing read-regression suite; confirm green before merge.
