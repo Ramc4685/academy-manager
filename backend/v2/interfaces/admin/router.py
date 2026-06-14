@@ -14,8 +14,8 @@ from .directory_routes import router as directory_router
 from .dues_routes import router as dues_router
 from .pathway_routes import router as pathway_router
 from .pause_routes import router as pause_router
-from .payroll_routes import router as payroll_router
 from .payout_period_routes import router as payout_period_router
+from .payroll_routes import router as payroll_router
 from .progress_routes import router as progress_router
 from .registration_routes import router as registration_router
 from .reports_routes import router as reports_router
