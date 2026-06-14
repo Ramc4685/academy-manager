@@ -7,7 +7,7 @@ live in migration 0102.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from backend.v2.contexts.coaching.domain.payout import CoachRate
@@ -18,7 +18,14 @@ class MongoCoachRateRepository(TenantScopedRepository):
     collection_name = "coach_rates"
 
     @staticmethod
-    def _to_domain(doc: dict[str, Any]) -> CoachRate:
+    def _as_utc(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+    @classmethod
+    def _to_domain(cls, doc: dict[str, Any]) -> CoachRate:
+        effective_until = doc.get("effective_until")
         return CoachRate(
             rate_id=str(doc.get("rate_id") or doc.get("_id")),
             academy_id=str(doc["academy_id"]),
@@ -27,8 +34,8 @@ class MongoCoachRateRepository(TenantScopedRepository):
             amount_minor=int(doc.get("amount_minor", doc.get("amount_cents", 0))),
             percent_bps=(None if doc.get("percent_bps") is None else int(doc["percent_bps"])),
             currency=str(doc.get("currency", "USD")).upper(),
-            effective_from=doc["effective_from"],
-            effective_until=doc.get("effective_until"),
+            effective_from=cls._as_utc(doc["effective_from"]),
+            effective_until=(None if effective_until is None else cls._as_utc(effective_until)),
             status=doc.get("status", "active"),
         )
 
