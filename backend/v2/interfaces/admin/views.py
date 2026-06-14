@@ -706,6 +706,7 @@ class InvoiceDetailResponse(BaseModel):
 class SendInvoiceResponse(BaseModel):
     invoice_id: str
     delivery_status: str
+    sent_at: datetime | None = None
     last_sent_at: datetime | None = None
     checkout_url: str | None = None
 

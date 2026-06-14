@@ -551,6 +551,7 @@ async def send_billing_invoice(
     return SendInvoiceResponse(
         invoice_id=result.invoice.invoice_id,
         delivery_status=result.invoice.delivery_status,
+        sent_at=result.invoice.sent_at,
         last_sent_at=result.invoice.last_sent_at,
         checkout_url=result.checkout_url,
     )
