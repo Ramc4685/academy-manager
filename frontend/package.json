@@ -9,7 +9,7 @@
     "preview:cloudflare": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy:cloudflare": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "upload:cloudflare": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
-    "lint": "next lint",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "generate:api": "openapi-typescript http://localhost:8001/openapi.json -o lib/api/generated/v2.d.ts",
     "size": "size-limit",
@@ -78,6 +78,7 @@
   "pnpm": {
     "overrides": {
       "@grpc/grpc-js": "1.9.16",
+      "esbuild": "0.28.1",
       "tmp": "0.2.6"
     },
     "onlyBuiltDependencies": [
