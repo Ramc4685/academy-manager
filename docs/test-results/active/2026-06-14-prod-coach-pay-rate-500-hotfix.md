@@ -20,6 +20,7 @@ Admin setting a coach pay rate in production returns HTTP 500 for /api/v2/admin/
 
 - No verification recorded yet.
 - 2026-06-14T17:18:06: Clean origin/main hotfix branch verification: ruff format --check v2 passed; ruff check v2 passed; focused pay-rate tests passed 11; pytest v2/tests -q passed 1162, 3 warnings.
+- 2026-06-14T17:24:45: Production deploy: flyctl deploy -a courtmastr-academy-api from commit 02b7794f completed; image registry.fly.io/courtmastr-academy-api:deployment-01KV43E39TZQYY12DFTK4QQD37. Post-deploy curl https://api.academy.courtmastr.com/api/v2/healthz returned {"status":"ok"}; flyctl status shows machine 781960b93e5d18 started with 1/1 checks passing.
 ## Reusable Lessons
 
 - None recorded yet.
