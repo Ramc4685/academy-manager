@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import UTC, date, datetime
 
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field
+
+from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
+    AddInvoiceLine,
+    AddInvoiceLineCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscountCommand,
     GenerateMonthlyPaymentsCommand,
@@ -21,6 +28,10 @@ from backend.v2.contexts.billing.application.use_cases.issue_refund import (
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
     ApproveWithdrawalCreditCommand,
     PreviewWithdrawalCreditCommand,
+)
+from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
+from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
+    MongoBillingLedgerRepository,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
@@ -58,6 +69,8 @@ from backend.v2.interfaces.admin.views import (
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
+from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.tenancy import current_academy_id
 
 router = APIRouter(tags=["admin.billing"])
 
@@ -474,6 +487,166 @@ async def revenue(
     # ADR-0006 trigger) when this query gets its own aggregates.
     by_month = await use_cases.revenue_query.execute(parent_id_filter=None)
     return AdminRevenueResponse(by_month=by_month)
+
+
+# --- Ledger invoice management routes (Phase 2A) ---
+
+
+class AddInvoiceLineRequest(BaseModel):
+    product_id: str | None = None  # informational — prefills name/price/type at call site
+    description: str = Field(min_length=1)
+    line_type: str = Field(min_length=1)
+    quantity: int = Field(ge=1, default=1)
+    unit_amount_cents: int
+
+
+class InvoiceLineResponse(BaseModel):
+    line_id: str
+    invoice_id: str
+    line_type: str
+    description: str
+    quantity: int
+    unit_amount_cents: int
+    amount_cents: int
+
+
+class CreateStudentInvoiceRequest(BaseModel):
+    student_id: str
+    parent_id: str
+    period: str = Field(pattern=r"^\d{4}-\d{2}$")
+    due_date: date
+    enrollment_id: str | None = None
+
+
+def _get_ledger_repo(request: Request) -> MongoBillingLedgerRepository:
+    return MongoBillingLedgerRepository(request.app.state.db)
+
+
+@router.post(
+    "/billing/invoices/{invoice_id}/lines",
+    response_model=InvoiceLineResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_invoice_line(
+    invoice_id: str,
+    body: AddInvoiceLineRequest,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
+) -> InvoiceLineResponse:
+    use_case = AddInvoiceLine(ledger=ledger)
+    try:
+        result = await use_case.execute(
+            AddInvoiceLineCommand(
+                invoice_id=invoice_id,
+                description=body.description,
+                line_type=body.line_type,
+                quantity=body.quantity,
+                unit_amount_cents=body.unit_amount_cents,
+                product_id=body.product_id,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    line = result.line
+    return InvoiceLineResponse(
+        line_id=line.line_id,
+        invoice_id=line.invoice_id,
+        line_type=line.line_type,
+        description=line.description,
+        quantity=line.quantity,
+        unit_amount_cents=line.unit_amount_cents,
+        amount_cents=line.amount_cents,
+    )
+
+
+@router.delete(
+    "/billing/invoices/{invoice_id}/lines/{line_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def remove_invoice_line(
+    invoice_id: str,
+    line_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
+) -> None:
+    from backend.v2.shared.tenancy import current_academy_id as _caid
+
+    invoice = await ledger.get_invoice(invoice_id)
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="invoice not found")
+    if invoice.status != "draft":
+        raise HTTPException(
+            status_code=409,
+            detail=f"can only remove lines from a draft invoice, got {invoice.status}",
+        )
+    academy_id = _caid()
+    result = await ledger._db["invoice_lines"].delete_one(
+        {"academy_id": academy_id, "invoice_id": invoice_id, "line_id": line_id}
+    )
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="line not found")
+    # Recompute totals after deletion
+    from backend.v2.contexts.billing.domain.ledger import recompute_totals
+
+    remaining_lines = await ledger.get_lines_for_invoice(invoice_id)
+    updated_invoice = recompute_totals(
+        invoice.model_copy(update={"updated_at": datetime.now(UTC)}), remaining_lines
+    )
+    await ledger.save_invoice(updated_invoice)
+
+
+@router.post("/billing/invoices/{invoice_id}/void", status_code=status.HTTP_200_OK)
+async def void_invoice_route(
+    invoice_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
+) -> dict[str, bool]:
+    from backend.v2.contexts.billing.domain.ledger import void_invoice
+
+    invoice = await ledger.get_invoice(invoice_id)
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="invoice not found")
+    try:
+        voided = void_invoice(invoice, reason="admin", now=datetime.now(UTC))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await ledger.save_invoice(voided)
+    return {"ok": True}
+
+
+@router.post(
+    "/students/{student_id}/invoices",
+    response_model=dict,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_student_invoice(
+    student_id: str,
+    body: CreateStudentInvoiceRequest,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
+) -> dict:
+    now = datetime.now(UTC)
+    invoice_id = f"inv-{new_ulid()}"
+    invoice = LedgerInvoice(
+        invoice_id=invoice_id,
+        academy_id=current_academy_id(),
+        parent_id=body.parent_id,
+        student_id=student_id,
+        enrollment_id=body.enrollment_id,
+        period=body.period,
+        status="draft",
+        subtotal_cents=0,
+        discount_cents=0,
+        total_cents=0,
+        balance_due_cents=0,
+        currency="usd",
+        due_date=body.due_date,
+        created_at=now,
+        updated_at=now,
+    )
+    idempotency_key = f"admin-invoice-{invoice_id}"
+    created = await ledger.create_invoice(invoice, lines=[], idempotency_key=idempotency_key)
+    return created.model_dump(mode="json")
 
 
 def _payment_view(row: object) -> AdminPaymentView:

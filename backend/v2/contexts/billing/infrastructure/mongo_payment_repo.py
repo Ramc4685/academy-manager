@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -17,6 +18,7 @@ from backend.v2.contexts.billing.domain.errors import (
     PaymentNotFound,
     PaymentOperationNotAllowed,
 )
+from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment
 from backend.v2.contexts.billing.domain.proration import (
     BillingCalculationSnapshot,
@@ -48,10 +50,12 @@ class MongoPaymentRepository(TenantScopedRepository):
         *,
         clock=lambda: datetime.now(UTC),
         credit_ledger: Any | None = None,
+        ledger_repo: Any | None = None,
     ) -> None:
         super().__init__(db)
         self._clock = clock
         self._credit_ledger = credit_ledger
+        self._ledger_repo = ledger_repo  # MongoBillingLedgerRepository | None — Phase 2A dual-write
 
     @staticmethod
     def _payment_id(doc: dict[str, object]) -> str:
@@ -347,6 +351,74 @@ class MongoPaymentRepository(TenantScopedRepository):
             return "stripe_synced"
         return None
 
+    async def _dual_write_ledger_invoice(
+        self,
+        *,
+        ledger_repo: Any,
+        payment_id: str,
+        enrollment_id: str,
+        parent_id: str,
+        student_id: str,
+        period: str,
+        amount_cents: int,
+        now: datetime,
+    ) -> None:
+        """Phase 2A: write a LedgerInvoice alongside the legacy Payment.
+
+        Uses a deterministic invoice_id for idempotency so re-runs are safe.
+        """
+        _log = logging.getLogger(__name__)
+        invoice_id = f"inv-monthly-{enrollment_id}-{period}"
+        idempotency_key = f"monthly-ledger-{enrollment_id}-{period}"
+        academy_id = current_academy_id()
+
+        # Compute due_date as last day of the period month
+        year, month = int(period[:4]), int(period[5:7])
+        if month == 12:
+            due_date = date(year + 1, 1, 1) - timedelta(days=1)
+        else:
+            due_date = date(year, month + 1, 1) - timedelta(days=1)
+
+        invoice = LedgerInvoice(
+            invoice_id=invoice_id,
+            academy_id=academy_id,
+            parent_id=parent_id,
+            student_id=student_id or None,
+            enrollment_id=enrollment_id,
+            period=period,
+            status="open",
+            subtotal_cents=amount_cents,
+            discount_cents=0,
+            total_cents=amount_cents,
+            balance_due_cents=amount_cents,
+            currency="usd",
+            due_date=due_date,
+            created_at=now,
+            updated_at=now,
+        )
+        line = InvoiceLine(
+            line_id=f"line-monthly-{enrollment_id}-{period}",
+            academy_id=academy_id,
+            invoice_id=invoice_id,
+            line_type="tuition",
+            description=f"Monthly tuition {period}",
+            quantity=1,
+            unit_amount_cents=amount_cents,
+            amount_cents=amount_cents,
+            source_type="payment",
+            source_id=payment_id,
+            created_at=now,
+        )
+        try:
+            await ledger_repo.create_invoice(invoice, lines=[line], idempotency_key=idempotency_key)
+        except Exception:
+            _log.exception(
+                "Phase 2A ledger dual-write failed for enrollment=%s period=%s — "
+                "legacy payment still created, skipping ledger write",
+                enrollment_id,
+                period,
+            )
+
     async def generate_monthly_payments(self, period: str) -> GenerateMonthlyPaymentsResult:
         academy_id = current_academy_id()
         cursor = self._db["enrollments"].find(
@@ -466,6 +538,19 @@ class MongoPaymentRepository(TenantScopedRepository):
                 }
             )
             created += 1
+            # Phase 2A dual-write: also create a LedgerInvoice (open) for this enrollment.
+            # Phase 3 will cut reads to ledger-only; Phase 5 will remove the legacy write above.
+            if self._ledger_repo is not None:
+                await self._dual_write_ledger_invoice(
+                    ledger_repo=self._ledger_repo,
+                    payment_id=payment_id,
+                    enrollment_id=enrollment_id,
+                    parent_id=parent_id,
+                    student_id=student_id,
+                    period=period,
+                    amount_cents=amount_cents,
+                    now=now,
+                )
         return GenerateMonthlyPaymentsResult(
             created=created,
             skipped_existing=skipped_existing,

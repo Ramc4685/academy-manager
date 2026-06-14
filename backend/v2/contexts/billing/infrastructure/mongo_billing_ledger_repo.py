@@ -215,6 +215,38 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             invoices.append({"invoice": inv_doc, "lines": lines})
         return invoices
 
+    async def get_lines_for_invoice(self, invoice_id: str) -> list[InvoiceLine]:
+        academy_id = current_academy_id()
+        cursor = self._db["invoice_lines"].find(
+            {"academy_id": academy_id, "invoice_id": invoice_id}
+        )
+        return [self._line_from_doc(doc) async for doc in cursor]
+
+    async def save_invoice(self, invoice: LedgerInvoice) -> LedgerInvoice:
+        """Upsert invoice by invoice_id."""
+        academy_id = current_academy_id()
+        doc = _mongo_doc(invoice)
+        await self.collection.update_one(
+            {"academy_id": academy_id, "invoice_id": invoice.invoice_id},
+            {"$set": {k: v for k, v in doc.items() if k != "academy_id"}},
+            upsert=True,
+        )
+        stored = await self.get_invoice(invoice.invoice_id)
+        if stored is None:
+            raise ValueError("invoice save failed")
+        return stored
+
+    async def save_line(self, line: InvoiceLine) -> InvoiceLine:
+        """Upsert line by line_id."""
+        academy_id = current_academy_id()
+        doc = _mongo_doc(line)
+        await self._db["invoice_lines"].update_one(
+            {"academy_id": academy_id, "line_id": line.line_id},
+            {"$set": {k: v for k, v in doc.items() if k != "academy_id"}},
+            upsert=True,
+        )
+        return line
+
     async def list_invoices_for_parent(
         self, parent_id: str, *, limit: int = 100
     ) -> list[LedgerInvoice]:

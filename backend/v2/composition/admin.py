@@ -1134,7 +1134,9 @@ def compose_admin(
     # Billing
     billing_ledger_repo = MongoBillingLedgerRepository(db)
     credits_repo = MongoCreditLedgerRepository(db)
-    payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
+    payments_repo = MongoPaymentRepository(
+        db, credit_ledger=credits_repo, ledger_repo=billing_ledger_repo
+    )
     session_type_repo = MongoSessionTypeRepository(db)
     student_billing_enrollment_repo = MongoStudentBillingEnrollmentRepository(db)
     create_session_type = CreateSessionType(
