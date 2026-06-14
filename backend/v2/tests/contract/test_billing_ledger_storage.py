@@ -124,6 +124,42 @@ async def test_no_cross_collection_contamination(db, acad) -> None:
 
 
 @pytest.mark.asyncio
+async def test_save_get_invoice_strips_mongo_id(db, acad) -> None:
+    """save_invoice → get_invoice must not raise ValidationError due to _id or idempotency_key."""
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    invoice = _make_invoice("inv-roundtrip-1", acad, now)
+
+    saved = await repo.save_invoice(invoice)
+
+    # Verify the raw Mongo document contains _id (motor/mongomock always adds it)
+    raw = await db["invoices"].find_one({"invoice_id": "inv-roundtrip-1"})
+    assert raw is not None
+    assert "_id" in raw
+
+    # get_invoice must succeed and return a valid LedgerInvoice (no ValidationError)
+    fetched = await repo.get_invoice("inv-roundtrip-1")
+    assert fetched is not None
+    assert fetched.invoice_id == "inv-roundtrip-1"
+    assert fetched == saved
+
+
+@pytest.mark.asyncio
+async def test_create_invoice_strips_mongo_id(db, acad) -> None:
+    """create_invoice idempotent re-read must not raise ValidationError due to _id/idempotency_key."""
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    invoice = _make_invoice("inv-roundtrip-2", acad, now)
+
+    first = await repo.create_invoice(invoice, lines=[], idempotency_key="inv:roundtrip:2")
+    # Second call hits the idempotency path — _invoice_from_doc is called on the stored doc
+    second = await repo.create_invoice(invoice, lines=[], idempotency_key="inv:roundtrip:2")
+
+    assert first.invoice_id == "inv-roundtrip-2"
+    assert first == second
+
+
+@pytest.mark.asyncio
 async def test_list_payments_for_parent(db, acad) -> None:
     """list_payments_for_parent returns payments from ledger_payments only."""
     repo = MongoBillingLedgerRepository(db)

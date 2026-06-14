@@ -186,6 +186,11 @@ def recompute_totals(invoice: LedgerInvoice, lines: list[InvoiceLine]) -> Ledger
     """Derive subtotal/total/balance_due from lines. Callers never set totals directly."""
     subtotal = sum(line.amount_cents for line in lines)
     total = max(0, subtotal - invoice.discount_cents)
+    # NOTE: `allocated` is inferred from persisted totals (total_cents - balance_due_cents),
+    # not from summing payment_allocations. This is correct under a single-writer model.
+    # Under concurrent writes to the same invoice, the second writer's recompute will see
+    # a stale baseline. Phase 3 should either add optimistic locking (e.g. a `version` field)
+    # or derive allocated from the payment_allocations collection directly.
     allocated = invoice.total_cents - invoice.balance_due_cents  # already-allocated amount
     balance = max(0, total - allocated)
     new_status = invoice.status

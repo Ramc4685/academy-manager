@@ -183,6 +183,8 @@ async def test_mode_b_reuses_existing_open_invoice() -> None:
         AddInvoiceLineCommand(
             student_id="s1",
             period="2026-06",
+            academy_id="acad-1",
+            parent_id="parent-1",
             **_line_cmd(),
         )
     )
@@ -202,6 +204,8 @@ async def test_mode_b_due_date_is_last_day_of_period() -> None:
         AddInvoiceLineCommand(
             student_id="s2",
             period="2026-02",
+            academy_id="acad-1",
+            parent_id="parent-1",
             **_line_cmd(),
         )
     )
@@ -218,6 +222,8 @@ async def test_mode_b_december_due_date() -> None:
         AddInvoiceLineCommand(
             student_id="s3",
             period="2026-12",
+            academy_id="acad-1",
+            parent_id="parent-1",
             **_line_cmd(),
         )
     )
@@ -264,3 +270,25 @@ def test_command_raises_when_neither_mode_provided() -> None:
     """Command validator rejects commands that specify neither invoice_id nor student+period."""
     with pytest.raises(ValueError, match="invoice_id"):
         AddInvoiceLineCommand(**_line_cmd())
+
+
+def test_command_raises_mode_b_missing_academy_id() -> None:
+    """Mode B requires academy_id; omitting it must raise ValueError."""
+    with pytest.raises(ValueError, match="academy_id is required in Mode B"):
+        AddInvoiceLineCommand(
+            student_id="s1",
+            period="2026-06",
+            parent_id="parent-1",
+            **_line_cmd(),
+        )
+
+
+def test_command_raises_mode_b_missing_parent_id() -> None:
+    """Mode B requires parent_id; omitting it must raise ValueError."""
+    with pytest.raises(ValueError, match="parent_id is required in Mode B"):
+        AddInvoiceLineCommand(
+            student_id="s1",
+            period="2026-06",
+            academy_id="acad-1",
+            **_line_cmd(),
+        )

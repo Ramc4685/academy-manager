@@ -27,11 +27,13 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
 
     @staticmethod
     def _invoice_from_doc(doc: dict[str, object]) -> LedgerInvoice:
-        return LedgerInvoice(**doc)
+        return LedgerInvoice(
+            **{k: v for k, v in doc.items() if k not in ("_id", "idempotency_key")}
+        )
 
     @staticmethod
     def _line_from_doc(doc: dict[str, object]) -> InvoiceLine:
-        return InvoiceLine(**doc)
+        return InvoiceLine(**{k: v for k, v in doc.items() if k not in ("_id", "idempotency_key")})
 
     @staticmethod
     def _payment_from_doc(doc: dict[str, object]) -> LedgerPayment:

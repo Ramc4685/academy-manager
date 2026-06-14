@@ -59,9 +59,13 @@ class AddInvoiceLineCommand(BaseModel):
         has_invoice = self.invoice_id is not None
         has_student = self.student_id is not None and self.period is not None
         if not has_invoice and not has_student:
-            raise ValueError(
-                "provide either invoice_id (Mode A) " "or student_id + period (Mode B)"
-            )
+            raise ValueError("provide either invoice_id (Mode A) or student_id + period (Mode B)")
+        if not has_invoice:
+            # Mode B: academy_id and parent_id are required to create an on-the-fly invoice
+            if not self.academy_id:
+                raise ValueError("academy_id is required in Mode B (invoice_id not provided)")
+            if not self.parent_id:
+                raise ValueError("parent_id is required in Mode B (invoice_id not provided)")
         return self
 
 
@@ -150,8 +154,8 @@ class AddInvoiceLine:
 
         new_invoice = LedgerInvoice(
             invoice_id=invoice_id,
-            academy_id=cmd.academy_id or "",
-            parent_id=cmd.parent_id or "",
+            academy_id=cmd.academy_id,
+            parent_id=cmd.parent_id,
             student_id=cmd.student_id,
             period=cmd.period,
             status="open",
