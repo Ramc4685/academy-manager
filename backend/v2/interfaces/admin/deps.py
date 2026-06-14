@@ -80,12 +80,18 @@ from backend.v2.contexts.finance.application.use_cases.approve_payout_period imp
 from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
     GeneratePayoutPeriod,
 )
+from backend.v2.contexts.finance.application.use_cases.bulk_payroll import (
+    BulkGeneratePayroll,
+    BulkRecomputePayroll,
+)
+from backend.v2.contexts.finance.application.use_cases.list_monthly_payroll import ListMonthlyPayroll
 from backend.v2.contexts.finance.application.use_cases.manage_payout_period import (
     ListPayoutAuditEntries,
     OverridePayoutLine,
     RecomputePayoutPeriod,
     ReopenPayoutPeriod,
 )
+from backend.v2.contexts.finance.application.ports import PayoutPeriodRepository
 from backend.v2.contexts.identity.application.change_user_role_use_case import ChangeUserRole
 from backend.v2.contexts.identity.application.get_academy_fees_use_case import GetAcademyFeesUseCase
 from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
@@ -205,7 +211,10 @@ class AdminUseCases:
     update_session_occurrence_replacement: object | None = None  # async (...) -> dict | None
     manage_admin_waiver_templates: ManageAdminWaiverTemplates | None = None
     admin_registration_review: AdminRegistrationReview | None = None
-    payout_periods: object | None = None
+    payout_periods: PayoutPeriodRepository | None = None
+    list_monthly_payroll: ListMonthlyPayroll | None = None
+    bulk_generate_payroll: BulkGeneratePayroll | None = None
+    bulk_recompute_payroll: BulkRecomputePayroll | None = None
     generate_payout_period: GeneratePayoutPeriod | None = None
     approve_payout_period: ApprovePayoutPeriod | None = None
     mark_payout_paid: MarkPayoutPaid | None = None

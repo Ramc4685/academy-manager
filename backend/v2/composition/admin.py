@@ -193,6 +193,11 @@ from backend.v2.contexts.finance.application.use_cases.coach_utilization import 
 from backend.v2.contexts.finance.application.use_cases.enrollment_funnel import (
     GetEnrollmentFunnel,
 )
+from backend.v2.contexts.finance.application.use_cases.bulk_payroll import (
+    BulkGeneratePayroll,
+    BulkRecomputePayroll,
+)
+from backend.v2.contexts.finance.application.use_cases.list_monthly_payroll import ListMonthlyPayroll
 from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
     GeneratePayoutPeriod,
 )
@@ -2736,6 +2741,20 @@ def compose_admin(
         payouts=payouts_repo,
         revenue_query=revenue_query,
         payout_periods=payout_periods_repo,
+        list_monthly_payroll=ListMonthlyPayroll(
+            reader=_MonthlyCoachOccurrenceReaderAdapter(db["session_occurrences"]),
+            periods=payout_periods_repo,
+            calculator=coach_payout_calculator,
+        ),
+        bulk_generate_payroll=BulkGeneratePayroll(
+            reader=_MonthlyCoachOccurrenceReaderAdapter(db["session_occurrences"]),
+            periods=payout_periods_repo,
+            generate=generate_payout_period,
+        ),
+        bulk_recompute_payroll=BulkRecomputePayroll(
+            periods=payout_periods_repo,
+            recompute=recompute_payout_period,
+        ),
         generate_payout_period=generate_payout_period,
         approve_payout_period=approve_payout_period,
         mark_payout_paid=mark_payout_paid,
