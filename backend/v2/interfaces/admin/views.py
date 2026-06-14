@@ -1191,6 +1191,8 @@ class UpdateAdminNotificationsRequest(BaseModel):
 class CoachDigestTestSendRequest(BaseModel):
     # Target a specific coach by user_id, or omit/"self" to send to the admin.
     coach_id: str | None = None
+    # Date to build the teaching-plan digest for. Omitted uses scheduler-local today.
+    on_date: date | None = None
 
 
 class CoachDigestTestSendResponse(BaseModel):

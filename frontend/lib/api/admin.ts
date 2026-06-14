@@ -919,6 +919,7 @@ export type UpdateAdminNotificationsRequest = Partial<AdminNotificationsView>;
 
 export interface CoachDigestTestSendRequest {
   coach_id?: string | null;
+  on_date?: string | null;
 }
 
 export interface CoachDigestTestSendResponse {

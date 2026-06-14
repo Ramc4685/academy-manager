@@ -36,17 +36,17 @@ function CoachEngagementStatsStrip() {
   return (
     <div className="grid grid-cols-1 gap-3 md:grid-cols-3" data-testid="coach-engagement-stats">
       <StatsTile
-        label="Skill statuses updated"
+        label="Skill outcomes recorded"
         value={sevenDay.isLoading ? "..." : String(sevenTotal)}
         detail="Last 7 days"
       />
       <StatsTile
-        label="Skill statuses updated"
+        label="Skill outcomes recorded"
         value={thirtyDay.isLoading ? "..." : String(thirtyTotal)}
         detail="Last 30 days"
       />
       <StatsTile
-        label="Coaches active"
+        label="Coaches recording skills"
         value={
           sevenDay.isLoading || thirtyDay.isLoading
             ? "..."
