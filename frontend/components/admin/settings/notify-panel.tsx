@@ -157,6 +157,7 @@ export function NotifyPanel() {
 function CoachDigestTools() {
   const [coachId, setCoachId] = useState<string>("self");
   const [testDate, setTestDate] = useState<string>(() => dateInputValue(new Date()));
+  const [testDateTouched, setTestDateTouched] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
 
   const coaches = useQuery({
@@ -173,7 +174,7 @@ function CoachDigestTools() {
     mutationFn: () =>
       sendCoachDigestTest({
         coach_id: coachId === "self" ? null : coachId,
-        on_date: testDate || null,
+        ...(testDateTouched && testDate ? { on_date: testDate } : {}),
       }),
     onSuccess: (res: CoachDigestTestSendResponse) => {
       setFeedback(describeTestResult(res));
@@ -212,7 +213,10 @@ function CoachDigestTools() {
             data-testid="coach-digest-test-date"
             type="date"
             value={testDate}
-            onChange={(event) => setTestDate(event.target.value)}
+            onChange={(event) => {
+              setTestDateTouched(true);
+              setTestDate(event.target.value);
+            }}
             className="ml-2 rounded-md border border-rally-line bg-white px-2 py-1 text-sm"
           />
         </label>
