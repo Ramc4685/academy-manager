@@ -535,7 +535,7 @@ async def test_composed_start_trial_writes_platform_audit_events_collection() ->
         StartTenantTrialCommand(
             academy_id="academy-1",
             plan_id="plan-growth",
-            trial_ends_at=_clock() + timedelta(days=14),
+            trial_ends_at=datetime.now(UTC) + timedelta(days=14),
             actor_user_id="platform-admin-1",
             platform_actor_role="platform_admin",
         )
