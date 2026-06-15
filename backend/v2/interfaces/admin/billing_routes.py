@@ -37,6 +37,7 @@ from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
 )
+from backend.v2.contexts.billing.infrastructure.stripe_gateway import RealStripeGateway
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
     AdminEnrollmentQuoteRequest,
@@ -74,6 +75,7 @@ from backend.v2.interfaces.admin.views import (
     WithdrawalCreditPreviewResponse,
 )
 from backend.v2.shared.auth.claims import AuthClaims
+from backend.v2.shared.config import get_settings
 from backend.v2.shared.http import require_persona
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import current_academy_id
@@ -531,6 +533,13 @@ def _get_ledger_repo(request: Request) -> MongoBillingLedgerRepository:
     return MongoBillingLedgerRepository(request.app.state.db)
 
 
+def _get_autopay_gateway() -> RealStripeGateway | None:
+    s = get_settings()
+    if not s.stripe_api_key or not s.stripe_webhook_secret:
+        return None
+    return RealStripeGateway(api_key=s.stripe_api_key, webhook_secret=s.stripe_webhook_secret)
+
+
 @router.post(
     "/billing/invoices/{invoice_id}/send",
     response_model=SendInvoiceResponse,
@@ -569,17 +578,21 @@ async def charge_invoice_via_autopay(
     invoice_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
     ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
+    stripe: RealStripeGateway | None = Depends(_get_autopay_gateway),
 ) -> ChargeAutopayResponse:
     """Charge the invoice balance via the parent's saved Stripe payment method (off-session).
 
     - Returns success=True when the PI succeeds immediately and the ledger is updated.
     - Returns success=False with decline_code on card declines (invoice status unchanged).
     - Returns success=False with requires_action=True when 3DS is needed (invoice unchanged).
+    - Raises 503 when Stripe is not configured.
     - Raises 404 when the invoice is not found.
     - Raises 409 when the invoice is not chargeable (paid/void/draft with zero balance)
       or the parent has no saved payment method.
     """
-    use_case = ChargeInvoiceViaAutopay(ledger=ledger)
+    if stripe is None:
+        raise HTTPException(status_code=503, detail="Stripe autopay not configured")
+    use_case = ChargeInvoiceViaAutopay(ledger=ledger, stripe=stripe)
     try:
         result = await use_case.execute(invoice_id)
     except ValueError as exc:

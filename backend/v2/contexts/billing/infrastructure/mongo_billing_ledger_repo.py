@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from pymongo.errors import DuplicateKeyError
+
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
     LedgerAllocationResult,
@@ -122,9 +124,18 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
 
         doc = _mongo_doc(payment)
         doc["ledger_idempotency_key"] = idempotency_key
-        await self._db["ledger_payments"].insert_one(
-            {**{k: v for k, v in doc.items() if k != "academy_id"}, "academy_id": academy_id}
-        )
+        try:
+            await self._db["ledger_payments"].insert_one(
+                {**{k: v for k, v in doc.items() if k != "academy_id"}, "academy_id": academy_id}
+            )
+        except DuplicateKeyError:
+            # Lost a concurrent race on idempotency_key — return the winner's record.
+            winner = await self._db["ledger_payments"].find_one(
+                {"academy_id": academy_id, "ledger_idempotency_key": idempotency_key}
+            )
+            if winner is not None:
+                return self._payment_from_doc(winner)
+            raise  # Collision on payment_id unique index — genuine duplicate, re-raise.
         stored = await self._db["ledger_payments"].find_one(
             {"academy_id": academy_id, "payment_id": payment.payment_id}
         )
