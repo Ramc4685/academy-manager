@@ -28,6 +28,10 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
 from backend.v2.contexts.billing.application.use_cases.issue_refund import (
     IssueRefundCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.record_manual_payment import (
+    RecordManualPayment,
+    RecordManualPaymentCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.send_invoice import SendInvoice
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
     ApproveWithdrawalCreditCommand,
@@ -700,6 +704,60 @@ async def void_invoice_route(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     await ledger.save_invoice(voided)
     return {"ok": True}
+
+
+class RecordManualPaymentRequest(BaseModel):
+    amount_cents: int = Field(gt=0)
+    payment_method: str = "cash"
+    reference_number: str | None = None
+    notes: str = ""
+
+
+class RecordManualPaymentResponse(BaseModel):
+    invoice_id: str
+    payment_id: str
+    invoice_status: str
+    balance_due_cents: int
+
+
+@router.post(
+    "/billing/invoices/{invoice_id}/record-payment",
+    response_model=RecordManualPaymentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def record_manual_payment(
+    invoice_id: str,
+    body: RecordManualPaymentRequest,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
+) -> RecordManualPaymentResponse:
+    """Record a manual payment (cash, check, etc.) against a ledger invoice.
+
+    Creates a LedgerPayment and allocates it to the invoice balance.
+    Partial payments are allowed; the invoice status updates accordingly.
+    """
+    use_case = RecordManualPayment(ledger=ledger)
+    try:
+        result = await use_case.execute(
+            RecordManualPaymentCommand(
+                invoice_id=invoice_id,
+                amount_cents=body.amount_cents,
+                payment_method=body.payment_method,  # type: ignore[arg-type]
+                reference_number=body.reference_number,
+                notes=body.notes,
+            )
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=409, detail=msg) from exc
+    return RecordManualPaymentResponse(
+        invoice_id=result.invoice_id,
+        payment_id=result.payment_id,
+        invoice_status=result.invoice_status,
+        balance_due_cents=result.balance_due_cents,
+    )
 
 
 @router.post(

@@ -363,7 +363,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         amount_cents: int,
         now: datetime,
     ) -> None:
-        """Phase 2A: write a LedgerInvoice alongside the legacy Payment.
+        """Write a LedgerInvoice for a monthly-generated enrollment charge.
 
         Uses a deterministic invoice_id for idempotency so re-runs are safe.
         """
@@ -409,15 +409,7 @@ class MongoPaymentRepository(TenantScopedRepository):
             source_id=payment_id,
             created_at=now,
         )
-        try:
-            await ledger_repo.create_invoice(invoice, lines=[line], idempotency_key=idempotency_key)
-        except Exception:
-            _log.exception(
-                "Phase 2A ledger dual-write failed for enrollment=%s period=%s — "
-                "legacy payment still created, skipping ledger write",
-                enrollment_id,
-                period,
-            )
+        await ledger_repo.create_invoice(invoice, lines=[line], idempotency_key=idempotency_key)
 
     async def generate_monthly_payments(self, period: str) -> GenerateMonthlyPaymentsResult:
         academy_id = current_academy_id()
@@ -514,32 +506,8 @@ class MongoPaymentRepository(TenantScopedRepository):
                     amount_due_cents=gross_amount_cents,
                 )
             amount_cents = max(gross_amount_cents - applied_credit_cents, 0)
-            await self._insert_one(
-                {
-                    "payment_id": payment_id,
-                    "parent_id": parent_id,
-                    "student_id": student_id,
-                    "enrollment_id": enrollment_id,
-                    "session_id": session_id,
-                    "period": period,
-                    "gross_amount_cents": gross_amount_cents,
-                    "applied_credit_cents": applied_credit_cents,
-                    "amount_cents": amount_cents,
-                    "discount_cents": 0,
-                    "calculation_snapshot_id": snapshot_id,
-                    "invoice_key_id": invoice_key_id,
-                    "currency": "usd",
-                    "status": "pending",
-                    "refunded_cents": 0,
-                    "invoice_number": f"INV-{period.replace('-', '')}-{payment_id[-6:]}",
-                    "invoice_created_at": now,
-                    "created_at": now,
-                    "updated_at": now,
-                }
-            )
-            created += 1
-            # Phase 2A dual-write: also create a LedgerInvoice (open) for this enrollment.
-            # Phase 3 will cut reads to ledger-only; Phase 5 will remove the legacy write above.
+            # Phase 2A complete: write only to the ledger (legacy Payment write removed).
+            # Phase 5 will delete MongoPaymentRepository once the prod backfill is confirmed.
             if self._ledger_repo is not None:
                 await self._dual_write_ledger_invoice(
                     ledger_repo=self._ledger_repo,
@@ -551,6 +519,7 @@ class MongoPaymentRepository(TenantScopedRepository):
                     amount_cents=amount_cents,
                     now=now,
                 )
+            created += 1
         return GenerateMonthlyPaymentsResult(
             created=created,
             skipped_existing=skipped_existing,

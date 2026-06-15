@@ -7,6 +7,9 @@ from datetime import UTC, datetime
 import pytest
 
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment
+from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
+    MongoBillingLedgerRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
     MongoCreditLedgerRepository,
 )
@@ -38,9 +41,11 @@ async def test_list_for_parent_maps_domain_payments(db, acad) -> None:
 
 @pytest.mark.asyncio
 async def test_generate_monthly_prorates_first_period_and_stores_snapshot(db, acad) -> None:
+    ledger_repo = MongoBillingLedgerRepository(db)
     repo = MongoPaymentRepository(
         db,
         clock=lambda: datetime(2026, 5, 18, 22, 0, tzinfo=UTC),
+        ledger_repo=ledger_repo,
     )
     await db["sessions"].insert_one(
         {
@@ -85,16 +90,18 @@ async def test_generate_monthly_prorates_first_period_and_stores_snapshot(db, ac
     result = await repo.generate_monthly_payments("2026-05")
 
     assert result.created == 1
-    payment = await db["payments"].find_one({"academy_id": acad, "enrollment_id": "enroll-1"})
-    assert payment is not None
-    assert payment["amount_cents"] == 3_333
-    assert payment["calculation_snapshot_id"]
-    assert payment["invoice_key_id"]
+    # Legacy payment is no longer written; verify the LedgerInvoice was created instead.
+    legacy = await db["payments"].find_one({"academy_id": acad, "enrollment_id": "enroll-1"})
+    assert legacy is None
+    invoice = await db["invoices"].find_one({"academy_id": acad, "enrollment_id": "enroll-1"})
+    assert invoice is not None
+    assert invoice["total_cents"] == 3_333
+    assert invoice["invoice_id"] == "inv-monthly-enroll-1-2026-05"
+    # Verify the calculation snapshot was still produced and consumed.
     snapshot = await db["billing_calculation_snapshots"].find_one(
-        {"snapshot_id": payment["calculation_snapshot_id"]}
+        {"academy_id": acad, "status": "CONSUMED"}
     )
     assert snapshot is not None
-    assert snapshot["status"] == "CONSUMED"
     assert snapshot["total_eligible_classes"] == 9
     assert snapshot["billable_remaining_classes"] == 3
     assert snapshot["excluded_occurrences"]["sess-prorate:2026-05-18:18:00"] == "SAME_DAY_CUTOFF"
@@ -103,10 +110,12 @@ async def test_generate_monthly_prorates_first_period_and_stores_snapshot(db, ac
 @pytest.mark.asyncio
 async def test_generate_monthly_applies_approved_account_credit(db, acad) -> None:
     credits = MongoCreditLedgerRepository(db)
+    ledger_repo = MongoBillingLedgerRepository(db)
     repo = MongoPaymentRepository(
         db,
         clock=lambda: datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
         credit_ledger=credits,
+        ledger_repo=ledger_repo,
     )
     now = datetime(2026, 5, 20, tzinfo=UTC)
     await credits.create(
@@ -170,12 +179,12 @@ async def test_generate_monthly_applies_approved_account_credit(db, acad) -> Non
     result = await repo.generate_monthly_payments("2026-06")
 
     assert result.created == 1
-    payment = await db["payments"].find_one({"academy_id": acad, "enrollment_id": "enroll-1"})
-    assert payment is not None
-    assert payment["gross_amount_cents"] == 10_000
-    assert payment["applied_credit_cents"] == 3750
-    assert payment["amount_cents"] == 6250
-    assert payment["calculation_snapshot_id"]
+    # Legacy payment is no longer written; verify the LedgerInvoice reflects post-credit amount.
+    legacy = await db["payments"].find_one({"academy_id": acad, "enrollment_id": "enroll-1"})
+    assert legacy is None
+    invoice = await db["invoices"].find_one({"academy_id": acad, "enrollment_id": "enroll-1"})
+    assert invoice is not None
+    assert invoice["total_cents"] == 6_250  # 10_000 gross - 3_750 credit
     assert await credits.balance_for_parent("parent-1") == 0
 
 
