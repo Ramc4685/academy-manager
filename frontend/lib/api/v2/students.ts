@@ -33,7 +33,7 @@ export interface AdminStudentPaymentSummary {
 
 export interface AdminStudentCurrentPaymentSummary {
   amount_cents: number;
-  source: "invoice" | "session_price";
+  source: "invoice";
   status: string;
   period?: string | null;
   payment_id?: string | null;

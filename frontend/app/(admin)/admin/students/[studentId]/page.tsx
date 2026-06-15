@@ -594,9 +594,7 @@ function CurrentPaymentPanel({ student }: { student: AdminStudentDetail }) {
             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-rally-muted">
               <StatusChip status={current.status} />
               <span>
-                {current.source === "invoice"
-                  ? "Invoice balance"
-                  : "Session price"}
+                {"Invoice balance"}
               </span>
             </div>
           </div>

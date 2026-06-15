@@ -2256,7 +2256,34 @@ def compose_admin(
         return rows
 
     async def list_payments_recent():
-        return await payments_repo.list_recent_admin()
+        legacy = list(await payments_repo.list_recent_admin())
+        ledger_rows: list[dict[str, Any]] = []
+        async for doc in db["ledger_payments"].find(
+            {"academy_id": academy_id},
+            sort=[("created_at", -1)],
+            limit=200,
+        ):
+            ledger_rows.append(
+                {
+                    "payment_id": str(doc.get("payment_id") or ""),
+                    "parent_id": str(doc.get("parent_id") or ""),
+                    "session_id": None,
+                    "amount_cents": int(doc.get("amount_cents") or 0),
+                    "currency": str(doc.get("currency") or "usd"),
+                    "status": str(doc.get("status") or ""),
+                    "refunded_cents": 0,
+                    "stripe_payment_intent_id": doc.get("stripe_payment_intent_id"),
+                    "payment_method": doc.get("payment_method"),
+                    "created_at": doc["created_at"],
+                }
+            )
+        combined = ledger_rows + legacy
+        combined.sort(
+            key=lambda r: (r.get("created_at") if isinstance(r, dict) else None)
+            or datetime.min.replace(tzinfo=UTC),
+            reverse=True,
+        )
+        return combined[:200]
 
     async def reconcile_stripe_billing(
         *,
