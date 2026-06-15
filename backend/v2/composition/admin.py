@@ -2561,7 +2561,14 @@ def compose_admin(
             inv_id = str(invoice.get("invoice_id") or invoice_id)
             lines = [
                 {
+                    "line_id": str(line.get("line_id") or ""),
+                    "invoice_id": str(line.get("invoice_id") or inv_id),
+                    "line_type": str(line.get("line_type") or ""),
                     "description": str(line.get("description", "")),
+                    "quantity": int(line.get("quantity") or 1),
+                    "unit_amount_cents": int(
+                        line.get("unit_amount_cents") or line.get("amount_cents", 0)
+                    ),
                     "amount_cents": int(line.get("amount_cents", 0)),
                 }
                 async for line in db["invoice_lines"].find(
@@ -2589,9 +2596,14 @@ def compose_admin(
             total = int(invoice.get("total_cents", 0))
             due = int(invoice.get("balance_due_cents", 0))
             return {
+                "invoice_id": inv_id,
                 "invoice_number": str(invoice.get("invoice_number") or inv_id),
                 "period": str(invoice.get("period") or ""),
                 "lines": lines,
+                "subtotal_cents": int(invoice.get("subtotal_cents", total)),
+                "discount_cents": int(invoice.get("discount_cents", 0)),
+                "total_cents": total,
+                "balance_due_cents": due,
                 "due_amount_cents": due,
                 "paid_amount_cents": max(total - due, 0),
                 "status": str(invoice.get("status", "open")),
@@ -2600,6 +2612,9 @@ def compose_admin(
                 "invoice_pdf_artifact_id": invoice.get("invoice_pdf_artifact_id")
                 or invoice.get("pdf_artifact_id"),
                 "receipt_artifact_id": invoice.get("receipt_artifact_id"),
+                "delivery_status": str(invoice.get("delivery_status") or "not_sent"),
+                "sent_at": invoice.get("sent_at"),
+                "last_sent_at": invoice.get("last_sent_at"),
             }
 
         payment = await payments_repo._find_one(  # type: ignore[attr-defined]

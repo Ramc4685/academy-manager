@@ -337,9 +337,52 @@ export interface ReconcileStripeBillingResponse {
   audit_id: string | null;
 }
 
+export interface AdminBillingProductView {
+  product_id: string;
+  name: string;
+  default_unit_amount_cents: number;
+  line_type: string;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminBillingProductList {
+  products: AdminBillingProductView[];
+}
+
+export interface CreateBillingProductRequest {
+  name: string;
+  default_unit_amount_cents: number;
+  line_type: string;
+}
+
+export interface UpdateBillingProductRequest {
+  name?: string;
+  default_unit_amount_cents?: number;
+  line_type?: string;
+  active?: boolean;
+}
+
 export interface InvoiceLineView {
+  line_id?: string | null;
+  invoice_id?: string | null;
+  line_type?: string | null;
   description: string;
+  quantity?: number | null;
+  unit_amount_cents?: number | null;
   amount_cents: number;
+}
+
+export interface InvoiceLineMutationResponse extends InvoiceLineView {
+  line_id: string;
+  invoice_id: string;
+  line_type: string;
+  quantity: number;
+  unit_amount_cents: number;
+  invoice_total_cents: number;
+  invoice_balance_due_cents: number;
+  invoice_status: string;
 }
 
 export interface InvoiceAllocationView {
@@ -353,16 +396,101 @@ export interface InvoiceCreditUsageView {
 }
 
 export interface AdminInvoiceDetail {
+  invoice_id?: string;
   invoice_number: string;
   period: string;
   lines: InvoiceLineView[];
+  total_cents?: number;
+  subtotal_cents?: number;
+  discount_cents?: number;
+  balance_due_cents?: number;
   due_amount_cents: number;
   paid_amount_cents: number;
   status: string;
+  delivery_status: "not_sent" | "sent" | "delivery_failed" | string;
+  sent_at: string | null;
+  last_sent_at: string | null;
   allocations: InvoiceAllocationView[];
   credit_usage: InvoiceCreditUsageView[];
   invoice_pdf_artifact_id: string | null;
   receipt_artifact_id: string | null;
+}
+
+export interface AdminLedgerInvoiceView {
+  invoice_id: string;
+  academy_id: string;
+  parent_id: string;
+  student_id: string | null;
+  enrollment_id: string | null;
+  period: string;
+  status: "draft" | "open" | "partially_paid" | "paid" | "void" | string;
+  subtotal_cents: number;
+  discount_cents: number;
+  total_cents: number;
+  balance_due_cents: number;
+  currency: string;
+  due_date: string;
+  pdf_artifact_id: string | null;
+  delivery_status: "not_sent" | "sent" | "delivery_failed" | string;
+  sent_at: string | null;
+  last_sent_at: string | null;
+  finalized_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateStudentInvoiceRequest {
+  parent_id: string;
+  period: string;
+  due_date: string;
+  enrollment_id?: string | null;
+}
+
+export interface AddInvoiceLineRequest {
+  product_id?: string | null;
+  description: string;
+  line_type: string;
+  quantity?: number;
+  unit_amount_cents: number;
+}
+
+export interface SendInvoiceResponse {
+  invoice_id: string;
+  delivery_status: "not_sent" | "sent" | "delivery_failed" | string;
+  sent_at: string | null;
+  last_sent_at: string | null;
+  checkout_url: string | null;
+}
+
+export interface ChargeAutopayResponse {
+  invoice_id: string;
+  success: boolean;
+  status: string;
+  balance_due_cents: number;
+  requires_action: boolean;
+  decline_code: string | null;
+}
+
+export interface RecordManualPaymentRequest {
+  amount_cents: number;
+  payment_method?: string;
+  reference_number?: string | null;
+  notes?: string;
+}
+
+export interface RecordManualPaymentResponse {
+  invoice_id: string;
+  payment_id: string;
+  invoice_status: string;
+  balance_due_cents: number;
+}
+
+export interface VoidInvoiceResponse {
+  ok: boolean;
+}
+
+export interface VoidInvoiceRequest {
+  reason: string;
 }
 
 export interface GenerateInvoiceArtifactResponse {
@@ -1315,10 +1443,103 @@ export function reconcileStripeBilling(
   });
 }
 
+export function listBillingProducts(): Promise<AdminBillingProductList> {
+  return apiFetch<AdminBillingProductList>("/admin/billing/products", {
+    method: "GET",
+  });
+}
+
+export function createBillingProduct(
+  payload: CreateBillingProductRequest,
+): Promise<AdminBillingProductView> {
+  return apiFetch<AdminBillingProductView>("/admin/billing/products", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateBillingProduct(
+  productId: string,
+  payload: UpdateBillingProductRequest,
+): Promise<AdminBillingProductView> {
+  return apiFetch<AdminBillingProductView>(
+    `/admin/billing/products/${encodeURIComponent(productId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function deleteBillingProduct(productId: string): Promise<void> {
+  return apiFetch<void>(`/admin/billing/products/${encodeURIComponent(productId)}`, {
+    method: "DELETE",
+  });
+}
+
 export function getAdminInvoiceDetail(invoiceId: string): Promise<AdminInvoiceDetail> {
   return apiFetch<AdminInvoiceDetail>(
     `/admin/billing/invoices/${encodeURIComponent(invoiceId)}`,
     { method: "GET" },
+  );
+}
+
+export function addAdminInvoiceLine(
+  invoiceId: string,
+  payload: AddInvoiceLineRequest,
+): Promise<InvoiceLineMutationResponse> {
+  return apiFetch<InvoiceLineMutationResponse>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/lines`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function deleteAdminInvoiceLine(invoiceId: string, lineId: string): Promise<void> {
+  return apiFetch<void>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export function sendAdminInvoice(invoiceId: string): Promise<SendInvoiceResponse> {
+  return apiFetch<SendInvoiceResponse>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/send`,
+    { method: "POST" },
+  );
+}
+
+export function chargeAdminInvoiceAutopay(
+  invoiceId: string,
+): Promise<ChargeAutopayResponse> {
+  return apiFetch<ChargeAutopayResponse>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/charge-autopay`,
+    { method: "POST" },
+  );
+}
+
+export function recordAdminInvoicePayment(
+  invoiceId: string,
+  payload: RecordManualPaymentRequest,
+): Promise<RecordManualPaymentResponse> {
+  return apiFetch<RecordManualPaymentResponse>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/record-payment`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function voidAdminInvoice(
+  invoiceId: string,
+  payload: VoidInvoiceRequest,
+): Promise<VoidInvoiceResponse> {
+  return apiFetch<VoidInvoiceResponse>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/void`,
+    { method: "POST", body: JSON.stringify(payload) },
   );
 }
 

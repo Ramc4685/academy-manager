@@ -273,6 +273,17 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         return line
 
+    async def delete_invoice_line(self, *, invoice_id: str, line_id: str) -> bool:
+        """Delete one invoice line within the current tenant scope."""
+        result = await self._db["invoice_lines"].delete_one(
+            {
+                "academy_id": current_academy_id(),
+                "invoice_id": invoice_id,
+                "line_id": line_id,
+            }
+        )
+        return result.deleted_count > 0
+
     async def list_invoices_for_parent(
         self, parent_id: str, *, limit: int = 100
     ) -> list[LedgerInvoice]:

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
     AddInvoiceLine,
@@ -32,6 +33,10 @@ from backend.v2.contexts.billing.application.use_cases.record_manual_payment imp
     RecordManualPayment,
     RecordManualPaymentCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.remove_invoice_line import (
+    RemoveInvoiceLine,
+    RemoveInvoiceLineCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.send_invoice import SendInvoice
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
     ApproveWithdrawalCreditCommand,
@@ -42,6 +47,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import
     MongoBillingLedgerRepository,
 )
 from backend.v2.contexts.billing.infrastructure.stripe_gateway import RealStripeGateway
+from backend.v2.contexts.enrollment.domain.errors import StudentNotFound
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
     AdminEnrollmentQuoteRequest,
@@ -82,7 +88,6 @@ from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.http import require_persona
 from backend.v2.shared.ids import new_ulid
-from backend.v2.shared.tenancy import current_academy_id
 
 router = APIRouter(tags=["admin.billing"])
 
@@ -119,7 +124,11 @@ async def list_billing_invoices(
     return InvoicesResponse(invoices=invoices)
 
 
-@router.get("/billing/invoices/{invoice_id}", response_model=InvoiceDetailResponse)
+@router.get(
+    "/billing/invoices/{invoice_id}",
+    response_model=InvoiceDetailResponse,
+    response_model_exclude_none=True,
+)
 async def get_billing_invoice_detail(
     invoice_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
@@ -127,15 +136,25 @@ async def get_billing_invoice_detail(
 ) -> InvoiceDetailResponse:
     raw = await use_cases.get_billing_invoice_detail(invoice_id)  # type: ignore[operator]
     return InvoiceDetailResponse(
+        invoice_id=raw.get("invoice_id"),  # type: ignore[arg-type]
         invoice_number=str(raw["invoice_number"]),
         period=str(raw.get("period") or ""),
         lines=[
             InvoiceLineDto(
+                line_id=line.get("line_id"),
+                invoice_id=line.get("invoice_id"),
+                line_type=line.get("line_type"),
                 description=str(line.get("description", "")),
+                quantity=line.get("quantity"),
+                unit_amount_cents=line.get("unit_amount_cents"),
                 amount_cents=int(line.get("amount_cents", 0)),
             )
             for line in raw.get("lines", [])
         ],
+        subtotal_cents=raw.get("subtotal_cents"),  # type: ignore[arg-type]
+        discount_cents=raw.get("discount_cents"),  # type: ignore[arg-type]
+        total_cents=raw.get("total_cents"),  # type: ignore[arg-type]
+        balance_due_cents=raw.get("balance_due_cents"),  # type: ignore[arg-type]
         due_amount_cents=int(raw.get("due_amount_cents", 0)),
         paid_amount_cents=int(raw.get("paid_amount_cents", 0)),
         status=str(raw.get("status", "open")),
@@ -512,7 +531,7 @@ class AddInvoiceLineRequest(BaseModel):
     description: str = Field(min_length=1)
     line_type: str = Field(min_length=1)
     quantity: int = Field(ge=1, default=1)
-    unit_amount_cents: int
+    unit_amount_cents: int = Field(ge=0)
 
 
 class InvoiceLineResponse(BaseModel):
@@ -523,6 +542,9 @@ class InvoiceLineResponse(BaseModel):
     quantity: int
     unit_amount_cents: int
     amount_cents: int
+    invoice_total_cents: int
+    invoice_balance_due_cents: int
+    invoice_status: str
 
 
 class CreateStudentInvoiceRequest(BaseModel):
@@ -531,6 +553,34 @@ class CreateStudentInvoiceRequest(BaseModel):
     period: str = Field(pattern=r"^\d{4}-\d{2}$")
     due_date: date
     enrollment_id: str | None = None
+
+
+class VoidInvoiceRequest(BaseModel):
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+async def _validate_student_invoice_scope(
+    use_cases: AdminUseCases,
+    *,
+    student_id: str,
+    parent_id: str,
+    enrollment_id: str | None,
+) -> None:
+    if use_cases.get_admin_student is None:
+        raise HTTPException(status_code=503, detail="Admin student detail is not configured")
+    try:
+        student = await use_cases.get_admin_student.execute(student_id)
+    except StudentNotFound as exc:
+        raise HTTPException(status_code=404, detail="student not found") from exc
+
+    if student.parent_id != parent_id:
+        raise HTTPException(status_code=409, detail="invoice parent must match student parent")
+
+    if enrollment_id is None:
+        return
+
+    if not any(session.enrollment_id == enrollment_id for session in student.enrolled_sessions):
+        raise HTTPException(status_code=409, detail="invoice enrollment must belong to student")
 
 
 def _get_ledger_repo(request: Request) -> MongoBillingLedgerRepository:
@@ -648,6 +698,9 @@ async def add_invoice_line(
         quantity=line.quantity,
         unit_amount_cents=line.unit_amount_cents,
         amount_cents=line.amount_cents,
+        invoice_total_cents=result.invoice.total_cents,
+        invoice_balance_due_cents=result.invoice.balance_due_cents,
+        invoice_status=result.invoice.status,
     )
 
 
@@ -661,35 +714,22 @@ async def remove_invoice_line(
     _claims: AuthClaims = Depends(require_persona("admin")),
     ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
 ) -> None:
-    from backend.v2.shared.tenancy import current_academy_id as _caid
-
-    invoice = await ledger.get_invoice(invoice_id)
-    if invoice is None:
-        raise HTTPException(status_code=404, detail="invoice not found")
-    if invoice.status != "draft":
-        raise HTTPException(
-            status_code=409,
-            detail=f"can only remove lines from a draft invoice, got {invoice.status}",
-        )
-    academy_id = _caid()
-    result = await ledger._db["invoice_lines"].delete_one(
-        {"academy_id": academy_id, "invoice_id": invoice_id, "line_id": line_id}
-    )
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="line not found")
-    # Recompute totals after deletion
-    from backend.v2.contexts.billing.domain.ledger import recompute_totals
-
-    remaining_lines = await ledger.get_lines_for_invoice(invoice_id)
-    updated_invoice = recompute_totals(
-        invoice.model_copy(update={"updated_at": datetime.now(UTC)}), remaining_lines
-    )
-    await ledger.save_invoice(updated_invoice)
+    use_case = RemoveInvoiceLine(ledger=ledger)
+    try:
+        await use_case.execute(RemoveInvoiceLineCommand(invoice_id=invoice_id, line_id=line_id))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=409, detail=msg) from exc
 
 
 @router.post("/billing/invoices/{invoice_id}/void", status_code=status.HTTP_200_OK)
 async def void_invoice_route(
     invoice_id: str,
+    body: VoidInvoiceRequest,
     _claims: AuthClaims = Depends(require_persona("admin")),
     ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
 ) -> dict[str, bool]:
@@ -698,8 +738,16 @@ async def void_invoice_route(
     invoice = await ledger.get_invoice(invoice_id)
     if invoice is None:
         raise HTTPException(status_code=404, detail="invoice not found")
+    if (
+        invoice.status in {"partially_paid", "paid"}
+        or invoice.balance_due_cents != invoice.total_cents
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="cannot void invoice with recorded payments; issue refund or credit first",
+        )
     try:
-        voided = void_invoice(invoice, reason="admin", now=datetime.now(UTC))
+        voided = void_invoice(invoice, reason=body.reason, now=datetime.now(UTC))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     await ledger.save_invoice(voided)
@@ -768,14 +816,23 @@ async def record_manual_payment(
 async def create_student_invoice(
     student_id: str,
     body: CreateStudentInvoiceRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
     ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
 ) -> dict:
+    if body.student_id != student_id:
+        raise HTTPException(status_code=409, detail="invoice student must match route student")
+    await _validate_student_invoice_scope(
+        use_cases,
+        student_id=student_id,
+        parent_id=body.parent_id,
+        enrollment_id=body.enrollment_id,
+    )
     now = datetime.now(UTC)
     invoice_id = f"inv-{new_ulid()}"
     invoice = LedgerInvoice(
         invoice_id=invoice_id,
-        academy_id=current_academy_id(),
+        academy_id=claims.academy_id,
         parent_id=body.parent_id,
         student_id=student_id,
         enrollment_id=body.enrollment_id,

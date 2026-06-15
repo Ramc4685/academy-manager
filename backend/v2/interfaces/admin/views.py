@@ -658,7 +658,12 @@ class WithdrawalCreditApproveResponse(BaseModel):
 
 
 class InvoiceLineDto(BaseModel):
+    line_id: str | None = None
+    invoice_id: str | None = None
+    line_type: str | None = None
     description: str
+    quantity: int | None = None
+    unit_amount_cents: int | None = None
     amount_cents: int
 
 
@@ -687,9 +692,14 @@ class InvoiceCreditUsageDto(BaseModel):
 
 
 class InvoiceDetailResponse(BaseModel):
+    invoice_id: str | None = None
     invoice_number: str
     period: str
     lines: list[InvoiceLineDto]
+    subtotal_cents: int | None = None
+    discount_cents: int | None = None
+    total_cents: int | None = None
+    balance_due_cents: int | None = None
     due_amount_cents: int
     paid_amount_cents: int
     status: str

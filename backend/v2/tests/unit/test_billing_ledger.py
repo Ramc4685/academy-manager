@@ -103,7 +103,9 @@ class _FakeLedger:
             allocation=dummy_allocation,
         )
 
-    async def get_open_invoice_for_student(self, student_id: str, period: str) -> LedgerInvoice | None:
+    async def get_open_invoice_for_student(
+        self, student_id: str, period: str
+    ) -> LedgerInvoice | None:
         return None
 
     async def save_invoice(self, invoice: LedgerInvoice) -> LedgerInvoice:
@@ -259,9 +261,7 @@ async def test_record_manual_payment_raises_if_invoice_not_found() -> None:
     ledger = _FakeLedger(None)
     uc = RecordManualPayment(ledger=ledger)
     with pytest.raises(ValueError, match="not found"):
-        await uc.execute(
-            RecordManualPaymentCommand(invoice_id="inv-missing", amount_cents=100)
-        )
+        await uc.execute(RecordManualPaymentCommand(invoice_id="inv-missing", amount_cents=100))
 
 
 @pytest.mark.asyncio
@@ -269,9 +269,7 @@ async def test_record_manual_payment_raises_if_invoice_already_paid() -> None:
     ledger = _FakeLedger(_make_invoice(status="paid", balance_due_cents=0))
     uc = RecordManualPayment(ledger=ledger)
     with pytest.raises(ValueError, match="not payable"):
-        await uc.execute(
-            RecordManualPaymentCommand(invoice_id="inv-1", amount_cents=100)
-        )
+        await uc.execute(RecordManualPaymentCommand(invoice_id="inv-1", amount_cents=100))
 
 
 @pytest.mark.asyncio
@@ -279,6 +277,4 @@ async def test_record_manual_payment_raises_if_amount_exceeds_balance() -> None:
     ledger = _FakeLedger(_make_invoice(balance_due_cents=6_000))
     uc = RecordManualPayment(ledger=ledger)
     with pytest.raises(ValueError, match="exceeds balance_due_cents"):
-        await uc.execute(
-            RecordManualPaymentCommand(invoice_id="inv-1", amount_cents=9_999)
-        )
+        await uc.execute(RecordManualPaymentCommand(invoice_id="inv-1", amount_cents=9_999))

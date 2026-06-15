@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime
 import pytest
 
 from backend.v2.contexts.billing.domain.ledger import (
+    InvoiceLine,
     LedgerInvoice,
     LedgerPayment,
 )
@@ -48,6 +49,21 @@ def _make_payment(
         paid_at=now,
         created_at=now,
         updated_at=now,
+    )
+
+
+def _make_line(line_id: str, invoice_id: str, academy_id: str, amount: int) -> InvoiceLine:
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    return InvoiceLine(
+        line_id=line_id,
+        academy_id=academy_id,
+        invoice_id=invoice_id,
+        line_type="fee",
+        description="Fee",
+        quantity=1,
+        unit_amount_cents=amount,
+        amount_cents=amount,
+        created_at=now,
     )
 
 
@@ -178,3 +194,36 @@ async def test_list_payments_for_parent(db, acad) -> None:
     assert ids == {"pay-list-a", "pay-list-b"}
     # Nothing leaked into legacy collection
     assert await db["payments"].count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_invoice_line_is_tenant_scoped_and_reports_missing(db, acad) -> None:
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    invoice = _make_invoice("inv-delete-line", acad, now)
+    line = _make_line("line-delete", invoice.invoice_id, acad, 4_000)
+
+    await repo.create_invoice(invoice, lines=[line], idempotency_key="inv:delete-line")
+    await db["invoice_lines"].insert_one(
+        {
+            **line.model_dump(mode="python"),
+            "academy_id": "other-academy",
+        }
+    )
+
+    assert (
+        await repo.delete_invoice_line(
+            invoice_id=invoice.invoice_id,
+            line_id="missing-line",
+        )
+        is False
+    )
+    assert (
+        await repo.delete_invoice_line(
+            invoice_id=invoice.invoice_id,
+            line_id=line.line_id,
+        )
+        is True
+    )
+    assert await db["invoice_lines"].count_documents({"academy_id": acad}) == 0
+    assert await db["invoice_lines"].count_documents({"academy_id": "other-academy"}) == 1
