@@ -243,6 +243,49 @@ export function createSkill(
 }
 
 // ---------------------------------------------------------------------------
+// Admin — lesson cards
+// ---------------------------------------------------------------------------
+
+export interface LessonCardSummary {
+  card_id: string;
+  slug: string;
+  lesson_number: number;
+  title: string;
+  module_name: string;
+  lesson_range: string;
+  skill_ids: string[];
+}
+
+export interface LessonCardsList {
+  count: number;
+  cards: LessonCardSummary[];
+}
+
+export interface SeedLessonCardsResult {
+  program_id: string;
+  cards_created: number;
+  cards_updated: number;
+  cards_unchanged: number;
+  video_refs_created: number;
+  video_refs_updated: number;
+  video_refs_unchanged: number;
+}
+
+export function listLessonCards(programId: string): Promise<LessonCardsList> {
+  return apiFetch<LessonCardsList>(
+    `/admin/programs/${encodeURIComponent(programId)}/lesson-cards`,
+    { method: "GET" },
+  );
+}
+
+export function seedLessonCards(programId: string): Promise<SeedLessonCardsResult> {
+  return apiFetch<SeedLessonCardsResult>(
+    `/admin/programs/${encodeURIComponent(programId)}/lesson-cards/seed`,
+    { method: "POST" },
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Admin — student progress
 // ---------------------------------------------------------------------------
 

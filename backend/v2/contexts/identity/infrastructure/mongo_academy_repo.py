@@ -48,6 +48,11 @@ class MongoAcademyRepository:
                 "dues_reminders": False,
                 "attendance_alerts": False,
                 "daily_digest_to_admin": False,
+                # coach_digest_enabled / coach_digest_hour are intentionally
+                # omitted: their absence means "fall back to the env default" so
+                # existing deployments keep their behaviour until an admin saves a
+                # per-academy override. See resolve_digest_schedule + the hourly
+                # digest scheduler job in main.py.
             },
         }
 

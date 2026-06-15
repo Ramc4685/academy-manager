@@ -42,9 +42,14 @@ async def get_monthly_payroll(
     if uc is None:
         raise HTTPException(status_code=503, detail="Monthly payroll not configured")
     rows = await uc.execute(academy_id=claims.academy_id, period_start=start, period_end=end)
+    coach_names = {
+        user.user_id: user.display_name
+        for user in await use_cases.list_admin_users.execute("coach", academy_id=claims.academy_id)
+    }
     view_rows = [
         AdminMonthlyPayrollRow(
             coach_id=r.coach_id,
+            coach_name=coach_names.get(r.coach_id),
             session_count=r.session_count,
             total_amount_cents=r.total_minor,
             currency=r.currency,

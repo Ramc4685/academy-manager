@@ -17,6 +17,7 @@ from backend.v2.contexts.finance.application.use_cases.bulk_payroll import (
 from backend.v2.contexts.finance.application.use_cases.list_monthly_payroll import (
     MonthlyPayrollRow,
 )
+from backend.v2.contexts.identity.application.use_cases.admin_directory import AdminUserSummary
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
@@ -62,14 +63,16 @@ class _FakeBulkRecomputePayroll:
 
 
 def _minimal_admin_use_cases(
+    list_admin_users=None,
     list_monthly_payroll=None,
     bulk_generate_payroll=None,
     bulk_recompute_payroll=None,
 ) -> AdminUseCases:
     """Build the smallest possible AdminUseCases for payroll route tests."""
     mock = AsyncMock(return_value=[])
+    list_admin_users = list_admin_users or mock
     return AdminUseCases(
-        list_admin_users=mock,  # type: ignore[arg-type]
+        list_admin_users=list_admin_users,  # type: ignore[arg-type]
         list_admin_students=mock,  # type: ignore[arg-type]
         create_session=mock,  # type: ignore[arg-type]
         edit_session=mock,  # type: ignore[arg-type]
@@ -173,6 +176,26 @@ def payroll_client() -> Iterator[TestClient]:
         ),
     ]
     uc = _minimal_admin_use_cases(
+        list_admin_users=AsyncMock(
+            execute=AsyncMock(
+                return_value=[
+                    AdminUserSummary(
+                        user_id="coach-1",
+                        email="coach1@example.com",
+                        display_name="Coach One",
+                        role="coach",
+                        status="active",
+                    ),
+                    AdminUserSummary(
+                        user_id="coach-2",
+                        email="coach2@example.com",
+                        display_name="Coach Two",
+                        role="coach",
+                        status="active",
+                    ),
+                ]
+            )
+        ),
         list_monthly_payroll=_FakeListMonthlyPayroll(rows),
         bulk_generate_payroll=_FakeBulkGeneratePayroll(),
         bulk_recompute_payroll=_FakeBulkRecomputePayroll(),
@@ -241,6 +264,8 @@ def test_get_monthly_payroll_returns_200(payroll_client) -> None:
     assert body["month"] == "2026-06"
     assert isinstance(body["rows"], list)
     assert len(body["rows"]) == 2
+    assert body["rows"][0]["coach_name"] == "Coach One"
+    assert body["rows"][1]["coach_name"] == "Coach Two"
     assert body["total_amount_cents"] == sum(r["total_amount_cents"] for r in body["rows"])
     assert body["total_amount_cents"] == 30000
 

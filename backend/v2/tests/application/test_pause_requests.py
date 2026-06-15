@@ -150,6 +150,164 @@ async def test_mongo_pending_pause_requests_include_admin_context() -> None:
     assert loaded.session_start_at == datetime(2026, 6, 4, 23, 0)
 
 
+@pytest.mark.asyncio
+async def test_mongo_pending_pause_requests_resolves_parent_without_academy_id() -> None:
+    """Regression: parent lookup previously included academy_id which excluded
+    cross-academy user documents that lack the field."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["pause-requests-parent-no-academy"]
+    repo = MongoPauseRequestRepository(db)
+    request = PauseRequest(
+        pause_request_id="pause-2",
+        enrollment_id="enr-2",
+        parent_id="firebase-uid-abc",
+        pause_kind="fixed",
+        resume_on=date(2026, 7, 15),
+        reason="summer",
+        created_at=datetime(2026, 6, 3, tzinfo=UTC),
+    )
+
+    with tenant_scope("acad-1"):
+        await db.enrollments.insert_one(
+            {
+                "academy_id": "acad-1",
+                "enrollment_id": "enr-2",
+                "student_id": "student-2",
+                "session_id": "session-2",
+                "status": "active",
+            }
+        )
+        await db.students.insert_one(
+            {
+                "academy_id": "acad-1",
+                "student_id": "student-2",
+                "parent_id": "firebase-uid-abc",
+                "full_name": "Test Student",
+            }
+        )
+        # User doc has NO academy_id — mirrors production cross-academy users collection.
+        await db.users.insert_one(
+            {
+                "firebase_uid": "firebase-uid-abc",
+                "display_name": "Real Parent Name",
+                "email": "realparent@example.com",
+            }
+        )
+        await repo.add(request)
+        [loaded] = await repo.list_pending()
+
+    assert loaded.parent_name == "Real Parent Name"
+    assert loaded.parent_email == "realparent@example.com"
+
+
+@pytest.mark.asyncio
+async def test_mongo_pending_pause_requests_falls_back_to_billing_enrollment() -> None:
+    """Regression: only enrollments was checked; billing-flow pause requests store
+    enrollment_id from student_billing_enrollments which was never joined."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["pause-requests-billing-fallback"]
+    repo = MongoPauseRequestRepository(db)
+    request = PauseRequest(
+        pause_request_id="pause-3",
+        enrollment_id="billing-enr-1",
+        parent_id="parent-3",
+        pause_kind="indefinite",
+        reason="surgery",
+        created_at=datetime(2026, 6, 3, tzinfo=UTC),
+    )
+
+    with tenant_scope("acad-1"):
+        # No row in enrollments — only in student_billing_enrollments.
+        await db.student_billing_enrollments.insert_one(
+            {
+                "academy_id": "acad-1",
+                "enrollment_id": "billing-enr-1",
+                "student_id": "student-3",
+                "session_type_id": "st-1",
+            }
+        )
+        await db.students.insert_one(
+            {
+                "academy_id": "acad-1",
+                "student_id": "student-3",
+                "full_name": "Aadhya Abhishek",
+            }
+        )
+        await db.session_types.insert_one(
+            {
+                "academy_id": "acad-1",
+                "session_type_id": "st-1",
+                "name": "Junior Foundations",
+            }
+        )
+        await repo.add(request)
+        [loaded] = await repo.list_pending()
+
+    assert loaded.student_name == "Aadhya Abhishek"
+    assert loaded.session_title == "Junior Foundations"
+    assert loaded.student_id == "student-3"
+
+
+@pytest.mark.asyncio
+async def test_mongo_pending_pause_requests_resolves_legacy_billing_context() -> None:
+    """Regression: production pause requests can reference a billing enrollment
+    by stored _id and a parent user by auth_uid."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["pause-requests-legacy-billing-context"]
+    repo = MongoPauseRequestRepository(db)
+    request = PauseRequest(
+        pause_request_id="pause-4",
+        enrollment_id="01KT4PG7VT6ESV722TEDWQDQ3M",
+        parent_id="TqPnkjCF1N83ooMGZioq74yeqgHB",
+        pause_kind="fixed",
+        resume_on=date(2026, 7, 15),
+        reason="travel",
+        created_at=datetime(2026, 6, 2, tzinfo=UTC),
+    )
+
+    with tenant_scope("acad-1"):
+        await db.student_billing_enrollments.insert_one(
+            {
+                "_id": "01KT4PG7VT6ESV722TEDWQDQ3M",
+                "academy_id": "acad-1",
+                "student_id": "student-4",
+                "parent_id": "TqPnkjCF1N83ooMGZioq74yeqgHB",
+                "session_type_id": "st-4",
+            }
+        )
+        await db.students.insert_one(
+            {
+                "academy_id": "acad-1",
+                "student_id": "student-4",
+                "parent_user_id": "TqPnkjCF1N83ooMGZioq74yeqgHB",
+                "first_name": "Viha",
+                "last_name": "Ramchand",
+            }
+        )
+        await db.session_types.insert_one(
+            {
+                "academy_id": "acad-1",
+                "session_type_id": "st-4",
+                "name": "BLNO Intermediate",
+            }
+        )
+        await db.users.insert_one(
+            {
+                "auth_uid": "TqPnkjCF1N83ooMGZioq74yeqgHB",
+                "display_name": "Ram Parent",
+                "email": "parent@example.test",
+            }
+        )
+        await repo.add(request)
+        [loaded] = await repo.list_pending()
+
+    assert loaded.parent_name == "Ram Parent"
+    assert loaded.parent_email == "parent@example.test"
+    assert loaded.student_id == "student-4"
+    assert loaded.student_name == "Viha Ramchand"
+    assert loaded.session_title == "BLNO Intermediate"
+
+
 class _FakePauseRequests:
     async def add(self, request: PauseRequest) -> None:
         self.request = request

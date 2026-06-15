@@ -53,7 +53,7 @@ export default function PayoutsPage() {
   const missingRates = rows.filter((r) => r.session_count > 0 && r.total_amount_cents === 0);
 
   return (
-    <div className="space-y-4 p-6">
+    <div className="space-y-4 p-6" data-testid="admin-payouts">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Coach Payroll</h1>
         <MonthPicker value={month} onChange={setMonth} />

@@ -38,6 +38,10 @@ export const queryKeys = {
       ["admin", "session", sessionId] as const,
     sessionOccurrences: (sessionId: string) =>
       ["admin", "session", sessionId, "occurrences"] as const,
+    teachingPlan: (occurrenceId: string, programId?: string | null) =>
+      ["admin", "teaching-plan", occurrenceId, programId ?? "default"] as const,
+    coachEngagement: (startDate: string, endDate: string) =>
+      ["admin", "coach-engagement", startDate, endDate] as const,
     enrollments: (sessionId: string) =>
       ["admin", "enrollments", sessionId] as const,
     waitlist: (sessionId: string) => ["admin", "waitlist", sessionId] as const,
@@ -57,6 +61,9 @@ export const queryKeys = {
     fees: () => ["admin", "academy", "fees"] as const,
     notifications: () => ["admin", "academy", "notifications"] as const,
     gateway: () => ["admin", "academy", "gateway"] as const,
+    lessonCards: (programId: string) =>
+      ["admin", "pathway", programId, "lesson-cards"] as const,
+    coachDigestLog: () => ["admin", "comms", "digests", "log"] as const,
   },
 } as const;
 

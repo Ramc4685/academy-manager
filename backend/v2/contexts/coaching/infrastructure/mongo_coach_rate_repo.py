@@ -14,18 +14,18 @@ from backend.v2.contexts.coaching.domain.payout import CoachRate
 from backend.v2.shared.tenancy import TenantScopedRepository
 
 
-def _to_aware(dt: datetime | None) -> datetime | None:
-    """Coerce a naive datetime from legacy Mongo docs to UTC-aware."""
-    if dt is None:
-        return None
-    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
-
-
 class MongoCoachRateRepository(TenantScopedRepository):
     collection_name = "coach_rates"
 
     @staticmethod
-    def _to_domain(doc: dict[str, Any]) -> CoachRate:
+    def _as_utc(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+    @classmethod
+    def _to_domain(cls, doc: dict[str, Any]) -> CoachRate:
+        effective_until = doc.get("effective_until")
         return CoachRate(
             rate_id=str(doc.get("rate_id") or doc.get("_id")),
             academy_id=str(doc["academy_id"]),
@@ -34,8 +34,8 @@ class MongoCoachRateRepository(TenantScopedRepository):
             amount_minor=int(doc.get("amount_minor", doc.get("amount_cents", 0))),
             percent_bps=(None if doc.get("percent_bps") is None else int(doc["percent_bps"])),
             currency=str(doc.get("currency", "USD")).upper(),
-            effective_from=_to_aware(doc["effective_from"]),
-            effective_until=_to_aware(doc.get("effective_until")),
+            effective_from=cls._as_utc(doc["effective_from"]),
+            effective_until=(None if effective_until is None else cls._as_utc(effective_until)),
             status=doc.get("status", "active"),
         )
 

@@ -14,6 +14,10 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
 )
+from backend.v2.composition.digests import (
+    compose_get_digest_delivery_log,
+    compose_send_coach_digest_test,
+)
 from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
@@ -73,6 +77,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
 from backend.v2.contexts.coaching.application.use_cases.compute_payout import (
     ComputeCoachPayout,
 )
+from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_plan import (
+    GenerateDailyTeachingPlan,
+)
 from backend.v2.contexts.coaching.application.use_cases.manage_coach_rates import (
     ListCoachPayRates,
     SetCoachPayRate,
@@ -109,6 +116,15 @@ from backend.v2.contexts.communications.infrastructure.resend_send_port import (
 from backend.v2.contexts.communications.infrastructure.stub_send_port import (
     StubEmailSendPort,
 )
+from backend.v2.contexts.curriculum.infrastructure.mongo_criterion_repo import (
+    MongoCriterionRepository,
+)
+from backend.v2.contexts.curriculum.infrastructure.mongo_lesson_card_repo import (
+    MongoLessonCardRepository,
+)
+from backend.v2.contexts.curriculum.infrastructure.mongo_video_ref_repo import (
+    MongoCurriculumVideoRefRepository,
+)
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     ChangeAdminStudentParent,
     GetAdminStudent,
@@ -128,6 +144,12 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     SkipFromWaitlist,
     TransferEnrollment,
     WithdrawEnrollment,
+)
+from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
+    GetSessionRoster,
+)
+from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences_for_date import (
+    ListCoachOccurrencesForDate,
 )
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     ApprovePauseRequest,
@@ -269,8 +291,14 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import
 from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_template_repo import (
     MongoWaiverTemplateRepository,
 )
+from backend.v2.contexts.student_progress.application.use_cases.get_coach_engagement_stats import (
+    GetCoachEngagementStats,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_pathway_placement import (
     StudentPathwayPlacementRequest,
+)
+from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_repo import (
+    MongoStudentSkillProgressRepository,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases
 from backend.v2.shared.comms import CommsService, MongoMessageRepository
@@ -1011,6 +1039,20 @@ def compose_admin(
     subscriptions_repo = MongoSubscriptionRepository(db)
     curriculum = compose_curriculum(db)
     student_progress = compose_student_progress(db, outbox)
+    generate_daily_teaching_plan = GenerateDailyTeachingPlan(
+        occurrences=ListCoachOccurrencesForDate(
+            occurrences=occurrences_r,
+            sessions=sessions_r,
+        ),
+        get_roster=GetSessionRoster(enrollments=enrollments_r, students=students_r),
+        teaching_focus=student_progress.get_teaching_focus,
+        lesson_cards=MongoLessonCardRepository(db),
+        video_refs=MongoCurriculumVideoRefRepository(db),
+        criteria=MongoCriterionRepository(db),
+    )
+    get_coach_engagement_stats = GetCoachEngagementStats(
+        skill_progress=MongoStudentSkillProgressRepository(db)
+    )
 
     create_session = CreateSession(sessions=sessions_w, academy_id=academy_id)
     edit_session = EditSession(sessions=sessions_w)
@@ -1254,8 +1296,16 @@ def compose_admin(
     update_academy_use_case = UpdateAcademyUseCase(academy_repo)
     get_academy_fees_use_case = GetAcademyFeesUseCase(academy_repo)
     update_academy_fees_use_case = UpdateAcademyFeesUseCase(academy_repo)
-    get_academy_notifications_use_case = GetAcademyNotificationsUseCase(academy_repo)
-    update_academy_notifications_use_case = UpdateAcademyNotificationsUseCase(academy_repo)
+    get_academy_notifications_use_case = GetAcademyNotificationsUseCase(
+        academy_repo,
+        default_coach_digest_enabled=settings.coach_digest_enabled,
+        default_coach_digest_hour=settings.coach_digest_hour,
+    )
+    update_academy_notifications_use_case = UpdateAcademyNotificationsUseCase(
+        academy_repo,
+        default_coach_digest_enabled=settings.coach_digest_enabled,
+        default_coach_digest_hour=settings.coach_digest_hour,
+    )
     get_academy_gateway_use_case = GetAcademyGatewayUseCase(academy_repo)
     _connect_callback_uri = settings.stripe_connect_callback_uri or ""
     _state_secret = settings.stripe_connect_state_secret or settings.stripe_webhook_secret or ""
@@ -2767,6 +2817,9 @@ def compose_admin(
         get_admin_session=get_admin_session,
         maintain_session_occurrences=maintain_session_occurrences,
         list_session_occurrences=list_session_occurrences,
+        get_session_occurrence=occurrences_r.get,
+        generate_daily_teaching_plan=generate_daily_teaching_plan,
+        get_coach_engagement_stats=get_coach_engagement_stats,
         update_session_occurrence_coach=update_session_occurrence_coach,
         add_session_replacement=add_session_replacement,
         update_session_occurrence_replacement=update_session_occurrence_replacement,
@@ -2790,6 +2843,8 @@ def compose_admin(
         update_academy_fees_use_case=update_academy_fees_use_case,
         get_academy_notifications_use_case=get_academy_notifications_use_case,
         update_academy_notifications_use_case=update_academy_notifications_use_case,
+        send_coach_digest_test=compose_send_coach_digest_test(db),
+        get_digest_delivery_log=compose_get_digest_delivery_log(db),
         get_academy_gateway_use_case=get_academy_gateway_use_case,
         start_stripe_connect_use_case=start_stripe_connect_use_case,
         complete_stripe_connect_use_case=complete_stripe_connect_use_case,
