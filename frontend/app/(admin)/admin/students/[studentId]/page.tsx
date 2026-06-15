@@ -883,8 +883,10 @@ function PaymentHistoryPanel({
           <table className="min-w-full text-left text-sm">
             <thead className="border-b border-neutral-200 text-xs uppercase tracking-overline text-rally-muted">
               <tr>
-                <th className="py-2 pr-4 font-medium">Date</th>
+                <th className="py-2 pr-4 font-medium">Paid on</th>
                 <th className="py-2 pr-4 font-medium">Period</th>
+                <th className="py-2 pr-4 font-medium">Invoice</th>
+                <th className="py-2 pr-4 font-medium">Method</th>
                 <th className="py-2 pr-4 font-medium">Amount</th>
                 <th className="py-2 pr-4 font-medium">Paid</th>
                 <th className="py-2 pr-4 font-medium">Balance</th>
@@ -895,10 +897,16 @@ function PaymentHistoryPanel({
               {payments.map((payment) => (
                 <tr key={payment.payment_id}>
                   <td className="py-3 pr-4 align-top text-rally-muted">
-                    {formatDate(payment.created_at)}
+                    {formatDate(payment.paid_at ?? payment.created_at)}
                   </td>
                   <td className="py-3 pr-4 align-top text-rally-ink">
                     {payment.period ?? "—"}
+                  </td>
+                  <td className="py-3 pr-4 align-top font-mono text-xs text-rally-muted">
+                    {payment.invoice_number ?? "—"}
+                  </td>
+                  <td className="py-3 pr-4 align-top text-rally-ink capitalize">
+                    {payment.payment_method ?? "—"}
                   </td>
                   <td className="py-3 pr-4 align-top font-mono tabular-nums text-rally-ink">
                     {formatCurrencyCents(payment.amount_cents)}

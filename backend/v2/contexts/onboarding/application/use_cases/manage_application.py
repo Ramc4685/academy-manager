@@ -119,6 +119,7 @@ class PatchApplication:
                 waiver_version=waiver.version,
                 content_hash=waiver.content_hash,
                 accepted_at=self._now(),
+                waiver_template_id=waiver.waiver_id,
             )
 
         updated = app.model_copy(

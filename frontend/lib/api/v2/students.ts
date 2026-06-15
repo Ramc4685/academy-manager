@@ -28,6 +28,10 @@ export interface AdminStudentPaymentSummary {
   balance_due_cents: number;
   status: string;
   payment_method?: string | null;
+  invoice_number?: string | null;
+  paid_at?: string | null;
+  stripe_invoice_id?: string | null;
+  stripe_payment_intent_id?: string | null;
   created_at: string;
 }
 

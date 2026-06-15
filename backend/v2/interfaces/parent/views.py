@@ -61,6 +61,14 @@ class PatchApplicationRequest(BaseModel):
     accept_waiver: bool = False
 
 
+class RegistrationWaiverView(BaseModel):
+    """Active registration waiver for the parent onboarding stepper."""
+
+    configured: bool
+    version: str | None = None
+    body: str | None = None
+
+
 # --- Checkout ---
 
 

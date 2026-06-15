@@ -69,7 +69,6 @@ class Settings(BaseSettings):
     stripe_connect_client_id: str | None = Field(default=None)
     stripe_connect_callback_uri: str | None = Field(default=None)
     stripe_connect_state_secret: str | None = Field(default=None)
-    stripe_use_fake_gateway: bool = Field(default=True)
     firebase_project_id: str | None = Field(default=None)
     cors_origins: str = Field(default="")
     frontend_url: str | None = Field(default=None)
@@ -170,8 +169,6 @@ class Settings(BaseSettings):
             missing.append("mongo_db")
         if not _explicit_env_value("V2_FIREBASE_PROJECT_ID", "FIREBASE_PROJECT_ID"):
             missing.append("firebase_project_id")
-        if self.stripe_use_fake_gateway:
-            missing.append("stripe_use_fake_gateway=false")
         if not _explicit_env_value("V2_STRIPE_API_KEY", "STRIPE_API_KEY"):
             missing.append("stripe_api_key")
         if not _explicit_env_value("V2_STRIPE_WEBHOOK_SECRET", "STRIPE_WEBHOOK_SECRET"):

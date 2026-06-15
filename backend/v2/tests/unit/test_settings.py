@@ -153,29 +153,12 @@ def test_prod_settings_require_stripe_secrets_when_real_gateway_enabled(monkeypa
     monkeypatch.setenv("MONGO_URL", "mongodb+srv://prod")
     monkeypatch.setenv("DB_NAME", "academy_prod")
     monkeypatch.setenv("FIREBASE_PROJECT_ID", "academy-courtmastr")
-    monkeypatch.setenv("V2_STRIPE_USE_FAKE_GATEWAY", "false")
-
     with pytest.raises(ValidationError) as exc:
         Settings(_env_file=None)
 
     message = str(exc.value)
     assert "stripe_api_key" in message
     assert "stripe_webhook_secret" in message
-
-
-def test_prod_settings_forbid_fake_stripe_gateway(monkeypatch) -> None:
-    _clear_production_env(monkeypatch)
-    monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.setenv("MONGO_URL", "mongodb+srv://prod")
-    monkeypatch.setenv("DB_NAME", "academy_prod")
-    monkeypatch.setenv("FIREBASE_PROJECT_ID", "academy-courtmastr")
-    monkeypatch.setenv("STRIPE_API_KEY", "sk_live_existing")
-    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_existing")
-
-    with pytest.raises(ValidationError) as exc:
-        Settings(_env_file=None)
-
-    assert "stripe_use_fake_gateway=false" in str(exc.value)
 
 
 def test_cors_origins_reuse_existing_env_and_dedupe(monkeypatch) -> None:

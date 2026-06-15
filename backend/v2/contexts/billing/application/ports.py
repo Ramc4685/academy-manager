@@ -124,6 +124,9 @@ class StripeGateway(Protocol):
     ) -> str:
         """Returns portal redirect URL."""
 
+    async def find_customer_id_by_email(self, email: str) -> str | None:
+        """Look up Stripe customer by email. Returns customer ID or None."""
+
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, object]: ...
 
     async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, Any]:

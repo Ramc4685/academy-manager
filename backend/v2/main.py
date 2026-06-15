@@ -29,9 +29,6 @@ from backend.v2.composition.digests import (
 )
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.contexts.billing.application.ports import StripeGateway
-from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
-    FakeStripeGateway,
-)
 from backend.v2.contexts.communications.application.use_cases.send_coach_daily_digest import (
     SendCoachDailyDigestCommand,
 )
@@ -429,20 +426,20 @@ def create_app() -> FastAPI:
 
 
 def _build_stripe(settings: Settings) -> StripeGateway:
-    if settings.env == "prod" and settings.stripe_use_fake_gateway:
-        raise RuntimeError("V2_STRIPE_USE_FAKE_GATEWAY must be false in production")
-    if (
-        settings.stripe_use_fake_gateway
-        or not settings.stripe_api_key
-        or not settings.stripe_webhook_secret
-    ):
-        return FakeStripeGateway()
+    if not settings.stripe_api_key or not settings.stripe_webhook_secret:
+        raise RuntimeError(
+            "STRIPE_API_KEY and STRIPE_WEBHOOK_SECRET must be set. "
+            "Use Stripe test-mode keys (sk_test_...) for local/staging and live keys for prod."
+        )
+    import os
+
     from backend.v2.contexts.billing.infrastructure.stripe_gateway import RealStripeGateway
 
     return RealStripeGateway(
         api_key=settings.stripe_api_key,
         webhook_secret=settings.stripe_webhook_secret,
         connect_client_id=settings.stripe_connect_client_id,
+        skip_signature_verify=os.environ.get("APP_ENV") == "development",
     )
 
 

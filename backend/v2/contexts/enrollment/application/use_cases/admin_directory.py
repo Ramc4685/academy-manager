@@ -63,6 +63,10 @@ class AdminStudentPaymentSummary(BaseModel):
     balance_due_cents: int
     status: str
     payment_method: str | None = None
+    invoice_number: str | None = None
+    paid_at: datetime | None = None
+    stripe_invoice_id: str | None = None
+    stripe_payment_intent_id: str | None = None
     created_at: datetime
 
 

@@ -650,6 +650,10 @@ class MongoStudentRepository(TenantScopedRepository):
             balance_due_cents=balance_due_cents,
             status=str(doc.get("status") or "pending"),
             payment_method=cls._optional_str(doc.get("payment_method")),
+            invoice_number=cls._optional_str(doc.get("invoice_number")),
+            paid_at=cls._coerce_datetime(doc.get("paid_at")),
+            stripe_invoice_id=cls._optional_str(doc.get("stripe_invoice_id")),
+            stripe_payment_intent_id=cls._optional_str(doc.get("stripe_payment_intent_id")),
             created_at=created_at or datetime.now(UTC),
         )
 

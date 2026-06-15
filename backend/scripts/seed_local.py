@@ -1595,18 +1595,26 @@ async def main() -> None:
         )
 
     # ── 4. Waiver ────────────────────────────────────────────────────────────
-    # MongoWaiverRepository reads from the "waivers" collection and maps:
-    # waiver_id, version, text, content_hash, effective_from.
+    # MongoRegistrationWaiverRepository reads waiver_templates where
+    # status=="active" and assigned_to_registration==True.
     _waiver_text = "I, the parent/guardian, have read and agree to the BlNo Badminton Academy Liability Waiver."
-    _waiver_id = new_id()
-    waiver_r = await db.waivers.insert_one(
+    _waiver_template_id = new_id()
+    _waiver_hash = hashlib.sha256(_waiver_text.encode()).hexdigest()
+    _waiver_published_at = datetime(2026, 4, 1, tzinfo=timezone.utc)
+    waiver_r = await db.waiver_templates.insert_one(
         {
             "academy_id": ACADEMY_ID,
-            "waiver_id": _waiver_id,
-            "version": "1.0",
-            "text": _waiver_text,
-            "content_hash": hashlib.sha256(_waiver_text.encode()).hexdigest(),
-            "effective_from": datetime(2026, 4, 1, tzinfo=timezone.utc),
+            "waiver_template_id": _waiver_template_id,
+            "name": "Standard Liability Waiver",
+            "version": "2026.1",
+            "body": _waiver_text,
+            "content_hash": _waiver_hash,
+            "effective_from": _waiver_published_at,
+            "status": "active",
+            "assigned_to_registration": True,
+            "assigned_at": _waiver_published_at,
+            "published_at": _waiver_published_at,
+            "updated_at": utcnow(),
             "created_at": utcnow(),
         }
     )

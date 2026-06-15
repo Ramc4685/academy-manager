@@ -16,7 +16,12 @@ from backend.v2.contexts.billing.application.ports import StripeGateway
 
 class RealStripeGateway(StripeGateway):
     def __init__(
-        self, *, api_key: str, webhook_secret: str, connect_client_id: str | None = None
+        self,
+        *,
+        api_key: str,
+        webhook_secret: str,
+        connect_client_id: str | None = None,
+        skip_signature_verify: bool = False,
     ) -> None:
         # Lazy import keeps the rest of the app importable without stripe
         # installed (tests use a fake gateway).
@@ -26,6 +31,7 @@ class RealStripeGateway(StripeGateway):
         self._stripe = stripe
         self._webhook_secret = webhook_secret
         self._connect_client_id = connect_client_id
+        self._skip_signature_verify = skip_signature_verify
 
     async def create_checkout_session(
         self,
@@ -117,8 +123,23 @@ class RealStripeGateway(StripeGateway):
         result = await asyncio.to_thread(_create)
         return str(result.url)
 
+    async def find_customer_id_by_email(self, email: str) -> str | None:
+        def _search() -> Any:
+            results = self._stripe.Customer.search(query=f'email:"{email}"', limit=1)
+            return results.data[0].id if results.data else None
+
+        return await asyncio.to_thread(_search)
+
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, object]:
-        return self._stripe.Webhook.construct_event(payload, signature, self._webhook_secret)  # type: ignore[no-any-return]
+        import json
+
+        if not self._skip_signature_verify:
+            # Raises SignatureVerificationError on mismatch. We discard the
+            # returned stripe.Event because in stripe-python >=15 StripeObject
+            # no longer subclasses dict; the handler requires a plain dict, so
+            # we parse the (now verified) raw payload instead.
+            self._stripe.Webhook.construct_event(payload, signature, self._webhook_secret)
+        return json.loads(payload)  # type: ignore[no-any-return]
 
     async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, Any]:
         def _retrieve() -> Any:
