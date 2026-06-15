@@ -7,11 +7,18 @@ live in migration 0102.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from backend.v2.contexts.coaching.domain.payout import CoachRate
 from backend.v2.shared.tenancy import TenantScopedRepository
+
+
+def _to_aware(dt: datetime | None) -> datetime | None:
+    """Coerce a naive datetime from legacy Mongo docs to UTC-aware."""
+    if dt is None:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
 class MongoCoachRateRepository(TenantScopedRepository):
@@ -27,8 +34,8 @@ class MongoCoachRateRepository(TenantScopedRepository):
             amount_minor=int(doc.get("amount_minor", doc.get("amount_cents", 0))),
             percent_bps=(None if doc.get("percent_bps") is None else int(doc["percent_bps"])),
             currency=str(doc.get("currency", "USD")).upper(),
-            effective_from=doc["effective_from"],
-            effective_until=doc.get("effective_until"),
+            effective_from=_to_aware(doc["effective_from"]),
+            effective_until=_to_aware(doc.get("effective_until")),
             status=doc.get("status", "active"),
         )
 
