@@ -291,6 +291,60 @@ class RealStripeGateway(StripeGateway):
         except self._stripe.StripeError as exc:
             raise ValueError(f"{label} lookup failed: {exc}") from exc
 
+    async def get_default_payment_method(self, *, parent_id: str) -> tuple[str, str] | None:
+        """Return (stripe_customer_id, payment_method_id) or None if no saved card."""
+
+        def _find() -> tuple[str, str] | None:
+            customers = self._stripe.Customer.search(
+                query=f'metadata["parent_id"]:"{parent_id}"', limit=1
+            )
+            data = customers.get("data", [])
+            if not data:
+                return None
+            customer = data[0]
+            pm_id = (customer.get("invoice_settings") or {}).get("default_payment_method")
+            if not pm_id:
+                return None
+            return str(customer["id"]), str(pm_id)
+
+        try:
+            return await asyncio.to_thread(_find)
+        except self._stripe.StripeError as exc:
+            raise ValueError(f"Stripe customer lookup failed: {exc}") from exc
+
+    async def create_off_session_payment_intent(
+        self,
+        *,
+        amount_cents: int,
+        currency: str,
+        customer_id: str,
+        payment_method_id: str,
+        idempotency_key: str,
+        metadata: dict[str, str],
+    ) -> tuple[str, str, str | None]:
+        """Return (pi_id, pi_status, decline_code_or_None)."""
+
+        def _create() -> Any:
+            return self._stripe.PaymentIntent.create(
+                amount=amount_cents,
+                currency=currency,
+                customer=customer_id,
+                payment_method=payment_method_id,
+                off_session=True,
+                confirm=True,
+                idempotency_key=idempotency_key,
+                metadata=metadata,
+            )
+
+        try:
+            pi = await asyncio.to_thread(_create)
+            return str(pi["id"]), str(pi["status"]), None
+        except self._stripe.CardError as exc:
+            err = exc.error
+            return "", "failed", str(getattr(err, "decline_code", None) or str(exc))
+        except self._stripe.StripeError as exc:
+            raise ValueError(f"Stripe PaymentIntent creation failed: {exc}") from exc
+
 
 def _stripe_object_to_dict(result: Any) -> dict[str, Any]:
     if isinstance(result, dict):

@@ -76,7 +76,7 @@ class AdminStudentPaymentSummaryView(BaseModel):
 
 class AdminStudentCurrentPaymentSummaryView(BaseModel):
     amount_cents: int
-    source: Literal["invoice", "session_price"]
+    source: Literal["invoice"]
     status: str
     period: str | None = None
     payment_id: str | None = None
@@ -662,7 +662,12 @@ class WithdrawalCreditApproveResponse(BaseModel):
 
 
 class InvoiceLineDto(BaseModel):
+    line_id: str | None = None
+    invoice_id: str | None = None
+    line_type: str | None = None
     description: str
+    quantity: int | None = None
+    unit_amount_cents: int | None = None
     amount_cents: int
     line_type: str | None = None
     quantity: int | None = None
@@ -696,9 +701,14 @@ class InvoiceCreditUsageDto(BaseModel):
 
 
 class InvoiceDetailResponse(BaseModel):
+    invoice_id: str | None = None
     invoice_number: str
     period: str
     lines: list[InvoiceLineDto]
+    subtotal_cents: int | None = None
+    discount_cents: int | None = None
+    total_cents: int | None = None
+    balance_due_cents: int | None = None
     due_amount_cents: int
     paid_amount_cents: int
     status: str
@@ -706,6 +716,27 @@ class InvoiceDetailResponse(BaseModel):
     credit_usage: list[InvoiceCreditUsageDto] = []
     invoice_pdf_artifact_id: str | None = None
     receipt_artifact_id: str | None = None
+    # delivery axis (separate from financial status)
+    delivery_status: str = "not_sent"
+    sent_at: datetime | None = None
+    last_sent_at: datetime | None = None
+
+
+class SendInvoiceResponse(BaseModel):
+    invoice_id: str
+    delivery_status: str
+    sent_at: datetime | None = None
+    last_sent_at: datetime | None = None
+    checkout_url: str | None = None
+
+
+class ChargeAutopayResponse(BaseModel):
+    invoice_id: str
+    success: bool
+    status: str
+    balance_due_cents: int
+    requires_action: bool = False
+    decline_code: str | None = None
 
 
 class GenerateInvoiceArtifactRequest(BaseModel):

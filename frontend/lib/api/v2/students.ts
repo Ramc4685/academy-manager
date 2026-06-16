@@ -4,7 +4,12 @@
  * Wraps the admin student detail/edit endpoints.
  */
 import { apiFetch } from "../client";
-import { type AdminEnrollmentView, type AdminStudentView } from "../admin";
+import {
+  type AdminEnrollmentView,
+  type AdminLedgerInvoiceView,
+  type AdminStudentView,
+  type CreateStudentInvoiceRequest,
+} from "../admin";
 
 export interface AdminStudentSessionSummary {
   enrollment_id: string;
@@ -37,7 +42,7 @@ export interface AdminStudentPaymentSummary {
 
 export interface AdminStudentCurrentPaymentSummary {
   amount_cents: number;
-  source: "invoice" | "session_price";
+  source: "invoice";
   status: string;
   period?: string | null;
   payment_id?: string | null;
@@ -107,6 +112,19 @@ export function updateAdminStudent(
     {
       method: "PATCH",
       body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function createAdminStudentInvoice(
+  studentId: string,
+  payload: CreateStudentInvoiceRequest,
+): Promise<AdminLedgerInvoiceView> {
+  return apiFetch<AdminLedgerInvoiceView>(
+    `/admin/students/${encodeURIComponent(studentId)}/invoices`,
+    {
+      method: "POST",
+      body: JSON.stringify({ student_id: studentId, ...payload }),
     },
   );
 }

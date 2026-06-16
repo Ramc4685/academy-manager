@@ -386,8 +386,13 @@ test.describe("admin students", () => {
     await expect(page.getByTestId("admin-student-recent-attendance")).toContainText(
       "PRESENT",
     );
-    await page.getByLabel("Medical notes").fill("");
-    await page.getByRole("button", { name: /^save changes$/i }).click();
+    const trainingForm = page.getByTestId("admin-student-training-edit-form");
+    const medicalNotes = trainingForm.getByLabel("Medical notes");
+    await medicalNotes.focus();
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.keyboard.press("Backspace");
+    await expect(medicalNotes).toHaveValue("");
+    await trainingForm.getByRole("button", { name: /^save changes$/i }).click();
     expect(patchBody).toMatchObject({
       medical_notes: "",
       reason: "Admin profile update",
@@ -402,23 +407,22 @@ test.describe("admin students", () => {
     await page.getByRole("tab", { name: "Billing" }).click();
     await expect(page.getByTestId("admin-student-current-payment")).toContainText("$110");
     await expect(page.getByTestId("admin-student-current-payment")).toContainText(
-      "Invoice balance",
+      "Balance",
     );
     await expect(page.getByTestId("admin-student-payment-history")).toContainText("2026-06");
     await expect(page.getByTestId("admin-student-payment-history")).toContainText("$40");
     await expect(page.getByTestId("admin-student-payment-history")).toContainText("$110");
-    await expect(page.getByTestId("admin-student-invoice-breakdown")).toContainText(
+    await expect(page.getByTestId("admin-student-current-payment")).toContainText(
       "INV-2026-06-001",
     );
-    await expect(page.getByTestId("admin-student-invoice-breakdown")).toContainText(
+    await expect(page.getByTestId("admin-student-invoice-lines")).toContainText(
       "Racket purchase",
     );
-    await expect(page.getByTestId("admin-student-invoice-breakdown")).toContainText(
-      "equipment / 1 x $40 / product",
-    );
-    await expect(page.getByTestId("admin-student-invoice-breakdown")).toContainText("$190");
-    await expect(page.getByTestId("admin-student-invoice-breakdown")).toContainText("$80");
-    await expect(page.getByTestId("admin-student-invoice-breakdown")).toContainText("$110");
+    await expect(page.getByTestId("admin-student-invoice-lines")).toContainText("equipment");
+    await expect(page.getByTestId("admin-student-invoice-lines")).toContainText("$40");
+    await expect(page.getByTestId("admin-student-current-payment")).toContainText("$190");
+    await expect(page.getByTestId("admin-student-current-payment")).toContainText("$80");
+    await expect(page.getByTestId("admin-student-current-payment")).toContainText("$110");
 
     await page.getByRole("tab", { name: "Family & Compliance" }).click();
     await expect(page.getByTestId("admin-student-compliance-tab")).toContainText("2026-v1");

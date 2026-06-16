@@ -125,7 +125,14 @@ async def test_admin_invoice_detail_uses_request_tenant_not_default(mongo_db) ->
 
     assert detail["invoice_number"] == "REQ-001"
     assert detail["due_amount_cents"] == 4000
-    assert detail["lines"] == [{"description": "Request academy tuition", "amount_cents": 10000}]
+    assert detail["lines"] == [
+        {
+            "line_id": "line-request",
+            "invoice_id": "inv-shared",
+            "description": "Request academy tuition",
+            "amount_cents": 10000,
+        }
+    ]
 
 
 @pytest.mark.asyncio

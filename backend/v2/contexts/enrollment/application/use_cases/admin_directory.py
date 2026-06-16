@@ -74,7 +74,7 @@ class AdminStudentCurrentPaymentSummary(BaseModel):
     model_config = {"frozen": True}
 
     amount_cents: int
-    source: Literal["invoice", "session_price"]
+    source: Literal["invoice"]
     status: str
     period: str | None = None
     payment_id: str | None = None

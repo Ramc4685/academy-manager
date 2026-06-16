@@ -20,7 +20,7 @@ money flows, prove production operations, and complete live-like QA.
 | No RBAC gaps | Green for reviewed P0/P1 paths | Coach billing moves and roster mutations now deny; admin exports are allowlisted; platform governance requires platform admin; platform routes are not mounted when `ENABLE_PLATFORM_ROUTES=false`. |
 | Money flows reconcile | Yellow | ADR-0011 code now writes `LedgerPayment` to `ledger_payments` and includes a copy-only migration. The migration has not been run against the target environment and full invoice/payment/credit/refund/payout reconciliation has not been run. |
 | Parent/coach flows pass mobile | Partial green | `pnpm e2e:local-auth` passed on mobile Chromium against seeded local stack. Broader real-device/mobile browser QA is still manual. |
-| Admin flows pass desktop | Partial green | Mocked E2E and local-auth admin checks pass. Student Billing now renders read-only invoice line/totals detail in focused E2E; admin export/download and billing action workflows still need manual desktop QA. |
+| Admin flows pass desktop | Partial green | Mocked E2E and local-auth admin checks pass. Student Billing invoice actions are now integrated from `feat/billing-ledger-convergence` and covered by focused unit/interface tests plus the admin-students mobile E2E render path; admin export/download and live billing action workflows still need manual desktop QA. |
 | Stripe webhooks are idempotent | Backend green, staging pending | `stripe_webhook_events` dedup and metadata-only rejection tests pass. Stripe fixture replay against staging/live-like config is still required. |
 | Backups and rollback exist | Red | Documented in `DEPLOYMENT.md`, but no restore-drill evidence or rollback rehearsal is present in this branch. |
 
@@ -39,7 +39,7 @@ money flows, prove production operations, and complete live-like QA.
 
 | Area | Current source | Status | Notes |
 | --- | --- | --- | --- |
-| Invoice | `invoices` + `invoice_lines` via `MongoBillingLedgerRepository` | Partially implemented | Intended source of truth per `docs/plans/2026-06-14-billing-ledger-convergence.md`; Student Billing now shows read-only invoice breakdown with line metadata when present, but add/send/charge/void/refund action workflows are still incomplete. |
+| Invoice | `invoices` + `invoice_lines` via `MongoBillingLedgerRepository` | Implemented, validation pending | Intended source of truth per `docs/plans/2026-06-14-billing-ledger-convergence.md`; the integration branch includes Student Billing actions for create invoice, add/remove line, send invoice, charge autopay, record manual payment, and void safeguards. Refund/credit convergence and live reconciliation remain pending. |
 | Payment | Legacy `Payment` in `payments`; `LedgerPayment` in `ledger_payments` | Code fixed, migration pending | `mongo_billing_ledger_repo.py` now reads/writes ledger payments from `ledger_payments`. Migration `0128_ledger_payments_storage` creates indexes and copy-only backfills ledger-shaped rows from `payments`; `backend/scripts/ledger_payments_storage_audit.py` provides dry-run/apply count evidence. |
 | Credit | `account_credit_ledger` | Backend implemented | Used by ledger allocation and withdrawal-credit paths; full reconciliation still pending. |
 | Refund | Stripe refund + local payment/credit records | Partially implemented | `IssueRefund` exists; ledger refund/credit-note convergence is not fully proven end to end. |
@@ -75,8 +75,8 @@ money flows, prove production operations, and complete live-like QA.
 | Coach today view | Local-auth browser path passed. |
 | Attendance submission | Backend tests pass; browser workflow QA pending. |
 | Skill progress update | Mocked E2E previously passed; seeded browser workflow QA pending. |
-| Invoice generation | Backend primitives exist; target migration/reconciliation pending. |
-| Payment allocation | Backend tests exist; full reconciliation pending. |
+| Invoice generation | Backend/UI workflow integrated; target migration/reconciliation and manual admin QA pending. |
+| Payment allocation | Backend tests pass for ledger allocation and manual/autopay payment paths; full reconciliation pending. |
 | Refund / credit | Backend tests exist; full reconciliation pending. |
 | Coach payout | Backend tests exist; admin workflow and payout reconciliation pending. |
 | Parent pause request | Browser/admin workflow QA pending. |
@@ -89,7 +89,7 @@ money flows, prove production operations, and complete live-like QA.
 | Ledger payments shared `payments` collection with legacy payments, despite ADR-0011 requiring `ledger_payments`. | P1 launch blocker | Admin / Parent | Billing | Fixed in branch; target migration pending |
 | Full money-flow reconciliation not run across invoice, payment, credit, refund, payout, and Stripe webhook replay. | P1 launch blocker | Admin / Parent | Billing | Open |
 | Production backup/restore, monitoring, log drain, secrets, and rollback proof missing. | P1 launch blocker | Platform Operator | Operations | Open |
-| Admin student Billing tab convergence workflow remains incomplete per billing convergence plan. | P1 launch blocker | Admin | Student Billing | Partial; read-only invoice breakdown now renders line metadata, totals, allocations, and credits. Add-charge, send invoice, charge autopay, record manual payment, void, refund/credit, delivery badge, and live reconciliation remain open. |
+| Admin student Billing tab convergence workflow requires live-like validation after merge. | P1 launch blocker | Admin | Student Billing | Integrated from `feat/billing-ledger-convergence`: create invoice, add/remove charge, send invoice, charge autopay, record manual payment, void safeguards, invoice lines, totals, allocations, credits. Remaining: live Stripe/email/PDF behavior, refund/credit workflow, reconciliation, and manual desktop QA. |
 | Local stack helper requires care in this Codex exec environment because infra processes can be reaped when the command exits. | P2 | Developer | Local QA | Documented |
 
 ## ADR-0011 Implementation Evidence
@@ -114,12 +114,13 @@ money flows, prove production operations, and complete live-like QA.
 - Unit coverage proves platform routes are mounted by default and absent when `ENABLE_PLATFORM_ROUTES=false`.
 - Operator check before deploy: confirm deployed Fly secrets/env do not override these launch-mode values unexpectedly and authenticated `/api/v2/me` returns `academy_id=acad_blno_badminton` for the production host.
 
-## Billing Workflow Gap Evidence
+## Billing Workflow Integration Evidence
 
-- The historical billing convergence plan references backend routes for product CRUD, add/remove invoice lines, send invoice, charge autopay, record payment, and void invoice.
-- Current worktree inspection found no active remove-line or void-invoice route under `backend/v2/interfaces/admin/billing_routes.py`; that file currently exposes invoice list/detail/artifact, enrollment quotes, legacy payment operations, reconciliation, and finance routes.
-- The Student Billing tab now has a read-only invoice breakdown that calls the existing tenant-scoped invoice detail endpoint and displays line metadata, paid/due totals, allocations, and credits.
-- The launch blocker remains the missing admin billing action workflows and money-flow reconciliation, not an active unsafe remove/void route implementation.
+- This integration branch merges the billing convergence workflow from `feat/billing-ledger-convergence`.
+- Backend routes now exist for product listing, create invoice, add/remove invoice lines, send invoice, charge autopay, record manual payment, and void invoice safeguards.
+- The old plan warnings about `remove_invoice_line` using `ledger._db` directly and `void_invoice_route` hardcoding the reason are no longer current on this branch: remove-line uses `RemoveInvoiceLine`, and void requires `VoidInvoiceRequest.reason`.
+- The Student Billing tab now renders invoice totals, line metadata, allocations, credits, and action controls for add charge, send, autopay, record payment, create invoice, and void.
+- The launch blocker is no longer the absence of the admin billing workflow code. It is proving that workflow in a live-like environment: target migration/reconciliation, Stripe/email/PDF behavior, refund/credit handling, and manual desktop QA.
 
 ## Next Launch Slice
 
@@ -129,6 +130,6 @@ money flows, prove production operations, and complete live-like QA.
    in this slice.
 2. Run end-to-end billing reconciliation: invoice generation, payment
    allocation, refund/credit, Stripe webhook replay, and coach payout.
-3. Complete admin desktop QA for the read-only Billing tab, then build or explicitly defer billing action workflows: add charge, send invoice, charge autopay, record manual payment, void, refund/credit, and delivery status.
+3. Complete admin desktop QA for the merged Billing tab actions: create invoice, add/remove charge, send invoice, charge autopay, record manual payment, void, refund/credit, and delivery status.
 4. Prove production operations: secrets, CORS/cookies, backups/restore drill,
    log drain, monitoring alerts, and rollback rehearsal.

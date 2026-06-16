@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from pymongo.errors import DuplicateKeyError
+
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
     LedgerAllocationResult,
@@ -32,11 +34,13 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
 
     @staticmethod
     def _invoice_from_doc(doc: dict[str, object]) -> LedgerInvoice:
-        return LedgerInvoice(**doc)
+        return LedgerInvoice(
+            **{k: v for k, v in doc.items() if k not in ("_id", "idempotency_key")}
+        )
 
     @staticmethod
     def _line_from_doc(doc: dict[str, object]) -> InvoiceLine:
-        return InvoiceLine(**doc)
+        return InvoiceLine(**{k: v for k, v in doc.items() if k not in ("_id", "idempotency_key")})
 
     @staticmethod
     def _payment_from_doc(doc: dict[str, object]) -> LedgerPayment:
@@ -97,6 +101,19 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         doc = await self._find_one({"invoice_id": invoice_id})
         return self._invoice_from_doc(doc) if doc else None
 
+    async def get_open_invoice_for_student(
+        self, student_id: str, period: str
+    ) -> LedgerInvoice | None:
+        """Return the first open/draft/partially-paid invoice for a student in a period."""
+        doc = await self._find_one(
+            {
+                "student_id": student_id,
+                "period": period,
+                "status": {"$in": ["open", "draft", "partially_paid"]},
+            }
+        )
+        return self._invoice_from_doc(doc) if doc else None
+
     async def record_payment(
         self,
         payment: LedgerPayment,
@@ -112,9 +129,18 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
 
         doc = _mongo_doc(payment)
         doc["ledger_idempotency_key"] = idempotency_key
-        await self.ledger_payments.insert_one(
-            {**{k: v for k, v in doc.items() if k != "academy_id"}, "academy_id": academy_id}
-        )
+        try:
+            await self.ledger_payments.insert_one(
+                {**{k: v for k, v in doc.items() if k != "academy_id"}, "academy_id": academy_id}
+            )
+        except DuplicateKeyError:
+            # Lost a concurrent race on idempotency_key — return the winner's record.
+            winner = await self.ledger_payments.find_one(
+                {"academy_id": academy_id, "ledger_idempotency_key": idempotency_key}
+            )
+            if winner is not None:
+                return self._payment_from_doc(winner)
+            raise  # Collision on payment_id unique index — genuine duplicate, re-raise.
         stored = await self.ledger_payments.find_one(
             {"academy_id": academy_id, "payment_id": payment.payment_id}
         )
@@ -220,6 +246,49 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             invoices.append({"invoice": inv_doc, "lines": lines})
         return invoices
 
+    async def get_lines_for_invoice(self, invoice_id: str) -> list[InvoiceLine]:
+        academy_id = current_academy_id()
+        cursor = self._db["invoice_lines"].find(
+            {"academy_id": academy_id, "invoice_id": invoice_id}
+        )
+        return [self._line_from_doc(doc) async for doc in cursor]
+
+    async def save_invoice(self, invoice: LedgerInvoice) -> LedgerInvoice:
+        """Upsert invoice by invoice_id."""
+        academy_id = current_academy_id()
+        doc = _mongo_doc(invoice)
+        await self.collection.update_one(
+            {"academy_id": academy_id, "invoice_id": invoice.invoice_id},
+            {"$set": {k: v for k, v in doc.items() if k != "academy_id"}},
+            upsert=True,
+        )
+        stored = await self.get_invoice(invoice.invoice_id)
+        if stored is None:
+            raise ValueError("invoice save failed")
+        return stored
+
+    async def save_line(self, line: InvoiceLine) -> InvoiceLine:
+        """Upsert line by line_id."""
+        academy_id = current_academy_id()
+        doc = _mongo_doc(line)
+        await self._db["invoice_lines"].update_one(
+            {"academy_id": academy_id, "line_id": line.line_id},
+            {"$set": {k: v for k, v in doc.items() if k != "academy_id"}},
+            upsert=True,
+        )
+        return line
+
+    async def delete_invoice_line(self, *, invoice_id: str, line_id: str) -> bool:
+        """Delete one invoice line within the current tenant scope."""
+        result = await self._db["invoice_lines"].delete_one(
+            {
+                "academy_id": current_academy_id(),
+                "invoice_id": invoice_id,
+                "line_id": line_id,
+            }
+        )
+        return result.deleted_count > 0
+
     async def list_invoices_for_parent(
         self, parent_id: str, *, limit: int = 100
     ) -> list[LedgerInvoice]:
@@ -229,6 +298,17 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             limit=limit,
         )
         return [self._invoice_from_doc(doc) async for doc in cursor]
+
+    async def list_payments_for_parent(
+        self, parent_id: str, *, limit: int = 100
+    ) -> list[LedgerPayment]:
+        academy_id = current_academy_id()
+        cursor = self._db["ledger_payments"].find(
+            {"academy_id": academy_id, "parent_id": parent_id},
+            sort=[("created_at", -1)],
+            limit=limit,
+        )
+        return [self._payment_from_doc(doc) async for doc in cursor]
 
     async def _existing_allocation_result(
         self, allocation_doc: dict[str, object]

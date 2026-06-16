@@ -92,9 +92,24 @@ def test_discount_route_requires_reason(admin_client) -> None:
 
 def test_invoice_detail_shows_lines_allocations_and_credit_usage(admin_client) -> None:
     admin_client.seed["invoice_details"]["inv-1"] = {
+        "invoice_id": "inv-1",
         "invoice_number": "inv-1",
         "period": "2026-05",
-        "lines": [{"description": "May tuition", "amount_cents": 10_000}],
+        "lines": [
+            {
+                "line_id": "line-1",
+                "invoice_id": "inv-1",
+                "line_type": "tuition",
+                "description": "May tuition",
+                "quantity": 1,
+                "unit_amount_cents": 10_000,
+                "amount_cents": 10_000,
+            }
+        ],
+        "subtotal_cents": 10_000,
+        "discount_cents": 0,
+        "total_cents": 10_000,
+        "balance_due_cents": 6_000,
         "due_amount_cents": 6_000,
         "paid_amount_cents": 4_000,
         "status": "partially_paid",
@@ -108,7 +123,22 @@ def test_invoice_detail_shows_lines_allocations_and_credit_usage(admin_client) -
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["lines"] == [{"description": "May tuition", "amount_cents": 10000}]
+    assert body["invoice_id"] == "inv-1"
+    assert body["lines"] == [
+        {
+            "line_id": "line-1",
+            "invoice_id": "inv-1",
+            "line_type": "tuition",
+            "description": "May tuition",
+            "quantity": 1,
+            "unit_amount_cents": 10000,
+            "amount_cents": 10000,
+        }
+    ]
+    assert body["subtotal_cents"] == 10000
+    assert body["discount_cents"] == 0
+    assert body["total_cents"] == 10000
+    assert body["balance_due_cents"] == 6000
     assert body["due_amount_cents"] == 6000
     assert body["paid_amount_cents"] == 4000
     assert body["status"] == "partially_paid"

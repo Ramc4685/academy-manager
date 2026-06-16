@@ -36,6 +36,7 @@ Close P0/P1 launch security blockers: tenant context, RBAC, Stripe, reports, exp
 - 2026-06-16T12:32:30 main/working: Inspected billing convergence route hazards from the older plan; current worktree has no active remove-line or void-invoice admin routes, so remaining billing blocker is missing Student Billing workflow plus reconciliation.
 - 2026-06-16T12:46:48 main/working: Added read-only Admin Student Billing invoice breakdown with line metadata; corrected production PRIMARY_ACADEMY_ID to acad_blno_badminton; added prod single_academy fail-closed guard for platform routes. Sidecar security review found no residual code-level P0/P1 issue; sidecar frontend review recommended this read-only invoice slice and noted remaining billing action workflows.
 - 2026-06-16T12:56:29 main/working: Added read-only launch readiness audit script for environment flags, ledger payment migration counts, required Mongo indexes, and active parent membership provenance review.
+- 2026-06-16T13:14:54 main/working: Merged billing-ledger-convergence into launch-hardening integration branch; preserved launch tenancy/RBAC guards and billing ledger storage separation; updated launch/billing docs to reflect merged Student Billing workflow and remaining live-like validation gates.
 ## Verification
 
 - No verification recorded yet.
@@ -66,6 +67,9 @@ Close P0/P1 launch security blockers: tenant context, RBAC, Stripe, reports, exp
 - 2026-06-16T12:30:38: source /Users/ramc/Documents/Code/academy-manager/backend/.venv/bin/activate && pytest backend/v2/tests/unit/test_healthz.py backend/v2/tests/unit/test_settings.py -q -> 17 passed; cd backend && pytest v2/tests -q -> 1200 passed, 3 warnings; ruff check/format and git diff --check passed.
 - 2026-06-16T12:46:48: Backend focused settings/admin invoice tests: 37 passed. Backend full suite: cd backend && pytest v2/tests -q -> 1201 passed, 3 warnings. Backend ruff check/format touched files -> passed. Frontend: pnpm typecheck passed; pnpm lint passed with 5 existing warnings; pnpm exec playwright test e2e/specs/admin-students.spec.ts --project=chromium-mobile -> 4 passed. git diff --check -> passed.
 - 2026-06-16T12:56:29: source /Users/ramc/Documents/Code/academy-manager/backend/.venv/bin/activate && ruff format/check backend/scripts/launch_readiness_audit.py backend/v2/tests/contract/test_launch_readiness_audit.py && pytest backend/v2/tests/contract/test_launch_readiness_audit.py -q -> 4 passed; git diff --check -> passed.
+- 2026-06-16T13:14:54: Post-merge focused billing backend suite: 143 passed; focused launch/security regression suite: 153 passed; frontend typecheck passed; frontend lint passed with 5 existing warnings; admin-students chromium-mobile E2E: 4 passed; git ls-files -u empty; git diff --check passed.
+- 2026-06-16T13:16:06: Full backend post-merge: cd backend && source /Users/ramc/Documents/Code/academy-manager/backend/.venv/bin/activate && pytest v2/tests -q -> 1307 passed, 3 warnings. Backend ruff post-merge: ruff check v2 && ruff format --check v2 -> passed, 649 files already formatted.
+- 2026-06-16T13:18:02: Frontend production build post-merge: cd frontend && pnpm build -> passed; compiled successfully and generated 49 static pages; same 4 eslint warnings surfaced during build.
 ## Reusable Lessons
 
 - None recorded yet.

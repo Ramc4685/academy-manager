@@ -400,7 +400,52 @@ def compose_parent(
     )
 
     async def list_payments_for_parent(parent_id: str):
-        return await payments_repo.list_for_parent(parent_id)
+        from dataclasses import dataclass as _dc
+
+        @_dc
+        class _Row:
+            payment_id: str
+            amount_cents: int
+            currency: str
+            status: str
+            refunded_cents: int
+            created_at: datetime
+            session_id: str | None
+
+        rows: list[_Row] = []
+        for p in await payments_repo.list_for_parent(parent_id):
+            rows.append(
+                _Row(
+                    payment_id=p.payment_id,
+                    amount_cents=p.amount_cents,
+                    currency=p.currency or "usd",
+                    status=p.status,
+                    refunded_cents=p.refunded_cents,
+                    created_at=p.created_at,
+                    session_id=p.session_id,
+                )
+            )
+        async for doc in db["ledger_payments"].find(
+            {"academy_id": academy_id, "parent_id": parent_id},
+            sort=[("created_at", -1)],
+            limit=100,
+        ):
+            rows.append(
+                _Row(
+                    payment_id=str(doc.get("payment_id") or ""),
+                    amount_cents=int(doc.get("amount_cents") or 0),
+                    currency=str(doc.get("currency") or "usd"),
+                    status=str(doc.get("status") or ""),
+                    refunded_cents=0,
+                    created_at=doc["created_at"],
+                    session_id=None,
+                )
+            )
+        rows.sort(
+            key=lambda r: r.created_at or datetime.min.replace(tzinfo=UTC),
+            reverse=True,
+        )
+        return rows
 
     async def list_credits_for_parent(parent_id: str):
         return await credits_repo.list_for_parent(parent_id)

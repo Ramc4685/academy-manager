@@ -1134,7 +1134,9 @@ def compose_admin(
     # Billing
     billing_ledger_repo = MongoBillingLedgerRepository(db)
     credits_repo = MongoCreditLedgerRepository(db)
-    payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
+    payments_repo = MongoPaymentRepository(
+        db, credit_ledger=credits_repo, ledger_repo=billing_ledger_repo
+    )
     session_type_repo = MongoSessionTypeRepository(db)
     student_billing_enrollment_repo = MongoStudentBillingEnrollmentRepository(db)
     create_session_type = CreateSessionType(
@@ -2263,10 +2265,37 @@ def compose_admin(
             .sort([("created_at", -1)])
             .limit(200)
         )
-        return [
+        legacy = [
             payments_repo._to_admin_row(payment, None)  # type: ignore[attr-defined]
             async for payment in cursor
         ]
+        ledger_rows: list[dict[str, Any]] = []
+        async for doc in db["ledger_payments"].find(
+            {"academy_id": request_academy_id},
+            sort=[("created_at", -1)],
+            limit=200,
+        ):
+            ledger_rows.append(
+                {
+                    "payment_id": str(doc.get("payment_id") or ""),
+                    "parent_id": str(doc.get("parent_id") or ""),
+                    "session_id": None,
+                    "amount_cents": int(doc.get("amount_cents") or 0),
+                    "currency": str(doc.get("currency") or "usd"),
+                    "status": str(doc.get("status") or ""),
+                    "refunded_cents": 0,
+                    "stripe_payment_intent_id": doc.get("stripe_payment_intent_id"),
+                    "payment_method": doc.get("payment_method"),
+                    "created_at": doc["created_at"],
+                }
+            )
+        combined = ledger_rows + legacy
+        combined.sort(
+            key=lambda r: (r.get("created_at") if isinstance(r, dict) else None)
+            or datetime.min.replace(tzinfo=UTC),
+            reverse=True,
+        )
+        return combined[:200]
 
     async def reconcile_stripe_billing(
         *,
@@ -2554,6 +2583,8 @@ def compose_admin(
 
         def _invoice_line_response(line: dict[str, Any]) -> dict[str, Any]:
             payload: dict[str, Any] = {
+                "line_id": str(line.get("line_id") or ""),
+                "invoice_id": str(line.get("invoice_id") or ""),
                 "description": str(line.get("description", "")),
                 "amount_cents": int(line.get("amount_cents", 0)),
             }
@@ -2604,9 +2635,14 @@ def compose_admin(
             total = int(invoice.get("total_cents", 0))
             due = int(invoice.get("balance_due_cents", 0))
             return {
+                "invoice_id": inv_id,
                 "invoice_number": str(invoice.get("invoice_number") or inv_id),
                 "period": str(invoice.get("period") or ""),
                 "lines": lines,
+                "subtotal_cents": int(invoice.get("subtotal_cents", total)),
+                "discount_cents": int(invoice.get("discount_cents", 0)),
+                "total_cents": total,
+                "balance_due_cents": due,
                 "due_amount_cents": due,
                 "paid_amount_cents": max(total - due, 0),
                 "status": str(invoice.get("status", "open")),
@@ -2615,6 +2651,9 @@ def compose_admin(
                 "invoice_pdf_artifact_id": invoice.get("invoice_pdf_artifact_id")
                 or invoice.get("pdf_artifact_id"),
                 "receipt_artifact_id": invoice.get("receipt_artifact_id"),
+                "delivery_status": str(invoice.get("delivery_status") or "not_sent"),
+                "sent_at": invoice.get("sent_at"),
+                "last_sent_at": invoice.get("last_sent_at"),
             }
 
         payment = await db["payments"].find_one(

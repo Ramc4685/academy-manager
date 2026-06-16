@@ -10,9 +10,16 @@
 
 ---
 
-## Implementation Status (updated 2026-06-15)
+## Implementation Status (updated 2026-06-16 integration branch)
 
-> **Readout:** Backend P1–P4 are mostly coded; the **frontend acceptance workflow is mostly not coded**; Phase 5 is intentionally blocked on the prod backfill + billing-cycle soak. "Backend routes exist" is **not** the same as "the plan is complete" — the plan's exit gates are user-workflow gates (admin can add a racket line *from the Billing tab*, send it, parent pays it, admin charges autopay, UI shows delivery separately from financial status, backfill has reconciled clean in prod).
+> **Readout:** Backend P1–P4 and the admin Student Billing workflow are merged into
+> `feat/launch-hardening-billing-integration`. Phase 5 is intentionally blocked
+> on the target backfill + billing-cycle soak. "Workflow code exists" is still
+> not the same as "ready to ship" — the remaining exit gates are live-like
+> validation gates: admin can add a racket line from the Billing tab, send it,
+> parent pays it, admin charges autopay, UI shows delivery separately from
+> financial status, Stripe/email/PDF behavior is verified, and backfill
+> reconciles clean in the target environment.
 
 **Done (backend primitives)**
 - Phase 1 storage separation: `LedgerPayment` reads/writes use `ledger_payments`; migration + indexes + contract tests exist.
@@ -21,29 +28,44 @@
 - Phase 3 (partial): admin payments list unions ledger + legacy ([composition/admin.py:2258](backend/v2/composition/admin.py:2258)); parent payments list unions ledger + legacy ([composition/parent.py:401](backend/v2/composition/parent.py:401)); student current-payment source narrowed to invoice-only ([students.ts:33](frontend/lib/api/v2/students.ts:33)).
 - Phase 4: backfill script exists ([backfill_p4_legacy_payments.py](backend/scripts/backfill_p4_legacy_payments.py:1)) + 21 mapping unit tests pass.
 
-**Left to code (frontend + hardening)**
-1. **Admin student Billing tab UI — the biggest gap.** Only the label changed ("Session price" → "Invoice balance") at [page.tsx:571](<frontend/app/(admin)/admin/students/[studentId]/page.tsx:571>). Still needed: fetch current invoice detail; financial-status chip + separate delivery badge; render lines (qty/unit/amount/type); subtotal/discount/total/balance; payments + allocations; action dialogs (add charge, send/re-send, charge autopay, record manual payment, void, refund/credit).
-2. **Frontend API clients + types.** Backend routes exist but wrappers are missing/incomplete for products CRUD, create-invoice, add/remove line, send, charge-autopay, record-payment, void. Expand `InvoiceLineView` beyond `description`/`amount_cents`.
-3. **Product catalog UI** (or, smaller: let the Add-charge dialog fetch products + allow free-text).
-4. **Backend route hardening:** `remove_invoice_line` uses `ledger._db` directly ([billing_routes.py:654](backend/v2/interfaces/admin/billing_routes.py:654)) — move into a use case/repo method; `void_invoice_route` hardcodes `reason="admin"` ([billing_routes.py:690](backend/v2/interfaces/admin/billing_routes.py:690)) — plan requires a real reason; add-line returns only the line, not refreshed totals (UI needs refetch or richer response); confirm `SendInvoice(ledger=ledger)` email/PDF/Stripe adapters are wired vs. stubbed.
-5. **Phase 3 cleanup ≠ Phase 5 deletion.** Legacy reads are still intentionally unioned (correct for transition). "Legacy reads off" is **not** done; do not delete `MongoPaymentRepository`/`Payment`/`MarkPaymentPaid`/`ApplyPaymentDiscount`/`UndoPaymentPaid`/legacy mark-paid|discount|undo-paid routes/parent legacy checkout path until backfill + soak complete.
+**Still open (validation + remaining product gaps)**
+1. **Admin Student Billing workflow is merged but not production-proven.** The
+   Billing tab now fetches current invoice detail, renders totals/lines,
+   allocations and credits, and exposes action dialogs for create invoice, add
+   charge, remove line, send invoice, charge autopay, record manual payment, and
+   void safeguards. It still needs manual desktop QA and live-like Stripe/email
+   validation.
+2. **Refund/credit workflow remains a launch-validation gap.** Backend credit and
+   refund primitives exist, but the merged Student Billing tab does not complete
+   the refund/credit user workflow or prove credit-note behavior end to end.
+3. **Backend route hardening status:** `remove_invoice_line` now uses the
+   `RemoveInvoiceLine` use case, and `void_invoice_route` now requires a real
+   request reason. Add-line returns refreshed invoice totals. Confirm
+   `SendInvoice(ledger=ledger)` email/PDF/Stripe adapters in a live-like
+   environment before ship.
+4. **Phase 3 cleanup ≠ Phase 5 deletion.** Legacy reads are still intentionally
+   unioned (correct for transition). "Legacy reads off" is **not** done; do not
+   delete `MongoPaymentRepository`/`Payment`/`MarkPaymentPaid`/
+   `ApplyPaymentDiscount`/`UndoPaymentPaid`/legacy mark-paid|discount|undo-paid
+   routes/parent legacy checkout path until backfill + soak complete.
 
-**Verification status (2026-06-15)**
-- Focused billing-ledger tests: **133 passed**. `ruff check v2`: pass. `git diff --check origin/main...HEAD`: pass.
-- ❌ `ruff format --check v2`: `v2/tests/unit/test_billing_ledger.py` would reformat — **fix formatting**.
-- ❌ Full backend suite: **1250 passed, 1 failed** — failure is an unrelated time-sensitive platform billing test, but it blocks a clean "suite green" claim — **fix or quarantine**.
+**Verification status (2026-06-16 integration branch)**
+- Focused backend billing suite after merge: **143 passed**.
+- Focused launch/security regression suite after merge: **153 passed**.
+- Frontend `pnpm typecheck`: pass.
+- Frontend `pnpm lint`: pass with 5 pre-existing warnings.
+- Admin students mobile E2E: **4 passed**.
+- Merge hygiene: `git ls-files -u` empty; `git diff --check` passed.
+- Full backend v2 suite: **1307 passed**, 3 known warnings.
 
 **Recommended next work order**
-1. Fix formatting in `v2/tests/unit/test_billing_ledger.py`.
-2. Fix/quarantine the unrelated time-sensitive platform billing test so full backend goes green.
-3. Build frontend API wrappers + types for the new invoice/product/action routes.
-4. Build the admin student Billing tab workflow.
-5. Add focused frontend tests for the Billing tab actions.
-6. Run backend focused + full suite, frontend typecheck/lint/build.
-7. `backfill_p4_legacy_payments.py --dry-run` against prod.
-8. If clean, run prod backfill with explicit approval; save reconciliation output.
-9. Keep legacy reads unioned for one full billing cycle.
-10. Only then start Phase 5 deletion.
+1. Run live-like admin desktop QA for the merged Billing tab actions.
+2. Replay Stripe invoice pay-link and autopay webhooks against staging.
+3. Run `ledger_payments_storage_audit.py` and `backfill_p4_legacy_payments.py
+   --dry-run` against the target database.
+4. If clean, run approved target backfills and save reconciliation output.
+5. Keep legacy reads unioned for one full billing cycle.
+6. Only then start Phase 5 deletion.
 
 ---
 

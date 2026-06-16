@@ -682,15 +682,6 @@ class MongoStudentRepository(TenantScopedRepository):
                     payment_id=payment.payment_id,
                     session_id=payment.session_id,
                 )
-        for enrollment in enrolled_sessions:
-            if enrollment.status == "active" and enrollment.amount_cents:
-                return AdminStudentCurrentPaymentSummary(
-                    amount_cents=enrollment.amount_cents,
-                    source="session_price",
-                    status=enrollment.status,
-                    session_id=enrollment.session_id,
-                    session_title=enrollment.session_title,
-                )
         return None
 
     async def _waiver_summary(

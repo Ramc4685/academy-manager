@@ -572,7 +572,7 @@ async def test_get_admin_student_normalizes_legacy_payment_amounts(db, acad) -> 
 
 
 @pytest.mark.asyncio
-async def test_get_admin_student_current_payment_falls_back_to_active_session_price(
+async def test_get_admin_student_current_payment_none_when_all_paid_no_open_invoice(
     db, acad
 ) -> None:
     now = datetime.now(UTC)
@@ -624,12 +624,9 @@ async def test_get_admin_student_current_payment_falls_back_to_active_session_pr
     detail = await repo.get_admin_student("st-alice")
 
     assert detail is not None
-    assert detail.current_payment is not None
-    assert detail.current_payment.amount_cents == 12_500
-    assert detail.current_payment.source == "session_price"
-    assert detail.current_payment.status == "active"
-    assert detail.current_payment.payment_id is None
-    assert detail.current_payment.session_id == "sess-active"
+    # No open invoice and no unpaid payment → current_payment is None.
+    # The "session_price" fallback (showing enrollment price) was removed in Phase 3.
+    assert detail.current_payment is None
 
 
 async def _seed_parent_change(db, academy_id: str) -> None:
