@@ -45,6 +45,7 @@ Close P0/P1 launch security blockers: tenant context, RBAC, Stripe, reports, exp
 - 2026-06-16T14:03:20 main/working: Fixed sidecar-review P0 launch config bug: non-SaaS single_academy request resolution now uses PRIMARY_ACADEMY_ID instead of default_academy_id; public registration and legacy membership composition use the same runtime academy id.
 - 2026-06-16T14:10:25 main/working: Pushed feat/launch-hardening-billing-integration to origin and opened draft PR #198. Pre-push hook passed during push; PR is open/draft/mergeable with CodeRabbit pending.
 - 2026-06-16T14:31:05 main/working: CI fix: bumped vulnerable backend/frontend dependencies; moved admin billing invoice/product route construction behind admin composition to satisfy import-linter; updated billing interface tests for composition-backed callables.
+- 2026-06-16T14:39:48 main/working: CI E2E fix: delayed admin student billing product lookup until the Add charge dialog opens; this removes the un-stubbed /admin/billing/products request from the student profile E2E path.
 ## Verification
 
 - No verification recorded yet.
@@ -90,6 +91,7 @@ Close P0/P1 launch security blockers: tenant context, RBAC, Stripe, reports, exp
 - 2026-06-16T14:06:42: Pre-push-equivalent after 4203d854: backend ruff format --check v2 and ruff check v2 passed; backend pytest v2/tests -n auto -q --tb=short -> 1320 passed, 12 warnings; frontend node unit tests -> 32 passed; pnpm typecheck passed; pnpm lint passed with 5 existing warnings. Wrapper not run because worktree lacks backend/.venv and backend/.venv is not ignored here.
 - 2026-06-16T14:10:25: PR handoff: gh pr view 198 reports url=https://github.com/Ramc4685/academy-manager/pull/198, isDraft=true, state=OPEN, mergeable=MERGEABLE, CodeRabbit=PENDING.
 - 2026-06-16T14:31:05: Local CI verification: backend pip-audit, compileall, import-linter, ruff format/check, ruff check, pytest v2/tests (1320 passed); frontend pnpm install --frozen-lockfile, pnpm audit --audit-level=high, pnpm typecheck, pnpm lint, pnpm build passed with existing lint warnings only.
+- 2026-06-16T14:39:49: Focused E2E: pnpm exec playwright test e2e/specs/admin-students.spec.ts --project=chromium-mobile --project=webkit-mobile passed (8 passed).
 ## Reusable Lessons
 
 - None recorded yet.

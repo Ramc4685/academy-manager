@@ -625,7 +625,7 @@ function BillingWorkflowPanel({
   const productsQuery = useQuery({
     queryKey: ["admin", "billing", "products"],
     queryFn: () => listBillingProducts(),
-    enabled: active,
+    enabled: active && modal === "add-line",
   });
 
   const invoice = invoiceQuery.data;
