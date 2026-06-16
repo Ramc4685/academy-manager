@@ -85,6 +85,7 @@ Close P0/P1 launch security blockers: tenant context, RBAC, Stripe, reports, exp
 - 2026-06-16T13:49:25: Final invoice email hardening verification on final diff: no default_academy_id reference remains in admin billing route; focused admin/send-invoice/static guard suite -> 49 passed; full backend pytest v2/tests -q -> 1316 passed, 3 warnings.
 - 2026-06-16T13:53:13: Continuation security completion audit: focused launch/security suite covering settings, tenant resolution, parent/admin/coach RBAC, webhook tenant mapping, registration, platform governance, static guards, and launch audit contract -> 181 passed. Env-only launch_readiness_audit with expected single_academy flags/CORS -> pass.
 - 2026-06-16T14:03:20: Sidecar-review fix verification: new red test first reproduced default-academy resolution; after fix targeted resolver/middleware/structural tests -> 4 passed; focused launch/security suite -> 185 passed; ruff format --check v2 && ruff check v2 && git diff --check -> passed; full backend pytest v2/tests -q -> 1320 passed, 3 warnings.
+- 2026-06-16T14:06:42: Pre-push-equivalent after 4203d854: backend ruff format --check v2 and ruff check v2 passed; backend pytest v2/tests -n auto -q --tb=short -> 1320 passed, 12 warnings; frontend node unit tests -> 32 passed; pnpm typecheck passed; pnpm lint passed with 5 existing warnings. Wrapper not run because worktree lacks backend/.venv and backend/.venv is not ignored here.
 ## Reusable Lessons
 
 - None recorded yet.
