@@ -129,9 +129,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     idempotency_store = MongoIdempotencyStore(db)
     app.state.idempotency_store = idempotency_store
 
+    runtime_academy_id = _runtime_academy_id(settings)
+
     # Identity wiring — needed by TenancyMiddleware for token verification
     # and membership validation (ADR-0007).
-    users_repo = MongoUserRepository(db, default_academy_id=settings.default_academy_id)
+    users_repo = MongoUserRepository(db, default_academy_id=runtime_academy_id)
     verifier = FirebaseTokenVerifier()
 
     # In SaaS mode, both academy_memberships and platform_roles come from the
@@ -148,7 +150,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         membership_repo = MongoMembershipRepository(db)
         platform_role_repo = _MongoPlatformRoleAdapter(membership_repo)
     else:
-        membership_repo = _LegacyUserMembershipAdapter(users_repo, settings.default_academy_id)
+        membership_repo = _LegacyUserMembershipAdapter(users_repo, runtime_academy_id)
         platform_role_repo = _MongoPlatformRoleAdapter(MongoMembershipRepository(db))
 
     load_claims = LoadAuthClaims(
@@ -163,7 +165,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         users=users_repo,
         memberships=membership_repo if settings.saas_mode else None,
         outbox=outbox,
-        default_academy_id=settings.default_academy_id,
+        default_academy_id=runtime_academy_id,
         saas_mode=settings.saas_mode,
     )
     app.state.bootstrap_academy = BootstrapAcademy(
@@ -182,6 +184,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         else None
     )
     app.state.saas_mode = settings.saas_mode
+    app.state.tenancy_mode = settings.tenancy_mode
+    app.state.primary_academy_id = settings.primary_academy_id
     app.state.default_academy_id = settings.default_academy_id
     # Platform audit + governance services (issues #78, #79).
     # Constructed before TenantLifecycleService so the lifecycle service can
@@ -217,7 +221,6 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Parent BFF wiring (Wave 2). Cross-context event handlers are registered
     # by compose_parent via install_handlers().
-    runtime_academy_id = settings.primary_academy_id or settings.default_academy_id
     app.state.parent = compose_parent(
         db,
         outbox,
@@ -433,6 +436,15 @@ def create_app() -> FastAPI:
     return app
 
 
+def _runtime_academy_id(settings: Settings) -> str:
+    """Return the explicit single-tenant academy used for non-SaaS launch paths."""
+    if settings.tenancy_mode == "single_academy":
+        if not settings.primary_academy_id:
+            raise RuntimeError("PRIMARY_ACADEMY_ID is required in single_academy mode")
+        return settings.primary_academy_id
+    return settings.default_academy_id
+
+
 def _build_stripe(settings: Settings) -> StripeGateway:
     if not settings.stripe_api_key or not settings.stripe_webhook_secret:
         raise RuntimeError(
@@ -475,8 +487,8 @@ class _LazyTenancyMiddleware(TenancyMiddleware):
     Necessary because middleware is constructed during ``create_app`` (before
     the lifespan sets ``app.state.load_auth_claims`` and friends). On the
     first request we capture references off ``request.app.state`` and bind
-    the resolver callable in either SaaS mode (TenantResolver) or
-    single-tenant mode (default_academy_id).
+    the resolver callable in either SaaS mode (TenantResolver), launch
+    single-academy mode (PRIMARY_ACADEMY_ID), or legacy compatibility mode.
     """
 
     async def dispatch(self, request, call_next):  # type: ignore[override]
@@ -501,12 +513,14 @@ def _build_request_tenant_resolver(app: FastAPI):
     which inspects subdomain, custom domain, or internal header — and never
     falls back to a default tenant.
 
-    In non-SaaS mode we keep the legacy single-tenant deployment alive by
-    returning ``settings.default_academy_id`` so existing routes keep
-    working. ``default_academy_id`` is only ever consulted in this branch.
+    In non-SaaS single-academy launch mode, resolve to PRIMARY_ACADEMY_ID. In
+    legacy non-SaaS compatibility mode, resolve to the configured default
+    academy so existing local/single-tenant flows keep working.
     """
 
     saas_mode = getattr(app.state, "saas_mode", False)
+    tenancy_mode = getattr(app.state, "tenancy_mode", "multi_academy")
+    primary_academy_id = getattr(app.state, "primary_academy_id", None)
     default_academy_id = getattr(app.state, "default_academy_id", None)
     resolver = getattr(app.state, "tenant_resolver", None)
 
@@ -519,6 +533,8 @@ def _build_request_tenant_resolver(app: FastAPI):
                 return result.academy_id
             except TenantResolutionError:
                 return None
+        if tenancy_mode == "single_academy":
+            return primary_academy_id
         return default_academy_id
 
     return _resolve

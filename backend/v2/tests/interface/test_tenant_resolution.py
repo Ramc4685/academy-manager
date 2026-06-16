@@ -524,6 +524,46 @@ def test_main_resolver_prefers_forwarded_host_for_frontend_proxy() -> None:
     assert tenant_resolver.hosts == ["courtmastr.app.example.com"]
 
 
+def test_main_resolver_uses_primary_academy_in_single_academy_launch_mode() -> None:
+    app = FastAPI()
+    app.state.saas_mode = False
+    app.state.tenancy_mode = "single_academy"
+    app.state.primary_academy_id = "acad_blno_badminton"
+    app.state.default_academy_id = "default-academy"
+    app.state.tenant_resolver = None
+    resolve_tenant = _build_request_tenant_resolver(app)
+
+    @app.get("/resolve")
+    async def resolve(request: Request) -> dict[str, str | None]:
+        return {"academy_id": await resolve_tenant(request)}
+
+    client = TestClient(app, base_url="http://api.academy.courtmastr.com")
+    response = client.get("/resolve")
+
+    assert response.status_code == 200
+    assert response.json() == {"academy_id": "acad_blno_badminton"}
+
+
+def test_main_resolver_keeps_default_only_for_legacy_multi_academy_mode() -> None:
+    app = FastAPI()
+    app.state.saas_mode = False
+    app.state.tenancy_mode = "multi_academy"
+    app.state.primary_academy_id = None
+    app.state.default_academy_id = "default-academy"
+    app.state.tenant_resolver = None
+    resolve_tenant = _build_request_tenant_resolver(app)
+
+    @app.get("/resolve")
+    async def resolve(request: Request) -> dict[str, str | None]:
+        return {"academy_id": await resolve_tenant(request)}
+
+    client = TestClient(app, base_url="http://api.local")
+    response = client.get("/resolve")
+
+    assert response.status_code == 200
+    assert response.json() == {"academy_id": "default-academy"}
+
+
 def test_middleware_blocks_inactive_tenant_before_auth_loader() -> None:
     loader = _RecordingLoader(
         memberships={
@@ -585,5 +625,59 @@ def test_middleware_single_academy_mode_rejects_other_resolved_tenant(monkeypatc
         assert r.status_code == 403
         assert r.json()["error"]["code"] == "Platform.TenantForbidden"
         assert loader.calls == []
+    finally:
+        get_settings.cache_clear()
+
+
+def test_middleware_single_academy_non_saas_launch_env_uses_primary_tenant(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("MONGO_URL", "mongodb://prod")
+    monkeypatch.setenv("DB_NAME", "academy_prod")
+    monkeypatch.setenv("FIREBASE_PROJECT_ID", "academy-courtmastr")
+    monkeypatch.setenv("V2_STRIPE_USE_FAKE_GATEWAY", "false")
+    monkeypatch.setenv("STRIPE_API_KEY", "sk_live_test")
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test")
+    monkeypatch.setenv("APP_TENANCY_MODE", "single_academy")
+    monkeypatch.setenv("PRIMARY_ACADEMY_ID", "acad_blno_badminton")
+    monkeypatch.setenv("ENABLE_PLATFORM_ROUTES", "false")
+    monkeypatch.delenv("V2_SAAS_MODE", raising=False)
+    monkeypatch.delenv("V2_DEFAULT_ACADEMY_ID", raising=False)
+    get_settings.cache_clear()
+    try:
+        loader = _RecordingLoader(
+            memberships={
+                ("u-admin", "acad_blno_badminton"): {
+                    "membership_id": "m-admin-blno",
+                    "roles": ("admin",),
+                }
+            },
+        )
+        app = FastAPI()
+        register_exception_handlers(app)
+        app.state.saas_mode = False
+        app.state.tenancy_mode = "single_academy"
+        app.state.primary_academy_id = "acad_blno_badminton"
+        app.state.default_academy_id = "default-academy"
+        app.state.tenant_resolver = None
+        app.add_middleware(
+            TenancyMiddleware,
+            load_auth_claims=loader,
+            resolve_tenant=_build_request_tenant_resolver(app),
+        )
+
+        @app.get("/whoami")
+        async def whoami(claims: AuthClaims = Depends(get_auth_claims)) -> dict[str, str]:
+            return {"academy_id": claims.academy_id}
+
+        client = TestClient(app, base_url="http://api.academy.courtmastr.com")
+        response = client.get("/whoami", headers={"Authorization": "Bearer u-admin"})
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {"academy_id": "acad_blno_badminton"}
+        assert loader.calls == [
+            {"id_token": "u-admin", "resolved_academy_id": "acad_blno_badminton"}
+        ]
     finally:
         get_settings.cache_clear()

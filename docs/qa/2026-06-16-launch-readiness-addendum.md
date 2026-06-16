@@ -16,7 +16,7 @@ money flows, prove production operations, and complete live-like QA.
 
 | Gate | Status | Evidence / gap |
 | --- | --- | --- |
-| No tenant leaks | Green for hardened v2 paths | Backend v2 suite passed; focused tenant/RBAC tests passed; local-auth parent/admin/coach browser suite passed; collection-level audit in `docs/qa/2026-06-16-tenant-isolation-audit.md`; invoice email delivery verifies active parent membership in the request academy before reading global user email. |
+| No tenant leaks | Green for hardened v2 paths | Backend v2 suite passed; focused tenant/RBAC tests passed; local-auth parent/admin/coach browser suite passed; collection-level audit in `docs/qa/2026-06-16-tenant-isolation-audit.md`; non-SaaS `single_academy` requests now resolve `PRIMARY_ACADEMY_ID` instead of `default_academy_id`; invoice email delivery verifies active parent membership in the request academy before reading global user email. |
 | No RBAC gaps | Green for reviewed P0/P1 paths | Coach billing moves and roster mutations now deny; admin exports are allowlisted; platform governance requires platform admin; platform routes are not mounted when `ENABLE_PLATFORM_ROUTES=false`. |
 | Money flows reconcile | Yellow | ADR-0011 code now writes `LedgerPayment` to `ledger_payments` and includes a copy-only migration. The migration has not been run against the target environment and full invoice/payment/credit/refund/payout reconciliation has not been run. |
 | Parent/coach flows pass mobile | Partial green | `pnpm e2e:local-auth` passed on mobile Chromium against seeded local stack. Broader real-device/mobile browser QA is still manual. |
@@ -87,6 +87,7 @@ money flows, prove production operations, and complete live-like QA.
 | Bug | Severity | Role | Page | Status |
 | --- | ---: | --- | --- | --- |
 | Ledger payments shared `payments` collection with legacy payments, despite ADR-0011 requiring `ledger_payments`. | P1 launch blocker | Admin / Parent | Billing | Fixed in branch; target migration pending |
+| Non-SaaS `single_academy` launch config resolved `default-academy`, causing request-path default tenant use and production 403s when `PRIMARY_ACADEMY_ID=acad_blno_badminton`. | P0 launch blocker | All authenticated roles | All v2 routes | Fixed in branch; regression proves primary academy resolution |
 | Full money-flow reconciliation not run across invoice, payment, credit, refund, payout, and Stripe webhook replay. | P1 launch blocker | Admin / Parent | Billing | Open |
 | Production backup/restore, monitoring, log drain, secrets, and rollback proof missing. | P1 launch blocker | Platform Operator | Operations | Open |
 | Admin student Billing tab convergence workflow requires live-like validation after merge. | P1 launch blocker | Admin | Student Billing | Integrated from `feat/billing-ledger-convergence`: create invoice, add/remove charge, generate invoice Stripe checkout URL when configured, gated Resend invoice email delivery when configured, charge autopay, record manual payment, void safeguards, invoice lines, totals, allocations, credits. Remaining: live Stripe webhook/Resend/PDF behavior, refund/credit workflow, reconciliation, and manual desktop QA. |
@@ -109,6 +110,7 @@ money flows, prove production operations, and complete live-like QA.
 ## Launch Mode Evidence
 
 - `backend/fly.toml` sets `APP_TENANCY_MODE=single_academy`, `PRIMARY_ACADEMY_ID=acad_blno_badminton`, `ENABLE_PLATFORM_ROUTES=false`, `ENABLE_OWNER_ROLE=false`, and `ENABLE_STUDENT_LOGIN=false`.
+- Non-SaaS `single_academy` request resolution uses `PRIMARY_ACADEMY_ID`, so launch mode does not require `V2_SAAS_MODE=true` or `V2_DEFAULT_ACADEMY_ID=acad_blno_badminton` to avoid `default-academy`.
 - `backend/v2/main.py` mounts platform routes only when `settings.enable_platform_routes` is true.
 - Production `single_academy` settings fail closed if `ENABLE_PLATFORM_ROUTES=true`.
 - Unit coverage proves platform routes are mounted by default and absent when `ENABLE_PLATFORM_ROUTES=false`.
@@ -123,6 +125,9 @@ money flows, prove production operations, and complete live-like QA.
 - The launch blocker is no longer the absence of the admin billing workflow code. It is proving that workflow in a live-like environment: target migration/reconciliation, Stripe webhook/Resend/PDF behavior, refund/credit handling, and manual desktop QA.
 
 ## Next Launch Slice
+
+Run the operator checklist in `docs/runbooks/production-launch-hardening.md`.
+At minimum:
 
 1. Run `backend/scripts/ledger_payments_storage_audit.py` against a
    staging/prod-like database in dry-run mode, then with `--apply`, and save the

@@ -41,6 +41,8 @@ Close P0/P1 launch security blockers: tenant context, RBAC, Stripe, reports, exp
 - 2026-06-16T13:31:02 main/working: Wired admin send-invoice route to the Stripe invoice checkout gateway when Stripe is configured; updated launch/billing docs to mark checkout URL generation implemented while email/PDF/live webhook validation remains pending.
 - 2026-06-16T13:36:03 main/working: Fixed send-invoice delivery semantics: checkout-link generation no longer records delivery_status=sent; delivery is marked sent only after email succeeds, delivery_failed after email errors, and the admin UI no longer says invoice sent when only a checkout link was generated.
 - 2026-06-16T13:46:25 main/working: Added gated tenant-safe invoice email composition: admin send-invoice now injects a Resend-backed email adapter only when email delivery is enabled and confirms the parent has active membership in the request academy before reading global user email.
+- 2026-06-16T13:54:17 main/working: Added docs/runbooks/production-launch-hardening.md to turn remaining external launch blockers into explicit operator commands, pass criteria, and evidence gates; linked it from the launch readiness addendum.
+- 2026-06-16T14:03:20 main/working: Fixed sidecar-review P0 launch config bug: non-SaaS single_academy request resolution now uses PRIMARY_ACADEMY_ID instead of default_academy_id; public registration and legacy membership composition use the same runtime academy id.
 ## Verification
 
 - No verification recorded yet.
@@ -81,6 +83,8 @@ Close P0/P1 launch security blockers: tenant context, RBAC, Stripe, reports, exp
 - 2026-06-16T13:46:25: Invoice email hardening verification: pytest v2/tests/interface/test_admin_billing.py v2/tests/unit/test_send_invoice_use_case.py v2/tests/test_no_raw_tenant_mongo_access.py -q -> 49 passed; ruff format/check v2 and ruff check v2 -> passed; full backend pytest v2/tests -q -> 1316 passed, 3 warnings.
 - 2026-06-16T13:48:13: Final invoice email hardening verification after removing default_academy_id fallback: focused admin/send-invoice/static guard suite -> 49 passed; full backend pytest v2/tests -q -> 1316 passed, 3 warnings; ruff format --check v2 && ruff check v2 && git diff --check -> passed.
 - 2026-06-16T13:49:25: Final invoice email hardening verification on final diff: no default_academy_id reference remains in admin billing route; focused admin/send-invoice/static guard suite -> 49 passed; full backend pytest v2/tests -q -> 1316 passed, 3 warnings.
+- 2026-06-16T13:53:13: Continuation security completion audit: focused launch/security suite covering settings, tenant resolution, parent/admin/coach RBAC, webhook tenant mapping, registration, platform governance, static guards, and launch audit contract -> 181 passed. Env-only launch_readiness_audit with expected single_academy flags/CORS -> pass.
+- 2026-06-16T14:03:20: Sidecar-review fix verification: new red test first reproduced default-academy resolution; after fix targeted resolver/middleware/structural tests -> 4 passed; focused launch/security suite -> 185 passed; ruff format --check v2 && ruff check v2 && git diff --check -> passed; full backend pytest v2/tests -q -> 1320 passed, 3 warnings.
 ## Reusable Lessons
 
 - None recorded yet.

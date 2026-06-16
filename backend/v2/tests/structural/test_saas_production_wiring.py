@@ -68,6 +68,15 @@ def test_v2_main_passes_saas_mode_into_register_public_parent() -> None:
     assert "memberships=membership_repo" in source
 
 
+def test_v2_main_uses_runtime_academy_for_single_academy_launch_composition() -> None:
+    source = (REPO_ROOT / "backend/v2/main.py").read_text(encoding="utf-8")
+
+    assert "runtime_academy_id = _runtime_academy_id(settings)" in source
+    assert "_LegacyUserMembershipAdapter(users_repo, runtime_academy_id)" in source
+    assert "default_academy_id=runtime_academy_id" in source
+    assert "app.state.primary_academy_id = settings.primary_academy_id" in source
+
+
 def test_fly_health_check_uses_v2_health_endpoint() -> None:
     fly_toml = (REPO_ROOT / "backend/fly.toml").read_text(encoding="utf-8")
 

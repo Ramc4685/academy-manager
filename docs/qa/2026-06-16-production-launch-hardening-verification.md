@@ -28,9 +28,10 @@ Files changed:
 - `backend/v2/main.py`
 
 Fix summary: added launch-mode settings, configured Fly launch-mode env with `PRIMARY_ACADEMY_ID=acad_blno_badminton`, enforced `single_academy` tenant mismatch as 403, gated platform route mounting behind `ENABLE_PLATFORM_ROUTES`, added a production fail-closed settings guard for platform routes in single-academy launch mode, required explicit parent/webhook academy composition, made hardened admin closures use `current_academy_id()`, made coach metrics/attendance prefer request tenant, and changed scheduler fallback to runtime academy (`PRIMARY_ACADEMY_ID` when configured).
+Follow-up fix: sidecar review found that non-SaaS `single_academy` request resolution still returned `settings.default_academy_id`, which would resolve `default-academy` and 403 production requests under the Fly launch env. `backend/v2/main.py` now derives a runtime academy id from `PRIMARY_ACADEMY_ID` in `single_academy` mode and uses it for request resolution, legacy membership fallback, parent composition, webhook composition, and public registration composition.
 Test added: settings, tenant resolution, parent composition, admin composition tenancy, scheduler academy tests.
 Command run: `cd backend && pytest v2/tests -q`
-Result: 1201 passed, 3 warnings.
+Result: latest full backend verification after follow-up fix: 1320 passed, 3 warnings.
 Remaining risk: legacy/non-SaaS compatibility paths still intentionally reference `default_academy_id`; not a SaaS launch path.
 
 ### 2. Admin Analytics And Reports
