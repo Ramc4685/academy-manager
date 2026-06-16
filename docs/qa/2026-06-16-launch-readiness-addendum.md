@@ -89,7 +89,7 @@ money flows, prove production operations, and complete live-like QA.
 | Ledger payments shared `payments` collection with legacy payments, despite ADR-0011 requiring `ledger_payments`. | P1 launch blocker | Admin / Parent | Billing | Fixed in branch; target migration pending |
 | Full money-flow reconciliation not run across invoice, payment, credit, refund, payout, and Stripe webhook replay. | P1 launch blocker | Admin / Parent | Billing | Open |
 | Production backup/restore, monitoring, log drain, secrets, and rollback proof missing. | P1 launch blocker | Platform Operator | Operations | Open |
-| Admin student Billing tab convergence workflow requires live-like validation after merge. | P1 launch blocker | Admin | Student Billing | Integrated from `feat/billing-ledger-convergence`: create invoice, add/remove charge, send invoice with Stripe checkout URL when configured, charge autopay, record manual payment, void safeguards, invoice lines, totals, allocations, credits. Remaining: live Stripe webhook/email/PDF behavior, refund/credit workflow, reconciliation, and manual desktop QA. |
+| Admin student Billing tab convergence workflow requires live-like validation after merge. | P1 launch blocker | Admin | Student Billing | Integrated from `feat/billing-ledger-convergence`: create invoice, add/remove charge, generate invoice Stripe checkout URL when configured, charge autopay, record manual payment, void safeguards, invoice lines, totals, allocations, credits. Remaining: live Stripe webhook/email/PDF behavior, refund/credit workflow, reconciliation, and manual desktop QA. |
 | Local stack helper requires care in this Codex exec environment because infra processes can be reaped when the command exits. | P2 | Developer | Local QA | Documented |
 
 ## ADR-0011 Implementation Evidence
@@ -117,7 +117,7 @@ money flows, prove production operations, and complete live-like QA.
 ## Billing Workflow Integration Evidence
 
 - This integration branch merges the billing convergence workflow from `feat/billing-ledger-convergence`.
-- Backend routes now exist for product listing, create invoice, add/remove invoice lines, send invoice, charge autopay, record manual payment, and void invoice safeguards. The send-invoice route now injects the Stripe gateway and returns a checkout URL when Stripe is configured.
+- Backend routes now exist for product listing, create invoice, add/remove invoice lines, send invoice, charge autopay, record manual payment, and void invoice safeguards. The send-invoice route now injects the Stripe gateway and returns a checkout URL when Stripe is configured; it does not mark delivery as `sent` unless email delivery succeeds.
 - The old plan warnings about `remove_invoice_line` using `ledger._db` directly and `void_invoice_route` hardcoding the reason are no longer current on this branch: remove-line uses `RemoveInvoiceLine`, and void requires `VoidInvoiceRequest.reason`.
 - The Student Billing tab now renders invoice totals, line metadata, allocations, credits, and action controls for add charge, send, autopay, record payment, create invoice, and void.
 - The launch blocker is no longer the absence of the admin billing workflow code. It is proving that workflow in a live-like environment: target migration/reconciliation, Stripe webhook/email/PDF behavior, refund/credit handling, and manual desktop QA.

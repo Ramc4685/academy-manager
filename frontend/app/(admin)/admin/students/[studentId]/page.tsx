@@ -655,9 +655,13 @@ function BillingWorkflowPanel({
     mutationFn: () => sendAdminInvoice(invoiceId!),
     onSuccess: (result) => {
       setActionMessage(
-        result.checkout_url
+        result.delivery_status === "sent" && result.checkout_url
           ? `Invoice sent. Checkout link: ${result.checkout_url}`
-          : "Invoice sent.",
+          : result.delivery_status === "sent"
+            ? "Invoice sent."
+            : result.checkout_url
+              ? `Checkout link generated: ${result.checkout_url}`
+              : "Invoice delivery is not configured.",
       );
       refreshInvoice();
     },

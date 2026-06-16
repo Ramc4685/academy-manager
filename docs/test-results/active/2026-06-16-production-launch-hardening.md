@@ -39,6 +39,7 @@ Close P0/P1 launch security blockers: tenant context, RBAC, Stripe, reports, exp
 - 2026-06-16T13:14:54 main/working: Merged billing-ledger-convergence into launch-hardening integration branch; preserved launch tenancy/RBAC guards and billing ledger storage separation; updated launch/billing docs to reflect merged Student Billing workflow and remaining live-like validation gates.
 - 2026-06-16T13:26:09 main/working: Hardened merged admin autopay billing path: removed dead Stripe customer email lookup API surface and scoped saved-card lookup by invoice academy_id plus parent_id before off-session charge.
 - 2026-06-16T13:31:02 main/working: Wired admin send-invoice route to the Stripe invoice checkout gateway when Stripe is configured; updated launch/billing docs to mark checkout URL generation implemented while email/PDF/live webhook validation remains pending.
+- 2026-06-16T13:36:03 main/working: Fixed send-invoice delivery semantics: checkout-link generation no longer records delivery_status=sent; delivery is marked sent only after email succeeds, delivery_failed after email errors, and the admin UI no longer says invoice sent when only a checkout link was generated.
 ## Verification
 
 - No verification recorded yet.
@@ -74,6 +75,8 @@ Close P0/P1 launch security blockers: tenant context, RBAC, Stripe, reports, exp
 - 2026-06-16T13:18:02: Frontend production build post-merge: cd frontend && pnpm build -> passed; compiled successfully and generated 49 static pages; same 4 eslint warnings surfaced during build.
 - 2026-06-16T13:26:09: Stripe/autopay hardening verification: pytest v2/tests/unit/test_charge_autopay_use_case.py v2/tests/infrastructure/test_stripe_gateway_request_shape.py v2/tests/unit/test_parent_composition.py v2/tests/application/test_parent_billing_portal.py -q -> 27 passed. Full backend: cd backend && pytest v2/tests -q -> 1309 passed, 3 warnings. Backend ruff: ruff check v2 && ruff format --check v2 -> passed, 649 files already formatted. Static search: no real find_customer_id_by_email implementation remains; only the parent composition assertion references that name.
 - 2026-06-16T13:31:02: Send-invoice checkout verification: pytest v2/tests/interface/test_admin_billing.py v2/tests/unit/test_send_invoice_use_case.py v2/tests/infrastructure/test_stripe_gateway_request_shape.py -q -> 45 passed. Full backend: cd backend && pytest v2/tests -q -> 1311 passed, 3 warnings. Backend ruff: ruff check v2 && ruff format --check v2 -> passed, 649 files already formatted.
+- 2026-06-16T13:36:03: Truthful send-invoice delivery verification: pytest v2/tests/unit/test_send_invoice_use_case.py v2/tests/interface/test_admin_billing.py v2/tests/infrastructure/test_stripe_gateway_request_shape.py -q -> 47 passed. Frontend pnpm typecheck passed; pnpm lint passed with 5 existing warnings. Full backend: cd backend && pytest v2/tests -q -> 1313 passed, 3 warnings. Backend ruff: ruff check v2 && ruff format --check v2 -> passed, 649 files already formatted.
+- 2026-06-16T13:37:05: Admin Student Billing UI regression after delivery-state fix: cd frontend && pnpm exec playwright test e2e/specs/admin-students.spec.ts --project=chromium-mobile -> 4 passed.
 ## Reusable Lessons
 
 - None recorded yet.

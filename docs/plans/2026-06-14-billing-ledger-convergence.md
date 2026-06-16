@@ -34,8 +34,8 @@
    allocations and credits, and exposes action dialogs for create invoice, add
    charge, remove line, send invoice, charge autopay, record manual payment, and
    void safeguards. Send-invoice now returns a Stripe checkout URL when Stripe
-   is configured. It still needs manual desktop QA and live-like Stripe webhook
-   and email validation.
+   is configured and only marks delivery as sent after email succeeds. It still
+   needs manual desktop QA and live-like Stripe webhook and email validation.
 2. **Refund/credit workflow remains a launch-validation gap.** Backend credit and
    refund primitives exist, but the merged Student Billing tab does not complete
    the refund/credit user workflow or prove credit-note behavior end to end.
@@ -146,7 +146,7 @@ The plan extends the existing ledger; it does not replace it. Explicit deltas:
 | **Financial** (money state) | `status` | `draft`, `open`, `partially_paid`, `paid`, `void` |
 | **Delivery** (was it emailed) | `delivery_status` + `sent_at` + `last_sent_at` | `not_sent`, `sent`, `delivery_failed` |
 
-`SendInvoice` (path B) updates the delivery axis only. Whether the invoice is `open` or `partially_paid` is decided solely by payment allocation. The UI composes them ("`open` · sent 2026-06-12").
+`SendInvoice` (path B) updates the delivery axis only after email delivery succeeds. Checkout-link generation alone does not mark an invoice as sent. Whether the invoice is `open` or `partially_paid` is decided solely by payment allocation. The UI composes them ("`open` · sent 2026-06-12").
 
 ---
 
@@ -318,7 +318,7 @@ Each phase has an **entry gate** and an **exit gate**. A phase may not merge unt
 
 **Entry gate:** Phase 2A green.
 
-- [~] **Use case `SendInvoice`** — route exists ([billing_routes.py:547](backend/v2/interfaces/admin/billing_routes.py:547)). Stripe checkout URL wiring is implemented for configured environments; email/PDF delivery still requires live-like verification before claiming end-to-end collection.
+- [~] **Use case `SendInvoice`** — route exists ([billing_routes.py:547](backend/v2/interfaces/admin/billing_routes.py:547)). Stripe checkout URL wiring is implemented for configured environments, and `delivery_status="sent"` is recorded only after email succeeds; email/PDF delivery still requires live-like verification before claiming end-to-end collection.
 - [x] Webhook: on pay-link payment, record `LedgerPayment` (in `ledger_payments`) + `allocate_payment_to_invoice`. Idempotent by checkout/PI id.
 - [ ] UI: "Send invoice" action on the Billing tab; the financial status chip is unchanged by sending; a separate **delivery badge** shows "Sent {last_sent_at}"; "re-send" appears when a charge is appended after delivery. **(Not built.)**
 - [x] Tests: send updates delivery axis only (financial status unchanged), payment→allocation→`paid`, overpayment→credit, re-send updates `last_sent_at`, send on a `partially_paid` invoice keeps `partially_paid`.
@@ -457,7 +457,7 @@ The Billing tab is the primary surface and the **single largest remaining gap**.
 - [ ] Refunds show as credit-note entries with amount + date; the invoice remains `paid`.
 
 **Actions**
-- [ ] "Send invoice" (path B) — visible on `draft`/`open`/`partially_paid`; updates the **delivery badge** only (financial status unchanged); shows confirmation; re-send updates "Sent {last_sent_at}".
+- [~] "Send invoice" (path B) — visible on `draft`/`open`/`partially_paid`; financial status stays unchanged; checkout-link generation is surfaced separately from email delivery. Re-send/email-delivery UI behavior still needs live-like QA.
 - [ ] "Charge autopay now" (path A) — visible only when the parent has a saved default card; modal confirms amount + card last-4; immediate charge.
 - [ ] "Record manual payment" (cash/check) — records a `LedgerPayment` + allocation.
 - [ ] "Refund / credit" — on `paid` invoices/lines; admin chooses refund-to-card or credit-to-account; amount capped at allocated.

@@ -1,19 +1,19 @@
-"""SendInvoice use case — finalize if draft, record delivery, generate pay link, send email.
+"""SendInvoice use case — finalize if draft, generate pay link, send email.
 
 Delivery axis invariant: financial status is NEVER changed by this use case.
-Only `delivery_status`, `sent_at`, and `last_sent_at` move.
+Only a successful email delivery can set `delivery_status="sent"`.
 
 Calling flow
 ------------
 1. Load invoice by invoice_id (raises ValueError if not found).
 2. If status == "draft": call finalize() → save. Financial status becomes "open".
-3. Call record_delivery(outcome="sent") → save.
-4. If balance_due_cents > 0: create a Stripe Checkout Session for the balance.
-5. Send email to parent with the pay link via EmailSendPort.
+3. If balance_due_cents > 0: create a Stripe Checkout Session for the balance.
+4. Send email to parent with the pay link via EmailSendPort when configured.
+5. Record delivery only after email succeeds; record delivery_failed after email errors.
 6. Return SendInvoiceResult(invoice=updated, checkout_url=str|None).
 
-Re-send: if delivery_status == "sent" already, proceed anyway — last_sent_at updates,
-sent_at stays the same (domain rule enforced by record_delivery).
+Re-send: if email succeeds and delivery_status == "sent" already, last_sent_at
+updates and sent_at stays the same (domain rule enforced by record_delivery).
 """
 
 from __future__ import annotations
@@ -123,11 +123,7 @@ class SendInvoice:
             invoice = await self._ledger.save_invoice(invoice)
             log.info("send_invoice: finalized draft invoice=%s", invoice_id)
 
-        # 3. Record delivery (financial status unchanged by this call)
-        invoice = record_delivery(invoice, outcome="sent", now=now)
-        invoice = await self._ledger.save_invoice(invoice)
-
-        # 4. Generate Stripe Checkout Session for unpaid balance
+        # 3. Generate Stripe Checkout Session for unpaid balance
         checkout_url: str | None = None
         if invoice.balance_due_cents > 0 and self._stripe is not None:
             try:
@@ -164,7 +160,7 @@ class SendInvoice:
                 invoice_id,
             )
 
-        # 5. Send email
+        # 4. Send email and only then record delivery.
         if self._email is not None:
             try:
                 await self._email.send_invoice_email(
@@ -176,8 +172,12 @@ class SendInvoice:
                     currency=invoice.currency,
                     checkout_url=checkout_url,
                 )
+                invoice = record_delivery(invoice, outcome="sent", now=now)
+                invoice = await self._ledger.save_invoice(invoice)
                 log.info("send_invoice: email sent for invoice=%s", invoice_id)
             except Exception as exc:
+                invoice = record_delivery(invoice, outcome="delivery_failed", now=now)
+                invoice = await self._ledger.save_invoice(invoice)
                 log.warning(
                     "send_invoice: email failed invoice=%s err=%s — continuing",
                     invoice_id,

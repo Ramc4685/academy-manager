@@ -95,14 +95,24 @@ class FakeLedgerRepository:
         return invoice
 
 
+class FakeInvoiceEmail:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[dict] = []
+
+    async def send_invoice_email(self, **kwargs) -> None:
+        self.calls.append(kwargs)
+        if self.fail:
+            raise RuntimeError("email provider unavailable")
+
+
 # ---------------------------------------------------------------------------
 # Use-case factory
 # ---------------------------------------------------------------------------
 
 
-def _uc(repo: FakeLedgerRepository) -> SendInvoice:
-    """Build SendInvoice with no Stripe/email — just the ledger."""
-    return SendInvoice(ledger=repo, stripe=None, email=None, clock=lambda: NOW)
+def _uc(repo: FakeLedgerRepository, *, email: FakeInvoiceEmail | None = None) -> SendInvoice:
+    return SendInvoice(ledger=repo, stripe=None, email=email, clock=lambda: NOW)
 
 
 # ---------------------------------------------------------------------------
@@ -110,21 +120,33 @@ def _uc(repo: FakeLedgerRepository) -> SendInvoice:
 # ---------------------------------------------------------------------------
 
 
-async def test_send_draft_invoice_finalizes_then_records_delivery() -> None:
-    """Draft invoice: finalized first (status→open), then delivery recorded."""
+async def test_send_draft_invoice_finalizes_then_records_delivery_after_email() -> None:
+    """Draft invoice: finalized first (status→open), then successful email records delivery."""
     repo = FakeLedgerRepository(invoices=[_invoice(status="draft")])
-    result = await _uc(repo).execute("inv-1")
+    email = FakeInvoiceEmail()
+    result = await _uc(repo, email=email).execute("inv-1")
 
     assert result.invoice.status == "open", "financial status must be 'open' after finalize+send"
     assert result.invoice.delivery_status == "sent"
     assert result.invoice.sent_at == NOW
     assert result.invoice.last_sent_at == NOW
+    assert email.calls == [
+        {
+            "parent_id": "parent-1",
+            "invoice_id": "inv-1",
+            "period": "2026-06",
+            "total_cents": 10_000,
+            "balance_due_cents": 10_000,
+            "currency": "usd",
+            "checkout_url": None,
+        }
+    ]
 
 
 async def test_send_open_invoice_records_delivery_without_changing_status() -> None:
     """Open invoice: delivery recorded, financial status remains 'open'."""
     repo = FakeLedgerRepository(invoices=[_invoice(status="open")])
-    result = await _uc(repo).execute("inv-1")
+    result = await _uc(repo, email=FakeInvoiceEmail()).execute("inv-1")
 
     assert result.invoice.status == "open"
     assert result.invoice.delivery_status == "sent"
@@ -137,7 +159,7 @@ async def test_send_partially_paid_invoice_keeps_status() -> None:
     repo = FakeLedgerRepository(
         invoices=[_invoice(status="partially_paid", balance_due_cents=3_000)]
     )
-    result = await _uc(repo).execute("inv-1")
+    result = await _uc(repo, email=FakeInvoiceEmail()).execute("inv-1")
 
     assert result.invoice.status == "partially_paid"
     assert result.invoice.delivery_status == "sent"
@@ -154,7 +176,7 @@ async def test_resend_updates_last_sent_at_but_preserves_sent_at() -> None:
             )
         ]
     )
-    result = await _uc(repo).execute("inv-1")
+    result = await _uc(repo, email=FakeInvoiceEmail()).execute("inv-1")
 
     # sent_at must not be overwritten (first-send preserved)
     assert result.invoice.sent_at == FIRST_SEND, "sent_at must be the first-send timestamp"
@@ -175,7 +197,7 @@ async def test_financial_status_unchanged_by_send_key_invariant() -> None:
         repo = FakeLedgerRepository(
             invoices=[_invoice(status=initial_status, balance_due_cents=balance)]
         )
-        result = await _uc(repo).execute("inv-1")
+        result = await _uc(repo, email=FakeInvoiceEmail()).execute("inv-1")
         assert (
             result.invoice.status == expected_status
         ), f"financial status changed from {initial_status!r} to {result.invoice.status!r}"
@@ -193,6 +215,9 @@ async def test_checkout_url_is_none_when_no_stripe_configured() -> None:
     repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=5_000)])
     result = await _uc(repo).execute("inv-1")
     assert result.checkout_url is None
+    assert result.invoice.delivery_status == "not_sent"
+    assert result.invoice.sent_at is None
+    assert result.invoice.last_sent_at is None
 
 
 async def test_no_checkout_session_when_balance_is_zero() -> None:
@@ -227,4 +252,35 @@ async def test_checkout_url_returned_when_stripe_configured() -> None:
     result = await uc.execute("inv-1")
 
     assert result.checkout_url == "https://checkout.stripe.com/pay/test"
+    assert result.invoice.delivery_status == "not_sent"
+
+
+async def test_checkout_url_is_passed_to_successful_email_before_marking_sent() -> None:
+    class _FakeStripe:
+        async def create_invoice_checkout_session(self, **kwargs) -> tuple[str, str]:  # type: ignore[override]
+            return ("cs_test_123", "https://checkout.stripe.com/pay/test")
+
+    email = FakeInvoiceEmail()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=_FakeStripe(),  # type: ignore[arg-type]
+        email=email,  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    result = await uc.execute("inv-1")
+
+    assert result.checkout_url == "https://checkout.stripe.com/pay/test"
     assert result.invoice.delivery_status == "sent"
+    assert result.invoice.sent_at == NOW
+    assert email.calls[0]["checkout_url"] == "https://checkout.stripe.com/pay/test"
+
+
+async def test_email_failure_records_delivery_failed_without_sent_at() -> None:
+    email = FakeInvoiceEmail(fail=True)
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    result = await _uc(repo, email=email).execute("inv-1")
+
+    assert result.invoice.delivery_status == "delivery_failed"
+    assert result.invoice.sent_at is None
+    assert result.invoice.last_sent_at == NOW

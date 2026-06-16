@@ -375,7 +375,7 @@ def test_send_invoice_returns_checkout_url_when_stripe_configured(admin_client):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["checkout_url"] == "https://checkout.stripe.test/invoice"
-    assert body["delivery_status"] == "sent"
+    assert body["delivery_status"] == "not_sent"
     assert stripe.calls == [
         {
             "invoice_id": "inv-1",
