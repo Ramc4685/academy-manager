@@ -4,15 +4,20 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+import pytest
+
 from backend.v2.contexts.billing.application.use_cases.finance import Payout
 from backend.v2.contexts.billing.domain import ledger as ledger_domain
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 from backend.v2.contexts.billing.domain.models import Payment
+from backend.v2.contexts.communications.application.ports import SendOutcome
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     AdminStudentDetail,
     AdminStudentSessionSummary,
 )
+from backend.v2.contexts.identity.domain.models import AcademyMembership, User
 from backend.v2.interfaces.admin import billing_routes as admin_billing_routes
+from backend.v2.shared.tenancy import tenant_scope
 
 
 def _seed_payment(
@@ -163,6 +168,51 @@ class _FakeInvoiceStripe:
         return "cs_invoice_test", "https://checkout.stripe.test/invoice"
 
 
+class _FakeInvoiceEmail:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def send_invoice_email(self, **kwargs) -> None:
+        self.calls.append(kwargs)
+
+
+class _FakeEmailSender:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def send(self, **kwargs) -> SendOutcome:
+        self.calls.append(kwargs)
+        return SendOutcome(ok=True, provider_message_id="msg_test", failed_reason=None)
+
+
+class _FakeMembershipRepo:
+    def __init__(self, membership: AcademyMembership | None) -> None:
+        self.membership = membership
+        self.calls: list[tuple[str, str]] = []
+
+    async def get_membership(self, academy_id: str, user_id: str) -> AcademyMembership | None:
+        self.calls.append((academy_id, user_id))
+        if (
+            self.membership is not None
+            and self.membership.academy_id == academy_id
+            and self.membership.user_id == user_id
+        ):
+            return self.membership
+        return None
+
+
+class _FakeUserRepo:
+    def __init__(self, user: User | None) -> None:
+        self.user = user
+        self.calls: list[str] = []
+
+    async def get_by_id(self, user_id: str) -> User | None:
+        self.calls.append(user_id)
+        if self.user is not None and self.user.user_id == user_id:
+            return self.user
+        return None
+
+
 def _student_detail(
     *,
     student_id: str = "student-1",
@@ -197,6 +247,12 @@ def _override_ledger(admin_client, ledger: _FakeLedger) -> None:
 def _override_invoice_stripe(admin_client, stripe: _FakeInvoiceStripe) -> None:
     admin_client.app.dependency_overrides[admin_billing_routes._get_autopay_gateway] = (
         lambda: stripe
+    )
+
+
+def _override_invoice_email(admin_client, email: _FakeInvoiceEmail) -> None:
+    admin_client.app.dependency_overrides[admin_billing_routes._get_invoice_email_port] = (
+        lambda: email
     )
 
 
@@ -391,6 +447,104 @@ def test_send_invoice_returns_checkout_url_when_stripe_configured(admin_client):
             },
         }
     ]
+
+
+def test_send_invoice_with_email_marks_sent_and_passes_checkout_url(admin_client):
+    ledger = _FakeLedger(invoices=[_invoice(status="open", balance_due_cents=7_000)])
+    stripe = _FakeInvoiceStripe()
+    email = _FakeInvoiceEmail()
+    _override_ledger(admin_client, ledger)
+    _override_invoice_stripe(admin_client, stripe)
+    _override_invoice_email(admin_client, email)
+
+    response = admin_client.post("/api/v2/admin/billing/invoices/inv-1/send")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["checkout_url"] == "https://checkout.stripe.test/invoice"
+    assert body["delivery_status"] == "sent"
+    assert email.calls == [
+        {
+            "parent_id": "parent-1",
+            "invoice_id": "inv-1",
+            "period": "2026-06",
+            "total_cents": 7_000,
+            "balance_due_cents": 7_000,
+            "currency": "usd",
+            "checkout_url": "https://checkout.stripe.test/invoice",
+        }
+    ]
+
+
+async def test_invoice_email_adapter_requires_parent_membership_in_request_academy() -> None:
+    sender = _FakeEmailSender()
+    memberships = _FakeMembershipRepo(
+        AcademyMembership(
+            membership_id="mem-1",
+            academy_id="other-acad",
+            user_id="parent-1",
+            roles=("parent",),
+            status="active",
+        )
+    )
+    users = _FakeUserRepo(
+        User(user_id="parent-1", email="parent@example.com", display_name="Parent One")
+    )
+    adapter = admin_billing_routes._InvoiceEmailAdapter(
+        memberships=memberships,
+        users=users,
+        sender=sender,
+    )
+
+    with tenant_scope("acad"), pytest.raises(ValueError, match="active membership"):
+        await adapter.send_invoice_email(
+            parent_id="parent-1",
+            invoice_id="inv-1",
+            period="2026-06",
+            total_cents=7_000,
+            balance_due_cents=7_000,
+            currency="usd",
+            checkout_url="https://checkout.stripe.test/invoice",
+        )
+
+    assert sender.calls == []
+    assert users.calls == []
+
+
+async def test_invoice_email_adapter_sends_after_membership_match() -> None:
+    sender = _FakeEmailSender()
+    memberships = _FakeMembershipRepo(
+        AcademyMembership(
+            membership_id="mem-1",
+            academy_id="acad",
+            user_id="parent-1",
+            roles=("parent",),
+            status="active",
+        )
+    )
+    users = _FakeUserRepo(
+        User(user_id="parent-1", email="parent@example.com", display_name="Parent One")
+    )
+    adapter = admin_billing_routes._InvoiceEmailAdapter(
+        memberships=memberships,
+        users=users,
+        sender=sender,
+    )
+
+    with tenant_scope("acad"):
+        await adapter.send_invoice_email(
+            parent_id="parent-1",
+            invoice_id="inv-1",
+            period="2026-06",
+            total_cents=7_000,
+            balance_due_cents=7_000,
+            currency="usd",
+            checkout_url="https://checkout.stripe.test/invoice",
+        )
+
+    assert sender.calls[0]["recipient"].email == "parent@example.com"
+    assert sender.calls[0]["recipient"].user_id == "parent-1"
+    assert "https://checkout.stripe.test/invoice" in sender.calls[0]["body"]
 
 
 def test_add_invoice_line_returns_refreshed_invoice_totals(admin_client):

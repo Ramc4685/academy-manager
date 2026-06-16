@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 from datetime import UTC, date, datetime
 from typing import Annotated
 
@@ -47,7 +48,18 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import
     MongoBillingLedgerRepository,
 )
 from backend.v2.contexts.billing.infrastructure.stripe_gateway import RealStripeGateway
+from backend.v2.contexts.communications.application.ports import (
+    EmailSendPort,
+    ResolvedRecipient,
+)
+from backend.v2.contexts.communications.infrastructure.resend_send_port import (
+    ResendEmailSendPort,
+)
 from backend.v2.contexts.enrollment.domain.errors import StudentNotFound
+from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
+    MongoMembershipRepository,
+)
+from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
     AdminEnrollmentQuoteRequest,
@@ -88,6 +100,7 @@ from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.http import require_persona
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.tenancy import current_academy_id
 
 router = APIRouter(tags=["admin.billing"])
 
@@ -601,6 +614,92 @@ def _get_autopay_gateway() -> RealStripeGateway | None:
     return RealStripeGateway(api_key=s.stripe_api_key, webhook_secret=s.stripe_webhook_secret)
 
 
+class _InvoiceEmailAdapter:
+    def __init__(
+        self,
+        *,
+        memberships: MongoMembershipRepository,
+        users: MongoUserRepository,
+        sender: EmailSendPort,
+    ) -> None:
+        self._memberships = memberships
+        self._users = users
+        self._sender = sender
+
+    async def send_invoice_email(
+        self,
+        *,
+        parent_id: str,
+        invoice_id: str,
+        period: str,
+        total_cents: int,
+        balance_due_cents: int,
+        currency: str,
+        checkout_url: str | None,
+    ) -> None:
+        academy_id = current_academy_id()
+        membership = await self._memberships.get_membership(academy_id, parent_id)
+        if membership is None or not membership.is_active() or "parent" not in membership.roles:
+            raise ValueError("invoice parent has no active membership in request academy")
+
+        user = await self._users.get_by_id(parent_id)
+        email = str(user.email if user else "").strip()
+        if not email:
+            raise ValueError("invoice parent email not found")
+
+        display_name = str(user.display_name if user else "")
+        amount = f"{currency.upper()} {balance_due_cents / 100:.2f}"
+        total = f"{currency.upper()} {total_cents / 100:.2f}"
+        safe_invoice = html.escape(invoice_id)
+        safe_period = html.escape(period)
+        safe_amount = html.escape(amount)
+        safe_total = html.escape(total)
+        pay_line = (
+            f'<p><a href="{html.escape(checkout_url, quote=True)}">Pay invoice</a></p>'
+            if checkout_url
+            else "<p>Please contact the academy to arrange payment.</p>"
+        )
+        body = (
+            f"<p>Your invoice <strong>{safe_invoice}</strong> for {safe_period} is ready.</p>"
+            f"<p>Balance due: <strong>{safe_amount}</strong> "
+            f"(invoice total {safe_total}).</p>"
+            f"{pay_line}"
+        )
+        outcome = await self._sender.send(
+            recipient=ResolvedRecipient(
+                user_id=parent_id,
+                email=email,
+                display_name=display_name or None,
+            ),
+            subject=f"Invoice {invoice_id} for {period}",
+            body=body,
+        )
+        if not outcome.ok:
+            raise ValueError(outcome.failed_reason or "invoice email delivery failed")
+
+
+def _invoice_from_address(frontend_url: str | None) -> str:
+    if not frontend_url:
+        return "noreply@academy.app"
+    host = frontend_url.replace("https://", "").replace("http://", "").split("/")[0]
+    return f"noreply@{host}"
+
+
+def _get_invoice_email_port(request: Request) -> _InvoiceEmailAdapter | None:
+    settings = get_settings()
+    if not (settings.email_delivery_enabled and settings.resend_api_key):
+        return None
+    sender = ResendEmailSendPort(
+        api_key=settings.resend_api_key,
+        from_address=_invoice_from_address(settings.frontend_url),
+    )
+    return _InvoiceEmailAdapter(
+        memberships=MongoMembershipRepository(request.app.state.db),
+        users=MongoUserRepository(request.app.state.db),
+        sender=sender,
+    )
+
+
 @router.post(
     "/billing/invoices/{invoice_id}/send",
     response_model=SendInvoiceResponse,
@@ -610,6 +709,7 @@ async def send_billing_invoice(
     _claims: AuthClaims = Depends(require_persona("admin")),
     ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
     stripe: RealStripeGateway | None = Depends(_get_autopay_gateway),
+    email: _InvoiceEmailAdapter | None = Depends(_get_invoice_email_port),
 ) -> SendInvoiceResponse:
     """Send (or re-send) an invoice to the parent.
 
@@ -623,6 +723,7 @@ async def send_billing_invoice(
     use_case = SendInvoice(
         ledger=ledger,
         stripe=stripe,
+        email=email,
         success_url=f"{frontend_url}/parent/payments?invoice=paid",
         cancel_url=f"{frontend_url}/parent/payments?invoice=cancelled",
     )

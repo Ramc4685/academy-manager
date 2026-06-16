@@ -34,15 +34,16 @@
    allocations and credits, and exposes action dialogs for create invoice, add
    charge, remove line, send invoice, charge autopay, record manual payment, and
    void safeguards. Send-invoice now returns a Stripe checkout URL when Stripe
-   is configured and only marks delivery as sent after email succeeds. It still
-   needs manual desktop QA and live-like Stripe webhook and email validation.
+   is configured, wires a gated Resend invoice-email adapter when email delivery
+   is configured, and only marks delivery as sent after email succeeds. It still
+   needs manual desktop QA and live-like Stripe webhook and Resend validation.
 2. **Refund/credit workflow remains a launch-validation gap.** Backend credit and
    refund primitives exist, but the merged Student Billing tab does not complete
    the refund/credit user workflow or prove credit-note behavior end to end.
 3. **Backend route hardening status:** `remove_invoice_line` now uses the
    `RemoveInvoiceLine` use case, and `void_invoice_route` now requires a real
    request reason. Add-line returns refreshed invoice totals. Confirm the
-   send-invoice Stripe checkout URL, email, and PDF behavior in a live-like
+   send-invoice Stripe checkout URL, Resend email, and PDF behavior in a live-like
    environment before ship.
 4. **Phase 3 cleanup ≠ Phase 5 deletion.** Legacy reads are still intentionally
    unioned (correct for transition). "Legacy reads off" is **not** done; do not
@@ -318,7 +319,7 @@ Each phase has an **entry gate** and an **exit gate**. A phase may not merge unt
 
 **Entry gate:** Phase 2A green.
 
-- [~] **Use case `SendInvoice`** — route exists ([billing_routes.py:547](backend/v2/interfaces/admin/billing_routes.py:547)). Stripe checkout URL wiring is implemented for configured environments, and `delivery_status="sent"` is recorded only after email succeeds; email/PDF delivery still requires live-like verification before claiming end-to-end collection.
+- [~] **Use case `SendInvoice`** — route exists ([billing_routes.py:547](backend/v2/interfaces/admin/billing_routes.py:547)). Stripe checkout URL wiring is implemented for configured environments, gated Resend invoice-email composition is implemented, and `delivery_status="sent"` is recorded only after email succeeds; Resend/PDF delivery still requires live-like verification before claiming end-to-end collection.
 - [x] Webhook: on pay-link payment, record `LedgerPayment` (in `ledger_payments`) + `allocate_payment_to_invoice`. Idempotent by checkout/PI id.
 - [ ] UI: "Send invoice" action on the Billing tab; the financial status chip is unchanged by sending; a separate **delivery badge** shows "Sent {last_sent_at}"; "re-send" appears when a charge is appended after delivery. **(Not built.)**
 - [x] Tests: send updates delivery axis only (financial status unchanged), payment→allocation→`paid`, overpayment→credit, re-send updates `last_sent_at`, send on a `partially_paid` invoice keeps `partially_paid`.
