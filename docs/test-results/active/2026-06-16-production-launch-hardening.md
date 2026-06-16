@@ -100,6 +100,7 @@ Close P0/P1 launch security blockers: tenant context, RBAC, Stripe, reports, exp
 - 2026-06-16T15:17:26: Static backend checks: ruff format --check v2, ruff check v2, and import-linter contracts all passed.
 - 2026-06-16T15:39:35: Focused launch/billing/startup regression: source backend/.venv/bin/activate && pytest v2/tests/contract/test_stripe_webhook_fixture_replay.py v2/tests/application/test_webhook_handler.py v2/tests/contract/test_stripe_event_dedup.py v2/tests/contract/test_billing_idempotency.py v2/tests/contract/test_billing_ledger_storage.py v2/tests/unit/test_charge_autopay_use_case.py v2/tests/unit/test_send_invoice_use_case.py v2/tests/contract/test_launch_readiness_audit.py v2/tests/structural/test_saas_production_wiring.py v2/tests/unit/test_settings.py -q => 113 passed, 1 warning.
 - 2026-06-16T15:39:35: Docker smoke blocked before app build by local Docker Engine EOF: docker info returns 'ERROR: Error reading remote info: EOF'. docker compose config succeeds; app-side missing-Stripe startup path verified by structural test and local stack health during script run.
+- 2026-06-16T15:47:29: GitHub PR #198 run 27646851892 passed Backend, Backend Lint, Frontend Static, Frontend E2E Chromium, and Frontend E2E WebKit. Deploy/production approval/smoke jobs skipped on PR; CodeRabbit pending ignored per user direction.
 ## Reusable Lessons
 
 - None recorded yet.
