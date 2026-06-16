@@ -323,6 +323,7 @@ class FakeBillingLedger:
     def __init__(self) -> None:
         self.payments: dict[str, LedgerPayment] = {}
         self.allocations: list[dict[str, Any]] = []
+        self.fail_allocate = False
 
     async def record_payment(
         self, payment: LedgerPayment, *, idempotency_key: str
@@ -340,6 +341,8 @@ class FakeBillingLedger:
         amount_cents: int,
         idempotency_key: str,
     ) -> None:
+        if self.fail_allocate:
+            raise ValueError("allocation failed")
         self.allocations.append(
             {
                 "payment_id": payment_id,
@@ -392,3 +395,19 @@ async def test_fixture_invoice_pay_link_checkout_records_ledger_payment_and_allo
     assert alloc["invoice_id"] == "inv-pay-link-test-01"
     assert alloc["amount_cents"] == 20000
     assert alloc["payment_id"] == lp.payment_id
+
+
+@pytest.mark.asyncio
+async def test_invoice_pay_link_allocation_failure_is_retryable() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger()
+    ledger.fail_allocate = True
+    uc = _build_with_ledger(repo, ledger)
+
+    with pytest.raises(ValueError, match="allocation failed"):
+        await uc.execute(
+            _load("checkout_session_completed_invoice_pay_link.json"), "test_signature"
+        )
+
+    assert len(ledger.payments) == 1
+    assert ledger.allocations == []

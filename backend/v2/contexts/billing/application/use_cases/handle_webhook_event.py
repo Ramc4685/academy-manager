@@ -355,25 +355,18 @@ class HandleWebhookEvent:
         )
 
         if amount_total > 0:
-            try:
-                await self._billing_ledger.allocate_payment(
-                    payment_id=payment.payment_id,
-                    invoice_id=invoice_id,
-                    amount_cents=amount_total,
-                    idempotency_key=f"invoice-checkout-alloc:{checkout_session_id}",
-                )
-                log.info(
-                    "invoice_checkout_completed: allocated payment=%s to invoice=%s amount=%d",
-                    payment.payment_id,
-                    invoice_id,
-                    amount_total,
-                )
-            except ValueError as exc:
-                log.warning(
-                    "invoice_checkout_completed: allocation skipped invoice=%s err=%s",
-                    invoice_id,
-                    exc,
-                )
+            await self._billing_ledger.allocate_payment(
+                payment_id=payment.payment_id,
+                invoice_id=invoice_id,
+                amount_cents=amount_total,
+                idempotency_key=f"invoice-checkout-alloc:{checkout_session_id}",
+            )
+            log.info(
+                "invoice_checkout_completed: allocated payment=%s to invoice=%s amount=%d",
+                payment.payment_id,
+                invoice_id,
+                amount_total,
+            )
 
     async def _on_checkout_completed(self, event: dict[str, Any]) -> None:
         obj = event["data"]["object"]

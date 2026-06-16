@@ -84,6 +84,21 @@ def test_v2_main_does_not_bypass_stripe_webhook_signatures_from_raw_env() -> Non
     assert "skip_signature_verify=" not in source
 
 
+def test_v2_main_uses_fake_stripe_gateway_for_non_prod_without_secrets(monkeypatch) -> None:
+    from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
+    from backend.v2.main import _build_stripe
+    from backend.v2.shared.config.settings import Settings
+
+    monkeypatch.delenv("STRIPE_API_KEY", raising=False)
+    monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
+    monkeypatch.delenv("V2_STRIPE_API_KEY", raising=False)
+    monkeypatch.delenv("V2_STRIPE_WEBHOOK_SECRET", raising=False)
+
+    settings = Settings(env="dev", _env_file=None)
+
+    assert isinstance(_build_stripe(settings), FakeStripeGateway)
+
+
 def test_fly_health_check_uses_v2_health_endpoint() -> None:
     fly_toml = (REPO_ROOT / "backend/fly.toml").read_text(encoding="utf-8")
 

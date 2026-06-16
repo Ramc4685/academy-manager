@@ -447,6 +447,12 @@ def _runtime_academy_id(settings: Settings) -> str:
 
 def _build_stripe(settings: Settings) -> StripeGateway:
     if not settings.stripe_api_key or not settings.stripe_webhook_secret:
+        if settings.env != "prod":
+            from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
+                FakeStripeGateway,
+            )
+
+            return FakeStripeGateway()
         raise RuntimeError(
             "STRIPE_API_KEY and STRIPE_WEBHOOK_SECRET must be set. "
             "Use Stripe test-mode keys (sk_test_...) for local/staging and live keys for prod."

@@ -47,6 +47,7 @@ Close P0/P1 launch security blockers: tenant context, RBAC, Stripe, reports, exp
 - 2026-06-16T14:31:05 main/working: CI fix: bumped vulnerable backend/frontend dependencies; moved admin billing invoice/product route construction behind admin composition to satisfy import-linter; updated billing interface tests for composition-backed callables.
 - 2026-06-16T14:39:48 main/working: CI E2E fix: delayed admin student billing product lookup until the Add charge dialog opens; this removes the un-stubbed /admin/billing/products request from the student profile E2E path.
 - 2026-06-16T15:17:25 main/working: Addressed reviewer launch blockers: autopay webhook recovery now derives parent/tenant from stored ledger invoice and fails retryably on allocation errors; Stripe gateway wiring no longer bypasses webhook signatures via raw APP_ENV; received webhook queue uses receiving academy instead of event metadata; ledger payments normalize final_amount_cents for reports; removed stale V2_STRIPE_USE_FAKE_GATEWAY Fly env.
+- 2026-06-16T15:39:34 main/working: Fixed two late launch-readiness issues found during parallel verification: non-prod/Docker startup now falls back to FakeStripeGateway when Stripe secrets are absent; invoice pay-link webhook allocation failures now propagate so events remain retryable instead of being marked processed.
 ## Verification
 
 - No verification recorded yet.
@@ -97,6 +98,8 @@ Close P0/P1 launch security blockers: tenant context, RBAC, Stripe, reports, exp
 - 2026-06-16T15:17:25: Focused backend regression: source backend/.venv/bin/activate && pytest v2/tests/unit/test_admin_composition_tenancy.py v2/tests/application/test_webhook_handler.py v2/tests/unit/test_charge_autopay_use_case.py v2/tests/contract/test_stripe_event_dedup.py v2/tests/structural/test_saas_production_wiring.py -q => 69 passed, 1 warning.
 - 2026-06-16T15:17:26: Full backend v2 suite: source backend/.venv/bin/activate && pytest v2/tests --override-ini=testpaths=v2/tests --cov=v2/shared --cov-report=term-missing --cov-fail-under=70 => 1325 passed, 4 warnings, coverage 82.51%.
 - 2026-06-16T15:17:26: Static backend checks: ruff format --check v2, ruff check v2, and import-linter contracts all passed.
+- 2026-06-16T15:39:35: Focused launch/billing/startup regression: source backend/.venv/bin/activate && pytest v2/tests/contract/test_stripe_webhook_fixture_replay.py v2/tests/application/test_webhook_handler.py v2/tests/contract/test_stripe_event_dedup.py v2/tests/contract/test_billing_idempotency.py v2/tests/contract/test_billing_ledger_storage.py v2/tests/unit/test_charge_autopay_use_case.py v2/tests/unit/test_send_invoice_use_case.py v2/tests/contract/test_launch_readiness_audit.py v2/tests/structural/test_saas_production_wiring.py v2/tests/unit/test_settings.py -q => 113 passed, 1 warning.
+- 2026-06-16T15:39:35: Docker smoke blocked before app build by local Docker Engine EOF: docker info returns 'ERROR: Error reading remote info: EOF'. docker compose config succeeds; app-side missing-Stripe startup path verified by structural test and local stack health during script run.
 ## Reusable Lessons
 
 - None recorded yet.
