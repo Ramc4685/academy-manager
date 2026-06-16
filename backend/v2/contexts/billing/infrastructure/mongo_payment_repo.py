@@ -176,7 +176,10 @@ class MongoPaymentRepository(TenantScopedRepository):
         # latest. This keeps withdrawals working for older data without forcing
         # a manual backfill.
         enrollment_doc = await self._db["enrollments"].find_one(
-            {"$or": [{"enrollment_id": enrollment_id}, _safe_object_lookup(enrollment_id)]}
+            {
+                "academy_id": current_academy_id(),
+                "$or": [{"enrollment_id": enrollment_id}, _safe_object_lookup(enrollment_id)],
+            }
         )
         if enrollment_doc is None:
             return None

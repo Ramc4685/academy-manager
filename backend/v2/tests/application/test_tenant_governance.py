@@ -19,7 +19,10 @@ from backend.v2.contexts.platform.governance.application.use_cases import (
     RevokeSupportAccessCommand,
     TenantGovernanceService,
 )
-from backend.v2.contexts.platform.governance.domain.errors import GovernancePermissionDenied
+from backend.v2.contexts.platform.governance.domain.errors import (
+    GovernancePermissionDenied,
+    GovernanceRequestNotFound,
+)
 from backend.v2.contexts.platform.governance.domain.models import (
     GovernanceActor,
     PIIHandlingPolicy,
@@ -100,10 +103,10 @@ class FakeGovernanceStore:
         ]
 
     async def revoke_support_access_grant(
-        self, grant_id: str, updates: dict[str, Any]
+        self, grant_id: str, academy_id: str, updates: dict[str, Any]
     ) -> dict[str, Any] | None:
         grant = self.support_access_grants.get(grant_id)
-        if grant is None:
+        if grant is None or grant["academy_id"] != academy_id:
             return None
         grant.update(updates)
         return dict(grant)
@@ -191,9 +194,19 @@ def _platform_actor() -> GovernanceActor:
     return GovernanceActor(
         actor_user_id="user_platform_001",
         actor_membership_id=None,
-        platform_role="platform_support",
+        platform_role="platform_admin",
         request_id="req_123",
         ip_address="203.0.113.10",
+    )
+
+
+def _platform_support_actor() -> GovernanceActor:
+    return GovernanceActor(
+        actor_user_id="user_support_001",
+        actor_membership_id=None,
+        platform_role="platform_support",
+        request_id="req_support",
+        ip_address="203.0.113.11",
     )
 
 
@@ -425,7 +438,7 @@ async def test_support_access_grant_dual_writes_unified_platform_audit_event() -
     assert len(audit.commands) == 1
     event = audit.commands[0]
     assert event.actor_user_id == actor.actor_user_id
-    assert event.platform_actor_role == "platform_support"
+    assert event.platform_actor_role == "platform_admin"
     assert event.academy_id == "acad_001"
     assert event.action == "support_access.granted"
     assert event.entity_type == "support_access_grant"
@@ -510,7 +523,7 @@ async def test_support_access_rejects_non_platform_actor_without_audit() -> None
     store = FakeGovernanceStore()
     service = _service(store)
 
-    with pytest.raises(GovernancePermissionDenied, match="platform support role required"):
+    with pytest.raises(GovernancePermissionDenied, match="platform admin role required"):
         await service.grant_support_access(
             GrantSupportAccessCommand(
                 academy_id="acad_001",
@@ -522,6 +535,54 @@ async def test_support_access_rejects_non_platform_actor_without_audit() -> None
 
     assert store.support_access_grants == {}
     assert store.audit_logs == []
+
+
+@pytest.mark.asyncio
+async def test_support_access_grant_rejects_platform_support_actor_without_audit() -> None:
+    store = FakeGovernanceStore()
+    service = _service(store)
+
+    with pytest.raises(GovernancePermissionDenied, match="platform admin role required"):
+        await service.grant_support_access(
+            GrantSupportAccessCommand(
+                academy_id="acad_001",
+                actor=_platform_support_actor(),
+                support_user_id="user_support_002",
+                purpose="debug tenant onboarding",
+            )
+        )
+
+    assert store.support_access_grants == {}
+    assert store.audit_logs == []
+
+
+@pytest.mark.asyncio
+async def test_support_access_revoke_is_filtered_by_stored_grant_academy() -> None:
+    store = FakeGovernanceStore()
+    service = _service(store)
+    actor = _platform_actor()
+
+    grant = await service.grant_support_access(
+        GrantSupportAccessCommand(
+            academy_id="acad_001",
+            actor=actor,
+            support_user_id="user_support_002",
+            purpose="debug tenant onboarding",
+        )
+    )
+
+    with pytest.raises(GovernanceRequestNotFound):
+        await service.revoke_support_access(
+            RevokeSupportAccessCommand(
+                academy_id="acad_other",
+                actor=actor,
+                support_access_grant_id=grant.support_access_grant_id,
+                reason="wrong tenant",
+            )
+        )
+
+    assert store.support_access_grants[grant.support_access_grant_id]["status"] == "active"
+    assert [entry["action"] for entry in store.audit_logs] == ["support_access.granted"]
 
 
 @pytest.mark.asyncio

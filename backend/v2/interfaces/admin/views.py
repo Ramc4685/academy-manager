@@ -664,6 +664,11 @@ class WithdrawalCreditApproveResponse(BaseModel):
 class InvoiceLineDto(BaseModel):
     description: str
     amount_cents: int
+    line_type: str | None = None
+    quantity: int | None = None
+    unit_amount_cents: int | None = None
+    source_type: str | None = None
+    source_id: str | None = None
 
 
 class InvoiceDto(BaseModel):

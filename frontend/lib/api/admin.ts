@@ -340,6 +340,11 @@ export interface ReconcileStripeBillingResponse {
 export interface InvoiceLineView {
   description: string;
   amount_cents: number;
+  line_type?: string | null;
+  quantity?: number | null;
+  unit_amount_cents?: number | null;
+  source_type?: string | null;
+  source_id?: string | null;
 }
 
 export interface InvoiceAllocationView {

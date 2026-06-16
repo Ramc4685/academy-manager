@@ -46,6 +46,17 @@ class Settings(BaseSettings):
             "forbidden and default_academy_id is not a valid tenant source."
         ),
     )
+    tenancy_mode: Literal["multi_academy", "single_academy"] = Field(
+        default="multi_academy",
+        description=(
+            "Launch tenancy mode. In single_academy mode every resolved request tenant "
+            "must match primary_academy_id."
+        ),
+    )
+    primary_academy_id: str | None = Field(default=None)
+    enable_platform_routes: bool = Field(default=True)
+    enable_owner_role: bool = Field(default=False)
+    enable_student_login: bool = Field(default=False)
 
     allowed_internal_tenant_header: str | None = Field(
         default=None,
@@ -125,6 +136,22 @@ class Settings(BaseSettings):
             self.stripe_webhook_secret = os.environ.get(
                 "STRIPE_WEBHOOK_SECRET", self.stripe_webhook_secret
             )
+        if "V2_TENANCY_MODE" not in os.environ and os.environ.get("APP_TENANCY_MODE"):
+            self.tenancy_mode = os.environ["APP_TENANCY_MODE"].strip().lower()  # type: ignore[assignment]
+        if "V2_PRIMARY_ACADEMY_ID" not in os.environ:
+            self.primary_academy_id = os.environ.get("PRIMARY_ACADEMY_ID", self.primary_academy_id)
+        if "V2_ENABLE_PLATFORM_ROUTES" not in os.environ:
+            self.enable_platform_routes = _env_bool(
+                "ENABLE_PLATFORM_ROUTES",
+                self.enable_platform_routes,
+            )
+        if "V2_ENABLE_OWNER_ROLE" not in os.environ:
+            self.enable_owner_role = _env_bool("ENABLE_OWNER_ROLE", self.enable_owner_role)
+        if "V2_ENABLE_STUDENT_LOGIN" not in os.environ:
+            self.enable_student_login = _env_bool(
+                "ENABLE_STUDENT_LOGIN",
+                self.enable_student_login,
+            )
         if "V2_STRIPE_CONNECT_CLIENT_ID" not in os.environ:
             self.stripe_connect_client_id = os.environ.get(
                 "STRIPE_CONNECT_CLIENT_ID", self.stripe_connect_client_id
@@ -143,6 +170,7 @@ class Settings(BaseSettings):
             self.frontend_url = os.environ.get("FRONTEND_URL", self.frontend_url)
         if "V2_SCHEDULER_TZ" not in os.environ:
             self.scheduler_tz = os.environ.get("SCHEDULER_TZ", self.scheduler_tz)
+        self._validate_launch_settings()
         self._validate_production_settings()
         return self
 
@@ -180,6 +208,22 @@ class Settings(BaseSettings):
             missing_text = ", ".join(missing)
             raise ValueError(f"Missing required production v2 settings: {missing_text}")
 
+    def _validate_launch_settings(self) -> None:
+        if self.tenancy_mode not in {"multi_academy", "single_academy"}:
+            raise ValueError(f"Unsupported tenancy_mode: {self.tenancy_mode}")
+        if self.tenancy_mode == "single_academy" and not (
+            self.primary_academy_id and self.primary_academy_id.strip()
+        ):
+            raise ValueError("primary_academy_id is required when tenancy_mode=single_academy")
+        if (
+            self.env == "prod"
+            and self.tenancy_mode == "single_academy"
+            and self.enable_platform_routes
+        ):
+            raise ValueError(
+                "enable_platform_routes must be false for production single_academy launch"
+            )
+
 
 def _explicit_env_value(*names: str) -> str | None:
     for name in names:
@@ -187,6 +231,18 @@ def _explicit_env_value(*names: str) -> str | None:
         if value is not None and value.strip():
             return value
     return None
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean")
 
 
 @lru_cache(maxsize=1)

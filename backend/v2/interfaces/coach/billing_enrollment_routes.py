@@ -4,7 +4,7 @@ GET  /coach/billing-enrollments                         — list active StudentB
                                                           records for the coach's students
 GET  /coach/billing-enrollments/{enrollment_id}/move/preview
                                                         — proration preview (no side effects)
-POST /coach/billing-enrollments/{enrollment_id}/move    — apply session-type move
+POST /coach/billing-enrollments/{enrollment_id}/move    — disabled for launch
 
 All routes require the `coach` persona.
 """
@@ -17,7 +17,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
-    MoveStudentSessionTypeCommand,
     PreviewStudentSessionTypeMoveCommand,
 )
 from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
@@ -30,6 +29,11 @@ from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
 router = APIRouter(tags=["coach.billing"])
+
+_BILLING_MUTATION_FORBIDDEN = HTTPException(
+    status_code=status.HTTP_403_FORBIDDEN,
+    detail="coach billing changes are disabled; admin approval is required",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +198,7 @@ async def move_preview(
 @router.post(
     "/billing-enrollments/{enrollment_id}/move",
     response_model=MoveEnrollmentResponse,
-    summary="Apply a session-type move for a student billing enrollment",
+    summary="Disabled: coach cannot apply billing-impacting enrollment moves",
 )
 async def move_enrollment(
     enrollment_id: str,
@@ -202,59 +206,5 @@ async def move_enrollment(
     claims: AuthClaims = Depends(require_persona("coach")),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> MoveEnrollmentResponse:
-    enrollment = await use_cases.get_billing_enrollment(enrollment_id)
-    if enrollment is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="enrollment not found")
-
-    await _verify_coach_owns_enrollment(
-        enrollment,
-        claims.user_id,
-        use_cases.assigned_sessions,
-        use_cases.get_active_session_enrollments_for_student,
-    )
-
-    effective_move_date = _ensure_utc(body.move_date or datetime.now(UTC))
-
-    if body.period_start is not None and body.period_end is not None:
-        period_start = _ensure_utc(body.period_start)
-        period_end = _ensure_utc(body.period_end)
-    else:
-        period_start, period_end = _default_period(effective_move_date)
-
-    cmd = MoveStudentSessionTypeCommand(
-        enrollment_id=enrollment_id,
-        to_session_type_id=body.to_session_type_id,
-        move_date=effective_move_date,
-        period_start=period_start,
-        period_end=period_end,
-        actor_id=claims.user_id,
-        reason=body.reason,
-    )
-
-    result = await use_cases.move_student_session_type.execute(cmd)
-
-    # Build session type name map for the response view
-    session_types = await use_cases.list_session_types.execute()
-    st_map = {st.session_type_id: st for st in session_types}
-
-    updated = result.enrollment
-    st = st_map.get(updated.session_type_id)
-
-    return MoveEnrollmentResponse(
-        enrollment=CoachBillingEnrollmentView(
-            enrollment_id=updated.enrollment_id,
-            student_id=updated.student_id,
-            session_type_id=updated.session_type_id,
-            session_type_name=st.name if st else "(unknown)",
-            status=updated.status,
-            billing_start_date=updated.billing_start_date,
-            override_price_cents=updated.override_price_cents,
-        ),
-        proration=ProrationPreviewView(
-            credit_cents=result.proration.credit_cents,
-            charge_cents=result.proration.charge_cents,
-            net_cents=result.proration.net_cents,
-            from_session_type_id=result.proration.from_session_type_id,
-            to_session_type_id=result.proration.to_session_type_id,
-        ),
-    )
+    _ = enrollment_id, body, claims, use_cases
+    raise _BILLING_MUTATION_FORBIDDEN

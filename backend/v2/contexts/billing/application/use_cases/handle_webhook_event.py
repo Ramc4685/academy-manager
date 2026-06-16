@@ -296,8 +296,8 @@ class HandleWebhookEvent:
         obj = event["data"]["object"]
         checkout_id = obj["id"]
         payment = await self._payments.get_by_checkout_session(checkout_id)
-        await self._persist_checkout_customer(obj, payment=payment)
-        await self._sync_subscription_from_checkout(obj)
+        subscription = await self._sync_subscription_from_checkout(obj)
+        await self._persist_checkout_customer(obj, payment=payment, subscription=subscription)
         if payment is None:
             log.warning("checkout.completed for unknown checkout_id=%s", checkout_id)
             return
@@ -327,14 +327,24 @@ class HandleWebhookEvent:
         )
 
     async def _persist_checkout_customer(
-        self, checkout: dict[str, Any], *, payment: Payment | None
+        self,
+        checkout: dict[str, Any],
+        *,
+        payment: Payment | None,
+        subscription: Any | None,
     ) -> None:
         if self._parent_customers is None:
             return
         stripe_customer_id = str(checkout.get("customer") or "")
         if not stripe_customer_id:
             return
-        parent_id = payment.parent_id if payment is not None else self._checkout_parent_id(checkout)
+        if payment is None and subscription is None:
+            log.warning(
+                "checkout.completed customer ignored without tenant-owned mapping checkout_id=%s",
+                checkout.get("id"),
+            )
+            return
+        parent_id = payment.parent_id if payment is not None else subscription.parent_id
         if not parent_id:
             log.warning(
                 "checkout.completed customer present without parent_id checkout_id=%s",
@@ -346,7 +356,7 @@ class HandleWebhookEvent:
             stripe_customer_id=stripe_customer_id,
         )
 
-    async def _sync_subscription_from_checkout(self, checkout: dict[str, Any]) -> None:
+    async def _sync_subscription_from_checkout(self, checkout: dict[str, Any]) -> Any | None:
         """Backfill the Stripe subscription id captured only after Checkout
         completes (it is null at session-creation time) and activate both the
         subscription row and the enrollment's autopay state. Without this,
@@ -355,7 +365,7 @@ class HandleWebhookEvent:
         """
         stripe_sub_id = str(checkout.get("subscription") or "")
         if not stripe_sub_id:
-            return
+            return None
         metadata = checkout.get("metadata")
         enrollment_id: str | None = None
         internal_sub_id: str | None = None
@@ -387,12 +397,19 @@ class HandleWebhookEvent:
             )
             await self._subscriptions.save(updated)
             enrollment_id = enrollment_id or updated.enrollment_id
+        else:
+            log.warning(
+                "checkout.completed subscription ignored without tenant-owned subscription checkout_id=%s",
+                checkout.get("id"),
+            )
+            return None
         if self._enrollment_autopay is not None and enrollment_id:
             await self._enrollment_autopay.set_autopay_state(
                 enrollment_id=enrollment_id,
                 subscription_status="active",
                 stripe_subscription_id=stripe_sub_id,
             )
+        return updated
 
     @staticmethod
     def _checkout_parent_id(checkout: dict[str, Any]) -> str | None:

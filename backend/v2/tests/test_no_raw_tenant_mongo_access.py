@@ -129,6 +129,45 @@ def test_composition_exceptions_are_explicit_and_documented() -> None:
         assert "Transitional" in rationale
 
 
+def test_hardened_admin_composition_paths_use_request_tenant_not_default() -> None:
+    guarded_functions = [
+        "list_audit_logs",
+        "list_dues_followup",
+        "get_billing_invoice_detail",
+        "generate_billing_invoice_artifact",
+        "export_report_csv",
+        "get_enrollment_funnel",
+        "get_attendance_trends",
+        "get_coach_utilization",
+    ]
+    source = (V2_ROOT / "composition/admin.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    lines = source.splitlines()
+
+    for function_name in guarded_functions:
+        function_source = _node_source(
+            _find_function(tree, function_name),
+            lines,
+        )
+        assert "current_academy_id" in function_source, function_name
+        assert "settings.default_academy_id" not in function_source, function_name
+
+
+def test_parent_composition_requires_explicit_academy_id() -> None:
+    source = (V2_ROOT / "composition/parent.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    lines = source.splitlines()
+
+    for function_name in ("compose_parent", "compose_parent_webhook_handler"):
+        function_source = _node_source(_find_function(tree, function_name), lines)
+        assert "academy_id: str" in function_source, function_name
+        assert "_require_academy_id(academy_id)" in function_source, function_name
+        assert "settings.default_academy_id" not in function_source, function_name
+
+    helper_source = _node_source(_find_function(tree, "_require_academy_id"), lines)
+    assert "if not academy_id:" in helper_source
+
+
 def test_raw_mongo_guard_reports_tenant_owned_direct_access(tmp_path) -> None:
     path = tmp_path / "bad_repo.py"
     path.write_text(
@@ -158,6 +197,18 @@ def _raw_mongo_accesses(path: Path, rel_path: Path) -> list[RawMongoAccess]:
     visitor = _RawMongoAccessVisitor(rel_path)
     visitor.visit(tree)
     return visitor.accesses
+
+
+def _find_function(tree: ast.AST, name: str) -> ast.FunctionDef | ast.AsyncFunctionDef:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == name:
+            return node
+    raise AssertionError(f"function not found: {name}")
+
+
+def _node_source(node: ast.AST, lines: list[str]) -> str:
+    assert node.end_lineno is not None
+    return "\n".join(lines[node.lineno - 1 : node.end_lineno])
 
 
 class _RawMongoAccessVisitor(ast.NodeVisitor):

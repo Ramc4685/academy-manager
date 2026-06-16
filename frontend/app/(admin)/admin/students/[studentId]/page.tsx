@@ -24,9 +24,11 @@ import {
 } from "lucide-react";
 
 import {
+  getAdminInvoiceDetail,
   changeAdminStudentParent,
   listAdminSessions,
   listAdminUsers,
+  type AdminInvoiceDetail,
   type AdminSessionView,
   type AdminUserView,
   type ChangeAdminStudentParentRequest,
@@ -576,6 +578,15 @@ function ComplianceSummary({ student }: { student: AdminStudentDetail }) {
 
 function CurrentPaymentPanel({ student }: { student: AdminStudentDetail }) {
   const current = student.current_payment;
+  const currentInvoiceId =
+    current?.source === "invoice" && current.payment_id ? current.payment_id : "";
+  const invoiceQuery = useQuery({
+    queryKey: queryKeys.admin.invoiceDetail(currentInvoiceId),
+    queryFn: () => getAdminInvoiceDetail(currentInvoiceId),
+    enabled: Boolean(currentInvoiceId),
+    retry: false,
+  });
+
   return (
     <Card p={20}>
       <div className="flex items-center gap-2">
@@ -607,6 +618,13 @@ function CurrentPaymentPanel({ student }: { student: AdminStudentDetail }) {
               { label: "Session", value: current.session_title ?? current.session_id ?? "—" },
             ]}
           />
+          {currentInvoiceId && (
+            <InvoiceBreakdown
+              invoice={invoiceQuery.data}
+              loading={invoiceQuery.isPending}
+              error={invoiceQuery.isError}
+            />
+          )}
         </div>
       ) : (
         <p
@@ -618,6 +636,117 @@ function CurrentPaymentPanel({ student }: { student: AdminStudentDetail }) {
       )}
     </Card>
   );
+}
+
+function InvoiceBreakdown({
+  invoice,
+  loading,
+  error,
+}: {
+  invoice?: AdminInvoiceDetail;
+  loading: boolean;
+  error: boolean;
+}) {
+  if (loading) {
+    return (
+      <div
+        className="rounded-lg border border-neutral-200 bg-neutral-50 p-3"
+        data-testid="admin-student-invoice-loading"
+      >
+        <div className="h-4 w-28 animate-pulse rounded bg-neutral-200" />
+        <div className="mt-3 h-16 animate-pulse rounded bg-neutral-100" />
+      </div>
+    );
+  }
+
+  if (error || !invoice) {
+    return (
+      <p
+        className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+        data-testid="admin-student-invoice-error"
+      >
+        Invoice detail unavailable.
+      </p>
+    );
+  }
+
+  const totalCents = invoice.due_amount_cents + invoice.paid_amount_cents;
+  return (
+    <div
+      className="rounded-lg border border-neutral-200 bg-neutral-50 p-3"
+      data-testid="admin-student-invoice-breakdown"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="font-medium text-rally-ink">{invoice.invoice_number}</div>
+          <div className="text-xs text-rally-muted">{invoice.period || "No period"}</div>
+        </div>
+        <StatusChip status={invoice.status} />
+      </div>
+
+      <div className="mt-3 overflow-x-auto">
+        <table className="min-w-full text-left text-xs">
+          <thead className="border-b border-neutral-200 uppercase tracking-overline text-rally-muted">
+            <tr>
+              <th className="py-2 pr-4 font-medium">Line</th>
+              <th className="py-2 text-right font-medium">Amount</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-neutral-100">
+            {invoice.lines.length === 0 ? (
+              <tr>
+                <td className="py-3 pr-4 text-rally-muted" colSpan={2}>
+                  No invoice lines.
+                </td>
+              </tr>
+            ) : (
+              invoice.lines.map((line, index) => (
+                <tr key={`${line.description}-${index}`}>
+                  <td className="py-3 pr-4 text-rally-ink">
+                    <div>{line.description}</div>
+                    <InvoiceLineMeta line={line} />
+                  </td>
+                  <td className="py-3 text-right font-mono tabular-nums text-rally-ink">
+                    {formatCurrencyCents(line.amount_cents)}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <DetailList
+        rows={[
+          { label: "Invoice total", value: formatCurrencyCents(totalCents) },
+          { label: "Paid", value: formatCurrencyCents(invoice.paid_amount_cents) },
+          { label: "Balance", value: formatCurrencyCents(invoice.due_amount_cents) },
+          {
+            label: "Allocations",
+            value: String(invoice.allocations.length),
+          },
+          {
+            label: "Credits",
+            value: formatCurrencyCents(
+              invoice.credit_usage.reduce((sum, item) => sum + item.amount_cents, 0),
+            ),
+          },
+        ]}
+      />
+    </div>
+  );
+}
+
+function InvoiceLineMeta({ line }: { line: AdminInvoiceDetail["lines"][number] }) {
+  const parts = [
+    line.line_type,
+    line.quantity && line.unit_amount_cents
+      ? `${line.quantity} x ${formatCurrencyCents(line.unit_amount_cents)}`
+      : null,
+    line.source_type,
+  ].filter(Boolean);
+  if (parts.length === 0) return null;
+  return <div className="mt-0.5 text-[11px] text-rally-muted">{parts.join(" / ")}</div>;
 }
 
 function SessionsPanel({

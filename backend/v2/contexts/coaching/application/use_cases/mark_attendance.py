@@ -41,6 +41,7 @@ from backend.v2.contexts.coaching.domain.events import (
 from backend.v2.contexts.coaching.domain.models import Attendance
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore, idempotent
+from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
 
 
 class MarkAttendanceCommand(BaseModel):
@@ -149,9 +150,10 @@ class MarkAttendance:
         # 4. Persist + outbox in the same logical transaction. The repo handles
         # tenant scope via TenantScopedRepository.
         now = self._now()
+        academy_id = self._current_academy_id()
         attendance = Attendance(
             attendance_id=cmd.mutation_id,
-            academy_id=self._academy_id,
+            academy_id=academy_id,
             occurrence_id=cmd.occurrence_id,
             session_id=cmd.session_id,
             student_id=cmd.student_id,
@@ -165,7 +167,7 @@ class MarkAttendance:
         await self._outbox.append(
             AttendanceMarked(
                 aggregate_id=attendance.attendance_id,
-                academy_id=self._academy_id,
+                academy_id=academy_id,
                 payload=AttendanceMarkedPayload(
                     attendance_id=attendance.attendance_id,
                     occurrence_id=attendance.occurrence_id,
@@ -186,3 +188,9 @@ class MarkAttendance:
             status=attendance.status,
             marked_at=attendance.marked_at,
         )
+
+    def _current_academy_id(self) -> str:
+        try:
+            return current_academy_id()
+        except TenantContextUnset:
+            return self._academy_id

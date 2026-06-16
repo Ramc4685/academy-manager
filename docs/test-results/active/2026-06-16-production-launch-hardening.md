@@ -1,0 +1,71 @@
+# production launch hardening
+
+## Current State
+
+Status: active
+
+## Problem
+
+Close P0/P1 launch security blockers: tenant context, RBAC, Stripe, reports, exports, public registration
+
+## Changed Files
+
+- None recorded yet.
+
+## Log
+
+- 2026-06-16T09:54:52 main/NA: Task ledger created.
+- 2026-06-16T10:01:57 main/working: Implemented first production launch hardening slice: APP_TENANCY_MODE/PRIMARY_ACADEMY_ID launch config, single-academy 403 tenant guard, explicit parent/webhook academy composition, and removal of Stripe customer global email lookup from parent portal.
+- 2026-06-16T11:04:36 main/working: Starting slice 2: admin composition/reporting/audit/invoice artifact tenant-context hardening. Re-read slice 1 diff and active ledger before edits.
+- 2026-06-16T11:11:53 main/working: Slice 2 verified: admin audit, invoice detail/artifacts, dues follow-up, attendance export, and Phase 2 analytics now use request tenant; focused suite 70 passed; ruff/diff checks passed.
+- 2026-06-16T11:14:26 main/working: Coach authority slice verified: coach billing enrollment POST move now returns 403 without mutation/events; coach roster POST/DELETE now return 403; coach view/preview tests remain green.
+- 2026-06-16T11:17:42 main/working: Stripe webhook slice verified: checkout.completed no longer writes customer/autopay from metadata-only events without tenant-owned payment/subscription mappings; existing subscription mapping flows remain green.
+- 2026-06-16T11:19:08 main/working: Coach tenant-context slice verified: coach metrics and attendance event academy ids now prefer request tenant; coach billing/roster mutation restrictions remain green.
+- 2026-06-16T11:21:32 main/working: P1 enrollment fallback lookup fixed: legacy payment fallback now filters enrollment lookup by current tenant; cross-tenant regression added.
+- 2026-06-16T11:24:30 main/working: P1 platform governance tightened: support access grant/revoke now require platform_admin at service boundary, revoke is tenant-filtered, and mismatch cannot produce caller-supplied audit academy.
+- 2026-06-16T11:25:51 main/working: P1 public registration hardened: SaaS self-registration now creates only invited membership rows, leaves existing memberships unchanged, and cannot reactivate suspended/removed access.
+- 2026-06-16T11:27:10 main/working: P1 admin exports restricted: CSV exports now have an explicit allowlist, unknown names fail closed at route and composition layers, and route coverage proves admin-only access.
+- 2026-06-16T11:28:32 main/working: P1 static guard coverage added for hardened composition request paths: admin report/audit/artifact closures must use request tenant, parent composition must require explicit academy id.
+- 2026-06-16T11:29:25 main/working: P0 scheduler composition fallback now uses runtime academy id (PRIMARY_ACADEMY_ID when configured) instead of default_academy_id for scheduled resumes, Stripe webhook processing, and coach digests.
+- 2026-06-16T11:37:47 main/working: Wrote docs/qa/2026-06-16-production-launch-hardening-verification.md with P0/P1 fix evidence, ship verdict, skipped checks, manual QA, migration and rollback notes.
+- 2026-06-16T12:13:14 main/working: Added launch readiness addendum. Security/RBAC/tenant P0/P1 hardening remains green, but billing source-of-truth review found a launch blocker: LedgerPayment still persists in shared payments collection despite ADR-0011 requiring ledger_payments before money-flow reconciliation can be trusted.
+- 2026-06-16T12:18:19 main/working: Implemented ADR-0011 ledger-payment storage separation: MongoBillingLedgerRepository now uses ledger_payments; migration 0128 creates ledger_payments indexes and copy-only backfills ledger-shaped rows from payments; ADR and launch reports updated.
+- 2026-06-16T12:20:59 main/working: Added backend/scripts/ledger_payments_storage_audit.py for ADR-0011 dry-run/apply count evidence; regression covers audit counts before/after copy-only migration.
+- 2026-06-16T12:25:29 main/working: Added docs/qa/2026-06-16-tenant-isolation-audit.md with collection-level academy_id tenant audit, global/platform exceptions, and remaining legacy/compatibility risks; linked it from launch readiness addendum.
+- 2026-06-16T12:30:38 main/working: Enforced ENABLE_PLATFORM_ROUTES in v2 create_app and updated launch-mode verification docs.
+- 2026-06-16T12:32:30 main/working: Inspected billing convergence route hazards from the older plan; current worktree has no active remove-line or void-invoice admin routes, so remaining billing blocker is missing Student Billing workflow plus reconciliation.
+- 2026-06-16T12:46:48 main/working: Added read-only Admin Student Billing invoice breakdown with line metadata; corrected production PRIMARY_ACADEMY_ID to acad_blno_badminton; added prod single_academy fail-closed guard for platform routes. Sidecar security review found no residual code-level P0/P1 issue; sidecar frontend review recommended this read-only invoice slice and noted remaining billing action workflows.
+- 2026-06-16T12:56:29 main/working: Added read-only launch readiness audit script for environment flags, ledger payment migration counts, required Mongo indexes, and active parent membership provenance review.
+## Verification
+
+- No verification recorded yet.
+- 2026-06-16T10:01:57: source /Users/ramc/Documents/Code/academy-manager/backend/.venv/bin/activate && pytest backend/v2/tests/unit/test_settings.py backend/v2/tests/interface/test_tenant_resolution.py backend/v2/tests/unit/test_parent_composition.py -q => 37 passed
+- 2026-06-16T10:01:57: source /Users/ramc/Documents/Code/academy-manager/backend/.venv/bin/activate && ruff check touched backend files => passed; ruff format --check touched backend files => passed. Worktree-local backend/.venv was missing, so verification used the main checkout backend virtualenv.
+- 2026-06-16T11:04:36: Slice 1 additional verification from prior turn: source /Users/ramc/Documents/Code/academy-manager/backend/.venv/bin/activate && pytest backend/v2/tests/application/test_parent_billing_portal.py backend/v2/tests/application/test_webhook_handler.py -q => 26 passed
+- 2026-06-16T11:11:53: Admin/parent focused regression: pytest backend/v2/tests/unit/test_settings.py backend/v2/tests/interface/test_tenant_resolution.py backend/v2/tests/unit/test_parent_composition.py backend/v2/tests/unit/test_admin_composition_tenancy.py backend/v2/tests/application/test_parent_billing_portal.py backend/v2/tests/application/test_webhook_handler.py -q -> 70 passed. Ruff check/format check touched backend files passed. git diff --check passed.
+- 2026-06-16T11:11:54: Slice 2 focused admin tenancy tests: source /Users/ramc/Documents/Code/academy-manager/backend/.venv/bin/activate && pytest backend/v2/tests/unit/test_admin_composition_tenancy.py -q => 9 passed
+- 2026-06-16T11:14:26: Coach slice regression: pytest settings/tenant/parent/admin/parent billing+webhook/coach billing/coach roster focused suite -> 102 passed. Ruff check/format check touched backend files passed. git diff --check passed.
+- 2026-06-16T11:17:42: Webhook slice regression: cumulative focused suite including webhook handler, parent portal, admin tenancy, coach route restrictions -> 103 passed. Ruff check/format check touched backend files passed. git diff --check passed.
+- 2026-06-16T11:19:08: Coach tenant-context regression: cumulative focused suite including settings, tenant, parent, admin, webhook, mark attendance, coach attendance, coach bulk attendance, coach billing, coach roster -> 126 passed. Ruff check/format check touched coach/webhook files passed. git diff --check passed.
+- 2026-06-16T11:21:32: Enrollment fallback regression: pytest backend/v2/tests/contract/test_mongo_payment_repo.py -q -> 7 passed; cumulative focused suite with payment repo -> 133 passed before formatting; ruff check/format check payment repo files passed; git diff --check passed.
+- 2026-06-16T11:24:30: pytest backend/v2/tests/application/test_tenant_governance.py backend/v2/tests/interface/test_platform_governance_routes.py -q -> 20 passed
+- 2026-06-16T11:25:51: pytest backend/v2/tests/application/test_register_public_parent.py backend/v2/tests/interface/test_registration.py backend/v2/tests/interface/test_public_write_rate_limit.py -q -> 22 passed
+- 2026-06-16T11:27:10: pytest backend/v2/tests/interface/test_admin_analytics_routes.py backend/v2/tests/unit/test_admin_composition_tenancy.py -q -> 23 passed
+- 2026-06-16T11:28:32: pytest backend/v2/tests/test_no_raw_tenant_mongo_access.py backend/v2/tests/structural/test_saas_production_wiring.py -q -> 17 passed
+- 2026-06-16T11:29:25: pytest backend/v2/tests/unit/test_scheduler_academies.py backend/v2/tests/unit/test_settings.py backend/v2/tests/interface/test_tenant_resolution.py -q -> 36 passed
+- 2026-06-16T11:30:10: pytest focused hardening suite (17 files) -q -> 180 passed; ruff check touched backend files -> passed; ruff format --check touched backend files -> passed
+- 2026-06-16T11:31:14: cd backend && pytest v2/tests -q -> 1196 passed, 3 warnings (PytestCollectionWarning for TestAttempt model; mongomock datetime.utcnow deprecation). Root-level pytest backend/v2/tests is path-sensitive and failed one source-path test; documented backend cwd command passed.
+- 2026-06-16T11:31:24: cd backend && ruff check v2 && ruff format --check v2 -> passed; 633 files already formatted
+- 2026-06-16T11:33:15: Pre-push-equivalent checks: backend commands run from backend with shared .venv -> ruff format/check passed, pytest v2/tests -n auto -q --tb=short -> 1196 passed; frontend pnpm install completed, node unit tests -> 32 passed, pnpm typecheck -> passed, pnpm lint -> passed with 5 warnings. scripts/dev/pre-push-checks.sh wrapper itself cannot run in this worktree because backend/.venv is not present locally.
+- 2026-06-16T11:36:00: frontend pnpm e2e -> 164 passed, 30 skipped in 2.2m. Skips include local-auth QA, coach offline writes, skill-board/offline-specific specs in this mocked auth-bypass run.
+- 2026-06-16T11:36:46: scripts/local_test_stack.sh all -> failed because worktree-local backend/.venv is missing after starting Mongo/Firebase; scripts/local_test_stack.sh stop/status confirmed MongoDB, Firebase Auth/UI, backend, and frontend stopped. Seeded local-auth E2E not run: requires explicit approval for local Mongo reset/seed plus LOCAL_AUTH_* credentials.
+- 2026-06-16T12:10:23: Isolated local-auth stack on Mongo 27018/Firebase 9109/backend 8011/frontend 3011: emulator sign-in ok, backend /api/v2/me 200, frontend proxy /api/v2/me 200; LOCAL_AUTH_E2E=1 LOCAL_AUTH_BASE_URL=http://localhost:3011 pnpm e2e:local-auth -> 7 passed. Initial malformed retry reseeded the default local DB before being stopped; final validation used isolated DB academy_manager_launch_hardening and local test ports were verified stopped.
+- 2026-06-16T12:18:19: ADR-0011 verification: pytest backend/v2/tests/contract/test_billing_idempotency.py -> 5 passed; focused billing/webhook suite -> 42 passed; cd backend && pytest v2/tests -q -> 1198 passed, 3 warnings; cd backend && ruff check v2 && ruff format --check v2 -> passed; git diff --check -> passed.
+- 2026-06-16T12:20:59: Post-audit-script verification: focused billing/webhook suite -> 42 passed; cd backend && pytest v2/tests -q -> 1198 passed, 3 warnings; cd backend && ruff check v2 scripts/ledger_payments_storage_audit.py && ruff format --check v2 scripts/ledger_payments_storage_audit.py -> passed; git diff --check -> passed.
+- 2026-06-16T12:25:51: Tenant isolation audit verification: pytest backend/v2/tests/test_no_raw_tenant_mongo_access.py backend/v2/tests/structural/test_saas_production_wiring.py backend/v2/tests/contract/test_billing_idempotency.py -q -> 22 passed; git diff --check -> passed.
+- 2026-06-16T12:30:38: source /Users/ramc/Documents/Code/academy-manager/backend/.venv/bin/activate && pytest backend/v2/tests/unit/test_healthz.py backend/v2/tests/unit/test_settings.py -q -> 17 passed; cd backend && pytest v2/tests -q -> 1200 passed, 3 warnings; ruff check/format and git diff --check passed.
+- 2026-06-16T12:46:48: Backend focused settings/admin invoice tests: 37 passed. Backend full suite: cd backend && pytest v2/tests -q -> 1201 passed, 3 warnings. Backend ruff check/format touched files -> passed. Frontend: pnpm typecheck passed; pnpm lint passed with 5 existing warnings; pnpm exec playwright test e2e/specs/admin-students.spec.ts --project=chromium-mobile -> 4 passed. git diff --check -> passed.
+- 2026-06-16T12:56:29: source /Users/ramc/Documents/Code/academy-manager/backend/.venv/bin/activate && ruff format/check backend/scripts/launch_readiness_audit.py backend/v2/tests/contract/test_launch_readiness_audit.py && pytest backend/v2/tests/contract/test_launch_readiness_audit.py -q -> 4 passed; git diff --check -> passed.
+## Reusable Lessons
+
+- None recorded yet.

@@ -357,6 +357,51 @@ async def test_process_next_fetches_current_checkout_before_projection() -> None
 
 
 @pytest.mark.asyncio
+async def test_checkout_completed_without_tenant_owned_mapping_does_not_mutate_customer_or_autopay() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    parent_customers = FakeParentStripeCustomers()
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    outbox = FakeOutbox()
+    uc = _build(
+        repo,
+        outbox=outbox,
+        parent_customers=parent_customers,
+        enrollment_autopay=enrollment_autopay,
+    )
+    body = json.dumps(
+        {
+            "id": "evt_unknown_checkout",
+            "type": "checkout.session.completed",
+            "livemode": True,
+            "data": {
+                "object": {
+                    "id": "cs_unknown",
+                    "customer": "cus_wrong_tenant",
+                    "subscription": "sub_wrong_tenant",
+                    "payment_intent": "pi_wrong_tenant",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "parent_id": "parent-from-metadata",
+                        "enrollment_id": "enrollment-from-metadata",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    result = await uc.process_next(processor_id="worker-1")
+
+    assert result["processed"] is True
+    assert parent_customers.saved == []
+    assert enrollment_autopay.synced == []
+    assert repo.by_id == {}
+    assert outbox.events == []
+
+
+@pytest.mark.asyncio
 async def test_failed_stored_event_can_be_retried_later() -> None:
     repo = FakePaymentRepo()
     _seed_pending_payment(repo)
@@ -515,7 +560,7 @@ async def test_checkout_completed_marks_payment_succeeded_and_emits_event() -> N
 
 
 @pytest.mark.asyncio
-async def test_subscription_checkout_completed_saves_parent_stripe_customer() -> None:
+async def test_subscription_checkout_without_mapping_does_not_save_parent_stripe_customer() -> None:
     repo = FakePaymentRepo()
     customers = FakeParentStripeCustomers()
     uc = _build(repo, parent_customers=customers)
@@ -538,7 +583,7 @@ async def test_subscription_checkout_completed_saves_parent_stripe_customer() ->
     res = await uc.execute(body, "test_signature")
 
     assert res["received"] is True
-    assert customers.saved == [{"parent_id": "p1", "stripe_customer_id": "cus_live_parent"}]
+    assert customers.saved == []
 
 
 @pytest.mark.asyncio

@@ -178,7 +178,7 @@ def compose_parent_webhook_handler(
     academy_id: str | None = None,
 ) -> HandleWebhookEvent:
     settings = get_settings()
-    academy_id = academy_id or settings.default_academy_id
+    academy_id = _require_academy_id(academy_id)
 
     credits_repo = MongoCreditLedgerRepository(db)
     billing_ledger_repo = MongoBillingLedgerRepository(db)
@@ -249,7 +249,7 @@ def compose_parent(
     academy_id: str | None = None,
 ) -> ParentComposition:
     settings = get_settings()
-    academy_id = academy_id or settings.default_academy_id
+    academy_id = _require_academy_id(academy_id)
 
     # Billing
     credits_repo = MongoCreditLedgerRepository(db)
@@ -809,14 +809,6 @@ def compose_parent(
             {"academy_id": academy_id, "$or": [{"user_id": parent_id}, {"firebase_uid": parent_id}]}
         )
         stripe_customer_id: str | None = (user or {}).get("stripe_customer_id")
-        if not stripe_customer_id and user and user.get("email"):
-            # Webhooks may not have fired (e.g. local dev) — look up by email as fallback.
-            stripe_customer_id = await stripe.find_customer_id_by_email(user["email"])
-            if stripe_customer_id:
-                await db["users"].update_one(
-                    {"_id": user["_id"]},
-                    {"$set": {"stripe_customer_id": stripe_customer_id}},
-                )
         result = await create_portal.execute(
             CreateCustomerPortalSessionCommand(
                 parent_id=parent_id,
@@ -935,6 +927,12 @@ def compose_parent(
 
 class _StripeGatewayProto(Protocol):
     """Re-export to make this module importable without backing import."""
+
+
+def _require_academy_id(academy_id: str | None) -> str:
+    if not academy_id:
+        raise ValueError("academy_id is required for parent composition")
+    return academy_id
 
 
 def _session_amount_cents(doc: dict[str, object]) -> int:

@@ -217,8 +217,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Parent BFF wiring (Wave 2). Cross-context event handlers are registered
     # by compose_parent via install_handlers().
-    app.state.parent = compose_parent(db, outbox, idempotency_store, stripe_gw)
-    stripe_webhook_processors = {settings.default_academy_id: app.state.parent.handle_webhook_event}
+    runtime_academy_id = settings.primary_academy_id or settings.default_academy_id
+    app.state.parent = compose_parent(
+        db,
+        outbox,
+        idempotency_store,
+        stripe_gw,
+        academy_id=runtime_academy_id,
+    )
+    stripe_webhook_processors = {runtime_academy_id: app.state.parent.handle_webhook_event}
 
     # Admin BFF wiring (Wave 3).
     app.state.admin = compose_admin(db, outbox, idempotency_store, stripe_gw)
@@ -235,7 +242,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         }
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            settings.default_academy_id,
+            runtime_academy_id,
         ):
             with tenant_scope(academy_id):
                 result = await app.state.admin.process_scheduled_resume_actions.execute(limit=100)
@@ -251,7 +258,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         totals = {"processed": 0, "failed": 0}
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            settings.default_academy_id,
+            runtime_academy_id,
         ):
             processor = stripe_webhook_processors.get(academy_id)
             if processor is None:
@@ -301,7 +308,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         }
         for academy_id in await _scheduler_academy_ids(
             academy_repo,
-            settings.default_academy_id,
+            runtime_academy_id,
         ):
             # Read the raw notifications subdoc so an *unset* override falls back
             # to the env default (key present but False is a deliberate opt-out).
@@ -394,7 +401,7 @@ async def _scheduler_academy_ids(
 
 
 def create_app() -> FastAPI:
-    get_settings()
+    settings = get_settings()
     app = FastAPI(
         title="Academy Manager API",
         version="2.0.0",
@@ -408,7 +415,7 @@ def create_app() -> FastAPI:
     # lazily on the first request.
     app.add_middleware(_LazyTenancyMiddleware)
     app.add_middleware(InMemoryRateLimitMiddleware)
-    _add_cors_middleware(app, get_settings())
+    _add_cors_middleware(app, settings)
 
     @app.get("/api/v2/healthz")
     async def healthz() -> dict[str, str]:
@@ -417,7 +424,8 @@ def create_app() -> FastAPI:
     # Persona route packages.
     app.include_router(me_router, prefix="/api/v2")
     app.include_router(registration_router, prefix="/api/v2")
-    app.include_router(platform_router, prefix="/api/v2")
+    if settings.enable_platform_routes:
+        app.include_router(platform_router, prefix="/api/v2")
     app.include_router(coach_router, prefix="/api/v2")
     app.include_router(parent_router, prefix="/api/v2")
     app.include_router(admin_router, prefix="/api/v2")

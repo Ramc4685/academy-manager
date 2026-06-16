@@ -244,6 +244,51 @@ async def test_latest_paid_payment_for_enrollment_fallback_via_session_when_enro
 
 
 @pytest.mark.asyncio
+async def test_latest_paid_payment_for_enrollment_fallback_does_not_cross_tenants(db, acad) -> None:
+    repo = MongoPaymentRepository(db)
+    await db["enrollments"].insert_one(
+        {
+            "academy_id": "other-acad",
+            "_id": "enroll-cross-tenant",
+            "enrollment_id": "enroll-cross-tenant",
+            "parent_user_id": "parent-other",
+            "session_id": "sess-other",
+            "status": "active",
+        }
+    )
+    await db["payments"].insert_one(
+        {
+            "academy_id": acad,
+            "payment_id": "current-pay-without-enrollment",
+            "parent_user_id": "parent-other",
+            "session_id": "sess-other",
+            "status": "paid",
+            "amount_cents": 5000,
+            "calculation_snapshot_id": "snap-current-1",
+            "created_at": datetime(2026, 5, 2, tzinfo=UTC),
+            "updated_at": datetime(2026, 5, 2, tzinfo=UTC),
+        }
+    )
+    await db["payments"].insert_one(
+        {
+            "academy_id": "other-acad",
+            "payment_id": "other-pay-1",
+            "parent_user_id": "parent-other",
+            "session_id": "sess-other",
+            "status": "paid",
+            "amount_cents": 4000,
+            "calculation_snapshot_id": "snap-other-1",
+            "created_at": datetime(2026, 5, 1, tzinfo=UTC),
+            "updated_at": datetime(2026, 5, 1, tzinfo=UTC),
+        }
+    )
+
+    payment = await repo.latest_paid_payment_for_enrollment("enroll-cross-tenant")
+
+    assert payment is None
+
+
+@pytest.mark.asyncio
 async def test_list_all_tolerates_legacy_waived_payments(db, acad) -> None:
     repo = MongoPaymentRepository(db)
     await db["payments"].insert_one(

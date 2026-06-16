@@ -62,7 +62,7 @@ class TenantGovernanceStore(Protocol):
         self, academy_id: str | None = None
     ) -> list[dict[str, Any]]: ...
     async def revoke_support_access_grant(
-        self, grant_id: str, updates: dict[str, Any]
+        self, grant_id: str, academy_id: str, updates: dict[str, Any]
     ) -> dict[str, Any] | None: ...
     async def create_support_impersonation_request(
         self, request: dict[str, Any]
@@ -279,7 +279,7 @@ class TenantGovernanceService:
         ]
 
     async def grant_support_access(self, command: GrantSupportAccessCommand) -> SupportAccessGrant:
-        self._require_platform_support(command.actor)
+        self._require_platform_admin(command.actor)
         now = self._clock()
         grant = SupportAccessGrant(
             support_access_grant_id=self._id_factory("support_access_"),
@@ -315,10 +315,11 @@ class TenantGovernanceService:
     async def revoke_support_access(
         self, command: RevokeSupportAccessCommand
     ) -> SupportAccessGrant:
-        self._require_platform_support(command.actor)
+        self._require_platform_admin(command.actor)
         now = self._clock()
         revoked = await self._store.revoke_support_access_grant(
             command.support_access_grant_id,
+            command.academy_id,
             {
                 "status": "revoked",
                 "revoked_at": now,
@@ -332,7 +333,7 @@ class TenantGovernanceService:
             )
         await self._append_audit(
             actor=command.actor,
-            academy_id=command.academy_id,
+            academy_id=str(revoked["academy_id"]),
             action="support_access.revoked",
             entity_type="support_access_grant",
             entity_id=command.support_access_grant_id,
@@ -416,6 +417,10 @@ class TenantGovernanceService:
     def _require_platform_support(self, actor: GovernanceActor) -> None:
         if not actor.has_platform_support_access():
             raise GovernancePermissionDenied("platform support role required")
+
+    def _require_platform_admin(self, actor: GovernanceActor) -> None:
+        if actor.platform_role != "platform_admin":
+            raise GovernancePermissionDenied("platform admin role required")
 
     async def _append_platform_audit(self, audit: GovernanceAuditLog) -> None:
         if self._audit_recorder is None:

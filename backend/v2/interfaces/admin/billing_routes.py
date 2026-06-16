@@ -62,7 +62,7 @@ from backend.v2.shared.http import require_persona
 router = APIRouter(tags=["admin.billing"])
 
 
-@router.get("/billing/invoices", response_model=InvoicesResponse)
+@router.get("/billing/invoices", response_model=InvoicesResponse, response_model_exclude_none=True)
 async def list_billing_invoices(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
@@ -75,6 +75,11 @@ async def list_billing_invoices(
             InvoiceLineDto(
                 description=str(line.get("description", "")),
                 amount_cents=int(line.get("amount_cents", 0)),
+                line_type=line.get("line_type"),  # type: ignore[arg-type]
+                quantity=line.get("quantity"),  # type: ignore[arg-type]
+                unit_amount_cents=line.get("unit_amount_cents"),  # type: ignore[arg-type]
+                source_type=line.get("source_type"),  # type: ignore[arg-type]
+                source_id=line.get("source_id"),  # type: ignore[arg-type]
             )
             for line in item["lines"]
         ]
@@ -94,7 +99,11 @@ async def list_billing_invoices(
     return InvoicesResponse(invoices=invoices)
 
 
-@router.get("/billing/invoices/{invoice_id}", response_model=InvoiceDetailResponse)
+@router.get(
+    "/billing/invoices/{invoice_id}",
+    response_model=InvoiceDetailResponse,
+    response_model_exclude_none=True,
+)
 async def get_billing_invoice_detail(
     invoice_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
@@ -108,6 +117,11 @@ async def get_billing_invoice_detail(
             InvoiceLineDto(
                 description=str(line.get("description", "")),
                 amount_cents=int(line.get("amount_cents", 0)),
+                line_type=line.get("line_type"),  # type: ignore[arg-type]
+                quantity=line.get("quantity"),  # type: ignore[arg-type]
+                unit_amount_cents=line.get("unit_amount_cents"),  # type: ignore[arg-type]
+                source_type=line.get("source_type"),  # type: ignore[arg-type]
+                source_id=line.get("source_id"),  # type: ignore[arg-type]
             )
             for line in raw.get("lines", [])
         ],

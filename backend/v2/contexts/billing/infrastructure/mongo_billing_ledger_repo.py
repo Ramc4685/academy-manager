@@ -20,10 +20,15 @@ from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
 class MongoBillingLedgerRepository(TenantScopedRepository):
     collection_name = "invoices"
+    ledger_payments_collection_name = "ledger_payments"
 
     def __init__(self, db: Any, *, clock=lambda: datetime.now(UTC)) -> None:
         super().__init__(db)
         self._clock = clock
+
+    @property
+    def ledger_payments(self) -> Any:
+        return self._db[self.ledger_payments_collection_name]
 
     @staticmethod
     def _invoice_from_doc(doc: dict[str, object]) -> LedgerInvoice:
@@ -99,7 +104,7 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         idempotency_key: str,
     ) -> LedgerPayment:
         academy_id = current_academy_id()
-        existing = await self._db["payments"].find_one(
+        existing = await self.ledger_payments.find_one(
             {"academy_id": academy_id, "ledger_idempotency_key": idempotency_key}
         )
         if existing is not None:
@@ -107,10 +112,10 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
 
         doc = _mongo_doc(payment)
         doc["ledger_idempotency_key"] = idempotency_key
-        await self._db["payments"].insert_one(
+        await self.ledger_payments.insert_one(
             {**{k: v for k, v in doc.items() if k != "academy_id"}, "academy_id": academy_id}
         )
-        stored = await self._db["payments"].find_one(
+        stored = await self.ledger_payments.find_one(
             {"academy_id": academy_id, "payment_id": payment.payment_id}
         )
         if stored is None:
@@ -133,7 +138,7 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             return await self._existing_allocation_result(existing)
 
         invoice_doc = await self._find_one({"invoice_id": invoice_id})
-        payment_doc = await self._db["payments"].find_one(
+        payment_doc = await self.ledger_payments.find_one(
             {"academy_id": academy_id, "payment_id": payment_id}
         )
         if invoice_doc is None:
@@ -168,7 +173,7 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
                 }
             },
         )
-        await self._db["payments"].update_one(
+        await self.ledger_payments.update_one(
             {"academy_id": academy_id, "payment_id": payment_id},
             {
                 "$set": {
@@ -231,7 +236,7 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         academy_id = current_academy_id()
         allocation = self._allocation_from_doc(allocation_doc)
         invoice_doc = await self._find_one({"invoice_id": allocation.invoice_id})
-        payment_doc = await self._db["payments"].find_one(
+        payment_doc = await self.ledger_payments.find_one(
             {"academy_id": academy_id, "payment_id": allocation.payment_id}
         )
         if invoice_doc is None or payment_doc is None:

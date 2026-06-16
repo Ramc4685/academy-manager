@@ -195,6 +195,7 @@ from backend.v2.contexts.identity.domain.errors import MembershipNotFound
 from backend.v2.main import _build_request_tenant_resolver
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.auth.middleware import TenancyMiddleware
+from backend.v2.shared.config.settings import get_settings
 from backend.v2.shared.http import register_exception_handlers
 from backend.v2.shared.tenancy.context import _current as _tenant_var
 
@@ -561,3 +562,28 @@ def test_middleware_allows_platform_routes_to_inspect_inactive_tenant() -> None:
 
     assert r.status_code == 200
     assert r.json() == {"ok": True, "tenant_context": None}
+
+
+def test_middleware_single_academy_mode_rejects_other_resolved_tenant(monkeypatch) -> None:
+    monkeypatch.setenv("APP_TENANCY_MODE", "single_academy")
+    monkeypatch.setenv("PRIMARY_ACADEMY_ID", "academy-court")
+    get_settings.cache_clear()
+    try:
+        loader = _RecordingLoader(
+            memberships={
+                ("u-coach", "academy-tennis"): {
+                    "membership_id": "m-coach-tennis",
+                    "roles": ("coach",),
+                }
+            },
+        )
+        app = _make_middleware_app(loader=loader)
+        client = TestClient(app, base_url="http://tennis.example.com")
+
+        r = client.get("/whoami", headers={"Authorization": "Bearer u-coach"})
+
+        assert r.status_code == 403
+        assert r.json()["error"]["code"] == "Platform.TenantForbidden"
+        assert loader.calls == []
+    finally:
+        get_settings.cache_clear()

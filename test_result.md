@@ -26,6 +26,7 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-06-13-parent-skill-updates](docs/test-results/active/2026-06-13-parent-skill-updates.md)
 - [2026-06-14-prod-coach-pay-rate-500-hotfix](docs/test-results/active/2026-06-14-prod-coach-pay-rate-500-hotfix.md)
 - [2026-06-15-onboarding-waiver-registration-fix](docs/test-results/active/2026-06-15-onboarding-waiver-registration-fix.md)
+- [2026-06-16-production-launch-hardening](docs/test-results/active/2026-06-16-production-launch-hardening.md)
 
 ## Required Workflow
 
