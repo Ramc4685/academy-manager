@@ -42,13 +42,31 @@ class _FakeCheckoutSession:
         return _StripeObject()
 
 
+class _FakeCustomer:
+    calls: ClassVar[list[dict[str, object]]] = []
+
+    @classmethod
+    def search(cls, **kwargs: object) -> dict[str, object]:
+        cls.calls.append(kwargs)
+        return {
+            "data": [
+                {
+                    "id": "cus_scoped",
+                    "invoice_settings": {"default_payment_method": "pm_scoped"},
+                }
+            ]
+        }
+
+
 @pytest.fixture(autouse=True)
 def fake_stripe_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeCheckoutSession.calls.clear()
+    _FakeCustomer.calls.clear()
     fake_stripe = SimpleNamespace(
         api_key=None,
         checkout=SimpleNamespace(Session=_FakeCheckoutSession),
         billing_portal=SimpleNamespace(Session=SimpleNamespace()),
+        Customer=_FakeCustomer,
         Webhook=SimpleNamespace(),
         Refund=SimpleNamespace(),
         Subscription=SimpleNamespace(),
@@ -116,3 +134,21 @@ async def test_retrieve_checkout_session_converts_stripe_errors_to_value_error()
 
     with pytest.raises(ValueError, match="Stripe Checkout Session lookup failed"):
         await gateway.retrieve_checkout_session("cs_missing")
+
+
+@pytest.mark.asyncio
+async def test_default_payment_method_search_is_academy_and_parent_scoped() -> None:
+    gateway = RealStripeGateway(api_key="sk_test_fake", webhook_secret="whsec_fake")
+
+    result = await gateway.get_default_payment_method(
+        academy_id="academy_1",
+        parent_id="parent_1",
+    )
+
+    assert result == ("cus_scoped", "pm_scoped")
+    assert _FakeCustomer.calls == [
+        {
+            "query": 'metadata["academy_id"]:"academy_1" AND metadata["parent_id"]:"parent_1"',
+            "limit": 1,
+        }
+    ]

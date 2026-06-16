@@ -163,9 +163,13 @@ class FakeStripeSucceeds:
         self.customer_id = customer_id
         self.pm_id = pm_id
         self.pi_id = pi_id
+        self.lookup_calls: list[dict[str, str]] = []
         self.create_calls: list[dict] = []
 
-    async def get_default_payment_method(self, *, parent_id: str) -> tuple[str, str] | None:
+    async def get_default_payment_method(
+        self, *, academy_id: str, parent_id: str
+    ) -> tuple[str, str] | None:
+        self.lookup_calls.append({"academy_id": academy_id, "parent_id": parent_id})
         return (self.customer_id, self.pm_id)
 
     async def create_off_session_payment_intent(
@@ -197,7 +201,9 @@ class FakeStripeDeclines:
     def __init__(self, decline_code: str = "insufficient_funds") -> None:
         self.decline_code = decline_code
 
-    async def get_default_payment_method(self, *, parent_id: str) -> tuple[str, str] | None:
+    async def get_default_payment_method(
+        self, *, academy_id: str, parent_id: str
+    ) -> tuple[str, str] | None:
         return ("cus_1", "pm_1")
 
     async def create_off_session_payment_intent(self, **kwargs) -> tuple[str, str, str | None]:
@@ -207,7 +213,9 @@ class FakeStripeDeclines:
 class FakeStripeRequiresAction:
     """Gateway that returns requires_action status."""
 
-    async def get_default_payment_method(self, *, parent_id: str) -> tuple[str, str] | None:
+    async def get_default_payment_method(
+        self, *, academy_id: str, parent_id: str
+    ) -> tuple[str, str] | None:
         return ("cus_1", "pm_1")
 
     async def create_off_session_payment_intent(self, **kwargs) -> tuple[str, str, str | None]:
@@ -217,7 +225,9 @@ class FakeStripeRequiresAction:
 class FakeStripeRaises:
     """Gateway that raises on PI creation (network / API error)."""
 
-    async def get_default_payment_method(self, *, parent_id: str) -> tuple[str, str] | None:
+    async def get_default_payment_method(
+        self, *, academy_id: str, parent_id: str
+    ) -> tuple[str, str] | None:
         return ("cus_1", "pm_1")
 
     async def create_off_session_payment_intent(self, **kwargs) -> tuple[str, str, str | None]:
@@ -227,7 +237,9 @@ class FakeStripeRaises:
 class FakeStripeNoCard:
     """Gateway with no saved card for the parent."""
 
-    async def get_default_payment_method(self, *, parent_id: str) -> tuple[str, str] | None:
+    async def get_default_payment_method(
+        self, *, academy_id: str, parent_id: str
+    ) -> tuple[str, str] | None:
         return None
 
     async def create_off_session_payment_intent(self, **kwargs) -> tuple[str, str, str | None]:
@@ -275,6 +287,7 @@ async def test_happy_path_open_invoice_pi_succeeds() -> None:
     assert recorded_payment.stripe_payment_intent_id == "pi_test_123"
     assert recorded_payment.amount_cents == 10_000
     assert recorded_payment.payment_method == "stripe_autopay"
+    assert stripe.lookup_calls == [{"academy_id": "acad-1", "parent_id": "parent-1"}]
 
     # Exactly one allocation
     assert len(repo.allocation_calls) == 1
@@ -384,6 +397,29 @@ async def test_idempotency_key_uses_invoice_id() -> None:
 
     call = stripe.create_calls[0]
     assert call["idempotency_key"] == "autopay-inv-xyz-99"
+
+
+async def test_saved_card_lookup_uses_invoice_academy_and_parent() -> None:
+    """Saved-card lookup must be scoped by invoice tenant and parent."""
+    repo = FakeLedgerRepo(
+        invoices=[
+            _invoice(
+                invoice_id="inv-academy-parent",
+                status="open",
+                parent_id="parent-shared-id",
+            )
+        ]
+    )
+    stripe = FakeStripeSucceeds()
+
+    await _uc(repo, stripe).execute("inv-academy-parent")
+
+    assert stripe.lookup_calls == [{"academy_id": "acad-1", "parent_id": "parent-shared-id"}]
+    assert stripe.create_calls[0]["metadata"] == {
+        "invoice_id": "inv-academy-parent",
+        "academy_id": "acad-1",
+        "source": "autopay",
+    }
 
 
 async def test_idempotency_key_same_on_retry() -> None:

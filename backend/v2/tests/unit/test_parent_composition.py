@@ -37,12 +37,7 @@ class _FakeDb:
 
 class _PortalStripe:
     def __init__(self) -> None:
-        self.email_lookup_calls: list[str] = []
         self.portal_calls: list[dict[str, Any]] = []
-
-    async def find_customer_id_by_email(self, email: str) -> str | None:
-        self.email_lookup_calls.append(email)
-        raise AssertionError("portal lookup must not search Stripe customers globally by email")
 
     async def create_customer_portal_session(
         self, *, parent_id: str, return_url: str, stripe_customer_id: str | None
@@ -119,7 +114,7 @@ async def test_billing_portal_does_not_fall_back_to_global_email_customer_lookup
             return_url="https://app.example.com/parent/payments",
         )
 
-    assert stripe.email_lookup_calls == []
+    assert not hasattr(stripe, "find_customer_id_by_email")
     assert stripe.portal_calls == [
         {
             "parent_id": "parent-1",

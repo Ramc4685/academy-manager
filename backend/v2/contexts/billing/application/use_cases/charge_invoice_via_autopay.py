@@ -38,7 +38,9 @@ class AutopayStripeGateway(Protocol):
     ``decline_code`` is set on hard declines (card_declined, etc.).
     """
 
-    async def get_default_payment_method(self, *, parent_id: str) -> tuple[str, str] | None:
+    async def get_default_payment_method(
+        self, *, academy_id: str, parent_id: str
+    ) -> tuple[str, str] | None:
         """Return (stripe_customer_id, payment_method_id) or None if no saved card."""
         ...
 
@@ -129,7 +131,10 @@ class ChargeInvoiceViaAutopay:
                 decline_code="stripe_not_configured",
             )
 
-        saved = await self._stripe.get_default_payment_method(parent_id=invoice.parent_id)
+        saved = await self._stripe.get_default_payment_method(
+            academy_id=invoice.academy_id,
+            parent_id=invoice.parent_id,
+        )
         if saved is None:
             raise ValueError(
                 f"no_saved_payment_method: parent {invoice.parent_id!r} has no saved Stripe card"

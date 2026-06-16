@@ -123,13 +123,6 @@ class RealStripeGateway(StripeGateway):
         result = await asyncio.to_thread(_create)
         return str(result.url)
 
-    async def find_customer_id_by_email(self, email: str) -> str | None:
-        def _search() -> Any:
-            results = self._stripe.Customer.search(query=f'email:"{email}"', limit=1)
-            return results.data[0].id if results.data else None
-
-        return await asyncio.to_thread(_search)
-
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, object]:
         import json
 
@@ -291,12 +284,18 @@ class RealStripeGateway(StripeGateway):
         except self._stripe.StripeError as exc:
             raise ValueError(f"{label} lookup failed: {exc}") from exc
 
-    async def get_default_payment_method(self, *, parent_id: str) -> tuple[str, str] | None:
+    async def get_default_payment_method(
+        self, *, academy_id: str, parent_id: str
+    ) -> tuple[str, str] | None:
         """Return (stripe_customer_id, payment_method_id) or None if no saved card."""
 
         def _find() -> tuple[str, str] | None:
+            query = (
+                f'metadata["academy_id"]:"{academy_id}" ' f'AND metadata["parent_id"]:"{parent_id}"'
+            )
             customers = self._stripe.Customer.search(
-                query=f'metadata["parent_id"]:"{parent_id}"', limit=1
+                query=query,
+                limit=1,
             )
             data = customers.get("data", [])
             if not data:

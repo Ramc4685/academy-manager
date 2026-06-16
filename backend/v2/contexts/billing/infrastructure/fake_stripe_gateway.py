@@ -95,9 +95,6 @@ class FakeStripeGateway(StripeGateway):
         )
         return f"https://fake.stripe.com/portal/{portal_id}"
 
-    async def find_customer_id_by_email(self, email: str) -> str | None:
-        return None
-
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, object]:
         # Tests pass already-parsed events as JSON body and a fixed sig.
         if signature != "test_signature":
