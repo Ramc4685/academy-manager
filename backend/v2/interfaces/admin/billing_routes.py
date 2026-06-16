@@ -2,25 +2,17 @@
 
 from __future__ import annotations
 
-import html
-from datetime import UTC, date, datetime
+from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, StringConstraints
 
-from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
-    AddInvoiceLine,
-    AddInvoiceLineCommand,
-)
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscountCommand,
     GenerateMonthlyPaymentsCommand,
     MarkPaymentPaidCommand,
     UndoPaymentPaidCommand,
-)
-from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopay import (
-    ChargeInvoiceViaAutopay,
 )
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
     DeleteExpenseCommand,
@@ -30,36 +22,10 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
 from backend.v2.contexts.billing.application.use_cases.issue_refund import (
     IssueRefundCommand,
 )
-from backend.v2.contexts.billing.application.use_cases.record_manual_payment import (
-    RecordManualPayment,
-    RecordManualPaymentCommand,
-)
-from backend.v2.contexts.billing.application.use_cases.remove_invoice_line import (
-    RemoveInvoiceLine,
-    RemoveInvoiceLineCommand,
-)
-from backend.v2.contexts.billing.application.use_cases.send_invoice import SendInvoice
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
     ApproveWithdrawalCreditCommand,
     PreviewWithdrawalCreditCommand,
 )
-from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
-from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
-    MongoBillingLedgerRepository,
-)
-from backend.v2.contexts.billing.infrastructure.stripe_gateway import RealStripeGateway
-from backend.v2.contexts.communications.application.ports import (
-    EmailSendPort,
-    ResolvedRecipient,
-)
-from backend.v2.contexts.communications.infrastructure.resend_send_port import (
-    ResendEmailSendPort,
-)
-from backend.v2.contexts.enrollment.domain.errors import StudentNotFound
-from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
-    MongoMembershipRepository,
-)
-from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
     AdminEnrollmentQuoteRequest,
@@ -97,12 +63,15 @@ from backend.v2.interfaces.admin.views import (
     WithdrawalCreditPreviewResponse,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.config import get_settings
 from backend.v2.shared.http import require_persona
-from backend.v2.shared.ids import new_ulid
-from backend.v2.shared.tenancy import current_academy_id
 
 router = APIRouter(tags=["admin.billing"])
+
+
+def _required_callable(use_case: object | None, name: str) -> object:
+    if use_case is None:
+        raise HTTPException(status_code=503, detail=f"{name} is not configured")
+    return use_case
 
 
 @router.get("/billing/invoices", response_model=InvoicesResponse, response_model_exclude_none=True)
@@ -590,8 +559,10 @@ async def _validate_student_invoice_scope(
         raise HTTPException(status_code=503, detail="Admin student detail is not configured")
     try:
         student = await use_cases.get_admin_student.execute(student_id)
-    except StudentNotFound as exc:
-        raise HTTPException(status_code=404, detail="student not found") from exc
+    except Exception as exc:
+        if getattr(exc, "code", "") == "Enrollment.StudentNotFound":
+            raise HTTPException(status_code=404, detail="student not found") from exc
+        raise
 
     if student.parent_id != parent_id:
         raise HTTPException(status_code=409, detail="invoice parent must match student parent")
@@ -603,103 +574,6 @@ async def _validate_student_invoice_scope(
         raise HTTPException(status_code=409, detail="invoice enrollment must belong to student")
 
 
-def _get_ledger_repo(request: Request) -> MongoBillingLedgerRepository:
-    return MongoBillingLedgerRepository(request.app.state.db)
-
-
-def _get_autopay_gateway() -> RealStripeGateway | None:
-    s = get_settings()
-    if not s.stripe_api_key or not s.stripe_webhook_secret:
-        return None
-    return RealStripeGateway(api_key=s.stripe_api_key, webhook_secret=s.stripe_webhook_secret)
-
-
-class _InvoiceEmailAdapter:
-    def __init__(
-        self,
-        *,
-        memberships: MongoMembershipRepository,
-        users: MongoUserRepository,
-        sender: EmailSendPort,
-    ) -> None:
-        self._memberships = memberships
-        self._users = users
-        self._sender = sender
-
-    async def send_invoice_email(
-        self,
-        *,
-        parent_id: str,
-        invoice_id: str,
-        period: str,
-        total_cents: int,
-        balance_due_cents: int,
-        currency: str,
-        checkout_url: str | None,
-    ) -> None:
-        academy_id = current_academy_id()
-        membership = await self._memberships.get_membership(academy_id, parent_id)
-        if membership is None or not membership.is_active() or "parent" not in membership.roles:
-            raise ValueError("invoice parent has no active membership in request academy")
-
-        user = await self._users.get_by_id(parent_id)
-        email = str(user.email if user else "").strip()
-        if not email:
-            raise ValueError("invoice parent email not found")
-
-        display_name = str(user.display_name if user else "")
-        amount = f"{currency.upper()} {balance_due_cents / 100:.2f}"
-        total = f"{currency.upper()} {total_cents / 100:.2f}"
-        safe_invoice = html.escape(invoice_id)
-        safe_period = html.escape(period)
-        safe_amount = html.escape(amount)
-        safe_total = html.escape(total)
-        pay_line = (
-            f'<p><a href="{html.escape(checkout_url, quote=True)}">Pay invoice</a></p>'
-            if checkout_url
-            else "<p>Please contact the academy to arrange payment.</p>"
-        )
-        body = (
-            f"<p>Your invoice <strong>{safe_invoice}</strong> for {safe_period} is ready.</p>"
-            f"<p>Balance due: <strong>{safe_amount}</strong> "
-            f"(invoice total {safe_total}).</p>"
-            f"{pay_line}"
-        )
-        outcome = await self._sender.send(
-            recipient=ResolvedRecipient(
-                user_id=parent_id,
-                email=email,
-                display_name=display_name or None,
-            ),
-            subject=f"Invoice {invoice_id} for {period}",
-            body=body,
-        )
-        if not outcome.ok:
-            raise ValueError(outcome.failed_reason or "invoice email delivery failed")
-
-
-def _invoice_from_address(frontend_url: str | None) -> str:
-    if not frontend_url:
-        return "noreply@academy.app"
-    host = frontend_url.replace("https://", "").replace("http://", "").split("/")[0]
-    return f"noreply@{host}"
-
-
-def _get_invoice_email_port(request: Request) -> _InvoiceEmailAdapter | None:
-    settings = get_settings()
-    if not (settings.email_delivery_enabled and settings.resend_api_key):
-        return None
-    sender = ResendEmailSendPort(
-        api_key=settings.resend_api_key,
-        from_address=_invoice_from_address(settings.frontend_url),
-    )
-    return _InvoiceEmailAdapter(
-        memberships=MongoMembershipRepository(request.app.state.db),
-        users=MongoUserRepository(request.app.state.db),
-        sender=sender,
-    )
-
-
 @router.post(
     "/billing/invoices/{invoice_id}/send",
     response_model=SendInvoiceResponse,
@@ -707,9 +581,7 @@ def _get_invoice_email_port(request: Request) -> _InvoiceEmailAdapter | None:
 async def send_billing_invoice(
     invoice_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
-    ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
-    stripe: RealStripeGateway | None = Depends(_get_autopay_gateway),
-    email: _InvoiceEmailAdapter | None = Depends(_get_invoice_email_port),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> SendInvoiceResponse:
     """Send (or re-send) an invoice to the parent.
 
@@ -718,25 +590,17 @@ async def send_billing_invoice(
     - Returns a Stripe Checkout URL when a balance is outstanding (stubbed if
       Stripe is not configured in the current environment).
     """
-    settings = get_settings()
-    frontend_url = (settings.frontend_url or "https://app.example.com").rstrip("/")
-    use_case = SendInvoice(
-        ledger=ledger,
-        stripe=stripe,
-        email=email,
-        success_url=f"{frontend_url}/parent/payments?invoice=paid",
-        cancel_url=f"{frontend_url}/parent/payments?invoice=cancelled",
-    )
+    send_invoice = _required_callable(use_cases.send_billing_invoice, "Invoice sending")
     try:
-        result = await use_case.execute(invoice_id)
+        result = await send_invoice(invoice_id)  # type: ignore[operator]
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return SendInvoiceResponse(
-        invoice_id=result.invoice.invoice_id,
-        delivery_status=result.invoice.delivery_status,
-        sent_at=result.invoice.sent_at,
-        last_sent_at=result.invoice.last_sent_at,
-        checkout_url=result.checkout_url,
+        invoice_id=str(result["invoice_id"]),
+        delivery_status=str(result["delivery_status"]),
+        sent_at=result["sent_at"],
+        last_sent_at=result["last_sent_at"],
+        checkout_url=result["checkout_url"],
     )
 
 
@@ -747,8 +611,7 @@ async def send_billing_invoice(
 async def charge_invoice_via_autopay(
     invoice_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
-    ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
-    stripe: RealStripeGateway | None = Depends(_get_autopay_gateway),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> ChargeAutopayResponse:
     """Charge the invoice balance via the parent's saved Stripe payment method (off-session).
 
@@ -760,23 +623,26 @@ async def charge_invoice_via_autopay(
     - Raises 409 when the invoice is not chargeable (paid/void/draft with zero balance)
       or the parent has no saved payment method.
     """
-    if stripe is None:
-        raise HTTPException(status_code=503, detail="Stripe autopay not configured")
-    use_case = ChargeInvoiceViaAutopay(ledger=ledger, stripe=stripe)
+    charge_autopay = _required_callable(
+        use_cases.charge_invoice_via_autopay,
+        "Stripe autopay",
+    )
     try:
-        result = await use_case.execute(invoice_id)
+        result = await charge_autopay(invoice_id)  # type: ignore[operator]
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         msg = str(exc)
         if "not found" in msg:
             raise HTTPException(status_code=404, detail=msg) from exc
         raise HTTPException(status_code=409, detail=msg) from exc
     return ChargeAutopayResponse(
-        invoice_id=result.invoice_id,
-        success=result.success,
-        status=result.status,
-        balance_due_cents=result.balance_due_cents,
-        requires_action=result.requires_action,
-        decline_code=result.decline_code,
+        invoice_id=str(result["invoice_id"]),
+        success=bool(result["success"]),
+        status=str(result["status"]),
+        balance_due_cents=int(result["balance_due_cents"]),
+        requires_action=bool(result["requires_action"]),
+        decline_code=result["decline_code"],
     )
 
 
@@ -789,34 +655,33 @@ async def add_invoice_line(
     invoice_id: str,
     body: AddInvoiceLineRequest,
     _claims: AuthClaims = Depends(require_persona("admin")),
-    ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> InvoiceLineResponse:
-    use_case = AddInvoiceLine(ledger=ledger)
+    add_line = _required_callable(use_cases.add_invoice_line, "Invoice line management")
     try:
-        result = await use_case.execute(
-            AddInvoiceLineCommand(
-                invoice_id=invoice_id,
-                description=body.description,
-                line_type=body.line_type,
-                quantity=body.quantity,
-                unit_amount_cents=body.unit_amount_cents,
-                product_id=body.product_id,
-            )
+        result = await add_line(  # type: ignore[operator]
+            invoice_id=invoice_id,
+            description=body.description,
+            line_type=body.line_type,
+            quantity=body.quantity,
+            unit_amount_cents=body.unit_amount_cents,
+            product_id=body.product_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    line = result.line
+    line = result["line"]
+    invoice = result["invoice"]
     return InvoiceLineResponse(
-        line_id=line.line_id,
-        invoice_id=line.invoice_id,
-        line_type=line.line_type,
-        description=line.description,
-        quantity=line.quantity,
-        unit_amount_cents=line.unit_amount_cents,
-        amount_cents=line.amount_cents,
-        invoice_total_cents=result.invoice.total_cents,
-        invoice_balance_due_cents=result.invoice.balance_due_cents,
-        invoice_status=result.invoice.status,
+        line_id=str(line["line_id"]),
+        invoice_id=str(line["invoice_id"]),
+        line_type=str(line["line_type"]),
+        description=str(line["description"]),
+        quantity=int(line["quantity"]),
+        unit_amount_cents=int(line["unit_amount_cents"]),
+        amount_cents=int(line["amount_cents"]),
+        invoice_total_cents=int(invoice["total_cents"]),
+        invoice_balance_due_cents=int(invoice["balance_due_cents"]),
+        invoice_status=str(invoice["status"]),
     )
 
 
@@ -828,11 +693,11 @@ async def remove_invoice_line(
     invoice_id: str,
     line_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
-    ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
-    use_case = RemoveInvoiceLine(ledger=ledger)
+    remove_line = _required_callable(use_cases.remove_invoice_line, "Invoice line management")
     try:
-        await use_case.execute(RemoveInvoiceLineCommand(invoice_id=invoice_id, line_id=line_id))
+        await remove_line(invoice_id=invoice_id, line_id=line_id)  # type: ignore[operator]
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -847,26 +712,16 @@ async def void_invoice_route(
     invoice_id: str,
     body: VoidInvoiceRequest,
     _claims: AuthClaims = Depends(require_persona("admin")),
-    ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, bool]:
-    from backend.v2.contexts.billing.domain.ledger import void_invoice
-
-    invoice = await ledger.get_invoice(invoice_id)
-    if invoice is None:
-        raise HTTPException(status_code=404, detail="invoice not found")
-    if (
-        invoice.status in {"partially_paid", "paid"}
-        or invoice.balance_due_cents != invoice.total_cents
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail="cannot void invoice with recorded payments; issue refund or credit first",
-        )
+    void_invoice_ = _required_callable(use_cases.void_billing_invoice, "Invoice voiding")
     try:
-        voided = void_invoice(invoice, reason=body.reason, now=datetime.now(UTC))
+        await void_invoice_(invoice_id=invoice_id, reason=body.reason)  # type: ignore[operator]
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    await ledger.save_invoice(voided)
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=409, detail=msg) from exc
     return {"ok": True}
 
 
@@ -893,23 +748,21 @@ async def record_manual_payment(
     invoice_id: str,
     body: RecordManualPaymentRequest,
     _claims: AuthClaims = Depends(require_persona("admin")),
-    ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> RecordManualPaymentResponse:
     """Record a manual payment (cash, check, etc.) against a ledger invoice.
 
     Creates a LedgerPayment and allocates it to the invoice balance.
     Partial payments are allowed; the invoice status updates accordingly.
     """
-    use_case = RecordManualPayment(ledger=ledger)
+    record_payment = _required_callable(use_cases.record_manual_payment, "Manual payment recording")
     try:
-        result = await use_case.execute(
-            RecordManualPaymentCommand(
-                invoice_id=invoice_id,
-                amount_cents=body.amount_cents,
-                payment_method=body.payment_method,  # type: ignore[arg-type]
-                reference_number=body.reference_number,
-                notes=body.notes,
-            )
+        result = await record_payment(  # type: ignore[operator]
+            invoice_id=invoice_id,
+            amount_cents=body.amount_cents,
+            payment_method=body.payment_method,
+            reference_number=body.reference_number,
+            notes=body.notes,
         )
     except ValueError as exc:
         msg = str(exc)
@@ -917,10 +770,10 @@ async def record_manual_payment(
             raise HTTPException(status_code=404, detail=msg) from exc
         raise HTTPException(status_code=409, detail=msg) from exc
     return RecordManualPaymentResponse(
-        invoice_id=result.invoice_id,
-        payment_id=result.payment_id,
-        invoice_status=result.invoice_status,
-        balance_due_cents=result.balance_due_cents,
+        invoice_id=str(result["invoice_id"]),
+        payment_id=str(result["payment_id"]),
+        invoice_status=str(result["invoice_status"]),
+        balance_due_cents=int(result["balance_due_cents"]),
     )
 
 
@@ -932,9 +785,8 @@ async def record_manual_payment(
 async def create_student_invoice(
     student_id: str,
     body: CreateStudentInvoiceRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
-    ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
 ) -> dict:
     if body.student_id != student_id:
         raise HTTPException(status_code=409, detail="invoice student must match route student")
@@ -944,28 +796,14 @@ async def create_student_invoice(
         parent_id=body.parent_id,
         enrollment_id=body.enrollment_id,
     )
-    now = datetime.now(UTC)
-    invoice_id = f"inv-{new_ulid()}"
-    invoice = LedgerInvoice(
-        invoice_id=invoice_id,
-        academy_id=claims.academy_id,
-        parent_id=body.parent_id,
+    create_invoice = _required_callable(use_cases.create_student_invoice, "Invoice creation")
+    return await create_invoice(  # type: ignore[operator]
         student_id=student_id,
-        enrollment_id=body.enrollment_id,
+        parent_id=body.parent_id,
         period=body.period,
-        status="draft",
-        subtotal_cents=0,
-        discount_cents=0,
-        total_cents=0,
-        balance_due_cents=0,
-        currency="usd",
         due_date=body.due_date,
-        created_at=now,
-        updated_at=now,
+        enrollment_id=body.enrollment_id,
     )
-    idempotency_key = f"admin-invoice-{invoice_id}"
-    created = await ledger.create_invoice(invoice, lines=[], idempotency_key=idempotency_key)
-    return created.model_dump(mode="json")
 
 
 def _payment_view(row: object) -> AdminPaymentView:

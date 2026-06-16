@@ -6,7 +6,17 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from backend.v2.composition.admin import _InvoiceEmailAdapter
+from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
+    AddInvoiceLine,
+    AddInvoiceLineCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.finance import Payout
+from backend.v2.contexts.billing.application.use_cases.remove_invoice_line import (
+    RemoveInvoiceLine,
+    RemoveInvoiceLineCommand,
+)
+from backend.v2.contexts.billing.application.use_cases.send_invoice import SendInvoice
 from backend.v2.contexts.billing.domain import ledger as ledger_domain
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 from backend.v2.contexts.billing.domain.models import Payment
@@ -16,7 +26,6 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
     AdminStudentSessionSummary,
 )
 from backend.v2.contexts.identity.domain.models import AcademyMembership, User
-from backend.v2.interfaces.admin import billing_routes as admin_billing_routes
 from backend.v2.shared.tenancy import tenant_scope
 
 
@@ -241,19 +250,93 @@ def _override_admin_student(admin_client, student: AdminStudentDetail | None) ->
 
 
 def _override_ledger(admin_client, ledger: _FakeLedger) -> None:
-    admin_client.app.dependency_overrides[admin_billing_routes._get_ledger_repo] = lambda: ledger
+    async def send_billing_invoice(invoice_id: str) -> dict:
+        result = await SendInvoice(
+            ledger=ledger,
+            stripe=getattr(admin_client, "_test_invoice_stripe", None),
+            email=getattr(admin_client, "_test_invoice_email", None),
+            success_url="https://app.example.com/parent/payments?invoice=paid",
+            cancel_url="https://app.example.com/parent/payments?invoice=cancelled",
+        ).execute(invoice_id)
+        return {
+            "invoice_id": result.invoice.invoice_id,
+            "delivery_status": result.invoice.delivery_status,
+            "sent_at": result.invoice.sent_at,
+            "last_sent_at": result.invoice.last_sent_at,
+            "checkout_url": result.checkout_url,
+        }
+
+    async def add_invoice_line(**kwargs) -> dict:
+        result = await AddInvoiceLine(ledger=ledger).execute(AddInvoiceLineCommand(**kwargs))
+        return {
+            "line": result.line.model_dump(mode="python"),
+            "invoice": result.invoice.model_dump(mode="python"),
+        }
+
+    async def remove_invoice_line(*, invoice_id: str, line_id: str) -> None:
+        await RemoveInvoiceLine(ledger=ledger).execute(
+            RemoveInvoiceLineCommand(invoice_id=invoice_id, line_id=line_id)
+        )
+
+    async def void_billing_invoice(*, invoice_id: str, reason: str) -> None:
+        invoice = await ledger.get_invoice(invoice_id)
+        if invoice is None:
+            raise ValueError("invoice not found")
+        if (
+            invoice.status in {"partially_paid", "paid"}
+            or invoice.balance_due_cents != invoice.total_cents
+        ):
+            raise ValueError(
+                "cannot void invoice with recorded payments; issue refund or credit first"
+            )
+        voided = ledger_domain.void_invoice(invoice, reason=reason, now=datetime.now(UTC))
+        await ledger.save_invoice(voided)
+
+    async def create_student_invoice(
+        *,
+        student_id: str,
+        parent_id: str,
+        period: str,
+        due_date: date,
+        enrollment_id: str | None,
+    ) -> dict:
+        invoice = LedgerInvoice(
+            invoice_id="inv-test",
+            academy_id="acad",
+            parent_id=parent_id,
+            student_id=student_id,
+            enrollment_id=enrollment_id,
+            period=period,
+            status="draft",
+            subtotal_cents=0,
+            discount_cents=0,
+            total_cents=0,
+            balance_due_cents=0,
+            currency="usd",
+            due_date=due_date,
+            created_at=NOW,
+            updated_at=NOW,
+        )
+        created = await ledger.create_invoice(
+            invoice,
+            lines=[],
+            idempotency_key=f"admin-invoice-{invoice.invoice_id}",
+        )
+        return created.model_dump(mode="json")
+
+    admin_client.use_cases.send_billing_invoice = send_billing_invoice
+    admin_client.use_cases.add_invoice_line = add_invoice_line
+    admin_client.use_cases.remove_invoice_line = remove_invoice_line
+    admin_client.use_cases.void_billing_invoice = void_billing_invoice
+    admin_client.use_cases.create_student_invoice = create_student_invoice
 
 
 def _override_invoice_stripe(admin_client, stripe: _FakeInvoiceStripe) -> None:
-    admin_client.app.dependency_overrides[admin_billing_routes._get_autopay_gateway] = (
-        lambda: stripe
-    )
+    admin_client._test_invoice_stripe = stripe
 
 
 def _override_invoice_email(admin_client, email: _FakeInvoiceEmail) -> None:
-    admin_client.app.dependency_overrides[admin_billing_routes._get_invoice_email_port] = (
-        lambda: email
-    )
+    admin_client._test_invoice_email = email
 
 
 def test_list_payments_returns_recent(admin_client):
@@ -490,7 +573,7 @@ async def test_invoice_email_adapter_requires_parent_membership_in_request_acade
     users = _FakeUserRepo(
         User(user_id="parent-1", email="parent@example.com", display_name="Parent One")
     )
-    adapter = admin_billing_routes._InvoiceEmailAdapter(
+    adapter = _InvoiceEmailAdapter(
         memberships=memberships,
         users=users,
         sender=sender,
@@ -525,7 +608,7 @@ async def test_invoice_email_adapter_sends_after_membership_match() -> None:
     users = _FakeUserRepo(
         User(user_id="parent-1", email="parent@example.com", display_name="Parent One")
     )
-    adapter = admin_billing_routes._InvoiceEmailAdapter(
+    adapter = _InvoiceEmailAdapter(
         memberships=memberships,
         users=users,
         sender=sender,

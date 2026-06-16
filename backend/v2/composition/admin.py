@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import html
 import io
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
@@ -23,12 +24,19 @@ from backend.v2.composition.pathway import (
     compose_student_progress,
 )
 from backend.v2.contexts.billing.application.ports import StripeGateway
+from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
+    AddInvoiceLine,
+    AddInvoiceLineCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscount,
     GenerateMonthlyPayments,
     MarkPaymentPaid,
     SendDuesReminders,
     UndoPaymentPaid,
+)
+from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopay import (
+    ChargeInvoiceViaAutopay,
 )
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
     AcademyRevenueQuery,
@@ -43,6 +51,15 @@ from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
     QuoteEnrollmentCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.record_manual_payment import (
+    RecordManualPayment,
+    RecordManualPaymentCommand,
+)
+from backend.v2.contexts.billing.application.use_cases.remove_invoice_line import (
+    RemoveInvoiceLine,
+    RemoveInvoiceLineCommand,
+)
+from backend.v2.contexts.billing.application.use_cases.send_invoice import SendInvoice
 from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     CreateSessionType,
     ListSessionTypes,
@@ -56,6 +73,8 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
     ApproveWithdrawalCredit,
     PreviewWithdrawalCredit,
 )
+from backend.v2.contexts.billing.domain.ledger import LedgerInvoice, void_invoice
+from backend.v2.contexts.billing.domain.product import Product
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
 )
@@ -64,6 +83,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import 
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_product_repo import (
+    MongoProductRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_session_type_repo import (
     MongoSessionTypeRepository,
@@ -97,6 +119,10 @@ from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_coach_rate_repo import (
     MongoCoachRateRepository,
+)
+from backend.v2.contexts.communications.application.ports import (
+    EmailSendPort,
+    ResolvedRecipient,
 )
 from backend.v2.contexts.communications.application.use_cases.send_campaign import (
     SendCampaign,
@@ -275,6 +301,9 @@ from backend.v2.contexts.identity.application.use_cases.stripe_connect import (
     StartStripeConnectUseCase,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
+from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
+    MongoMembershipRepository,
+)
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
     ManageAdminWaiverTemplates,
@@ -306,6 +335,72 @@ from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.ids import new_ulid
+
+
+class _InvoiceEmailAdapter:
+    def __init__(
+        self,
+        *,
+        memberships: MongoMembershipRepository,
+        users: MongoUserRepository,
+        sender: EmailSendPort,
+    ) -> None:
+        self._memberships = memberships
+        self._users = users
+        self._sender = sender
+
+    async def send_invoice_email(
+        self,
+        *,
+        parent_id: str,
+        invoice_id: str,
+        period: str,
+        total_cents: int,
+        balance_due_cents: int,
+        currency: str,
+        checkout_url: str | None,
+    ) -> None:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        academy_id = current_academy_id()
+        membership = await self._memberships.get_membership(academy_id, parent_id)
+        if membership is None or not membership.is_active() or "parent" not in membership.roles:
+            raise ValueError("invoice parent has no active membership in request academy")
+
+        user = await self._users.get_by_id(parent_id)
+        email = str(user.email if user else "").strip()
+        if not email:
+            raise ValueError("invoice parent email not found")
+
+        display_name = str(user.display_name if user else "")
+        amount = f"{currency.upper()} {balance_due_cents / 100:.2f}"
+        total = f"{currency.upper()} {total_cents / 100:.2f}"
+        safe_invoice = html.escape(invoice_id)
+        safe_period = html.escape(period)
+        safe_amount = html.escape(amount)
+        safe_total = html.escape(total)
+        pay_line = (
+            f'<p><a href="{html.escape(checkout_url, quote=True)}">Pay invoice</a></p>'
+            if checkout_url
+            else "<p>Please contact the academy to arrange payment.</p>"
+        )
+        body = (
+            f"<p>Your invoice <strong>{safe_invoice}</strong> for {safe_period} is ready.</p>"
+            f"<p>Balance due: <strong>{safe_amount}</strong> "
+            f"(invoice total {safe_total}).</p>"
+            f"{pay_line}"
+        )
+        outcome = await self._sender.send(
+            recipient=ResolvedRecipient(
+                user_id=parent_id,
+                email=email,
+                display_name=display_name or None,
+            ),
+            subject=f"Invoice {invoice_id} for {period}",
+            body=body,
+        )
+        if not outcome.ok:
+            raise ValueError(outcome.failed_reason or "invoice email delivery failed")
 
 
 def _make_reports_kpis(db: AsyncIOMotorDatabase[Any]) -> object:
@@ -1272,6 +1367,177 @@ def compose_admin(
         _email_sender = ResendEmailSendPort(api_key=_s.resend_api_key, from_address=_from_addr)
     else:
         _email_sender = StubEmailSendPort()
+
+    product_repo = MongoProductRepository(db)
+
+    def _product_dict(product: Product) -> dict[str, Any]:
+        return product.model_dump(mode="python")
+
+    async def list_billing_products() -> list[dict[str, Any]]:
+        return [_product_dict(p) for p in await product_repo.list_products(active_only=True)]
+
+    async def create_billing_product(
+        *,
+        name: str,
+        default_unit_amount_cents: int,
+        line_type: str,
+    ) -> dict[str, Any]:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        now = datetime.now(UTC)
+        product = Product(
+            product_id=f"prod-{new_ulid()}",
+            academy_id=current_academy_id(),
+            name=name,
+            default_unit_amount_cents=default_unit_amount_cents,
+            line_type=line_type,
+            active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        return _product_dict(await product_repo.create_product(product))
+
+    async def update_billing_product(product_id: str, **updates: object) -> dict[str, Any]:
+        return _product_dict(await product_repo.update_product(product_id, **updates))
+
+    async def deactivate_billing_product(product_id: str) -> None:
+        await product_repo.deactivate_product(product_id)
+
+    def _invoice_email_port() -> _InvoiceEmailAdapter | None:
+        if not (settings.email_delivery_enabled and settings.resend_api_key):
+            return None
+        return _InvoiceEmailAdapter(
+            memberships=MongoMembershipRepository(db),
+            users=MongoUserRepository(db, default_academy_id=academy_id),
+            sender=_email_sender,
+        )
+
+    async def send_billing_invoice(invoice_id: str) -> dict[str, Any]:
+        frontend_url = (settings.frontend_url or "https://app.example.com").rstrip("/")
+        invoice_stripe = stripe if hasattr(stripe, "create_invoice_checkout_session") else None
+        result = await SendInvoice(
+            ledger=billing_ledger_repo,
+            stripe=invoice_stripe,  # type: ignore[arg-type]
+            email=_invoice_email_port(),
+            success_url=f"{frontend_url}/parent/payments?invoice=paid",
+            cancel_url=f"{frontend_url}/parent/payments?invoice=cancelled",
+        ).execute(invoice_id)
+        return {
+            "invoice_id": result.invoice.invoice_id,
+            "delivery_status": result.invoice.delivery_status,
+            "sent_at": result.invoice.sent_at,
+            "last_sent_at": result.invoice.last_sent_at,
+            "checkout_url": result.checkout_url,
+        }
+
+    async def charge_invoice_via_autopay(invoice_id: str) -> dict[str, Any]:
+        required = ("get_default_payment_method", "create_off_session_payment_intent")
+        if not all(hasattr(stripe, name) for name in required):
+            raise RuntimeError("Stripe autopay not configured")
+        result = await ChargeInvoiceViaAutopay(
+            ledger=billing_ledger_repo,
+            stripe=stripe,  # type: ignore[arg-type]
+        ).execute(invoice_id)
+        return result.model_dump(mode="python")
+
+    async def add_invoice_line(
+        *,
+        invoice_id: str,
+        description: str,
+        line_type: str,
+        quantity: int,
+        unit_amount_cents: int,
+        product_id: str | None,
+    ) -> dict[str, Any]:
+        result = await AddInvoiceLine(ledger=billing_ledger_repo).execute(
+            AddInvoiceLineCommand(
+                invoice_id=invoice_id,
+                description=description,
+                line_type=line_type,
+                quantity=quantity,
+                unit_amount_cents=unit_amount_cents,
+                product_id=product_id,
+            )
+        )
+        return {
+            "line": result.line.model_dump(mode="python"),
+            "invoice": result.invoice.model_dump(mode="python"),
+        }
+
+    async def remove_invoice_line(*, invoice_id: str, line_id: str) -> None:
+        await RemoveInvoiceLine(ledger=billing_ledger_repo).execute(
+            RemoveInvoiceLineCommand(invoice_id=invoice_id, line_id=line_id)
+        )
+
+    async def void_billing_invoice(*, invoice_id: str, reason: str) -> None:
+        invoice = await billing_ledger_repo.get_invoice(invoice_id)
+        if invoice is None:
+            raise ValueError("invoice not found")
+        if (
+            invoice.status in {"partially_paid", "paid"}
+            or invoice.balance_due_cents != invoice.total_cents
+        ):
+            raise ValueError(
+                "cannot void invoice with recorded payments; issue refund or credit first"
+            )
+        voided = void_invoice(invoice, reason=reason, now=datetime.now(UTC))
+        await billing_ledger_repo.save_invoice(voided)
+
+    async def record_manual_payment(
+        *,
+        invoice_id: str,
+        amount_cents: int,
+        payment_method: str,
+        reference_number: str | None,
+        notes: str,
+    ) -> dict[str, Any]:
+        result = await RecordManualPayment(ledger=billing_ledger_repo).execute(
+            RecordManualPaymentCommand(
+                invoice_id=invoice_id,
+                amount_cents=amount_cents,
+                payment_method=payment_method,  # type: ignore[arg-type]
+                reference_number=reference_number,
+                notes=notes,
+            )
+        )
+        return result.model_dump(mode="python")
+
+    async def create_student_invoice(
+        *,
+        student_id: str,
+        parent_id: str,
+        period: str,
+        due_date: date,
+        enrollment_id: str | None,
+    ) -> dict[str, Any]:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        now = datetime.now(UTC)
+        invoice_id = f"inv-{new_ulid()}"
+        invoice = LedgerInvoice(
+            invoice_id=invoice_id,
+            academy_id=current_academy_id(),
+            parent_id=parent_id,
+            student_id=student_id,
+            enrollment_id=enrollment_id,
+            period=period,
+            status="draft",
+            subtotal_cents=0,
+            discount_cents=0,
+            total_cents=0,
+            balance_due_cents=0,
+            currency="usd",
+            due_date=due_date,
+            created_at=now,
+            updated_at=now,
+        )
+        created = await billing_ledger_repo.create_invoice(
+            invoice,
+            lines=[],
+            idempotency_key=f"admin-invoice-{invoice_id}",
+        )
+        return created.model_dump(mode="json")
+
     send_campaign = SendCampaign(
         campaigns=MongoCampaignRepository(db),
         deliveries=MongoDeliveryRepository(db),
@@ -2900,6 +3166,17 @@ def compose_admin(
         list_billing_invoices=billing_ledger_repo.list_invoices_for_academy,
         get_billing_invoice_detail=get_billing_invoice_detail,
         generate_billing_invoice_artifact=generate_billing_invoice_artifact,
+        send_billing_invoice=send_billing_invoice,
+        charge_invoice_via_autopay=charge_invoice_via_autopay,
+        add_invoice_line=add_invoice_line,
+        remove_invoice_line=remove_invoice_line,
+        void_billing_invoice=void_billing_invoice,
+        record_manual_payment=record_manual_payment,
+        create_student_invoice=create_student_invoice,
+        list_billing_products=list_billing_products,
+        create_billing_product=create_billing_product,
+        update_billing_product=update_billing_product,
+        deactivate_billing_product=deactivate_billing_product,
         generate_monthly_payments=generate_monthly_payments,
         mark_payment_paid=mark_payment_paid,
         apply_payment_discount=apply_payment_discount,

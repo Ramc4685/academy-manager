@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from backend.v2.contexts.billing.domain.product import Product
-from backend.v2.contexts.billing.infrastructure.mongo_product_repo import MongoProductRepository
+from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
-from backend.v2.shared.ids import new_ulid
-from backend.v2.shared.tenancy import current_academy_id
 
 router = APIRouter(tags=["admin.billing.products"])
 
@@ -47,19 +44,21 @@ class ProductListResponse(BaseModel):
     products: list[ProductView]
 
 
-def _get_product_repo(request: Request) -> MongoProductRepository:
-    return MongoProductRepository(request.app.state.db)
+def _required_callable(use_case: object | None, name: str) -> object:
+    if use_case is None:
+        raise HTTPException(status_code=503, detail=f"{name} is not configured")
+    return use_case
 
 
-def _product_view(product: Product) -> ProductView:
+def _product_view(product: dict[str, object]) -> ProductView:
     return ProductView(
-        product_id=product.product_id,
-        name=product.name,
-        default_unit_amount_cents=product.default_unit_amount_cents,
-        line_type=product.line_type,
-        active=product.active,
-        created_at=product.created_at,
-        updated_at=product.updated_at,
+        product_id=str(product["product_id"]),
+        name=str(product["name"]),
+        default_unit_amount_cents=int(product["default_unit_amount_cents"]),
+        line_type=str(product["line_type"]),
+        active=bool(product["active"]),
+        created_at=product["created_at"],  # type: ignore[arg-type]
+        updated_at=product["updated_at"],  # type: ignore[arg-type]
     )
 
 
@@ -69,9 +68,10 @@ def _product_view(product: Product) -> ProductView:
 @router.get("/billing/products", response_model=ProductListResponse)
 async def list_billing_products(
     _claims: AuthClaims = Depends(require_persona("admin")),
-    repo: MongoProductRepository = Depends(_get_product_repo),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> ProductListResponse:
-    products = await repo.list_products(active_only=True)
+    list_products = _required_callable(use_cases.list_billing_products, "Billing products")
+    products = await list_products()  # type: ignore[operator]
     return ProductListResponse(products=[_product_view(p) for p in products])
 
 
@@ -83,20 +83,14 @@ async def list_billing_products(
 async def create_billing_product(
     body: CreateProductRequest,
     _claims: AuthClaims = Depends(require_persona("admin")),
-    repo: MongoProductRepository = Depends(_get_product_repo),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> ProductView:
-    now = datetime.now(UTC)
-    product = Product(
-        product_id=f"prod-{new_ulid()}",
-        academy_id=current_academy_id(),
+    create_product = _required_callable(use_cases.create_billing_product, "Billing products")
+    created = await create_product(  # type: ignore[operator]
         name=body.name,
         default_unit_amount_cents=body.default_unit_amount_cents,
         line_type=body.line_type,
-        active=True,
-        created_at=now,
-        updated_at=now,
     )
-    created = await repo.create_product(product)
     return _product_view(created)
 
 
@@ -105,15 +99,25 @@ async def update_billing_product(
     product_id: str,
     body: UpdateProductRequest,
     _claims: AuthClaims = Depends(require_persona("admin")),
-    repo: MongoProductRepository = Depends(_get_product_repo),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> ProductView:
-    existing = await repo.get_product(product_id)
-    if existing is None:
-        raise HTTPException(status_code=404, detail="product not found")
     updates = body.model_dump(exclude_unset=True)
+    update_product = _required_callable(use_cases.update_billing_product, "Billing products")
     if not updates:
-        return _product_view(existing)
-    updated = await repo.update_product(product_id, **updates)
+        products = await _required_callable(
+            use_cases.list_billing_products,
+            "Billing products",
+        )()  # type: ignore[operator]
+        for product in products:
+            if product["product_id"] == product_id:
+                return _product_view(product)
+        raise HTTPException(status_code=404, detail="product not found")
+    try:
+        updated = await update_product(product_id, **updates)  # type: ignore[operator]
+    except ValueError as exc:
+        if "not found" in str(exc):
+            raise HTTPException(status_code=404, detail="product not found") from exc
+        raise
     return _product_view(updated)
 
 
@@ -121,9 +125,14 @@ async def update_billing_product(
 async def deactivate_billing_product(
     product_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
-    repo: MongoProductRepository = Depends(_get_product_repo),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
-    existing = await repo.get_product(product_id)
-    if existing is None:
-        raise HTTPException(status_code=404, detail="product not found")
-    await repo.deactivate_product(product_id)
+    deactivate_product = _required_callable(
+        use_cases.deactivate_billing_product, "Billing products"
+    )
+    try:
+        await deactivate_product(product_id)  # type: ignore[operator]
+    except ValueError as exc:
+        if "not found" in str(exc):
+            raise HTTPException(status_code=404, detail="product not found") from exc
+        raise
