@@ -120,6 +120,47 @@ async def test_payment_checkout_uses_dynamic_payment_methods() -> None:
 
 
 @pytest.mark.asyncio
+async def test_invoice_checkout_session_uses_invoice_metadata_and_reference() -> None:
+    gateway = RealStripeGateway(api_key="sk_test_fake", webhook_secret="whsec_fake")
+
+    session_id, checkout_url = await gateway.create_invoice_checkout_session(
+        invoice_id="inv_123",
+        amount_cents=4100,
+        currency="usd",
+        success_url="https://example.test/paid",
+        cancel_url="https://example.test/cancelled",
+        metadata={
+            "invoice_id": "inv_123",
+            "academy_id": "academy_1",
+            "parent_id": "parent_1",
+            "source": "invoice_pay_link",
+        },
+    )
+
+    request = _FakeCheckoutSession.calls[-1]
+    assert session_id == "cs_test_request_shape"
+    assert checkout_url == "https://checkout.stripe.test/session"
+    assert request["mode"] == "payment"
+    assert request["client_reference_id"] == "parent_1"
+    assert request["metadata"] == {
+        "invoice_id": "inv_123",
+        "academy_id": "academy_1",
+        "parent_id": "parent_1",
+        "source": "invoice_pay_link",
+    }
+    assert request["line_items"] == [
+        {
+            "price_data": {
+                "currency": "usd",
+                "product_data": {"name": "Academy invoice inv_123"},
+                "unit_amount": 4100,
+            },
+            "quantity": 1,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_retrieve_checkout_session_serializes_current_stripe_objects() -> None:
     gateway = RealStripeGateway(api_key="sk_test_fake", webhook_secret="whsec_fake")
 

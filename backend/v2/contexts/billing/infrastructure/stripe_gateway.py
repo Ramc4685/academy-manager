@@ -102,6 +102,38 @@ class RealStripeGateway(StripeGateway):
         stripe_subscription_id = str(getattr(result, "subscription", "") or "")
         return str(result.id), str(result.url), stripe_subscription_id
 
+    async def create_invoice_checkout_session(
+        self,
+        *,
+        invoice_id: str,
+        amount_cents: int,
+        currency: str,
+        success_url: str,
+        cancel_url: str,
+        metadata: dict[str, str],
+    ) -> tuple[str, str]:
+        def _create() -> Any:
+            return self._stripe.checkout.Session.create(
+                mode="payment",
+                line_items=[
+                    {
+                        "price_data": {
+                            "currency": currency,
+                            "product_data": {"name": f"Academy invoice {invoice_id}"},
+                            "unit_amount": amount_cents,
+                        },
+                        "quantity": 1,
+                    }
+                ],
+                success_url=success_url,
+                cancel_url=cancel_url,
+                client_reference_id=metadata.get("parent_id"),
+                metadata=metadata,
+            )
+
+        result = await asyncio.to_thread(_create)
+        return str(result.id), str(result.url)
+
     async def create_customer_portal_session(
         self,
         *,

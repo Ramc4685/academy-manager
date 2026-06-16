@@ -609,6 +609,7 @@ async def send_billing_invoice(
     invoice_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
     ledger: MongoBillingLedgerRepository = Depends(_get_ledger_repo),
+    stripe: RealStripeGateway | None = Depends(_get_autopay_gateway),
 ) -> SendInvoiceResponse:
     """Send (or re-send) an invoice to the parent.
 
@@ -617,7 +618,14 @@ async def send_billing_invoice(
     - Returns a Stripe Checkout URL when a balance is outstanding (stubbed if
       Stripe is not configured in the current environment).
     """
-    use_case = SendInvoice(ledger=ledger)
+    settings = get_settings()
+    frontend_url = (settings.frontend_url or "https://app.example.com").rstrip("/")
+    use_case = SendInvoice(
+        ledger=ledger,
+        stripe=stripe,
+        success_url=f"{frontend_url}/parent/payments?invoice=paid",
+        cancel_url=f"{frontend_url}/parent/payments?invoice=cancelled",
+    )
     try:
         result = await use_case.execute(invoice_id)
     except ValueError as exc:

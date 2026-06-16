@@ -154,6 +154,15 @@ class _FakeGetAdminStudent:
         return self.student
 
 
+class _FakeInvoiceStripe:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def create_invoice_checkout_session(self, **kwargs) -> tuple[str, str]:
+        self.calls.append(kwargs)
+        return "cs_invoice_test", "https://checkout.stripe.test/invoice"
+
+
 def _student_detail(
     *,
     student_id: str = "student-1",
@@ -183,6 +192,12 @@ def _override_admin_student(admin_client, student: AdminStudentDetail | None) ->
 
 def _override_ledger(admin_client, ledger: _FakeLedger) -> None:
     admin_client.app.dependency_overrides[admin_billing_routes._get_ledger_repo] = lambda: ledger
+
+
+def _override_invoice_stripe(admin_client, stripe: _FakeInvoiceStripe) -> None:
+    admin_client.app.dependency_overrides[admin_billing_routes._get_autopay_gateway] = (
+        lambda: stripe
+    )
 
 
 def test_list_payments_returns_recent(admin_client):
@@ -347,6 +362,35 @@ def test_revenue_skips_waived_payments(admin_client):
 def test_revenue_wrong_persona_404(coach_on_admin_client):
     r = coach_on_admin_client.get("/api/v2/admin/finance/revenue")
     assert r.status_code == 404
+
+
+def test_send_invoice_returns_checkout_url_when_stripe_configured(admin_client):
+    ledger = _FakeLedger(invoices=[_invoice(status="open", balance_due_cents=7_000)])
+    stripe = _FakeInvoiceStripe()
+    _override_ledger(admin_client, ledger)
+    _override_invoice_stripe(admin_client, stripe)
+
+    response = admin_client.post("/api/v2/admin/billing/invoices/inv-1/send")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["checkout_url"] == "https://checkout.stripe.test/invoice"
+    assert body["delivery_status"] == "sent"
+    assert stripe.calls == [
+        {
+            "invoice_id": "inv-1",
+            "amount_cents": 7_000,
+            "currency": "usd",
+            "success_url": "https://app.example.com/parent/payments?invoice=paid",
+            "cancel_url": "https://app.example.com/parent/payments?invoice=cancelled",
+            "metadata": {
+                "invoice_id": "inv-1",
+                "source": "invoice_pay_link",
+                "academy_id": "acad",
+                "parent_id": "parent-1",
+            },
+        }
+    ]
 
 
 def test_add_invoice_line_returns_refreshed_invoice_totals(admin_client):
