@@ -16,6 +16,7 @@ import pytest
 from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
     HandleWebhookEvent,
 )
+from backend.v2.contexts.billing.domain.ledger import LedgerInvoice, LedgerPayment
 from backend.v2.contexts.billing.domain.models import Payment, Subscription
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
@@ -112,12 +113,10 @@ class FakeDedup:
         event_id = str(event["id"])
         if event_id in self.events:
             return False
-        obj = event.get("data", {}).get("object", {})
-        metadata = obj.get("metadata") if isinstance(obj, dict) else None
         self.events[event_id] = {
             "event_id": event_id,
             "event_type": str(event["type"]),
-            "academy_id": (metadata or {}).get("academy_id") or academy_id,
+            "academy_id": academy_id,
             "livemode": bool(event.get("livemode", False)),
             "status": "received",
             "retry_count": 0,
@@ -185,6 +184,48 @@ class FakeEnrollmentAutopayState:
         )
 
 
+class FakeBillingLedger:
+    def __init__(self, invoice: LedgerInvoice | None = None) -> None:
+        self.invoices = {invoice.invoice_id: invoice} if invoice else {}
+        self.payments: dict[str, LedgerPayment] = {}
+        self.allocations: list[dict[str, Any]] = []
+        self.fail_allocate = False
+
+    async def get_invoice(self, invoice_id: str) -> LedgerInvoice | None:
+        return self.invoices.get(invoice_id)
+
+    async def record_payment(
+        self,
+        payment: LedgerPayment,
+        *,
+        idempotency_key: str,
+    ) -> LedgerPayment:
+        existing = self.payments.get(payment.payment_id)
+        if existing is not None:
+            return existing
+        self.payments[payment.payment_id] = payment
+        return payment
+
+    async def allocate_payment(
+        self,
+        *,
+        payment_id: str,
+        invoice_id: str,
+        amount_cents: int,
+        idempotency_key: str,
+    ) -> None:
+        if self.fail_allocate:
+            raise ValueError("allocation failed")
+        self.allocations.append(
+            {
+                "payment_id": payment_id,
+                "invoice_id": invoice_id,
+                "amount_cents": amount_cents,
+                "idempotency_key": idempotency_key,
+            }
+        )
+
+
 def _build(
     repo,
     outbox=None,
@@ -194,6 +235,7 @@ def _build(
     enrollment_autopay=None,
     stripe=None,
     expected_livemode=None,
+    billing_ledger=None,
 ):
     return HandleWebhookEvent(
         stripe=stripe or FakeStripeGateway(),
@@ -205,6 +247,31 @@ def _build(
         outbox=outbox or FakeOutbox(),
         academy_id="acad",
         expected_livemode=expected_livemode,
+        billing_ledger=billing_ledger,
+    )
+
+
+def _ledger_invoice(
+    *,
+    invoice_id: str = "inv-autopay",
+    academy_id: str = "acad",
+    parent_id: str = "parent-from-invoice",
+) -> LedgerInvoice:
+    now = datetime.now(UTC)
+    return LedgerInvoice(
+        invoice_id=invoice_id,
+        academy_id=academy_id,
+        parent_id=parent_id,
+        period="2026-06",
+        status="open",
+        subtotal_cents=10_000,
+        discount_cents=0,
+        total_cents=10_000,
+        balance_due_cents=10_000,
+        currency="usd",
+        due_date=now.date(),
+        created_at=now,
+        updated_at=now,
     )
 
 
@@ -489,7 +556,7 @@ async def test_tenant_mismatch_event_is_quarantined() -> None:
 
 
 @pytest.mark.asyncio
-async def test_process_next_does_not_claim_other_academy_events() -> None:
+async def test_process_next_quarantines_mismatched_metadata_events() -> None:
     repo = FakePaymentRepo()
     _seed_pending_payment(repo)
     dedup = FakeDedup()
@@ -510,8 +577,8 @@ async def test_process_next_does_not_claim_other_academy_events() -> None:
     await uc.accept(body, "test_signature")
     res = await uc.process_next(processor_id="test-worker")
 
-    assert res == {"processed": False, "empty": True}
-    assert dedup.events["evt_other_academy_pending"]["status"] == "received"
+    assert res["status"] == "quarantined"
+    assert dedup.events["evt_other_academy_pending"]["status"] == "quarantined"
     assert repo.by_id["pay-1"].status == "pending"
 
 
@@ -537,6 +604,82 @@ async def test_payment_intent_succeeded_marks_payment_succeeded() -> None:
     assert res["processed"] is True
     assert repo.by_id["pay-1"].status == "succeeded"
     assert [e.name for e in outbox.events] == ["Billing.PaymentSucceeded"]
+
+
+@pytest.mark.asyncio
+async def test_autopay_payment_intent_uses_invoice_parent_when_metadata_parent_missing() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice())
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger)
+    body = json.dumps(
+        {
+            "id": "evt_autopay_pi_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_autopay_1",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-autopay",
+                        "source": "autopay",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    payment = ledger.payments["ledger-pay-autopay:pi_autopay_1"]
+    assert payment.parent_id == "parent-from-invoice"
+    assert payment.academy_id == "acad"
+    assert ledger.allocations == [
+        {
+            "payment_id": "ledger-pay-autopay:pi_autopay_1",
+            "invoice_id": "inv-autopay",
+            "amount_cents": 10000,
+            "idempotency_key": "autopay-alloc:pi_autopay_1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_autopay_payment_intent_allocation_failure_is_retryable() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice())
+    ledger.fail_allocate = True
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger)
+    body = json.dumps(
+        {
+            "id": "evt_autopay_pi_retry",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_autopay_retry",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-autopay",
+                        "source": "autopay",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    failed = await uc.process_next(processor_id="test-worker")
+
+    assert failed["status"] == "failed"
+    assert dedup.events["evt_autopay_pi_retry"]["status"] == "failed"
+    assert "evt_autopay_pi_retry" not in dedup.processed
 
 
 @pytest.mark.asyncio

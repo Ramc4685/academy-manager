@@ -77,6 +77,13 @@ def test_v2_main_uses_runtime_academy_for_single_academy_launch_composition() ->
     assert "app.state.primary_academy_id = settings.primary_academy_id" in source
 
 
+def test_v2_main_does_not_bypass_stripe_webhook_signatures_from_raw_env() -> None:
+    source = (REPO_ROOT / "backend/v2/main.py").read_text(encoding="utf-8")
+
+    assert "APP_ENV" not in source
+    assert "skip_signature_verify=" not in source
+
+
 def test_fly_health_check_uses_v2_health_endpoint() -> None:
     fly_toml = (REPO_ROOT / "backend/fly.toml").read_text(encoding="utf-8")
 

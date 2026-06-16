@@ -540,14 +540,25 @@ class HandleWebhookEvent:
         pi_id: str = str(pi.get("id") or "")
         metadata = pi.get("metadata") or {}
         invoice_id = str(metadata.get("invoice_id") or "")
-        parent_id = str(metadata.get("parent_id") or "")
 
         if not invoice_id:
             log.warning("autopay_pi_succeeded: no invoice_id in metadata pi=%s", pi_id)
             return
 
+        invoice = await self._billing_ledger.get_invoice(invoice_id)
+        if invoice is None:
+            raise ValueError("autopay invoice not found")
+        if invoice.academy_id != self._academy_id:
+            raise _QuarantineStripeEvent(
+                f"academy mismatch: invoice={invoice.academy_id} expected={self._academy_id}"
+            )
+
         amount_cents = int(pi.get("amount") or 0)
-        currency = str(pi.get("currency") or "usd").lower()
+        if amount_cents <= 0:
+            raise ValueError("autopay payment_intent missing positive amount")
+        currency = str(pi.get("currency") or invoice.currency).lower()
+        if currency != invoice.currency.lower():
+            raise ValueError("autopay payment_intent currency does not match invoice")
         now = self._now()
         idempotency_key = f"autopay-pi:{pi_id}"
         ledger_payment_id = f"ledger-pay-autopay:{pi_id}"
@@ -555,8 +566,8 @@ class HandleWebhookEvent:
         payment = await self._billing_ledger.record_payment(
             LedgerPayment(
                 payment_id=ledger_payment_id,
-                academy_id=self._academy_id,
-                parent_id=parent_id,
+                academy_id=invoice.academy_id,
+                parent_id=invoice.parent_id,
                 amount_cents=amount_cents,
                 unapplied_amount_cents=amount_cents,
                 currency=currency,
@@ -571,27 +582,19 @@ class HandleWebhookEvent:
         )
 
         if amount_cents > 0:
-            try:
-                await self._billing_ledger.allocate_payment(
-                    payment_id=payment.payment_id,
-                    invoice_id=invoice_id,
-                    amount_cents=amount_cents,
-                    idempotency_key=f"autopay-alloc:{pi_id}",
-                )
-                log.info(
-                    "autopay_pi_succeeded: allocated payment=%s to invoice=%s pi=%s amount=%d",
-                    payment.payment_id,
-                    invoice_id,
-                    pi_id,
-                    amount_cents,
-                )
-            except ValueError as exc:
-                log.warning(
-                    "autopay_pi_succeeded: allocation skipped invoice=%s pi=%s err=%s",
-                    invoice_id,
-                    pi_id,
-                    exc,
-                )
+            await self._billing_ledger.allocate_payment(
+                payment_id=payment.payment_id,
+                invoice_id=invoice_id,
+                amount_cents=amount_cents,
+                idempotency_key=f"autopay-alloc:{pi_id}",
+            )
+            log.info(
+                "autopay_pi_succeeded: allocated payment=%s to invoice=%s pi=%s amount=%d",
+                payment.payment_id,
+                invoice_id,
+                pi_id,
+                amount_cents,
+            )
 
     async def _handle_autopay_pi_failed(self, event: dict[str, Any]) -> None:
         """Handle payment_intent.payment_failed from an autopay charge.

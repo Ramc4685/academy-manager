@@ -391,6 +391,39 @@ async def test_admin_pending_payments_export_uses_request_tenant_not_default(mon
 
 
 @pytest.mark.asyncio
+async def test_admin_revenue_export_includes_ledger_payments(mongo_db) -> None:
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    await mongo_db["ledger_payments"].insert_many(
+        [
+            {
+                "payment_id": "ledger-request",
+                "academy_id": "request-acad",
+                "parent_id": "parent-request",
+                "status": "succeeded",
+                "amount_cents": 12000,
+                "currency": "usd",
+                "created_at": now,
+            },
+            {
+                "payment_id": "ledger-default",
+                "academy_id": "default-academy",
+                "parent_id": "parent-default",
+                "status": "succeeded",
+                "amount_cents": 99000,
+                "currency": "usd",
+                "created_at": now,
+            },
+        ]
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope("request-acad"):
+        csv_text = await admin.export_report_csv("revenue")
+
+    assert csv_text == "month,revenue_cents\r\n2026-06,12000\r\n"
+
+
+@pytest.mark.asyncio
 async def test_admin_report_export_rejects_unknown_report_name(mongo_db) -> None:
     admin = _admin_use_cases(mongo_db)
 

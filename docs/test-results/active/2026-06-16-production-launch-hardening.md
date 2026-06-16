@@ -46,6 +46,7 @@ Close P0/P1 launch security blockers: tenant context, RBAC, Stripe, reports, exp
 - 2026-06-16T14:10:25 main/working: Pushed feat/launch-hardening-billing-integration to origin and opened draft PR #198. Pre-push hook passed during push; PR is open/draft/mergeable with CodeRabbit pending.
 - 2026-06-16T14:31:05 main/working: CI fix: bumped vulnerable backend/frontend dependencies; moved admin billing invoice/product route construction behind admin composition to satisfy import-linter; updated billing interface tests for composition-backed callables.
 - 2026-06-16T14:39:48 main/working: CI E2E fix: delayed admin student billing product lookup until the Add charge dialog opens; this removes the un-stubbed /admin/billing/products request from the student profile E2E path.
+- 2026-06-16T15:17:25 main/working: Addressed reviewer launch blockers: autopay webhook recovery now derives parent/tenant from stored ledger invoice and fails retryably on allocation errors; Stripe gateway wiring no longer bypasses webhook signatures via raw APP_ENV; received webhook queue uses receiving academy instead of event metadata; ledger payments normalize final_amount_cents for reports; removed stale V2_STRIPE_USE_FAKE_GATEWAY Fly env.
 ## Verification
 
 - No verification recorded yet.
@@ -93,6 +94,9 @@ Close P0/P1 launch security blockers: tenant context, RBAC, Stripe, reports, exp
 - 2026-06-16T14:31:05: Local CI verification: backend pip-audit, compileall, import-linter, ruff format/check, ruff check, pytest v2/tests (1320 passed); frontend pnpm install --frozen-lockfile, pnpm audit --audit-level=high, pnpm typecheck, pnpm lint, pnpm build passed with existing lint warnings only.
 - 2026-06-16T14:39:49: Focused E2E: pnpm exec playwright test e2e/specs/admin-students.spec.ts --project=chromium-mobile --project=webkit-mobile passed (8 passed).
 - 2026-06-16T14:48:44: GitHub PR #198 CI after fixes: Backend, Backend Lint, Frontend Static, Frontend E2E Chromium, and Frontend E2E WebKit passed on run 27643460636. Deploy/production approval/smoke jobs skipped because this is a draft PR/non-deploy run.
+- 2026-06-16T15:17:25: Focused backend regression: source backend/.venv/bin/activate && pytest v2/tests/unit/test_admin_composition_tenancy.py v2/tests/application/test_webhook_handler.py v2/tests/unit/test_charge_autopay_use_case.py v2/tests/contract/test_stripe_event_dedup.py v2/tests/structural/test_saas_production_wiring.py -q => 69 passed, 1 warning.
+- 2026-06-16T15:17:26: Full backend v2 suite: source backend/.venv/bin/activate && pytest v2/tests --override-ini=testpaths=v2/tests --cov=v2/shared --cov-report=term-missing --cov-fail-under=70 => 1325 passed, 4 warnings, coverage 82.51%.
+- 2026-06-16T15:17:26: Static backend checks: ruff format --check v2, ruff check v2, and import-linter contracts all passed.
 ## Reusable Lessons
 
 - None recorded yet.

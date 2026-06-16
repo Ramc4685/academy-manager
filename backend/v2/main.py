@@ -451,15 +451,12 @@ def _build_stripe(settings: Settings) -> StripeGateway:
             "STRIPE_API_KEY and STRIPE_WEBHOOK_SECRET must be set. "
             "Use Stripe test-mode keys (sk_test_...) for local/staging and live keys for prod."
         )
-    import os
-
     from backend.v2.contexts.billing.infrastructure.stripe_gateway import RealStripeGateway
 
     return RealStripeGateway(
         api_key=settings.stripe_api_key,
         webhook_secret=settings.stripe_webhook_secret,
         connect_client_id=settings.stripe_connect_client_id,
-        skip_signature_verify=os.environ.get("APP_ENV") == "development",
     )
 
 

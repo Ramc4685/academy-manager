@@ -21,7 +21,6 @@ primary_region = "ord"
   ENABLE_OWNER_ROLE = "false"
   ENABLE_STUDENT_LOGIN = "false"
   V2_RUN_MIGRATIONS_ON_BOOT = "true"
-  V2_STRIPE_USE_FAKE_GATEWAY = "false"
 
 [http_service]
   internal_port = 8001

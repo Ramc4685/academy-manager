@@ -75,3 +75,27 @@ async def test_stale_processing_row_is_reclaimable(db) -> None:
     )
     # Retry should reclaim.
     assert await dedup.claim("evt_5", "checkout.session.completed") is True
+
+
+@pytest.mark.asyncio
+async def test_store_received_uses_receiving_academy_not_metadata_queue(db) -> None:
+    await db["stripe_webhook_events"].create_index("event_id", unique=True)
+    dedup = MongoStripeEventDedup(db)
+
+    await dedup.store_received(
+        {
+            "id": "evt_wrong_metadata_queue",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_wrong_metadata_queue",
+                    "metadata": {"academy_id": "other-academy"},
+                }
+            },
+        },
+        raw_payload=b"{}",
+        academy_id="acad",
+    )
+
+    doc = await db["stripe_webhook_events"].find_one({"event_id": "evt_wrong_metadata_queue"})
+    assert doc["academy_id"] == "acad"

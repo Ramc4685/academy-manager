@@ -116,7 +116,6 @@ class MongoStripeEventDedup:
         obj = event.get("data", {}).get("object", {})
         if not isinstance(obj, dict):
             obj = {}
-        metadata = self._metadata_from_object(obj)
         now = datetime.now(UTC)
         try:
             await self._coll.insert_one(
@@ -126,7 +125,7 @@ class MongoStripeEventDedup:
                     "livemode": bool(event.get("livemode", False)),
                     "stripe_account": event.get("account"),
                     "api_version": event.get("api_version"),
-                    "academy_id": metadata.get("academy_id") or academy_id,
+                    "academy_id": academy_id,
                     "object_id": obj.get("id"),
                     "object_type": obj.get("object"),
                     "received_at": now,

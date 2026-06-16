@@ -418,6 +418,7 @@ async def test_saved_card_lookup_uses_invoice_academy_and_parent() -> None:
     assert stripe.create_calls[0]["metadata"] == {
         "invoice_id": "inv-academy-parent",
         "academy_id": "acad-1",
+        "parent_id": "parent-shared-id",
         "source": "autopay",
     }
 

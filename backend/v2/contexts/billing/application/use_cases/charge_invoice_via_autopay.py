@@ -153,6 +153,7 @@ class ChargeInvoiceViaAutopay:
                 metadata={
                     "invoice_id": invoice.invoice_id,
                     "academy_id": invoice.academy_id,
+                    "parent_id": invoice.parent_id,
                     "source": "autopay",
                 },
             )
