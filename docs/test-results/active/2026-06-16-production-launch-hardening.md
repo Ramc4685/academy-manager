@@ -92,6 +92,7 @@ Close P0/P1 launch security blockers: tenant context, RBAC, Stripe, reports, exp
 - 2026-06-16T14:10:25: PR handoff: gh pr view 198 reports url=https://github.com/Ramc4685/academy-manager/pull/198, isDraft=true, state=OPEN, mergeable=MERGEABLE, CodeRabbit=PENDING.
 - 2026-06-16T14:31:05: Local CI verification: backend pip-audit, compileall, import-linter, ruff format/check, ruff check, pytest v2/tests (1320 passed); frontend pnpm install --frozen-lockfile, pnpm audit --audit-level=high, pnpm typecheck, pnpm lint, pnpm build passed with existing lint warnings only.
 - 2026-06-16T14:39:49: Focused E2E: pnpm exec playwright test e2e/specs/admin-students.spec.ts --project=chromium-mobile --project=webkit-mobile passed (8 passed).
+- 2026-06-16T14:48:44: GitHub PR #198 CI after fixes: Backend, Backend Lint, Frontend Static, Frontend E2E Chromium, and Frontend E2E WebKit passed on run 27643460636. Deploy/production approval/smoke jobs skipped because this is a draft PR/non-deploy run.
 ## Reusable Lessons
 
 - None recorded yet.
