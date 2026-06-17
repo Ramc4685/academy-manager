@@ -113,6 +113,8 @@ class MongoStripeEventDedup:
     ) -> bool:
         event_id = str(event.get("id") or "")
         event_type = str(event.get("type") or "")
+        if await self._coll.find_one({"event_id": event_id}, {"_id": 1}) is not None:
+            return False
         obj = event.get("data", {}).get("object", {})
         if not isinstance(obj, dict):
             obj = {}
@@ -194,7 +196,7 @@ class MongoStripeEventDedup:
         )
 
     async def mark_processed(self, event_id: str) -> None:
-        await self._coll.update_one(
+        await self._coll.update_many(
             {"event_id": event_id},
             {
                 "$set": {
@@ -213,7 +215,7 @@ class MongoStripeEventDedup:
         existing = await self._coll.find_one({"event_id": event_id})
         retry_count = int((existing or {}).get("retry_count") or 0)
         delay = self._retry_delay(retry_count)
-        await self._coll.update_one(
+        await self._coll.update_many(
             {"event_id": event_id},
             {
                 "$set": {
@@ -231,7 +233,7 @@ class MongoStripeEventDedup:
 
     async def mark_quarantined(self, event_id: str, error: str) -> None:
         now = datetime.now(UTC)
-        await self._coll.update_one(
+        await self._coll.update_many(
             {"event_id": event_id},
             {
                 "$set": {

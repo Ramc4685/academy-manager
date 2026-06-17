@@ -75,6 +75,7 @@ services:
       V2_ENV: "staging"
       V2_MONGO_URL: "mongodb://mongo:27017"
       V2_MONGO_DB: "academy_manager_saas_staging"
+      V2_RUN_MIGRATIONS_ON_BOOT: "true"
       V2_ALLOWED_INTERNAL_TENANT_HEADER: "x-internal-tenant-id"
       # --- Legacy backend env (non-secret) ---
       APP_ENV: "staging"

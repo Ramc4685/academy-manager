@@ -326,6 +326,51 @@ async def test_already_paid_invoice_raises_value_error() -> None:
         await _uc(repo, FakeStripeSucceeds()).execute("inv-1")
 
 
+async def test_charge_autopay_paid_invoice_does_not_lookup_card_or_call_stripe() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="paid", balance_due_cents=5_000)])
+    stripe = FakeStripeSucceeds()
+
+    with pytest.raises(ValueError, match="not chargeable"):
+        await _uc(repo, stripe).execute("inv-1")
+
+    assert stripe.lookup_calls == []
+    assert stripe.create_calls == []
+
+
+async def test_charge_autopay_zero_balance_invoice_does_not_lookup_card_or_call_stripe() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open", balance_due_cents=0)])
+    stripe = FakeStripeSucceeds()
+
+    with pytest.raises(ValueError, match="no balance due"):
+        await _uc(repo, stripe).execute("inv-1")
+
+    assert stripe.lookup_calls == []
+    assert stripe.create_calls == []
+
+
+async def test_charge_autopay_rechecks_invoice_before_stripe_call() -> None:
+    class _StaleThenPaidLedger(FakeLedgerRepo):
+        def __init__(self) -> None:
+            super().__init__(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+            self.reads = 0
+
+        async def get_invoice(self, invoice_id: str) -> LedgerInvoice | None:
+            self.reads += 1
+            if self.reads == 1:
+                return _invoice(status="open", balance_due_cents=10_000)
+            return _invoice(status="paid", balance_due_cents=0)
+
+    repo = _StaleThenPaidLedger()
+    stripe = FakeStripeSucceeds()
+
+    with pytest.raises(ValueError, match="no longer chargeable"):
+        await _uc(repo, stripe).execute("inv-1")
+
+    assert repo.reads == 2
+    assert stripe.lookup_calls == []
+    assert stripe.create_calls == []
+
+
 async def test_void_invoice_raises_value_error() -> None:
     """Void invoice raises ValueError (not chargeable)."""
     repo = FakeLedgerRepo(invoices=[_invoice(status="void", balance_due_cents=0)])

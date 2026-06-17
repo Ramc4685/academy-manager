@@ -51,6 +51,7 @@ class InvoiceStripeGateway(Protocol):
         success_url: str,
         cancel_url: str,
         metadata: dict[str, str],
+        idempotency_key: str | None = None,
     ) -> tuple[str, str]:
         """Returns (checkout_session_id, checkout_url)."""
         ...
@@ -125,7 +126,9 @@ class SendInvoice:
 
         # 3. Generate Stripe Checkout Session for unpaid balance
         checkout_url: str | None = None
-        if invoice.balance_due_cents > 0 and self._stripe is not None:
+        payable_statuses = {"open", "partially_paid"}
+        can_create_checkout = invoice.status in payable_statuses and invoice.balance_due_cents > 0
+        if can_create_checkout and self._stripe is not None:
             try:
                 _session_id, checkout_url = await self._stripe.create_invoice_checkout_session(
                     invoice_id=invoice_id,
@@ -139,6 +142,9 @@ class SendInvoice:
                         "academy_id": invoice.academy_id,
                         "parent_id": invoice.parent_id,
                     },
+                    idempotency_key=(
+                        f"invoice-checkout:{invoice.invoice_id}:{invoice.balance_due_cents}"
+                    ),
                 )
                 log.info(
                     "send_invoice: checkout_session created invoice=%s url=%s",
@@ -152,8 +158,13 @@ class SendInvoice:
                     exc,
                 )
                 checkout_url = None
-        elif invoice.balance_due_cents == 0:
-            log.info("send_invoice: invoice=%s already paid — skipping Stripe", invoice_id)
+        elif invoice.balance_due_cents == 0 or invoice.status not in payable_statuses:
+            log.info(
+                "send_invoice: invoice=%s not payable (status=%s balance=%d) — skipping Stripe",
+                invoice_id,
+                invoice.status,
+                invoice.balance_due_cents,
+            )
         else:
             log.info(
                 "send_invoice: stripe gateway not configured — skipping checkout for invoice=%s",

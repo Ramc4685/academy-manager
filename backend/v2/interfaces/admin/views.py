@@ -605,6 +605,41 @@ class ReconcileStripeBillingResponse(BaseModel):
     audit_id: str
 
 
+class BillingReconciliationMismatchView(BaseModel):
+    code: str
+    message: str
+    stripe_value: Any | None = None
+    local_value: Any | None = None
+
+
+class BillingReconciliationReportResponse(BaseModel):
+    result: str
+    stripe_invoice_id: str | None = None
+    payment_intent_id: str | None = None
+    stripe_customer_id: str | None = None
+    local_invoice_id: str | None = None
+    ledger_payment_id: str | None = None
+    payment_allocation_id: str | None = None
+    mismatches: list[BillingReconciliationMismatchView] = Field(default_factory=list)
+    checked_at: datetime
+
+
+class BillingWebhookEventView(BaseModel):
+    event_id: str
+    event_type: str
+    status: Literal["received", "processing", "processed", "failed", "quarantined"] | str
+    object_id: str | None = None
+    object_type: str | None = None
+    received_at: datetime | None = None
+    last_attempt_at: datetime | None = None
+    retry_count: int = 0
+    error_message: str | None = None
+
+
+class BillingWebhookQueueResponse(BaseModel):
+    events: list[BillingWebhookEventView]
+
+
 class ApplyPaymentDiscountRequest(BaseModel):
     discount_cents: int
     reason: str = Field(min_length=1)

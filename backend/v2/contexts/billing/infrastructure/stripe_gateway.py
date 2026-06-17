@@ -111,11 +111,12 @@ class RealStripeGateway(StripeGateway):
         success_url: str,
         cancel_url: str,
         metadata: dict[str, str],
+        idempotency_key: str | None = None,
     ) -> tuple[str, str]:
         def _create() -> Any:
-            return self._stripe.checkout.Session.create(
-                mode="payment",
-                line_items=[
+            request: dict[str, Any] = {
+                "mode": "payment",
+                "line_items": [
                     {
                         "price_data": {
                             "currency": currency,
@@ -125,11 +126,14 @@ class RealStripeGateway(StripeGateway):
                         "quantity": 1,
                     }
                 ],
-                success_url=success_url,
-                cancel_url=cancel_url,
-                client_reference_id=metadata.get("parent_id"),
-                metadata=metadata,
-            )
+                "success_url": success_url,
+                "cancel_url": cancel_url,
+                "client_reference_id": metadata.get("parent_id"),
+                "metadata": metadata,
+            }
+            if idempotency_key:
+                request["idempotency_key"] = idempotency_key
+            return self._stripe.checkout.Session.create(**request)
 
         result = await asyncio.to_thread(_create)
         return str(result.id), str(result.url)

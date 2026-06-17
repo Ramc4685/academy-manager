@@ -189,6 +189,127 @@ async def test_generate_monthly_applies_approved_account_credit(db, acad) -> Non
 
 
 @pytest.mark.asyncio
+async def test_generate_monthly_recovers_orphan_invoice_key_with_existing_credit_application(
+    db, acad
+) -> None:
+    await db["billing_invoice_keys"].create_index(
+        [("academy_id", 1), ("enrollment_id", 1), ("period", 1)],
+        unique=True,
+        name="uniq_monthly_invoice_key",
+    )
+    credits = MongoCreditLedgerRepository(db)
+    ledger_repo = MongoBillingLedgerRepository(db)
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
+        credit_ledger=credits,
+        ledger_repo=ledger_repo,
+    )
+    now = datetime(2026, 5, 20, tzinfo=UTC)
+    await credits.create(
+        CreditLedgerEntry(
+            credit_id="credit-orphan-key",
+            academy_id=acad,
+            parent_id="parent-1",
+            student_id="student-1",
+            enrollment_id="enroll-orphan-key",
+            type="EARLY_WITHDRAWAL_CREDIT",
+            status="APPROVED",
+            amount_cents=3_750,
+            remaining_amount_cents=3_750,
+            currency="usd",
+            reason="withdrawal",
+            calculation_snapshot_id="snap-orphan-key",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    await credits.apply_available_credits(
+        parent_id="parent-1",
+        invoice_id="pay-orphan-key",
+        amount_due_cents=10_000,
+    )
+    await db["billing_invoice_keys"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_key_id": "key-orphan",
+            "payment_id": "pay-orphan-key",
+            "enrollment_id": "enroll-orphan-key",
+            "period": "2026-06",
+            "created_at": now,
+        }
+    )
+    await db["sessions"].insert_one(
+        {
+            "academy_id": acad,
+            "session_id": "sess-orphan-key",
+            "name": "Junior Badminton",
+            "title": "Junior Badminton",
+            "coach_id": "coach-1",
+            "location": "Court 1",
+            "start_date": "2026-06-01",
+            "end_date": "2026-06-30",
+            "days_of_week": ["Mon", "Wed"],
+            "start_time": "18:00",
+            "end_time": "19:00",
+            "monthly_price_cents": 10_000,
+            "capacity": 8,
+            "status": "active",
+        }
+    )
+    await db["students"].insert_one(
+        {
+            "academy_id": acad,
+            "student_id": "student-1",
+            "parent_id": "parent-1",
+            "full_name": "A Student",
+        }
+    )
+    await db["enrollments"].insert_one(
+        {
+            "academy_id": acad,
+            "enrollment_id": "enroll-orphan-key",
+            "session_id": "sess-orphan-key",
+            "student_id": "student-1",
+            "parent_id": "parent-1",
+            "status": "active",
+            "billing_type": "standard",
+            "billing_start_at": datetime(2026, 5, 1, tzinfo=UTC),
+            "created_at": datetime(2026, 5, 1, tzinfo=UTC),
+        }
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.created == 1
+    assert result.skipped_existing == 0
+    invoice = await db["invoices"].find_one(
+        {"academy_id": acad, "invoice_id": "inv-monthly-enroll-orphan-key-2026-06"}
+    )
+    assert invoice is not None
+    assert invoice["total_cents"] == 6_250
+    assert invoice["balance_due_cents"] == 6_250
+    assert await credits.balance_for_parent("parent-1") == 0
+    assert (
+        await db["credit_applications"].count_documents(
+            {"academy_id": acad, "invoice_id": "pay-orphan-key"}
+        )
+        == 1
+    )
+
+    replay = await repo.generate_monthly_payments("2026-06")
+
+    assert replay.created == 0
+    assert replay.skipped_existing == 1
+    assert (
+        await db["invoices"].count_documents(
+            {"academy_id": acad, "invoice_id": "inv-monthly-enroll-orphan-key-2026-06"}
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
 async def test_latest_paid_payment_for_enrollment_finds_legacy_paid_status(db, acad) -> None:
     repo = MongoPaymentRepository(db)
     # Legacy onboarding writes status="paid" (not the v2 "succeeded") and stores

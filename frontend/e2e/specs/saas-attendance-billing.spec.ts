@@ -213,6 +213,10 @@ test.describe("SaaS v2 — admin billing ledger idempotency", () => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, { payments: [] });
     });
+    await page.route("**/api/v2/admin/billing/webhooks*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, { events: [] });
+    });
 
     await page.goto("/admin/payments");
     await expect(page.getByTestId("admin-payments")).toBeVisible();

@@ -38,6 +38,8 @@ from backend.v2.interfaces.admin.views import (
     AdminPayoutView,
     AdminRevenueResponse,
     ApplyPaymentDiscountRequest,
+    BillingReconciliationReportResponse,
+    BillingWebhookQueueResponse,
     ChargeAutopayResponse,
     DeleteExpenseRequest,
     EditExpenseRequest,
@@ -392,6 +394,41 @@ async def reconcile_stripe_billing(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return ReconcileStripeBillingResponse(**result)
+
+
+@router.get("/billing/reconciliation", response_model=BillingReconciliationReportResponse)
+async def get_billing_reconciliation_report(
+    stripe_invoice_id: str | None = None,
+    payment_intent_id: str | None = None,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> BillingReconciliationReportResponse:
+    if not stripe_invoice_id and not payment_intent_id:
+        raise HTTPException(
+            status_code=422,
+            detail="stripe_invoice_id or payment_intent_id is required",
+        )
+    report = _required_callable(
+        use_cases.get_billing_reconciliation_report,
+        "Billing reconciliation report",
+    )
+    result = await report(
+        stripe_invoice_id=stripe_invoice_id,
+        payment_intent_id=payment_intent_id,
+    )
+    return BillingReconciliationReportResponse(**result)
+
+
+@router.get("/billing/webhooks", response_model=BillingWebhookQueueResponse)
+async def list_billing_webhook_events(
+    status: str | None = None,
+    limit: int = 50,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> BillingWebhookQueueResponse:
+    queue = _required_callable(use_cases.list_billing_webhook_events, "Billing webhook queue")
+    rows = await queue(status=status, limit=max(1, min(limit, 100)))
+    return BillingWebhookQueueResponse(events=rows)
 
 
 # --- # FINANCE ---

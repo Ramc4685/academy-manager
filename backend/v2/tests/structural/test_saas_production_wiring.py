@@ -126,6 +126,12 @@ def test_local_test_stack_uses_v2_app_and_health_endpoint() -> None:
     assert "/api/health" not in script
 
 
+def test_saas_staging_runs_v2_migrations_on_boot() -> None:
+    compose = (REPO_ROOT / "docker-compose.saas.yml").read_text(encoding="utf-8")
+
+    assert 'V2_RUN_MIGRATIONS_ON_BOOT: "true"' in compose
+
+
 def test_ci_installs_single_backend_requirements_file() -> None:
     workflow = (REPO_ROOT / ".github/workflows/production.yml").read_text(encoding="utf-8")
 

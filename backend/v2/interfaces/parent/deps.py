@@ -61,6 +61,7 @@ class ParentUseCases:
     accept_parent_waiver: AcceptParentWaiver
     get_academy_info: object  # callable accepting academy_id
     get_registration_waiver: object = None  # callable -> Waiver | None
+    start_invoice_payment_for_parent: object | None = None  # callable
     # Optional so existing ParentUseCases constructions (and tests) that predate
     # the skill pathway keep working. Real parent composition always sets it;
     # the skill routes are the only consumers.

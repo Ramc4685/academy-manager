@@ -28,6 +28,21 @@ CreditEntryType = Literal[
 ]
 CreditStatus = Literal["PENDING", "APPROVED", "APPLIED", "EXPIRED", "VOIDED"]
 
+ALLOWED_PAYMENT_PROJECTION_TRANSITIONS: dict[str, set[str]] = {
+    "pending": {"succeeded", "failed", "cancelled"},
+    "failed": {"succeeded"},
+    "succeeded": {"partially_refunded", "refunded"},
+    "partially_refunded": {"refunded"},
+    "refunded": set(),
+    "cancelled": set(),
+}
+
+
+def can_transition_payment_projection(current: str, target: str) -> bool:
+    if current == target:
+        return True
+    return target in ALLOWED_PAYMENT_PROJECTION_TRANSITIONS.get(current, set())
+
 
 class Payment(BaseModel):
     model_config = {"frozen": True}

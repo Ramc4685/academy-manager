@@ -414,6 +414,56 @@ class MongoPaymentRepository(TenantScopedRepository):
         )
         await ledger_repo.create_invoice(invoice, lines=[line], idempotency_key=idempotency_key)
 
+    async def _recover_orphan_monthly_invoice(
+        self,
+        *,
+        enrollment_id: str,
+        parent_id: str,
+        student_id: str,
+        period: str,
+        gross_amount_cents: int,
+        invoice_key: dict[str, object] | None,
+        now: datetime,
+    ) -> bool:
+        if self._ledger_repo is None or invoice_key is None:
+            return False
+        invoice_id = f"inv-monthly-{enrollment_id}-{period}"
+        existing_invoice = await self._ledger_repo.get_invoice(invoice_id)
+        if existing_invoice is not None:
+            return False
+
+        payment_id = str(invoice_key.get("payment_id") or "")
+        if not payment_id:
+            return False
+
+        applied_credit_cents = await self._applied_credit_cents(payment_id)
+        if applied_credit_cents == 0 and self._credit_ledger is not None:
+            applied_credit_cents = await self._credit_ledger.apply_available_credits(
+                parent_id=parent_id,
+                invoice_id=payment_id,
+                amount_due_cents=gross_amount_cents,
+            )
+        amount_cents = max(gross_amount_cents - applied_credit_cents, 0)
+        await self._dual_write_ledger_invoice(
+            ledger_repo=self._ledger_repo,
+            payment_id=payment_id,
+            enrollment_id=enrollment_id,
+            parent_id=parent_id,
+            student_id=student_id,
+            period=period,
+            amount_cents=amount_cents,
+            now=now,
+        )
+        return True
+
+    async def _applied_credit_cents(self, invoice_id: str) -> int:
+        total = 0
+        async for doc in self._db["credit_applications"].find(
+            {"academy_id": current_academy_id(), "invoice_id": invoice_id}
+        ):
+            total += int(doc.get("amount_cents", 0))
+        return total
+
     async def generate_monthly_payments(self, period: str) -> GenerateMonthlyPaymentsResult:
         academy_id = current_academy_id()
         cursor = self._db["enrollments"].find(
@@ -493,13 +543,33 @@ class MongoPaymentRepository(TenantScopedRepository):
                     {
                         "academy_id": academy_id,
                         "invoice_key_id": invoice_key_id,
+                        "payment_id": payment_id,
                         "enrollment_id": enrollment_id,
                         "period": period,
                         "created_at": now,
                     }
                 )
             except DuplicateKeyError:
-                skipped_existing += 1
+                invoice_key = await self._db["billing_invoice_keys"].find_one(
+                    {
+                        "academy_id": academy_id,
+                        "enrollment_id": enrollment_id,
+                        "period": period,
+                    }
+                )
+                recovered = await self._recover_orphan_monthly_invoice(
+                    enrollment_id=enrollment_id,
+                    parent_id=parent_id,
+                    student_id=student_id,
+                    period=period,
+                    gross_amount_cents=gross_amount_cents,
+                    invoice_key=invoice_key,
+                    now=now,
+                )
+                if recovered:
+                    created += 1
+                else:
+                    skipped_existing += 1
                 continue
             applied_credit_cents = 0
             if self._credit_ledger is not None:

@@ -88,6 +88,7 @@ chainlit.md
 .superpowers/
 .worktrees/
 .ipynb_checkpoints/
+.playwright-cli/
 .playwright-mcp/
 rally-*.png
 

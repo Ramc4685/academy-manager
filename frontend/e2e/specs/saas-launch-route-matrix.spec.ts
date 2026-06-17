@@ -142,6 +142,9 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
   await page.route("**/api/v2/admin/payments*", (route) =>
     fulfillJson(route, { payments: [] })
   );
+  await page.route("**/api/v2/admin/billing/webhooks*", (route) =>
+    fulfillJson(route, { events: [] })
+  );
   await page.route("**/api/v2/admin/dues-followup*", (route) =>
     fulfillJson(route, { parents: [] })
   );
@@ -224,6 +227,9 @@ async function stubParentLaunchBff(page: Page): Promise<void> {
   await stubMe(page, PARENT_ME);
   await page.route("**/api/v2/parent/payments", (route) =>
     fulfillJson(route, { payments: [] })
+  );
+  await page.route("**/api/v2/parent/invoices", (route) =>
+    fulfillJson(route, { invoices: [] })
   );
   await page.route("**/api/v2/parent/enrollments", (route) =>
     fulfillJson(route, { enrollments: [] })

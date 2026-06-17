@@ -41,6 +41,8 @@ export interface ParentPayment {
   refunded_cents: number;
   created_at: string;
   session_id: string | null;
+  stripe_invoice_id?: string | null;
+  stripe_payment_intent_id?: string | null;
 }
 
 export interface ParentCredit {
@@ -103,6 +105,29 @@ export interface ParentEnrollment {
   status: string;
   payment_mode: string | null;
   subscription_status: string | null;
+}
+
+export interface ParentInvoice {
+  invoice_id: string;
+  period: string;
+  status: string;
+  total_cents: number;
+  balance_due_cents: number;
+  currency: string;
+  due_date: string;
+  pdf_url: string | null;
+  created_at: string;
+}
+
+export interface ParentInvoiceLine {
+  description: string;
+  quantity: number;
+  unit_amount_cents: number;
+  amount_cents: number;
+}
+
+export interface ParentInvoiceDetail extends ParentInvoice {
+  lines: ParentInvoiceLine[];
 }
 
 export interface ParentAttendanceRecord {
@@ -277,6 +302,27 @@ export function listAvailableParentSessions(): Promise<{
 
 export function listParentPayments(): Promise<{ payments: ParentPayment[] }> {
   return apiFetch("/parent/payments", { method: "GET" });
+}
+
+export function listParentInvoices(): Promise<{ invoices: ParentInvoice[] }> {
+  return apiFetch("/parent/invoices", { method: "GET" });
+}
+
+export function getParentInvoice(invoiceId: string): Promise<ParentInvoiceDetail> {
+  return apiFetch(`/parent/invoices/${encodeURIComponent(invoiceId)}`, { method: "GET" });
+}
+
+export function startParentInvoicePayment(
+  invoiceId: string,
+  payload: {
+    success_url: string;
+    cancel_url: string;
+  },
+): Promise<{ invoice_id: string; redirect_url: string }> {
+  return apiFetch(`/parent/invoices/${encodeURIComponent(invoiceId)}/pay`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function listParentCredits(): Promise<ParentCreditBalance> {

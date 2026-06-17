@@ -647,6 +647,86 @@ async def test_get_admin_student_current_payment_none_when_all_paid_no_open_invo
     assert detail.current_payment is None
 
 
+@pytest.mark.asyncio
+async def test_get_admin_student_includes_enrollment_linked_paid_ledger_invoice_once(
+    db, acad
+) -> None:
+    now = datetime.now(UTC)
+    await db["students"].insert_one(
+        {
+            "academy_id": acad,
+            "student_id": "st-alice",
+            "full_name": "Alice Chen",
+            "parent_id": "parent-1",
+            "status": "active",
+        }
+    )
+    await db["sessions"].insert_one(
+        {
+            "academy_id": acad,
+            "session_id": "sess-active",
+            "title": "Beginner Group",
+            "location": "Court 2",
+            "start_at": now + timedelta(days=5),
+            "end_at": now + timedelta(days=5, hours=1),
+            "status": "scheduled",
+            "monthly_price_cents": 7_000,
+        }
+    )
+    await db["enrollments"].insert_one(
+        {
+            "academy_id": acad,
+            "enrollment_id": "enr-active",
+            "student_id": "st-alice",
+            "session_id": "sess-active",
+            "status": "active",
+        }
+    )
+    await db["payments"].insert_one(
+        {
+            "academy_id": acad,
+            "payment_id": "legacy-projection",
+            "student_id": "st-alice",
+            "enrollment_id": "enr-active",
+            "period": "2026-06",
+            "amount_cents": 7_000,
+            "paid_amount_cents": 7_000,
+            "balance_due_cents": 0,
+            "status": "succeeded",
+            "payment_method": "stripe_subscription",
+            "stripe_payment_intent_id": "in_subscription_paid",
+            "created_at": now - timedelta(minutes=1),
+        }
+    )
+    await db["invoices"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_id": "ledger-invoice-paid",
+            "parent_id": "parent-1",
+            "enrollment_id": "enr-active",
+            "period": "2026-06",
+            "status": "paid",
+            "subtotal_cents": 7_000,
+            "discount_cents": 0,
+            "total_cents": 7_000,
+            "balance_due_cents": 0,
+            "currency": "usd",
+            "due_date": now,
+            "stripe_invoice_id": "in_subscription_paid",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+
+    detail = await MongoStudentRepository(db).get_admin_student("st-alice")
+
+    assert detail is not None
+    assert [row.payment_id for row in detail.payment_history] == ["ledger-invoice-paid"]
+    assert detail.payment_history[0].stripe_invoice_id == "in_subscription_paid"
+    assert detail.payment_history[0].balance_due_cents == 0
+    assert detail.current_payment is None
+
+
 async def _seed_parent_change(db, academy_id: str) -> None:
     await db["students"].insert_one(
         {

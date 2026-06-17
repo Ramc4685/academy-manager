@@ -106,6 +106,15 @@ class FakeInvoiceEmail:
             raise RuntimeError("email provider unavailable")
 
 
+class FakeInvoiceStripe:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def create_invoice_checkout_session(self, **kwargs) -> tuple[str, str]:
+        self.calls.append(kwargs)
+        return ("cs_test_123", "https://checkout.stripe.com/pay/test")
+
+
 # ---------------------------------------------------------------------------
 # Use-case factory
 # ---------------------------------------------------------------------------
@@ -236,6 +245,28 @@ async def test_no_checkout_session_when_balance_is_zero() -> None:
     result = await uc.execute("inv-1")
 
     assert not stripe.called, "Stripe must not be called when balance_due_cents == 0"
+    assert result.checkout_url is None
+
+
+async def test_send_invoice_skips_checkout_for_paid_invoice_even_with_positive_balance() -> None:
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="paid", balance_due_cents=5_000)])
+    uc = SendInvoice(ledger=repo, stripe=stripe, email=None, clock=lambda: NOW)
+
+    result = await uc.execute("inv-1")
+
+    assert stripe.calls == []
+    assert result.checkout_url is None
+
+
+async def test_send_invoice_skips_checkout_for_void_invoice_even_with_positive_balance() -> None:
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="void", balance_due_cents=5_000)])
+    uc = SendInvoice(ledger=repo, stripe=stripe, email=None, clock=lambda: NOW)
+
+    result = await uc.execute("inv-1")
+
+    assert stripe.calls == []
     assert result.checkout_url is None
 
 

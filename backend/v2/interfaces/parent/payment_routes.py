@@ -163,6 +163,8 @@ async def list_payments(
                 refunded_cents=p.refunded_cents,
                 created_at=p.created_at,
                 session_id=p.session_id,
+                stripe_invoice_id=getattr(p, "stripe_invoice_id", None),
+                stripe_payment_intent_id=getattr(p, "stripe_payment_intent_id", None),
             )
             for p in payments
         ]

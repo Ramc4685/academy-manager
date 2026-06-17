@@ -35,6 +35,7 @@ from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
     QuoteEnrollmentCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.send_invoice import SendInvoice
 from backend.v2.contexts.billing.application.use_cases.start_checkout import (
     StartCheckout,
     StartCheckoutCommand,
@@ -57,6 +58,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_session_type_repo import (
 )
 from backend.v2.contexts.billing.infrastructure.mongo_stripe_dedup import (
     MongoStripeEventDedup,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_stripe_invoice_processing_repo import (
+    MongoStripeInvoiceProcessingRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_student_billing_enrollment_repo import (
     MongoStudentBillingEnrollmentRepository,
@@ -163,6 +167,7 @@ class ParentComposition:
     list_progress_for_parent: object
     list_invoices_for_parent: object
     get_invoice_for_parent: object
+    start_invoice_payment_for_parent: object
     get_child_schedule: object
     enroll_child: object
     cancel_billing_enrollment: object
@@ -191,6 +196,7 @@ def compose_parent_webhook_handler(
     parent_customers_repo = MongoParentBillingCustomerRepository(db)
     student_billing_enrollments = MongoStudentBillingEnrollmentRepository(db)
     dedup = MongoStripeEventDedup(db)
+    invoice_processing = MongoStripeInvoiceProcessingRepository(db)
 
     class _EnrollmentAutopayState:
         async def set_autopay_state(
@@ -211,6 +217,23 @@ def compose_parent_webhook_handler(
                 },
             )
 
+    class _EnrollmentBillingIdentity:
+        async def get_billing_identity(self, enrollment_id: str) -> dict[str, str | None] | None:
+            enrollment = await db["enrollments"].find_one(
+                {"academy_id": academy_id, "enrollment_id": enrollment_id}
+            )
+            if enrollment is None:
+                return None
+            return {
+                "academy_id": academy_id,
+                "parent_id": str(
+                    enrollment.get("parent_id") or enrollment.get("parent_user_id") or ""
+                ),
+                "student_id": str(enrollment.get("student_id") or "") or None,
+                "enrollment_id": enrollment_id,
+                "session_id": str(enrollment.get("session_id") or "") or None,
+            }
+
     return HandleWebhookEvent(
         stripe=stripe,
         dedup=dedup,
@@ -220,6 +243,8 @@ def compose_parent_webhook_handler(
         billing_ledger=billing_ledger_repo,
         parent_customers=parent_customers_repo,
         enrollment_autopay=_EnrollmentAutopayState(),
+        enrollment_identity=_EnrollmentBillingIdentity(),
+        invoice_processing=invoice_processing,
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
@@ -250,6 +275,7 @@ def compose_parent(
     student_billing_enrollments = MongoStudentBillingEnrollmentRepository(db)
     session_types_repo = MongoSessionTypeRepository(db)
     dedup = MongoStripeEventDedup(db)
+    invoice_processing = MongoStripeInvoiceProcessingRepository(db)
 
     start_checkout = StartCheckout(
         payment_repo=payments_repo,
@@ -288,7 +314,25 @@ def compose_parent(
                 },
             )
 
+    class _EnrollmentBillingIdentity:
+        async def get_billing_identity(self, enrollment_id: str) -> dict[str, str | None] | None:
+            enrollment = await db["enrollments"].find_one(
+                {"academy_id": academy_id, "enrollment_id": enrollment_id}
+            )
+            if enrollment is None:
+                return None
+            return {
+                "academy_id": academy_id,
+                "parent_id": str(
+                    enrollment.get("parent_id") or enrollment.get("parent_user_id") or ""
+                ),
+                "student_id": str(enrollment.get("student_id") or "") or None,
+                "enrollment_id": enrollment_id,
+                "session_id": str(enrollment.get("session_id") or "") or None,
+            }
+
     enrollment_autopay_state = _EnrollmentAutopayState()
+    enrollment_identity = _EnrollmentBillingIdentity()
     checkout_status = GetCheckoutStatus(
         payments=payments_repo,
         subscriptions=subscriptions_repo,
@@ -306,6 +350,8 @@ def compose_parent(
         billing_ledger=billing_ledger_repo,
         parent_customers=parent_customers_repo,
         enrollment_autopay=enrollment_autopay_state,
+        enrollment_identity=enrollment_identity,
+        invoice_processing=invoice_processing,
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
@@ -395,10 +441,13 @@ def compose_parent(
             refunded_cents: int
             created_at: datetime
             session_id: str | None
+            stripe_payment_intent_id: str | None = None
+            stripe_invoice_id: str | None = None
 
         rows: list[_Row] = []
+        legacy_rows: list[_Row] = []
         for p in await payments_repo.list_for_parent(parent_id):
-            rows.append(
+            legacy_rows.append(
                 _Row(
                     payment_id=p.payment_id,
                     amount_cents=p.amount_cents,
@@ -407,13 +456,24 @@ def compose_parent(
                     refunded_cents=p.refunded_cents,
                     created_at=p.created_at,
                     session_id=p.session_id,
+                    stripe_payment_intent_id=p.stripe_payment_intent_id,
                 )
             )
+        ledger_keys: set[str] = set()
         async for doc in db["ledger_payments"].find(
             {"academy_id": academy_id, "parent_id": parent_id},
             sort=[("created_at", -1)],
             limit=100,
         ):
+            stripe_payment_intent_id = (
+                str(doc.get("stripe_payment_intent_id"))
+                if doc.get("stripe_payment_intent_id")
+                else None
+            )
+            stripe_invoice_id = (
+                str(doc.get("stripe_invoice_id")) if doc.get("stripe_invoice_id") else None
+            )
+            ledger_keys.update(key for key in (stripe_payment_intent_id, stripe_invoice_id) if key)
             rows.append(
                 _Row(
                     payment_id=str(doc.get("payment_id") or ""),
@@ -423,8 +483,15 @@ def compose_parent(
                     refunded_cents=0,
                     created_at=doc["created_at"],
                     session_id=None,
+                    stripe_payment_intent_id=stripe_payment_intent_id,
+                    stripe_invoice_id=stripe_invoice_id,
                 )
             )
+        rows.extend(
+            row
+            for row in legacy_rows
+            if not row.stripe_payment_intent_id or row.stripe_payment_intent_id not in ledger_keys
+        )
         rows.sort(
             key=lambda r: r.created_at or datetime.min.replace(tzinfo=UTC),
             reverse=True,
@@ -709,6 +776,33 @@ def compose_parent(
         lines = [InvoiceLine(**doc) async for doc in lines_cursor]
         return {"invoice": invoice, "lines": lines}
 
+    async def start_invoice_payment_for_parent(
+        *,
+        parent_id: str,
+        invoice_id: str,
+        success_url: str,
+        cancel_url: str,
+    ):
+        invoice = await billing_ledger_repo.get_invoice(invoice_id)
+        if invoice is None or invoice.parent_id != parent_id:
+            return None
+        if invoice.status not in {"open", "partially_paid"} or invoice.balance_due_cents <= 0:
+            raise ValueError("invoice is not payable")
+        invoice_stripe = stripe if hasattr(stripe, "create_invoice_checkout_session") else None
+        result = await SendInvoice(
+            ledger=billing_ledger_repo,
+            stripe=invoice_stripe,  # type: ignore[arg-type]
+            email=None,
+            success_url=success_url,
+            cancel_url=cancel_url,
+        ).execute(invoice_id)
+        if not result.checkout_url:
+            raise ValueError("invoice payment link unavailable")
+        return {
+            "invoice_id": result.invoice.invoice_id,
+            "checkout_url": result.checkout_url,
+        }
+
     async def quote_enrollment(
         *,
         parent_id: str,
@@ -942,6 +1036,7 @@ def compose_parent(
         list_progress_for_parent=list_progress_for_parent,
         list_invoices_for_parent=list_invoices_for_parent,
         get_invoice_for_parent=get_invoice_for_parent,
+        start_invoice_payment_for_parent=start_invoice_payment_for_parent,
         get_child_schedule=get_child_schedule,
         enroll_child=enroll_child_uc.execute,
         cancel_billing_enrollment=cancel_billing_enrollment_uc.execute,

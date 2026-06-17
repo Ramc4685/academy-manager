@@ -1,0 +1,54 @@
+# Hot-reload dev overlay for SaaS staging.
+# Apply on top of docker-compose.yml + docker-compose.saas.yml via:
+#
+#   scripts/dev/saas_staging.sh up-dev
+#
+# What changes vs the production staging stack:
+#  - frontend: Dockerfile.dev (next dev + WATCHPACK_POLLING), source volume-mounted → instant reload
+#  - backend:  source volume-mounted + uvicorn --reload → auto-reload on .py save
+#
+# What stays the same:
+#  - All V2_SAAS_MODE / Firebase emulator / Stripe env vars from docker-compose.saas.yml
+#  - mongo and firebase-emulator services unchanged
+#  - Same project name (saas-staging) — seed, smoke, logs, reset, down all work as normal
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./frontend:/app
+      - frontend_saas_dev_node_modules:/app/node_modules
+      - frontend_saas_dev_next:/app/.next
+    environment:
+      NODE_ENV: development
+      # macOS Docker Desktop requires polling — inotify doesn't cross the VM boundary.
+      WATCHPACK_POLLING: "true"
+      BFF_API_ORIGIN: http://backend:8001
+      PORT: "3001"
+      # NEXT_PUBLIC_* passed as runtime env (next dev reads them at startup, not bake-time).
+      NEXT_PUBLIC_API_BASE: /api/v2
+      NEXT_PUBLIC_FIREBASE_API_KEY: ${NEXT_PUBLIC_FIREBASE_API_KEY:-}
+      NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: academy-courtmastr.firebaseapp.com
+      NEXT_PUBLIC_FIREBASE_PROJECT_ID: academy-courtmastr
+      NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: academy-courtmastr.firebasestorage.app
+      NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: "953230788846"
+      NEXT_PUBLIC_FIREBASE_APP_ID: 1:953230788846:web:1f2819c11418ecf5860bff
+      NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID: G-Z6GS6WRZY8
+      NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST: "http://localhost:9099"
+      NEXT_PUBLIC_FIREBASE_AUTH_PROXY: ${NEXT_PUBLIC_FIREBASE_AUTH_PROXY:-}
+
+  backend:
+    volumes:
+      - ./backend:/app/backend
+    command: >
+      uvicorn backend.v2.main:app
+        --host 0.0.0.0
+        --port 8001
+        --reload
+        --reload-dir /app/backend
+
+volumes:
+  frontend_saas_dev_node_modules:
+  frontend_saas_dev_next:
