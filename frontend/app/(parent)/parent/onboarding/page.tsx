@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import {
+  getRegistrationWaiver,
   listAvailableParentSessions,
   patchOnboarding,
   quoteEnrollment,
@@ -12,6 +13,7 @@ import {
   type EnrollmentQuote,
   type OnboardingApplication,
   type ParentAvailableSession,
+  type RegistrationWaiver,
 } from "@/lib/api/parent";
 
 /**
@@ -55,7 +57,6 @@ export default function OnboardingStepperPage() {
     })();
   }, []);
 
-  if (error) return <p className="text-red-600">{error}</p>;
   if (!app) return <p className="text-neutral-500">Loading…</p>;
 
   async function save(patch: Parameters<typeof patchOnboarding>[1]) {
@@ -103,7 +104,19 @@ export default function OnboardingStepperPage() {
   return (
     <section data-testid="parent-onboarding">
       <OnboardingStyles />
-      <Progress step={step} />
+      <Progress step={step} onStepClick={setStep} />
+
+      {error && (
+        <div
+          role="alert"
+          className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
+        >
+          {error}
+          <button type="button" onClick={() => setError(null)} className="ml-3 underline">
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {step === "parent" && (
         <ParentStep
@@ -164,13 +177,25 @@ export default function OnboardingStepperPage() {
   );
 }
 
-function Progress({ step }: { step: Step }) {
+function Progress({ step, onStepClick }: { step: Step; onStepClick: (s: Step) => void }) {
   const i = ORDER.indexOf(step);
   return (
     <ol className="mb-6 flex items-center justify-between text-xs" data-testid="onboarding-progress">
       {ORDER.map((s, idx) => (
-        <li key={s} className={idx <= i ? "font-semibold text-blue-600" : "text-neutral-400"}>
-          {idx + 1}. {s}
+        <li key={s}>
+          <button
+            type="button"
+            onClick={() => onStepClick(s)}
+            className={`px-1 py-0.5 rounded transition-colors ${
+              idx === i
+                ? "font-semibold text-blue-600"
+                : idx < i
+                  ? "font-medium text-blue-400 hover:text-blue-600"
+                  : "text-neutral-400 hover:text-neutral-600"
+            }`}
+          >
+            {idx + 1}. {s}
+          </button>
         </li>
       ))}
     </ol>
@@ -282,15 +307,53 @@ function ChildStep({
   );
 }
 
-function WaiverStep({ accepted, onAccept, saving }: { accepted: boolean; onAccept: () => void; saving: boolean }) {
+function WaiverStep({
+  accepted,
+  onAccept,
+  saving,
+}: {
+  accepted: boolean;
+  onAccept: () => void;
+  saving: boolean;
+}) {
+  const waiverQuery = useQuery<RegistrationWaiver>({
+    queryKey: ["parent", "registration-waiver"],
+    queryFn: getRegistrationWaiver,
+    staleTime: 300_000,
+  });
+
+  if (waiverQuery.isLoading) {
+    return (
+      <div className="space-y-4">
+        <h2 className="text-xl font-semibold">Waiver</h2>
+        <div className="h-32 animate-pulse rounded-lg bg-neutral-100 dark:bg-neutral-800" />
+      </div>
+    );
+  }
+
+  const waiver = waiverQuery.data;
+  if (!waiver?.configured) {
+    return (
+      <div className="space-y-4">
+        <h2 className="text-xl font-semibold">Waiver</h2>
+        <p className="text-sm text-neutral-500 dark:text-neutral-400">
+          Waiver not configured yet — please contact the academy to proceed.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold">Waiver</h2>
-      <p className="text-sm text-neutral-700 dark:text-neutral-300">
-        I acknowledge the program&apos;s standard liability waiver and agree to its terms.
-      </p>
-      <button onClick={onAccept} disabled={saving || accepted} className="primary">
-        {accepted ? "Accepted ✓" : "Accept"}
+      {waiver.version && (
+        <p className="text-xs text-neutral-400 dark:text-neutral-500">Version {waiver.version}</p>
+      )}
+      <div className="max-h-60 overflow-y-auto rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-sm dark:border-neutral-800 dark:bg-neutral-900">
+        <p className="whitespace-pre-wrap">{waiver.body}</p>
+      </div>
+      <button onClick={onAccept} disabled={saving} className="primary">
+        {accepted ? "Continue →" : "I Accept"}
       </button>
     </div>
   );

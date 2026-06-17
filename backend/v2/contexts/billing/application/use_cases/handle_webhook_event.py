@@ -270,13 +270,25 @@ class HandleWebhookEvent:
 
     async def _dispatch(self, event_type: str, event: dict[str, Any]) -> None:
         if event_type == "checkout.session.completed":
-            await self._on_checkout_completed(event)
+            metadata = self._event_metadata(event)
+            if metadata.get("source") == "invoice_pay_link" or metadata.get("invoice_id"):
+                await self._handle_invoice_checkout_completed(event)
+            else:
+                await self._on_checkout_completed(event)
         elif event_type == "checkout.session.expired":
             await self._on_checkout_expired(event)
         elif event_type == "payment_intent.succeeded":
-            await self._on_payment_succeeded(event)
+            metadata = self._event_metadata(event)
+            if metadata.get("source") == "autopay" or metadata.get("invoice_id"):
+                await self._handle_autopay_pi_succeeded(event)
+            else:
+                await self._on_payment_succeeded(event)
         elif event_type == "payment_intent.payment_failed":
-            await self._on_payment_failed(event)
+            metadata = self._event_metadata(event)
+            if metadata.get("source") == "autopay" or metadata.get("invoice_id"):
+                await self._handle_autopay_pi_failed(event)
+            else:
+                await self._on_payment_failed(event)
         elif event_type == "invoice.paid":
             await self._on_invoice_paid(event)
         elif event_type == "invoice.payment_failed":
@@ -292,12 +304,76 @@ class HandleWebhookEvent:
         else:
             log.info("stripe_webhook_ignored type=%s", event_type)
 
+    async def _handle_invoice_checkout_completed(self, event: dict[str, Any]) -> None:
+        """Handle checkout.session.completed from an invoice pay-link.
+
+        Idempotent by checkout_session_id: if a ledger payment already exists
+        for this session, the record_payment call returns the existing row and
+        allocation is skipped via its own idempotency_key.
+        """
+        if self._billing_ledger is None:
+            log.warning("invoice_checkout_completed: billing_ledger not configured — skipping")
+            return
+
+        obj = event["data"]["object"]
+        checkout_session_id: str = str(obj.get("id") or "")
+        metadata = obj.get("metadata") or {}
+        invoice_id = str(metadata.get("invoice_id") or "")
+        if not invoice_id:
+            log.warning(
+                "invoice_checkout_completed: no invoice_id in metadata session=%s",
+                checkout_session_id,
+            )
+            return
+
+        payment_intent_id: str | None = obj.get("payment_intent") or None
+        if payment_intent_id:
+            payment_intent_id = str(payment_intent_id)
+        amount_total = int(obj.get("amount_total") or 0)
+        currency = str(obj.get("currency") or "usd").lower()
+
+        now = self._now()
+        idempotency_key = f"invoice-checkout:{checkout_session_id}"
+        ledger_payment_id = f"ledger-pay-cs:{checkout_session_id}"
+
+        payment = await self._billing_ledger.record_payment(
+            LedgerPayment(
+                payment_id=ledger_payment_id,
+                academy_id=self._academy_id,
+                parent_id=str(metadata.get("parent_id") or "unknown"),
+                amount_cents=amount_total,
+                unapplied_amount_cents=amount_total,
+                currency=currency,
+                status="succeeded",
+                payment_method="stripe_checkout",
+                stripe_payment_intent_id=payment_intent_id,
+                paid_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            idempotency_key=idempotency_key,
+        )
+
+        if amount_total > 0:
+            await self._billing_ledger.allocate_payment(
+                payment_id=payment.payment_id,
+                invoice_id=invoice_id,
+                amount_cents=amount_total,
+                idempotency_key=f"invoice-checkout-alloc:{checkout_session_id}",
+            )
+            log.info(
+                "invoice_checkout_completed: allocated payment=%s to invoice=%s amount=%d",
+                payment.payment_id,
+                invoice_id,
+                amount_total,
+            )
+
     async def _on_checkout_completed(self, event: dict[str, Any]) -> None:
         obj = event["data"]["object"]
         checkout_id = obj["id"]
         payment = await self._payments.get_by_checkout_session(checkout_id)
-        await self._persist_checkout_customer(obj, payment=payment)
-        await self._sync_subscription_from_checkout(obj)
+        subscription = await self._sync_subscription_from_checkout(obj)
+        await self._persist_checkout_customer(obj, payment=payment, subscription=subscription)
         if payment is None:
             log.warning("checkout.completed for unknown checkout_id=%s", checkout_id)
             return
@@ -327,14 +403,24 @@ class HandleWebhookEvent:
         )
 
     async def _persist_checkout_customer(
-        self, checkout: dict[str, Any], *, payment: Payment | None
+        self,
+        checkout: dict[str, Any],
+        *,
+        payment: Payment | None,
+        subscription: Any | None,
     ) -> None:
         if self._parent_customers is None:
             return
         stripe_customer_id = str(checkout.get("customer") or "")
         if not stripe_customer_id:
             return
-        parent_id = payment.parent_id if payment is not None else self._checkout_parent_id(checkout)
+        if payment is None and subscription is None:
+            log.warning(
+                "checkout.completed customer ignored without tenant-owned mapping checkout_id=%s",
+                checkout.get("id"),
+            )
+            return
+        parent_id = payment.parent_id if payment is not None else subscription.parent_id
         if not parent_id:
             log.warning(
                 "checkout.completed customer present without parent_id checkout_id=%s",
@@ -346,7 +432,7 @@ class HandleWebhookEvent:
             stripe_customer_id=stripe_customer_id,
         )
 
-    async def _sync_subscription_from_checkout(self, checkout: dict[str, Any]) -> None:
+    async def _sync_subscription_from_checkout(self, checkout: dict[str, Any]) -> Any | None:
         """Backfill the Stripe subscription id captured only after Checkout
         completes (it is null at session-creation time) and activate both the
         subscription row and the enrollment's autopay state. Without this,
@@ -355,7 +441,7 @@ class HandleWebhookEvent:
         """
         stripe_sub_id = str(checkout.get("subscription") or "")
         if not stripe_sub_id:
-            return
+            return None
         metadata = checkout.get("metadata")
         enrollment_id: str | None = None
         internal_sub_id: str | None = None
@@ -387,12 +473,19 @@ class HandleWebhookEvent:
             )
             await self._subscriptions.save(updated)
             enrollment_id = enrollment_id or updated.enrollment_id
+        else:
+            log.warning(
+                "checkout.completed subscription ignored without tenant-owned subscription checkout_id=%s",
+                checkout.get("id"),
+            )
+            return None
         if self._enrollment_autopay is not None and enrollment_id:
             await self._enrollment_autopay.set_autopay_state(
                 enrollment_id=enrollment_id,
                 subscription_status="active",
                 stripe_subscription_id=stripe_sub_id,
             )
+        return updated
 
     @staticmethod
     def _checkout_parent_id(checkout: dict[str, Any]) -> str | None:
@@ -424,6 +517,94 @@ class HandleWebhookEvent:
                     session_id=updated.session_id,
                 ),
             )
+        )
+
+    async def _handle_autopay_pi_succeeded(self, event: dict[str, Any]) -> None:
+        """Handle payment_intent.succeeded from an autopay charge.
+
+        Idempotent by pi_id via idempotency_key ``autopay-pi:{pi_id}``.
+        Records a LedgerPayment and allocates it to the invoice.
+        """
+        if self._billing_ledger is None:
+            log.warning("autopay_pi_succeeded: billing_ledger not configured — skipping")
+            return
+
+        pi = event["data"]["object"]
+        pi_id: str = str(pi.get("id") or "")
+        metadata = pi.get("metadata") or {}
+        invoice_id = str(metadata.get("invoice_id") or "")
+
+        if not invoice_id:
+            log.warning("autopay_pi_succeeded: no invoice_id in metadata pi=%s", pi_id)
+            return
+
+        invoice = await self._billing_ledger.get_invoice(invoice_id)
+        if invoice is None:
+            raise ValueError("autopay invoice not found")
+        if invoice.academy_id != self._academy_id:
+            raise _QuarantineStripeEvent(
+                f"academy mismatch: invoice={invoice.academy_id} expected={self._academy_id}"
+            )
+
+        amount_cents = int(pi.get("amount") or 0)
+        if amount_cents <= 0:
+            raise ValueError("autopay payment_intent missing positive amount")
+        currency = str(pi.get("currency") or invoice.currency).lower()
+        if currency != invoice.currency.lower():
+            raise ValueError("autopay payment_intent currency does not match invoice")
+        now = self._now()
+        idempotency_key = f"autopay-pi:{pi_id}"
+        ledger_payment_id = f"ledger-pay-autopay:{pi_id}"
+
+        payment = await self._billing_ledger.record_payment(
+            LedgerPayment(
+                payment_id=ledger_payment_id,
+                academy_id=invoice.academy_id,
+                parent_id=invoice.parent_id,
+                amount_cents=amount_cents,
+                unapplied_amount_cents=amount_cents,
+                currency=currency,
+                status="succeeded",
+                payment_method="stripe_autopay",
+                stripe_payment_intent_id=pi_id,
+                paid_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            idempotency_key=idempotency_key,
+        )
+
+        if amount_cents > 0:
+            await self._billing_ledger.allocate_payment(
+                payment_id=payment.payment_id,
+                invoice_id=invoice_id,
+                amount_cents=amount_cents,
+                idempotency_key=f"autopay-alloc:{pi_id}",
+            )
+            log.info(
+                "autopay_pi_succeeded: allocated payment=%s to invoice=%s pi=%s amount=%d",
+                payment.payment_id,
+                invoice_id,
+                pi_id,
+                amount_cents,
+            )
+
+    async def _handle_autopay_pi_failed(self, event: dict[str, Any]) -> None:
+        """Handle payment_intent.payment_failed from an autopay charge.
+
+        Per spec: log the decline, do NOT change invoice status.
+        """
+        pi = event["data"]["object"]
+        pi_id: str = str(pi.get("id") or "")
+        metadata = pi.get("metadata") or {}
+        invoice_id = str(metadata.get("invoice_id") or "")
+        last_error = pi.get("last_payment_error") or {}
+        decline_code = str(last_error.get("decline_code") or last_error.get("code") or "unknown")
+        log.warning(
+            "autopay_pi_failed: pi=%s invoice=%s decline_code=%s — invoice status unchanged",
+            pi_id,
+            invoice_id,
+            decline_code,
         )
 
     async def _on_payment_failed(self, event: dict[str, Any]) -> None:

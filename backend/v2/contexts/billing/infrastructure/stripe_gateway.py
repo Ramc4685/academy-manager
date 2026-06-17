@@ -16,7 +16,12 @@ from backend.v2.contexts.billing.application.ports import StripeGateway
 
 class RealStripeGateway(StripeGateway):
     def __init__(
-        self, *, api_key: str, webhook_secret: str, connect_client_id: str | None = None
+        self,
+        *,
+        api_key: str,
+        webhook_secret: str,
+        connect_client_id: str | None = None,
+        skip_signature_verify: bool = False,
     ) -> None:
         # Lazy import keeps the rest of the app importable without stripe
         # installed (tests use a fake gateway).
@@ -26,6 +31,7 @@ class RealStripeGateway(StripeGateway):
         self._stripe = stripe
         self._webhook_secret = webhook_secret
         self._connect_client_id = connect_client_id
+        self._skip_signature_verify = skip_signature_verify
 
     async def create_checkout_session(
         self,
@@ -96,6 +102,38 @@ class RealStripeGateway(StripeGateway):
         stripe_subscription_id = str(getattr(result, "subscription", "") or "")
         return str(result.id), str(result.url), stripe_subscription_id
 
+    async def create_invoice_checkout_session(
+        self,
+        *,
+        invoice_id: str,
+        amount_cents: int,
+        currency: str,
+        success_url: str,
+        cancel_url: str,
+        metadata: dict[str, str],
+    ) -> tuple[str, str]:
+        def _create() -> Any:
+            return self._stripe.checkout.Session.create(
+                mode="payment",
+                line_items=[
+                    {
+                        "price_data": {
+                            "currency": currency,
+                            "product_data": {"name": f"Academy invoice {invoice_id}"},
+                            "unit_amount": amount_cents,
+                        },
+                        "quantity": 1,
+                    }
+                ],
+                success_url=success_url,
+                cancel_url=cancel_url,
+                client_reference_id=metadata.get("parent_id"),
+                metadata=metadata,
+            )
+
+        result = await asyncio.to_thread(_create)
+        return str(result.id), str(result.url)
+
     async def create_customer_portal_session(
         self,
         *,
@@ -118,7 +156,15 @@ class RealStripeGateway(StripeGateway):
         return str(result.url)
 
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, object]:
-        return self._stripe.Webhook.construct_event(payload, signature, self._webhook_secret)  # type: ignore[no-any-return]
+        import json
+
+        if not self._skip_signature_verify:
+            # Raises SignatureVerificationError on mismatch. We discard the
+            # returned stripe.Event because in stripe-python >=15 StripeObject
+            # no longer subclasses dict; the handler requires a plain dict, so
+            # we parse the (now verified) raw payload instead.
+            self._stripe.Webhook.construct_event(payload, signature, self._webhook_secret)
+        return json.loads(payload)  # type: ignore[no-any-return]
 
     async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, Any]:
         def _retrieve() -> Any:
@@ -269,6 +315,66 @@ class RealStripeGateway(StripeGateway):
             return await asyncio.to_thread(fn)
         except self._stripe.StripeError as exc:
             raise ValueError(f"{label} lookup failed: {exc}") from exc
+
+    async def get_default_payment_method(
+        self, *, academy_id: str, parent_id: str
+    ) -> tuple[str, str] | None:
+        """Return (stripe_customer_id, payment_method_id) or None if no saved card."""
+
+        def _find() -> tuple[str, str] | None:
+            query = (
+                f'metadata["academy_id"]:"{academy_id}" ' f'AND metadata["parent_id"]:"{parent_id}"'
+            )
+            customers = self._stripe.Customer.search(
+                query=query,
+                limit=1,
+            )
+            data = customers.get("data", [])
+            if not data:
+                return None
+            customer = data[0]
+            pm_id = (customer.get("invoice_settings") or {}).get("default_payment_method")
+            if not pm_id:
+                return None
+            return str(customer["id"]), str(pm_id)
+
+        try:
+            return await asyncio.to_thread(_find)
+        except self._stripe.StripeError as exc:
+            raise ValueError(f"Stripe customer lookup failed: {exc}") from exc
+
+    async def create_off_session_payment_intent(
+        self,
+        *,
+        amount_cents: int,
+        currency: str,
+        customer_id: str,
+        payment_method_id: str,
+        idempotency_key: str,
+        metadata: dict[str, str],
+    ) -> tuple[str, str, str | None]:
+        """Return (pi_id, pi_status, decline_code_or_None)."""
+
+        def _create() -> Any:
+            return self._stripe.PaymentIntent.create(
+                amount=amount_cents,
+                currency=currency,
+                customer=customer_id,
+                payment_method=payment_method_id,
+                off_session=True,
+                confirm=True,
+                idempotency_key=idempotency_key,
+                metadata=metadata,
+            )
+
+        try:
+            pi = await asyncio.to_thread(_create)
+            return str(pi["id"]), str(pi["status"]), None
+        except self._stripe.CardError as exc:
+            err = exc.error
+            return "", "failed", str(getattr(err, "decline_code", None) or str(exc))
+        except self._stripe.StripeError as exc:
+            raise ValueError(f"Stripe PaymentIntent creation failed: {exc}") from exc
 
 
 def _stripe_object_to_dict(result: Any) -> dict[str, Any]:

@@ -76,7 +76,6 @@ services:
       V2_MONGO_URL: "mongodb://mongo:27017"
       V2_MONGO_DB: "academy_manager_saas_staging"
       V2_ALLOWED_INTERNAL_TENANT_HEADER: "x-internal-tenant-id"
-      V2_STRIPE_USE_FAKE_GATEWAY: "true"
       V2_STRIPE_API_KEY: ""
       V2_STRIPE_WEBHOOK_SECRET: ""
       # --- Legacy backend env (non-secret) ---

@@ -60,14 +60,21 @@ class FakeUsers:
 
 
 class FakeMemberships:
-    def __init__(self) -> None:
+    def __init__(self, existing: AcademyMembership | None = None) -> None:
+        self.existing = existing
         self.upserts: list[AcademyMembership] = []
 
     async def upsert_membership(self, membership: AcademyMembership) -> AcademyMembership:
         self.upserts.append(membership)
         return membership
 
-    async def get_membership(self, academy_id: str, user_id: str):  # pragma: no cover
+    async def get_membership(self, academy_id: str, user_id: str):
+        if (
+            self.existing is not None
+            and self.existing.academy_id == academy_id
+            and self.existing.user_id == user_id
+        ):
+            return self.existing
         return None
 
     async def list_memberships_for_user(self, user_id: str):  # pragma: no cover
@@ -190,7 +197,7 @@ async def test_register_public_parent_does_not_reactivate_disabled_user() -> Non
 @pytest.mark.asyncio
 async def test_register_public_parent_saas_uses_resolved_tenant_not_default() -> None:
     """Issue #81 regression: in SaaS mode the resolved tenant from the
-    request host must flow into User.academy_id and a matching active
+    request host must flow into User.academy_id and a matching invited
     membership row must be created. The configured default_academy_id
     must NOT be used as a fallback in SaaS request paths."""
     users = FakeUsers()
@@ -215,14 +222,74 @@ async def test_register_public_parent_saas_uses_resolved_tenant_not_default() ->
     assert user.academy_id == "acad_acme"
     assert users.ensure_calls[0]["academy_id"] == "acad_acme"
 
-    # Membership row created so SaaS paths can authorize the parent
-    # against acad_acme on subsequent requests.
+    # Public self-registration creates a durable pending membership row,
+    # but it must not grant tenant access until admin approval activates it.
     assert len(memberships.upserts) == 1
     upsert = memberships.upserts[0]
     assert upsert.academy_id == "acad_acme"
     assert upsert.user_id == "firebase-parent-1"
     assert upsert.roles == ("parent",)
-    assert upsert.is_active()
+    assert upsert.status == "invited"
+    assert not upsert.is_active()
+
+
+@pytest.mark.asyncio
+async def test_register_public_parent_saas_does_not_mutate_existing_membership() -> None:
+    existing = AcademyMembership(
+        membership_id="membership-existing",
+        academy_id="acad_acme",
+        user_id="firebase-parent-1",
+        roles=("parent",),
+        status="active",
+    )
+    memberships = FakeMemberships(existing=existing)
+    use_case = RegisterPublicParent(
+        verifier=FakeVerifier(
+            {
+                "email": "new.parent@example.com",
+                "uid": "firebase-parent-1",
+                "name": "New Parent",
+            }
+        ),
+        users=FakeUsers(),
+        memberships=memberships,
+        saas_mode=True,
+    )
+
+    await use_case.execute("firebase-token", academy_id="acad_acme")
+
+    assert memberships.upserts == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["invited", "suspended", "removed"])
+async def test_register_public_parent_saas_does_not_reactivate_inactive_membership(
+    status: str,
+) -> None:
+    existing = AcademyMembership(
+        membership_id="membership-existing",
+        academy_id="acad_acme",
+        user_id="firebase-parent-1",
+        roles=("parent",),
+        status=status,  # type: ignore[arg-type]
+    )
+    memberships = FakeMemberships(existing=existing)
+    use_case = RegisterPublicParent(
+        verifier=FakeVerifier(
+            {
+                "email": "new.parent@example.com",
+                "uid": "firebase-parent-1",
+                "name": "New Parent",
+            }
+        ),
+        users=FakeUsers(),
+        memberships=memberships,
+        saas_mode=True,
+    )
+
+    await use_case.execute("firebase-token", academy_id="acad_acme")
+
+    assert memberships.upserts == []
 
 
 @pytest.mark.asyncio

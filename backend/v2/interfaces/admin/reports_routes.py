@@ -20,6 +20,7 @@ from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
 _PERIOD_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+_EXPORT_REPORTS = frozenset({"pending-payments", "revenue", "attendance"})
 
 router = APIRouter(tags=["admin.reports"])
 
@@ -88,6 +89,8 @@ async def export_report_csv(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> Response:
+    if report_name not in _EXPORT_REPORTS:
+        raise HTTPException(status_code=404, detail="Report export not found")
     csv_text = await use_cases.export_report_csv(report_name)  # type: ignore[operator]
     return Response(
         content=csv_text,

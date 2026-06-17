@@ -97,3 +97,4 @@ graphify-out/
 # ── Misc ───────────────────────────────────────────────────────────────────────
 memory/test_credentials.md
 agenthub/agents/youtube/db
+firebase-emulator/data/

@@ -12,6 +12,8 @@ ADRs are short, dated, owned. Status moves: **Proposed → Accepted → (Superse
 | [0004](0004-pwa-over-native.md) | PWA over native, Capacitor deferred | Accepted | 2026-05-16 |
 | [0005](0005-clean-architecture-lite-monolith.md) | Clean-architecture-lite monolith, not microservices | Accepted | 2026-05-16 |
 | [0006](0006-tenant-ready-single-tenant-shipped.md) | Tenant-ready, single-tenant shipped | Accepted | 2026-05-16 |
+| [0011](0011-billing-ledger-payment-storage.md) | LedgerPayment uses its own ledger_payments collection | Accepted | 2026-06-14 |
+| [0012](0012-ledger-invoice-as-source-of-truth.md) | Ledger invoice is the source of truth for billing | Accepted | 2026-06-14 |
 
 ## When to write an ADR
 

@@ -29,6 +29,7 @@ import pytest
 from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
     HandleWebhookEvent,
 )
+from backend.v2.contexts.billing.domain.ledger import LedgerPayment
 from backend.v2.contexts.billing.domain.models import Payment
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
@@ -309,3 +310,104 @@ def test_all_fixtures_parse() -> None:
         assert "type" in body
         assert "data" in body
         assert "object" in body["data"]
+
+
+# ---------------------------------------------------------------------------
+# checkout.session.completed with source=invoice_pay_link
+# ---------------------------------------------------------------------------
+
+
+class FakeBillingLedger:
+    """Minimal billing ledger double for pay-link webhook tests."""
+
+    def __init__(self) -> None:
+        self.payments: dict[str, LedgerPayment] = {}
+        self.allocations: list[dict[str, Any]] = []
+        self.fail_allocate = False
+
+    async def record_payment(
+        self, payment: LedgerPayment, *, idempotency_key: str
+    ) -> LedgerPayment:
+        if idempotency_key in {p.payment_id for p in self.payments.values()}:
+            return next(iter(self.payments.values()))
+        self.payments[payment.payment_id] = payment
+        return payment
+
+    async def allocate_payment(
+        self,
+        *,
+        payment_id: str,
+        invoice_id: str,
+        amount_cents: int,
+        idempotency_key: str,
+    ) -> None:
+        if self.fail_allocate:
+            raise ValueError("allocation failed")
+        self.allocations.append(
+            {
+                "payment_id": payment_id,
+                "invoice_id": invoice_id,
+                "amount_cents": amount_cents,
+                "idempotency_key": idempotency_key,
+            }
+        )
+
+
+def _build_with_ledger(repo, ledger, outbox=None, dedup=None):
+    return HandleWebhookEvent(
+        stripe=FakeStripeGateway(),
+        dedup=dedup or FakeDedup(),
+        payments=repo,
+        subscriptions=FakeSubscriptionRepo(),
+        outbox=outbox or FakeOutbox(),
+        academy_id="test-academy",
+        billing_ledger=ledger,
+    )
+
+
+@pytest.mark.asyncio
+async def test_fixture_invoice_pay_link_checkout_records_ledger_payment_and_allocates() -> None:
+    """checkout.session.completed with source=invoice_pay_link creates a
+    LedgerPayment in ledger_payments and calls allocate_payment."""
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger()
+    uc = _build_with_ledger(repo, ledger)
+
+    res = await uc.execute(
+        _load("checkout_session_completed_invoice_pay_link.json"), "test_signature"
+    )
+
+    assert res["received"] is True
+
+    # One LedgerPayment must be recorded
+    assert len(ledger.payments) == 1
+    (lp,) = ledger.payments.values()
+    assert lp.payment_id == "ledger-pay-cs:cs_test_abcdef0000000099"
+    assert lp.amount_cents == 20000
+    assert lp.status == "succeeded"
+    assert lp.payment_method == "stripe_checkout"
+    assert lp.stripe_payment_intent_id == "pi_test_0000000099"
+    assert lp.parent_id == "parent-099"
+
+    # allocate_payment must have been called for the correct invoice
+    assert len(ledger.allocations) == 1
+    alloc = ledger.allocations[0]
+    assert alloc["invoice_id"] == "inv-pay-link-test-01"
+    assert alloc["amount_cents"] == 20000
+    assert alloc["payment_id"] == lp.payment_id
+
+
+@pytest.mark.asyncio
+async def test_invoice_pay_link_allocation_failure_is_retryable() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger()
+    ledger.fail_allocate = True
+    uc = _build_with_ledger(repo, ledger)
+
+    with pytest.raises(ValueError, match="allocation failed"):
+        await uc.execute(
+            _load("checkout_session_completed_invoice_pay_link.json"), "test_signature"
+        )
+
+    assert len(ledger.payments) == 1
+    assert ledger.allocations == []

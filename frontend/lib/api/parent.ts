@@ -179,6 +179,16 @@ export interface ParentPauseRequest {
   decided_by: string | null;
 }
 
+export interface RegistrationWaiver {
+  configured: boolean;
+  version: string | null;
+  body: string | null;
+}
+
+export function getRegistrationWaiver(): Promise<RegistrationWaiver> {
+  return apiFetch("/parent/onboarding/waiver", { method: "GET" });
+}
+
 export function startOnboarding(): Promise<OnboardingApplication> {
   return apiFetch("/parent/onboarding/start", { method: "POST", body: "{}" });
 }

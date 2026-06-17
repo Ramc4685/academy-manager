@@ -125,8 +125,8 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import
 from backend.v2.contexts.onboarding.infrastructure.mongo_parent_waiver_repo import (
     MongoParentWaiverRepository,
 )
-from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_repo import (
-    MongoWaiverRepository,
+from backend.v2.contexts.onboarding.infrastructure.mongo_registration_waiver_repo import (
+    MongoRegistrationWaiverRepository,
 )
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
@@ -165,6 +165,7 @@ class ParentComposition:
     get_parent_waiver_requirement: GetParentWaiverRequirement
     accept_parent_waiver: AcceptParentWaiver
     get_academy_info: object  # callable accepting academy_id
+    get_registration_waiver: object  # callable -> Waiver | None
     student_progress: StudentProgressComposition
     curriculum: CurriculumComposition
 
@@ -177,7 +178,7 @@ def compose_parent_webhook_handler(
     academy_id: str | None = None,
 ) -> HandleWebhookEvent:
     settings = get_settings()
-    academy_id = academy_id or settings.default_academy_id
+    academy_id = _require_academy_id(academy_id)
 
     credits_repo = MongoCreditLedgerRepository(db)
     billing_ledger_repo = MongoBillingLedgerRepository(db)
@@ -248,7 +249,7 @@ def compose_parent(
     academy_id: str | None = None,
 ) -> ParentComposition:
     settings = get_settings()
-    academy_id = academy_id or settings.default_academy_id
+    academy_id = _require_academy_id(academy_id)
 
     # Billing
     credits_repo = MongoCreditLedgerRepository(db)
@@ -375,7 +376,7 @@ def compose_parent(
 
     # Onboarding
     apps_repo = MongoApplicationRepository(db)
-    waivers_repo = MongoWaiverRepository(db)
+    waivers_repo = MongoRegistrationWaiverRepository(db)
     parent_waivers_repo = MongoParentWaiverRepository(db)
     get_waiver_req = GetParentWaiverRequirement(waivers=parent_waivers_repo)
     accept_waiver = AcceptParentWaiver(waivers=parent_waivers_repo, academy_id=academy_id)
@@ -399,7 +400,52 @@ def compose_parent(
     )
 
     async def list_payments_for_parent(parent_id: str):
-        return await payments_repo.list_for_parent(parent_id)
+        from dataclasses import dataclass as _dc
+
+        @_dc
+        class _Row:
+            payment_id: str
+            amount_cents: int
+            currency: str
+            status: str
+            refunded_cents: int
+            created_at: datetime
+            session_id: str | None
+
+        rows: list[_Row] = []
+        for p in await payments_repo.list_for_parent(parent_id):
+            rows.append(
+                _Row(
+                    payment_id=p.payment_id,
+                    amount_cents=p.amount_cents,
+                    currency=p.currency or "usd",
+                    status=p.status,
+                    refunded_cents=p.refunded_cents,
+                    created_at=p.created_at,
+                    session_id=p.session_id,
+                )
+            )
+        async for doc in db["ledger_payments"].find(
+            {"academy_id": academy_id, "parent_id": parent_id},
+            sort=[("created_at", -1)],
+            limit=100,
+        ):
+            rows.append(
+                _Row(
+                    payment_id=str(doc.get("payment_id") or ""),
+                    amount_cents=int(doc.get("amount_cents") or 0),
+                    currency=str(doc.get("currency") or "usd"),
+                    status=str(doc.get("status") or ""),
+                    refunded_cents=0,
+                    created_at=doc["created_at"],
+                    session_id=None,
+                )
+            )
+        rows.sort(
+            key=lambda r: r.created_at or datetime.min.replace(tzinfo=UTC),
+            reverse=True,
+        )
+        return rows
 
     async def list_credits_for_parent(parent_id: str):
         return await credits_repo.list_for_parent(parent_id)
@@ -807,11 +853,12 @@ def compose_parent(
         user = await db["users"].find_one(
             {"academy_id": academy_id, "$or": [{"user_id": parent_id}, {"firebase_uid": parent_id}]}
         )
+        stripe_customer_id: str | None = (user or {}).get("stripe_customer_id")
         result = await create_portal.execute(
             CreateCustomerPortalSessionCommand(
                 parent_id=parent_id,
                 return_url=return_url,
-                stripe_customer_id=(user or {}).get("stripe_customer_id"),  # type: ignore[arg-type]
+                stripe_customer_id=stripe_customer_id,
             )
         )
         return result.model_dump()
@@ -819,6 +866,9 @@ def compose_parent(
     async def get_checkout_status(*, parent_id: str, checkout_session_id: str):
         result = await checkout_status.execute(checkout_session_id, parent_id=parent_id)
         return result.model_dump()
+
+    async def get_registration_waiver():
+        return await waivers_repo.get_active()
 
     async def get_academy_info(*, academy_id: str) -> dict[str, Any]:
         doc = await db["academies"].find_one({"academy_id": academy_id})
@@ -914,6 +964,7 @@ def compose_parent(
         get_parent_waiver_requirement=get_waiver_req,
         accept_parent_waiver=accept_waiver,
         get_academy_info=get_academy_info,
+        get_registration_waiver=get_registration_waiver,
         student_progress=sp_composition,
         curriculum=curriculum_composition,
     )
@@ -921,6 +972,12 @@ def compose_parent(
 
 class _StripeGatewayProto(Protocol):
     """Re-export to make this module importable without backing import."""
+
+
+def _require_academy_id(academy_id: str | None) -> str:
+    if not academy_id:
+        raise ValueError("academy_id is required for parent composition")
+    return academy_id
 
 
 def _session_amount_cents(doc: dict[str, object]) -> int:

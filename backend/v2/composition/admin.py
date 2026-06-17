@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import html
 import io
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
@@ -23,12 +24,19 @@ from backend.v2.composition.pathway import (
     compose_student_progress,
 )
 from backend.v2.contexts.billing.application.ports import StripeGateway
+from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
+    AddInvoiceLine,
+    AddInvoiceLineCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscount,
     GenerateMonthlyPayments,
     MarkPaymentPaid,
     SendDuesReminders,
     UndoPaymentPaid,
+)
+from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopay import (
+    ChargeInvoiceViaAutopay,
 )
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
     AcademyRevenueQuery,
@@ -43,6 +51,15 @@ from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
     QuoteEnrollmentCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.record_manual_payment import (
+    RecordManualPayment,
+    RecordManualPaymentCommand,
+)
+from backend.v2.contexts.billing.application.use_cases.remove_invoice_line import (
+    RemoveInvoiceLine,
+    RemoveInvoiceLineCommand,
+)
+from backend.v2.contexts.billing.application.use_cases.send_invoice import SendInvoice
 from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     CreateSessionType,
     ListSessionTypes,
@@ -56,6 +73,8 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
     ApproveWithdrawalCredit,
     PreviewWithdrawalCredit,
 )
+from backend.v2.contexts.billing.domain.ledger import LedgerInvoice, void_invoice
+from backend.v2.contexts.billing.domain.product import Product
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
 )
@@ -64,6 +83,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import 
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_product_repo import (
+    MongoProductRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_session_type_repo import (
     MongoSessionTypeRepository,
@@ -97,6 +119,10 @@ from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_coach_rate_repo import (
     MongoCoachRateRepository,
+)
+from backend.v2.contexts.communications.application.ports import (
+    EmailSendPort,
+    ResolvedRecipient,
 )
 from backend.v2.contexts.communications.application.use_cases.send_campaign import (
     SendCampaign,
@@ -275,6 +301,9 @@ from backend.v2.contexts.identity.application.use_cases.stripe_connect import (
     StartStripeConnectUseCase,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
+from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
+    MongoMembershipRepository,
+)
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
     ManageAdminWaiverTemplates,
@@ -306,6 +335,72 @@ from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.ids import new_ulid
+
+
+class _InvoiceEmailAdapter:
+    def __init__(
+        self,
+        *,
+        memberships: MongoMembershipRepository,
+        users: MongoUserRepository,
+        sender: EmailSendPort,
+    ) -> None:
+        self._memberships = memberships
+        self._users = users
+        self._sender = sender
+
+    async def send_invoice_email(
+        self,
+        *,
+        parent_id: str,
+        invoice_id: str,
+        period: str,
+        total_cents: int,
+        balance_due_cents: int,
+        currency: str,
+        checkout_url: str | None,
+    ) -> None:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        academy_id = current_academy_id()
+        membership = await self._memberships.get_membership(academy_id, parent_id)
+        if membership is None or not membership.is_active() or "parent" not in membership.roles:
+            raise ValueError("invoice parent has no active membership in request academy")
+
+        user = await self._users.get_by_id(parent_id)
+        email = str(user.email if user else "").strip()
+        if not email:
+            raise ValueError("invoice parent email not found")
+
+        display_name = str(user.display_name if user else "")
+        amount = f"{currency.upper()} {balance_due_cents / 100:.2f}"
+        total = f"{currency.upper()} {total_cents / 100:.2f}"
+        safe_invoice = html.escape(invoice_id)
+        safe_period = html.escape(period)
+        safe_amount = html.escape(amount)
+        safe_total = html.escape(total)
+        pay_line = (
+            f'<p><a href="{html.escape(checkout_url, quote=True)}">Pay invoice</a></p>'
+            if checkout_url
+            else "<p>Please contact the academy to arrange payment.</p>"
+        )
+        body = (
+            f"<p>Your invoice <strong>{safe_invoice}</strong> for {safe_period} is ready.</p>"
+            f"<p>Balance due: <strong>{safe_amount}</strong> "
+            f"(invoice total {safe_total}).</p>"
+            f"{pay_line}"
+        )
+        outcome = await self._sender.send(
+            recipient=ResolvedRecipient(
+                user_id=parent_id,
+                email=email,
+                display_name=display_name or None,
+            ),
+            subject=f"Invoice {invoice_id} for {period}",
+            body=body,
+        )
+        if not outcome.ok:
+            raise ValueError(outcome.failed_reason or "invoice email delivery failed")
 
 
 def _make_reports_kpis(db: AsyncIOMotorDatabase[Any]) -> object:
@@ -1020,7 +1115,7 @@ def compose_admin(
     stripe: StripeGateway,
 ) -> AdminUseCases:
     settings = get_settings()
-    academy_id = settings.default_academy_id
+    academy_id = settings.primary_academy_id or settings.default_academy_id
 
     # Enrollment repos
     users_r = MongoUserRepository(db, default_academy_id=academy_id)
@@ -1134,7 +1229,9 @@ def compose_admin(
     # Billing
     billing_ledger_repo = MongoBillingLedgerRepository(db)
     credits_repo = MongoCreditLedgerRepository(db)
-    payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
+    payments_repo = MongoPaymentRepository(
+        db, credit_ledger=credits_repo, ledger_repo=billing_ledger_repo
+    )
     session_type_repo = MongoSessionTypeRepository(db)
     student_billing_enrollment_repo = MongoStudentBillingEnrollmentRepository(db)
     create_session_type = CreateSessionType(
@@ -1270,6 +1367,177 @@ def compose_admin(
         _email_sender = ResendEmailSendPort(api_key=_s.resend_api_key, from_address=_from_addr)
     else:
         _email_sender = StubEmailSendPort()
+
+    product_repo = MongoProductRepository(db)
+
+    def _product_dict(product: Product) -> dict[str, Any]:
+        return product.model_dump(mode="python")
+
+    async def list_billing_products() -> list[dict[str, Any]]:
+        return [_product_dict(p) for p in await product_repo.list_products(active_only=True)]
+
+    async def create_billing_product(
+        *,
+        name: str,
+        default_unit_amount_cents: int,
+        line_type: str,
+    ) -> dict[str, Any]:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        now = datetime.now(UTC)
+        product = Product(
+            product_id=f"prod-{new_ulid()}",
+            academy_id=current_academy_id(),
+            name=name,
+            default_unit_amount_cents=default_unit_amount_cents,
+            line_type=line_type,
+            active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        return _product_dict(await product_repo.create_product(product))
+
+    async def update_billing_product(product_id: str, **updates: object) -> dict[str, Any]:
+        return _product_dict(await product_repo.update_product(product_id, **updates))
+
+    async def deactivate_billing_product(product_id: str) -> None:
+        await product_repo.deactivate_product(product_id)
+
+    def _invoice_email_port() -> _InvoiceEmailAdapter | None:
+        if not (settings.email_delivery_enabled and settings.resend_api_key):
+            return None
+        return _InvoiceEmailAdapter(
+            memberships=MongoMembershipRepository(db),
+            users=MongoUserRepository(db, default_academy_id=academy_id),
+            sender=_email_sender,
+        )
+
+    async def send_billing_invoice(invoice_id: str) -> dict[str, Any]:
+        frontend_url = (settings.frontend_url or "https://app.example.com").rstrip("/")
+        invoice_stripe = stripe if hasattr(stripe, "create_invoice_checkout_session") else None
+        result = await SendInvoice(
+            ledger=billing_ledger_repo,
+            stripe=invoice_stripe,  # type: ignore[arg-type]
+            email=_invoice_email_port(),
+            success_url=f"{frontend_url}/parent/payments?invoice=paid",
+            cancel_url=f"{frontend_url}/parent/payments?invoice=cancelled",
+        ).execute(invoice_id)
+        return {
+            "invoice_id": result.invoice.invoice_id,
+            "delivery_status": result.invoice.delivery_status,
+            "sent_at": result.invoice.sent_at,
+            "last_sent_at": result.invoice.last_sent_at,
+            "checkout_url": result.checkout_url,
+        }
+
+    async def charge_invoice_via_autopay(invoice_id: str) -> dict[str, Any]:
+        required = ("get_default_payment_method", "create_off_session_payment_intent")
+        if not all(hasattr(stripe, name) for name in required):
+            raise RuntimeError("Stripe autopay not configured")
+        result = await ChargeInvoiceViaAutopay(
+            ledger=billing_ledger_repo,
+            stripe=stripe,  # type: ignore[arg-type]
+        ).execute(invoice_id)
+        return result.model_dump(mode="python")
+
+    async def add_invoice_line(
+        *,
+        invoice_id: str,
+        description: str,
+        line_type: str,
+        quantity: int,
+        unit_amount_cents: int,
+        product_id: str | None,
+    ) -> dict[str, Any]:
+        result = await AddInvoiceLine(ledger=billing_ledger_repo).execute(
+            AddInvoiceLineCommand(
+                invoice_id=invoice_id,
+                description=description,
+                line_type=line_type,
+                quantity=quantity,
+                unit_amount_cents=unit_amount_cents,
+                product_id=product_id,
+            )
+        )
+        return {
+            "line": result.line.model_dump(mode="python"),
+            "invoice": result.invoice.model_dump(mode="python"),
+        }
+
+    async def remove_invoice_line(*, invoice_id: str, line_id: str) -> None:
+        await RemoveInvoiceLine(ledger=billing_ledger_repo).execute(
+            RemoveInvoiceLineCommand(invoice_id=invoice_id, line_id=line_id)
+        )
+
+    async def void_billing_invoice(*, invoice_id: str, reason: str) -> None:
+        invoice = await billing_ledger_repo.get_invoice(invoice_id)
+        if invoice is None:
+            raise ValueError("invoice not found")
+        if (
+            invoice.status in {"partially_paid", "paid"}
+            or invoice.balance_due_cents != invoice.total_cents
+        ):
+            raise ValueError(
+                "cannot void invoice with recorded payments; issue refund or credit first"
+            )
+        voided = void_invoice(invoice, reason=reason, now=datetime.now(UTC))
+        await billing_ledger_repo.save_invoice(voided)
+
+    async def record_manual_payment(
+        *,
+        invoice_id: str,
+        amount_cents: int,
+        payment_method: str,
+        reference_number: str | None,
+        notes: str,
+    ) -> dict[str, Any]:
+        result = await RecordManualPayment(ledger=billing_ledger_repo).execute(
+            RecordManualPaymentCommand(
+                invoice_id=invoice_id,
+                amount_cents=amount_cents,
+                payment_method=payment_method,  # type: ignore[arg-type]
+                reference_number=reference_number,
+                notes=notes,
+            )
+        )
+        return result.model_dump(mode="python")
+
+    async def create_student_invoice(
+        *,
+        student_id: str,
+        parent_id: str,
+        period: str,
+        due_date: date,
+        enrollment_id: str | None,
+    ) -> dict[str, Any]:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        now = datetime.now(UTC)
+        invoice_id = f"inv-{new_ulid()}"
+        invoice = LedgerInvoice(
+            invoice_id=invoice_id,
+            academy_id=current_academy_id(),
+            parent_id=parent_id,
+            student_id=student_id,
+            enrollment_id=enrollment_id,
+            period=period,
+            status="draft",
+            subtotal_cents=0,
+            discount_cents=0,
+            total_cents=0,
+            balance_due_cents=0,
+            currency="usd",
+            due_date=due_date,
+            created_at=now,
+            updated_at=now,
+        )
+        created = await billing_ledger_repo.create_invoice(
+            invoice,
+            lines=[],
+            idempotency_key=f"admin-invoice-{invoice_id}",
+        )
+        return created.model_dump(mode="json")
+
     send_campaign = SendCampaign(
         campaigns=MongoCampaignRepository(db),
         deliveries=MongoDeliveryRepository(db),
@@ -2254,7 +2522,47 @@ def compose_admin(
         return rows
 
     async def list_payments_recent():
-        return await payments_repo.list_recent_admin()
+        from backend.v2.shared.tenancy import current_academy_id
+
+        request_academy_id = current_academy_id()
+        cursor = (
+            db["payments"]
+            .find({"academy_id": request_academy_id, "is_deleted": {"$ne": True}})
+            .sort([("created_at", -1)])
+            .limit(200)
+        )
+        legacy = [
+            payments_repo._to_admin_row(payment, None)  # type: ignore[attr-defined]
+            async for payment in cursor
+        ]
+        ledger_rows: list[dict[str, Any]] = []
+        async for doc in db["ledger_payments"].find(
+            {"academy_id": request_academy_id},
+            sort=[("created_at", -1)],
+            limit=200,
+        ):
+            ledger_rows.append(
+                {
+                    "payment_id": str(doc.get("payment_id") or ""),
+                    "parent_id": str(doc.get("parent_id") or ""),
+                    "session_id": None,
+                    "amount_cents": int(doc.get("amount_cents") or 0),
+                    "final_amount_cents": int(doc.get("amount_cents") or 0),
+                    "currency": str(doc.get("currency") or "usd"),
+                    "status": str(doc.get("status") or ""),
+                    "refunded_cents": int(doc.get("refunded_cents") or 0),
+                    "stripe_payment_intent_id": doc.get("stripe_payment_intent_id"),
+                    "payment_method": doc.get("payment_method"),
+                    "created_at": doc["created_at"],
+                }
+            )
+        combined = ledger_rows + legacy
+        combined.sort(
+            key=lambda r: (r.get("created_at") if isinstance(r, dict) else None)
+            or datetime.min.replace(tzinfo=UTC),
+            reverse=True,
+        )
+        return combined[:200]
 
     async def reconcile_stripe_billing(
         *,
@@ -2457,8 +2765,14 @@ def compose_admin(
         )
 
     async def list_audit_logs():
+        from backend.v2.shared.tenancy import current_academy_id
+
+        request_academy_id = current_academy_id()
         cursor = (
-            db["audit_logs"].find({"academy_id": academy_id}).sort([("created_at", -1)]).limit(200)
+            db["audit_logs"]
+            .find({"academy_id": request_academy_id})
+            .sort([("created_at", -1)])
+            .limit(200)
         )
         rows: list[dict[str, Any]] = []
         async for doc in cursor:
@@ -2475,10 +2789,20 @@ def compose_admin(
         return rows
 
     async def list_dues_followup():
-        cursor = payments_repo._find_many(  # type: ignore[attr-defined]
-            {"status": "pending", "is_deleted": {"$ne": True}},
-            sort=[("created_at", -1)],
-            limit=500,
+        from backend.v2.shared.tenancy import current_academy_id
+
+        request_academy_id = current_academy_id()
+        cursor = (
+            db["payments"]
+            .find(
+                {
+                    "academy_id": request_academy_id,
+                    "status": "pending",
+                    "is_deleted": {"$ne": True},
+                }
+            )
+            .sort([("created_at", -1)])
+            .limit(500)
         )
         totals: dict[str, dict[str, Any]] = {}
         async for payment in cursor:
@@ -2505,7 +2829,7 @@ def compose_admin(
             ]
             if oid_ids:
                 or_filter.append({"_id": {"$in": oid_ids}})
-            users = db["users"].find({"academy_id": academy_id, "$or": or_filter})
+            users = db["users"].find({"academy_id": request_academy_id, "$or": or_filter})
             async for user in users:
                 for key in (
                     str(user.get("user_id") or ""),
@@ -2522,21 +2846,39 @@ def compose_admin(
         return sorted(totals.values(), key=lambda row: int(row["total_due_cents"]), reverse=True)
 
     async def get_billing_invoice_detail(invoice_id: str) -> dict[str, Any]:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        def _invoice_line_response(line: dict[str, Any]) -> dict[str, Any]:
+            payload: dict[str, Any] = {
+                "line_id": str(line.get("line_id") or ""),
+                "invoice_id": str(line.get("invoice_id") or ""),
+                "description": str(line.get("description", "")),
+                "amount_cents": int(line.get("amount_cents", 0)),
+            }
+            for key in (
+                "line_type",
+                "quantity",
+                "unit_amount_cents",
+                "source_type",
+                "source_id",
+            ):
+                if line.get(key) is not None:
+                    payload[key] = line[key]
+            return payload
+
+        request_academy_id = current_academy_id()
         invoice = await db["invoices"].find_one(
             {
-                "academy_id": academy_id,
+                "academy_id": request_academy_id,
                 "$or": [{"invoice_id": invoice_id}, {"invoice_number": invoice_id}],
             }
         )
         if invoice is not None:
             inv_id = str(invoice.get("invoice_id") or invoice_id)
             lines = [
-                {
-                    "description": str(line.get("description", "")),
-                    "amount_cents": int(line.get("amount_cents", 0)),
-                }
+                _invoice_line_response(line)
                 async for line in db["invoice_lines"].find(
-                    {"academy_id": academy_id, "invoice_id": inv_id}
+                    {"academy_id": request_academy_id, "invoice_id": inv_id}
                 )
             ]
             allocations = [
@@ -2545,7 +2887,7 @@ def compose_admin(
                     "amount_cents": int(row.get("amount_cents", 0)),
                 }
                 async for row in db["payment_allocations"].find(
-                    {"academy_id": academy_id, "invoice_id": inv_id}
+                    {"academy_id": request_academy_id, "invoice_id": inv_id}
                 )
             ]
             credit_usage = [
@@ -2554,15 +2896,20 @@ def compose_admin(
                     "amount_cents": int(row.get("amount_cents", 0)),
                 }
                 async for row in db["credit_applications"].find(
-                    {"academy_id": academy_id, "invoice_id": inv_id}
+                    {"academy_id": request_academy_id, "invoice_id": inv_id}
                 )
             ]
             total = int(invoice.get("total_cents", 0))
             due = int(invoice.get("balance_due_cents", 0))
             return {
+                "invoice_id": inv_id,
                 "invoice_number": str(invoice.get("invoice_number") or inv_id),
                 "period": str(invoice.get("period") or ""),
                 "lines": lines,
+                "subtotal_cents": int(invoice.get("subtotal_cents", total)),
+                "discount_cents": int(invoice.get("discount_cents", 0)),
+                "total_cents": total,
+                "balance_due_cents": due,
                 "due_amount_cents": due,
                 "paid_amount_cents": max(total - due, 0),
                 "status": str(invoice.get("status", "open")),
@@ -2571,10 +2918,16 @@ def compose_admin(
                 "invoice_pdf_artifact_id": invoice.get("invoice_pdf_artifact_id")
                 or invoice.get("pdf_artifact_id"),
                 "receipt_artifact_id": invoice.get("receipt_artifact_id"),
+                "delivery_status": str(invoice.get("delivery_status") or "not_sent"),
+                "sent_at": invoice.get("sent_at"),
+                "last_sent_at": invoice.get("last_sent_at"),
             }
 
-        payment = await payments_repo._find_one(  # type: ignore[attr-defined]
-            {"$or": [{"payment_id": invoice_id}, {"invoice_number": invoice_id}]}
+        payment = await db["payments"].find_one(
+            {
+                "academy_id": request_academy_id,
+                "$or": [{"payment_id": invoice_id}, {"invoice_number": invoice_id}],
+            }
         )
         if payment is None:
             from backend.v2.contexts.billing.domain.errors import PaymentNotFound
@@ -2600,6 +2953,13 @@ def compose_admin(
                 {
                     "description": f"Tuition {payment.get('period') or ''}".strip(),
                     "amount_cents": int(payment.get("gross_amount_cents") or row["amount_cents"]),
+                    "line_type": "tuition",
+                    "quantity": 1,
+                    "unit_amount_cents": int(
+                        payment.get("gross_amount_cents") or row["amount_cents"]
+                    ),
+                    "source_type": "legacy_payment",
+                    "source_id": str(row["payment_id"]),
                 }
             ],
             "due_amount_cents": due,
@@ -2614,11 +2974,32 @@ def compose_admin(
     async def generate_billing_invoice_artifact(
         invoice_id: str, artifact_type: str
     ) -> dict[str, Any]:
+        from backend.v2.contexts.billing.domain.errors import PaymentNotFound
+        from backend.v2.shared.tenancy import current_academy_id
+
+        request_academy_id = current_academy_id()
+        owned_invoice = await db["invoices"].find_one(
+            {
+                "academy_id": request_academy_id,
+                "$or": [{"invoice_id": invoice_id}, {"invoice_number": invoice_id}],
+            },
+            {"_id": 1},
+        )
+        owned_payment = await db["payments"].find_one(
+            {
+                "academy_id": request_academy_id,
+                "$or": [{"payment_id": invoice_id}, {"invoice_number": invoice_id}],
+            },
+            {"_id": 1},
+        )
+        if owned_invoice is None and owned_payment is None:
+            raise PaymentNotFound("invoice not found", payment_id=invoice_id)
+
         artifact_id = str(new_ulid())
         now = datetime.now(UTC)
         await db["billing_artifacts"].insert_one(
             {
-                "academy_id": academy_id,
+                "academy_id": request_academy_id,
                 "artifact_id": artifact_id,
                 "invoice_id": invoice_id,
                 "artifact_type": artifact_type,
@@ -2629,14 +3010,14 @@ def compose_admin(
         field = "receipt_artifact_id" if artifact_type == "receipt" else "invoice_pdf_artifact_id"
         await db["invoices"].update_one(
             {
-                "academy_id": academy_id,
+                "academy_id": request_academy_id,
                 "$or": [{"invoice_id": invoice_id}, {"invoice_number": invoice_id}],
             },
             {"$set": {field: artifact_id, "updated_at": now}},
         )
         await db["payments"].update_one(
             {
-                "academy_id": academy_id,
+                "academy_id": request_academy_id,
                 "$or": [{"payment_id": invoice_id}, {"invoice_number": invoice_id}],
             },
             {"$set": {field: artifact_id, "updated_at": now}},
@@ -2650,6 +3031,9 @@ def compose_admin(
             parent_ids: list[str] | None,
             generate_invoice_artifacts: bool,
         ) -> dict[str, object]:
+            from backend.v2.shared.tenancy import current_academy_id
+
+            request_academy_id = current_academy_id()
             rows = await list_dues_followup()
             if parent_ids is not None:
                 selected = set(parent_ids)
@@ -2657,16 +3041,20 @@ def compose_admin(
             generated = 0
             if generate_invoice_artifacts:
                 for row in rows:
-                    payment_cursor = payments_repo._find_many(  # type: ignore[attr-defined]
-                        {
-                            "status": {"$in": ["pending", "partially_paid"]},
-                            "$or": [
-                                {"parent_id": row["parent_id"]},
-                                {"parent_user_id": row["parent_id"]},
-                            ],
-                            "is_deleted": {"$ne": True},
-                        },
-                        sort=[("created_at", -1)],
+                    payment_cursor = (
+                        db["payments"]
+                        .find(
+                            {
+                                "academy_id": request_academy_id,
+                                "status": {"$in": ["pending", "partially_paid"]},
+                                "$or": [
+                                    {"parent_id": row["parent_id"]},
+                                    {"parent_user_id": row["parent_id"]},
+                                ],
+                                "is_deleted": {"$ne": True},
+                            }
+                        )
+                        .sort([("created_at", -1)])
                     )
                     async for payment in payment_cursor:
                         await generate_billing_invoice_artifact(
@@ -2693,6 +3081,9 @@ def compose_admin(
         }
 
     async def export_report_csv(report_name: str):
+        from backend.v2.shared.tenancy import current_academy_id
+
+        request_academy_id = current_academy_id()
         out = io.StringIO()
         writer = csv.writer(out)
         if report_name == "pending-payments":
@@ -2730,7 +3121,7 @@ def compose_admin(
             writer.writerow(["attendance_id", "session_id", "student_id", "status", "marked_at"])
             cursor = (
                 db["attendance"]
-                .find({"academy_id": academy_id})
+                .find({"academy_id": request_academy_id})
                 .sort([("marked_at", -1)])
                 .limit(1000)
             )
@@ -2745,8 +3136,7 @@ def compose_admin(
                     ]
                 )
         else:
-            writer.writerow(["error"])
-            writer.writerow([f"unknown report {report_name}"])
+            raise ValueError(f"unknown report export: {report_name}")
         return out.getvalue()
 
     admin = AdminUseCases(
@@ -2777,6 +3167,17 @@ def compose_admin(
         list_billing_invoices=billing_ledger_repo.list_invoices_for_academy,
         get_billing_invoice_detail=get_billing_invoice_detail,
         generate_billing_invoice_artifact=generate_billing_invoice_artifact,
+        send_billing_invoice=send_billing_invoice,
+        charge_invoice_via_autopay=charge_invoice_via_autopay,
+        add_invoice_line=add_invoice_line,
+        remove_invoice_line=remove_invoice_line,
+        void_billing_invoice=void_billing_invoice,
+        record_manual_payment=record_manual_payment,
+        create_student_invoice=create_student_invoice,
+        list_billing_products=list_billing_products,
+        create_billing_product=create_billing_product,
+        update_billing_product=update_billing_product,
+        deactivate_billing_product=deactivate_billing_product,
         generate_monthly_payments=generate_monthly_payments,
         mark_payment_paid=mark_payment_paid,
         apply_payment_discount=apply_payment_discount,
@@ -2870,19 +3271,36 @@ def compose_admin(
     )
     admin.get_reports_dashboard = _make_reports_dashboard(db)  # type: ignore[attr-defined]
 
-    # Analytics use cases (Phase 2)
-    admin.get_enrollment_funnel = GetEnrollmentFunnel(  # type: ignore[attr-defined]
-        application_reader=MongoApplicationFunnelReader(db),
-        academy_id=academy_id,
-    ).execute
-    admin.get_attendance_trends = GetAttendanceTrends(  # type: ignore[attr-defined]
-        snapshot_repo=MongoAttendanceSnapshotReader(db),
-        academy_id=academy_id,
-    ).execute
-    admin.get_coach_utilization = GetCoachUtilization(  # type: ignore[attr-defined]
-        snapshot_repo=MongoCoachPayoutSnapshotReader(db),
-        academy_id=academy_id,
-    ).execute
+    # Analytics use cases (Phase 2) are request-tenant scoped. These are
+    # closures rather than long-lived use case instances because the use case
+    # constructors take academy_id.
+    async def get_enrollment_funnel(period: str | None = None):
+        from backend.v2.shared.tenancy import current_academy_id
+
+        return await GetEnrollmentFunnel(
+            application_reader=MongoApplicationFunnelReader(db),
+            academy_id=current_academy_id(),
+        ).execute(period)
+
+    async def get_attendance_trends(periods: list[str]):
+        from backend.v2.shared.tenancy import current_academy_id
+
+        return await GetAttendanceTrends(
+            snapshot_repo=MongoAttendanceSnapshotReader(db),
+            academy_id=current_academy_id(),
+        ).execute(periods)
+
+    async def get_coach_utilization(periods: list[str]):
+        from backend.v2.shared.tenancy import current_academy_id
+
+        return await GetCoachUtilization(
+            snapshot_repo=MongoCoachPayoutSnapshotReader(db),
+            academy_id=current_academy_id(),
+        ).execute(periods)
+
+    admin.get_enrollment_funnel = get_enrollment_funnel  # type: ignore[attr-defined]
+    admin.get_attendance_trends = get_attendance_trends  # type: ignore[attr-defined]
+    admin.get_coach_utilization = get_coach_utilization  # type: ignore[attr-defined]
 
     admin.curriculum = curriculum  # type: ignore[attr-defined]
     admin.student_progress = student_progress  # type: ignore[attr-defined]

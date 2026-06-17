@@ -650,6 +650,10 @@ class MongoStudentRepository(TenantScopedRepository):
             balance_due_cents=balance_due_cents,
             status=str(doc.get("status") or "pending"),
             payment_method=cls._optional_str(doc.get("payment_method")),
+            invoice_number=cls._optional_str(doc.get("invoice_number")),
+            paid_at=cls._coerce_datetime(doc.get("paid_at")),
+            stripe_invoice_id=cls._optional_str(doc.get("stripe_invoice_id")),
+            stripe_payment_intent_id=cls._optional_str(doc.get("stripe_payment_intent_id")),
             created_at=created_at or datetime.now(UTC),
         )
 
@@ -677,15 +681,6 @@ class MongoStudentRepository(TenantScopedRepository):
                     period=payment.period,
                     payment_id=payment.payment_id,
                     session_id=payment.session_id,
-                )
-        for enrollment in enrolled_sessions:
-            if enrollment.status == "active" and enrollment.amount_cents:
-                return AdminStudentCurrentPaymentSummary(
-                    amount_cents=enrollment.amount_cents,
-                    source="session_price",
-                    status=enrollment.status,
-                    session_id=enrollment.session_id,
-                    session_title=enrollment.session_title,
                 )
         return None
 

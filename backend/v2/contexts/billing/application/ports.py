@@ -5,6 +5,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
+from backend.v2.contexts.billing.domain.ledger import (
+    InvoiceLine,
+    LedgerAllocationResult,
+    LedgerInvoice,
+    LedgerPayment,
+)
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment, Subscription
 from backend.v2.contexts.billing.domain.proration import (
     BillingCalculationSnapshot,
@@ -273,3 +279,39 @@ class StudentBillingEnrollmentRepository(Protocol):
     async def get_by_stripe_subscription(
         self, stripe_subscription_id: str
     ) -> StudentBillingEnrollment | None: ...
+
+
+class LedgerRepository(Protocol):
+    """Port for ledger invoice + line persistence (Phase 2A+)."""
+
+    async def get_invoice(self, invoice_id: str) -> LedgerInvoice | None: ...
+    async def get_open_invoice_for_student(
+        self, student_id: str, period: str
+    ) -> LedgerInvoice | None: ...
+    async def get_lines_for_invoice(self, invoice_id: str) -> list[InvoiceLine]: ...
+    async def save_invoice(self, invoice: LedgerInvoice) -> LedgerInvoice: ...
+    async def save_line(self, line: InvoiceLine) -> InvoiceLine: ...
+    async def delete_invoice_line(self, *, invoice_id: str, line_id: str) -> bool: ...
+    async def create_invoice(
+        self,
+        invoice: LedgerInvoice,
+        *,
+        lines: list[InvoiceLine],
+        idempotency_key: str,
+    ) -> LedgerInvoice: ...
+
+    async def record_payment(
+        self,
+        payment: LedgerPayment,
+        *,
+        idempotency_key: str,
+    ) -> LedgerPayment: ...
+
+    async def allocate_payment(
+        self,
+        *,
+        payment_id: str,
+        invoice_id: str,
+        amount_cents: int,
+        idempotency_key: str,
+    ) -> LedgerAllocationResult: ...

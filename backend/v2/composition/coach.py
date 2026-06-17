@@ -104,6 +104,7 @@ from backend.v2.interfaces.coach.views import CoachProfileResponse, UpdateCoachP
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
+from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
 
 from .coaching_lookups import (
     EnrollmentLookupAdapter,
@@ -216,7 +217,14 @@ def compose_coach(
     # Skill note repo
     skill_note_repo = MongoSkillNoteRepository(db)
 
+    def request_academy_id() -> str:
+        try:
+            return current_academy_id()
+        except TenantContextUnset:
+            return settings.default_academy_id
+
     async def get_dashboard_metrics(coach_id: str) -> dict[str, int | float]:
+        academy_id = request_academy_id()
         today = datetime.now(UTC).date()
         today_sessions = await sessions_repo.for_coach_on_date(coach_id, today)
         session_cursor = sessions_repo._find_many(  # type: ignore[attr-defined]
@@ -227,7 +235,7 @@ def compose_coach(
             await enrollments_repo.collection.distinct(
                 "student_id",
                 {
-                    "academy_id": settings.default_academy_id,
+                    "academy_id": academy_id,
                     "session_id": {"$in": session_ids},
                     "status": "active",
                 },
@@ -236,11 +244,11 @@ def compose_coach(
             else []
         )
         total_marks = await attendance_repo.collection.count_documents(
-            {"academy_id": settings.default_academy_id, "marked_by": coach_id}
+            {"academy_id": academy_id, "marked_by": coach_id}
         )
         present_marks = await attendance_repo.collection.count_documents(
             {
-                "academy_id": settings.default_academy_id,
+                "academy_id": academy_id,
                 "marked_by": coach_id,
                 "status": {"$in": ["present", "late"]},
             }

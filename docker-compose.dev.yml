@@ -1,0 +1,71 @@
+# Dev override — mounts source for live reload, runs `next dev` with polling,
+# and auto-seeds MongoDB on first boot.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+services:
+  firebase-emulator:
+    image: andreysenov/firebase-tools:latest
+    restart: unless-stopped
+    working_dir: /workspace
+    user: "node"
+    volumes:
+      - ./firebase-emulator/firebase.json:/workspace/firebase.json:ro
+    command:
+      - firebase
+      - emulators:start
+      - --only=auth
+      - --project=academy-courtmastr
+    ports:
+      - "9099:9099"
+      - "4000:4000"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "require('http').get('http://127.0.0.1:9099/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  backend:
+    depends_on:
+      firebase-emulator:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app/backend
+    environment:
+      FIREBASE_AUTH_EMULATOR_HOST: "firebase-emulator:9099"
+    command: bash backend/scripts/docker_entrypoint.sh
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+      - frontend_next:/app/.next
+    environment:
+      NODE_ENV: development
+      # Polling is required on macOS Docker (inotify doesn't cross the VM boundary).
+      WATCHPACK_POLLING: "true"
+      BFF_API_ORIGIN: http://backend:8001
+      PORT: "3001"
+      NEXT_PUBLIC_API_BASE: /api/v2
+      # Browser reaches emulator via host port, not internal Docker hostname.
+      NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST: "http://localhost:9099"
+
+  stripe-cli:
+    image: stripe/stripe-cli
+    env_file:
+      - path: ./backend/.env
+    # Forwards Stripe test-mode events to the local backend.
+    # Signature verification is skipped in APP_ENV=development so the
+    # rotating CLI signing secret does not need to match STRIPE_WEBHOOK_SECRET.
+    command: listen --forward-to http://backend:8001/webhooks/stripe
+    depends_on:
+      - backend
+
+volumes:
+  frontend_node_modules:
+  frontend_next:

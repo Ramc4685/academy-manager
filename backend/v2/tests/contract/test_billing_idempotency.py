@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from datetime import UTC, date, datetime
 
 import pytest
@@ -123,9 +124,14 @@ async def test_allocation_overpayment_credit_is_idempotent(db, acad) -> None:
 
     assert first == second
     invoice = await db["invoices"].find_one({"academy_id": acad, "invoice_id": "inv-overpay"})
-    payment = await db["payments"].find_one({"academy_id": acad, "payment_id": "pay-overpay"})
+    payment = await db["ledger_payments"].find_one(
+        {"academy_id": acad, "payment_id": "pay-overpay"}
+    )
     assert invoice is not None
     assert payment is not None
+    assert (
+        await db["payments"].count_documents({"academy_id": acad, "payment_id": "pay-overpay"}) == 0
+    )
     assert invoice["balance_due_cents"] == 0
     assert invoice["status"] == "paid"
     assert payment["unapplied_amount_cents"] == 0
@@ -167,3 +173,140 @@ async def test_billing_ledger_reads_are_tenant_isolated(db, acad) -> None:
     with tenant_scope("other-academy"):
         other_repo = MongoBillingLedgerRepository(db)
         assert await other_repo.get_invoice("inv-tenant") is None
+
+
+@pytest.mark.asyncio
+async def test_ledger_payment_storage_ignores_legacy_payments_collection(db, acad) -> None:
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    await repo.create_invoice(
+        LedgerInvoice(
+            invoice_id="inv-storage-split",
+            academy_id=acad,
+            parent_id="parent-1",
+            period="2026-06",
+            status="open",
+            subtotal_cents=5_000,
+            discount_cents=0,
+            total_cents=5_000,
+            balance_due_cents=5_000,
+            currency="usd",
+            due_date=date(2026, 6, 10),
+            created_at=now,
+            updated_at=now,
+        ),
+        lines=[],
+        idempotency_key="invoice:storage-split",
+    )
+    await db["payments"].insert_one(
+        {
+            "academy_id": acad,
+            "payment_id": "pay-storage-split",
+            "parent_id": "parent-1",
+            "amount_cents": 5_000,
+            "status": "succeeded",
+            "ledger_idempotency_key": "payment:storage-split",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+
+    with pytest.raises(ValueError, match="payment not found"):
+        await repo.allocate_payment(
+            payment_id="pay-storage-split",
+            invoice_id="inv-storage-split",
+            amount_cents=5_000,
+            idempotency_key="allocation:storage-split",
+        )
+
+    await repo.record_payment(
+        LedgerPayment(
+            payment_id="pay-storage-split",
+            academy_id=acad,
+            parent_id="parent-1",
+            amount_cents=5_000,
+            unapplied_amount_cents=5_000,
+            currency="usd",
+            status="succeeded",
+            payment_method="cash",
+            paid_at=now,
+            created_at=now,
+            updated_at=now,
+        ),
+        idempotency_key="payment:storage-split",
+    )
+
+    result = await repo.allocate_payment(
+        payment_id="pay-storage-split",
+        invoice_id="inv-storage-split",
+        amount_cents=5_000,
+        idempotency_key="allocation:storage-split",
+    )
+
+    assert result.invoice.status == "paid"
+    assert (
+        await db["ledger_payments"].count_documents(
+            {"academy_id": acad, "payment_id": "pay-storage-split"}
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_ledger_payments_migration_copies_only_ledger_shape_without_deleting(
+    db, acad
+) -> None:
+    migration = importlib.import_module("backend.v2.migrations.0128_ledger_payments_storage")
+    audit_script = importlib.import_module("backend.scripts.ledger_payments_storage_audit")
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    await db["payments"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "payment_id": "pay-ledger-copy",
+                "parent_id": "parent-1",
+                "amount_cents": 5_000,
+                "unapplied_amount_cents": 5_000,
+                "ledger_idempotency_key": "payment:ledger-copy",
+                "status": "succeeded",
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "academy_id": acad,
+                "payment_id": "pay-legacy-keep",
+                "parent_id": "parent-1",
+                "enrollment_id": "enroll-1",
+                "amount_cents": 6_000,
+                "status": "pending",
+                "created_at": now,
+                "updated_at": now,
+            },
+        ]
+    )
+
+    before = await audit_script.audit(db)
+    assert before == {
+        "legacy_ledger_shaped_payments": 1,
+        "ledger_payments": 0,
+        "missing_from_ledger_payments": 1,
+    }
+
+    await migration.up(db)
+    await migration.up(db)
+
+    after = await audit_script.audit(db)
+    assert after == {
+        "legacy_ledger_shaped_payments": 1,
+        "ledger_payments": 1,
+        "missing_from_ledger_payments": 0,
+    }
+
+    copied = await db["ledger_payments"].find_one(
+        {"academy_id": acad, "payment_id": "pay-ledger-copy"}
+    )
+    assert copied is not None
+    assert copied["ledger_idempotency_key"] == "payment:ledger-copy"
+    assert await db["ledger_payments"].count_documents({"academy_id": acad}) == 1
+    assert await db["payments"].count_documents({"academy_id": acad}) == 2
+    assert await db["payments"].find_one({"academy_id": acad, "payment_id": "pay-legacy-keep"})

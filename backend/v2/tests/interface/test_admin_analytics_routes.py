@@ -117,6 +117,38 @@ def test_enrollment_funnel_returns_result(analytics_client: TestClient) -> None:
     assert body["period"] is None
 
 
+def test_admin_report_export_allows_known_reports() -> None:
+    export = AsyncMock(return_value="header\nvalue\n")
+    client = _make_client(use_cases=SimpleNamespace(export_report_csv=export))
+
+    resp = client.get("/api/v2/admin/reports/attendance.csv")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"] == "text/csv; charset=utf-8"
+    assert resp.text == "header\nvalue\n"
+    export.assert_awaited_once_with("attendance")
+
+
+def test_admin_report_export_rejects_unknown_report_without_calling_use_case() -> None:
+    export = AsyncMock(return_value="error\n")
+    client = _make_client(use_cases=SimpleNamespace(export_report_csv=export))
+
+    resp = client.get("/api/v2/admin/reports/all-tenants.csv")
+
+    assert resp.status_code == 404
+    export.assert_not_awaited()
+
+
+def test_admin_report_export_requires_admin_persona() -> None:
+    export = AsyncMock(return_value="header\nvalue\n")
+    client = _make_client(roles=("parent",), use_cases=SimpleNamespace(export_report_csv=export))
+
+    resp = client.get("/api/v2/admin/reports/attendance.csv")
+
+    assert resp.status_code == 404
+    export.assert_not_awaited()
+
+
 def test_enrollment_funnel_with_period(analytics_client: TestClient) -> None:
     uc = SimpleNamespace(
         get_enrollment_funnel=AsyncMock(

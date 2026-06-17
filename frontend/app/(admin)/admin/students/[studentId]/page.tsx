@@ -14,24 +14,43 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   ArrowLeft,
+  Ban,
   CalendarCheck,
   CreditCard,
+  DollarSign,
   FileCheck,
+  FilePlus2,
+  Plus,
   RefreshCw,
+  Send,
   ShieldCheck,
+  Trash2,
   UserRound,
   Wallet,
 } from "lucide-react";
 
 import {
+  addAdminInvoiceLine,
+  chargeAdminInvoiceAutopay,
   changeAdminStudentParent,
+  deleteAdminInvoiceLine,
+  getAdminInvoiceDetail,
   listAdminSessions,
   listAdminUsers,
+  listBillingProducts,
+  recordAdminInvoicePayment,
+  sendAdminInvoice,
+  voidAdminInvoice,
+  type AdminBillingProductView,
+  type AdminInvoiceDetail,
+  type AddInvoiceLineRequest,
   type AdminSessionView,
   type AdminUserView,
   type ChangeAdminStudentParentRequest,
+  type RecordManualPaymentRequest,
 } from "@/lib/api/admin";
 import {
+  createAdminStudentInvoice,
   getAdminStudent,
   transferEnrollment,
   updateAdminStudent,
@@ -53,6 +72,7 @@ import { Overline } from "@/components/ds/typography";
 type EditableStatus = "active" | "paused" | "inactive";
 type StudentTab = "overview" | "training" | "sessions" | "billing" | "family";
 type StudentEditMode = "overview" | "training" | "family";
+type BillingModal = "add-line" | "manual-payment" | "void" | "create-invoice" | null;
 
 const STUDENT_TABS: Array<{ id: StudentTab; label: string }> = [
   { id: "overview", label: "Overview" },
@@ -213,7 +233,15 @@ export default function AdminStudentDetailPage() {
       {activeTab === "billing" && (
         <TabPanel id="billing">
           <div className="grid gap-6 lg:grid-cols-[minmax(300px,0.8fr)_minmax(0,1.4fr)]">
-            <CurrentPaymentPanel student={student} />
+            <BillingWorkflowPanel
+              student={student}
+              active={activeTab === "billing"}
+              onChanged={() => {
+                void queryClient.invalidateQueries({
+                  queryKey: queryKeys.admin.studentDetail(studentId),
+                });
+              }}
+            />
             <PaymentHistoryPanel payments={student.payment_history ?? []} />
           </div>
         </TabPanel>
@@ -574,49 +602,460 @@ function ComplianceSummary({ student }: { student: AdminStudentDetail }) {
   );
 }
 
-function CurrentPaymentPanel({ student }: { student: AdminStudentDetail }) {
+function BillingWorkflowPanel({
+  student,
+  active,
+  onChanged,
+}: {
+  student: AdminStudentDetail;
+  active: boolean;
+  onChanged: () => void;
+}) {
   const current = student.current_payment;
+  const [createdInvoiceId, setCreatedInvoiceId] = useState<string | null>(null);
+  const invoiceId = current?.payment_id ?? createdInvoiceId;
+  const [modal, setModal] = useState<BillingModal>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+
+  const invoiceQuery = useQuery({
+    queryKey: ["admin", "billing", "invoice", invoiceId],
+    queryFn: () => getAdminInvoiceDetail(invoiceId!),
+    enabled: active && Boolean(invoiceId),
+  });
+  const productsQuery = useQuery({
+    queryKey: ["admin", "billing", "products"],
+    queryFn: () => listBillingProducts(),
+    enabled: active && modal === "add-line",
+  });
+
+  const invoice = invoiceQuery.data;
+  const status = invoice?.status ?? current?.status ?? "draft";
+  const balanceDueCents =
+    invoice?.balance_due_cents ?? invoice?.due_amount_cents ?? current?.amount_cents ?? 0;
+  const invoiceTotalCents =
+    invoice?.total_cents ??
+    (invoice ? invoice.due_amount_cents + invoice.paid_amount_cents : current?.amount_cents ?? 0);
+  const isDraft = status === "draft";
+  const isVoid = status === "void";
+  const isPaid = status === "paid";
+  const canVoid = (status === "draft" || status === "open") && balanceDueCents === invoiceTotalCents;
+  const canMutateLines = Boolean(invoiceId) && isDraft;
+  const canSend = Boolean(invoiceId) && !isVoid && !isPaid;
+  const canRecordPayment = Boolean(invoiceId) && !isDraft && !isVoid && balanceDueCents > 0;
+  const canChargeAutopay = canRecordPayment;
+
+  const refreshInvoice = () => {
+    if (invoiceId) {
+      void invoiceQuery.refetch();
+    }
+    onChanged();
+  };
+
+  const sendMutation = useMutation({
+    mutationFn: () => sendAdminInvoice(invoiceId!),
+    onSuccess: (result) => {
+      setActionMessage(
+        result.delivery_status === "sent" && result.checkout_url
+          ? `Invoice sent. Checkout link: ${result.checkout_url}`
+          : result.delivery_status === "sent"
+            ? "Invoice sent."
+            : result.checkout_url
+              ? `Checkout link generated: ${result.checkout_url}`
+              : "Invoice delivery is not configured.",
+      );
+      refreshInvoice();
+    },
+  });
+
+  const chargeMutation = useMutation({
+    mutationFn: () => chargeAdminInvoiceAutopay(invoiceId!),
+    onSuccess: (result) => {
+      setActionMessage(
+        result.success
+          ? "Autopay charge succeeded."
+          : result.requires_action
+            ? "Autopay requires parent action."
+            : `Autopay did not complete: ${result.status}`,
+      );
+      refreshInvoice();
+    },
+  });
+
+  const deleteLineMutation = useMutation({
+    mutationFn: (lineId: string) => deleteAdminInvoiceLine(invoiceId!, lineId),
+    onSuccess: () => {
+      setActionMessage("Line item removed.");
+      refreshInvoice();
+    },
+  });
+
+  const createInvoiceMutation = useMutation({
+    mutationFn: (payload: { period: string; due_date: string; enrollment_id?: string | null }) =>
+      createAdminStudentInvoice(student.student_id, {
+        parent_id: student.parent_id,
+        period: payload.period,
+        due_date: payload.due_date,
+        enrollment_id: payload.enrollment_id ?? null,
+      }),
+    onSuccess: (newInvoice) => {
+      setCreatedInvoiceId(newInvoice.invoice_id);
+      setModal(null);
+      setActionMessage("Draft invoice created.");
+      onChanged();
+    },
+  });
+
+  const errorMessage =
+    getErrorMessage(sendMutation.error) ??
+    getErrorMessage(chargeMutation.error) ??
+    getErrorMessage(deleteLineMutation.error) ??
+    getErrorMessage(createInvoiceMutation.error) ??
+    getErrorMessage(invoiceQuery.error);
+
   return (
-    <Card p={20}>
-      <div className="flex items-center gap-2">
-        <CreditCard className="size-4 text-rally-muted" aria-hidden="true" />
-        <Overline>Current payment</Overline>
-      </div>
-      {current ? (
-        <div
-          className="mt-3 space-y-3"
-          data-testid="admin-student-current-payment"
-        >
-          <div>
-            <div className="font-mono text-2xl font-semibold tabular-nums text-rally-ink">
-              {formatCurrencyCents(current.amount_cents)}
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-rally-muted">
-              <StatusChip status={current.status} />
-              <span>
-                {current.source === "invoice"
-                  ? "Invoice balance"
-                  : "Session price"}
-              </span>
-            </div>
+    <>
+      <Card p={20} className="lg:col-span-2">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="flex items-center gap-2">
+            <CreditCard className="size-4 text-rally-muted" aria-hidden="true" />
+            <Overline>Current invoice</Overline>
           </div>
-          <DetailList
-            rows={[
-              { label: "Period", value: current.period ?? "—" },
-              { label: "Payment", value: current.payment_id ?? "—" },
-              { label: "Session", value: current.session_title ?? current.session_id ?? "—" },
-            ]}
-          />
+          <div className="flex flex-wrap gap-2">
+            {!invoiceId && (
+              <Button
+                size="sm"
+                icon={<FilePlus2 className="size-3.5" aria-hidden="true" />}
+                onClick={() => setModal("create-invoice")}
+              >
+                Create invoice
+              </Button>
+            )}
+            {invoiceId && (
+              <>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon={<Plus className="size-3.5" aria-hidden="true" />}
+                  onClick={() => setModal("add-line")}
+                  disabled={!canMutateLines}
+                  title={!canMutateLines ? "Line items can only be edited while draft." : undefined}
+                >
+                  Add charge
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon={
+                    sendMutation.isPending ? (
+                      <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Send className="size-3.5" aria-hidden="true" />
+                    )
+                  }
+                  onClick={() => sendMutation.mutate()}
+                  disabled={!canSend || sendMutation.isPending}
+                >
+                  Send
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon={<DollarSign className="size-3.5" aria-hidden="true" />}
+                  onClick={() => setModal("manual-payment")}
+                  disabled={!canRecordPayment}
+                  title={isDraft ? "Send the invoice before recording payment." : undefined}
+                >
+                  Record payment
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon={
+                    chargeMutation.isPending ? (
+                      <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <CreditCard className="size-3.5" aria-hidden="true" />
+                    )
+                  }
+                  onClick={() => chargeMutation.mutate()}
+                  disabled={!canChargeAutopay || chargeMutation.isPending}
+                  title={isDraft ? "Send the invoice before charging autopay." : undefined}
+                >
+                  Autopay
+                </Button>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  icon={<Ban className="size-3.5" aria-hidden="true" />}
+                  onClick={() => setModal("void")}
+                  disabled={!canVoid}
+                  title={!canVoid ? "Invoices with recorded payments cannot be voided here." : undefined}
+                >
+                  Void
+                </Button>
+              </>
+            )}
+          </div>
         </div>
-      ) : (
-        <p
-          className="mt-3 text-sm text-rally-muted"
-          data-testid="admin-student-no-current-payment"
-        >
-          No current balance.
-        </p>
+
+        {errorMessage && (
+          <p role="alert" className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
+            {errorMessage}
+          </p>
+        )}
+        {actionMessage && (
+          <p className="mt-3 break-words rounded-md bg-blue-50 px-3 py-2 text-xs text-blue-800">
+            {actionMessage}
+          </p>
+        )}
+
+        {!invoiceId ? (
+          <p
+            className="mt-4 text-sm text-rally-muted"
+            data-testid="admin-student-no-current-payment"
+          >
+            No current invoice.
+          </p>
+        ) : (
+          <div className="mt-4 space-y-5" data-testid="admin-student-current-payment">
+            <div className="grid gap-3 md:grid-cols-4">
+              <InvoiceMetric label="Total" value={formatCurrencyCents(invoiceTotalCents)} />
+              <InvoiceMetric label="Paid" value={formatCurrencyCents(invoice?.paid_amount_cents ?? 0)} />
+              <InvoiceMetric label="Balance" value={formatCurrencyCents(balanceDueCents)} />
+              <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+                <div className="font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+                  Status
+                </div>
+                <div className="mt-2">
+                  <StatusChip status={status} />
+                </div>
+              </div>
+            </div>
+
+            <DetailList
+              rows={[
+                { label: "Invoice", value: invoice?.invoice_number ?? invoiceId },
+                { label: "Period", value: invoice?.period ?? current?.period ?? "—" },
+                { label: "Delivery", value: invoice?.delivery_status ?? "not_sent" },
+                { label: "Sent", value: formatDateTime(invoice?.last_sent_at ?? invoice?.sent_at) },
+                { label: "Session", value: current?.session_title ?? current?.session_id ?? "—" },
+              ]}
+            />
+
+            {invoiceQuery.isPending ? (
+              <div className="h-20 animate-pulse rounded-lg bg-neutral-100" aria-label="Loading invoice" />
+            ) : (
+              <InvoiceLinesTable
+                invoice={invoice}
+                canRemove={canMutateLines}
+                removingLineId={
+                  deleteLineMutation.isPending ? (deleteLineMutation.variables ?? null) : null
+                }
+                onRemove={(lineId) => deleteLineMutation.mutate(lineId)}
+              />
+            )}
+
+            <InvoiceSettlementPanel invoice={invoice} />
+          </div>
+        )}
+      </Card>
+
+      {modal === "create-invoice" && (
+        <CreateInvoiceDialog
+          student={student}
+          pending={createInvoiceMutation.isPending}
+          error={getErrorMessage(createInvoiceMutation.error)}
+          onCancel={() => setModal(null)}
+          onSubmit={(payload) => createInvoiceMutation.mutate(payload)}
+        />
       )}
-    </Card>
+      {modal === "add-line" && invoiceId && (
+        <AddInvoiceLineDialog
+          invoiceId={invoiceId}
+          products={productsQuery.data?.products ?? []}
+          productsLoading={productsQuery.isPending}
+          onCancel={() => setModal(null)}
+          onSaved={(payload) => addAdminInvoiceLine(invoiceId, payload)}
+          onDone={() => {
+            setModal(null);
+            setActionMessage("Line item added.");
+            refreshInvoice();
+          }}
+        />
+      )}
+      {modal === "manual-payment" && invoiceId && (
+        <RecordPaymentDialog
+          balanceDueCents={balanceDueCents}
+          onCancel={() => setModal(null)}
+          onSaved={(payload) => recordAdminInvoicePayment(invoiceId, payload)}
+          onDone={(paymentId) => {
+            setModal(null);
+            setActionMessage(`Payment recorded: ${paymentId}`);
+            refreshInvoice();
+          }}
+        />
+      )}
+      {modal === "void" && invoiceId && (
+        <VoidInvoiceDialog
+          onCancel={() => setModal(null)}
+          onSaved={(reason) => voidAdminInvoice(invoiceId, { reason })}
+          onDone={() => {
+            setModal(null);
+            setActionMessage("Invoice voided.");
+            refreshInvoice();
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function InvoiceMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+      <div className="font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+        {label}
+      </div>
+      <div className="mt-2 font-mono text-lg font-semibold tabular-nums text-rally-ink">
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function InvoiceLinesTable({
+  invoice,
+  canRemove,
+  removingLineId,
+  onRemove,
+}: {
+  invoice: AdminInvoiceDetail | undefined;
+  canRemove: boolean;
+  removingLineId: string | null;
+  onRemove: (lineId: string) => void;
+}) {
+  const lines = invoice?.lines ?? [];
+  if (lines.length === 0) {
+    return <p className="text-sm text-rally-muted">No invoice line items.</p>;
+  }
+  return (
+    <div className="overflow-x-auto" data-testid="admin-student-invoice-lines">
+      <table className="min-w-full text-left text-sm">
+        <thead className="border-b border-neutral-200 text-xs uppercase tracking-overline text-rally-muted">
+          <tr>
+            <th className="py-2 pr-4 font-medium">Charge</th>
+            <th className="py-2 pr-4 font-medium">Type</th>
+            <th className="py-2 pr-4 font-medium">Qty</th>
+            <th className="py-2 pr-4 font-medium">Unit</th>
+            <th className="py-2 pr-4 font-medium">Amount</th>
+            <th className="py-2 font-medium" />
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-neutral-100">
+          {lines.map((line, index) => {
+            const lineKey = line.line_id ?? `${line.description}-${index}`;
+            const removable = canRemove && Boolean(line.line_id);
+            return (
+              <tr key={lineKey}>
+                <td className="py-3 pr-4 align-top text-rally-ink">
+                  {line.description}
+                </td>
+                <td className="py-3 pr-4 align-top text-rally-muted">
+                  {line.line_type ?? "—"}
+                </td>
+                <td className="py-3 pr-4 align-top font-mono tabular-nums text-rally-ink">
+                  {line.quantity ?? "—"}
+                </td>
+                <td className="py-3 pr-4 align-top font-mono tabular-nums text-rally-ink">
+                  {line.unit_amount_cents == null
+                    ? "—"
+                    : formatCurrencyCents(line.unit_amount_cents)}
+                </td>
+                <td className="py-3 pr-4 align-top font-mono tabular-nums text-rally-ink">
+                  {formatCurrencyCents(line.amount_cents)}
+                </td>
+                <td className="py-3 align-top">
+                  <button
+                    type="button"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-md text-rally-muted hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => line.line_id && onRemove(line.line_id)}
+                    disabled={!removable || removingLineId === line.line_id}
+                    title={removable ? "Remove line" : "Line removal requires a draft invoice."}
+                  >
+                    {removingLineId === line.line_id ? (
+                      <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Trash2 className="size-4" aria-hidden="true" />
+                    )}
+                    <span className="sr-only">Remove line</span>
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function InvoiceSettlementPanel({ invoice }: { invoice: AdminInvoiceDetail | undefined }) {
+  const allocations = invoice?.allocations ?? [];
+  const credits = invoice?.credit_usage ?? [];
+  if (allocations.length === 0 && credits.length === 0) {
+    return null;
+  }
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      <SettlementList
+        label="Payment allocations"
+        emptyLabel="No payment allocations"
+        rows={allocations.map((item) => ({
+          id: item.payment_id,
+          amount: item.amount_cents,
+        }))}
+      />
+      <SettlementList
+        label="Credit usage"
+        emptyLabel="No credit usage"
+        rows={credits.map((item) => ({
+          id: item.credit_id,
+          amount: item.amount_cents,
+        }))}
+      />
+    </div>
+  );
+}
+
+function SettlementList({
+  label,
+  emptyLabel,
+  rows,
+}: {
+  label: string;
+  emptyLabel: string;
+  rows: Array<{ id: string; amount: number }>;
+}) {
+  return (
+    <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+      <div className="font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+        {label}
+      </div>
+      {rows.length === 0 ? (
+        <p className="mt-2 text-xs text-rally-muted">{emptyLabel}</p>
+      ) : (
+        <dl className="mt-2 space-y-2 text-sm">
+          {rows.map((row) => (
+            <div key={row.id} className="flex items-center justify-between gap-3">
+              <dt className="truncate text-rally-muted">{row.id}</dt>
+              <dd className="font-mono tabular-nums text-rally-ink">
+                {formatCurrencyCents(row.amount)}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
   );
 }
 
@@ -855,6 +1294,392 @@ function SessionsPanel({
   );
 }
 
+function CreateInvoiceDialog({
+  student,
+  pending,
+  error,
+  onCancel,
+  onSubmit,
+}: {
+  student: AdminStudentDetail;
+  pending: boolean;
+  error: string | null | undefined;
+  onCancel: () => void;
+  onSubmit: (payload: { period: string; due_date: string; enrollment_id?: string | null }) => void;
+}) {
+  const [period, setPeriod] = useState(() => new Date().toISOString().slice(0, 7));
+  const [dueDate, setDueDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [enrollmentId, setEnrollmentId] = useState("");
+  const sessions = student.enrolled_sessions ?? [];
+
+  return (
+    <BillingDialogFrame title="Create draft invoice" onCancel={onCancel}>
+      {error && <BillingDialogError message={error} />}
+      <div className="space-y-3">
+        <Field label="Period" htmlFor="billing-create-period">
+          <input
+            id="billing-create-period"
+            type="month"
+            value={period}
+            onChange={(event) => setPeriod(event.target.value)}
+            className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+          />
+        </Field>
+        <Field label="Due date" htmlFor="billing-create-due-date">
+          <input
+            id="billing-create-due-date"
+            type="date"
+            value={dueDate}
+            onChange={(event) => setDueDate(event.target.value)}
+            className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+          />
+        </Field>
+        <Field label="Enrollment" htmlFor="billing-create-enrollment">
+          <select
+            id="billing-create-enrollment"
+            value={enrollmentId}
+            onChange={(event) => setEnrollmentId(event.target.value)}
+            className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+          >
+            <option value="">No enrollment link</option>
+            {sessions.map((session) => (
+              <option key={session.enrollment_id} value={session.enrollment_id}>
+                {session.session_title}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+      <BillingDialogActions onCancel={onCancel}>
+        <Button
+          size="sm"
+          disabled={!period || !dueDate || pending}
+          icon={pending ? <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" /> : undefined}
+          onClick={() =>
+            onSubmit({
+              period,
+              due_date: dueDate,
+              enrollment_id: enrollmentId || null,
+            })
+          }
+        >
+          {pending ? "Creating..." : "Create invoice"}
+        </Button>
+      </BillingDialogActions>
+    </BillingDialogFrame>
+  );
+}
+
+function AddInvoiceLineDialog({
+  invoiceId,
+  products,
+  productsLoading,
+  onCancel,
+  onSaved,
+  onDone,
+}: {
+  invoiceId: string;
+  products: AdminBillingProductView[];
+  productsLoading: boolean;
+  onCancel: () => void;
+  onSaved: (payload: AddInvoiceLineRequest) => Promise<unknown>;
+  onDone: () => void;
+}) {
+  const [productId, setProductId] = useState("");
+  const [description, setDescription] = useState("");
+  const [lineType, setLineType] = useState("fee");
+  const [quantity, setQuantity] = useState("1");
+  const [unitAmount, setUnitAmount] = useState("");
+
+  useEffect(() => {
+    const selected = products.find((product) => product.product_id === productId);
+    if (!selected) return;
+    setDescription(selected.name);
+    setLineType(selected.line_type);
+    setUnitAmount(centsToDollarInput(selected.default_unit_amount_cents));
+  }, [productId, products]);
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      onSaved({
+        product_id: productId || null,
+        description: description.trim(),
+        line_type: lineType.trim(),
+        quantity: Number.parseInt(quantity, 10),
+        unit_amount_cents: dollarsToCents(unitAmount),
+      }),
+    onSuccess: onDone,
+  });
+  const canSubmit =
+    description.trim().length > 0 &&
+    lineType.trim().length > 0 &&
+    Number.parseInt(quantity, 10) > 0 &&
+    dollarsToCents(unitAmount) >= 0;
+
+  return (
+    <BillingDialogFrame title="Add invoice charge" onCancel={onCancel}>
+      {getErrorMessage(mutation.error) && (
+        <BillingDialogError message={getErrorMessage(mutation.error)!} />
+      )}
+      <div className="space-y-3">
+        <Field label="Product" htmlFor={`billing-product-${invoiceId}`}>
+          <select
+            id={`billing-product-${invoiceId}`}
+            value={productId}
+            onChange={(event) => setProductId(event.target.value)}
+            className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+          >
+            <option value="">{productsLoading ? "Loading products..." : "Custom charge"}</option>
+            {products.map((product) => (
+              <option key={product.product_id} value={product.product_id}>
+                {product.name} - {formatCurrencyCents(product.default_unit_amount_cents)}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Description" htmlFor={`billing-line-description-${invoiceId}`}>
+          <input
+            id={`billing-line-description-${invoiceId}`}
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+          />
+        </Field>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field label="Type" htmlFor={`billing-line-type-${invoiceId}`}>
+            <input
+              id={`billing-line-type-${invoiceId}`}
+              value={lineType}
+              onChange={(event) => setLineType(event.target.value)}
+              className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+            />
+          </Field>
+          <Field label="Qty" htmlFor={`billing-line-quantity-${invoiceId}`}>
+            <input
+              id={`billing-line-quantity-${invoiceId}`}
+              type="number"
+              min="1"
+              step="1"
+              value={quantity}
+              onChange={(event) => setQuantity(event.target.value)}
+              className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+            />
+          </Field>
+          <Field label="Unit amount" htmlFor={`billing-line-amount-${invoiceId}`}>
+            <input
+              id={`billing-line-amount-${invoiceId}`}
+              inputMode="decimal"
+              value={unitAmount}
+              onChange={(event) => setUnitAmount(event.target.value)}
+              className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+              placeholder="0.00"
+            />
+          </Field>
+        </div>
+      </div>
+      <BillingDialogActions onCancel={onCancel}>
+        <Button
+          size="sm"
+          disabled={!canSubmit || mutation.isPending}
+          icon={mutation.isPending ? <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" /> : undefined}
+          onClick={() => mutation.mutate()}
+        >
+          {mutation.isPending ? "Adding..." : "Add charge"}
+        </Button>
+      </BillingDialogActions>
+    </BillingDialogFrame>
+  );
+}
+
+function RecordPaymentDialog({
+  balanceDueCents,
+  onCancel,
+  onSaved,
+  onDone,
+}: {
+  balanceDueCents: number;
+  onCancel: () => void;
+  onSaved: (payload: RecordManualPaymentRequest) => Promise<{ payment_id: string }>;
+  onDone: (paymentId: string) => void;
+}) {
+  const [amount, setAmount] = useState(() => centsToDollarInput(balanceDueCents));
+  const [method, setMethod] = useState("cash");
+  const [referenceNumber, setReferenceNumber] = useState("");
+  const [notes, setNotes] = useState("");
+  const mutation = useMutation({
+    mutationFn: () =>
+      onSaved({
+        amount_cents: dollarsToCents(amount),
+        payment_method: method,
+        reference_number: referenceNumber.trim() || null,
+        notes: notes.trim(),
+      }),
+    onSuccess: (result) => onDone(result.payment_id),
+  });
+  const amountCents = dollarsToCents(amount);
+
+  return (
+    <BillingDialogFrame title="Record manual payment" onCancel={onCancel}>
+      {getErrorMessage(mutation.error) && (
+        <BillingDialogError message={getErrorMessage(mutation.error)!} />
+      )}
+      <div className="space-y-3">
+        <Field label="Amount" htmlFor="billing-payment-amount">
+          <input
+            id="billing-payment-amount"
+            inputMode="decimal"
+            value={amount}
+            onChange={(event) => setAmount(event.target.value)}
+            className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+          />
+        </Field>
+        <Field label="Method" htmlFor="billing-payment-method">
+          <select
+            id="billing-payment-method"
+            value={method}
+            onChange={(event) => setMethod(event.target.value)}
+            className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+          >
+            <option value="cash">Cash</option>
+            <option value="check">Check</option>
+            <option value="zelle">Zelle</option>
+            <option value="venmo">Venmo</option>
+            <option value="bank_transfer">Bank transfer</option>
+            <option value="other">Other</option>
+          </select>
+        </Field>
+        <Field label="Reference" htmlFor="billing-payment-reference">
+          <input
+            id="billing-payment-reference"
+            value={referenceNumber}
+            onChange={(event) => setReferenceNumber(event.target.value)}
+            className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+          />
+        </Field>
+        <Field label="Notes" htmlFor="billing-payment-notes">
+          <textarea
+            id="billing-payment-notes"
+            rows={3}
+            value={notes}
+            onChange={(event) => setNotes(event.target.value)}
+            className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+          />
+        </Field>
+      </div>
+      <BillingDialogActions onCancel={onCancel}>
+        <Button
+          size="sm"
+          disabled={amountCents <= 0 || mutation.isPending}
+          icon={mutation.isPending ? <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" /> : undefined}
+          onClick={() => mutation.mutate()}
+        >
+          {mutation.isPending ? "Recording..." : "Record payment"}
+        </Button>
+      </BillingDialogActions>
+    </BillingDialogFrame>
+  );
+}
+
+function VoidInvoiceDialog({
+  onCancel,
+  onSaved,
+  onDone,
+}: {
+  onCancel: () => void;
+  onSaved: (reason: string) => Promise<unknown>;
+  onDone: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const mutation = useMutation({
+    mutationFn: () => onSaved(reason.trim()),
+    onSuccess: onDone,
+  });
+
+  return (
+    <BillingDialogFrame title="Void invoice" onCancel={onCancel}>
+      {getErrorMessage(mutation.error) && (
+        <BillingDialogError message={getErrorMessage(mutation.error)!} />
+      )}
+      <Field label="Reason" htmlFor="billing-void-reason">
+        <textarea
+          id="billing-void-reason"
+          rows={3}
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+          required
+        />
+      </Field>
+      <BillingDialogActions onCancel={onCancel}>
+        <Button
+          size="sm"
+          variant="danger"
+          disabled={reason.trim().length === 0 || mutation.isPending}
+          icon={mutation.isPending ? <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" /> : undefined}
+          onClick={() => mutation.mutate()}
+        >
+          {mutation.isPending ? "Voiding..." : "Void invoice"}
+        </Button>
+      </BillingDialogActions>
+    </BillingDialogFrame>
+  );
+}
+
+function BillingDialogFrame({
+  title,
+  children,
+  onCancel,
+}: {
+  title: string;
+  children: ReactNode;
+  onCancel: () => void;
+}) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onCancel]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="billing-dialog-title"
+        className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl dark:bg-neutral-900"
+      >
+        <h2 id="billing-dialog-title" className="mb-4 text-base font-semibold text-rally-ink">
+          {title}
+        </h2>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function BillingDialogActions({
+  children,
+  onCancel,
+}: {
+  children: ReactNode;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="mt-5 flex justify-end gap-2">
+      <Button variant="ghost" size="sm" onClick={onCancel}>
+        Cancel
+      </Button>
+      {children}
+    </div>
+  );
+}
+
+function BillingDialogError({ message }: { message: string }) {
+  return <p className="mb-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">{message}</p>;
+}
+
 function PaymentHistoryPanel({
   payments,
 }: {
@@ -1002,6 +1827,23 @@ function formatCurrencyCents(cents: number) {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(cents / 100);
+}
+
+function centsToDollarInput(cents: number) {
+  return (cents / 100).toFixed(2);
+}
+
+function dollarsToCents(value: string) {
+  const normalized = value.replace(/[$,]/g, "").trim();
+  if (!normalized) return 0;
+  const amount = Number.parseFloat(normalized);
+  if (!Number.isFinite(amount)) return -1;
+  return Math.round(amount * 100);
+}
+
+function getErrorMessage(error: unknown) {
+  if (!error) return null;
+  return error instanceof Error ? error.message : "Request failed.";
 }
 
 function formatDate(value: string | null | undefined) {

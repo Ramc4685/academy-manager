@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import date
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field, StringConstraints
 
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscountCommand,
@@ -34,6 +38,7 @@ from backend.v2.interfaces.admin.views import (
     AdminPayoutView,
     AdminRevenueResponse,
     ApplyPaymentDiscountRequest,
+    ChargeAutopayResponse,
     DeleteExpenseRequest,
     EditExpenseRequest,
     GenerateInvoiceArtifactRequest,
@@ -51,6 +56,7 @@ from backend.v2.interfaces.admin.views import (
     ReconcileStripeBillingRequest,
     ReconcileStripeBillingResponse,
     RecordExpenseRequest,
+    SendInvoiceResponse,
     WithdrawalCreditApproveRequest,
     WithdrawalCreditApproveResponse,
     WithdrawalCreditPreviewRequest,
@@ -62,7 +68,13 @@ from backend.v2.shared.http import require_persona
 router = APIRouter(tags=["admin.billing"])
 
 
-@router.get("/billing/invoices", response_model=InvoicesResponse)
+def _required_callable(use_case: object | None, name: str) -> object:
+    if use_case is None:
+        raise HTTPException(status_code=503, detail=f"{name} is not configured")
+    return use_case
+
+
+@router.get("/billing/invoices", response_model=InvoicesResponse, response_model_exclude_none=True)
 async def list_billing_invoices(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
@@ -75,6 +87,11 @@ async def list_billing_invoices(
             InvoiceLineDto(
                 description=str(line.get("description", "")),
                 amount_cents=int(line.get("amount_cents", 0)),
+                line_type=line.get("line_type"),  # type: ignore[arg-type]
+                quantity=line.get("quantity"),  # type: ignore[arg-type]
+                unit_amount_cents=line.get("unit_amount_cents"),  # type: ignore[arg-type]
+                source_type=line.get("source_type"),  # type: ignore[arg-type]
+                source_id=line.get("source_id"),  # type: ignore[arg-type]
             )
             for line in item["lines"]
         ]
@@ -94,7 +111,11 @@ async def list_billing_invoices(
     return InvoicesResponse(invoices=invoices)
 
 
-@router.get("/billing/invoices/{invoice_id}", response_model=InvoiceDetailResponse)
+@router.get(
+    "/billing/invoices/{invoice_id}",
+    response_model=InvoiceDetailResponse,
+    response_model_exclude_none=True,
+)
 async def get_billing_invoice_detail(
     invoice_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
@@ -102,15 +123,27 @@ async def get_billing_invoice_detail(
 ) -> InvoiceDetailResponse:
     raw = await use_cases.get_billing_invoice_detail(invoice_id)  # type: ignore[operator]
     return InvoiceDetailResponse(
+        invoice_id=raw.get("invoice_id"),  # type: ignore[arg-type]
         invoice_number=str(raw["invoice_number"]),
         period=str(raw.get("period") or ""),
         lines=[
             InvoiceLineDto(
+                line_id=line.get("line_id"),
+                invoice_id=line.get("invoice_id"),
                 description=str(line.get("description", "")),
                 amount_cents=int(line.get("amount_cents", 0)),
+                line_type=line.get("line_type"),  # type: ignore[arg-type]
+                quantity=line.get("quantity"),  # type: ignore[arg-type]
+                unit_amount_cents=line.get("unit_amount_cents"),  # type: ignore[arg-type]
+                source_type=line.get("source_type"),  # type: ignore[arg-type]
+                source_id=line.get("source_id"),  # type: ignore[arg-type]
             )
             for line in raw.get("lines", [])
         ],
+        subtotal_cents=raw.get("subtotal_cents"),  # type: ignore[arg-type]
+        discount_cents=raw.get("discount_cents"),  # type: ignore[arg-type]
+        total_cents=raw.get("total_cents"),  # type: ignore[arg-type]
+        balance_due_cents=raw.get("balance_due_cents"),  # type: ignore[arg-type]
         due_amount_cents=int(raw.get("due_amount_cents", 0)),
         paid_amount_cents=int(raw.get("paid_amount_cents", 0)),
         status=str(raw.get("status", "open")),
@@ -130,6 +163,9 @@ async def get_billing_invoice_detail(
         ],
         invoice_pdf_artifact_id=raw.get("invoice_pdf_artifact_id"),  # type: ignore[arg-type]
         receipt_artifact_id=raw.get("receipt_artifact_id"),  # type: ignore[arg-type]
+        delivery_status=str(raw.get("delivery_status") or "not_sent"),
+        sent_at=raw.get("sent_at"),  # type: ignore[arg-type]
+        last_sent_at=raw.get("last_sent_at"),  # type: ignore[arg-type]
     )
 
 
@@ -474,6 +510,300 @@ async def revenue(
     # ADR-0006 trigger) when this query gets its own aggregates.
     by_month = await use_cases.revenue_query.execute(parent_id_filter=None)
     return AdminRevenueResponse(by_month=by_month)
+
+
+# --- Ledger invoice management routes (Phase 2A) ---
+
+
+class AddInvoiceLineRequest(BaseModel):
+    product_id: str | None = None  # informational — prefills name/price/type at call site
+    description: str = Field(min_length=1)
+    line_type: str = Field(min_length=1)
+    quantity: int = Field(ge=1, default=1)
+    unit_amount_cents: int = Field(ge=0)
+
+
+class InvoiceLineResponse(BaseModel):
+    line_id: str
+    invoice_id: str
+    line_type: str
+    description: str
+    quantity: int
+    unit_amount_cents: int
+    amount_cents: int
+    invoice_total_cents: int
+    invoice_balance_due_cents: int
+    invoice_status: str
+
+
+class CreateStudentInvoiceRequest(BaseModel):
+    student_id: str
+    parent_id: str
+    period: str = Field(pattern=r"^\d{4}-\d{2}$")
+    due_date: date
+    enrollment_id: str | None = None
+
+
+class VoidInvoiceRequest(BaseModel):
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+async def _validate_student_invoice_scope(
+    use_cases: AdminUseCases,
+    *,
+    student_id: str,
+    parent_id: str,
+    enrollment_id: str | None,
+) -> None:
+    if use_cases.get_admin_student is None:
+        raise HTTPException(status_code=503, detail="Admin student detail is not configured")
+    try:
+        student = await use_cases.get_admin_student.execute(student_id)
+    except Exception as exc:
+        if getattr(exc, "code", "") == "Enrollment.StudentNotFound":
+            raise HTTPException(status_code=404, detail="student not found") from exc
+        raise
+
+    if student.parent_id != parent_id:
+        raise HTTPException(status_code=409, detail="invoice parent must match student parent")
+
+    if enrollment_id is None:
+        return
+
+    if not any(session.enrollment_id == enrollment_id for session in student.enrolled_sessions):
+        raise HTTPException(status_code=409, detail="invoice enrollment must belong to student")
+
+
+@router.post(
+    "/billing/invoices/{invoice_id}/send",
+    response_model=SendInvoiceResponse,
+)
+async def send_billing_invoice(
+    invoice_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> SendInvoiceResponse:
+    """Send (or re-send) an invoice to the parent.
+
+    - Finalizes draft invoices before sending (draft → open).
+    - Records delivery status (delivery axis only — financial status unchanged).
+    - Returns a Stripe Checkout URL when a balance is outstanding (stubbed if
+      Stripe is not configured in the current environment).
+    """
+    send_invoice = _required_callable(use_cases.send_billing_invoice, "Invoice sending")
+    try:
+        result = await send_invoice(invoice_id)  # type: ignore[operator]
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return SendInvoiceResponse(
+        invoice_id=str(result["invoice_id"]),
+        delivery_status=str(result["delivery_status"]),
+        sent_at=result["sent_at"],
+        last_sent_at=result["last_sent_at"],
+        checkout_url=result["checkout_url"],
+    )
+
+
+@router.post(
+    "/billing/invoices/{invoice_id}/charge-autopay",
+    response_model=ChargeAutopayResponse,
+)
+async def charge_invoice_via_autopay(
+    invoice_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> ChargeAutopayResponse:
+    """Charge the invoice balance via the parent's saved Stripe payment method (off-session).
+
+    - Returns success=True when the PI succeeds immediately and the ledger is updated.
+    - Returns success=False with decline_code on card declines (invoice status unchanged).
+    - Returns success=False with requires_action=True when 3DS is needed (invoice unchanged).
+    - Raises 503 when Stripe is not configured.
+    - Raises 404 when the invoice is not found.
+    - Raises 409 when the invoice is not chargeable (paid/void/draft with zero balance)
+      or the parent has no saved payment method.
+    """
+    charge_autopay = _required_callable(
+        use_cases.charge_invoice_via_autopay,
+        "Stripe autopay",
+    )
+    try:
+        result = await charge_autopay(invoice_id)  # type: ignore[operator]
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=409, detail=msg) from exc
+    return ChargeAutopayResponse(
+        invoice_id=str(result["invoice_id"]),
+        success=bool(result["success"]),
+        status=str(result["status"]),
+        balance_due_cents=int(result["balance_due_cents"]),
+        requires_action=bool(result["requires_action"]),
+        decline_code=result["decline_code"],
+    )
+
+
+@router.post(
+    "/billing/invoices/{invoice_id}/lines",
+    response_model=InvoiceLineResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_invoice_line(
+    invoice_id: str,
+    body: AddInvoiceLineRequest,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> InvoiceLineResponse:
+    add_line = _required_callable(use_cases.add_invoice_line, "Invoice line management")
+    try:
+        result = await add_line(  # type: ignore[operator]
+            invoice_id=invoice_id,
+            description=body.description,
+            line_type=body.line_type,
+            quantity=body.quantity,
+            unit_amount_cents=body.unit_amount_cents,
+            product_id=body.product_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    line = result["line"]
+    invoice = result["invoice"]
+    return InvoiceLineResponse(
+        line_id=str(line["line_id"]),
+        invoice_id=str(line["invoice_id"]),
+        line_type=str(line["line_type"]),
+        description=str(line["description"]),
+        quantity=int(line["quantity"]),
+        unit_amount_cents=int(line["unit_amount_cents"]),
+        amount_cents=int(line["amount_cents"]),
+        invoice_total_cents=int(invoice["total_cents"]),
+        invoice_balance_due_cents=int(invoice["balance_due_cents"]),
+        invoice_status=str(invoice["status"]),
+    )
+
+
+@router.delete(
+    "/billing/invoices/{invoice_id}/lines/{line_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def remove_invoice_line(
+    invoice_id: str,
+    line_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> None:
+    remove_line = _required_callable(use_cases.remove_invoice_line, "Invoice line management")
+    try:
+        await remove_line(invoice_id=invoice_id, line_id=line_id)  # type: ignore[operator]
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=409, detail=msg) from exc
+
+
+@router.post("/billing/invoices/{invoice_id}/void", status_code=status.HTTP_200_OK)
+async def void_invoice_route(
+    invoice_id: str,
+    body: VoidInvoiceRequest,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> dict[str, bool]:
+    void_invoice_ = _required_callable(use_cases.void_billing_invoice, "Invoice voiding")
+    try:
+        await void_invoice_(invoice_id=invoice_id, reason=body.reason)  # type: ignore[operator]
+    except ValueError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=409, detail=msg) from exc
+    return {"ok": True}
+
+
+class RecordManualPaymentRequest(BaseModel):
+    amount_cents: int = Field(gt=0)
+    payment_method: str = "cash"
+    reference_number: str | None = None
+    notes: str = ""
+
+
+class RecordManualPaymentResponse(BaseModel):
+    invoice_id: str
+    payment_id: str
+    invoice_status: str
+    balance_due_cents: int
+
+
+@router.post(
+    "/billing/invoices/{invoice_id}/record-payment",
+    response_model=RecordManualPaymentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def record_manual_payment(
+    invoice_id: str,
+    body: RecordManualPaymentRequest,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> RecordManualPaymentResponse:
+    """Record a manual payment (cash, check, etc.) against a ledger invoice.
+
+    Creates a LedgerPayment and allocates it to the invoice balance.
+    Partial payments are allowed; the invoice status updates accordingly.
+    """
+    record_payment = _required_callable(use_cases.record_manual_payment, "Manual payment recording")
+    try:
+        result = await record_payment(  # type: ignore[operator]
+            invoice_id=invoice_id,
+            amount_cents=body.amount_cents,
+            payment_method=body.payment_method,
+            reference_number=body.reference_number,
+            notes=body.notes,
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=409, detail=msg) from exc
+    return RecordManualPaymentResponse(
+        invoice_id=str(result["invoice_id"]),
+        payment_id=str(result["payment_id"]),
+        invoice_status=str(result["invoice_status"]),
+        balance_due_cents=int(result["balance_due_cents"]),
+    )
+
+
+@router.post(
+    "/students/{student_id}/invoices",
+    response_model=dict,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_student_invoice(
+    student_id: str,
+    body: CreateStudentInvoiceRequest,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> dict:
+    if body.student_id != student_id:
+        raise HTTPException(status_code=409, detail="invoice student must match route student")
+    await _validate_student_invoice_scope(
+        use_cases,
+        student_id=student_id,
+        parent_id=body.parent_id,
+        enrollment_id=body.enrollment_id,
+    )
+    create_invoice = _required_callable(use_cases.create_student_invoice, "Invoice creation")
+    return await create_invoice(  # type: ignore[operator]
+        student_id=student_id,
+        parent_id=body.parent_id,
+        period=body.period,
+        due_date=body.due_date,
+        enrollment_id=body.enrollment_id,
+    )
 
 
 def _payment_view(row: object) -> AdminPaymentView:

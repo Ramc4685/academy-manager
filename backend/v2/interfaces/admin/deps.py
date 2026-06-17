@@ -263,6 +263,17 @@ class AdminUseCases:
     # Coach teaching-plan digest: test-send + delivery log (Stream 2 C/D).
     send_coach_digest_test: object | None = None  # SendCoachDigestTest
     get_digest_delivery_log: object | None = None  # GetDigestDeliveryLog
+    send_billing_invoice: object | None = None
+    charge_invoice_via_autopay: object | None = None
+    add_invoice_line: object | None = None
+    remove_invoice_line: object | None = None
+    void_billing_invoice: object | None = None
+    record_manual_payment: object | None = None
+    create_student_invoice: object | None = None
+    list_billing_products: object | None = None
+    create_billing_product: object | None = None
+    update_billing_product: object | None = None
+    deactivate_billing_product: object | None = None
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:

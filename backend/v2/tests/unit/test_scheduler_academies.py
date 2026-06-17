@@ -29,3 +29,18 @@ async def test_scheduler_academy_ids_are_unique_and_include_default() -> None:
         "academy-b",
         "default-academy",
     ]
+
+
+@pytest.mark.asyncio
+async def test_scheduler_academy_ids_uses_configured_runtime_fallback() -> None:
+    academies = _FakeAcademyRepo(
+        [
+            {"academy_id": "academy-a"},
+            {"academy_id": "primary-academy"},
+        ]
+    )
+
+    assert await _scheduler_academy_ids(academies, "primary-academy") == [
+        "academy-a",
+        "primary-academy",
+    ]
