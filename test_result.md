@@ -30,6 +30,7 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-06-16-production-launch-hardening](docs/test-results/active/2026-06-16-production-launch-hardening.md)
 - [2026-06-16-production-stripe-autopay-billing-fix](docs/test-results/active/2026-06-16-production-stripe-autopay-billing-fix.md)
 - [2026-06-16-release-candidate-validation-blno-staging](docs/test-results/active/2026-06-16-release-candidate-validation-blno-staging.md)
+- [2026-06-17-pr-200-rebase-with-main](docs/test-results/active/2026-06-17-pr-200-rebase-with-main.md)
 
 ## Required Workflow
 
