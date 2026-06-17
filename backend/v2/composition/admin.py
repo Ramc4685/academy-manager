@@ -81,6 +81,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import
 from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
     MongoCreditLedgerRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
+    MongoParentBillingCustomerRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
 )
@@ -1132,6 +1135,7 @@ def compose_admin(
     pause_requests = MongoPauseRequestRepository(db)
     scheduled_actions = MongoScheduledEnrollmentActionRepository(db)
     subscriptions_repo = MongoSubscriptionRepository(db)
+    parent_customers_repo = MongoParentBillingCustomerRepository(db)
     curriculum = compose_curriculum(db)
     student_progress = compose_student_progress(db, outbox)
     generate_daily_teaching_plan = GenerateDailyTeachingPlan(
@@ -2612,12 +2616,9 @@ def compose_admin(
             invoice = await stripe.retrieve_invoice(stripe_invoice_id)
             stripe_payment_intent_id = str(invoice.get("payment_intent") or "")
         if customer_id:
-            await db["users"].update_one(
-                {
-                    "academy_id": academy_id,
-                    "$or": [{"user_id": parent_id}, {"firebase_uid": parent_id}],
-                },
-                {"$set": {"stripe_customer_id": customer_id, "updated_at": now}},
+            await parent_customers_repo.set_stripe_customer_id(
+                parent_id=parent_id,
+                stripe_customer_id=customer_id,
             )
 
         app_subscription_id = str(

@@ -242,7 +242,7 @@ export function startAutopay(payload: {
   enrollment_id: string;
   success_url: string;
   cancel_url: string;
-}): Promise<{ subscription_id: string; redirect_url: string }> {
+}): Promise<{ subscription_id: string; checkout_session_id: string; redirect_url: string }> {
   return apiFetch("/parent/autopay/start", {
     method: "POST",
     body: JSON.stringify(payload),

@@ -180,6 +180,9 @@ class MongoStudentRepository(TenantScopedRepository):
         payment_history = await self._admin_student_payment_history(
             academy_id=academy_id,
             student_id=resolved_id,
+            enrollment_ids=[
+                session.enrollment_id for session in enrolled_sessions if session.enrollment_id
+            ],
         )
         current_payment = self._admin_student_current_payment(
             payment_history=payment_history,
@@ -554,13 +557,17 @@ class MongoStudentRepository(TenantScopedRepository):
         *,
         academy_id: str,
         student_id: str,
+        enrollment_ids: list[str] | None = None,
     ) -> list[AdminStudentPaymentSummary]:
+        payment_owner_filters: list[dict[str, object]] = [{"student_id": student_id}]
+        if enrollment_ids:
+            payment_owner_filters.append({"enrollment_id": {"$in": enrollment_ids}})
         cursor = self._db["payments"].aggregate(
             [
                 {
                     "$match": {
                         "academy_id": academy_id,
-                        "student_id": student_id,
+                        "$or": payment_owner_filters,
                         "is_deleted": {"$ne": True},
                     }
                 },

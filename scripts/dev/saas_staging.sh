@@ -19,6 +19,8 @@
 # Lifecycle:
 #   scripts/dev/saas_staging.sh logs <svc> # tail logs (backend|frontend|mongo|firebase-emulator)
 #   scripts/dev/saas_staging.sh urls       # just print access URLs
+#   scripts/dev/saas_staging.sh stripe-listen
+#                                            # configure sandbox Stripe webhooks + forward events
 #   scripts/dev/saas_staging.sh reset      # wipe test data, keep stack running
 #   scripts/dev/saas_staging.sh down       # stop containers, keep volumes
 #   scripts/dev/saas_staging.sh nuke       # stop + remove volumes (interactive confirm)
@@ -42,6 +44,8 @@ VENV_PYTHON="${VENV_PYTHON:-${REPO_ROOT}/backend/.venv/bin/python}"
 SMOKE_SCRIPT="${REPO_ROOT}/scripts/smoke/saas_readiness_smoke.sh"
 SEED_SCRIPT="${REPO_ROOT}/scripts/dev/seed_saas_staging.py"
 BLNO_SEED_SCRIPT="${REPO_ROOT}/scripts/dev/seed_blno_staging.py"
+STRIPE_WEBHOOK_URL="http://127.0.0.1:8001/api/v2/parent/webhooks/stripe"
+STRIPE_WEBHOOK_EVENTS="checkout.session.completed,checkout.session.expired,payment_intent.succeeded,payment_intent.payment_failed,invoice.paid,invoice.payment_failed,charge.refunded,customer.subscription.updated,customer.subscription.deleted"
 
 # Ports the stack binds. Used by pre-flight + status.
 declare -a REQUIRED_PORTS=(3000 4000 8001 9099 27017)
@@ -93,6 +97,21 @@ preflight() {
 random_hex() { LC_ALL=C openssl rand -hex "${1:-32}"; }
 random_password() { LC_ALL=C openssl rand -base64 36 | tr -d '\n=+/' | cut -c1-28; }
 
+upsert_env_value() {
+  local key="$1"
+  local value="$2"
+  mkdir -p "${LOCAL_DIR}"
+  touch "${ENV_FILE}"
+  chmod 600 "${ENV_FILE}"
+
+  local tmp
+  tmp="$(mktemp)"
+  awk -F= -v key="${key}" '$1 != key { print }' "${ENV_FILE}" > "${tmp}"
+  printf '%s=%s\n' "${key}" "${value}" >> "${tmp}"
+  mv "${tmp}" "${ENV_FILE}"
+  chmod 600 "${ENV_FILE}"
+}
+
 ensure_env_file() {
   if [[ -f "${ENV_FILE}" ]]; then
     return 0
@@ -126,6 +145,48 @@ read_local_env_value() {
     fi
   done
   return 1
+}
+
+stripe_test_api_key() {
+  if [[ -n "${STRIPE_API_KEY:-}" ]]; then
+    case "${STRIPE_API_KEY}" in
+      sk_test_*|rk_test_*) printf '%s\n' "${STRIPE_API_KEY}"; return 0 ;;
+      *) die "STRIPE_API_KEY must be a Stripe test-mode secret or restricted key for local SaaS staging." ;;
+    esac
+  fi
+
+  if ! command -v stripe >/dev/null 2>&1; then
+    die "Stripe CLI is required. Install it with: brew install stripe/stripe-cli/stripe"
+  fi
+
+  local tmp key
+  tmp="$(mktemp)"
+  stripe config --list > "${tmp}"
+  key="$(
+    awk -F= '
+      $1 ~ /^[[:space:]]*test_mode_api_key[[:space:]]*$/ {
+        v=$2
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+        gsub(/^'\''|'\''$/, "", v)
+        gsub(/^"|"$/, "", v)
+        print v
+      }
+    ' "${tmp}" | tail -n 1
+  )"
+  rm -f "${tmp}"
+  [[ "${key}" == sk_test_* || "${key}" == rk_test_* ]] || die "Stripe CLI has no test-mode secret key. Run 'stripe login' or export STRIPE_API_KEY=sk_test_..."
+  printf '%s\n' "${key}"
+}
+
+stripe_cli_webhook_secret() {
+  local api_key="$1"
+  local tmp secret
+  tmp="$(mktemp)"
+  stripe listen --api-key "${api_key}" --events "${STRIPE_WEBHOOK_EVENTS}" --print-secret > "${tmp}"
+  secret="$(awk '/whsec_/ { print $NF }' "${tmp}" | tail -n 1)"
+  rm -f "${tmp}"
+  [[ "${secret}" == whsec_* ]] || die "Could not read Stripe CLI webhook signing secret."
+  printf '%s\n' "${secret}"
 }
 
 firebase_api_key() {
@@ -175,6 +236,38 @@ cmd_up() {
     warn "Inspect logs:  scripts/dev/saas_staging.sh logs backend"
     exit 1
   fi
+}
+
+cmd_stripe_listen() {
+  ensure_env_file
+  if ! command -v stripe >/dev/null 2>&1; then
+    die "Stripe CLI is required. Install it with: brew install stripe/stripe-cli/stripe"
+  fi
+
+  log "Configuring Docker SaaS staging for Stripe sandbox webhooks..."
+  local api_key webhook_secret
+  api_key="$(stripe_test_api_key)"
+  webhook_secret="$(stripe_cli_webhook_secret "${api_key}")"
+  upsert_env_value STRIPE_API_KEY "${api_key}"
+  upsert_env_value STRIPE_WEBHOOK_SECRET "${webhook_secret}"
+  upsert_env_value V2_STRIPE_API_KEY "${api_key}"
+  upsert_env_value V2_STRIPE_WEBHOOK_SECRET "${webhook_secret}"
+
+  if "${COMPOSE[@]}" ps --status running --quiet backend 2>/dev/null | grep -q .; then
+    log "Restarting backend so it picks up the matching Stripe webhook secret..."
+    "${COMPOSE[@]}" up -d --no-deps --build backend
+    wait_for_url "http://127.0.0.1:8001/api/v2/healthz" 60 || die "Backend did not become healthy after Stripe env update."
+  else
+    warn "Backend is not running yet. Start it with: scripts/dev/saas_staging.sh up"
+  fi
+
+  log "Forwarding Stripe sandbox events to ${STRIPE_WEBHOOK_URL}"
+  log "Keep this process running while testing Checkout, autopay, portal, and invoice history."
+  stripe listen \
+    --api-key "${api_key}" \
+    --forward-to "${STRIPE_WEBHOOK_URL}" \
+    --events "${STRIPE_WEBHOOK_EVENTS}" \
+    2>&1 | sed -E 's/whsec_[A-Za-z0-9_]+/[redacted-whsec]/g; s/(sk|rk)_(test|live)_[A-Za-z0-9_]+/[redacted-stripe-key]/g'
 }
 
 cmd_seed() {
@@ -364,6 +457,7 @@ main() {
     urls)   cmd_urls "$@" ;;
     token)  cmd_token "$@" ;;
     smoke)  cmd_smoke "$@" ;;
+    stripe-listen) cmd_stripe_listen "$@" ;;
     logs)   cmd_logs "$@" ;;
     ps)     cmd_ps "$@" ;;
     down)   cmd_down "$@" ;;

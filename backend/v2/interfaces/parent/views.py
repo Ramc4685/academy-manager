@@ -93,6 +93,7 @@ class StartAutopayRequest(BaseModel):
 
 class StartAutopayResponse(BaseModel):
     subscription_id: str
+    checkout_session_id: str
     redirect_url: str
 
 

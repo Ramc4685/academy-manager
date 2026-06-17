@@ -46,6 +46,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import
 from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
     MongoCreditLedgerRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
+    MongoParentBillingCustomerRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
 )
@@ -131,6 +134,7 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_registration_waiver_rep
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
+from backend.v2.shared.tenancy import tenant_scope
 
 from .event_handlers import HandlerDeps, install_handlers
 
@@ -184,23 +188,9 @@ def compose_parent_webhook_handler(
     billing_ledger_repo = MongoBillingLedgerRepository(db)
     payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
     subscriptions_repo = MongoSubscriptionRepository(db)
+    parent_customers_repo = MongoParentBillingCustomerRepository(db)
     student_billing_enrollments = MongoStudentBillingEnrollmentRepository(db)
     dedup = MongoStripeEventDedup(db)
-
-    class _ParentStripeCustomers:
-        async def set_stripe_customer_id(self, *, parent_id: str, stripe_customer_id: str) -> None:
-            await db["users"].update_one(
-                {
-                    "academy_id": academy_id,
-                    "$or": [{"user_id": parent_id}, {"firebase_uid": parent_id}],
-                },
-                {
-                    "$set": {
-                        "stripe_customer_id": stripe_customer_id,
-                        "updated_at": datetime.now(UTC),
-                    }
-                },
-            )
 
     class _EnrollmentAutopayState:
         async def set_autopay_state(
@@ -228,7 +218,7 @@ def compose_parent_webhook_handler(
         subscriptions=subscriptions_repo,
         billing_enrollments=student_billing_enrollments,
         billing_ledger=billing_ledger_repo,
-        parent_customers=_ParentStripeCustomers(),
+        parent_customers=parent_customers_repo,
         enrollment_autopay=_EnrollmentAutopayState(),
         outbox=outbox,
         academy_id=academy_id,
@@ -256,6 +246,7 @@ def compose_parent(
     billing_ledger_repo = MongoBillingLedgerRepository(db)
     payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
     subscriptions_repo = MongoSubscriptionRepository(db)
+    parent_customers_repo = MongoParentBillingCustomerRepository(db)
     student_billing_enrollments = MongoStudentBillingEnrollmentRepository(db)
     session_types_repo = MongoSessionTypeRepository(db)
     dedup = MongoStripeEventDedup(db)
@@ -271,28 +262,12 @@ def compose_parent(
         academy_id=academy_id,
     )
     create_portal = CreateCustomerPortalSession(stripe=stripe)
-    checkout_status = GetCheckoutStatus(payments=payments_repo)
     issue_refund = IssueRefund(
         payment_repo=payments_repo,
         stripe=stripe,
         outbox=outbox,
         idempotency_store=idempotency_store,
     )
-
-    class _ParentStripeCustomers:
-        async def set_stripe_customer_id(self, *, parent_id: str, stripe_customer_id: str) -> None:
-            await db["users"].update_one(
-                {
-                    "academy_id": academy_id,
-                    "$or": [{"user_id": parent_id}, {"firebase_uid": parent_id}],
-                },
-                {
-                    "$set": {
-                        "stripe_customer_id": stripe_customer_id,
-                        "updated_at": datetime.now(UTC),
-                    }
-                },
-            )
 
     class _EnrollmentAutopayState:
         async def set_autopay_state(
@@ -313,6 +288,15 @@ def compose_parent(
                 },
             )
 
+    enrollment_autopay_state = _EnrollmentAutopayState()
+    checkout_status = GetCheckoutStatus(
+        payments=payments_repo,
+        subscriptions=subscriptions_repo,
+        stripe=stripe,
+        parent_customers=parent_customers_repo,
+        enrollment_autopay=enrollment_autopay_state,
+    )
+
     handle_webhook = HandleWebhookEvent(
         stripe=stripe,
         dedup=dedup,
@@ -320,8 +304,8 @@ def compose_parent(
         subscriptions=subscriptions_repo,
         billing_enrollments=student_billing_enrollments,
         billing_ledger=billing_ledger_repo,
-        parent_customers=_ParentStripeCustomers(),
-        enrollment_autopay=_EnrollmentAutopayState(),
+        parent_customers=parent_customers_repo,
+        enrollment_autopay=enrollment_autopay_state,
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
@@ -850,10 +834,10 @@ def compose_parent(
         return result
 
     async def open_billing_portal(*, parent_id: str, return_url: str):
-        user = await db["users"].find_one(
-            {"academy_id": academy_id, "$or": [{"user_id": parent_id}, {"firebase_uid": parent_id}]}
-        )
-        stripe_customer_id: str | None = (user or {}).get("stripe_customer_id")
+        with tenant_scope(academy_id):
+            stripe_customer_id = await parent_customers_repo.get_stripe_customer_id(
+                parent_id=parent_id
+            )
         result = await create_portal.execute(
             CreateCustomerPortalSessionCommand(
                 parent_id=parent_id,

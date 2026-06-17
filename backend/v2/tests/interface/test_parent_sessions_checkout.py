@@ -246,6 +246,7 @@ def test_parent_starts_autopay_for_enrollment() -> None:
     assert response.status_code == 200, response.text
     assert response.json() == {
         "subscription_id": "sub-1",
+        "checkout_session_id": "cs_sub_1",
         "redirect_url": "https://fake.stripe.com/cs-1",
     }
     assert use_cases.autopay_calls == [
