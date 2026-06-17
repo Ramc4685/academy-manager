@@ -461,12 +461,18 @@ class HandleWebhookEvent:
             subscription = await self._subscriptions.get(internal_sub_id)
         if subscription is None:
             subscription = await self._subscriptions.get_by_stripe_sub(stripe_sub_id)
+        if subscription is None:
+            checkout_id = str(checkout.get("id") or "")
+            if checkout_id:
+                subscription = await self._subscriptions.get_by_checkout_session(checkout_id)
         if subscription is None and enrollment_id:
             subscription = await self._subscriptions.latest_for_enrollment(enrollment_id)
         if subscription is not None:
             updated = subscription.model_copy(
                 update={
                     "stripe_subscription_id": stripe_sub_id,
+                    "stripe_checkout_session_id": str(checkout.get("id") or "")
+                    or subscription.stripe_checkout_session_id,
                     "status": "active",
                     "updated_at": self._now(),
                 }
@@ -949,7 +955,7 @@ class HandleWebhookEvent:
     async def _payment_from_invoice(
         self, invoice: dict[str, Any], *, status: str
     ) -> Payment | None:
-        stripe_sub_id = invoice.get("subscription")
+        stripe_sub_id = self._stripe_subscription_id_from_invoice(invoice)
         if not stripe_sub_id:
             return None
         subscription = await self._subscriptions.get_by_stripe_sub(str(stripe_sub_id))
@@ -968,6 +974,7 @@ class HandleWebhookEvent:
             payment_id=str(new_ulid()),
             academy_id=subscription.academy_id,
             parent_id=subscription.parent_id,
+            enrollment_id=subscription.enrollment_id,
             session_id=subscription.session_id,
             subscription_id=subscription.subscription_id,
             stripe_payment_intent_id=stripe_pi,

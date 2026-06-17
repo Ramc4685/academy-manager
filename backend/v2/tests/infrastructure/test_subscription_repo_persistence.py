@@ -23,9 +23,14 @@ from backend.v2.shared.tenancy import tenant_scope
 class _FakeCollection:
     def __init__(self) -> None:
         self.update_calls: list[dict[str, Any]] = []
+        self.find_calls: list[dict[str, Any]] = []
 
     async def update_one(self, filter_, update, upsert=False, session=None):
         self.update_calls.append({"filter": filter_, "update": update, "upsert": upsert})
+
+    async def find_one(self, filter_, *_, **__):
+        self.find_calls.append(filter_)
+        return None
 
 
 class _FakeDb:
@@ -45,6 +50,7 @@ def _subscription(stripe_subscription_id: str) -> Subscription:
         enrollment_id="enr-1",
         session_id="s1",
         stripe_subscription_id=stripe_subscription_id,
+        stripe_checkout_session_id="cs_sub_1",
         status="incomplete",
         created_at=now,
         updated_at=now,
@@ -88,3 +94,31 @@ def test_to_domain_tolerates_missing_stripe_subscription_id() -> None:
     }
     subscription = MongoSubscriptionRepository._to_domain(doc)
     assert subscription.stripe_subscription_id == ""
+    assert subscription.stripe_checkout_session_id is None
+
+
+def test_to_domain_reads_stripe_checkout_session_id() -> None:
+    now = datetime.now(UTC)
+    doc = {
+        "subscription_id": "sub-1",
+        "academy_id": "acad",
+        "parent_id": "p1",
+        "stripe_subscription_id": "sub-live",
+        "stripe_checkout_session_id": "cs-sub",
+        "created_at": now,
+        "updated_at": now,
+    }
+    subscription = MongoSubscriptionRepository._to_domain(doc)
+    assert subscription.stripe_checkout_session_id == "cs-sub"
+
+
+@pytest.mark.asyncio
+async def test_get_by_checkout_session_is_tenant_scoped() -> None:
+    db = _FakeDb()
+    repo = MongoSubscriptionRepository(db)  # type: ignore[arg-type]
+    with tenant_scope("acad"):
+        await repo.get_by_checkout_session("cs-sub")
+
+    assert db["subscriptions"].find_calls == [
+        {"stripe_checkout_session_id": "cs-sub", "academy_id": "acad"}
+    ]

@@ -104,6 +104,7 @@ async def start_autopay(
     )
     return StartAutopayResponse(
         subscription_id=result.subscription_id,
+        checkout_session_id=result.checkout_session_id,
         redirect_url=result.redirect_url,
     )
 

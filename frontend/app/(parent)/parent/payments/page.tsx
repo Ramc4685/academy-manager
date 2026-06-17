@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   createParentPauseRequest,
+  getCheckoutStatus,
   listParentEnrollments,
   listParentCredits,
   listParentPayments,
@@ -30,7 +32,7 @@ function autopayStatusText(enrollment: { payment_mode: string | null; subscripti
   if (status === "incomplete") return "Payment setup pending";
   if (status === "incomplete_expired") return "Payment setup expired";
   if (status === "unpaid") return "Payment blocked";
-  if (status === "canceled") return "Autopay off";
+  if (status === "cancelled") return "Autopay off";
   return "Autopay pending";
 }
 
@@ -50,6 +52,11 @@ function autopayHelperText(enrollment: { payment_mode: string | null; subscripti
 }
 
 export default function ParentPaymentsPage() {
+  const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
+  const autopayReturn = searchParams.get("autopay");
+  const checkoutSessionId = searchParams.get("checkout_session_id");
+  const returnedFromAutopayCheckout = autopayReturn === "success";
   const [pauseEnrollmentId, setPauseEnrollmentId] = useState("");
   const [pauseKind, setPauseKind] = useState<"fixed" | "indefinite">("fixed");
   const [resumeOn, setResumeOn] = useState(currentDate());
@@ -62,10 +69,27 @@ export default function ParentPaymentsPage() {
   const paymentsQuery = useQuery({
     queryKey: ["parent", "payments"],
     queryFn: listParentPayments,
+    staleTime: returnedFromAutopayCheckout ? 0 : undefined,
+    refetchOnMount: returnedFromAutopayCheckout ? "always" : undefined,
   });
   const enrollmentsQuery = useQuery({
     queryKey: ["parent", "enrollments"],
     queryFn: listParentEnrollments,
+    staleTime: returnedFromAutopayCheckout ? 0 : undefined,
+    refetchOnMount: returnedFromAutopayCheckout ? "always" : undefined,
+  });
+  const checkoutStatusQuery = useQuery({
+    queryKey: ["parent", "checkout-status", checkoutSessionId],
+    queryFn: () => getCheckoutStatus(checkoutSessionId ?? ""),
+    enabled: returnedFromAutopayCheckout && Boolean(checkoutSessionId),
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "active" || status === "past_due" || status === "cancelled"
+        ? false
+        : 3000;
+    },
   });
   const pauseRequestsQuery = useQuery({
     queryKey: ["parent", "pause-requests"],
@@ -147,6 +171,18 @@ export default function ParentPaymentsPage() {
     },
   });
 
+  useEffect(() => {
+    if (!returnedFromAutopayCheckout) return;
+    void queryClient.invalidateQueries({ queryKey: ["parent", "payments"] });
+    void queryClient.invalidateQueries({ queryKey: ["parent", "enrollments"] });
+  }, [queryClient, returnedFromAutopayCheckout]);
+
+  useEffect(() => {
+    if (!checkoutStatusQuery.data?.status) return;
+    void queryClient.invalidateQueries({ queryKey: ["parent", "payments"] });
+    void queryClient.invalidateQueries({ queryKey: ["parent", "enrollments"] });
+  }, [checkoutStatusQuery.data?.status, queryClient]);
+
   const payments = paymentsQuery.data?.payments ?? [];
   const enrollments = enrollmentsQuery.data?.enrollments ?? [];
   const pauseRequests = pauseRequestsQuery.data?.requests ?? [];
@@ -184,6 +220,15 @@ export default function ParentPaymentsPage() {
           {portalMutation.isPending ? "Opening..." : "Billing portal"}
         </button>
       </div>
+      {returnedFromAutopayCheckout && checkoutStatusQuery.isFetching && (
+        <p
+          role="status"
+          data-testid="autopay-checkout-confirming"
+          className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-100"
+        >
+          Confirming autopay with Stripe...
+        </p>
+      )}
       {enrollments.some(
         (enrollment) =>
           enrollment.payment_mode === "monthly" &&

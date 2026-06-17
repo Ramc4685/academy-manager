@@ -349,6 +349,18 @@ async def test_get_admin_student_enriches_sessions_payments_and_current_invoice(
             },
             {
                 "academy_id": acad,
+                "payment_id": "pay-stripe-subscription",
+                "enrollment_id": "enr-active",
+                "parent_id": "parent-1",
+                "session_id": "sess-active",
+                "period": "2026-07",
+                "amount_cents": 15_000,
+                "status": "succeeded",
+                "payment_method": "stripe",
+                "created_at": now - timedelta(hours=1),
+            },
+            {
+                "academy_id": acad,
                 "payment_id": "pay-open",
                 "student_id": "st-alice",
                 "session_id": "sess-active",
@@ -448,9 +460,15 @@ async def test_get_admin_student_enriches_sessions_payments_and_current_invoice(
     assert detail.enrolled_sessions[0].payment_mode == "monthly"
     assert detail.enrolled_sessions[0].subscription_status == "active"
     assert detail.enrolled_sessions[0].amount_cents == 15_000
-    assert [row.payment_id for row in detail.payment_history] == ["pay-open", "pay-paid"]
-    assert detail.payment_history[0].balance_due_cents == 11_000
-    assert detail.payment_history[0].payment_method == "cash"
+    assert [row.payment_id for row in detail.payment_history] == [
+        "pay-stripe-subscription",
+        "pay-open",
+        "pay-paid",
+    ]
+    assert detail.payment_history[0].balance_due_cents == 0
+    assert detail.payment_history[0].payment_method == "stripe"
+    assert detail.payment_history[1].balance_due_cents == 11_000
+    assert detail.payment_history[1].payment_method == "cash"
     assert detail.current_payment is not None
     assert detail.current_payment.payment_id == "pay-open"
     assert detail.current_payment.session_id == "sess-active"

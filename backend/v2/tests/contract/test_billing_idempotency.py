@@ -1,19 +1,34 @@
 from __future__ import annotations
 
 import importlib
+import json
 from datetime import UTC, date, datetime
 
 import pytest
 
+from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
+    HandleWebhookEvent,
+)
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
     LedgerInvoice,
     LedgerPayment,
 )
+from backend.v2.contexts.billing.domain.session_type import StudentBillingEnrollment
+from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_student_billing_enrollment_repo import (
+    MongoStudentBillingEnrollmentRepository,
+)
 from backend.v2.shared.tenancy import tenant_scope
+from backend.v2.tests.application.test_webhook_handler import (
+    FakeDedup,
+    FakeOutbox,
+    FakePaymentRepo,
+    FakeSubscriptionRepo,
+)
 
 
 @pytest.mark.asyncio
@@ -143,6 +158,163 @@ async def test_allocation_overpayment_credit_is_idempotent(db, acad) -> None:
     assert credits[0]["source_id"] == first.allocation.allocation_id
     assert credits[0]["amount_cents"] == 2_000
     assert credits[0]["remaining_amount_cents"] == 2_000
+
+
+@pytest.mark.asyncio
+async def test_ledger_payment_allocation_uses_ledger_collection_with_legacy_index(db, acad) -> None:
+    await db["payments"].create_index(
+        [("enrollment_id", 1), ("period", 1)],
+        unique=True,
+        name="enrollment_id_1_period_1",
+    )
+    await db["payments"].insert_one(
+        {
+            "academy_id": acad,
+            "payment_id": "legacy-null-period",
+            "parent_id": "parent-legacy",
+            "amount_cents": 1_000,
+            "status": "pending",
+            "enrollment_id": None,
+            "period": None,
+        }
+    )
+
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    await repo.create_invoice(
+        LedgerInvoice(
+            invoice_id="inv-stripe-paid",
+            academy_id=acad,
+            parent_id="parent-1",
+            period="2026-06",
+            status="open",
+            subtotal_cents=10_000,
+            discount_cents=0,
+            total_cents=10_000,
+            balance_due_cents=10_000,
+            currency="usd",
+            due_date=date(2026, 6, 10),
+            created_at=now,
+            updated_at=now,
+        ),
+        lines=[],
+        idempotency_key="invoice:stripe-paid",
+    )
+
+    payment = await repo.record_payment(
+        LedgerPayment(
+            payment_id="ledger-pay-in-1",
+            academy_id=acad,
+            parent_id="parent-1",
+            amount_cents=10_000,
+            unapplied_amount_cents=10_000,
+            currency="usd",
+            status="succeeded",
+            payment_method="stripe",
+            stripe_payment_intent_id="pi_invoice_1",
+            paid_at=now,
+            created_at=now,
+            updated_at=now,
+        ),
+        idempotency_key="stripe-invoice-payment:in_1",
+    )
+    allocation = await repo.allocate_payment(
+        payment_id=payment.payment_id,
+        invoice_id="inv-stripe-paid",
+        amount_cents=10_000,
+        idempotency_key="stripe-invoice-allocation:in_1",
+    )
+
+    assert allocation.invoice.status == "paid"
+    assert await db["payments"].count_documents({"academy_id": acad}) == 1
+    assert await db["ledger_payments"].count_documents({"academy_id": acad}) == 1
+    assert await db["payment_allocations"].count_documents({"academy_id": acad}) == 1
+
+
+@pytest.mark.asyncio
+async def test_invoice_paid_session_type_webhook_allocates_with_legacy_payment_index(
+    db, acad
+) -> None:
+    await db["payments"].create_index(
+        [("enrollment_id", 1), ("period", 1)],
+        unique=True,
+        name="enrollment_id_1_period_1",
+    )
+    await db["payments"].insert_one(
+        {
+            "academy_id": acad,
+            "payment_id": "legacy-null-period",
+            "parent_id": "parent-legacy",
+            "amount_cents": 1_000,
+            "status": "pending",
+            "enrollment_id": None,
+            "period": None,
+        }
+    )
+
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    enrollments = MongoStudentBillingEnrollmentRepository(db)
+    await enrollments.save(
+        StudentBillingEnrollment(
+            enrollment_id="bill-1",
+            academy_id=acad,
+            student_id="student-1",
+            parent_id="parent-1",
+            session_type_id="type-elite",
+            stripe_subscription_id="sub_123",
+            billing_start_date=now,
+            enrolled_at=now,
+            updated_at=now,
+        )
+    )
+    outbox = FakeOutbox()
+    use_case = HandleWebhookEvent(
+        stripe=FakeStripeGateway(),
+        dedup=FakeDedup(),
+        payments=FakePaymentRepo(),
+        subscriptions=FakeSubscriptionRepo(),
+        billing_enrollments=enrollments,
+        billing_ledger=MongoBillingLedgerRepository(db, clock=lambda: now),
+        outbox=outbox,
+        academy_id=acad,
+        clock=lambda: now,
+    )
+
+    await use_case.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_paid_legacy_index",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_legacy_index",
+                        "subscription": "sub_123",
+                        "payment_intent": "pi_legacy_index",
+                        "amount_paid": 20_000,
+                        "amount_due": 20_000,
+                        "currency": "usd",
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    invoice = await db["invoices"].find_one(
+        {"academy_id": acad, "invoice_id": "ledger-in_legacy_index"}
+    )
+    ledger_payment = await db["ledger_payments"].find_one(
+        {"academy_id": acad, "payment_id": "ledger-pay-in_legacy_index"}
+    )
+    assert invoice is not None
+    assert invoice["status"] == "paid"
+    assert invoice["balance_due_cents"] == 0
+    assert ledger_payment is not None
+    assert ledger_payment["stripe_payment_intent_id"] == "pi_legacy_index"
+    assert ledger_payment["unapplied_amount_cents"] == 0
+    assert await db["payments"].count_documents({"academy_id": acad}) == 1
+    assert await db["payment_allocations"].count_documents({"academy_id": acad}) == 1
+    assert [event.name for event in outbox.events] == ["Billing.InvoicePaid"]
 
 
 @pytest.mark.asyncio

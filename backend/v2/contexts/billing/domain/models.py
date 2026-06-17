@@ -59,6 +59,7 @@ class Subscription(BaseModel):
     enrollment_id: str | None = None
     session_id: str | None = None
     stripe_subscription_id: str
+    stripe_checkout_session_id: str | None = None
     status: SubscriptionStatus = "incomplete"
     payment_mode: Literal["one_time_first_month", "monthly", "manual"] = "monthly"
     created_at: datetime

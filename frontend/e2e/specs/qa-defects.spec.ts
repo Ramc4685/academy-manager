@@ -194,6 +194,55 @@ test.describe("QA defect regressions", () => {
     await expect(retryButton).toBeEnabled();
   });
 
+  test("autopay success return reconciles checkout before showing active state", async ({
+    page,
+  }) => {
+    await stubParentShell(page);
+    let enrollmentReads = 0;
+    await page.route("**/api/v2/parent/payments", (route) =>
+      fulfillJson(route, { payments: [] }),
+    );
+    await page.route("**/api/v2/parent/enrollments", (route) => {
+      enrollmentReads += 1;
+      return fulfillJson(route, {
+        enrollments: [
+          {
+            enrollment_id: "enr-qa-3",
+            student_id: "student-qa-1",
+            student_name: "Nila Rao",
+            session_id: "session-qa-1",
+            session_title: "Thursday Beginner",
+            status: "active",
+            payment_mode: "monthly",
+            subscription_status: enrollmentReads > 1 ? "active" : "incomplete",
+          },
+        ],
+      });
+    });
+    await page.route("**/api/v2/parent/checkout/status/cs_return_123", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      return fulfillJson(route, {
+        checkout_session_id: "cs_return_123",
+        payment_id: null,
+        status: "active",
+        parent_id: "user-parent-qa",
+      });
+    });
+    await page.route("**/api/v2/parent/pause-requests", (route) =>
+      fulfillJson(route, { requests: [] }),
+    );
+    await page.route("**/api/v2/parent/credits", (route) =>
+      fulfillJson(route, { balance_cents: 0, credits: [] }),
+    );
+
+    await page.goto("/parent/payments?autopay=success&checkout_session_id=cs_return_123");
+
+    await expect(page.getByTestId("autopay-checkout-confirming")).toBeVisible();
+    await expect(page.getByText("Autopay active")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Autopay on" })).toBeDisabled();
+    expect(enrollmentReads).toBeGreaterThan(1);
+  });
+
   test("parent pause request sends resume date contract", async ({ page }) => {
     await stubParentShell(page);
     await page.route("**/api/v2/parent/payments", (route) =>

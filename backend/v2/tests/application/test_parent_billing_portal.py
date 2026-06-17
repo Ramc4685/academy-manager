@@ -16,6 +16,7 @@ import pytest
 from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     CreateCustomerPortalSession,
     CreateCustomerPortalSessionCommand,
+    GetCheckoutStatus,
     StartSubscriptionCheckout,
     StartSubscriptionCheckoutCommand,
 )
@@ -96,26 +97,60 @@ async def test_portal_succeeds_with_stored_customer() -> None:
 class _SubscriptionRepo:
     def __init__(self) -> None:
         self.saved: list[Subscription] = []
+        self.by_id: dict[str, Subscription] = {}
+        self.by_checkout: dict[str, Subscription] = {}
+        self.latest: Subscription | None = None
 
     async def save(self, subscription: Subscription) -> None:
         self.saved.append(subscription)
+        self.by_id[subscription.subscription_id] = subscription
+        if subscription.stripe_checkout_session_id:
+            self.by_checkout[subscription.stripe_checkout_session_id] = subscription
+        if subscription.enrollment_id:
+            self.latest = subscription
+
+    async def get(self, subscription_id: str) -> Subscription | None:
+        return self.by_id.get(subscription_id)
 
     async def get_by_stripe_sub(self, stripe_sub: str) -> Subscription | None:
         return None
 
+    async def get_by_checkout_session(self, checkout_session_id: str) -> Subscription | None:
+        return self.by_checkout.get(checkout_session_id)
+
     async def latest_for_enrollment(self, enrollment_id: str) -> Subscription | None:
+        if self.latest and self.latest.enrollment_id == enrollment_id:
+            return self.latest
         return None
 
 
 class _CheckoutGateway:
-    def __init__(self, *, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        error: Exception | None = None,
+        retrieved: dict[str, object] | None = None,
+    ) -> None:
         self._error = error
+        self.created: list[dict[str, object]] = []
+        self.retrieved = retrieved
 
-    async def create_subscription_checkout_session(self, **_: object) -> tuple[str, str, str]:
+    async def create_subscription_checkout_session(self, **kwargs: object) -> tuple[str, str, str]:
         if self._error is not None:
             raise self._error
+        self.created.append(kwargs)
         # Stripe leaves `subscription` null until Checkout completes.
         return "cs_test_1", "https://checkout.stripe.com/c/test", ""
+
+    async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, object]:
+        if self.retrieved is not None:
+            return dict(self.retrieved)
+        return {
+            "id": checkout_session_id,
+            "object": "checkout.session",
+            "status": "open",
+            "url": "https://checkout.stripe.com/c/existing",
+        }
 
 
 def _checkout_command() -> StartSubscriptionCheckoutCommand:
@@ -143,9 +178,10 @@ async def test_start_autopay_stripe_rejection_maps_to_checkout_creation_failed()
 @pytest.mark.asyncio
 async def test_start_autopay_persists_incomplete_subscription_until_webhook() -> None:
     repo = _SubscriptionRepo()
+    gateway = _CheckoutGateway()
     uc = StartSubscriptionCheckout(
         subscriptions=repo,
-        stripe=_CheckoutGateway(),
+        stripe=gateway,
         academy_id="acad",
         clock=lambda: datetime(2026, 6, 11, tzinfo=UTC),
     )
@@ -155,5 +191,138 @@ async def test_start_autopay_persists_incomplete_subscription_until_webhook() ->
     saved = repo.saved[0]
     assert saved.status == "incomplete"
     assert saved.enrollment_id == "enr-1"
+    assert saved.stripe_checkout_session_id == "cs_test_1"
     # Stripe has not assigned a subscription id yet; the webhook backfills it.
     assert saved.stripe_subscription_id == ""
+    assert (
+        gateway.created[0]["success_url"]
+        == "https://app.example.com/parent/payments?autopay=success&checkout_session_id={CHECKOUT_SESSION_ID}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_start_autopay_reuses_existing_open_pending_checkout() -> None:
+    repo = _SubscriptionRepo()
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    await repo.save(
+        Subscription(
+            subscription_id="sub-existing",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="",
+            stripe_checkout_session_id="cs_existing",
+            status="incomplete",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    gateway = _CheckoutGateway()
+    uc = StartSubscriptionCheckout(
+        subscriptions=repo,
+        stripe=gateway,
+        academy_id="acad",
+        clock=lambda: now,
+    )
+
+    result = await uc.execute(_checkout_command())
+
+    assert result.subscription_id == "sub-existing"
+    assert result.checkout_session_id == "cs_existing"
+    assert result.redirect_url == "https://checkout.stripe.com/c/existing"
+    assert gateway.created == []
+
+
+class _NoPaymentRepo:
+    async def get_by_checkout_session(self, checkout_session_id: str):
+        return None
+
+
+class _CustomerRepo:
+    def __init__(self) -> None:
+        self.saved: list[dict[str, str]] = []
+
+    async def set_stripe_customer_id(self, *, parent_id: str, stripe_customer_id: str) -> None:
+        self.saved.append({"parent_id": parent_id, "stripe_customer_id": stripe_customer_id})
+
+
+class _EnrollmentAutopay:
+    def __init__(self) -> None:
+        self.synced: list[dict[str, str | None]] = []
+
+    async def set_autopay_state(
+        self,
+        *,
+        enrollment_id: str,
+        subscription_status: str,
+        stripe_subscription_id: str | None,
+    ) -> None:
+        self.synced.append(
+            {
+                "enrollment_id": enrollment_id,
+                "subscription_status": subscription_status,
+                "stripe_subscription_id": stripe_subscription_id,
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_checkout_status_reconciles_completed_subscription_checkout() -> None:
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    repo = _SubscriptionRepo()
+    await repo.save(
+        Subscription(
+            subscription_id="sub-local",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="",
+            stripe_checkout_session_id="cs_complete",
+            status="incomplete",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    customers = _CustomerRepo()
+    enrollment_autopay = _EnrollmentAutopay()
+    gateway = _CheckoutGateway(
+        retrieved={
+            "id": "cs_complete",
+            "object": "checkout.session",
+            "status": "complete",
+            "payment_status": "paid",
+            "customer": "cus_parent",
+            "subscription": "sub_live_123",
+            "metadata": {
+                "parent_id": "p1",
+                "app_subscription_id": "sub-local",
+                "subscription_id": "sub-local",
+                "enrollment_id": "enr-1",
+            },
+        }
+    )
+    uc = GetCheckoutStatus(
+        payments=_NoPaymentRepo(),
+        subscriptions=repo,
+        stripe=gateway,
+        parent_customers=customers,
+        enrollment_autopay=enrollment_autopay,
+        clock=lambda: now,
+    )
+
+    result = await uc.execute("cs_complete", parent_id="p1")
+
+    assert result.status == "active"
+    assert result.payment_id is None
+    assert repo.by_id["sub-local"].stripe_subscription_id == "sub_live_123"
+    assert repo.by_id["sub-local"].status == "active"
+    assert customers.saved == [{"parent_id": "p1", "stripe_customer_id": "cus_parent"}]
+    assert enrollment_autopay.synced == [
+        {
+            "enrollment_id": "enr-1",
+            "subscription_status": "active",
+            "stripe_subscription_id": "sub_live_123",
+        }
+    ]

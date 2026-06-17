@@ -54,6 +54,7 @@ if ! stripe webhook_endpoints create --live --api-key "${STRIPE_API_KEY}" \
   --description "${DESCRIPTION}" \
   --enabled-events checkout.session.completed \
   --enabled-events checkout.session.expired \
+  --enabled-events payment_intent.succeeded \
   --enabled-events payment_intent.payment_failed \
   --enabled-events invoice.paid \
   --enabled-events invoice.payment_failed \

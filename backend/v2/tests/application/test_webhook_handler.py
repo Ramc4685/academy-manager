@@ -60,11 +60,14 @@ class FakeSubscriptionRepo:
     def __init__(self) -> None:
         self.by_id: dict[str, Subscription] = {}
         self.by_stripe_sub: dict[str, Subscription] = {}
+        self.by_checkout: dict[str, Subscription] = {}
         self.by_enrollment: dict[str, Subscription] = {}
 
     def seed(self, subscription: Subscription) -> None:
         self.by_id[subscription.subscription_id] = subscription
         self.by_stripe_sub[subscription.stripe_subscription_id] = subscription
+        if subscription.stripe_checkout_session_id:
+            self.by_checkout[subscription.stripe_checkout_session_id] = subscription
         if subscription.enrollment_id:
             self.by_enrollment[subscription.enrollment_id] = subscription
 
@@ -76,6 +79,9 @@ class FakeSubscriptionRepo:
 
     async def get_by_stripe_sub(self, stripe_sub):
         return self.by_stripe_sub.get(stripe_sub)
+
+    async def get_by_checkout_session(self, checkout_session_id):
+        return self.by_checkout.get(checkout_session_id)
 
     async def latest_for_enrollment(self, enrollment_id):
         return self.by_enrollment.get(enrollment_id)
@@ -824,6 +830,54 @@ async def test_invoice_paid_creates_subscription_payment_and_emits() -> None:
     assert payment.subscription_id == "sub-1"
     assert payment.session_id == "s1"
     assert outbox.events[0].name == "Billing.PaymentSucceeded"
+
+
+@pytest.mark.asyncio
+async def test_invoice_paid_reads_subscription_from_parent_details() -> None:
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-parent-shape",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-parent",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    uc = _build(repo, subscriptions=subs)
+    body = json.dumps(
+        {
+            "id": "evt_invoice_parent_shape",
+            "type": "invoice.paid",
+            "data": {
+                "object": {
+                    "id": "in_parent_shape",
+                    "parent": {
+                        "subscription_details": {
+                            "subscription": "stripe-sub-parent",
+                        }
+                    },
+                    "payment_intent": "pi_parent_shape",
+                    "amount_paid": 7000,
+                    "currency": "usd",
+                }
+            },
+        }
+    ).encode()
+
+    await uc.execute(body, "test_signature")
+
+    payment = repo.by_pi["pi_parent_shape"]
+    assert payment.status == "succeeded"
+    assert payment.subscription_id == "sub-parent-shape"
+    assert payment.enrollment_id == "enr-1"
+    assert payment.session_id == "s1"
 
 
 @pytest.mark.asyncio

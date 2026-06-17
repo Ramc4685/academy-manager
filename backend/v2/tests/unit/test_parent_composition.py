@@ -15,13 +15,13 @@ class _FakeCollection:
         self.docs = docs or []
         self.updates: list[dict[str, Any]] = []
 
-    async def find_one(self, query: dict[str, Any]) -> dict[str, Any] | None:
+    async def find_one(self, query: dict[str, Any], **_: Any) -> dict[str, Any] | None:
         for doc in self.docs:
             if _matches(doc, query):
                 return doc
         return None
 
-    async def update_one(self, query: dict[str, Any], update: dict[str, Any]) -> None:
+    async def update_one(self, query: dict[str, Any], update: dict[str, Any], **_: Any) -> None:
         self.updates.append({"query": query, "update": update})
 
 

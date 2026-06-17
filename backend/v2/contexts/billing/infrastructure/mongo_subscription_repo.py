@@ -18,6 +18,7 @@ class MongoSubscriptionRepository(TenantScopedRepository):
             enrollment_id=doc.get("enrollment_id"),  # type: ignore[arg-type]
             session_id=doc.get("session_id"),  # type: ignore[arg-type]
             stripe_subscription_id=str(doc.get("stripe_subscription_id") or ""),
+            stripe_checkout_session_id=doc.get("stripe_checkout_session_id"),  # type: ignore[arg-type]
             status=doc.get("status", "incomplete"),  # type: ignore[arg-type]
             payment_mode=doc.get("payment_mode", "monthly"),  # type: ignore[arg-type]
             created_at=doc["created_at"],  # type: ignore[arg-type]
@@ -48,6 +49,10 @@ class MongoSubscriptionRepository(TenantScopedRepository):
 
     async def get_by_stripe_sub(self, stripe_sub: str) -> Subscription | None:
         doc = await self._find_one({"stripe_subscription_id": stripe_sub})
+        return self._to_domain(doc) if doc else None
+
+    async def get_by_checkout_session(self, checkout_session_id: str) -> Subscription | None:
+        doc = await self._find_one({"stripe_checkout_session_id": checkout_session_id})
         return self._to_domain(doc) if doc else None
 
     async def latest_for_enrollment(self, enrollment_id: str) -> Subscription | None:
