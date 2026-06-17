@@ -14,6 +14,7 @@
 #
 # Custom test data:
 #   scripts/dev/saas_staging.sh seed --slug blno --domain blno.localhost ...
+#   scripts/dev/saas_staging.sh blno-seed   # seed BLno academy with full realistic data
 #
 # Lifecycle:
 #   scripts/dev/saas_staging.sh logs <svc> # tail logs (backend|frontend|mongo|firebase-emulator)
@@ -40,6 +41,7 @@ CREDS_FILE="${LOCAL_DIR}/saas-staging-credentials.json"
 VENV_PYTHON="${VENV_PYTHON:-${REPO_ROOT}/backend/.venv/bin/python}"
 SMOKE_SCRIPT="${REPO_ROOT}/scripts/smoke/saas_readiness_smoke.sh"
 SEED_SCRIPT="${REPO_ROOT}/scripts/dev/seed_saas_staging.py"
+BLNO_SEED_SCRIPT="${REPO_ROOT}/scripts/dev/seed_blno_staging.py"
 
 # Ports the stack binds. Used by pre-flight + status.
 declare -a REQUIRED_PORTS=(3000 4000 8001 9099 27017)
@@ -181,6 +183,14 @@ cmd_seed() {
   fi
   log "Seeding tenant + Firebase emulator user..."
   "${VENV_PYTHON}" "${SEED_SCRIPT}" "$@"
+}
+
+cmd_blno_seed() {
+  if [[ ! -x "${VENV_PYTHON}" ]]; then
+    die "backend/.venv not found. Run preflight check or create the venv first."
+  fi
+  log "Seeding BLno Badminton Academy (parents, students, sessions, payments, pathway)..."
+  "${VENV_PYTHON}" "${BLNO_SEED_SCRIPT}" "$@"
 }
 
 # Reset: wipe seeded test data + emulator users, but keep the stack running.
@@ -346,9 +356,10 @@ main() {
   local cmd="${1:-}"
   shift || true
   case "${cmd}" in
-    up)     cmd_up "$@" ;;
-    seed)   cmd_seed "$@" ;;
-    reset)  cmd_reset "$@" ;;
+    up)          cmd_up "$@" ;;
+    seed)        cmd_seed "$@" ;;
+    blno-seed)   cmd_blno_seed "$@" ;;
+    reset)       cmd_reset "$@" ;;
     status) cmd_status "$@" ;;
     urls)   cmd_urls "$@" ;;
     token)  cmd_token "$@" ;;

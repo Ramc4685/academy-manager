@@ -28,6 +28,7 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-06-15-billing-ledger-workflow-completion](docs/test-results/active/2026-06-15-billing-ledger-workflow-completion.md)
 - [2026-06-15-onboarding-waiver-registration-fix](docs/test-results/active/2026-06-15-onboarding-waiver-registration-fix.md)
 - [2026-06-16-production-launch-hardening](docs/test-results/active/2026-06-16-production-launch-hardening.md)
+- [2026-06-16-release-candidate-validation-blno-staging](docs/test-results/active/2026-06-16-release-candidate-validation-blno-staging.md)
 
 ## Required Workflow
 
