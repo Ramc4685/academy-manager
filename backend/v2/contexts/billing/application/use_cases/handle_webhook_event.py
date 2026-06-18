@@ -19,10 +19,13 @@ from typing import Any
 
 from backend.v2.contexts.billing.application.ports import (
     EnrollmentAutopayStateRepository,
+    EnrollmentBillingIdentity,
+    EnrollmentBillingIdentityRepository,
     ParentStripeCustomerRepository,
     PaymentRepository,
     StripeEventDedup,
     StripeGateway,
+    StripeInvoiceProcessingRepository,
     StudentBillingEnrollmentRepository,
     SubscriptionRepository,
 )
@@ -47,12 +50,26 @@ from backend.v2.contexts.billing.domain.ledger import (
     LedgerInvoice,
     LedgerPayment,
 )
-from backend.v2.contexts.billing.domain.models import Payment
+from backend.v2.contexts.billing.domain.models import (
+    Payment,
+    can_transition_payment_projection,
+)
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import tenant_scope
 
 log = logging.getLogger(__name__)
+
+SUBSCRIPTION_INVOICE_RECOVERY_POINTS = {
+    "received",
+    "subscription_resolved",
+    "ledger_invoice_synced",
+    "ledger_payment_recorded",
+    "ledger_allocated",
+    "legacy_projection_saved",
+    "processed",
+    "quarantined",
+}
 
 
 class _QuarantineStripeEvent(Exception):
@@ -73,6 +90,8 @@ class HandleWebhookEvent:
         billing_ledger: Any | None = None,
         parent_customers: ParentStripeCustomerRepository | None = None,
         enrollment_autopay: EnrollmentAutopayStateRepository | None = None,
+        enrollment_identity: EnrollmentBillingIdentityRepository | None = None,
+        invoice_processing: StripeInvoiceProcessingRepository | None = None,
         expected_livemode: bool | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
@@ -84,6 +103,8 @@ class HandleWebhookEvent:
         self._billing_ledger = billing_ledger
         self._parent_customers = parent_customers
         self._enrollment_autopay = enrollment_autopay
+        self._enrollment_identity = enrollment_identity
+        self._invoice_processing = invoice_processing
         self._expected_livemode = expected_livemode
         self._outbox = outbox
         self._academy_id = academy_id
@@ -167,6 +188,18 @@ class HandleWebhookEvent:
                 await self._dispatch(event_type, event)
                 await self._dedup.mark_processed(event_id)
                 return {"received": True, "type": event_type}
+            except _QuarantineStripeEvent as exc:
+                mark_quarantined = getattr(self._dedup, "mark_quarantined", None)
+                if mark_quarantined is not None:
+                    await mark_quarantined(event_id, str(exc))
+                else:
+                    await self._dedup.mark_failed(event_id, str(exc))
+                return {
+                    "received": True,
+                    "type": event_type,
+                    "status": "quarantined",
+                    "error": str(exc),
+                }
             except Exception as exc:
                 await self._dedup.mark_failed(event_id, str(exc))
                 raise
@@ -287,6 +320,8 @@ class HandleWebhookEvent:
             metadata = self._event_metadata(event)
             if metadata.get("source") == "autopay" or metadata.get("invoice_id"):
                 await self._handle_autopay_pi_failed(event)
+            elif await self._handle_invoice_checkout_payment_failed(event):
+                return
             else:
                 await self._on_payment_failed(event)
         elif event_type == "invoice.paid":
@@ -613,6 +648,61 @@ class HandleWebhookEvent:
             decline_code,
         )
 
+    async def _handle_invoice_checkout_payment_failed(self, event: dict[str, Any]) -> bool:
+        """Record a failed manual invoice Checkout attempt without closing the invoice."""
+        if self._billing_ledger is None:
+            return False
+
+        event_id = str(event.get("id") or "")
+        pi = event["data"]["object"]
+        pi_id = str(pi.get("id") or "")
+        checkout_session_id = _checkout_session_id_from_payment_intent(pi)
+        if not checkout_session_id:
+            return False
+
+        checkout = await self._stripe.retrieve_checkout_session(checkout_session_id)
+        metadata = checkout.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        invoice_id = str(metadata.get("invoice_id") or "")
+        if metadata.get("source") != "invoice_pay_link" and not invoice_id:
+            return False
+        if not invoice_id:
+            log.warning(
+                "invoice_checkout_payment_failed: no invoice_id session=%s pi=%s",
+                checkout_session_id,
+                pi_id,
+            )
+            return True
+
+        last_error = pi.get("last_payment_error") or {}
+        if not isinstance(last_error, dict):
+            last_error = {}
+        failure_code = str(last_error.get("decline_code") or last_error.get("code") or "unknown")
+        failure_message = str(last_error.get("message") or "Payment failed")
+        amount_cents = int(pi.get("amount") or checkout.get("amount_total") or 0)
+        currency = str(pi.get("currency") or checkout.get("currency") or "usd").lower()
+        await self._billing_ledger.record_payment_attempt(
+            invoice_id=invoice_id,
+            parent_id=str(metadata.get("parent_id") or "unknown"),
+            amount_cents=amount_cents,
+            currency=currency,
+            status="failed",
+            stripe_payment_intent_id=pi_id or None,
+            stripe_checkout_session_id=checkout_session_id,
+            failure_code=failure_code,
+            failure_message=failure_message,
+            idempotency_key=f"invoice-checkout-failed:{invoice_id}:{pi_id or event_id}",
+            created_by_event_id=event_id or None,
+        )
+        log.warning(
+            "invoice_checkout_payment_failed: recorded attempt invoice=%s pi=%s code=%s",
+            invoice_id,
+            pi_id,
+            failure_code,
+        )
+        return True
+
     async def _on_payment_failed(self, event: dict[str, Any]) -> None:
         pi = event["data"]["object"]
         pi_id = pi["id"]
@@ -668,10 +758,53 @@ class HandleWebhookEvent:
         invoice = event["data"]["object"]
         if await self._handle_session_type_invoice(invoice, paid=True):
             return
-        payment = await self._payment_from_invoice(invoice, status="succeeded")
+        subscription = await self._subscription_from_invoice(invoice)
+        if subscription is None:
+            return
+        event_id = str(event.get("id") or "")
+        await self._record_subscription_invoice_recovery_point(
+            invoice,
+            subscription=subscription,
+            event_id=event_id,
+            recovery_point="subscription_resolved",
+        )
+        try:
+            await self._sync_subscription_invoice_ledger(
+                invoice,
+                subscription=subscription,
+                paid=True,
+                event_id=event_id,
+            )
+        except _QuarantineStripeEvent as exc:
+            await self._record_subscription_invoice_recovery_point(
+                invoice,
+                subscription=subscription,
+                event_id=event_id,
+                recovery_point="quarantined",
+                last_error=str(exc),
+            )
+            raise
+        payment = await self._payment_from_invoice(
+            invoice,
+            status="succeeded",
+            subscription=subscription,
+        )
         if payment is None:
+            await self._record_subscription_invoice_recovery_point(
+                invoice,
+                subscription=subscription,
+                event_id=event_id,
+                recovery_point="processed",
+            )
             return
         await self._payments.save(payment)
+        await self._record_subscription_invoice_recovery_point(
+            invoice,
+            subscription=subscription,
+            event_id=event_id,
+            recovery_point="legacy_projection_saved",
+            legacy_payment_id=payment.payment_id,
+        )
         await self._outbox.append(
             PaymentSucceeded(
                 aggregate_id=payment.payment_id,
@@ -686,15 +819,63 @@ class HandleWebhookEvent:
                 ),
             )
         )
+        await self._record_subscription_invoice_recovery_point(
+            invoice,
+            subscription=subscription,
+            event_id=event_id,
+            recovery_point="processed",
+            legacy_payment_id=payment.payment_id,
+        )
 
     async def _on_invoice_payment_failed(self, event: dict[str, Any]) -> None:
         invoice = event["data"]["object"]
         if await self._handle_session_type_invoice(invoice, paid=False):
             return
-        payment = await self._payment_from_invoice(invoice, status="failed")
+        subscription = await self._subscription_from_invoice(invoice)
+        if subscription is None:
+            return
+        event_id = str(event.get("id") or "")
+        await self._record_subscription_invoice_recovery_point(
+            invoice,
+            subscription=subscription,
+            event_id=event_id,
+            recovery_point="subscription_resolved",
+        )
+        try:
+            await self._sync_subscription_invoice_ledger(
+                invoice,
+                subscription=subscription,
+                paid=False,
+                event_id=event_id,
+            )
+        except _QuarantineStripeEvent as exc:
+            await self._record_subscription_invoice_recovery_point(
+                invoice,
+                subscription=subscription,
+                event_id=event_id,
+                recovery_point="quarantined",
+                last_error=str(exc),
+            )
+            raise
+        payment = await self._payment_from_invoice(
+            invoice, status="failed", subscription=subscription
+        )
         if payment is None:
+            await self._record_subscription_invoice_recovery_point(
+                invoice,
+                subscription=subscription,
+                event_id=event_id,
+                recovery_point="processed",
+            )
             return
         await self._payments.save(payment)
+        await self._record_subscription_invoice_recovery_point(
+            invoice,
+            subscription=subscription,
+            event_id=event_id,
+            recovery_point="legacy_projection_saved",
+            legacy_payment_id=payment.payment_id,
+        )
         await self._outbox.append(
             PaymentFailed(
                 aggregate_id=payment.payment_id,
@@ -710,6 +891,13 @@ class HandleWebhookEvent:
                     ),
                 ),
             )
+        )
+        await self._record_subscription_invoice_recovery_point(
+            invoice,
+            subscription=subscription,
+            event_id=event_id,
+            recovery_point="processed",
+            legacy_payment_id=payment.payment_id,
         )
 
     async def _on_charge_refunded(self, event: dict[str, Any]) -> None:
@@ -952,9 +1140,250 @@ class HandleWebhookEvent:
             stripe_invoice_id=str(stripe_invoice.get("id")) if stripe_invoice.get("id") else None,
         )
 
-    async def _payment_from_invoice(
-        self, invoice: dict[str, Any], *, status: str
-    ) -> Payment | None:
+    async def _sync_subscription_invoice_ledger(
+        self,
+        invoice: dict[str, Any],
+        *,
+        subscription: Any,
+        paid: bool,
+        event_id: str,
+    ) -> LedgerInvoice | None:
+        if self._billing_ledger is None:
+            return None
+        stripe_invoice_id = str(invoice.get("id") or "")
+        if not stripe_invoice_id:
+            raise _QuarantineStripeEvent("subscription invoice missing id")
+        amount_cents = int(
+            invoice.get("amount_paid" if paid else "amount_due") or invoice.get("amount_due") or 0
+        )
+
+        now = self._now()
+        period_label = self._invoice_period_label(invoice, now)
+        currency = str(invoice.get("currency") or "usd").lower()
+        enrollment_id = subscription.enrollment_id
+        identity = await self._subscription_enrollment_identity(subscription)
+        student_id = _identity_value(identity, "student_id")
+        parent_id = _identity_value(identity, "parent_id") or subscription.parent_id
+
+        ledger_invoice = await self._billing_ledger.get_invoice_by_stripe_invoice_id(
+            stripe_invoice_id
+        )
+        if enrollment_id:
+            get_for_enrollment = getattr(
+                self._billing_ledger,
+                "get_invoice_for_enrollment_period",
+                None,
+            )
+            if get_for_enrollment is not None:
+                ledger_invoice = ledger_invoice or await get_for_enrollment(
+                    enrollment_id,
+                    period_label,
+                    statuses={"draft", "open", "partially_paid", "paid"},
+                )
+            elif ledger_invoice is None:
+                ledger_invoice = await self._billing_ledger.get_open_invoice_for_enrollment(
+                    enrollment_id,
+                    period_label,
+                )
+        if ledger_invoice is None and student_id:
+            ledger_invoice = await self._billing_ledger.get_open_invoice_for_student(
+                student_id,
+                period_label,
+            )
+
+        if ledger_invoice is None:
+            if amount_cents <= 0:
+                return None
+            invoice_id = self._ledger_invoice_id(invoice)
+            ledger_invoice = await self._billing_ledger.create_invoice(
+                LedgerInvoice(
+                    invoice_id=invoice_id,
+                    academy_id=subscription.academy_id,
+                    parent_id=parent_id,
+                    student_id=student_id,
+                    enrollment_id=enrollment_id,
+                    period=period_label,
+                    status="open",
+                    subtotal_cents=amount_cents,
+                    discount_cents=0,
+                    total_cents=amount_cents,
+                    balance_due_cents=amount_cents,
+                    currency=currency,
+                    due_date=self._invoice_due_date(invoice, now),
+                    stripe_invoice_id=stripe_invoice_id,
+                    source_type="stripe_subscription",
+                    source_id=stripe_invoice_id,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                lines=[
+                    InvoiceLine(
+                        line_id=f"line-{invoice_id}",
+                        academy_id=subscription.academy_id,
+                        invoice_id=invoice_id,
+                        line_type="tuition",
+                        description=f"Subscription tuition {period_label}",
+                        quantity=1,
+                        unit_amount_cents=amount_cents,
+                        amount_cents=amount_cents,
+                        source_type="stripe_subscription",
+                        source_id=stripe_invoice_id or subscription.stripe_subscription_id,
+                        created_at=now,
+                    )
+                ],
+                idempotency_key=f"stripe-subscription-invoice:{stripe_invoice_id}",
+            )
+        await self._record_subscription_invoice_recovery_point(
+            invoice,
+            subscription=subscription,
+            event_id=event_id,
+            recovery_point="ledger_invoice_synced",
+            ledger_invoice_id=ledger_invoice.invoice_id,
+        )
+
+        if ledger_invoice.academy_id != self._academy_id:
+            raise _QuarantineStripeEvent(
+                f"academy mismatch: invoice={ledger_invoice.academy_id} expected={self._academy_id}"
+            )
+        if ledger_invoice.parent_id != parent_id:
+            raise _QuarantineStripeEvent(
+                f"parent mismatch: invoice={ledger_invoice.parent_id} subscription={parent_id}"
+            )
+        if (
+            ledger_invoice.stripe_invoice_id
+            and ledger_invoice.stripe_invoice_id != stripe_invoice_id
+        ):
+            if paid and (ledger_invoice.status == "paid" or ledger_invoice.balance_due_cents <= 0):
+                raise _QuarantineStripeEvent(
+                    f"subscription invoice {stripe_invoice_id} matched already-paid invoice "
+                    f"{ledger_invoice.invoice_id} already linked to "
+                    f"{ledger_invoice.stripe_invoice_id}"
+                )
+            raise _QuarantineStripeEvent(
+                f"subscription invoice {stripe_invoice_id} matched invoice "
+                f"{ledger_invoice.invoice_id} already linked to {ledger_invoice.stripe_invoice_id}"
+            )
+        if paid and (ledger_invoice.status == "paid" or ledger_invoice.balance_due_cents <= 0):
+            if ledger_invoice.stripe_invoice_id == stripe_invoice_id:
+                return ledger_invoice
+            raise _QuarantineStripeEvent(
+                f"subscription invoice {stripe_invoice_id} matched already-paid invoice "
+                f"{ledger_invoice.invoice_id}"
+            )
+        if ledger_invoice.stripe_invoice_id is None:
+            ledger_invoice = await self._billing_ledger.save_invoice(
+                ledger_invoice.model_copy(
+                    update={
+                        "stripe_invoice_id": stripe_invoice_id,
+                        "source_type": ledger_invoice.source_type or "stripe_subscription",
+                        "source_id": ledger_invoice.source_id or stripe_invoice_id,
+                        "updated_at": now,
+                    }
+                )
+            )
+        if not paid:
+            return ledger_invoice
+        if amount_cents <= 0:
+            return ledger_invoice
+
+        stripe_payment_id = self._stripe_invoice_payment_identifier(invoice)
+        payment = await self._billing_ledger.record_payment(
+            LedgerPayment(
+                payment_id=f"ledger-pay-{stripe_invoice_id}",
+                academy_id=ledger_invoice.academy_id,
+                parent_id=ledger_invoice.parent_id,
+                amount_cents=amount_cents,
+                unapplied_amount_cents=amount_cents,
+                currency=currency,
+                status="succeeded",
+                payment_method="stripe_subscription",
+                stripe_payment_intent_id=stripe_payment_id,
+                stripe_invoice_id=stripe_invoice_id,
+                paid_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            idempotency_key=f"stripe-invoice-payment:{stripe_invoice_id}",
+        )
+        await self._record_subscription_invoice_recovery_point(
+            invoice,
+            subscription=subscription,
+            event_id=event_id,
+            recovery_point="ledger_payment_recorded",
+            ledger_invoice_id=ledger_invoice.invoice_id,
+            ledger_payment_id=payment.payment_id,
+        )
+        await self._billing_ledger.allocate_payment(
+            payment_id=payment.payment_id,
+            invoice_id=ledger_invoice.invoice_id,
+            amount_cents=amount_cents,
+            idempotency_key=f"stripe-invoice-allocation:{stripe_invoice_id}",
+        )
+        await self._record_subscription_invoice_recovery_point(
+            invoice,
+            subscription=subscription,
+            event_id=event_id,
+            recovery_point="ledger_allocated",
+            ledger_invoice_id=ledger_invoice.invoice_id,
+            ledger_payment_id=payment.payment_id,
+        )
+        return await self._billing_ledger.get_invoice(ledger_invoice.invoice_id) or ledger_invoice
+
+    async def _record_subscription_invoice_recovery_point(
+        self,
+        invoice: dict[str, Any],
+        *,
+        subscription: Any,
+        event_id: str,
+        recovery_point: str,
+        ledger_invoice_id: str | None = None,
+        ledger_payment_id: str | None = None,
+        legacy_payment_id: str | None = None,
+        last_error: str | None = None,
+    ) -> None:
+        if self._invoice_processing is None:
+            return
+        if recovery_point not in SUBSCRIPTION_INVOICE_RECOVERY_POINTS:
+            raise ValueError(f"unknown subscription invoice recovery point: {recovery_point}")
+        stripe_invoice_id = str(invoice.get("id") or "")
+        if not stripe_invoice_id:
+            return
+        await self._invoice_processing.record_recovery_point(
+            academy_id=subscription.academy_id,
+            stripe_invoice_id=stripe_invoice_id,
+            stripe_subscription_id=self._stripe_subscription_id_from_invoice(invoice)
+            or subscription.stripe_subscription_id,
+            event_id=event_id,
+            recovery_point=recovery_point,
+            ledger_invoice_id=ledger_invoice_id,
+            ledger_payment_id=ledger_payment_id,
+            legacy_payment_id=legacy_payment_id,
+            last_error=last_error,
+            updated_at=self._now(),
+        )
+
+    async def _subscription_enrollment_identity(
+        self,
+        subscription: Any,
+    ) -> EnrollmentBillingIdentity | dict[str, str | None] | None:
+        if self._enrollment_identity is None or not subscription.enrollment_id:
+            return None
+        identity = await self._enrollment_identity.get_billing_identity(subscription.enrollment_id)
+        if identity is None:
+            return None
+        identity_academy = _identity_value(identity, "academy_id")
+        if identity_academy and identity_academy != self._academy_id:
+            raise _QuarantineStripeEvent(
+                f"academy mismatch: enrollment={identity_academy} expected={self._academy_id}"
+            )
+        identity_parent = _identity_value(identity, "parent_id")
+        if identity_parent and identity_parent != subscription.parent_id:
+            raise _QuarantineStripeEvent(
+                f"parent mismatch: enrollment={identity_parent} subscription={subscription.parent_id}"
+            )
+        return identity
+
+    async def _subscription_from_invoice(self, invoice: dict[str, Any]) -> Any | None:
         stripe_sub_id = self._stripe_subscription_id_from_invoice(invoice)
         if not stripe_sub_id:
             return None
@@ -962,10 +1391,35 @@ class HandleWebhookEvent:
         if subscription is None:
             log.warning("invoice webhook for unknown subscription=%s", stripe_sub_id)
             return None
+        if subscription.academy_id != self._academy_id:
+            raise _QuarantineStripeEvent(
+                f"academy mismatch: subscription={subscription.academy_id} expected={self._academy_id}"
+            )
+        return subscription
 
-        stripe_pi = str(invoice.get("payment_intent") or invoice.get("id"))
+    @staticmethod
+    def _stripe_invoice_payment_identifier(invoice: dict[str, Any]) -> str:
+        return str(invoice.get("payment_intent") or invoice.get("id"))
+
+    async def _payment_from_invoice(
+        self,
+        invoice: dict[str, Any],
+        *,
+        status: str,
+        subscription: Any | None = None,
+    ) -> Payment | None:
+        if subscription is None:
+            subscription = await self._subscription_from_invoice(invoice)
+        if subscription is None:
+            return None
+
+        stripe_pi = self._stripe_invoice_payment_identifier(invoice)
         existing = await self._payments.get_by_stripe_pi(stripe_pi)
         if existing is not None:
+            if not can_transition_payment_projection(existing.status, status):
+                raise _QuarantineStripeEvent(
+                    f"invalid payment projection transition {existing.status}->{status}"
+                )
             return None
 
         now = self._now()
@@ -984,3 +1438,26 @@ class HandleWebhookEvent:
             created_at=now,
             updated_at=now,
         )
+
+
+def _checkout_session_id_from_payment_intent(pi: dict[str, Any]) -> str | None:
+    payment_details = pi.get("payment_details")
+    if not isinstance(payment_details, dict):
+        return None
+    order_reference = str(payment_details.get("order_reference") or "")
+    if order_reference.startswith("cs_"):
+        return order_reference
+    return None
+
+
+def _identity_value(
+    identity: EnrollmentBillingIdentity | dict[str, str | None] | None,
+    key: str,
+) -> str | None:
+    if identity is None:
+        return None
+    if isinstance(identity, dict):
+        value = identity.get(key)
+    else:
+        value = getattr(identity, key)
+    return str(value) if value else None

@@ -591,20 +591,37 @@ class MongoStudentRepository(TenantScopedRepository):
         docs = [doc async for doc in cursor]
 
         # Billing-ledger invoices (autopay / Stripe subscription) live in a
-        # separate collection. Include open/unpaid ones not already covered by
-        # a payment row so the panel shows the real balance.
-        covered_invoice_ids: set[str] = {
-            str(doc["invoice_id"]) for doc in docs if doc.get("invoice_id")
-        }
+        # separate collection. Include enrollment-owned invoices and prefer the
+        # ledger shim over a matching transition-only legacy Payment projection.
+        invoice_owner_filters: list[dict[str, object]] = [{"student_id": student_id}]
+        if enrollment_ids:
+            invoice_owner_filters.append({"enrollment_id": {"$in": enrollment_ids}})
         invoice_cursor = self._db["invoices"].find(
             {
                 "academy_id": academy_id,
-                "student_id": student_id,
+                "$or": invoice_owner_filters,
                 "status": {"$nin": ["void"]},
                 "is_deleted": {"$ne": True},
             }
         )
-        async for inv_doc in invoice_cursor:
+        invoice_docs = [inv_doc async for inv_doc in invoice_cursor]
+        invoice_provider_keys: set[str] = {
+            key
+            for inv_doc in invoice_docs
+            for key in (inv_doc.get("stripe_invoice_id"),)
+            if isinstance(key, str) and key
+        }
+        if invoice_provider_keys:
+            docs = [
+                doc
+                for doc in docs
+                if str(doc.get("stripe_payment_intent_id") or "") not in invoice_provider_keys
+                and str(doc.get("stripe_invoice_id") or "") not in invoice_provider_keys
+            ]
+        covered_invoice_ids: set[str] = {
+            str(doc["invoice_id"]) for doc in docs if doc.get("invoice_id")
+        }
+        for inv_doc in invoice_docs:
             inv_id = str(inv_doc.get("invoice_id") or inv_doc.get("_id") or "")
             if inv_id and inv_id not in covered_invoice_ids:
                 covered_invoice_ids.add(inv_id)
@@ -636,6 +653,7 @@ class MongoStudentRepository(TenantScopedRepository):
             "balance_due_cents": balance,
             "status": str(inv_doc.get("status") or "open"),
             "payment_method": "autopay",
+            "stripe_invoice_id": inv_doc.get("stripe_invoice_id"),
             "created_at": inv_doc.get("created_at"),
         }
 

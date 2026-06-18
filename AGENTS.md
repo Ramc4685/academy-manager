@@ -107,7 +107,19 @@ SaaS direction:
 - See `docs/requirements/2026-05-21-saas-data-model-architecture-assessment.md` and `docs/plans/2026-05-21-saas-v2-parallel-execution-plan.md`.
 
 ---
-
+## Billing safety rules:
+- App ledger owns invoices.
+- Stripe owns payment collection.
+- Redirects never prove payment success.
+- Webhooks update ledger state.
+- Failed payments do not close invoices.
+- Payment attempts record failure.
+- Ledger payments record received money.
+- Payment allocations must be idempotent.
+- Paid invoices cannot be double-paid.
+- Duplicate Stripe obligations quarantine.
+- Replay must converge state.
+- Admin must see unrecovered failures.
 ## Golden Rules
 
 - Read existing code before editing.

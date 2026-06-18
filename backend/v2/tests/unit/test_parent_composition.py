@@ -8,6 +8,31 @@ import pytest
 
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.contexts.billing.domain.errors import CheckoutCreationFailed
+from backend.v2.shared.tenancy import tenant_scope
+
+
+class _FakeCursor:
+    def __init__(self, docs: list[dict[str, Any]]) -> None:
+        self.docs = docs
+
+    def sort(self, spec: list[tuple[str, int]]) -> _FakeCursor:
+        for field, direction in reversed(spec):
+            self.docs.sort(key=lambda doc: doc.get(field), reverse=direction < 0)
+        return self
+
+    def limit(self, n: int) -> _FakeCursor:
+        self.docs = self.docs[:n]
+        return self
+
+    def __aiter__(self) -> _FakeCursor:
+        self._iter = iter(self.docs)
+        return self
+
+    async def __anext__(self) -> dict[str, Any]:
+        try:
+            return next(self._iter)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
 
 
 class _FakeCollection:
@@ -20,6 +45,22 @@ class _FakeCollection:
             if _matches(doc, query):
                 return doc
         return None
+
+    def find(
+        self,
+        query: dict[str, Any],
+        *_: Any,
+        sort: list[tuple[str, int]] | None = None,
+        limit: int = 0,
+        **__: Any,
+    ) -> _FakeCursor:
+        docs = [doc for doc in self.docs if _matches(doc, query)]
+        cursor = _FakeCursor(docs)
+        if sort:
+            cursor.sort(sort)
+        if limit:
+            cursor.limit(limit)
+        return cursor
 
     async def update_one(self, query: dict[str, Any], update: dict[str, Any], **_: Any) -> None:
         self.updates.append({"query": query, "update": update})
@@ -81,6 +122,61 @@ def test_parent_webhook_composition_requires_explicit_academy_id() -> None:
             outbox=object(),  # type: ignore[arg-type]
             stripe=_PortalStripe(),  # type: ignore[arg-type]
         )
+
+
+@pytest.mark.asyncio
+async def test_parent_payment_history_suppresses_matching_legacy_projection() -> None:
+    from datetime import UTC, datetime
+
+    now = datetime(2026, 6, 17, 9, 0, tzinfo=UTC)
+    db = _FakeDb(
+        {
+            "payments": _FakeCollection(
+                [
+                    {
+                        "academy_id": "acad",
+                        "payment_id": "legacy-projection",
+                        "parent_id": "parent-1",
+                        "amount_cents": 7_000,
+                        "currency": "usd",
+                        "status": "succeeded",
+                        "refunded_cents": 0,
+                        "stripe_payment_intent_id": "in_subscription_paid",
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                ]
+            ),
+            "ledger_payments": _FakeCollection(
+                [
+                    {
+                        "academy_id": "acad",
+                        "payment_id": "ledger-payment",
+                        "parent_id": "parent-1",
+                        "amount_cents": 7_000,
+                        "currency": "usd",
+                        "status": "succeeded",
+                        "stripe_invoice_id": "in_subscription_paid",
+                        "stripe_payment_intent_id": "in_subscription_paid",
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                ]
+            ),
+        }
+    )
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=_PortalStripe(),  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"):
+        rows = await parent.list_payments_for_parent("parent-1")
+
+    assert [row.payment_id for row in rows] == ["ledger-payment"]
 
 
 @pytest.mark.asyncio

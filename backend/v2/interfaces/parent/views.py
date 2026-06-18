@@ -105,6 +105,16 @@ class BillingPortalResponse(BaseModel):
     redirect_url: str
 
 
+class StartInvoicePaymentRequest(BaseModel):
+    success_url: str
+    cancel_url: str
+
+
+class StartInvoicePaymentResponse(BaseModel):
+    invoice_id: str
+    redirect_url: str
+
+
 class CheckoutStatusResponse(BaseModel):
     checkout_session_id: str
     payment_id: str | None = None
@@ -143,6 +153,8 @@ class ParentPaymentView(BaseModel):
     refunded_cents: int
     created_at: datetime
     session_id: str | None
+    stripe_invoice_id: str | None = None
+    stripe_payment_intent_id: str | None = None
 
 
 class ParentPaymentHistoryResponse(BaseModel):

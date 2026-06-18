@@ -117,6 +117,13 @@ class ChargeInvoiceViaAutopay:
         if invoice.balance_due_cents <= 0:
             raise ValueError(f"invoice {invoice_id!r} has no balance due (balance_due_cents=0)")
 
+        fresh = await self._ledger.get_invoice(invoice_id)
+        if fresh is None:
+            raise ValueError(f"invoice {invoice_id!r} not found")
+        if fresh.status not in _CHARGEABLE_STATUSES or fresh.balance_due_cents <= 0:
+            raise ValueError(f"invoice {invoice_id!r} no longer chargeable")
+        invoice = fresh
+
         # 3. Look up parent's saved Stripe card
         if self._stripe is None:
             log.info(

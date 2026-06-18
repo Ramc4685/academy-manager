@@ -35,6 +35,9 @@ class LedgerInvoice(BaseModel):
     currency: str = Field(default="usd", min_length=3, max_length=3)
     due_date: date
     pdf_artifact_id: str | None = None
+    stripe_invoice_id: str | None = None
+    source_type: str | None = None
+    source_id: str | None = None
     # delivery tracking (separate axis from financial status)
     delivery_status: Literal["not_sent", "sent", "delivery_failed"] = "not_sent"
     sent_at: datetime | None = None
@@ -73,6 +76,7 @@ class LedgerPayment(BaseModel):
     status: LedgerPaymentStatus = "pending"
     payment_method: str | None = None
     stripe_payment_intent_id: str | None = None
+    stripe_invoice_id: str | None = None
     paid_at: datetime | None = None
     recorded_by: str | None = None
     notes: str | None = None

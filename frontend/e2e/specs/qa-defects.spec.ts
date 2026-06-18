@@ -29,11 +29,18 @@ async function stubParentShell(page: Parameters<typeof stubMe>[0]) {
     academy_id: ACADEMY_A,
     roles: ["parent"],
   });
+  await page.route("**/api/v2/parent/invoices", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { invoices: [] });
+  });
 }
 
 async function stubParentPayments(page: Parameters<typeof stubMe>[0]) {
   await page.route("**/api/v2/parent/payments", (route) =>
     fulfillJson(route, { payments: [] }),
+  );
+  await page.route("**/api/v2/parent/invoices", (route) =>
+    fulfillJson(route, { invoices: [] }),
   );
   await page.route("**/api/v2/parent/enrollments", (route) =>
     fulfillJson(route, { enrollments: [] }),

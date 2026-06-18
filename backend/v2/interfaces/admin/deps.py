@@ -207,6 +207,8 @@ class AdminUseCases:
     get_academy_gateway_use_case: GetAcademyGatewayUseCase
     change_user_role: ChangeUserRole
     reconcile_stripe_billing: object | None = None  # callable
+    get_billing_reconciliation_report: object | None = None  # callable
+    list_billing_webhook_events: object | None = None  # callable
     get_admin_user: GetAdminUser | None = None
     update_admin_user: UpdateAdminUser | None = None
     create_admin_user: CreateAdminUser | None = None

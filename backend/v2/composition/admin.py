@@ -2540,11 +2540,17 @@ def compose_admin(
             async for payment in cursor
         ]
         ledger_rows: list[dict[str, Any]] = []
+        ledger_keys: set[str] = set()
         async for doc in db["ledger_payments"].find(
             {"academy_id": request_academy_id},
             sort=[("created_at", -1)],
             limit=200,
         ):
+            stripe_payment_intent_id = doc.get("stripe_payment_intent_id")
+            stripe_invoice_id = doc.get("stripe_invoice_id")
+            ledger_keys.update(
+                str(key) for key in (stripe_payment_intent_id, stripe_invoice_id) if key
+            )
             ledger_rows.append(
                 {
                     "payment_id": str(doc.get("payment_id") or ""),
@@ -2555,18 +2561,294 @@ def compose_admin(
                     "currency": str(doc.get("currency") or "usd"),
                     "status": str(doc.get("status") or ""),
                     "refunded_cents": int(doc.get("refunded_cents") or 0),
-                    "stripe_payment_intent_id": doc.get("stripe_payment_intent_id"),
+                    "stripe_payment_intent_id": stripe_payment_intent_id,
+                    "stripe_invoice_id": stripe_invoice_id,
                     "payment_method": doc.get("payment_method"),
                     "created_at": doc["created_at"],
                 }
             )
-        combined = ledger_rows + legacy
+        attempt_rows: list[dict[str, Any]] = []
+        async for doc in db["payment_attempts"].find(
+            {"academy_id": request_academy_id, "status": {"$in": ["failed"]}},
+            sort=[("created_at", -1)],
+            limit=200,
+        ):
+            stripe_payment_intent_id = doc.get("stripe_payment_intent_id")
+            stripe_checkout_session_id = doc.get("stripe_checkout_session_id")
+            ledger_keys.update(
+                str(key) for key in (stripe_payment_intent_id, stripe_checkout_session_id) if key
+            )
+            attempt_rows.append(
+                {
+                    "payment_id": str(doc.get("attempt_id") or doc.get("idempotency_key") or ""),
+                    "parent_id": str(doc.get("parent_id") or ""),
+                    "session_id": None,
+                    "amount_cents": int(doc.get("amount_cents") or 0),
+                    "final_amount_cents": int(doc.get("amount_cents") or 0),
+                    "amount_received_cents": 0,
+                    "paid_amount_cents": 0,
+                    "balance_due_cents": int(doc.get("amount_cents") or 0),
+                    "currency": str(doc.get("currency") or "usd"),
+                    "status": "failed",
+                    "refunded_cents": 0,
+                    "stripe_payment_intent_id": stripe_payment_intent_id,
+                    "stripe_checkout_session_id": stripe_checkout_session_id,
+                    "invoice_number": doc.get("invoice_id"),
+                    "payment_method": "stripe_checkout",
+                    "reconciliation_status": doc.get("failure_code") or "payment_failed",
+                    "created_at": doc["created_at"],
+                }
+            )
+        deduped_legacy = [
+            row
+            for row in legacy
+            if str(row.get("stripe_payment_intent_id") or "") not in ledger_keys
+            and str(row.get("stripe_invoice_id") or "") not in ledger_keys
+        ]
+        combined = attempt_rows + ledger_rows + deduped_legacy
         combined.sort(
             key=lambda r: (r.get("created_at") if isinstance(r, dict) else None)
             or datetime.min.replace(tzinfo=UTC),
             reverse=True,
         )
         return combined[:200]
+
+    async def list_billing_webhook_events(*, status: str | None = None, limit: int = 50):
+        from backend.v2.shared.tenancy import current_academy_id
+
+        request_academy_id = current_academy_id()
+        query: dict[str, Any] = {"academy_id": request_academy_id}
+        if status:
+            query["status"] = status
+        else:
+            query["status"] = {"$in": ["failed", "quarantined"]}
+        rows = []
+        cursor = db["stripe_webhook_events"].find(
+            query,
+            sort=[("last_attempt_at", -1), ("received_at", -1), ("event_id", 1)],
+            limit=max(1, min(int(limit), 100)),
+        )
+        async for doc in cursor:
+            rows.append(
+                {
+                    "event_id": str(doc.get("event_id") or ""),
+                    "event_type": str(doc.get("event_type") or ""),
+                    "status": str(doc.get("status") or ""),
+                    "object_id": doc.get("object_id"),
+                    "object_type": doc.get("object_type"),
+                    "received_at": doc.get("received_at"),
+                    "last_attempt_at": doc.get("last_attempt_at"),
+                    "retry_count": int(doc.get("retry_count") or 0),
+                    "error_message": doc.get("error_message") or doc.get("error"),
+                }
+            )
+        return rows
+
+    async def get_billing_reconciliation_report(
+        *,
+        stripe_invoice_id: str | None = None,
+        payment_intent_id: str | None = None,
+    ) -> dict[str, Any]:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        request_academy_id = current_academy_id()
+        checked_at = datetime.now(UTC)
+        stripe_invoice: dict[str, Any] = {}
+        stripe_payment_intent: dict[str, Any] = {}
+        stripe_customer_id: str | None = None
+
+        retrieve_invoice = getattr(stripe, "retrieve_invoice", None)
+        if stripe_invoice_id and retrieve_invoice is not None:
+            stripe_invoice = await retrieve_invoice(stripe_invoice_id)
+            payment_intent_id = (
+                payment_intent_id or str(stripe_invoice.get("payment_intent") or "") or None
+            )
+            stripe_customer_id = str(stripe_invoice.get("customer") or "") or None
+
+        retrieve_payment_intent = getattr(stripe, "retrieve_payment_intent", None)
+        if payment_intent_id and retrieve_payment_intent is not None:
+            stripe_payment_intent = await retrieve_payment_intent(payment_intent_id)
+            stripe_customer_id = (
+                stripe_customer_id or str(stripe_payment_intent.get("customer") or "") or None
+            )
+
+        local_invoice = None
+        if stripe_invoice_id:
+            local_invoice = await db["invoices"].find_one(
+                {"academy_id": request_academy_id, "stripe_invoice_id": stripe_invoice_id}
+            )
+        stripe_invoice_metadata = (
+            stripe_invoice.get("metadata")
+            if isinstance(stripe_invoice.get("metadata"), dict)
+            else {}
+        ) or {}
+        duplicate_obligation_invoice = None
+        if stripe_invoice_id:
+            matching_invoices = (
+                await db["invoices"]
+                .find(
+                    {
+                        "academy_id": request_academy_id,
+                        "stripe_invoice_id": stripe_invoice_id,
+                    },
+                    {"invoice_id": 1, "stripe_invoice_id": 1},
+                )
+                .to_list(length=2)
+            )
+            if len(matching_invoices) > 1:
+                duplicate_obligation_invoice = matching_invoices[0]
+            elif local_invoice is None:
+                obligation_query: dict[str, Any] = {"academy_id": request_academy_id}
+                for field in ("enrollment_id", "period", "parent_id", "student_id"):
+                    value = stripe_invoice_metadata.get(field)
+                    if value:
+                        obligation_query[field] = str(value)
+                if len(obligation_query) > 1:
+                    obligation_query["status"] = {"$in": ["open", "partially_paid", "paid"]}
+                    obligation_query["stripe_invoice_id"] = {"$ne": stripe_invoice_id}
+                    duplicate_obligation_invoice = await db["invoices"].find_one(
+                        obligation_query,
+                        sort=[("created_at", -1), ("invoice_id", 1)],
+                    )
+                    if duplicate_obligation_invoice is not None:
+                        local_invoice = duplicate_obligation_invoice
+
+        ledger_payment_query: dict[str, Any] = {"academy_id": request_academy_id}
+        if stripe_invoice_id and payment_intent_id:
+            ledger_payment_query["$or"] = [
+                {"stripe_invoice_id": stripe_invoice_id},
+                {"stripe_payment_intent_id": payment_intent_id},
+            ]
+        elif stripe_invoice_id:
+            ledger_payment_query["stripe_invoice_id"] = stripe_invoice_id
+        elif payment_intent_id:
+            ledger_payment_query["stripe_payment_intent_id"] = payment_intent_id
+        ledger_payment = await db["ledger_payments"].find_one(ledger_payment_query)
+
+        allocation = None
+        if ledger_payment is not None:
+            allocation = await db["payment_allocations"].find_one(
+                {
+                    "academy_id": request_academy_id,
+                    "payment_id": ledger_payment.get("payment_id"),
+                }
+            )
+            if local_invoice is None and allocation is not None:
+                local_invoice = await db["invoices"].find_one(
+                    {
+                        "academy_id": request_academy_id,
+                        "invoice_id": allocation.get("invoice_id"),
+                    }
+                )
+
+        mismatches: list[dict[str, Any]] = []
+        if duplicate_obligation_invoice is not None:
+            mismatches.append(
+                {
+                    "code": "DUPLICATE_OBLIGATION",
+                    "message": "Stripe invoice maps to an already-existing local obligation",
+                    "stripe_value": stripe_invoice_id,
+                    "local_value": duplicate_obligation_invoice.get("stripe_invoice_id"),
+                }
+            )
+        elif stripe_invoice_id and local_invoice is None:
+            mismatches.append(
+                {
+                    "code": "MISSING_LOCAL_INVOICE",
+                    "message": "Stripe invoice has no matching LedgerInvoice",
+                    "stripe_value": stripe_invoice_id,
+                    "local_value": None,
+                }
+            )
+        if local_invoice is not None and ledger_payment is None:
+            mismatches.append(
+                {
+                    "code": "MISSING_LEDGER_PAYMENT",
+                    "message": "LedgerInvoice has no matching LedgerPayment",
+                    "stripe_value": stripe_invoice_id or payment_intent_id,
+                    "local_value": None,
+                }
+            )
+        if ledger_payment is not None and allocation is None:
+            mismatches.append(
+                {
+                    "code": "MISSING_ALLOCATION",
+                    "message": "LedgerPayment has no PaymentAllocation",
+                    "stripe_value": stripe_invoice_id or payment_intent_id,
+                    "local_value": ledger_payment.get("payment_id"),
+                }
+            )
+
+        stripe_payment_succeeded = (
+            str(stripe_payment_intent.get("status") or "").lower() == "succeeded"
+        )
+        if (
+            payment_intent_id
+            and stripe_payment_succeeded
+            and local_invoice is None
+            and ledger_payment is None
+            and allocation is None
+        ):
+            mismatches.append(
+                {
+                    "code": "ORPHAN_STRIPE_PAYMENT",
+                    "message": "Stripe PaymentIntent succeeded without local ledger records",
+                    "stripe_value": payment_intent_id,
+                    "local_value": None,
+                }
+            )
+
+        stripe_amount = int(
+            stripe_invoice.get("amount_paid")
+            or stripe_invoice.get("amount_due")
+            or stripe_payment_intent.get("amount")
+            or 0
+        )
+        if local_invoice is not None and stripe_amount:
+            local_total = int(local_invoice.get("total_cents") or 0)
+            if local_total and local_total != stripe_amount:
+                mismatches.append(
+                    {
+                        "code": "AMOUNT_MISMATCH",
+                        "message": "Stripe amount differs from ledger invoice total",
+                        "stripe_value": stripe_amount,
+                        "local_value": local_total,
+                    }
+                )
+
+        stripe_paid = (
+            str(stripe_invoice.get("status") or "").lower() == "paid"
+            or str(stripe_invoice.get("paid") or "").lower() == "true"
+            or str(stripe_payment_intent.get("status") or "").lower() == "succeeded"
+        )
+        if local_invoice is not None and stripe_paid and local_invoice.get("status") != "paid":
+            mismatches.append(
+                {
+                    "code": "STATUS_MISMATCH",
+                    "message": "Stripe is paid but LedgerInvoice is not paid",
+                    "stripe_value": "paid",
+                    "local_value": local_invoice.get("status"),
+                }
+            )
+
+        result = "MATCH" if not mismatches else str(mismatches[0]["code"])
+        return {
+            "result": result,
+            "stripe_invoice_id": stripe_invoice_id,
+            "payment_intent_id": payment_intent_id,
+            "stripe_customer_id": stripe_customer_id,
+            "local_invoice_id": str(local_invoice.get("invoice_id"))
+            if local_invoice is not None
+            else None,
+            "ledger_payment_id": str(ledger_payment.get("payment_id"))
+            if ledger_payment is not None
+            else None,
+            "payment_allocation_id": str(allocation.get("allocation_id"))
+            if allocation is not None
+            else None,
+            "mismatches": mismatches,
+            "checked_at": checked_at,
+        }
 
     async def reconcile_stripe_billing(
         *,
@@ -3184,6 +3466,8 @@ def compose_admin(
         apply_payment_discount=apply_payment_discount,
         undo_payment_paid=undo_payment_paid,
         reconcile_stripe_billing=reconcile_stripe_billing,
+        get_billing_reconciliation_report=get_billing_reconciliation_report,
+        list_billing_webhook_events=list_billing_webhook_events,
         record_expense=record_expense,
         edit_expense=edit_expense,
         delete_expense=delete_expense,

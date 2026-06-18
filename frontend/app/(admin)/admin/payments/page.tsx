@@ -17,6 +17,8 @@ import {
   generateAdminInvoiceArtifact,
   generateMonthlyPayments,
   getAdminInvoiceDetail,
+  getBillingReconciliationReport,
+  listBillingWebhookEvents,
   listAdminPayments,
   markPaymentPaid,
   reconcileStripeBilling,
@@ -24,6 +26,7 @@ import {
   undoPaymentPaid,
   type AdminPaymentStatus,
   type AdminPaymentView,
+  type BillingReconciliationReport,
   type ReconcileStripeBillingRequest,
   type RefundRequest,
 } from "@/lib/api/admin";
@@ -127,6 +130,10 @@ export default function AdminPaymentsPage() {
     queryKey: queryKeys.admin.payments(),
     queryFn: () => listAdminPayments(),
   });
+  const webhookQueueQuery = useQuery({
+    queryKey: ["admin", "billing-webhooks", "failed-quarantined"],
+    queryFn: () => listBillingWebhookEvents({ limit: 5 }),
+  });
 
   const undoMutation = useMutation({
     mutationFn: (paymentId: string) => undoPaymentPaid(paymentId),
@@ -134,12 +141,13 @@ export default function AdminPaymentsPage() {
   });
 
   const payments = data?.payments ?? [];
+  const webhookEvents = webhookQueueQuery.data?.events ?? [];
   const pendingCount = payments.filter((p) => {
     const status = adminPaymentStatus(p);
     return status === "pending" || status === "partially_paid";
   }).length;
-  const collectedCents = payments
-    .reduce((sum, p) => sum + (paidCents(p) ?? 0), 0);
+  const failedPaymentCount = payments.filter((p) => adminPaymentStatus(p) === "failed").length;
+  const collectedCents = payments.reduce((sum, p) => sum + (paidCents(p) ?? 0), 0);
 
   return (
     <section data-testid="admin-payments" className="space-y-5">
@@ -162,9 +170,58 @@ export default function AdminPaymentsPage() {
       {/* KPI strip */}
       <div className="grid gap-3 sm:grid-cols-3">
         <Metric label="Open invoices" value={String(pendingCount)} />
+        <Metric label="Failed payments" value={String(failedPaymentCount)} />
         <Metric label="Collected (net)" value={formatCents(collectedCents)} />
-        <Metric label="Total payments" value={String(payments.length)} />
       </div>
+
+      <Card p={16}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <Overline>Recovery</Overline>
+            <h2 className="mt-1 font-display text-lg font-semibold text-rally-ink">
+              Failed webhook queue
+            </h2>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void webhookQueueQuery.refetch()}
+            disabled={webhookQueueQuery.isFetching}
+          >
+            Refresh
+          </Button>
+        </div>
+        {webhookQueueQuery.isError ? (
+          <p className="mt-3 text-sm text-red-700">Could not load webhook recovery queue.</p>
+        ) : webhookEvents.length === 0 ? (
+          <p className="mt-3 text-sm text-rally-subtle">No failed or quarantined webhooks.</p>
+        ) : (
+          <div className="mt-4 divide-y divide-rally-line">
+            {webhookEvents.map((event) => (
+              <div key={event.event_id} className="grid gap-2 py-3 text-sm sm:grid-cols-[1fr_auto]">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-rally-ink">{event.event_type}</span>
+                    <Chip
+                      variant={event.status === "quarantined" ? "failed" : "pending"}
+                      label={event.status.toUpperCase()}
+                    />
+                  </div>
+                  <p className="mt-1 max-w-2xl text-rally-subtle">
+                    {event.error_message || "No error detail recorded."}
+                  </p>
+                </div>
+                <div className="font-mono text-xs text-rally-subtle sm:text-right">
+                  <div>{event.event_id}</div>
+                  {event.object_id && <div>{event.object_id}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <ReconciliationReportPanel />
 
       {isError && (
         <Card p={16} style={{ borderColor: "#fecaca", background: "#fef2f2" }}>
@@ -338,6 +395,117 @@ function Metric({ label, value }: { label: string; value: string }) {
         <BigNum size={28}>{value}</BigNum>
       </div>
     </Card>
+  );
+}
+
+function ReconciliationReportPanel() {
+  const [stripeInvoiceId, setStripeInvoiceId] = useState("");
+  const [paymentIntentId, setPaymentIntentId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const canRun = Boolean(stripeInvoiceId.trim() || paymentIntentId.trim());
+  const mutation = useMutation({
+    mutationFn: () =>
+      getBillingReconciliationReport({
+        stripe_invoice_id: stripeInvoiceId.trim() || null,
+        payment_intent_id: paymentIntentId.trim() || null,
+      }),
+    onSuccess: () => setError(null),
+    onError: (err: Error) => setError(err.message ?? "Reconciliation failed."),
+  });
+  const report = mutation.data;
+
+  return (
+    <Card p={16}>
+      <div>
+        <Overline>Reconciliation</Overline>
+        <h2 className="mt-1 font-display text-lg font-semibold text-rally-ink">
+          Read-only reconciliation
+        </h2>
+      </div>
+      <form
+        className="mt-4 grid gap-3 lg:grid-cols-[1fr_1fr_auto]"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!canRun) {
+            setError("Stripe invoice ID or PaymentIntent ID is required.");
+            return;
+          }
+          mutation.mutate();
+        }}
+      >
+        <Field label="Stripe invoice ID">
+          <input
+            value={stripeInvoiceId}
+            onChange={(event) => setStripeInvoiceId(event.target.value)}
+            className={inputClass}
+            placeholder="in_..."
+          />
+        </Field>
+        <Field label="PaymentIntent ID">
+          <input
+            value={paymentIntentId}
+            onChange={(event) => setPaymentIntentId(event.target.value)}
+            className={inputClass}
+            placeholder="pi_..."
+          />
+        </Field>
+        <div className="flex items-end">
+          <Button
+            variant="secondary"
+            size="sm"
+            type="submit"
+            disabled={!canRun || mutation.isPending}
+          >
+            {mutation.isPending ? "Checking..." : "Run report"}
+          </Button>
+        </div>
+      </form>
+      {error && <div className="mt-3"><Alert tone="red">{error}</Alert></div>}
+      {report && <ReconciliationReportSummary report={report} />}
+    </Card>
+  );
+}
+
+function ReconciliationReportSummary({ report }: { report: BillingReconciliationReport }) {
+  const checkedAt = new Date(report.checked_at).toLocaleString();
+  return (
+    <div className="mt-4 space-y-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <Chip
+          variant={report.result === "MATCH" ? "paid" : "failed"}
+          label={report.result.replaceAll("_", " ")}
+        />
+        <span className="text-rally-subtle">Checked {checkedAt}</span>
+      </div>
+      <div className="grid gap-2 rounded-md border border-rally-line bg-rally-paper/50 p-3 md:grid-cols-2">
+        <SummaryRow label="Stripe invoice" value={report.stripe_invoice_id || "—"} />
+        <SummaryRow label="PaymentIntent" value={report.payment_intent_id || "—"} />
+        <SummaryRow label="Stripe customer" value={report.stripe_customer_id || "—"} />
+        <SummaryRow label="Ledger invoice" value={report.local_invoice_id || "—"} />
+        <SummaryRow label="Ledger payment" value={report.ledger_payment_id || "—"} />
+        <SummaryRow label="Payment allocation" value={report.payment_allocation_id || "—"} />
+      </div>
+      {report.mismatches.length === 0 ? (
+        <p className="text-sm text-rally-subtle">No mismatches found.</p>
+      ) : (
+        <div className="divide-y divide-rally-line rounded-md border border-rally-line">
+          {report.mismatches.map((mismatch, index) => (
+            <div key={`${mismatch.code}-${index}`} className="grid gap-1 p-3 sm:grid-cols-[180px_1fr]">
+              <div className="font-mono text-xs font-bold uppercase text-rally-ink">
+                {mismatch.code}
+              </div>
+              <div>
+                <p className="text-rally-ink">{mismatch.message}</p>
+                <p className="mt-1 font-mono text-xs text-rally-subtle">
+                  Stripe: {String(mismatch.stripe_value ?? "—")} · Local:{" "}
+                  {String(mismatch.local_value ?? "—")}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -6,13 +6,16 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   createParentPauseRequest,
+  getParentInvoice,
   getCheckoutStatus,
   listParentEnrollments,
   listParentCredits,
+  listParentInvoices,
   listParentPayments,
   listParentPauseRequests,
   openBillingPortal,
   startAutopay,
+  startParentInvoicePayment,
 } from "@/lib/api/parent";
 
 const BILLING_PORTAL_PREREQUISITE =
@@ -63,6 +66,9 @@ export default function ParentPaymentsPage() {
   const [pauseReason, setPauseReason] = useState("");
   const [portalError, setPortalError] = useState<string | null>(null);
   const [autopayError, setAutopayError] = useState<string | null>(null);
+  const [invoicePaymentError, setInvoicePaymentError] = useState<string | null>(null);
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
+  const [payingInvoiceId, setPayingInvoiceId] = useState<string | null>(null);
   const [startingAutopayEnrollmentId, setStartingAutopayEnrollmentId] = useState<string | null>(
     null,
   );
@@ -77,6 +83,17 @@ export default function ParentPaymentsPage() {
     queryFn: listParentEnrollments,
     staleTime: returnedFromAutopayCheckout ? 0 : undefined,
     refetchOnMount: returnedFromAutopayCheckout ? "always" : undefined,
+  });
+  const invoicesQuery = useQuery({
+    queryKey: ["parent", "invoices"],
+    queryFn: listParentInvoices,
+    staleTime: returnedFromAutopayCheckout ? 0 : undefined,
+    refetchOnMount: returnedFromAutopayCheckout ? "always" : undefined,
+  });
+  const invoiceDetailQuery = useQuery({
+    queryKey: ["parent", "invoice-detail", selectedInvoiceId],
+    queryFn: () => getParentInvoice(selectedInvoiceId ?? ""),
+    enabled: Boolean(selectedInvoiceId),
   });
   const checkoutStatusQuery = useQuery({
     queryKey: ["parent", "checkout-status", checkoutSessionId],
@@ -153,6 +170,34 @@ export default function ParentPaymentsPage() {
       setStartingAutopayEnrollmentId(null);
     },
   });
+  const invoicePaymentMutation = useMutation({
+    mutationFn: (invoiceId: string) =>
+      startParentInvoicePayment(invoiceId, {
+        success_url: `${window.location.origin}/parent/payments?invoice=paid`,
+        cancel_url: `${window.location.origin}/parent/payments?invoice=cancelled`,
+      }),
+    onMutate: (invoiceId) => {
+      setPortalError(null);
+      setInvoicePaymentError(null);
+      setPayingInvoiceId(invoiceId);
+    },
+    onSuccess: (res) => {
+      if (!res.redirect_url) {
+        setInvoicePaymentError("Payment could not start because Stripe did not return a checkout link.");
+        return;
+      }
+      window.location.href = res.redirect_url;
+    },
+    onError: (error) => {
+      const detail = error instanceof Error ? error.message : "Request failed";
+      setInvoicePaymentError(
+        detail === "Request failed" ? "Payment could not start." : `Payment could not start. ${detail}`,
+      );
+    },
+    onSettled: () => {
+      setPayingInvoiceId(null);
+    },
+  });
   const pauseMutation = useMutation({
     mutationFn: () =>
       createParentPauseRequest({
@@ -175,27 +220,35 @@ export default function ParentPaymentsPage() {
     if (!returnedFromAutopayCheckout) return;
     void queryClient.invalidateQueries({ queryKey: ["parent", "payments"] });
     void queryClient.invalidateQueries({ queryKey: ["parent", "enrollments"] });
+    void queryClient.invalidateQueries({ queryKey: ["parent", "invoices"] });
   }, [queryClient, returnedFromAutopayCheckout]);
 
   useEffect(() => {
     if (!checkoutStatusQuery.data?.status) return;
     void queryClient.invalidateQueries({ queryKey: ["parent", "payments"] });
     void queryClient.invalidateQueries({ queryKey: ["parent", "enrollments"] });
+    void queryClient.invalidateQueries({ queryKey: ["parent", "invoices"] });
   }, [checkoutStatusQuery.data?.status, queryClient]);
 
   const payments = paymentsQuery.data?.payments ?? [];
   const enrollments = enrollmentsQuery.data?.enrollments ?? [];
+  const invoices = invoicesQuery.data?.invoices ?? [];
   const pauseRequests = pauseRequestsQuery.data?.requests ?? [];
   const creditBalance = creditsQuery.data?.balance_cents ?? 0;
   const credits = creditsQuery.data?.credits ?? [];
+  const currentBalance = invoices
+    .filter((invoice) => invoice.status !== "void")
+    .reduce((total, invoice) => total + invoice.balance_due_cents, 0);
   const loading =
     paymentsQuery.isLoading ||
     enrollmentsQuery.isLoading ||
+    invoicesQuery.isLoading ||
     pauseRequestsQuery.isLoading ||
     creditsQuery.isLoading;
   const error =
     paymentsQuery.isError ||
     enrollmentsQuery.isError ||
+    invoicesQuery.isError ||
     pauseRequestsQuery.isError ||
     creditsQuery.isError;
 
@@ -252,6 +305,15 @@ export default function ParentPaymentsPage() {
           {portalError}
         </p>
       )}
+      {invoicePaymentError && (
+        <p
+          role="alert"
+          data-testid="invoice-payment-error"
+          className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-100"
+        >
+          {invoicePaymentError}
+        </p>
+      )}
 
       {creditBalance > 0 && (
         <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900 dark:bg-emerald-950/30">
@@ -275,6 +337,110 @@ export default function ParentPaymentsPage() {
           )}
         </section>
       )}
+
+      <section className="rounded-lg border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">Invoices</h2>
+            <p className="text-sm text-neutral-500">Current balance {money(currentBalance)}</p>
+          </div>
+          <p className="text-xs text-neutral-500">{invoices.length} invoice{invoices.length === 1 ? "" : "s"}</p>
+        </div>
+        {invoices.length === 0 ? (
+          <p className="mt-3 text-sm text-neutral-500">No invoices yet.</p>
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead>
+                <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
+                  <th className="py-2 pr-3 font-medium">Period</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 py-2 text-right font-medium">Paid</th>
+                  <th className="px-3 py-2 text-right font-medium">Due</th>
+                  <th className="py-2 pl-3 text-right font-medium">Detail</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoices.map((invoice) => {
+                  const paid = Math.max(invoice.total_cents - invoice.balance_due_cents, 0);
+                  const payable =
+                    invoice.balance_due_cents > 0 &&
+                    (invoice.status === "open" || invoice.status === "partially_paid");
+                  return (
+                    <tr key={invoice.invoice_id} className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
+                      <td className="py-3 pr-3 font-medium">{invoice.period}</td>
+                      <td className="px-3 py-3"><StatusBadge status={invoice.status} /></td>
+                      <td className="px-3 py-3 text-right font-mono tabular-nums">{money(paid, invoice.currency.toUpperCase())}</td>
+                      <td className="px-3 py-3 text-right font-mono tabular-nums">{money(invoice.balance_due_cents, invoice.currency.toUpperCase())}</td>
+                      <td className="py-3 pl-3 text-right">
+                        <div className="flex flex-wrap justify-end gap-2">
+                          {payable && (
+                            <>
+                              <button
+                                type="button"
+                                className="rounded-md border border-blue-300 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-60 dark:border-blue-700 dark:text-blue-300"
+                                disabled={invoicePaymentMutation.isPending}
+                                onClick={() => invoicePaymentMutation.mutate(invoice.invoice_id)}
+                              >
+                                {payingInvoiceId === invoice.invoice_id ? "Starting..." : "Retry payment"}
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-700 dark:text-neutral-300"
+                                disabled={portalMutation.isPending}
+                                onClick={() => portalMutation.mutate()}
+                              >
+                                Update card
+                              </button>
+                            </>
+                          )}
+                          <button
+                            type="button"
+                            className="text-sm font-medium text-blue-700 hover:underline dark:text-blue-300"
+                            onClick={() => setSelectedInvoiceId(invoice.invoice_id)}
+                          >
+                            View
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {selectedInvoiceId && (
+          <div className="mt-4 rounded-md border border-neutral-200 p-3 dark:border-neutral-800">
+            {invoiceDetailQuery.isLoading ? (
+              <p className="text-sm text-neutral-500">Loading invoice...</p>
+            ) : invoiceDetailQuery.isError ? (
+              <p className="text-sm text-red-600">Could not load invoice detail.</p>
+            ) : invoiceDetailQuery.data ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="font-medium">Invoice {invoiceDetailQuery.data.period}</h3>
+                  <button
+                    type="button"
+                    className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+                    onClick={() => setSelectedInvoiceId(null)}
+                  >
+                    Close
+                  </button>
+                </div>
+                <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
+                  {invoiceDetailQuery.data.lines.map((line) => (
+                    <li key={`${line.description}-${line.amount_cents}`} className="flex items-center justify-between gap-3 py-2 text-sm">
+                      <span>{line.description} x {line.quantity}</span>
+                      <span className="font-mono tabular-nums">{money(line.amount_cents, invoiceDetailQuery.data.currency.toUpperCase())}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </section>
 
       <section>
         <h2 className="mb-3 text-lg font-semibold">Autopay</h2>
@@ -479,6 +645,13 @@ export default function ParentPaymentsPage() {
                 {payment.refunded_cents > 0 && (
                   <p className="text-xs text-amber-700 dark:text-amber-300">
                     Refunded {money(payment.refunded_cents, payment.currency.toUpperCase())}
+                  </p>
+                )}
+                {(payment.stripe_invoice_id || payment.stripe_payment_intent_id) && (
+                  <p className="mt-1 truncate text-xs font-mono text-neutral-500">
+                    {payment.stripe_invoice_id
+                      ? `Invoice ${payment.stripe_invoice_id}`
+                      : `PaymentIntent ${payment.stripe_payment_intent_id}`}
                   </p>
                 )}
               </li>

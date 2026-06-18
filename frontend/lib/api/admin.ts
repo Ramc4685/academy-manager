@@ -337,6 +337,41 @@ export interface ReconcileStripeBillingResponse {
   audit_id: string | null;
 }
 
+export interface BillingReconciliationMismatch {
+  code: string;
+  message: string;
+  stripe_value?: unknown;
+  local_value?: unknown;
+}
+
+export interface BillingReconciliationReport {
+  result: string;
+  stripe_invoice_id: string | null;
+  payment_intent_id: string | null;
+  stripe_customer_id: string | null;
+  local_invoice_id: string | null;
+  ledger_payment_id: string | null;
+  payment_allocation_id: string | null;
+  mismatches: BillingReconciliationMismatch[];
+  checked_at: string;
+}
+
+export interface BillingWebhookEvent {
+  event_id: string;
+  event_type: string;
+  status: string;
+  object_id: string | null;
+  object_type: string | null;
+  received_at: string | null;
+  last_attempt_at: string | null;
+  retry_count: number;
+  error_message: string | null;
+}
+
+export interface BillingWebhookQueue {
+  events: BillingWebhookEvent[];
+}
+
 export interface AdminBillingProductView {
   product_id: string;
   name: string;
@@ -1443,6 +1478,29 @@ export function reconcileStripeBilling(
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export function getBillingReconciliationReport(params: {
+  stripe_invoice_id?: string | null;
+  payment_intent_id?: string | null;
+}): Promise<BillingReconciliationReport> {
+  const query = new URLSearchParams();
+  if (params.stripe_invoice_id) query.set("stripe_invoice_id", params.stripe_invoice_id);
+  if (params.payment_intent_id) query.set("payment_intent_id", params.payment_intent_id);
+  return apiFetch<BillingReconciliationReport>(`/admin/billing/reconciliation?${query.toString()}`, {
+    method: "GET",
+  });
+}
+
+export function listBillingWebhookEvents(params: {
+  status?: "failed" | "quarantined" | string | null;
+  limit?: number;
+} = {}): Promise<BillingWebhookQueue> {
+  const query = new URLSearchParams();
+  if (params.status) query.set("status", params.status);
+  if (params.limit) query.set("limit", String(params.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return apiFetch<BillingWebhookQueue>(`/admin/billing/webhooks${suffix}`, { method: "GET" });
 }
 
 export function listBillingProducts(): Promise<AdminBillingProductList> {

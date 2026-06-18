@@ -7,10 +7,15 @@
 #   make up               # build, start, seed, show URLs + creds
 #
 # Or step by step:
-#   scripts/dev/saas_staging.sh up         # build + start the stack
+#   scripts/dev/saas_staging.sh up         # build + start the stack (production staging build)
+#   scripts/dev/saas_staging.sh up-dev     # hot-reload mode: UI + backend reload on save
 #   scripts/dev/saas_staging.sh seed       # seed tenant + Firebase test user
 #   scripts/dev/saas_staging.sh status     # show containers + URLs + creds
 #   scripts/dev/saas_staging.sh smoke      # run the SaaS readiness smoke
+#
+# Rebuild individual services without restarting the whole stack:
+#   scripts/dev/saas_staging.sh rebuild-ui  # rebuild + restart frontend only (staging build)
+#   scripts/dev/saas_staging.sh rebuild-api # rebuild + restart backend only
 #
 # Custom test data:
 #   scripts/dev/saas_staging.sh seed --slug blno --domain blno.localhost ...
@@ -36,6 +41,8 @@ cd "${REPO_ROOT}"
 PROJECT_NAME="saas-staging"
 COMPOSE_FILES=(-f docker-compose.yml -f docker-compose.saas.yml)
 COMPOSE=(docker compose -p "${PROJECT_NAME}" "${COMPOSE_FILES[@]}")
+COMPOSE_DEV_FILES=(-f docker-compose.yml -f docker-compose.saas.yml -f docker-compose.saas-dev.yml)
+COMPOSE_DEV=(docker compose -p "${PROJECT_NAME}" "${COMPOSE_DEV_FILES[@]}")
 
 LOCAL_DIR="${REPO_ROOT}/.local"
 ENV_FILE="${LOCAL_DIR}/saas-staging.env"
@@ -230,7 +237,7 @@ cmd_up() {
   log "Waiting for backend health (up to 90s)..."
   if wait_for_url "http://127.0.0.1:8001/api/v2/healthz" 90; then
     log "Backend is healthy."
-    log "Next:  scripts/dev/saas_staging.sh seed   (or: make saas-seed)"
+    log "Next:  scripts/dev/saas_staging.sh blno-seed   (seed BLno academy with realistic data)"
   else
     warn "Backend did not respond on http://127.0.0.1:8001/api/v2/healthz within 90s."
     warn "Inspect logs:  scripts/dev/saas_staging.sh logs backend"
@@ -441,8 +448,44 @@ cmd_nuke() {
   log "Nuked. Run 'up' to rebuild from a clean slate (or: make up)."
 }
 
+cmd_up_dev() {
+  ensure_env_file
+  local api_key
+  api_key="$(require_firebase_api_key)"
+  preflight
+  log "Starting stack in hot-reload dev mode (project=${PROJECT_NAME})..."
+  NEXT_PUBLIC_FIREBASE_API_KEY="${api_key}" "${COMPOSE_DEV[@]}" up -d --build
+  log "Waiting for backend health (up to 90s)..."
+  if wait_for_url "http://127.0.0.1:8001/api/v2/healthz" 90; then
+    log "Stack up in hot-reload mode."
+    log "  Frontend  → save a file, browser refreshes automatically (next dev + polling)."
+    log "  Backend   → save a .py file, uvicorn reloads automatically."
+    log "Next:  scripts/dev/saas_staging.sh blno-seed   (seed BLno academy with realistic data)"
+  else
+    warn "Backend did not respond on http://127.0.0.1:8001/api/v2/healthz within 90s."
+    warn "Inspect logs:  scripts/dev/saas_staging.sh logs backend"
+    exit 1
+  fi
+}
+
+cmd_rebuild_ui() {
+  log "Rebuilding frontend (deps layer cached if pnpm-lock.yaml unchanged)..."
+  "${COMPOSE[@]}" up -d --no-deps --build frontend
+  log "Frontend rebuilt and restarted at http://localhost:3000"
+}
+
+cmd_rebuild_api() {
+  log "Rebuilding backend (deps layer cached if requirements.txt unchanged)..."
+  "${COMPOSE[@]}" up -d --no-deps --build backend
+  if wait_for_url "http://127.0.0.1:8001/api/v2/healthz" 60; then
+    log "Backend rebuilt and healthy."
+  else
+    warn "Backend did not respond within 60s. Check: scripts/dev/saas_staging.sh logs backend"
+  fi
+}
+
 usage() {
-  sed -n '3,29p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 main() {
@@ -450,6 +493,9 @@ main() {
   shift || true
   case "${cmd}" in
     up)          cmd_up "$@" ;;
+    up-dev)      cmd_up_dev "$@" ;;
+    rebuild-ui)  cmd_rebuild_ui "$@" ;;
+    rebuild-api) cmd_rebuild_api "$@" ;;
     seed)        cmd_seed "$@" ;;
     blno-seed)   cmd_blno_seed "$@" ;;
     reset)       cmd_reset "$@" ;;

@@ -135,6 +135,7 @@ async def test_invoice_checkout_session_uses_invoice_metadata_and_reference() ->
             "parent_id": "parent_1",
             "source": "invoice_pay_link",
         },
+        idempotency_key="invoice-checkout:inv_123:4100",
     )
 
     request = _FakeCheckoutSession.calls[-1]
@@ -142,6 +143,7 @@ async def test_invoice_checkout_session_uses_invoice_metadata_and_reference() ->
     assert checkout_url == "https://checkout.stripe.test/session"
     assert request["mode"] == "payment"
     assert request["client_reference_id"] == "parent_1"
+    assert request["idempotency_key"] == "invoice-checkout:inv_123:4100"
     assert request["metadata"] == {
         "invoice_id": "inv_123",
         "academy_id": "academy_1",

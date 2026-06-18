@@ -16,12 +16,42 @@ class _NoopStripe:
     pass
 
 
+class _FakeReconciliationStripe:
+    def __init__(
+        self,
+        *,
+        invoice: dict[str, Any] | None = None,
+        payment_intent: dict[str, Any] | None = None,
+    ) -> None:
+        self.invoice = invoice
+        self.payment_intent = payment_intent
+
+    async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
+        assert self.invoice is not None
+        assert self.invoice["id"] == stripe_invoice_id
+        return self.invoice
+
+    async def retrieve_payment_intent(self, stripe_payment_intent_id: str) -> dict[str, Any]:
+        assert self.payment_intent is not None
+        assert self.payment_intent["id"] == stripe_payment_intent_id
+        return self.payment_intent
+
+
 def _admin_use_cases(db: Any):
     return compose_admin(
         db,
         outbox=object(),  # type: ignore[arg-type]
         idempotency_store=object(),  # type: ignore[arg-type]
         stripe=_NoopStripe(),  # type: ignore[arg-type]
+    )
+
+
+def _admin_use_cases_with_stripe(db: Any, stripe: Any):
+    return compose_admin(
+        db,
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
     )
 
 
@@ -414,6 +444,265 @@ async def test_admin_revenue_export_includes_ledger_payments(mongo_db) -> None:
                 "created_at": now,
             },
         ]
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope("request-acad"):
+        csv_text = await admin.export_report_csv("revenue")
+
+    assert csv_text == "month,revenue_cents\r\n2026-06,12000\r\n"
+
+
+@pytest.mark.asyncio
+async def test_admin_payments_recent_suppresses_matching_legacy_projection(mongo_db) -> None:
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    await mongo_db["ledger_payments"].insert_one(
+        {
+            "payment_id": "ledger-subscription",
+            "academy_id": "request-acad",
+            "parent_id": "parent-request",
+            "status": "succeeded",
+            "amount_cents": 12000,
+            "currency": "usd",
+            "stripe_invoice_id": "in_subscription_paid",
+            "stripe_payment_intent_id": "in_subscription_paid",
+            "created_at": now,
+        }
+    )
+    await mongo_db["payments"].insert_one(
+        {
+            "payment_id": "legacy-subscription-projection",
+            "academy_id": "request-acad",
+            "parent_id": "parent-request",
+            "status": "succeeded",
+            "amount_cents": 12000,
+            "currency": "usd",
+            "stripe_payment_intent_id": "in_subscription_paid",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope("request-acad"):
+        rows = await admin.list_payments_recent()
+
+    assert [row["payment_id"] for row in rows] == ["ledger-subscription"]
+
+
+@pytest.mark.asyncio
+async def test_admin_payments_recent_includes_failed_payment_attempts(mongo_db) -> None:
+    now = datetime(2026, 6, 17, tzinfo=UTC)
+    await mongo_db["payment_attempts"].insert_many(
+        [
+            {
+                "attempt_id": "attempt-request",
+                "idempotency_key": "invoice-checkout-failed:inv-request:pi-request",
+                "academy_id": "request-acad",
+                "invoice_id": "inv-request",
+                "parent_id": "parent-request",
+                "amount_cents": 1242,
+                "currency": "usd",
+                "status": "failed",
+                "failure_code": "insufficient_funds",
+                "failure_message": "Your card has insufficient funds.",
+                "stripe_payment_intent_id": "pi-request",
+                "stripe_checkout_session_id": "cs-request",
+                "created_at": now,
+            },
+            {
+                "attempt_id": "attempt-default",
+                "idempotency_key": "invoice-checkout-failed:inv-default:pi-default",
+                "academy_id": "default-academy",
+                "invoice_id": "inv-default",
+                "parent_id": "parent-default",
+                "amount_cents": 9999,
+                "currency": "usd",
+                "status": "failed",
+                "failure_code": "card_declined",
+                "stripe_payment_intent_id": "pi-default",
+                "stripe_checkout_session_id": "cs-default",
+                "created_at": now,
+            },
+        ]
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope("request-acad"):
+        rows = await admin.list_payments_recent()
+
+    assert len(rows) == 1
+    assert rows[0]["payment_id"] == "attempt-request"
+    assert rows[0]["invoice_number"] == "inv-request"
+    assert rows[0]["status"] == "failed"
+    assert rows[0]["amount_cents"] == 1242
+    assert rows[0]["balance_due_cents"] == 1242
+    assert rows[0]["paid_amount_cents"] == 0
+    assert rows[0]["payment_method"] == "stripe_checkout"
+    assert rows[0]["stripe_payment_intent_id"] == "pi-request"
+    assert rows[0]["stripe_checkout_session_id"] == "cs-request"
+    assert rows[0]["reconciliation_status"] == "insufficient_funds"
+
+
+@pytest.mark.asyncio
+async def test_admin_billing_webhook_queue_uses_request_tenant(mongo_db) -> None:
+    now = datetime(2026, 6, 17, tzinfo=UTC)
+    await mongo_db["stripe_webhook_events"].insert_many(
+        [
+            {
+                "event_id": "evt-request",
+                "event_type": "invoice.paid",
+                "academy_id": "request-acad",
+                "status": "quarantined",
+                "object_id": "in-request",
+                "object_type": "invoice",
+                "received_at": now,
+                "last_attempt_at": now,
+                "retry_count": 2,
+                "error_message": "duplicate obligation",
+            },
+            {
+                "event_id": "evt-request-failed",
+                "event_type": "invoice.payment_failed",
+                "academy_id": "request-acad",
+                "status": "failed",
+                "object_id": "in-failed",
+                "object_type": "invoice",
+                "received_at": now,
+                "last_attempt_at": now,
+                "retry_count": 1,
+                "error_message": "transient error",
+            },
+            {
+                "event_id": "evt-default",
+                "event_type": "invoice.paid",
+                "academy_id": "default-academy",
+                "status": "quarantined",
+                "object_id": "in-default",
+                "object_type": "invoice",
+                "received_at": now,
+                "last_attempt_at": now,
+                "retry_count": 1,
+                "error_message": "wrong tenant",
+            },
+        ]
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope("request-acad"):
+        rows = await admin.list_billing_webhook_events(status="quarantined", limit=10)
+
+    assert [row["event_id"] for row in rows] == ["evt-request"]
+    assert rows[0]["error_message"] == "duplicate obligation"
+
+
+@pytest.mark.asyncio
+async def test_billing_reconciliation_detects_orphan_stripe_payment(mongo_db) -> None:
+    stripe = _FakeReconciliationStripe(
+        payment_intent={
+            "id": "pi_orphan",
+            "status": "succeeded",
+            "amount": 7000,
+            "customer": "cus_parent",
+        }
+    )
+
+    admin = _admin_use_cases_with_stripe(mongo_db, stripe)
+    with tenant_scope("request-acad"):
+        report = await admin.get_billing_reconciliation_report(payment_intent_id="pi_orphan")
+
+    assert report["result"] == "ORPHAN_STRIPE_PAYMENT"
+    assert report["payment_intent_id"] == "pi_orphan"
+    assert report["stripe_customer_id"] == "cus_parent"
+    assert report["local_invoice_id"] is None
+    assert report["ledger_payment_id"] is None
+    assert report["mismatches"][0]["code"] == "ORPHAN_STRIPE_PAYMENT"
+
+
+@pytest.mark.asyncio
+async def test_billing_reconciliation_detects_duplicate_obligation(mongo_db) -> None:
+    now = datetime(2026, 6, 17, tzinfo=UTC)
+    await mongo_db["invoices"].insert_one(
+        {
+            "invoice_id": "inv-existing",
+            "academy_id": "request-acad",
+            "parent_id": "parent-1",
+            "student_id": "student-1",
+            "enrollment_id": "enroll-1",
+            "period": "2026-06",
+            "status": "paid",
+            "total_cents": 7000,
+            "balance_due_cents": 0,
+            "currency": "usd",
+            "stripe_invoice_id": "in_existing_paid",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    stripe = _FakeReconciliationStripe(
+        invoice={
+            "id": "in_duplicate",
+            "status": "paid",
+            "paid": True,
+            "amount_paid": 7000,
+            "customer": "cus_parent",
+            "payment_intent": "pi_duplicate",
+            "metadata": {
+                "academy_id": "request-acad",
+                "parent_id": "parent-1",
+                "student_id": "student-1",
+                "enrollment_id": "enroll-1",
+                "period": "2026-06",
+            },
+        },
+        payment_intent={
+            "id": "pi_duplicate",
+            "status": "succeeded",
+            "amount": 7000,
+            "customer": "cus_parent",
+        },
+    )
+
+    admin = _admin_use_cases_with_stripe(mongo_db, stripe)
+    with tenant_scope("request-acad"):
+        report = await admin.get_billing_reconciliation_report(stripe_invoice_id="in_duplicate")
+
+    assert report["result"] == "DUPLICATE_OBLIGATION"
+    assert report["stripe_invoice_id"] == "in_duplicate"
+    assert report["local_invoice_id"] == "inv-existing"
+    assert report["mismatches"][0]["code"] == "DUPLICATE_OBLIGATION"
+    assert report["mismatches"][0]["stripe_value"] == "in_duplicate"
+    assert report["mismatches"][0]["local_value"] == "in_existing_paid"
+
+
+@pytest.mark.asyncio
+async def test_admin_revenue_export_dedupes_legacy_subscription_projection(mongo_db) -> None:
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    await mongo_db["ledger_payments"].insert_one(
+        {
+            "payment_id": "ledger-subscription",
+            "academy_id": "request-acad",
+            "parent_id": "parent-request",
+            "status": "succeeded",
+            "amount_cents": 12000,
+            "currency": "usd",
+            "stripe_invoice_id": "in_subscription_paid",
+            "stripe_payment_intent_id": "in_subscription_paid",
+            "created_at": now,
+        }
+    )
+    await mongo_db["payments"].insert_one(
+        {
+            "payment_id": "legacy-subscription-projection",
+            "academy_id": "request-acad",
+            "parent_id": "parent-request",
+            "status": "succeeded",
+            "amount_cents": 12000,
+            "currency": "usd",
+            "stripe_payment_intent_id": "in_subscription_paid",
+            "created_at": now,
+            "updated_at": now,
+        }
     )
 
     admin = _admin_use_cases(mongo_db)

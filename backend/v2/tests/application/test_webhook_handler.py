@@ -148,6 +148,52 @@ class FakeDedup:
         return None
 
 
+class FakeInvoiceProcessing:
+    def __init__(self) -> None:
+        self.by_key: dict[str, dict[str, Any]] = {}
+
+    async def record_recovery_point(
+        self,
+        *,
+        academy_id: str,
+        stripe_invoice_id: str,
+        stripe_subscription_id: str | None,
+        event_id: str,
+        recovery_point: str,
+        ledger_invoice_id: str | None = None,
+        ledger_payment_id: str | None = None,
+        legacy_payment_id: str | None = None,
+        last_error: str | None = None,
+        updated_at: datetime,
+    ) -> None:
+        key = f"{academy_id}:stripe_invoice:{stripe_invoice_id}"
+        row = self.by_key.setdefault(
+            key,
+            {
+                "academy_id": academy_id,
+                "business_key": f"stripe_invoice:{stripe_invoice_id}",
+                "stripe_invoice_id": stripe_invoice_id,
+                "event_ids": [],
+            },
+        )
+        if event_id not in row["event_ids"]:
+            row["event_ids"].append(event_id)
+        row.update(
+            {
+                "stripe_subscription_id": stripe_subscription_id,
+                "recovery_point": recovery_point,
+                "last_error": last_error,
+                "updated_at": updated_at,
+            }
+        )
+        if ledger_invoice_id is not None:
+            row["ledger_invoice_id"] = ledger_invoice_id
+        if ledger_payment_id is not None:
+            row["ledger_payment_id"] = ledger_payment_id
+        if legacy_payment_id is not None:
+            row["legacy_payment_id"] = legacy_payment_id
+
+
 class FakeOutbox:
     def __init__(self) -> None:
         self.events: list[Any] = []
@@ -190,15 +236,115 @@ class FakeEnrollmentAutopayState:
         )
 
 
+class FakeEnrollmentBillingIdentity:
+    def __init__(self) -> None:
+        self.rows: dict[str, dict[str, str | None]] = {}
+
+    def seed(
+        self,
+        *,
+        academy_id: str = "acad",
+        enrollment_id: str,
+        parent_id: str,
+        student_id: str | None,
+        session_id: str | None,
+    ) -> None:
+        self.rows[enrollment_id] = {
+            "academy_id": academy_id,
+            "parent_id": parent_id,
+            "student_id": student_id,
+            "enrollment_id": enrollment_id,
+            "session_id": session_id,
+        }
+
+    async def get_billing_identity(self, enrollment_id: str) -> dict[str, str | None] | None:
+        return self.rows.get(enrollment_id)
+
+
 class FakeBillingLedger:
     def __init__(self, invoice: LedgerInvoice | None = None) -> None:
         self.invoices = {invoice.invoice_id: invoice} if invoice else {}
+        self.invoice_keys: dict[str, str] = {}
+        self.lines: dict[str, list[Any]] = {}
         self.payments: dict[str, LedgerPayment] = {}
+        self.payment_keys: dict[str, str] = {}
         self.allocations: list[dict[str, Any]] = []
+        self.allocation_keys: set[str] = set()
+        self.payment_attempts: dict[str, dict[str, Any]] = {}
         self.fail_allocate = False
+
+    async def create_invoice(
+        self,
+        invoice: LedgerInvoice,
+        *,
+        lines: list[Any],
+        idempotency_key: str,
+    ) -> LedgerInvoice:
+        existing_id = self.invoice_keys.get(idempotency_key)
+        if existing_id is not None:
+            return self.invoices[existing_id]
+        existing = self.invoices.get(invoice.invoice_id)
+        if existing is not None:
+            self.invoice_keys[idempotency_key] = existing.invoice_id
+            return existing
+        self.invoices[invoice.invoice_id] = invoice
+        self.lines[invoice.invoice_id] = lines
+        self.invoice_keys[idempotency_key] = invoice.invoice_id
+        return invoice
 
     async def get_invoice(self, invoice_id: str) -> LedgerInvoice | None:
         return self.invoices.get(invoice_id)
+
+    async def get_invoice_by_stripe_invoice_id(
+        self, stripe_invoice_id: str
+    ) -> LedgerInvoice | None:
+        for invoice in self.invoices.values():
+            if invoice.stripe_invoice_id == stripe_invoice_id:
+                return invoice
+        return None
+
+    async def save_invoice(self, invoice: LedgerInvoice) -> LedgerInvoice:
+        self.invoices[invoice.invoice_id] = invoice
+        return invoice
+
+    async def get_open_invoice_for_enrollment(
+        self, enrollment_id: str, period: str
+    ) -> LedgerInvoice | None:
+        for invoice in self.invoices.values():
+            if (
+                invoice.enrollment_id == enrollment_id
+                and invoice.period == period
+                and invoice.status in {"open", "draft", "partially_paid"}
+            ):
+                return invoice
+        return None
+
+    async def get_invoice_for_enrollment_period(
+        self,
+        enrollment_id: str,
+        period: str,
+        *,
+        statuses: set[str] | None = None,
+    ) -> LedgerInvoice | None:
+        for invoice in self.invoices.values():
+            if invoice.enrollment_id != enrollment_id or invoice.period != period:
+                continue
+            if statuses is not None and invoice.status not in statuses:
+                continue
+            return invoice
+        return None
+
+    async def get_open_invoice_for_student(
+        self, student_id: str, period: str
+    ) -> LedgerInvoice | None:
+        for invoice in self.invoices.values():
+            if (
+                invoice.student_id == student_id
+                and invoice.period == period
+                and invoice.status in {"open", "draft", "partially_paid"}
+            ):
+                return invoice
+        return None
 
     async def record_payment(
         self,
@@ -206,11 +352,46 @@ class FakeBillingLedger:
         *,
         idempotency_key: str,
     ) -> LedgerPayment:
-        existing = self.payments.get(payment.payment_id)
+        existing_id = self.payment_keys.get(idempotency_key)
+        if existing_id is not None:
+            return self.payments[existing_id]
+        self.payments[payment.payment_id] = payment
+        self.payment_keys[idempotency_key] = payment.payment_id
+        return payment
+
+    async def record_payment_attempt(
+        self,
+        *,
+        invoice_id: str,
+        parent_id: str,
+        amount_cents: int,
+        currency: str,
+        status: str,
+        stripe_payment_intent_id: str | None,
+        stripe_checkout_session_id: str | None,
+        failure_code: str | None,
+        failure_message: str | None,
+        idempotency_key: str,
+        created_by_event_id: str | None = None,
+    ) -> dict[str, Any]:
+        existing = self.payment_attempts.get(idempotency_key)
         if existing is not None:
             return existing
-        self.payments[payment.payment_id] = payment
-        return payment
+        attempt = {
+            "invoice_id": invoice_id,
+            "parent_id": parent_id,
+            "amount_cents": amount_cents,
+            "currency": currency,
+            "status": status,
+            "stripe_payment_intent_id": stripe_payment_intent_id,
+            "stripe_checkout_session_id": stripe_checkout_session_id,
+            "failure_code": failure_code,
+            "failure_message": failure_message,
+            "idempotency_key": idempotency_key,
+            "created_by_event_id": created_by_event_id,
+        }
+        self.payment_attempts[idempotency_key] = attempt
+        return attempt
 
     async def allocate_payment(
         self,
@@ -222,6 +403,25 @@ class FakeBillingLedger:
     ) -> None:
         if self.fail_allocate:
             raise ValueError("allocation failed")
+        if idempotency_key in self.allocation_keys:
+            return None
+        invoice = self.invoices[invoice_id]
+        payment = self.payments[payment_id]
+        allocated = min(amount_cents, invoice.balance_due_cents)
+        self.invoices[invoice_id] = invoice.model_copy(
+            update={
+                "balance_due_cents": max(invoice.balance_due_cents - allocated, 0),
+                "status": "paid"
+                if invoice.balance_due_cents - allocated <= 0
+                else "partially_paid",
+            }
+        )
+        self.payments[payment_id] = payment.model_copy(
+            update={
+                "unapplied_amount_cents": max(payment.unapplied_amount_cents - allocated, 0),
+            }
+        )
+        self.allocation_keys.add(idempotency_key)
         self.allocations.append(
             {
                 "payment_id": payment_id,
@@ -239,9 +439,11 @@ def _build(
     subscriptions=None,
     parent_customers=None,
     enrollment_autopay=None,
+    enrollment_identity=None,
     stripe=None,
     expected_livemode=None,
     billing_ledger=None,
+    invoice_processing=None,
 ):
     return HandleWebhookEvent(
         stripe=stripe or FakeStripeGateway(),
@@ -250,10 +452,12 @@ def _build(
         subscriptions=subscriptions or FakeSubscriptionRepo(),
         parent_customers=parent_customers,
         enrollment_autopay=enrollment_autopay,
+        enrollment_identity=enrollment_identity,
         outbox=outbox or FakeOutbox(),
         academy_id="acad",
         expected_livemode=expected_livemode,
         billing_ledger=billing_ledger,
+        invoice_processing=invoice_processing,
     )
 
 
@@ -262,18 +466,25 @@ def _ledger_invoice(
     invoice_id: str = "inv-autopay",
     academy_id: str = "acad",
     parent_id: str = "parent-from-invoice",
+    student_id: str | None = None,
+    enrollment_id: str | None = None,
+    period: str = "2026-06",
+    balance_due_cents: int = 10_000,
+    status: str = "open",
 ) -> LedgerInvoice:
     now = datetime.now(UTC)
     return LedgerInvoice(
         invoice_id=invoice_id,
         academy_id=academy_id,
         parent_id=parent_id,
-        period="2026-06",
-        status="open",
+        student_id=student_id,
+        enrollment_id=enrollment_id,
+        period=period,
+        status=status,  # type: ignore[arg-type]
         subtotal_cents=10_000,
         discount_cents=0,
         total_cents=10_000,
-        balance_due_cents=10_000,
+        balance_due_cents=balance_due_cents,
         currency="usd",
         due_date=now.date(),
         created_at=now,
@@ -689,6 +900,77 @@ async def test_autopay_payment_intent_allocation_failure_is_retryable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_invoice_checkout_payment_intent_failed_records_attempt_without_closing_invoice() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-checkout-failed", status="open"))
+    stripe = FakeStripeGateway()
+    stripe.checkouts.append(
+        {
+            "checkout_id": "cs_invoice_failed",
+            "parent_id": "parent-from-invoice",
+            "session_id": "invoice-pay-link",
+            "amount_cents": 1236,
+            "metadata": {
+                "source": "invoice_pay_link",
+                "invoice_id": "inv-checkout-failed",
+                "parent_id": "parent-from-invoice",
+            },
+        }
+    )
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger, stripe=stripe)
+    body = json.dumps(
+        {
+            "id": "evt_invoice_checkout_failed",
+            "type": "payment_intent.payment_failed",
+            "data": {
+                "object": {
+                    "id": "pi_invoice_checkout_failed",
+                    "amount": 1236,
+                    "currency": "usd",
+                    "metadata": {},
+                    "payment_details": {"order_reference": "cs_invoice_failed"},
+                    "last_payment_error": {
+                        "code": "card_declined",
+                        "decline_code": "insufficient_funds",
+                        "message": "Your card has insufficient funds.",
+                    },
+                    "status": "requires_payment_method",
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    assert ledger.invoices["inv-checkout-failed"].status == "open"
+    assert ledger.invoices["inv-checkout-failed"].balance_due_cents == 10000
+    assert ledger.allocations == []
+    assert ledger.payments == {}
+    assert list(ledger.payment_attempts.values()) == [
+        {
+            "invoice_id": "inv-checkout-failed",
+            "parent_id": "parent-from-invoice",
+            "amount_cents": 1236,
+            "currency": "usd",
+            "status": "failed",
+            "stripe_payment_intent_id": "pi_invoice_checkout_failed",
+            "stripe_checkout_session_id": "cs_invoice_failed",
+            "failure_code": "insufficient_funds",
+            "failure_message": "Your card has insufficient funds.",
+            "idempotency_key": (
+                "invoice-checkout-failed:inv-checkout-failed:pi_invoice_checkout_failed"
+            ),
+            "created_by_event_id": "evt_invoice_checkout_failed",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_checkout_completed_marks_payment_succeeded_and_emits_event() -> None:
     repo = FakePaymentRepo()
     _seed_pending_payment(repo)
@@ -881,6 +1163,507 @@ async def test_invoice_paid_reads_subscription_from_parent_details() -> None:
 
 
 @pytest.mark.asyncio
+async def test_subscription_invoice_paid_allocates_existing_ledger_invoice() -> None:
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-ledger",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-ledger",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-monthly-enr-1-2026-06",
+            parent_id="p1",
+            student_id="student-1",
+            enrollment_id="enr-1",
+            period="2026-06",
+            balance_due_cents=7_000,
+        )
+    )
+    uc = _build(repo, subscriptions=subs, billing_ledger=ledger)
+
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_paid_ledger",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_ledger",
+                        "parent": {
+                            "subscription_details": {
+                                "subscription": "stripe-sub-ledger",
+                            }
+                        },
+                        "payment_intent": "pi_ledger",
+                        "amount_paid": 7_000,
+                        "amount_due": 7_000,
+                        "currency": "usd",
+                        "period_start": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert ledger.invoices["inv-monthly-enr-1-2026-06"].status == "paid"
+    assert ledger.invoices["inv-monthly-enr-1-2026-06"].balance_due_cents == 0
+    assert ledger.payments["ledger-pay-in_ledger"].stripe_payment_intent_id == "pi_ledger"
+    assert ledger.allocations == [
+        {
+            "payment_id": "ledger-pay-in_ledger",
+            "invoice_id": "inv-monthly-enr-1-2026-06",
+            "amount_cents": 7000,
+            "idempotency_key": "stripe-invoice-allocation:in_ledger",
+        }
+    ]
+    assert repo.by_pi["pi_ledger"].enrollment_id == "enr-1"
+
+
+@pytest.mark.asyncio
+async def test_subscription_invoice_paid_with_null_payment_intent_uses_invoice_id_for_idempotency() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-api-2026",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-api-2026",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-monthly-enr-1-2026-06",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            period="2026-06",
+            balance_due_cents=7_000,
+        )
+    )
+    uc = _build(repo, subscriptions=subs, billing_ledger=ledger)
+
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_paid_api_2026",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_api_2026",
+                        "parent": {
+                            "subscription_details": {
+                                "subscription": "stripe-sub-api-2026",
+                            }
+                        },
+                        "payment_intent": None,
+                        "amount_paid": 7_000,
+                        "amount_due": 7_000,
+                        "currency": "usd",
+                        "period_start": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert repo.by_pi["in_api_2026"].status == "succeeded"
+    assert ledger.payments["ledger-pay-in_api_2026"].stripe_payment_intent_id == "in_api_2026"
+    assert ledger.payments["ledger-pay-in_api_2026"].stripe_invoice_id == "in_api_2026"
+    assert ledger.invoices["inv-monthly-enr-1-2026-06"].balance_due_cents == 0
+    assert ledger.invoices["inv-monthly-enr-1-2026-06"].stripe_invoice_id == "in_api_2026"
+
+
+@pytest.mark.asyncio
+async def test_subscription_invoice_paid_replay_does_not_duplicate_ledger_payment_or_allocation() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-replay",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-replay",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-monthly-enr-1-2026-06",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            period="2026-06",
+            balance_due_cents=7_000,
+        )
+    )
+    uc = _build(repo, subscriptions=subs, billing_ledger=ledger)
+
+    invoice_object = {
+        "id": "in_replay",
+        "subscription": "stripe-sub-replay",
+        "payment_intent": None,
+        "amount_paid": 7_000,
+        "amount_due": 7_000,
+        "currency": "usd",
+        "period_start": 1_781_712_000,
+    }
+    for event_id in ("evt_invoice_paid_replay_1", "evt_invoice_paid_replay_2"):
+        await uc.execute(
+            json.dumps(
+                {
+                    "id": event_id,
+                    "type": "invoice.paid",
+                    "data": {"object": invoice_object},
+                }
+            ).encode(),
+            "test_signature",
+        )
+
+    assert len(repo.by_id) == 1
+    assert len(ledger.payments) == 1
+    assert len(ledger.allocations) == 1
+    assert ledger.invoices["inv-monthly-enr-1-2026-06"].status == "paid"
+
+
+@pytest.mark.asyncio
+async def test_payment_intent_succeeded_before_subscription_invoice_paid_waits_for_invoice_event() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-out-of-order",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-out-of-order",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-monthly-enr-1-2026-06",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            period="2026-06",
+            balance_due_cents=7_000,
+        )
+    )
+    uc = _build(repo, subscriptions=subs, billing_ledger=ledger)
+
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_pi_before_invoice",
+                "type": "payment_intent.succeeded",
+                "data": {"object": {"id": "pi_out_of_order"}},
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert repo.by_id == {}
+    assert ledger.payments == {}
+
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_after_pi",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_out_of_order",
+                        "subscription": "stripe-sub-out-of-order",
+                        "payment_intent": "pi_out_of_order",
+                        "amount_paid": 7_000,
+                        "amount_due": 7_000,
+                        "currency": "usd",
+                        "period_start": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert len(repo.by_id) == 1
+    assert len(ledger.payments) == 1
+    assert (
+        ledger.payments["ledger-pay-in_out_of_order"].stripe_payment_intent_id == "pi_out_of_order"
+    )
+    assert len(ledger.allocations) == 1
+
+
+@pytest.mark.asyncio
+async def test_subscription_invoice_paid_creates_ledger_invoice_when_none_exists() -> None:
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    identity = FakeEnrollmentBillingIdentity()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-create-ledger",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-create-ledger",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    identity.seed(
+        enrollment_id="enr-1",
+        parent_id="p1",
+        student_id="student-1",
+        session_id="s1",
+    )
+    ledger = FakeBillingLedger()
+    uc = _build(
+        repo,
+        subscriptions=subs,
+        enrollment_identity=identity,
+        billing_ledger=ledger,
+    )
+
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_paid_create_ledger",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_create_ledger",
+                        "subscription": "stripe-sub-create-ledger",
+                        "payment_intent": None,
+                        "amount_paid": 7_000,
+                        "amount_due": 7_000,
+                        "currency": "usd",
+                        "period_start": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    invoice = ledger.invoices["ledger-in_create_ledger"]
+    assert invoice.student_id == "student-1"
+    assert invoice.enrollment_id == "enr-1"
+    assert invoice.parent_id == "p1"
+    assert invoice.status == "paid"
+    assert invoice.balance_due_cents == 0
+    assert ledger.lines["ledger-in_create_ledger"][0].source_type == "stripe_subscription"
+    assert ledger.lines["ledger-in_create_ledger"][0].source_id == "in_create_ledger"
+
+
+@pytest.mark.asyncio
+async def test_subscription_invoice_paid_different_invoice_for_paid_obligation_is_quarantined() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-paid-duplicate",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-paid-duplicate",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-monthly-enr-1-2026-06",
+            parent_id="p1",
+            student_id="student-1",
+            enrollment_id="enr-1",
+            period="2026-06",
+            balance_due_cents=0,
+            status="paid",
+        ).model_copy(update={"stripe_invoice_id": "in_original"})
+    )
+    dedup = FakeDedup()
+    uc = _build(repo, subscriptions=subs, billing_ledger=ledger, dedup=dedup)
+
+    result = await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_paid_duplicate_obligation",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_duplicate_obligation",
+                        "subscription": "stripe-sub-paid-duplicate",
+                        "payment_intent": None,
+                        "amount_paid": 7_000,
+                        "amount_due": 7_000,
+                        "currency": "usd",
+                        "period_start": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert result["status"] == "quarantined"
+    assert "already-paid invoice" in result["error"]
+    assert set(ledger.invoices) == {"inv-monthly-enr-1-2026-06"}
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+    assert repo.by_id == {}
+
+
+@pytest.mark.asyncio
+async def test_subscription_invoice_paid_zero_amount_does_not_create_ledger_payment_or_allocation() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-zero",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-zero",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger = FakeBillingLedger()
+    uc = _build(repo, subscriptions=subs, billing_ledger=ledger)
+
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_paid_zero",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_zero",
+                        "subscription": "stripe-sub-zero",
+                        "payment_intent": None,
+                        "amount_paid": 0,
+                        "amount_due": 0,
+                        "currency": "usd",
+                        "period_start": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+
+
+@pytest.mark.asyncio
+async def test_subscription_invoice_paid_quarantines_enrollment_parent_mismatch() -> None:
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    identity = FakeEnrollmentBillingIdentity()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-parent-mismatch",
+            academy_id="acad",
+            parent_id="subscription-parent",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-parent-mismatch",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    identity.seed(
+        enrollment_id="enr-1",
+        parent_id="different-parent",
+        student_id="student-1",
+        session_id="s1",
+    )
+    ledger = FakeBillingLedger()
+    dedup = FakeDedup()
+    uc = _build(
+        repo,
+        subscriptions=subs,
+        enrollment_identity=identity,
+        billing_ledger=ledger,
+        dedup=dedup,
+    )
+
+    result = await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_paid_parent_mismatch",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_parent_mismatch",
+                        "subscription": "stripe-sub-parent-mismatch",
+                        "payment_intent": None,
+                        "amount_paid": 7_000,
+                        "amount_due": 7_000,
+                        "currency": "usd",
+                        "period_start": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert result["status"] == "quarantined"
+    assert "parent mismatch" in result["error"]
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+
+
+@pytest.mark.asyncio
 async def test_invoice_payment_failed_creates_failed_subscription_payment() -> None:
     repo = FakePaymentRepo()
     subs = FakeSubscriptionRepo()
@@ -920,6 +1703,344 @@ async def test_invoice_payment_failed_creates_failed_subscription_payment() -> N
     assert payment.status == "failed"
     assert payment.subscription_id == "sub-2"
     assert outbox.events[0].name == "Billing.PaymentFailed"
+
+
+@pytest.mark.asyncio
+async def test_subscription_invoice_payment_failed_creates_open_ledger_invoice() -> None:
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-failed-ledger",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-failed-ledger",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger = FakeBillingLedger()
+    uc = _build(repo, subscriptions=subs, billing_ledger=ledger)
+
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_failed_ledger",
+                "type": "invoice.payment_failed",
+                "data": {
+                    "object": {
+                        "id": "in_failed_ledger",
+                        "subscription": "stripe-sub-failed-ledger",
+                        "payment_intent": "pi_failed_ledger",
+                        "amount_due": 7_000,
+                        "currency": "usd",
+                        "period_start": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    invoice = ledger.invoices["ledger-in_failed_ledger"]
+    assert invoice.status == "open"
+    assert invoice.balance_due_cents == 7_000
+    assert invoice.stripe_invoice_id == "in_failed_ledger"
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+
+
+@pytest.mark.asyncio
+async def test_subscription_invoice_paid_retry_after_ledger_payment_before_allocation_resumes_without_duplicate_payment() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-retry-payment",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-retry-payment",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-monthly-enr-1-2026-06",
+            parent_id="p1",
+            student_id="student-1",
+            enrollment_id="enr-1",
+            period="2026-06",
+            balance_due_cents=7_000,
+        )
+    )
+    ledger.fail_allocate = True
+    processing = FakeInvoiceProcessing()
+    uc = _build(
+        repo,
+        subscriptions=subs,
+        billing_ledger=ledger,
+        invoice_processing=processing,
+    )
+    event_object = {
+        "id": "in_retry_after_payment",
+        "subscription": "stripe-sub-retry-payment",
+        "payment_intent": None,
+        "amount_paid": 7_000,
+        "amount_due": 7_000,
+        "currency": "usd",
+        "period_start": 1_781_712_000,
+    }
+
+    with pytest.raises(ValueError, match="allocation failed"):
+        await uc.execute(
+            json.dumps(
+                {
+                    "id": "evt_retry_after_payment_1",
+                    "type": "invoice.paid",
+                    "data": {"object": event_object},
+                }
+            ).encode(),
+            "test_signature",
+        )
+
+    assert len(ledger.payments) == 1
+    assert ledger.allocations == []
+    row = processing.by_key["acad:stripe_invoice:in_retry_after_payment"]
+    assert row["recovery_point"] == "ledger_payment_recorded"
+
+    ledger.fail_allocate = False
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_retry_after_payment_2",
+                "type": "invoice.paid",
+                "data": {"object": event_object},
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert len(ledger.payments) == 1
+    assert len(ledger.allocations) == 1
+    assert len(repo.by_id) == 1
+    row = processing.by_key["acad:stripe_invoice:in_retry_after_payment"]
+    assert row["recovery_point"] == "processed"
+    assert row["event_ids"] == ["evt_retry_after_payment_1", "evt_retry_after_payment_2"]
+
+
+@pytest.mark.asyncio
+async def test_subscription_invoice_paid_retry_after_allocation_before_legacy_projection_resumes_without_duplicate_allocation() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    repo.fail_next_save = True
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-retry-allocation",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-retry-allocation",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-monthly-enr-1-2026-06",
+            parent_id="p1",
+            student_id="student-1",
+            enrollment_id="enr-1",
+            period="2026-06",
+            balance_due_cents=7_000,
+        )
+    )
+    processing = FakeInvoiceProcessing()
+    uc = _build(
+        repo,
+        subscriptions=subs,
+        billing_ledger=ledger,
+        invoice_processing=processing,
+    )
+    event_object = {
+        "id": "in_retry_after_allocation",
+        "subscription": "stripe-sub-retry-allocation",
+        "payment_intent": None,
+        "amount_paid": 7_000,
+        "amount_due": 7_000,
+        "currency": "usd",
+        "period_start": 1_781_712_000,
+    }
+
+    with pytest.raises(RuntimeError, match="transient payment write failed"):
+        await uc.execute(
+            json.dumps(
+                {
+                    "id": "evt_retry_after_allocation_1",
+                    "type": "invoice.paid",
+                    "data": {"object": event_object},
+                }
+            ).encode(),
+            "test_signature",
+        )
+
+    assert len(ledger.payments) == 1
+    assert len(ledger.allocations) == 1
+    assert repo.by_id == {}
+    row = processing.by_key["acad:stripe_invoice:in_retry_after_allocation"]
+    assert row["recovery_point"] == "ledger_allocated"
+
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_retry_after_allocation_2",
+                "type": "invoice.paid",
+                "data": {"object": event_object},
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert len(ledger.payments) == 1
+    assert len(ledger.allocations) == 1
+    assert len(repo.by_id) == 1
+    row = processing.by_key["acad:stripe_invoice:in_retry_after_allocation"]
+    assert row["recovery_point"] == "processed"
+    assert row["event_ids"] == [
+        "evt_retry_after_allocation_1",
+        "evt_retry_after_allocation_2",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_invoice_paid_does_not_downgrade_refunded_projection_to_succeeded() -> None:
+    repo = FakePaymentRepo()
+    now = datetime.now(UTC)
+    repo.seed(
+        Payment(
+            payment_id="pay-refunded",
+            academy_id="acad",
+            parent_id="p1",
+            subscription_id="sub-1",
+            stripe_payment_intent_id="in_refunded_projection",
+            amount_cents=7_000,
+            status="refunded",
+            refunded_cents=7_000,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    subs = FakeSubscriptionRepo()
+    subs.seed(
+        Subscription(
+            subscription_id="sub-1",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-refunded-projection",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    uc = _build(repo, subscriptions=subs)
+
+    result = await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_refunded_projection_paid",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_refunded_projection",
+                        "subscription": "stripe-sub-refunded-projection",
+                        "payment_intent": None,
+                        "amount_paid": 7_000,
+                        "amount_due": 7_000,
+                        "currency": "usd",
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert result["status"] == "quarantined"
+    assert "invalid payment projection transition refunded->succeeded" in result["error"]
+    assert repo.by_id["pay-refunded"].status == "refunded"
+
+
+@pytest.mark.asyncio
+async def test_invoice_payment_failed_does_not_downgrade_succeeded_projection_to_failed() -> None:
+    repo = FakePaymentRepo()
+    now = datetime.now(UTC)
+    repo.seed(
+        Payment(
+            payment_id="pay-succeeded",
+            academy_id="acad",
+            parent_id="p1",
+            subscription_id="sub-1",
+            stripe_payment_intent_id="pi_succeeded_projection",
+            amount_cents=7_000,
+            status="succeeded",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    subs = FakeSubscriptionRepo()
+    subs.seed(
+        Subscription(
+            subscription_id="sub-1",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-succeeded-projection",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    uc = _build(repo, subscriptions=subs)
+
+    result = await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_succeeded_projection_failed",
+                "type": "invoice.payment_failed",
+                "data": {
+                    "object": {
+                        "id": "in_succeeded_projection",
+                        "subscription": "stripe-sub-succeeded-projection",
+                        "payment_intent": "pi_succeeded_projection",
+                        "amount_due": 7_000,
+                        "currency": "usd",
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert result["status"] == "quarantined"
+    assert "invalid payment projection transition succeeded->failed" in result["error"]
+    assert repo.by_id["pay-succeeded"].status == "succeeded"
 
 
 @pytest.mark.asyncio

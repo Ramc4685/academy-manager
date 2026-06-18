@@ -528,6 +528,88 @@ def test_send_invoice_returns_checkout_url_when_stripe_configured(admin_client):
                 "academy_id": "acad",
                 "parent_id": "parent-1",
             },
+            "idempotency_key": "invoice-checkout:inv-1:7000",
+        }
+    ]
+
+
+def test_billing_reconciliation_report_is_read_only(admin_client):
+    async def report(**kwargs):
+        assert kwargs == {
+            "stripe_invoice_id": "in_123",
+            "payment_intent_id": "pi_123",
+        }
+        return {
+            "result": "AMOUNT_MISMATCH",
+            "stripe_invoice_id": "in_123",
+            "payment_intent_id": "pi_123",
+            "stripe_customer_id": "cus_123",
+            "local_invoice_id": "inv-123",
+            "ledger_payment_id": None,
+            "payment_allocation_id": None,
+            "mismatches": [
+                {
+                    "code": "AMOUNT_MISMATCH",
+                    "message": "Stripe amount_paid differs from ledger invoice total",
+                    "stripe_value": 7000,
+                    "local_value": 6000,
+                }
+            ],
+            "checked_at": NOW,
+        }
+
+    admin_client.use_cases.get_billing_reconciliation_report = report
+
+    response = admin_client.get(
+        "/api/v2/admin/billing/reconciliation?stripe_invoice_id=in_123&payment_intent_id=pi_123"
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["result"] == "AMOUNT_MISMATCH"
+    assert body["stripe_invoice_id"] == "in_123"
+    assert body["payment_intent_id"] == "pi_123"
+    assert body["local_invoice_id"] == "inv-123"
+    assert body["mismatches"][0]["code"] == "AMOUNT_MISMATCH"
+    assert body["mismatches"][0]["stripe_value"] == 7000
+    assert body["mismatches"][0]["local_value"] == 6000
+
+
+def test_billing_webhook_queue_returns_failed_and_quarantined_events(admin_client):
+    async def queue(*, status, limit):
+        assert status == "quarantined"
+        assert limit == 25
+        return [
+            {
+                "event_id": "evt_quarantine_1",
+                "event_type": "invoice.paid",
+                "status": "quarantined",
+                "object_id": "in_duplicate",
+                "object_type": "invoice",
+                "received_at": NOW,
+                "last_attempt_at": NOW,
+                "retry_count": 2,
+                "error_message": "duplicate obligation",
+            }
+        ]
+
+    admin_client.use_cases.list_billing_webhook_events = queue
+
+    response = admin_client.get("/api/v2/admin/billing/webhooks?status=quarantined&limit=25")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["events"] == [
+        {
+            "event_id": "evt_quarantine_1",
+            "event_type": "invoice.paid",
+            "status": "quarantined",
+            "object_id": "in_duplicate",
+            "object_type": "invoice",
+            "received_at": NOW.isoformat().replace("+00:00", "Z"),
+            "last_attempt_at": NOW.isoformat().replace("+00:00", "Z"),
+            "retry_count": 2,
+            "error_message": "duplicate obligation",
         }
     ]
 

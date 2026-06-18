@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
+from pydantic import BaseModel
+
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
     LedgerAllocationResult,
@@ -59,6 +61,25 @@ class EnrollmentAutopayStateRepository(Protocol):
     ) -> None: ...
 
 
+class EnrollmentBillingIdentity(BaseModel):
+    model_config = {"frozen": True}
+
+    academy_id: str
+    parent_id: str
+    student_id: str | None = None
+    enrollment_id: str
+    session_id: str | None = None
+
+
+class EnrollmentBillingIdentityRepository(Protocol):
+    """Cross-context read port for mapping subscription payments to enrollment owners."""
+
+    async def get_billing_identity(
+        self,
+        enrollment_id: str,
+    ) -> EnrollmentBillingIdentity | dict[str, str | None] | None: ...
+
+
 class CreditLedgerRepository(Protocol):
     async def create(self, entry: CreditLedgerEntry) -> None: ...
     async def list_for_parent(self, parent_id: str) -> list[CreditLedgerEntry]: ...
@@ -95,6 +116,23 @@ class StripeEventDedup(Protocol):
     async def mark_processed(self, event_id: str) -> None: ...
     async def mark_failed(self, event_id: str, error: str) -> None: ...
     async def mark_quarantined(self, event_id: str, error: str) -> None: ...
+
+
+class StripeInvoiceProcessingRepository(Protocol):
+    async def record_recovery_point(
+        self,
+        *,
+        academy_id: str,
+        stripe_invoice_id: str,
+        stripe_subscription_id: str | None,
+        event_id: str,
+        recovery_point: str,
+        ledger_invoice_id: str | None = None,
+        ledger_payment_id: str | None = None,
+        legacy_payment_id: str | None = None,
+        last_error: str | None = None,
+        updated_at: datetime,
+    ) -> None: ...
 
 
 class StripeGateway(Protocol):
@@ -287,8 +325,21 @@ class LedgerRepository(Protocol):
     """Port for ledger invoice + line persistence (Phase 2A+)."""
 
     async def get_invoice(self, invoice_id: str) -> LedgerInvoice | None: ...
+    async def get_invoice_by_stripe_invoice_id(
+        self, stripe_invoice_id: str
+    ) -> LedgerInvoice | None: ...
     async def get_open_invoice_for_student(
         self, student_id: str, period: str
+    ) -> LedgerInvoice | None: ...
+    async def get_open_invoice_for_enrollment(
+        self, enrollment_id: str, period: str
+    ) -> LedgerInvoice | None: ...
+    async def get_invoice_for_enrollment_period(
+        self,
+        enrollment_id: str,
+        period: str,
+        *,
+        statuses: set[str] | None = None,
     ) -> LedgerInvoice | None: ...
     async def get_lines_for_invoice(self, invoice_id: str) -> list[InvoiceLine]: ...
     async def save_invoice(self, invoice: LedgerInvoice) -> LedgerInvoice: ...
@@ -308,6 +359,22 @@ class LedgerRepository(Protocol):
         *,
         idempotency_key: str,
     ) -> LedgerPayment: ...
+
+    async def record_payment_attempt(
+        self,
+        *,
+        invoice_id: str,
+        parent_id: str,
+        amount_cents: int,
+        currency: str,
+        status: str,
+        stripe_payment_intent_id: str | None,
+        stripe_checkout_session_id: str | None,
+        failure_code: str | None,
+        failure_message: str | None,
+        idempotency_key: str,
+        created_by_event_id: str | None = None,
+    ) -> dict[str, Any]: ...
 
     async def allocate_payment(
         self,
