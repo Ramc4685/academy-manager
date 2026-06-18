@@ -15,6 +15,8 @@ from backend.v2.interfaces.parent.views import (
     ParentInvoiceLineView,
     ParentInvoicesResponse,
     ParentInvoiceView,
+    StartBalancePaymentRequest,
+    StartBalancePaymentResponse,
     StartInvoicePaymentRequest,
     StartInvoicePaymentResponse,
 )
@@ -126,3 +128,28 @@ async def start_invoice_payment(
         invoice_id=str(result["invoice_id"]),
         redirect_url=str(result["checkout_url"]),
     )
+
+
+@router.post(
+    "/invoices/pay-balance",
+    response_model=StartBalancePaymentResponse,
+    summary="Create a Stripe Checkout Session to pay all open invoices in one go",
+)
+async def start_balance_payment(
+    body: StartBalancePaymentRequest,
+    claims: AuthClaims = Depends(require_persona("parent")),
+    use_cases: ParentUseCases = Depends(get_parent_use_cases),
+) -> StartBalancePaymentResponse:
+    start_payment = _required_callable(
+        use_cases.start_balance_payment_for_parent,
+        "Balance payment",
+    )
+    try:
+        result = await start_payment(
+            parent_id=claims.user_id,
+            success_url=body.success_url,
+            cancel_url=body.cancel_url,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return StartBalancePaymentResponse(redirect_url=str(result["redirect_url"]))

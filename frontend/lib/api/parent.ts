@@ -325,6 +325,16 @@ export function startParentInvoicePayment(
   });
 }
 
+export function startParentBalancePayment(payload: {
+  success_url: string;
+  cancel_url: string;
+}): Promise<{ redirect_url: string }> {
+  return apiFetch("/parent/invoices/pay-balance", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function listParentCredits(): Promise<ParentCreditBalance> {
   return apiFetch("/parent/credits", { method: "GET" });
 }

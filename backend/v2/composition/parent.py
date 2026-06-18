@@ -803,6 +803,50 @@ def compose_parent(
             "checkout_url": result.checkout_url,
         }
 
+    async def start_balance_payment_for_parent(
+        *,
+        parent_id: str,
+        success_url: str,
+        cancel_url: str,
+    ):
+        all_invoices = await billing_ledger_repo.list_invoices_for_parent(parent_id)
+        payable = [
+            inv for inv in all_invoices
+            if inv.status in {"open", "partially_paid"} and inv.balance_due_cents > 0
+        ]
+        if not payable:
+            raise ValueError("no payable invoices")
+        if len(payable) == 1:
+            result = await start_invoice_payment_for_parent(
+                parent_id=parent_id,
+                invoice_id=payable[0].invoice_id,
+                success_url=success_url,
+                cancel_url=cancel_url,
+            )
+            if result is None:
+                raise ValueError("invoice not found")
+            return {"redirect_url": result["checkout_url"]}
+        invoice_stripe = stripe if hasattr(stripe, "create_invoice_checkout_session") else None
+        if invoice_stripe is None:
+            raise ValueError("balance payment unavailable")
+        total_cents = sum(inv.balance_due_cents for inv in payable)
+        currency = payable[0].currency
+        invoice_ids = ",".join(inv.invoice_id for inv in payable)
+        _, url = await invoice_stripe.create_invoice_checkout_session(
+            invoice_id=f"balance-{parent_id[:8]}",
+            amount_cents=total_cents,
+            currency=currency,
+            success_url=success_url,
+            cancel_url=cancel_url,
+            metadata={
+                "academy_id": academy_id,
+                "parent_id": parent_id,
+                "invoice_ids": invoice_ids,
+                "type": "balance_payment",
+            },
+        )
+        return {"redirect_url": url}
+
     async def quote_enrollment(
         *,
         parent_id: str,
@@ -1037,6 +1081,7 @@ def compose_parent(
         list_invoices_for_parent=list_invoices_for_parent,
         get_invoice_for_parent=get_invoice_for_parent,
         start_invoice_payment_for_parent=start_invoice_payment_for_parent,
+        start_balance_payment_for_parent=start_balance_payment_for_parent,
         get_child_schedule=get_child_schedule,
         enroll_child=enroll_child_uc.execute,
         cancel_billing_enrollment=cancel_billing_enrollment_uc.execute,
