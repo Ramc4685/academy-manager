@@ -1427,6 +1427,8 @@ class AdminSessionEconomicsRow(BaseModel):
     title: str
     coach_name: str | None = None
     active_enrollment_count: int = 0
+    paid_student_count: int = 0
+    unpaid_student_count: int = 0
     monthly_fee_cents: int = 0
     payable_occurrence_count: int = 0
     expected_revenue_per_occurrence_cents: int = 0

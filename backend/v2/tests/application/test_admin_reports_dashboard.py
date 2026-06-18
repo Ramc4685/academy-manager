@@ -428,3 +428,145 @@ async def test_reports_dashboard_returns_meaningful_empty_states() -> None:
             "No payout periods generated for this month.",
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_session_economics_prorates_monthly_fee_and_allocates_costs() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    client = mongomock_motor.AsyncMongoMockClient()
+    db = client["test_db"]
+
+    await db["sessions"].insert_one(
+        {
+            "session_id": "sess-beginner",
+            "academy_id": "acad",
+            "title": "Wednesday 5:45 PM Beginner",
+            "coach_name": "Kishore",
+            "amount_cents": 60_000,
+            "capacity": 8,
+            "status": "scheduled",
+            "start_at": datetime(2026, 4, 1, 22, 45, tzinfo=UTC),
+        }
+    )
+    await db["session_occurrences"].insert_many(
+        [
+            {
+                "occurrence_id": f"occ-{day}",
+                "academy_id": "acad",
+                "session_id": "sess-beginner",
+                "template_session_id": "sess-beginner",
+                "status": "scheduled",
+                "start_at": datetime(2026, 4, day, 22, 45, tzinfo=UTC),
+                "end_at": datetime(2026, 4, day, 23, 30, tzinfo=UTC),
+            }
+            for day in (1, 8, 15, 22)
+        ]
+    )
+    await db["enrollments"].insert_one(
+        {
+            "enrollment_id": "enr-beginner",
+            "academy_id": "acad",
+            "session_id": "sess-beginner",
+            "student_id": "student-1",
+            "parent_id": "parent-1",
+            "status": "active",
+        }
+    )
+    await db["invoices"].insert_one(
+        {
+            "invoice_id": "inv-beginner",
+            "academy_id": "acad",
+            "parent_id": "parent-1",
+            "student_id": "student-1",
+            "enrollment_id": "enr-beginner",
+            "period": "2026-04",
+            "status": "paid",
+            "subtotal_cents": 60_000,
+            "discount_cents": 0,
+            "total_cents": 60_000,
+            "balance_due_cents": 0,
+            "currency": "usd",
+            "created_at": datetime(2026, 4, 2, tzinfo=UTC),
+            "updated_at": datetime(2026, 4, 2, tzinfo=UTC),
+        }
+    )
+    await db["expenses"].insert_many(
+        [
+            {
+                "expense_id": "exp-rent",
+                "academy_id": "acad",
+                "category": "rent",
+                "amount_cents": 10_000,
+                "incurred_on": datetime(2026, 4, 2, tzinfo=UTC),
+            },
+            {
+                "expense_id": "exp-other",
+                "academy_id": "acad",
+                "category": "equipment",
+                "amount_cents": 5_000,
+                "incurred_on": datetime(2026, 4, 3, tzinfo=UTC),
+            },
+        ]
+    )
+    await db["payout_periods"].insert_one(
+        {
+            "period_id": "pp-kishore",
+            "academy_id": "acad",
+            "coach_id": "coach-kishore",
+            "period_start": datetime(2026, 4, 1, tzinfo=UTC),
+            "period_end": datetime(2026, 5, 1, tzinfo=UTC),
+            "status": "draft",
+            "currency": "USD",
+            "total_minor": 18_000,
+        }
+    )
+    await db["payout_period_lines"].insert_many(
+        [
+            {
+                "period_id": "pp-kishore",
+                "academy_id": "acad",
+                "occurrence_id": f"occ-{day}",
+                "coach_id": "coach-kishore",
+                "amount_minor": 4_500,
+                "expected_revenue_minor": 15_000,
+                "percent_bps": 3000,
+            }
+            for day in (1, 8, 15, 22)
+        ]
+    )
+
+    with tenant_scope("acad"):
+        report = await admin_composition._make_session_economics_report(db)("2026-04")
+
+    assert report["summary"] == {
+        "expected_revenue_cents": 60_000,
+        "paid_cents": 60_000,
+        "unpaid_cents": 0,
+        "coach_payroll_cents": 18_000,
+        "rent_cents": 10_000,
+        "other_expenses_cents": 5_000,
+        "expected_profit_cents": 27_000,
+        "profit_margin": 0.45,
+    }
+    assert report["sessions"] == [
+        {
+            "session_id": "sess-beginner",
+            "title": "Wednesday 5:45 PM Beginner",
+            "coach_name": "Kishore",
+            "active_enrollment_count": 1,
+            "paid_student_count": 1,
+            "unpaid_student_count": 0,
+            "monthly_fee_cents": 60_000,
+            "payable_occurrence_count": 4,
+            "expected_revenue_per_occurrence_cents": 15_000,
+            "expected_revenue_cents": 60_000,
+            "paid_cents": 60_000,
+            "unpaid_cents": 0,
+            "coach_payroll_cents": 18_000,
+            "rent_cents": 10_000,
+            "other_expenses_cents": 5_000,
+            "expected_profit_cents": 27_000,
+            "profit_margin": 0.45,
+        }
+    ]
+    assert report["empty_states"] == []

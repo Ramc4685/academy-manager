@@ -112,6 +112,6 @@ async def test_payable_occurrence_query_derives_completion_and_revenue(db, acad)
     assert by_id["occ-past"].status == "completed"
     assert by_id["occ-future"].status == "scheduled"
     assert by_id["occ-cancelled"].status == "cancelled"
-    # 2 active enrollments x $150.00 session price.
-    assert by_id["occ-past"].expected_revenue_minor == 30000
+    # 2 active enrollments x $150.00 monthly price / 2 non-cancelled occurrences.
+    assert by_id["occ-past"].expected_revenue_minor == 15000
     assert by_id["occ-past"].coach_attendance[0].status == "absent"

@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { X } from "lucide-react";
 import {
   updateOccurrenceCoachAttendance,
   updateSessionOccurrenceCoach,
@@ -62,105 +63,142 @@ export function CorrectionDrawer({
       }),
     onSuccess: onApplied,
   });
+  const busy = toggleAttendance.isPending || applyCoach.isPending || applyReplacement.isPending;
 
   return (
-    <div className="fixed inset-y-0 right-0 z-40 w-80 bg-background shadow-xl border-l flex flex-col">
-      <div className="flex items-center justify-between p-4 border-b">
-        <h3 className="text-sm font-semibold">Correct occurrence</h3>
-        <button onClick={onClose} aria-label="Close" className="text-muted-foreground hover:text-foreground">
-          ✕
-        </button>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-4 space-y-6">
-        {/* Section A: Attendance */}
-        <section>
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
-            Attendance
-          </p>
-          <div className="flex gap-2">
-            {(["present", "absent"] as const).map((s) => (
-              <button
-                key={s}
-                className={`rounded border px-3 py-1 text-sm capitalize ${
-                  attendanceStatus === s ? "bg-primary text-primary-foreground" : ""
-                }`}
-                disabled={toggleAttendance.isPending}
-                onClick={() => toggleAttendance.mutate(s)}
-              >
-                {s}
-              </button>
-            ))}
+    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-labelledby="correction-drawer-title">
+      <button
+        type="button"
+        aria-label="Close correction panel"
+        className="absolute inset-0 cursor-default bg-rally-ink/35"
+        onClick={onClose}
+      />
+      <aside className="absolute inset-y-0 right-0 flex w-[min(100vw,420px)] flex-col border-l border-rally-line bg-white shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-rally-line px-5 py-4">
+          <div>
+            <h3 id="correction-drawer-title" className="text-base font-semibold text-rally-ink">
+              Correct occurrence
+            </h3>
+            <p className="mt-1 font-mono text-[11px] text-rally-muted">
+              {occurrenceId}
+            </p>
           </div>
-        </section>
-
-        {/* Section B: Actual coach */}
-        <section>
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
-            Actual coach
-          </p>
-          <select
-            value={coachId}
-            onChange={(e) => setCoachId(e.target.value)}
-            className="w-full rounded border px-2 py-1.5 text-sm mb-2"
-          >
-            {coaches.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          <input
-            type="text"
-            placeholder="Reason (required)"
-            value={coachReason}
-            onChange={(e) => setCoachReason(e.target.value)}
-            required
-            aria-label="Reason for coach change"
-            className="w-full rounded border px-2 py-1.5 text-sm mb-2"
-          />
           <button
-            disabled={!canSubmitCoach || applyCoach.isPending}
-            onClick={() => applyCoach.mutate()}
-            className="rounded border px-3 py-1.5 text-sm disabled:opacity-50"
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded-md p-2 text-rally-muted hover:bg-neutral-100 hover:text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
           >
-            Apply coach change
+            <X className="size-4" aria-hidden="true" />
           </button>
-        </section>
+        </div>
 
-        {/* Section C: Replacement */}
-        <section>
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
-            Replacement coach
-          </p>
-          <select
-            value={replacementId}
-            onChange={(e) => setReplacementId(e.target.value)}
-            className="w-full rounded border px-2 py-1.5 text-sm mb-2"
-          >
-            <option value="">— none —</option>
-            {coaches.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          <input
-            type="text"
-            placeholder="Reason (optional)"
-            value={replacementReason}
-            onChange={(e) => setReplacementReason(e.target.value)}
-            className="w-full rounded border px-2 py-1.5 text-sm mb-2"
-          />
-          <button
-            disabled={applyReplacement.isPending}
-            onClick={() => applyReplacement.mutate()}
-            className="rounded border px-3 py-1.5 text-sm disabled:opacity-50"
-          >
-            Set replacement
-          </button>
-        </section>
-      </div>
+        <div className="flex-1 space-y-6 overflow-y-auto px-5 py-5">
+          <section className="space-y-3">
+            <p className="font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+              Attendance
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {(["present", "absent"] as const).map((status) => {
+                const selected = attendanceStatus === status;
+                return (
+                  <button
+                    key={status}
+                    type="button"
+                    className={
+                      selected
+                        ? "rounded-md bg-rally-ink px-3 py-2 text-sm font-semibold capitalize text-white"
+                        : "rounded-md border border-rally-line bg-white px-3 py-2 text-sm font-semibold capitalize text-rally-ink hover:bg-neutral-50"
+                    }
+                    disabled={busy}
+                    onClick={() => toggleAttendance.mutate(status)}
+                  >
+                    {status}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <p className="font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+              Actual coach
+            </p>
+            <label className="grid gap-1.5 text-sm font-semibold text-rally-ink">
+              Coach
+              <select
+                value={coachId}
+                onChange={(e) => setCoachId(e.target.value)}
+                className="h-10 w-full rounded-md border border-rally-line bg-white px-3 text-sm font-normal text-rally-ink outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+              >
+                {coaches.map((coach) => (
+                  <option key={coach.id} value={coach.id}>
+                    {coach.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1.5 text-sm font-semibold text-rally-ink">
+              Reason
+              <input
+                type="text"
+                placeholder="Required for audit trail"
+                value={coachReason}
+                onChange={(e) => setCoachReason(e.target.value)}
+                required
+                className="h-10 w-full rounded-md border border-rally-line bg-white px-3 text-sm font-normal text-rally-ink outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+              />
+            </label>
+            <button
+              type="button"
+              disabled={!canSubmitCoach || busy}
+              onClick={() => applyCoach.mutate()}
+              className="inline-flex min-h-10 items-center rounded-md border border-rally-line bg-white px-3 text-sm font-semibold text-rally-ink hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Apply coach change
+            </button>
+          </section>
+
+          <section className="space-y-3">
+            <p className="font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+              Replacement coach
+            </p>
+            <label className="grid gap-1.5 text-sm font-semibold text-rally-ink">
+              Replacement
+              <select
+                value={replacementId}
+                onChange={(e) => setReplacementId(e.target.value)}
+                className="h-10 w-full rounded-md border border-rally-line bg-white px-3 text-sm font-normal text-rally-ink outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+              >
+                <option value="">No replacement</option>
+                {coaches.map((coach) => (
+                  <option key={coach.id} value={coach.id}>
+                    {coach.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1.5 text-sm font-semibold text-rally-ink">
+              Reason
+              <input
+                type="text"
+                placeholder="Optional"
+                value={replacementReason}
+                onChange={(e) => setReplacementReason(e.target.value)}
+                className="h-10 w-full rounded-md border border-rally-line bg-white px-3 text-sm font-normal text-rally-ink outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+              />
+            </label>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => applyReplacement.mutate()}
+              className="inline-flex min-h-10 items-center rounded-md bg-rally-ink px-3 text-sm font-semibold text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Set replacement
+            </button>
+          </section>
+        </div>
+      </aside>
     </div>
   );
 }

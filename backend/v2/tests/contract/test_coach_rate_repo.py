@@ -51,3 +51,27 @@ async def test_set_rate_supersedes_mongo_rate_with_naive_effective_from(db, acad
     assert old is not None
     assert old["status"] == "superseded"
     assert old["effective_until"].replace(tzinfo=UTC) == datetime(2026, 6, 1, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_legacy_seed_percentage_rate_maps_to_percent_domain(db, acad) -> None:
+    await db["coach_rates"].insert_one(
+        {
+            "academy_id": acad,
+            "rate_id": "rate-legacy",
+            "coach_id": "coach-1",
+            "rate_type": "percentage_of_expected_revenue",
+            "percentage": 30.0,
+            "basis": "expected",
+            "per_session_cents": 2500,
+            "effective_from": datetime(2026, 4, 1, tzinfo=UTC),
+            "status": "active",
+        }
+    )
+
+    rates = await MongoCoachRateRepository(db).list_for_coach("coach-1")
+
+    assert len(rates) == 1
+    assert rates[0].billing_unit == "percent_of_revenue"
+    assert rates[0].percent_bps == 3000
+    assert rates[0].amount_minor == 2500

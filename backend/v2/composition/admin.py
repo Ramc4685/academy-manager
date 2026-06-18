@@ -1059,7 +1059,9 @@ def _make_session_economics_report(db: AsyncIOMotorDatabase[Any]) -> object:
             async for session in sessions_cursor:
                 sessions_by_id[str(session.get("session_id") or session.get("_id"))] = session
 
-        active_enrollments_by_session: dict[str, int] = {session_id: 0 for session_id in session_ids}
+        active_enrollments_by_session: dict[str, int] = {
+            session_id: 0 for session_id in session_ids
+        }
         enrollment_to_session: dict[str, str] = {}
         if session_ids:
             enrollments_cursor = db["enrollments"].find(
@@ -1101,6 +1103,12 @@ def _make_session_economics_report(db: AsyncIOMotorDatabase[Any]) -> object:
 
         paid_by_session: dict[str, int] = {session_id: 0 for session_id in session_ids}
         billed_unpaid_by_session: dict[str, int] = {session_id: 0 for session_id in session_ids}
+        paid_enrollments_by_session: dict[str, set[str]] = {
+            session_id: set() for session_id in session_ids
+        }
+        unpaid_enrollments_by_session: dict[str, set[str]] = {
+            session_id: set() for session_id in session_ids
+        }
         invoice_keys: set[str] = set()
 
         def session_for_doc(doc: dict[str, Any]) -> str | None:
@@ -1128,8 +1136,16 @@ def _make_session_economics_report(db: AsyncIOMotorDatabase[Any]) -> object:
             session_id = session_for_doc(invoice)
             if session_id not in paid_by_session:
                 continue
-            paid_by_session[session_id] += _invoice_paid_cents(invoice)
-            billed_unpaid_by_session[session_id] += _invoice_outstanding_cents(invoice)
+            paid = _invoice_paid_cents(invoice)
+            outstanding = _invoice_outstanding_cents(invoice)
+            paid_by_session[session_id] += paid
+            billed_unpaid_by_session[session_id] += outstanding
+            enrollment_id = str(invoice.get("enrollment_id") or "")
+            if enrollment_id:
+                if paid > 0 and outstanding == 0:
+                    paid_enrollments_by_session[session_id].add(enrollment_id)
+                if outstanding > 0 or paid == 0:
+                    unpaid_enrollments_by_session[session_id].add(enrollment_id)
 
         payments_cursor = db["payments"].find(
             {
@@ -1155,8 +1171,16 @@ def _make_session_economics_report(db: AsyncIOMotorDatabase[Any]) -> object:
             session_id = session_for_doc(payment)
             if session_id not in paid_by_session:
                 continue
-            paid_by_session[session_id] += _payment_collected_cents(payment)
-            billed_unpaid_by_session[session_id] += _payment_outstanding_cents(payment)
+            paid = _payment_collected_cents(payment)
+            outstanding = _payment_outstanding_cents(payment)
+            paid_by_session[session_id] += paid
+            billed_unpaid_by_session[session_id] += outstanding
+            enrollment_id = str(payment.get("enrollment_id") or "")
+            if enrollment_id:
+                if paid > 0 and outstanding == 0:
+                    paid_enrollments_by_session[session_id].add(enrollment_id)
+                if outstanding > 0 or paid == 0:
+                    unpaid_enrollments_by_session[session_id].add(enrollment_id)
 
         coach_payroll_by_session: dict[str, int] = {session_id: 0 for session_id in session_ids}
         payout_period_ids: list[str] = []
@@ -1214,6 +1238,11 @@ def _make_session_economics_report(db: AsyncIOMotorDatabase[Any]) -> object:
             rent = rent_allocations.get(session_id, 0)
             other = other_allocations.get(session_id, 0)
             profit = expected_revenue - coach_payroll - rent - other
+            paid_student_count = len(paid_enrollments_by_session.get(session_id, set()))
+            unpaid_student_count = max(
+                active_enrollments_by_session.get(session_id, 0) - paid_student_count,
+                len(unpaid_enrollments_by_session.get(session_id, set())),
+            )
             rows.append(
                 {
                     "session_id": session_id,
@@ -1225,6 +1254,8 @@ def _make_session_economics_report(db: AsyncIOMotorDatabase[Any]) -> object:
                     ),
                     "coach_name": str(session.get("coach_name") or "") or None,
                     "active_enrollment_count": active_enrollments_by_session.get(session_id, 0),
+                    "paid_student_count": paid_student_count,
+                    "unpaid_student_count": unpaid_student_count,
                     "monthly_fee_cents": monthly_fee_by_session.get(session_id, 0),
                     "payable_occurrence_count": occurrences_by_session.get(session_id, 0),
                     "expected_revenue_per_occurrence_cents": per_occurrence_by_session.get(
@@ -1280,7 +1311,9 @@ def _make_session_economics_report(db: AsyncIOMotorDatabase[Any]) -> object:
     return get_session_economics
 
 
-def _allocate_report_amount(total_cents: int, expected_by_session: dict[str, int]) -> dict[str, int]:
+def _allocate_report_amount(
+    total_cents: int, expected_by_session: dict[str, int]
+) -> dict[str, int]:
     expected_total = sum(expected_by_session.values())
     allocations = {session_id: 0 for session_id in expected_by_session}
     if total_cents <= 0 or expected_total <= 0:
