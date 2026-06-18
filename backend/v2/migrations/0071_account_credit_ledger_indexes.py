@@ -36,9 +36,7 @@ async def up(db) -> None:
     await _drop_conflicting_index_for_key(
         db.account_credit_ledger, expires_keys, "academy_credit_expires"
     )
-    await db.account_credit_ledger.create_index(
-        expires_keys, name="academy_credit_expires"
-    )
+    await db.account_credit_ledger.create_index(expires_keys, name="academy_credit_expires")
 
     application_keys = [("academy_id", 1), ("credit_id", 1), ("invoice_id", 1)]
     await _drop_conflicting_index_for_key(

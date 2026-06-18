@@ -70,9 +70,7 @@ class _FakeCustomer:
             data=[
                 _FakeStripeCustomerObject(
                     id="cus_scoped",
-                    invoice_settings=_FakeStripeCustomerObject(
-                        default_payment_method="pm_scoped"
-                    ),
+                    invoice_settings=_FakeStripeCustomerObject(default_payment_method="pm_scoped"),
                 )
             ]
         )
