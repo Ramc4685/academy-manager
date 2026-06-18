@@ -8,36 +8,67 @@ live in migration 0102.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 from backend.v2.contexts.coaching.domain.payout import CoachRate
 from backend.v2.shared.tenancy import TenantScopedRepository
 
 
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _legacy_billing_unit(doc: dict[str, Any]) -> str:
+    billing_unit = doc.get("billing_unit")
+    if billing_unit:
+        return str(billing_unit)
+    rate_type = str(doc.get("rate_type") or "").lower()
+    if rate_type in {"percentage_of_expected_revenue", "percent_of_revenue"}:
+        return "percent_of_revenue"
+    if doc.get("percentage") is not None:
+        return "percent_of_revenue"
+    if rate_type == "per_hour":
+        return "per_hour"
+    return "per_session"
+
+
+def _amount_minor(doc: dict[str, Any]) -> int:
+    return int(doc.get("amount_minor", doc.get("amount_cents", doc.get("per_session_cents", 0))))
+
+
+def _percent_bps(doc: dict[str, Any]) -> int | None:
+    if doc.get("percent_bps") is not None:
+        return int(doc["percent_bps"])
+    if doc.get("percentage") is None:
+        return None
+    return int((Decimal(str(doc["percentage"])) * Decimal(100)).quantize(Decimal("1")))
+
+
+def coach_rate_from_mongo_doc(doc: dict[str, Any]) -> CoachRate:
+    effective_until = doc.get("effective_until")
+    return CoachRate(
+        rate_id=str(doc.get("rate_id") or doc.get("_id")),
+        academy_id=str(doc["academy_id"]),
+        coach_id=str(doc["coach_id"]),
+        billing_unit=_legacy_billing_unit(doc),  # type: ignore[arg-type]
+        amount_minor=_amount_minor(doc),
+        percent_bps=_percent_bps(doc),
+        currency=str(doc.get("currency", "USD")).upper(),
+        effective_from=_as_utc(doc["effective_from"]),
+        effective_until=(None if effective_until is None else _as_utc(effective_until)),
+        status=doc.get("status", "active"),
+    )
+
+
 class MongoCoachRateRepository(TenantScopedRepository):
     collection_name = "coach_rates"
 
-    @staticmethod
-    def _as_utc(value: datetime) -> datetime:
-        if value.tzinfo is None:
-            return value.replace(tzinfo=UTC)
-        return value.astimezone(UTC)
-
     @classmethod
     def _to_domain(cls, doc: dict[str, Any]) -> CoachRate:
-        effective_until = doc.get("effective_until")
-        return CoachRate(
-            rate_id=str(doc.get("rate_id") or doc.get("_id")),
-            academy_id=str(doc["academy_id"]),
-            coach_id=str(doc["coach_id"]),
-            billing_unit=doc.get("billing_unit", "per_session"),
-            amount_minor=int(doc.get("amount_minor", doc.get("amount_cents", 0))),
-            percent_bps=(None if doc.get("percent_bps") is None else int(doc["percent_bps"])),
-            currency=str(doc.get("currency", "USD")).upper(),
-            effective_from=cls._as_utc(doc["effective_from"]),
-            effective_until=(None if effective_until is None else cls._as_utc(effective_until)),
-            status=doc.get("status", "active"),
-        )
+        return coach_rate_from_mongo_doc(doc)
 
     async def list_for_coach(self, coach_id: str) -> list[CoachRate]:
         cursor = self._find_many(

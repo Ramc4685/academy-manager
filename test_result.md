@@ -32,7 +32,6 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-06-16-release-candidate-validation-blno-staging](docs/test-results/active/2026-06-16-release-candidate-validation-blno-staging.md)
 - [2026-06-17-billing-ledger-reviewable-improvements](docs/test-results/active/2026-06-17-billing-ledger-reviewable-improvements.md)
 - [2026-06-17-pr-200-rebase-with-main](docs/test-results/active/2026-06-17-pr-200-rebase-with-main.md)
-- [2026-06-18-admin-session-economics](docs/test-results/active/2026-06-18-admin-session-economics.md)
 
 ## Required Workflow
 

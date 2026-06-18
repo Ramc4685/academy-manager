@@ -253,6 +253,7 @@ class AdminUseCases:
     get_coach_utilization: object | None = (
         None  # async (periods: list[str]) -> CoachUtilizationResult
     )
+    get_session_economics: object | None = None  # async (period: str) -> dict[str, Any]
     curriculum: CurriculumComposition | None = None
     student_progress: StudentProgressComposition | None = None
     generate_daily_teaching_plan: GenerateDailyTeachingPlan | None = None

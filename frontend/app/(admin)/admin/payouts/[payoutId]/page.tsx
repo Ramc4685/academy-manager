@@ -26,6 +26,7 @@ import {
   RefreshCw,
   RotateCcw,
   Undo2,
+  X,
 } from "lucide-react";
 
 import { listAdminUsers, listCoachPayRates, type AdminCoachPayRateView } from "@/lib/api/admin";
@@ -58,9 +59,9 @@ const STATUS_CHIP: Record<AdminPayoutPeriodView["status"], { variant: "paid" | "
   paid: { variant: "paid", label: "PAID" },
 };
 
-function payRuleLabel(rate: AdminCoachPayRateView | null): string | null {
-  if (!rate) return null;
-  const since = new Date(rate.effective_from).toLocaleDateString(undefined, {
+function formatPayRuleLabel(rate: AdminCoachPayRateView): string {
+  const from = new Date(rate.effective_from);
+  const since = from.toLocaleDateString(undefined, {
     month: "short",
     year: "numeric",
   });
@@ -69,6 +70,35 @@ function payRuleLabel(rate: AdminCoachPayRateView | null): string | null {
   }
   const unit = rate.billing_unit === "per_hour" ? "per hour" : "per session";
   return `Pay rule: ${money(rate.amount_cents, rate.currency)} ${unit} · effective since ${since}`;
+}
+
+function rateOverlapsPeriod(
+  rate: AdminCoachPayRateView,
+  periodStart: string,
+  periodEnd: string,
+): boolean {
+  const start = new Date(periodStart).getTime();
+  const end = new Date(periodEnd).getTime();
+  const from = new Date(rate.effective_from).getTime();
+  const until = rate.effective_until ? new Date(rate.effective_until).getTime() : Number.POSITIVE_INFINITY;
+  return from < end && until > start;
+}
+
+function payRuleLabel(
+  rates: AdminCoachPayRateView[],
+  period: AdminPayoutPeriodView | null,
+): string | null {
+  if (!period) return null;
+  const applicableRates = rates.filter((rate) =>
+    rateOverlapsPeriod(rate, period.period_start, period.period_end),
+  );
+  if (applicableRates.length === 0) {
+    return "No pay rule was effective for this payout period.";
+  }
+  if (applicableRates.length > 1) {
+    return "Pay rule: varies by session date in this payout period.";
+  }
+  return formatPayRuleLabel(applicableRates[0]);
 }
 
 export default function AdminPayoutReviewPage() {
@@ -98,9 +128,9 @@ export default function AdminPayoutReviewPage() {
     queryFn: () => listCoachPayRates(period!.coach_id),
     enabled: Boolean(period),
   });
-  const activeRate = useMemo(
-    () => ratesQuery.data?.rates.find((rate) => rate.status === "active") ?? null,
-    [ratesQuery.data],
+  const periodPayRule = useMemo(
+    () => payRuleLabel(ratesQuery.data?.rates ?? [], period),
+    [ratesQuery.data, period],
   );
 
   const auditQuery = useQuery({
@@ -184,7 +214,7 @@ export default function AdminPayoutReviewPage() {
       <Header
         coachName={coachName}
         coachEmail={coach?.email ?? null}
-        payRule={payRuleLabel(activeRate)}
+        payRule={periodPayRule}
         period={period}
         fallbackAmountCents={period.total_amount_cents}
         periodStart={period.period_start}
@@ -652,7 +682,7 @@ function PaidRow({
       </td>
       <td className="px-3 py-3">
         <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-emerald-800">
-          Paid
+          {period.status === "paid" ? "Paid" : period.status === "approved" ? "Approved" : "Calculated"}
         </span>
       </td>
       <td className="px-3 py-3 text-right font-mono tabular-nums text-rally-muted">
@@ -789,6 +819,7 @@ function MarkPaidDialog({
   const [paidAt, setPaidAt] = useState(today);
   const [amount, setAmount] = useState((defaultAmountCents / 100).toFixed(2));
   const [reference, setReference] = useState("");
+  const dialogTitleId = "mark-paid-dialog-title";
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -801,19 +832,44 @@ function MarkPaidDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-rally-ink/55 p-4 backdrop-blur-[2px]"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={dialogTitleId}
+    >
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-sm rounded-lg bg-background p-6 shadow-lg space-y-4"
+        className="w-full max-w-md rounded-xl border border-rally-line bg-white p-6 text-rally-ink shadow-2xl dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-50"
       >
-        <h2 className="text-base font-semibold">Record payment</h2>
-        <div className="space-y-3">
+        <div className="flex items-start justify-between gap-4">
           <div>
-            <label className="text-sm font-medium">Method</label>
+            <h2 id={dialogTitleId} className="text-lg font-semibold">
+              Record payment
+            </h2>
+            <p className="mt-1 text-sm text-rally-subtle">
+              Save the payment details for this approved payout.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-rally-line bg-white text-rally-muted shadow-sm transition hover:bg-rally-paper hover:text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-accent/25 dark:bg-neutral-900"
+            aria-label="Close payment dialog"
+          >
+            <X className="size-4" aria-hidden="true" />
+          </button>
+        </div>
+        <div className="mt-5 space-y-4">
+          <div>
+            <label htmlFor="mark-paid-method" className="text-sm font-medium text-rally-ink">
+              Method
+            </label>
             <select
+              id="mark-paid-method"
               value={method}
               onChange={(e) => setMethod(e.target.value as MarkPayoutPaidInput["method"])}
-              className="mt-1 w-full rounded border px-2 py-1.5 text-sm"
+              className="mt-1.5 h-11 w-full rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-accent focus:outline-none focus:ring-2 focus:ring-rally-accent/20 dark:bg-neutral-900 dark:text-neutral-50"
             >
               <option value="bank_transfer">Bank transfer</option>
               <option value="cash">Cash</option>
@@ -822,46 +878,59 @@ function MarkPaidDialog({
             </select>
           </div>
           <div>
-            <label className="text-sm font-medium">Date paid</label>
+            <label htmlFor="mark-paid-date" className="text-sm font-medium text-rally-ink">
+              Date paid
+            </label>
             <input
+              id="mark-paid-date"
               type="date"
               value={paidAt}
               onChange={(e) => setPaidAt(e.target.value)}
               required
-              className="mt-1 w-full rounded border px-2 py-1.5 text-sm"
+              className="mt-1.5 h-11 w-full rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-accent focus:outline-none focus:ring-2 focus:ring-rally-accent/20 dark:bg-neutral-900 dark:text-neutral-50"
             />
           </div>
           <div>
-            <label className="text-sm font-medium">Amount</label>
+            <label htmlFor="mark-paid-amount" className="text-sm font-medium text-rally-ink">
+              Amount
+            </label>
             <input
+              id="mark-paid-amount"
               type="number"
               step="0.01"
               min="0"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               required
-              className="mt-1 w-full rounded border px-2 py-1.5 text-sm"
+              className="mt-1.5 h-11 w-full rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-accent focus:outline-none focus:ring-2 focus:ring-rally-accent/20 dark:bg-neutral-900 dark:text-neutral-50"
             />
           </div>
           <div>
-            <label className="text-sm font-medium">Reference (optional)</label>
+            <label htmlFor="mark-paid-reference" className="text-sm font-medium text-rally-ink">
+              Reference <span className="font-normal text-rally-muted">(optional)</span>
+            </label>
             <input
+              id="mark-paid-reference"
               type="text"
               value={reference}
               onChange={(e) => setReference(e.target.value)}
               placeholder="e.g. transaction ID"
-              className="mt-1 w-full rounded border px-2 py-1.5 text-sm"
+              className="mt-1.5 h-11 w-full rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm placeholder:text-rally-muted focus:border-rally-accent focus:outline-none focus:ring-2 focus:ring-rally-accent/20 dark:bg-neutral-900 dark:text-neutral-50"
             />
           </div>
         </div>
-        <div className="flex gap-2 justify-end">
-          <button type="button" onClick={onCancel} className="rounded border px-3 py-1.5 text-sm">
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="inline-flex h-10 items-center justify-center rounded-md border border-rally-line bg-white px-4 text-sm font-semibold text-rally-ink shadow-sm transition hover:bg-rally-paper focus:outline-none focus:ring-2 focus:ring-rally-accent/25 dark:bg-neutral-900 dark:text-neutral-50"
+          >
             Cancel
           </button>
           <button
             type="submit"
             disabled={pending}
-            className="rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
+            className="inline-flex h-10 items-center justify-center rounded-md bg-rally-ink px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-rally-ink/90 focus:outline-none focus:ring-2 focus:ring-rally-accent/30 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {pending ? "Saving…" : "Confirm payment"}
           </button>

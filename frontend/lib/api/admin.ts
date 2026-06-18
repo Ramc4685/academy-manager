@@ -741,6 +741,44 @@ export interface AdminReportsDashboardResponse {
   empty_states: string[];
 }
 
+export interface AdminSessionEconomicsSummary {
+  expected_revenue_cents: number;
+  paid_cents: number;
+  unpaid_cents: number;
+  coach_payroll_cents: number;
+  rent_cents: number;
+  other_expenses_cents: number;
+  expected_profit_cents: number;
+  profit_margin: number | null;
+}
+
+export interface AdminSessionEconomicsRow {
+  session_id: string;
+  title: string;
+  coach_name: string | null;
+  active_enrollment_count: number;
+  paid_student_count: number;
+  unpaid_student_count: number;
+  monthly_fee_cents: number;
+  payable_occurrence_count: number;
+  expected_revenue_per_occurrence_cents: number;
+  expected_revenue_cents: number;
+  paid_cents: number;
+  unpaid_cents: number;
+  coach_payroll_cents: number;
+  rent_cents: number;
+  other_expenses_cents: number;
+  expected_profit_cents: number;
+  profit_margin: number | null;
+}
+
+export interface AdminSessionEconomicsResponse {
+  period: string;
+  summary: AdminSessionEconomicsSummary;
+  sessions: AdminSessionEconomicsRow[];
+  empty_states: string[];
+}
+
 export interface AdminMessageView {
   message_id: string;
   kind: "dm" | "announcement" | string;
@@ -1728,6 +1766,13 @@ export function getAdminReportKpis(): Promise<AdminReportsKpiResponse> {
 export function getAdminReportsDashboard(period: string): Promise<AdminReportsDashboardResponse> {
   return apiFetch<AdminReportsDashboardResponse>(
     `/admin/reports/dashboard?period=${encodeURIComponent(period)}`,
+    { method: "GET" },
+  );
+}
+
+export function getAdminSessionEconomics(period: string): Promise<AdminSessionEconomicsResponse> {
+  return apiFetch<AdminSessionEconomicsResponse>(
+    `/admin/reports/session-economics?period=${encodeURIComponent(period)}`,
     { method: "GET" },
   );
 }
