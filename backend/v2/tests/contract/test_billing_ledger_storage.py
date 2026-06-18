@@ -6,6 +6,10 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
+    AddInvoiceLine,
+    AddInvoiceLineCommand,
+)
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
     LedgerInvoice,
@@ -158,6 +162,49 @@ async def test_save_get_invoice_strips_mongo_id(db, acad) -> None:
     assert fetched is not None
     assert fetched.invoice_id == "inv-roundtrip-1"
     assert fetched == saved
+
+
+@pytest.mark.asyncio
+async def test_save_invoice_keeps_due_date_as_mongo_date(db, acad) -> None:
+    """Validated invoice collections require due_date as a date-like value, not an ISO string."""
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    invoice = _make_invoice("inv-due-date-type", acad, now)
+
+    await repo.save_invoice(invoice)
+
+    raw = await db["invoices"].find_one({"invoice_id": "inv-due-date-type"})
+    assert raw is not None
+    assert isinstance(raw["due_date"], datetime)
+    assert not isinstance(raw["due_date"], str)
+
+
+@pytest.mark.asyncio
+async def test_add_invoice_line_repairs_existing_string_due_date(db, acad) -> None:
+    """Older seeded invoices with string due_date must not fail validated Mongo updates."""
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    invoice = _make_invoice("inv-string-due-date", acad, now)
+    raw_invoice = invoice.model_dump(mode="python")
+    raw_invoice["due_date"] = "2026-06-30"
+    await db["invoices"].insert_one(raw_invoice)
+    await repo.save_line(_make_line("line-existing-tuition", invoice.invoice_id, acad, 10_000))
+
+    result = await AddInvoiceLine(ledger=repo, clock=lambda: now).execute(
+        AddInvoiceLineCommand(
+            invoice_id=invoice.invoice_id,
+            description="New racket",
+            line_type="equipment",
+            quantity=1,
+            unit_amount_cents=3_000,
+        )
+    )
+
+    assert result.invoice.total_cents == 13_000
+    raw = await db["invoices"].find_one({"invoice_id": invoice.invoice_id})
+    assert raw is not None
+    assert isinstance(raw["due_date"], datetime)
+    assert not isinstance(raw["due_date"], str)
 
 
 @pytest.mark.asyncio

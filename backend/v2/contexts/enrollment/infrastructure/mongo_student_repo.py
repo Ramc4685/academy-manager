@@ -117,6 +117,7 @@ class MongoStudentRepository(TenantScopedRepository):
         enrolled_sessions: list[AdminStudentSessionSummary] | None = None,
         payment_history: list[AdminStudentPaymentSummary] | None = None,
         current_payment: AdminStudentCurrentPaymentSummary | None = None,
+        outstanding_balance_cents: int = 0,
         waiver_status: str = "unknown",
         waiver_signed_at: datetime | None = None,
         waiver_version: str | None = None,
@@ -159,6 +160,7 @@ class MongoStudentRepository(TenantScopedRepository):
             enrolled_sessions=enrolled_sessions or [],
             payment_history=payment_history or [],
             current_payment=current_payment,
+            outstanding_balance_cents=outstanding_balance_cents,
         )
 
     async def get_admin_student(self, student_id: str) -> AdminStudentDetail | None:
@@ -188,6 +190,7 @@ class MongoStudentRepository(TenantScopedRepository):
             payment_history=payment_history,
             enrolled_sessions=enrolled_sessions,
         )
+        outstanding_balance_cents = self._admin_student_outstanding_balance(payment_history)
         waiver_status, waiver_signed_at, waiver_version = await self._waiver_summary(
             academy_id=academy_id,
             student_id=resolved_id,
@@ -210,6 +213,7 @@ class MongoStudentRepository(TenantScopedRepository):
             enrolled_sessions=enrolled_sessions,
             payment_history=payment_history,
             current_payment=current_payment,
+            outstanding_balance_cents=outstanding_balance_cents,
             waiver_status=waiver_status,
             waiver_signed_at=waiver_signed_at,
             waiver_version=waiver_version,
@@ -708,6 +712,25 @@ class MongoStudentRepository(TenantScopedRepository):
                     session_id=payment.session_id,
                 )
         return None
+
+    @staticmethod
+    def _admin_student_outstanding_balance(
+        payment_history: list[AdminStudentPaymentSummary],
+    ) -> int:
+        open_statuses = {
+            "open",
+            "unpaid",
+            "partially_paid",
+            "partial",
+            "pending",
+            "failed",
+            "expired",
+        }
+        return sum(
+            max(payment.balance_due_cents, 0)
+            for payment in payment_history
+            if payment.status in open_statuses and payment.balance_due_cents > 0
+        )
 
     async def _waiver_summary(
         self,
