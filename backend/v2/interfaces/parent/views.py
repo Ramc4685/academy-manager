@@ -115,6 +115,15 @@ class StartInvoicePaymentResponse(BaseModel):
     redirect_url: str
 
 
+class StartBalancePaymentRequest(BaseModel):
+    success_url: str
+    cancel_url: str
+
+
+class StartBalancePaymentResponse(BaseModel):
+    redirect_url: str
+
+
 class CheckoutStatusResponse(BaseModel):
     checkout_session_id: str
     payment_id: str | None = None
