@@ -20,6 +20,7 @@ Rebase feat/stripe-subscription-ledger-convergence onto current main, resolve bi
 
 - No verification recorded yet.
 - 2026-06-17T18:58:05: Focused rebase verification passed: backend ruff format/check for conflict-area files; pytest v2/tests/application/test_webhook_handler.py v2/tests/contract/test_billing_idempotency.py v2/tests/unit/test_parent_composition.py -q (53 passed); node --no-warnings --test frontend/lib/parent-billing-recovery-ui.node-test.mjs frontend/lib/admin-billing-reconciliation-ui.node-test.mjs (2 passed).
+- 2026-06-17T19:02:32: Full rebased-branch gate passed: scripts/dev/pre-push-checks.sh --full completed backend ruff format/check, backend v2 pytest, frontend node unit tests, pnpm typecheck, pnpm lint, and pnpm e2e.
 ## Reusable Lessons
 
 - None recorded yet.
