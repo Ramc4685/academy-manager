@@ -46,6 +46,7 @@ import bcrypt
 import firebase_admin
 from firebase_admin import auth as firebase_admin_auth, credentials as firebase_admin_credentials
 from motor.motor_asyncio import AsyncIOMotorClient
+from backend.scripts.backfill_p4_legacy_payments import map_legacy_payment
 from backend.v2.shared.ids import new_ulid
 
 
@@ -1391,6 +1392,46 @@ def _parse_emergency_phone(raw: str) -> str:
     return found[0].strip() if found else raw
 
 
+async def _upsert_seed_ledger_records(db, payment_doc: dict) -> None:
+    mapped = map_legacy_payment(payment_doc)
+    if mapped is None:
+        return
+
+    invoice = mapped["invoice"]
+    line = mapped["line"]
+    ledger_payment = mapped["ledger_payment"]
+    allocation = mapped["allocation"]
+
+    await db.invoices.update_one(
+        {"academy_id": invoice["academy_id"], "invoice_id": invoice["invoice_id"]},
+        {"$set": invoice},
+        upsert=True,
+    )
+    await db.invoice_lines.update_one(
+        {"academy_id": line["academy_id"], "line_id": line["line_id"]},
+        {"$set": line},
+        upsert=True,
+    )
+    if ledger_payment:
+        await db.ledger_payments.update_one(
+            {
+                "academy_id": ledger_payment["academy_id"],
+                "payment_id": ledger_payment["payment_id"],
+            },
+            {"$set": ledger_payment},
+            upsert=True,
+        )
+    if allocation:
+        await db.payment_allocations.update_one(
+            {
+                "academy_id": allocation["academy_id"],
+                "allocation_id": allocation["allocation_id"],
+            },
+            {"$set": allocation},
+            upsert=True,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -1418,11 +1459,22 @@ async def main() -> None:
     # ── 1. Drop transactional collections; keep admin user ─────────────────
     for col in (
         "academies",
+        "academy_settings",
+        "academy_memberships",
         "sessions",
         "session_occurrences",
         "students",
         "enrollments",
         "payments",
+        "invoices",
+        "invoice_lines",
+        "ledger_payments",
+        "payment_allocations",
+        "account_credit_ledger",
+        "credit_applications",
+        "payment_attempts",
+        "parent_billing_customers",
+        "legacy_payments_archive",
         "expenses",
         "attendance",
         "lesson_plans",
@@ -1475,6 +1527,32 @@ async def main() -> None:
     )
     print(f"Academy: {ACADEMY_NAME!r} ({ACADEMY_ID}, tz={ACADEMY_TZ})")
 
+    await db.academy_settings.update_one(
+        {"academy_id": ACADEMY_ID},
+        {
+            "$set": {
+                "settings_id": f"set_{ACADEMY_ID}",
+                "academy_id": ACADEMY_ID,
+                "display_name": ACADEMY_NAME,
+                "timezone": ACADEMY_TZ,
+                "fees": {
+                    "default_monthly_cents": 6000,
+                    "late_fee_cents": 500,
+                    "grace_days": 5,
+                },
+                "manual_methods": ["cash", "check", "zelle"],
+                "notifications": {
+                    "dues_reminders": True,
+                    "attendance_alerts": True,
+                    "daily_digest_to_admin": True,
+                },
+                "created_at": utcnow(),
+                "updated_at": utcnow(),
+            }
+        },
+        upsert=True,
+    )
+
     # ── Ensure admin user has v2 fields ────────────────────────────────────
     admin_firebase_uid = ""
     if FIREBASE_MODE and firebase_available():
@@ -1493,7 +1571,8 @@ async def main() -> None:
                     or "Admin",
                     "user_id": admin_firebase_uid or str(admin_doc["_id"]),
                     "firebase_uid": admin_firebase_uid or str(admin_doc["_id"]),
-                }
+                },
+                "$unset": {"stripe_customer_id": ""},
             },
         )
     else:
@@ -1506,6 +1585,7 @@ async def main() -> None:
             "roles": ["admin"],
             "status": "active",
             "is_active": True,
+            "stripe_customer_id": None,
             "created_at": utcnow(),
             "updated_at": utcnow(),
         }
@@ -1537,7 +1617,8 @@ async def main() -> None:
                     "role": "platform_admin",
                     "status": "active",
                     "granted_at": utcnow(),
-                }
+                },
+                "$setOnInsert": {"platform_role_id": new_ulid(), "created_at": utcnow()},
             },
             upsert=True,
         )
@@ -1564,6 +1645,7 @@ async def main() -> None:
             "roles": ["coach"],
             "status": "active",
             "is_active": True,
+            "stripe_customer_id": None,
             "created_at": utcnow(),
             "updated_at": utcnow(),
         }
@@ -1772,7 +1854,8 @@ async def main() -> None:
                             "display_name": existing.get("display_name")
                             or existing.get("name")
                             or parent_display,
-                        }
+                        },
+                        "$unset": {"stripe_customer_id": ""},
                     },
                 )
             else:
@@ -1790,6 +1873,7 @@ async def main() -> None:
                     "roles": ["parent"],
                     "status": "active",
                     "is_active": True,
+                    "stripe_customer_id": None,
                     "created_at": utcnow(),
                     "updated_at": utcnow(),
                 }
@@ -1806,6 +1890,18 @@ async def main() -> None:
                     )
                 parent_id_by_email[email] = uid
         parent_id = parent_id_by_email[email]
+        await db.parent_billing_customers.update_one(
+            {"academy_id": ACADEMY_ID, "parent_id": parent_id},
+            {
+                "$setOnInsert": {
+                    "academy_id": ACADEMY_ID,
+                    "parent_id": parent_id,
+                    "created_at": utcnow(),
+                },
+                "$set": {"updated_at": utcnow()},
+            },
+            upsert=True,
+        )
 
         # ── Student ──
         first, last = split_name(child)
@@ -1872,7 +1968,7 @@ async def main() -> None:
         await db.enrollments.insert_one(en_doc)
         enrollment_count += 1
 
-        # ── Payments ──
+        # ── Billing ledger ──
         session_price_cents = int(
             next(s["monthly_price"] for s in SESSIONS if s["name"] == session_name) * 100
         )
@@ -1913,12 +2009,12 @@ async def main() -> None:
                 if is_paid:
                     pay_doc["paid_at"] = utcnow()
                     pay_doc["payment_date"] = utcnow()
-                await db.payments.insert_one(pay_doc)
+                await _upsert_seed_ledger_records(db, pay_doc)
                 payment_count += 1
 
     print(
         f"Parents: {len(parent_id_by_email)}, Students: {len(student_id_by_name)}, "
-        f"Enrollments: {enrollment_count}, Payments: {payment_count}"
+        f"Enrollments: {enrollment_count}, Invoices: {payment_count}"
     )
 
     # ── 7. Attendance ───────────────────────────────────────────────────────

@@ -69,6 +69,7 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import
     MongoApplicationRepository,
 )
 from backend.v2.shared.events import MongoOutbox
+from backend.v2.shared.events.dispatcher import EventDispatcher
 from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
 from backend.v2.shared.ids import new_ulid
 
@@ -248,6 +249,72 @@ async def test_on_payment_succeeded_at_capacity_still_defers_to_admin_review(db,
     assert enrollments == []
     application = await db["onboarding_applications"].find_one({"application_id": "app-2"})
     assert application["status"] == "PENDING_APPROVAL"
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_rehydrates_payment_succeeded_payload_from_outbox(db, acad) -> None:
+    """MongoOutbox stores the full event under payload; dispatch must rebuild
+    the concrete event so handlers receive typed payload models.
+    """
+    await _wire(db)
+
+    session_id = str(new_ulid())
+    await db["sessions"].insert_one(
+        {
+            "session_id": session_id,
+            "academy_id": "acad",
+            "coach_id": "coach-1",
+            "title": "Junior A",
+            "location": "Court 1",
+            "start_at": datetime(2026, 6, 1, 9, 0, tzinfo=UTC),
+            "end_at": datetime(2026, 6, 1, 10, 30, tzinfo=UTC),
+            "capacity": 1,
+            "reserved_seats": 0,
+            "status": "scheduled",
+        }
+    )
+    now = datetime.now(UTC)
+    await db["onboarding_applications"].insert_one(
+        {
+            "application_id": "app-dispatch",
+            "academy_id": "acad",
+            "parent_user_id": "parent-dispatch",
+            "parent_email": "dispatch@example.com",
+            "status": "CHECKOUT_PENDING",
+            "selected_session_id": session_id,
+            "payment_id": "pay-dispatch",
+            "expires_at": now,
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+
+    outbox = MongoOutbox(db)
+    await outbox.append(
+        PaymentSucceeded(
+            aggregate_id="pay-dispatch",
+            academy_id="acad",
+            payload=PaymentSucceededPayload(
+                payment_id="pay-dispatch",
+                parent_id="parent-dispatch",
+                session_id=session_id,
+                amount_cents=15000,
+                currency="usd",
+                succeeded_at=datetime.now(UTC),
+            ),
+        )
+    )
+
+    event_doc = await db["outbox_events"].find_one({"aggregate_id": "pay-dispatch"})
+    assert event_doc is not None
+    await EventDispatcher(db)._process_event(event_doc)
+
+    application = await db["onboarding_applications"].find_one({"application_id": "app-dispatch"})
+    assert application["status"] == "PENDING_APPROVAL"
+    assert await db["dead_letter_events"].count_documents({}) == 0
+    processed = await db["outbox_events"].find_one({"aggregate_id": "pay-dispatch"})
+    assert processed["processed"] is True
+    assert processed["status"] == "processed"
 
 
 @pytest.mark.asyncio

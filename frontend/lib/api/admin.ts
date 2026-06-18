@@ -491,6 +491,12 @@ export interface AddInvoiceLineRequest {
   unit_amount_cents: number;
 }
 
+export interface ApplyInvoiceAdjustmentRequest {
+  description: string;
+  amount_cents: number;
+  reason: string;
+}
+
 export interface SendInvoiceResponse {
   invoice_id: string;
   delivery_status: "not_sent" | "sent" | "delivery_failed" | string;
@@ -520,6 +526,19 @@ export interface RecordManualPaymentResponse {
   payment_id: string;
   invoice_status: string;
   balance_due_cents: number;
+}
+
+export interface InvoiceRefundRequest {
+  amount_cents?: number;
+  reason: string;
+}
+
+export interface InvoiceRefundResponse {
+  invoice_id: string;
+  payment_id: string;
+  stripe_refund_id: string;
+  refunded_cents: number;
+  total_refunded_cents: number;
 }
 
 export interface VoidInvoiceResponse {
@@ -1557,6 +1576,19 @@ export function addAdminInvoiceLine(
   );
 }
 
+export function applyAdminInvoiceAdjustment(
+  invoiceId: string,
+  payload: ApplyInvoiceAdjustmentRequest,
+): Promise<InvoiceLineMutationResponse> {
+  return apiFetch<InvoiceLineMutationResponse>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/adjustments`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
 export function deleteAdminInvoiceLine(invoiceId: string, lineId: string): Promise<void> {
   return apiFetch<void>(
     `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}`,
@@ -1586,6 +1618,19 @@ export function recordAdminInvoicePayment(
 ): Promise<RecordManualPaymentResponse> {
   return apiFetch<RecordManualPaymentResponse>(
     `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/record-payment`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function refundAdminInvoice(
+  invoiceId: string,
+  payload: InvoiceRefundRequest,
+): Promise<InvoiceRefundResponse> {
+  return apiFetch<InvoiceRefundResponse>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/refund`,
     {
       method: "POST",
       body: JSON.stringify(payload),

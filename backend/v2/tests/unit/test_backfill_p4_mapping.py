@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from backend.scripts.backfill_p4_legacy_payments import (
+    _legacy_balance_for_parent,
     is_legacy_payment,
     map_legacy_payment,
 )
@@ -82,6 +83,7 @@ def test_succeeded_produces_invoice_paid_with_zero_balance() -> None:
     assert inv["subtotal_cents"] == 7000
     assert inv["total_cents"] == 7000
     assert inv["discount_cents"] == 0
+    assert inv["due_date"] == datetime(2026, 4, 15, 0, 0, tzinfo=UTC)
 
 
 def test_succeeded_creates_ledger_payment() -> None:
@@ -150,6 +152,35 @@ def test_pending_does_not_create_ledger_payment_or_allocation() -> None:
     assert result is not None
     assert result["ledger_payment"] is None
     assert result["allocation"] is None
+
+
+# ---------------------------------------------------------------------------
+# Status: failed
+# ---------------------------------------------------------------------------
+
+
+def test_failed_produces_open_invoice_without_payment() -> None:
+    doc = _base_doc(status="failed", amount_cents=6000)
+    result = map_legacy_payment(doc)
+
+    assert result is not None
+    inv = result["invoice"]
+    assert inv["status"] == "open"
+    assert inv["balance_due_cents"] == 6000
+    assert result["ledger_payment"] is None
+    assert result["allocation"] is None
+
+
+def test_failed_counts_as_open_legacy_balance() -> None:
+    assert (
+        _legacy_balance_for_parent(
+            [
+                _base_doc(status="failed", amount_cents=6000),
+                _base_doc(status="succeeded", amount_cents=7000),
+            ]
+        )
+        == 6000
+    )
 
 
 # ---------------------------------------------------------------------------

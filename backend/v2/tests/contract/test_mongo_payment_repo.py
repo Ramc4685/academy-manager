@@ -40,6 +40,52 @@ async def test_list_for_parent_maps_domain_payments(db, acad) -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_and_save_ledger_payment_without_recreating_legacy_payment(db, acad) -> None:
+    now = datetime.now(UTC)
+    await db["ledger_payments"].insert_one(
+        {
+            "academy_id": acad,
+            "payment_id": "lp-refundable",
+            "parent_id": "parent-1",
+            "amount_cents": 10_000,
+            "unapplied_amount_cents": 0,
+            "currency": "usd",
+            "status": "succeeded",
+            "stripe_payment_intent_id": "pi_refundable",
+            "refunded_cents": 0,
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    repo = MongoPaymentRepository(db)
+
+    payment = await repo.get("lp-refundable")
+
+    assert payment is not None
+    assert payment.payment_id == "lp-refundable"
+    assert payment.stripe_payment_intent_id == "pi_refundable"
+    assert payment.amount_cents == 10_000
+
+    await repo.save(
+        payment.model_copy(
+            update={
+                "status": "partially_refunded",
+                "refunded_cents": 4_000,
+                "updated_at": now,
+            }
+        )
+    )
+
+    ledger_payment = await db["ledger_payments"].find_one(
+        {"academy_id": acad, "payment_id": "lp-refundable"}
+    )
+    assert ledger_payment is not None
+    assert ledger_payment["status"] == "partially_refunded"
+    assert ledger_payment["refunded_cents"] == 4_000
+    assert await db["payments"].count_documents({"academy_id": acad}) == 0
+
+
+@pytest.mark.asyncio
 async def test_generate_monthly_prorates_first_period_and_stores_snapshot(db, acad) -> None:
     ledger_repo = MongoBillingLedgerRepository(db)
     repo = MongoPaymentRepository(

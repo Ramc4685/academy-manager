@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections import defaultdict
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-LEGACY_STATUSES = {"succeeded", "pending", "waived"}
+LEGACY_STATUSES = {"succeeded", "pending", "failed", "waived"}
 INVOICES_COLLECTION = "invoices"
 INVOICE_LINES_COLLECTION = "invoice_lines"
 LEDGER_PAYMENTS_COLLECTION = "ledger_payments"
@@ -109,7 +109,7 @@ def map_legacy_payment(doc: dict[str, Any]) -> dict[str, Any] | None:
     line_id = f"line-from-{payment_id}"
 
     # Status mapping
-    if status == "pending":
+    if status in {"pending", "failed"}:
         invoice_status = "open"
         balance_due_cents = amount_cents
     elif status == "succeeded":
@@ -132,7 +132,7 @@ def map_legacy_payment(doc: dict[str, Any]) -> dict[str, Any] | None:
         "total_cents": total_cents,
         "balance_due_cents": balance_due_cents,
         "currency": currency,
-        "due_date": _due_date_from(doc),
+        "due_date": datetime.combine(_due_date_from(doc), time.min, tzinfo=UTC),
         "pdf_artifact_id": None,
         "delivery_status": "not_sent",
         "sent_at": None,
@@ -218,7 +218,7 @@ def _legacy_balance_for_parent(docs: list[dict[str, Any]]) -> int:
     total = 0
     for doc in docs:
         status = (doc.get("status") or "").lower()
-        if status == "pending":
+        if status in {"pending", "failed"}:
             total += int(doc.get("amount_cents") or 0)
     return total
 

@@ -46,7 +46,10 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
     MongoPayoutRepository,
     RecordExpense,
 )
-from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
+from backend.v2.contexts.billing.application.use_cases.issue_refund import (
+    IssueRefund,
+    IssueRefundCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
     QuoteEnrollmentCommand,
@@ -416,6 +419,7 @@ def _make_reports_kpis(db: AsyncIOMotorDatabase[Any]) -> object:
         academy_id = current_academy_id()
         now = datetime.now(UTC)
         period_str = now.strftime("%Y-%m")
+        start_month, end_month = _month_bounds(period_str)
         cutoff_30d = now - timedelta(days=30)
 
         # active_students: distinct students with active enrollment
@@ -458,12 +462,24 @@ def _make_reports_kpis(db: AsyncIOMotorDatabase[Any]) -> object:
                 "$match": {
                     "academy_id": academy_id,
                     "status": {"$in": ["succeeded", "paid"]},
-                    "period": period_str,
+                    "created_at": {"$gte": start_month, "$lt": end_month},
                 }
             },
-            {"$group": {"_id": None, "total": {"$sum": "$amount_cents"}}},
+            {
+                "$group": {
+                    "_id": None,
+                    "total": {
+                        "$sum": {
+                            "$subtract": [
+                                "$amount_cents",
+                                {"$ifNull": ["$refunded_cents", 0]},
+                            ]
+                        }
+                    },
+                }
+            },
         ]
-        res3 = await db.payments.aggregate(pipeline_dues).to_list(length=1)
+        res3 = await db.ledger_payments.aggregate(pipeline_dues).to_list(length=1)
         dues_collected_mtd_cents: int = res3[0]["total"] if res3 else 0
 
         # pending_waivers
@@ -539,6 +555,100 @@ def _payment_outstanding_cents(payment: dict[str, Any]) -> int:
     return max(_payment_final_amount_cents(payment) - _payment_collected_cents(payment), 0)
 
 
+def _invoice_status_for_admin(invoice: dict[str, Any]) -> str:
+    status = str(invoice.get("status") or "open")
+    if status in {"open", "draft"}:
+        return "pending"
+    if status == "void":
+        return "waived"
+    return status
+
+
+def _invoice_amount_cents(invoice: dict[str, Any]) -> int:
+    subtotal = invoice.get("subtotal_cents")
+    if subtotal is not None:
+        return int(subtotal)
+    total = int(invoice.get("total_cents") or 0)
+    return total + int(invoice.get("discount_cents") or 0)
+
+
+def _invoice_final_amount_cents(invoice: dict[str, Any]) -> int:
+    return int(invoice.get("total_cents") or _invoice_amount_cents(invoice))
+
+
+def _invoice_paid_cents(invoice: dict[str, Any]) -> int:
+    total = _invoice_final_amount_cents(invoice)
+    balance = max(int(invoice.get("balance_due_cents") or 0), 0)
+    return max(total - balance, 0)
+
+
+def _invoice_outstanding_cents(invoice: dict[str, Any]) -> int:
+    if str(invoice.get("status") or "") in {"paid", "void", "waived", "cancelled"}:
+        return 0
+    return max(int(invoice.get("balance_due_cents") or 0), 0)
+
+
+def _invoice_provider_keys(invoice: dict[str, Any]) -> set[str]:
+    return {
+        str(value)
+        for value in (
+            invoice.get("invoice_id"),
+            invoice.get("invoice_number"),
+            invoice.get("stripe_invoice_id"),
+            invoice.get("stripe_payment_intent_id"),
+        )
+        if value
+    }
+
+
+def _invoice_to_admin_payment_row(invoice: dict[str, Any]) -> dict[str, Any]:
+    total = _invoice_final_amount_cents(invoice)
+    paid = _invoice_paid_cents(invoice)
+    stripe_invoice_id = invoice.get("stripe_invoice_id")
+    stripe_payment_intent_id = invoice.get("stripe_payment_intent_id")
+    stripe_checkout_session_id = invoice.get("stripe_checkout_session_id")
+    stripe_subscription_id = invoice.get("stripe_subscription_id")
+    stripe_linked = any(
+        value
+        for value in (
+            stripe_invoice_id,
+            stripe_payment_intent_id,
+            stripe_checkout_session_id,
+            stripe_subscription_id,
+        )
+    )
+    return {
+        "payment_id": str(invoice.get("invoice_id") or invoice.get("_id") or ""),
+        "parent_id": str(invoice.get("parent_id") or invoice.get("parent_user_id") or ""),
+        "parent_name": None,
+        "student_id": str(invoice.get("student_id") or "") or None,
+        "student_name": None,
+        "enrollment_id": str(invoice.get("enrollment_id") or "") or None,
+        "session_id": str(invoice.get("session_id") or "") or None,
+        "period": str(invoice.get("period") or "") or None,
+        "amount_cents": _invoice_amount_cents(invoice),
+        "discount_cents": int(invoice.get("discount_cents") or 0),
+        "final_amount_cents": total,
+        "amount_received_cents": paid,
+        "paid_amount_cents": paid,
+        "balance_due_cents": max(int(invoice.get("balance_due_cents") or 0), 0),
+        "overpayment_credit_cents": 0,
+        "currency": str(invoice.get("currency") or "usd"),
+        "status": _invoice_status_for_admin(invoice),
+        "refunded_cents": int(invoice.get("refunded_cents") or 0),
+        "invoice_number": invoice.get("invoice_number") or invoice.get("invoice_id"),
+        "payment_method": "stripe" if stripe_linked else "invoice",
+        "stripe_linked": stripe_linked,
+        "stripe_customer_id": invoice.get("stripe_customer_id"),
+        "stripe_checkout_session_id": stripe_checkout_session_id,
+        "stripe_subscription_id": stripe_subscription_id,
+        "stripe_invoice_id": stripe_invoice_id,
+        "stripe_payment_intent_id": stripe_payment_intent_id,
+        "reconciliation_status": invoice.get("reconciliation_status"),
+        "created_at": invoice.get("created_at") or datetime.now(UTC),
+    }
+
+
 def _coerce_report_date(value: object) -> date | None:
     if isinstance(value, datetime):
         return value.date()
@@ -555,6 +665,14 @@ def _coerce_report_date(value: object) -> date | None:
 def _payment_due_date(payment: dict[str, Any], fallback: date) -> date:
     for key in ("due_date", "due_at", "created_at"):
         parsed = _coerce_report_date(payment.get(key))
+        if parsed is not None:
+            return parsed
+    return fallback
+
+
+def _invoice_due_date(invoice: dict[str, Any], fallback: date) -> date:
+    for key in ("due_date", "due_at", "created_at"):
+        parsed = _coerce_report_date(invoice.get(key))
         if parsed is not None:
             return parsed
     return fallback
@@ -587,6 +705,64 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             label: {"amount_cents": 0, "family_ids": set()}
             for label in ("Current", "1-30", "31-60", "60+")
         }
+        invoice_keys: set[str] = set()
+        invoices_cursor = db["invoices"].find(
+            {
+                "academy_id": academy_id,
+                "period": period,
+                "status": {"$nin": ["void", "waived", "cancelled"]},
+                "is_deleted": {"$ne": True},
+            }
+        )
+        async for invoice in invoices_cursor:
+            invoice_keys.update(_invoice_provider_keys(invoice))
+            if str(invoice.get("status") or "") == "partially_paid":
+                partial_payment_count += 1
+            outstanding = _invoice_outstanding_cents(invoice)
+            outstanding_dues_cents += outstanding
+            if outstanding:
+                family_id = str(
+                    invoice.get("parent_id")
+                    or invoice.get("family_id")
+                    or invoice.get("student_id")
+                    or invoice.get("invoice_id")
+                    or ""
+                )
+                if family_id:
+                    collection_family_ids.add(family_id)
+                due_date = _invoice_due_date(invoice, end.date())
+                days_late = max((end.date() - due_date).days, 0)
+                label = _aging_label(days_late)
+                bucket = aging_totals[label]
+                bucket["amount_cents"] = int(bucket["amount_cents"]) + outstanding
+                family_ids = bucket["family_ids"]
+                if isinstance(family_ids, set) and family_id:
+                    family_ids.add(family_id)
+
+        ledger_payments_cursor = db["ledger_payments"].find(
+            {
+                "academy_id": academy_id,
+                "created_at": {"$gte": start, "$lt": end},
+                "status": {"$in": ["succeeded", "partially_refunded", "refunded"]},
+            }
+        )
+        async for ledger_payment in ledger_payments_cursor:
+            cash_collected_cents += max(
+                int(ledger_payment.get("amount_cents") or 0)
+                - int(ledger_payment.get("refunded_cents") or 0),
+                0,
+            )
+
+        failed_attempts_cursor = db["payment_attempts"].find(
+            {
+                "academy_id": academy_id,
+                "created_at": {"$gte": start, "$lt": end},
+                "status": "failed",
+            }
+        )
+        async for _attempt in failed_attempts_cursor:
+            failed_payment_count += 1
+
         payments_cursor = db["payments"].find(
             {
                 "academy_id": academy_id,
@@ -595,6 +771,19 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             }
         )
         async for payment in payments_cursor:
+            payment_keys = {
+                str(value)
+                for value in (
+                    payment.get("invoice_id"),
+                    payment.get("invoice_number"),
+                    payment.get("payment_id"),
+                    payment.get("stripe_invoice_id"),
+                    payment.get("stripe_payment_intent_id"),
+                )
+                if value
+            }
+            if payment_keys & invoice_keys:
+                continue
             status = str(payment.get("status") or "")
             if status == "failed":
                 failed_payment_count += 1
@@ -1505,6 +1694,49 @@ def compose_admin(
             )
         )
         return result.model_dump(mode="python")
+
+    async def issue_invoice_refund(
+        *,
+        invoice_id: str,
+        amount_cents: int | None,
+        reason: str,
+    ) -> dict[str, Any]:
+        invoice = await billing_ledger_repo.get_invoice(invoice_id)
+        if invoice is None:
+            raise ValueError("invoice not found")
+        allocation_cursor = db["payment_allocations"].find(
+            {
+                "academy_id": academy_id,
+                "invoice_id": invoice_id,
+            },
+            sort=[("created_at", -1), ("allocation_id", -1)],
+        )
+        selected_payment_id: str | None = None
+        async for allocation in allocation_cursor:
+            payment_id = str(allocation.get("payment_id") or "")
+            if not payment_id:
+                continue
+            payment = await payments_repo.get(payment_id)
+            if payment is None or not payment.stripe_payment_intent_id:
+                continue
+            refundable_cents = max(payment.amount_cents - payment.refunded_cents, 0)
+            if refundable_cents <= 0:
+                continue
+            if amount_cents is None or refundable_cents >= amount_cents:
+                selected_payment_id = payment_id
+                break
+        if selected_payment_id is None:
+            raise ValueError("invoice has no refundable allocated payment")
+        result = await issue_refund.execute(
+            IssueRefundCommand(
+                payment_id=selected_payment_id,
+                amount_cents=amount_cents,
+                reason=reason,
+            )
+        )
+        payload = result.model_dump(mode="python")
+        payload["invoice_id"] = invoice_id
+        return payload
 
     async def create_student_invoice(
         *,
@@ -2529,6 +2761,20 @@ def compose_admin(
         from backend.v2.shared.tenancy import current_academy_id
 
         request_academy_id = current_academy_id()
+        invoice_rows: list[dict[str, Any]] = []
+        invoice_keys: set[str] = set()
+        async for doc in db["invoices"].find(
+            {
+                "academy_id": request_academy_id,
+                "status": {"$nin": ["void", "waived", "cancelled"]},
+                "is_deleted": {"$ne": True},
+            },
+            sort=[("created_at", -1), ("invoice_id", 1)],
+            limit=200,
+        ):
+            invoice_keys.update(_invoice_provider_keys(doc))
+            invoice_rows.append(_invoice_to_admin_payment_row(doc))
+
         cursor = (
             db["payments"]
             .find({"academy_id": request_academy_id, "is_deleted": {"$ne": True}})
@@ -2548,6 +2794,27 @@ def compose_admin(
         ):
             stripe_payment_intent_id = doc.get("stripe_payment_intent_id")
             stripe_invoice_id = doc.get("stripe_invoice_id")
+            payment_keys = {
+                str(value)
+                for value in (
+                    doc.get("payment_id"),
+                    stripe_payment_intent_id,
+                    stripe_invoice_id,
+                )
+                if value
+            }
+            allocation = await db["payment_allocations"].find_one(
+                {
+                    "academy_id": request_academy_id,
+                    "payment_id": doc.get("payment_id"),
+                },
+                {"invoice_id": 1},
+            )
+            if allocation is not None:
+                payment_keys.add(str(allocation.get("invoice_id") or ""))
+            if payment_keys & invoice_keys:
+                ledger_keys.update(payment_keys)
+                continue
             ledger_keys.update(
                 str(key) for key in (stripe_payment_intent_id, stripe_invoice_id) if key
             )
@@ -2604,8 +2871,10 @@ def compose_admin(
             for row in legacy
             if str(row.get("stripe_payment_intent_id") or "") not in ledger_keys
             and str(row.get("stripe_invoice_id") or "") not in ledger_keys
+            and str(row.get("payment_id") or "") not in invoice_keys
+            and str(row.get("invoice_number") or "") not in invoice_keys
         ]
-        combined = attempt_rows + ledger_rows + deduped_legacy
+        combined = attempt_rows + invoice_rows + ledger_rows + deduped_legacy
         combined.sort(
             key=lambda r: (r.get("created_at") if isinstance(r, dict) else None)
             or datetime.min.replace(tzinfo=UTC),
@@ -3075,6 +3344,39 @@ def compose_admin(
         from backend.v2.shared.tenancy import current_academy_id
 
         request_academy_id = current_academy_id()
+        totals: dict[str, dict[str, Any]] = {}
+        invoice_cursor = (
+            db["invoices"]
+            .find(
+                {
+                    "academy_id": request_academy_id,
+                    "status": {"$in": ["open", "partially_paid", "draft"]},
+                    "balance_due_cents": {"$gt": 0},
+                    "is_deleted": {"$ne": True},
+                }
+            )
+            .sort([("created_at", -1), ("invoice_id", 1)])
+            .limit(500)
+        )
+        invoice_keys: set[str] = set()
+        async for invoice in invoice_cursor:
+            invoice_keys.update(_invoice_provider_keys(invoice))
+            parent_id = str(invoice.get("parent_id") or invoice.get("parent_user_id") or "")
+            if not parent_id:
+                continue
+            entry = totals.setdefault(
+                parent_id,
+                {
+                    "parent_id": parent_id,
+                    "parent_name": None,
+                    "email": None,
+                    "pending_count": 0,
+                    "total_due_cents": 0,
+                },
+            )
+            entry["pending_count"] += 1
+            entry["total_due_cents"] += _invoice_outstanding_cents(invoice)
+
         cursor = (
             db["payments"]
             .find(
@@ -3087,8 +3389,20 @@ def compose_admin(
             .sort([("created_at", -1)])
             .limit(500)
         )
-        totals: dict[str, dict[str, Any]] = {}
         async for payment in cursor:
+            payment_keys = {
+                str(value)
+                for value in (
+                    payment.get("invoice_id"),
+                    payment.get("invoice_number"),
+                    payment.get("payment_id"),
+                    payment.get("stripe_invoice_id"),
+                    payment.get("stripe_payment_intent_id"),
+                )
+                if value
+            }
+            if payment_keys & invoice_keys:
+                continue
             row = payments_repo._to_admin_row(payment, None)  # type: ignore[attr-defined]
             parent_id = str(row["parent_id"])
             entry = totals.setdefault(
@@ -3324,12 +3638,13 @@ def compose_admin(
             generated = 0
             if generate_invoice_artifacts:
                 for row in rows:
-                    payment_cursor = (
-                        db["payments"]
+                    invoice_cursor = (
+                        db["invoices"]
                         .find(
                             {
                                 "academy_id": request_academy_id,
-                                "status": {"$in": ["pending", "partially_paid"]},
+                                "status": {"$in": ["open", "partially_paid", "draft"]},
+                                "balance_due_cents": {"$gt": 0},
                                 "$or": [
                                     {"parent_id": row["parent_id"]},
                                     {"parent_user_id": row["parent_id"]},
@@ -3339,9 +3654,9 @@ def compose_admin(
                         )
                         .sort([("created_at", -1)])
                     )
-                    async for payment in payment_cursor:
+                    async for invoice in invoice_cursor:
                         await generate_billing_invoice_artifact(
-                            str(payment.get("payment_id") or payment.get("invoice_number")),
+                            str(invoice.get("invoice_id") or invoice.get("invoice_number")),
                             "invoice_pdf",
                         )
                         generated += 1
@@ -3456,6 +3771,7 @@ def compose_admin(
         remove_invoice_line=remove_invoice_line,
         void_billing_invoice=void_billing_invoice,
         record_manual_payment=record_manual_payment,
+        issue_invoice_refund=issue_invoice_refund,
         create_student_invoice=create_student_invoice,
         list_billing_products=list_billing_products,
         create_billing_product=create_billing_product,

@@ -355,6 +355,78 @@ async def test_admin_dues_followup_uses_request_tenant_not_default(mongo_db) -> 
 
 
 @pytest.mark.asyncio
+async def test_admin_dues_followup_uses_open_ledger_invoices_without_legacy_payments(
+    mongo_db,
+) -> None:
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    await mongo_db["invoices"].insert_many(
+        [
+            {
+                "invoice_id": "inv-open",
+                "invoice_number": "REQ-OPEN-001",
+                "academy_id": "request-acad",
+                "parent_id": "parent-request",
+                "student_id": "student-request",
+                "period": "2026-06",
+                "status": "open",
+                "total_cents": 12000,
+                "balance_due_cents": 12000,
+                "currency": "usd",
+                "due_date": now,
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "invoice_id": "inv-partial",
+                "academy_id": "request-acad",
+                "parent_id": "parent-request",
+                "student_id": "student-request",
+                "period": "2026-06",
+                "status": "partially_paid",
+                "total_cents": 10000,
+                "balance_due_cents": 4000,
+                "currency": "usd",
+                "due_date": now,
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "invoice_id": "inv-default",
+                "academy_id": "default-academy",
+                "parent_id": "parent-default",
+                "student_id": "student-default",
+                "period": "2026-06",
+                "status": "open",
+                "total_cents": 99000,
+                "balance_due_cents": 99000,
+                "currency": "usd",
+                "due_date": now,
+                "created_at": now,
+                "updated_at": now,
+            },
+        ]
+    )
+    await mongo_db["users"].insert_one(
+        {
+            "academy_id": "request-acad",
+            "user_id": "parent-request",
+            "display_name": "Request Parent",
+            "email": "request@example.com",
+        }
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope("request-acad"):
+        rows = await admin.list_dues_followup()
+
+    assert [row["parent_id"] for row in rows] == ["parent-request"]
+    assert rows[0]["parent_name"] == "Request Parent"
+    assert rows[0]["email"] == "request@example.com"
+    assert rows[0]["pending_count"] == 2
+    assert rows[0]["total_due_cents"] == 16000
+
+
+@pytest.mark.asyncio
 async def test_admin_attendance_export_uses_request_tenant_not_default(mongo_db) -> None:
     now = datetime(2026, 6, 16, tzinfo=UTC)
     await mongo_db["attendance"].insert_many(
@@ -488,6 +560,69 @@ async def test_admin_payments_recent_suppresses_matching_legacy_projection(mongo
         rows = await admin.list_payments_recent()
 
     assert [row["payment_id"] for row in rows] == ["ledger-subscription"]
+
+
+@pytest.mark.asyncio
+async def test_admin_payments_recent_returns_invoice_rows_without_legacy_payments(
+    mongo_db,
+) -> None:
+    now = datetime(2026, 6, 17, tzinfo=UTC)
+    await mongo_db["invoices"].insert_many(
+        [
+            {
+                "invoice_id": "inv-open",
+                "invoice_number": "REQ-OPEN-001",
+                "academy_id": "request-acad",
+                "parent_id": "parent-request",
+                "student_id": "student-request",
+                "enrollment_id": "enr-request",
+                "period": "2026-06",
+                "status": "open",
+                "subtotal_cents": 12000,
+                "discount_cents": 1000,
+                "total_cents": 11000,
+                "balance_due_cents": 11000,
+                "currency": "usd",
+                "due_date": now,
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "invoice_id": "inv-paid",
+                "invoice_number": "REQ-PAID-001",
+                "academy_id": "request-acad",
+                "parent_id": "parent-request",
+                "student_id": "student-request",
+                "enrollment_id": "enr-request",
+                "period": "2026-05",
+                "status": "paid",
+                "subtotal_cents": 12000,
+                "discount_cents": 0,
+                "total_cents": 12000,
+                "balance_due_cents": 0,
+                "currency": "usd",
+                "stripe_invoice_id": "in_paid",
+                "created_at": now.replace(day=16),
+                "updated_at": now,
+            },
+        ]
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope("request-acad"):
+        rows = await admin.list_payments_recent()
+
+    assert [row["payment_id"] for row in rows] == ["inv-open", "inv-paid"]
+    assert rows[0]["status"] == "pending"
+    assert rows[0]["amount_cents"] == 12000
+    assert rows[0]["discount_cents"] == 1000
+    assert rows[0]["final_amount_cents"] == 11000
+    assert rows[0]["balance_due_cents"] == 11000
+    assert rows[0]["paid_amount_cents"] == 0
+    assert rows[0]["invoice_number"] == "REQ-OPEN-001"
+    assert rows[1]["status"] == "paid"
+    assert rows[1]["paid_amount_cents"] == 12000
+    assert rows[1]["stripe_invoice_id"] == "in_paid"
 
 
 @pytest.mark.asyncio
