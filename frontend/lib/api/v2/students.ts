@@ -75,6 +75,7 @@ export interface AdminStudentDetail extends AdminStudentView {
   enrolled_sessions: AdminStudentSessionSummary[];
   payment_history: AdminStudentPaymentSummary[];
   current_payment?: AdminStudentCurrentPaymentSummary | null;
+  outstanding_balance_cents: number;
 }
 
 export async function getAdminStudent(

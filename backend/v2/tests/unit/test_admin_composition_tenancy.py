@@ -567,6 +567,17 @@ async def test_admin_payments_recent_returns_invoice_rows_without_legacy_payment
     mongo_db,
 ) -> None:
     now = datetime(2026, 6, 17, tzinfo=UTC)
+    await mongo_db["students"].insert_one(
+        {
+            "academy_id": "request-acad",
+            "student_id": "student-request",
+            "full_name": "Aadhya Abhishek",
+            "parent_id": "parent-request",
+            "status": "active",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
     await mongo_db["invoices"].insert_many(
         [
             {
@@ -620,9 +631,11 @@ async def test_admin_payments_recent_returns_invoice_rows_without_legacy_payment
     assert rows[0]["balance_due_cents"] == 11000
     assert rows[0]["paid_amount_cents"] == 0
     assert rows[0]["invoice_number"] == "REQ-OPEN-001"
+    assert rows[0]["student_name"] == "Aadhya Abhishek"
     assert rows[1]["status"] == "paid"
     assert rows[1]["paid_amount_cents"] == 12000
     assert rows[1]["stripe_invoice_id"] == "in_paid"
+    assert rows[1]["student_name"] == "Aadhya Abhishek"
 
 
 @pytest.mark.asyncio

@@ -82,6 +82,16 @@ const STUDENT_TABS: Array<{ id: StudentTab; label: string }> = [
   { id: "family", label: "Family & Compliance" },
 ];
 
+const OPEN_BILLING_STATUSES = new Set([
+  "open",
+  "unpaid",
+  "partially_paid",
+  "partial",
+  "pending",
+  "failed",
+  "expired",
+]);
+
 export default function AdminStudentDetailPage() {
   const params = useParams<{ studentId: string }>();
   const studentId = params?.studentId ?? "";
@@ -232,18 +242,15 @@ export default function AdminStudentDetailPage() {
 
       {activeTab === "billing" && (
         <TabPanel id="billing">
-          <div className="grid gap-6 lg:grid-cols-[minmax(300px,0.8fr)_minmax(0,1.4fr)]">
-            <BillingWorkflowPanel
-              student={student}
-              active={activeTab === "billing"}
-              onChanged={() => {
-                void queryClient.invalidateQueries({
-                  queryKey: queryKeys.admin.studentDetail(studentId),
-                });
-              }}
-            />
-            <PaymentHistoryPanel payments={student.payment_history ?? []} />
-          </div>
+          <BillingWorkflowPanel
+            student={student}
+            active={activeTab === "billing"}
+            onChanged={() => {
+              void queryClient.invalidateQueries({
+                queryKey: queryKeys.admin.studentDetail(studentId),
+              });
+            }}
+          />
         </TabPanel>
       )}
 
@@ -300,7 +307,16 @@ export default function AdminStudentDetailPage() {
 }
 
 function StudentSummaryStrip({ student }: { student: AdminStudentDetail }) {
-  const currentAmount = student.current_payment?.amount_cents;
+  const outstandingBalance =
+    student.outstanding_balance_cents ??
+    student.payment_history.reduce(
+      (sum, payment) =>
+        OPEN_BILLING_STATUSES.has(payment.status) ? sum + Math.max(payment.balance_due_cents, 0) : sum,
+      0,
+    );
+  const unpaidInvoiceCount = student.payment_history.filter(
+    (payment) => OPEN_BILLING_STATUSES.has(payment.status) && payment.balance_due_cents > 0,
+  ).length;
   const attendance =
     student.attendance_rate == null
       ? "—"
@@ -329,11 +345,13 @@ function StudentSummaryStrip({ student }: { student: AdminStudentDetail }) {
       />
       <SummaryMetric
         icon={<Wallet className="size-4" aria-hidden="true" />}
-        label="Current payment"
-        value={
-          currentAmount == null ? "—" : formatCurrencyCents(currentAmount)
+        label="Outstanding balance"
+        value={formatCurrencyCents(outstandingBalance)}
+        detail={
+          unpaidInvoiceCount === 0
+            ? "No unpaid invoices"
+            : `${unpaidInvoiceCount} unpaid ${unpaidInvoiceCount === 1 ? "invoice" : "invoices"}`
         }
-        detail={student.current_payment?.status ?? student.dues_status}
       />
       <SummaryMetric
         icon={<FileCheck className="size-4" aria-hidden="true" />}
@@ -612,8 +630,45 @@ function BillingWorkflowPanel({
   onChanged: () => void;
 }) {
   const current = student.current_payment;
+  const invoiceRows = useMemo(() => student.payment_history ?? [], [student.payment_history]);
   const [createdInvoiceId, setCreatedInvoiceId] = useState<string | null>(null);
-  const invoiceId = current?.payment_id ?? createdInvoiceId;
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
+  const defaultInvoiceId =
+    createdInvoiceId ??
+    current?.payment_id ??
+    invoiceRows.find(
+      (row) => OPEN_BILLING_STATUSES.has(row.status) && row.balance_due_cents > 0,
+    )?.payment_id ??
+    invoiceRows[0]?.payment_id ??
+    null;
+  const invoiceIds = useMemo(
+    () =>
+      new Set([
+        ...invoiceRows.map((row) => row.payment_id),
+        ...(createdInvoiceId ? [createdInvoiceId] : []),
+      ]),
+    [createdInvoiceId, invoiceRows],
+  );
+  useEffect(() => {
+    if (!active) return;
+    if (selectedInvoiceId && invoiceIds.has(selectedInvoiceId)) return;
+    setSelectedInvoiceId(defaultInvoiceId);
+  }, [active, defaultInvoiceId, invoiceIds, selectedInvoiceId]);
+
+  const invoiceId = selectedInvoiceId ?? defaultInvoiceId;
+  const selectedSummary = invoiceRows.find((row) => row.payment_id === invoiceId) ?? null;
+  const outstandingBalance =
+    student.outstanding_balance_cents ??
+    invoiceRows.reduce(
+      (sum, payment) =>
+        OPEN_BILLING_STATUSES.has(payment.status)
+          ? sum + Math.max(payment.balance_due_cents, 0)
+          : sum,
+      0,
+    );
+  const unpaidInvoiceCount = invoiceRows.filter(
+    (payment) => OPEN_BILLING_STATUSES.has(payment.status) && payment.balance_due_cents > 0,
+  ).length;
   const [modal, setModal] = useState<BillingModal>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
@@ -629,17 +684,25 @@ function BillingWorkflowPanel({
   });
 
   const invoice = invoiceQuery.data;
-  const status = invoice?.status ?? current?.status ?? "draft";
+  const status = invoice?.status ?? selectedSummary?.status ?? current?.status ?? "draft";
   const balanceDueCents =
-    invoice?.balance_due_cents ?? invoice?.due_amount_cents ?? current?.amount_cents ?? 0;
+    invoice?.balance_due_cents ??
+    invoice?.due_amount_cents ??
+    selectedSummary?.balance_due_cents ??
+    current?.amount_cents ??
+    0;
   const invoiceTotalCents =
     invoice?.total_cents ??
-    (invoice ? invoice.due_amount_cents + invoice.paid_amount_cents : current?.amount_cents ?? 0);
+    (invoice
+      ? invoice.due_amount_cents + invoice.paid_amount_cents
+      : selectedSummary?.amount_cents ?? current?.amount_cents ?? 0);
+  const paidAmountCents = invoice?.paid_amount_cents ?? selectedSummary?.paid_amount_cents ?? 0;
   const isDraft = status === "draft";
   const isVoid = status === "void";
   const isPaid = status === "paid";
   const canVoid = (status === "draft" || status === "open") && balanceDueCents === invoiceTotalCents;
-  const canMutateLines = Boolean(invoiceId) && isDraft;
+  const canAddLines = Boolean(invoiceId) && !isVoid && !isPaid;
+  const canRemoveLines = Boolean(invoiceId) && isDraft;
   const canSend = Boolean(invoiceId) && !isVoid && !isPaid;
   const canRecordPayment = Boolean(invoiceId) && !isDraft && !isVoid && balanceDueCents > 0;
   const canChargeAutopay = canRecordPayment;
@@ -672,10 +735,10 @@ function BillingWorkflowPanel({
     onSuccess: (result) => {
       setActionMessage(
         result.success
-          ? "Autopay charge succeeded."
+          ? "Card charged successfully."
           : result.requires_action
-            ? "Autopay requires parent action."
-            : `Autopay did not complete: ${result.status}`,
+            ? "Card requires parent action (3-D Secure verification)."
+            : `Charge did not complete: ${result.status}`,
       );
       refreshInvoice();
     },
@@ -699,6 +762,7 @@ function BillingWorkflowPanel({
       }),
     onSuccess: (newInvoice) => {
       setCreatedInvoiceId(newInvoice.invoice_id);
+      setSelectedInvoiceId(newInvoice.invoice_id);
       setModal(null);
       setActionMessage("Draft invoice created.");
       onChanged();
@@ -714,87 +778,33 @@ function BillingWorkflowPanel({
 
   return (
     <>
-      <Card p={20} className="lg:col-span-2">
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div className="flex items-center gap-2">
-            <CreditCard className="size-4 text-rally-muted" aria-hidden="true" />
-            <Overline>Current invoice</Overline>
+      <Card p={20} data-testid="admin-student-billing-workflow">
+        <div
+          className="flex flex-col gap-4 border-b border-neutral-200 pb-5 lg:flex-row lg:items-start lg:justify-between"
+          data-testid="admin-student-account-balance"
+        >
+          <div>
+            <div className="flex items-center gap-2">
+              <Wallet className="size-4 text-rally-muted" aria-hidden="true" />
+              <Overline>Account balance</Overline>
+            </div>
+            <div className="mt-2 font-mono text-3xl font-semibold tabular-nums text-rally-ink">
+              {formatCurrencyCents(outstandingBalance)}
+            </div>
+            <p className="mt-1 text-sm text-rally-muted">
+              {unpaidInvoiceCount === 0
+                ? "No unpaid invoices"
+                : `${unpaidInvoiceCount} unpaid ${unpaidInvoiceCount === 1 ? "invoice" : "invoices"}`}
+            </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {!invoiceId && (
-              <Button
-                size="sm"
-                icon={<FilePlus2 className="size-3.5" aria-hidden="true" />}
-                onClick={() => setModal("create-invoice")}
-              >
-                Create invoice
-              </Button>
-            )}
-            {invoiceId && (
-              <>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  icon={<Plus className="size-3.5" aria-hidden="true" />}
-                  onClick={() => setModal("add-line")}
-                  disabled={!canMutateLines}
-                  title={!canMutateLines ? "Line items can only be edited while draft." : undefined}
-                >
-                  Add charge
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  icon={
-                    sendMutation.isPending ? (
-                      <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
-                    ) : (
-                      <Send className="size-3.5" aria-hidden="true" />
-                    )
-                  }
-                  onClick={() => sendMutation.mutate()}
-                  disabled={!canSend || sendMutation.isPending}
-                >
-                  Send
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  icon={<DollarSign className="size-3.5" aria-hidden="true" />}
-                  onClick={() => setModal("manual-payment")}
-                  disabled={!canRecordPayment}
-                  title={isDraft ? "Send the invoice before recording payment." : undefined}
-                >
-                  Record payment
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  icon={
-                    chargeMutation.isPending ? (
-                      <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
-                    ) : (
-                      <CreditCard className="size-3.5" aria-hidden="true" />
-                    )
-                  }
-                  onClick={() => chargeMutation.mutate()}
-                  disabled={!canChargeAutopay || chargeMutation.isPending}
-                  title={isDraft ? "Send the invoice before charging autopay." : undefined}
-                >
-                  Autopay
-                </Button>
-                <Button
-                  size="sm"
-                  variant="danger"
-                  icon={<Ban className="size-3.5" aria-hidden="true" />}
-                  onClick={() => setModal("void")}
-                  disabled={!canVoid}
-                  title={!canVoid ? "Invoices with recorded payments cannot be voided here." : undefined}
-                >
-                  Void
-                </Button>
-              </>
-            )}
+            <Button
+              size="sm"
+              icon={<FilePlus2 className="size-3.5" aria-hidden="true" />}
+              onClick={() => setModal("create-invoice")}
+            >
+              Create invoice
+            </Button>
           </div>
         </div>
 
@@ -809,55 +819,159 @@ function BillingWorkflowPanel({
           </p>
         )}
 
-        {!invoiceId ? (
-          <p
-            className="mt-4 text-sm text-rally-muted"
-            data-testid="admin-student-no-current-payment"
-          >
-            No current invoice.
-          </p>
-        ) : (
-          <div className="mt-4 space-y-5" data-testid="admin-student-current-payment">
-            <div className="grid gap-3 md:grid-cols-4">
-              <InvoiceMetric label="Total" value={formatCurrencyCents(invoiceTotalCents)} />
-              <InvoiceMetric label="Paid" value={formatCurrencyCents(invoice?.paid_amount_cents ?? 0)} />
-              <InvoiceMetric label="Balance" value={formatCurrencyCents(balanceDueCents)} />
-              <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-                <div className="font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
-                  Status
-                </div>
-                <div className="mt-2">
-                  <StatusChip status={status} />
-                </div>
+        <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(260px,0.75fr)_minmax(0,1.45fr)]">
+          <StudentInvoiceList
+            invoices={invoiceRows}
+            selectedInvoiceId={invoiceId}
+            onSelect={(nextInvoiceId) => {
+              setSelectedInvoiceId(nextInvoiceId);
+              setActionMessage(null);
+            }}
+          />
+
+          <section className="min-w-0" data-testid="admin-student-selected-invoice">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div className="flex items-center gap-2">
+                <CreditCard className="size-4 text-rally-muted" aria-hidden="true" />
+                <Overline>Selected invoice</Overline>
               </div>
+              {invoiceId && (
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon={<Plus className="size-3.5" aria-hidden="true" />}
+                    onClick={() => setModal("add-line")}
+                    disabled={!canAddLines}
+                    title={!canAddLines ? "Paid or void invoices cannot be edited." : undefined}
+                  >
+                    Add charge
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon={
+                      sendMutation.isPending ? (
+                        <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Send className="size-3.5" aria-hidden="true" />
+                      )
+                    }
+                    onClick={() => sendMutation.mutate()}
+                    disabled={!canSend || sendMutation.isPending}
+                  >
+                    Send
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon={<DollarSign className="size-3.5" aria-hidden="true" />}
+                    onClick={() => setModal("manual-payment")}
+                    disabled={!canRecordPayment}
+                    title={isDraft ? "Send the invoice before recording payment." : undefined}
+                  >
+                    Record payment
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon={
+                      chargeMutation.isPending ? (
+                        <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <CreditCard className="size-3.5" aria-hidden="true" />
+                      )
+                    }
+                    onClick={() => chargeMutation.mutate()}
+                    disabled={!canChargeAutopay || chargeMutation.isPending}
+                    title={
+                      isDraft
+                        ? "Send the invoice before charging the card."
+                        : "Charge the parent's saved card now (requires a card on file)."
+                    }
+                  >
+                    Charge card
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    icon={<Ban className="size-3.5" aria-hidden="true" />}
+                    onClick={() => setModal("void")}
+                    disabled={!canVoid}
+                    title={
+                      !canVoid ? "Invoices with recorded payments cannot be voided here." : undefined
+                    }
+                  >
+                    Void
+                  </Button>
+                </div>
+              )}
             </div>
 
-            <DetailList
-              rows={[
-                { label: "Invoice", value: invoice?.invoice_number ?? invoiceId },
-                { label: "Period", value: invoice?.period ?? current?.period ?? "—" },
-                { label: "Delivery", value: invoice?.delivery_status ?? "not_sent" },
-                { label: "Sent", value: formatDateTime(invoice?.last_sent_at ?? invoice?.sent_at) },
-                { label: "Session", value: current?.session_title ?? current?.session_id ?? "—" },
-              ]}
-            />
-
-            {invoiceQuery.isPending ? (
-              <div className="h-20 animate-pulse rounded-lg bg-neutral-100" aria-label="Loading invoice" />
+            {!invoiceId ? (
+              <p
+                className="mt-4 text-sm text-rally-muted"
+                data-testid="admin-student-no-current-payment"
+              >
+                No invoice selected.
+              </p>
             ) : (
-              <InvoiceLinesTable
-                invoice={invoice}
-                canRemove={canMutateLines}
-                removingLineId={
-                  deleteLineMutation.isPending ? (deleteLineMutation.variables ?? null) : null
-                }
-                onRemove={(lineId) => deleteLineMutation.mutate(lineId)}
-              />
-            )}
+              <div className="mt-4 space-y-5" data-testid="admin-student-current-payment">
+                <div className="grid gap-3 md:grid-cols-4">
+                  <InvoiceMetric label="Total" value={formatCurrencyCents(invoiceTotalCents)} />
+                  <InvoiceMetric label="Paid" value={formatCurrencyCents(paidAmountCents)} />
+                  <InvoiceMetric label="Balance" value={formatCurrencyCents(balanceDueCents)} />
+                  <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+                    <div className="font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+                      Status
+                    </div>
+                    <div className="mt-2">
+                      <StatusChip status={status} />
+                    </div>
+                  </div>
+                </div>
 
-            <InvoiceSettlementPanel invoice={invoice} />
-          </div>
-        )}
+                <DetailList
+                  rows={[
+                    {
+                      label: "Invoice",
+                      value: invoice?.invoice_number ?? selectedSummary?.invoice_number ?? invoiceId,
+                    },
+                    { label: "Period", value: invoice?.period ?? selectedSummary?.period ?? "—" },
+                    { label: "Delivery", value: invoice?.delivery_status ?? "not_sent" },
+                    { label: "Sent", value: formatDateTime(invoice?.last_sent_at ?? invoice?.sent_at) },
+                    {
+                      label: "Session",
+                      value:
+                        selectedSummary?.session_id ??
+                        current?.session_title ??
+                        current?.session_id ??
+                        "—",
+                    },
+                  ]}
+                />
+
+                {invoiceQuery.isPending ? (
+                  <div
+                    className="h-20 animate-pulse rounded-lg bg-neutral-100"
+                    aria-label="Loading invoice"
+                  />
+                ) : (
+                  <InvoiceLinesTable
+                    invoice={invoice}
+                    canRemove={canRemoveLines}
+                    removingLineId={
+                      deleteLineMutation.isPending ? (deleteLineMutation.variables ?? null) : null
+                    }
+                    onRemove={(lineId) => deleteLineMutation.mutate(lineId)}
+                  />
+                )}
+
+                <InvoiceSettlementPanel invoice={invoice} />
+              </div>
+            )}
+          </section>
+        </div>
       </Card>
 
       {modal === "create-invoice" && (
@@ -907,6 +1021,73 @@ function BillingWorkflowPanel({
         />
       )}
     </>
+  );
+}
+
+function StudentInvoiceList({
+  invoices,
+  selectedInvoiceId,
+  onSelect,
+}: {
+  invoices: AdminStudentPaymentSummary[];
+  selectedInvoiceId: string | null;
+  onSelect: (invoiceId: string) => void;
+}) {
+  return (
+    <section className="min-w-0" data-testid="admin-student-invoice-list">
+      <div className="flex items-center justify-between gap-3">
+        <Overline>Invoices</Overline>
+        <span className="font-mono text-xs text-rally-muted tabular-nums">
+          {invoices.length} records
+        </span>
+      </div>
+      {invoices.length === 0 ? (
+        <p className="mt-4 text-sm text-rally-muted" data-testid="admin-student-no-payments">
+          No invoice records.
+        </p>
+      ) : (
+        <div className="mt-3 divide-y divide-neutral-100 border-y border-neutral-200">
+          {invoices.map((invoice) => {
+            const selected = invoice.payment_id === selectedInvoiceId;
+            const payable =
+              OPEN_BILLING_STATUSES.has(invoice.status) && invoice.balance_due_cents > 0;
+            return (
+              <button
+                key={invoice.payment_id}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => onSelect(invoice.payment_id)}
+                className={[
+                  "grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 px-2 py-3 text-left transition",
+                  "hover:bg-neutral-50 focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600",
+                  selected ? "bg-blue-50" : "bg-white",
+                ].join(" ")}
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium text-rally-ink">
+                    {invoice.invoice_number ?? `Invoice ${invoice.period ?? invoice.payment_id}`}
+                  </span>
+                  <span className="mt-1 block text-xs text-rally-muted">
+                    {invoice.period ?? "No period"} · Created {formatDate(invoice.created_at)}
+                  </span>
+                  {payable && (
+                    <span className="mt-1 block text-xs text-rally-muted">
+                      Unpaid balance {formatCurrencyCents(invoice.balance_due_cents)}
+                    </span>
+                  )}
+                </span>
+                <span className="flex flex-col items-end gap-2">
+                  <StatusChip status={invoice.status} />
+                  <span className="font-mono text-sm tabular-nums text-rally-ink">
+                    {formatCurrencyCents(invoice.balance_due_cents)}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1680,73 +1861,6 @@ function BillingDialogError({ message }: { message: string }) {
   return <p className="mb-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">{message}</p>;
 }
 
-function PaymentHistoryPanel({
-  payments,
-}: {
-  payments: AdminStudentPaymentSummary[];
-}) {
-  return (
-    <Card p={20} className="lg:col-span-2">
-      <div className="flex items-center justify-between gap-3">
-        <Overline>Payment history</Overline>
-        <span className="font-mono text-xs text-rally-muted tabular-nums">
-          {payments.length} records
-        </span>
-      </div>
-      {payments.length === 0 ? (
-        <p
-          className="mt-3 text-sm text-rally-muted"
-          data-testid="admin-student-no-payments"
-        >
-          No payment records.
-        </p>
-      ) : (
-        <div
-          className="mt-3 overflow-x-auto"
-          data-testid="admin-student-payment-history"
-        >
-          <table className="min-w-full text-left text-sm">
-            <thead className="border-b border-neutral-200 text-xs uppercase tracking-overline text-rally-muted">
-              <tr>
-                <th className="py-2 pr-4 font-medium">Date</th>
-                <th className="py-2 pr-4 font-medium">Period</th>
-                <th className="py-2 pr-4 font-medium">Amount</th>
-                <th className="py-2 pr-4 font-medium">Paid</th>
-                <th className="py-2 pr-4 font-medium">Balance</th>
-                <th className="py-2 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100">
-              {payments.map((payment) => (
-                <tr key={payment.payment_id}>
-                  <td className="py-3 pr-4 align-top text-rally-muted">
-                    {formatDate(payment.created_at)}
-                  </td>
-                  <td className="py-3 pr-4 align-top text-rally-ink">
-                    {payment.period ?? "—"}
-                  </td>
-                  <td className="py-3 pr-4 align-top font-mono tabular-nums text-rally-ink">
-                    {formatCurrencyCents(payment.amount_cents)}
-                  </td>
-                  <td className="py-3 pr-4 align-top font-mono tabular-nums text-rally-ink">
-                    {formatCurrencyCents(payment.paid_amount_cents)}
-                  </td>
-                  <td className="py-3 pr-4 align-top font-mono tabular-nums text-rally-ink">
-                    {formatCurrencyCents(payment.balance_due_cents)}
-                  </td>
-                  <td className="py-3 align-top">
-                    <StatusChip status={payment.status} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Card>
-  );
-}
-
 function BackLink() {
   return (
     <Link
@@ -1843,7 +1957,11 @@ function dollarsToCents(value: string) {
 
 function getErrorMessage(error: unknown) {
   if (!error) return null;
-  return error instanceof Error ? error.message : "Request failed.";
+  const message = error instanceof Error ? error.message : "Request failed.";
+  if (message.includes("no_saved_payment_method")) {
+    return "This parent has no saved card on file. Use Send to email a payment link, or Record payment to log a manual payment.";
+  }
+  return message;
 }
 
 function formatDate(value: string | null | undefined) {

@@ -534,8 +534,10 @@ cmd_up_dev() {
 }
 
 cmd_rebuild_ui() {
+  local api_key
+  api_key="$(require_firebase_api_key)"
   log "Rebuilding frontend (deps layer cached if pnpm-lock.yaml unchanged)..."
-  "${COMPOSE[@]}" up -d --no-deps --build frontend
+  NEXT_PUBLIC_FIREBASE_API_KEY="${api_key}" "${COMPOSE[@]}" up -d --no-deps --build frontend
   log "Frontend rebuilt and restarted at http://localhost:3000"
 }
 

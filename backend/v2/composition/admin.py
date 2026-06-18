@@ -6,6 +6,7 @@ import csv
 import html
 import io
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -125,6 +126,7 @@ from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_coach_rate_repo import (
     MongoCoachRateRepository,
+    coach_rate_from_mongo_doc,
 )
 from backend.v2.contexts.communications.application.ports import (
     EmailSendPort,
@@ -1017,6 +1019,289 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
     return get_reports_dashboard
 
 
+def _make_session_economics_report(db: AsyncIOMotorDatabase[Any]) -> object:
+    """Returns an async callable for monthly session-level economics."""
+    from backend.v2.shared.tenancy import current_academy_id
+
+    async def get_session_economics(period: str) -> dict[str, Any]:
+        academy_id = current_academy_id()
+        start, end = _month_bounds(period)
+
+        occurrence_by_id: dict[str, str] = {}
+        occurrences_by_session: dict[str, int] = {}
+        occurrences_cursor = db["session_occurrences"].find(
+            {
+                "academy_id": academy_id,
+                "start_at": {"$gte": start, "$lt": end},
+                "status": {"$ne": "cancelled"},
+                "is_payable": {"$ne": False},
+            },
+            {"occurrence_id": 1, "session_id": 1, "template_session_id": 1},
+        )
+        async for occurrence in occurrences_cursor:
+            session_id = _occurrence_session_id(occurrence)
+            occurrence_id = str(occurrence.get("occurrence_id") or "")
+            if not session_id or not occurrence_id:
+                continue
+            occurrence_by_id[occurrence_id] = session_id
+            occurrences_by_session[session_id] = occurrences_by_session.get(session_id, 0) + 1
+
+        session_ids = sorted(occurrences_by_session)
+        sessions_by_id: dict[str, dict[str, Any]] = {}
+        if session_ids:
+            sessions_cursor = db["sessions"].find(
+                {
+                    "academy_id": academy_id,
+                    "session_id": {"$in": session_ids},
+                    "is_deleted": {"$ne": True},
+                }
+            )
+            async for session in sessions_cursor:
+                sessions_by_id[str(session.get("session_id") or session.get("_id"))] = session
+
+        active_enrollments_by_session: dict[str, int] = {session_id: 0 for session_id in session_ids}
+        enrollment_to_session: dict[str, str] = {}
+        if session_ids:
+            enrollments_cursor = db["enrollments"].find(
+                {
+                    "academy_id": academy_id,
+                    "session_id": {"$in": session_ids},
+                    "status": "active",
+                    "is_deleted": {"$ne": True},
+                },
+                {"enrollment_id": 1, "session_id": 1},
+            )
+            async for enrollment in enrollments_cursor:
+                session_id = str(enrollment.get("session_id") or "")
+                enrollment_id = str(enrollment.get("enrollment_id") or "")
+                if not session_id:
+                    continue
+                active_enrollments_by_session[session_id] = (
+                    active_enrollments_by_session.get(session_id, 0) + 1
+                )
+                if enrollment_id:
+                    enrollment_to_session[enrollment_id] = session_id
+
+        expected_by_session: dict[str, int] = {}
+        per_occurrence_by_session: dict[str, int] = {}
+        monthly_fee_by_session: dict[str, int] = {}
+        for session_id in session_ids:
+            session = sessions_by_id.get(session_id, {})
+            monthly_fee = int(session.get("amount_cents") or 0)
+            enrollment_count = active_enrollments_by_session.get(session_id, 0)
+            occurrence_count = occurrences_by_session.get(session_id, 0)
+            monthly_fee_by_session[session_id] = monthly_fee
+            expected_total = monthly_fee * enrollment_count
+            expected_by_session[session_id] = expected_total
+            per_occurrence_by_session[session_id] = (
+                _round_money_minor(Decimal(expected_total) / Decimal(occurrence_count))
+                if occurrence_count
+                else 0
+            )
+
+        paid_by_session: dict[str, int] = {session_id: 0 for session_id in session_ids}
+        billed_unpaid_by_session: dict[str, int] = {session_id: 0 for session_id in session_ids}
+        invoice_keys: set[str] = set()
+
+        def session_for_doc(doc: dict[str, Any]) -> str | None:
+            direct_session_id = str(doc.get("session_id") or "")
+            if direct_session_id:
+                return direct_session_id
+            enrollment_id = str(doc.get("enrollment_id") or "")
+            if enrollment_id:
+                return enrollment_to_session.get(enrollment_id)
+            return None
+
+        invoices_cursor = db["invoices"].find(
+            {
+                "academy_id": academy_id,
+                "period": period,
+                "status": {"$nin": ["void", "waived", "cancelled"]},
+                "is_deleted": {"$ne": True},
+            }
+        )
+        async for invoice in invoices_cursor:
+            invoice_keys.update(_invoice_provider_keys(invoice))
+            backfill_payment_id = invoice.get("backfill_payment_id")
+            if backfill_payment_id:
+                invoice_keys.add(str(backfill_payment_id))
+            session_id = session_for_doc(invoice)
+            if session_id not in paid_by_session:
+                continue
+            paid_by_session[session_id] += _invoice_paid_cents(invoice)
+            billed_unpaid_by_session[session_id] += _invoice_outstanding_cents(invoice)
+
+        payments_cursor = db["payments"].find(
+            {
+                "academy_id": academy_id,
+                "period": period,
+                "is_deleted": {"$ne": True},
+            }
+        )
+        async for payment in payments_cursor:
+            payment_keys = {
+                str(value)
+                for value in (
+                    payment.get("invoice_id"),
+                    payment.get("invoice_number"),
+                    payment.get("payment_id"),
+                    payment.get("stripe_invoice_id"),
+                    payment.get("stripe_payment_intent_id"),
+                )
+                if value
+            }
+            if payment_keys & invoice_keys:
+                continue
+            session_id = session_for_doc(payment)
+            if session_id not in paid_by_session:
+                continue
+            paid_by_session[session_id] += _payment_collected_cents(payment)
+            billed_unpaid_by_session[session_id] += _payment_outstanding_cents(payment)
+
+        coach_payroll_by_session: dict[str, int] = {session_id: 0 for session_id in session_ids}
+        payout_period_ids: list[str] = []
+        payout_periods_cursor = db["payout_periods"].find(
+            {
+                "academy_id": academy_id,
+                "period_start": {"$gte": start, "$lt": end},
+            },
+            {"period_id": 1},
+        )
+        async for payout_period in payout_periods_cursor:
+            period_id = str(payout_period.get("period_id") or "")
+            if period_id:
+                payout_period_ids.append(period_id)
+        if payout_period_ids:
+            lines_cursor = db["payout_period_lines"].find(
+                {
+                    "academy_id": academy_id,
+                    "period_id": {"$in": payout_period_ids},
+                },
+                {"occurrence_id": 1, "amount_minor": 1},
+            )
+            async for line in lines_cursor:
+                session_id = occurrence_by_id.get(str(line.get("occurrence_id") or ""))
+                if session_id in coach_payroll_by_session:
+                    coach_payroll_by_session[session_id] += int(line.get("amount_minor") or 0)
+
+        rent_cents = 0
+        other_expenses_cents = 0
+        expenses_cursor = db["expenses"].find(
+            {
+                "academy_id": academy_id,
+                "incurred_on": {"$gte": start, "$lt": end},
+                "$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}],
+            }
+        )
+        async for expense in expenses_cursor:
+            amount = int(expense.get("amount_cents") or 0)
+            if str(expense.get("category") or "other") == "rent":
+                rent_cents += amount
+            else:
+                other_expenses_cents += amount
+
+        expected_total = sum(expected_by_session.values())
+        rent_allocations = _allocate_report_amount(rent_cents, expected_by_session)
+        other_allocations = _allocate_report_amount(other_expenses_cents, expected_by_session)
+
+        rows: list[dict[str, Any]] = []
+        for session_id in session_ids:
+            session = sessions_by_id.get(session_id, {})
+            expected_revenue = expected_by_session.get(session_id, 0)
+            paid = paid_by_session.get(session_id, 0)
+            unpaid = max(expected_revenue - paid, billed_unpaid_by_session.get(session_id, 0), 0)
+            coach_payroll = coach_payroll_by_session.get(session_id, 0)
+            rent = rent_allocations.get(session_id, 0)
+            other = other_allocations.get(session_id, 0)
+            profit = expected_revenue - coach_payroll - rent - other
+            rows.append(
+                {
+                    "session_id": session_id,
+                    "title": str(
+                        session.get("title")
+                        or session.get("name")
+                        or session.get("session_name")
+                        or "Untitled session"
+                    ),
+                    "coach_name": str(session.get("coach_name") or "") or None,
+                    "active_enrollment_count": active_enrollments_by_session.get(session_id, 0),
+                    "monthly_fee_cents": monthly_fee_by_session.get(session_id, 0),
+                    "payable_occurrence_count": occurrences_by_session.get(session_id, 0),
+                    "expected_revenue_per_occurrence_cents": per_occurrence_by_session.get(
+                        session_id, 0
+                    ),
+                    "expected_revenue_cents": expected_revenue,
+                    "paid_cents": paid,
+                    "unpaid_cents": unpaid,
+                    "coach_payroll_cents": coach_payroll,
+                    "rent_cents": rent,
+                    "other_expenses_cents": other,
+                    "expected_profit_cents": profit,
+                    "profit_margin": round(profit / expected_revenue, 4)
+                    if expected_revenue
+                    else None,
+                }
+            )
+
+        rows.sort(key=lambda row: (str(row["title"]).lower(), str(row["session_id"])))
+
+        paid_total = sum(int(row["paid_cents"]) for row in rows)
+        unpaid_total = sum(int(row["unpaid_cents"]) for row in rows)
+        coach_payroll_total = sum(coach_payroll_by_session.values())
+        expected_profit = expected_total - coach_payroll_total - rent_cents - other_expenses_cents
+        empty_states: list[str] = []
+        if not rows:
+            empty_states.append("No payable session occurrences found for this month.")
+        if rows and sum(active_enrollments_by_session.values()) == 0:
+            empty_states.append("No active enrollments found for payable sessions.")
+        if rows and not payout_period_ids:
+            empty_states.append("No payout periods generated for this month.")
+        if rows and paid_total == 0 and unpaid_total == 0:
+            empty_states.append("No attributable billing rows found for these sessions.")
+
+        return {
+            "period": period,
+            "summary": {
+                "expected_revenue_cents": expected_total,
+                "paid_cents": paid_total,
+                "unpaid_cents": unpaid_total,
+                "coach_payroll_cents": coach_payroll_total,
+                "rent_cents": rent_cents,
+                "other_expenses_cents": other_expenses_cents,
+                "expected_profit_cents": expected_profit,
+                "profit_margin": round(expected_profit / expected_total, 4)
+                if expected_total
+                else None,
+            },
+            "sessions": rows,
+            "empty_states": empty_states,
+        }
+
+    return get_session_economics
+
+
+def _allocate_report_amount(total_cents: int, expected_by_session: dict[str, int]) -> dict[str, int]:
+    expected_total = sum(expected_by_session.values())
+    allocations = {session_id: 0 for session_id in expected_by_session}
+    if total_cents <= 0 or expected_total <= 0:
+        return allocations
+
+    remaining = total_cents
+    session_ids = sorted(expected_by_session)
+    for index, session_id in enumerate(session_ids):
+        if index == len(session_ids) - 1:
+            allocations[session_id] = remaining
+            break
+        amount = _round_money_minor(
+            Decimal(total_cents)
+            * Decimal(expected_by_session.get(session_id, 0))
+            / Decimal(expected_total)
+        )
+        allocations[session_id] = amount
+        remaining -= amount
+    return allocations
+
+
 def _make_list_enrollment_events(db: Any) -> object:
     from backend.v2.shared.tenancy import current_academy_id
 
@@ -1112,7 +1397,9 @@ class _MongoPayableOccurrenceQuery:
         academy_id: str,
         occurrence_docs: list[dict[str, Any]],
     ) -> dict[str, int]:
-        """Expected revenue per session = session price x active enrollments.
+        """Expected revenue per occurrence = monthly session price prorated
+        across the session's non-cancelled payable occurrences in the
+        requested period, then multiplied by active enrollments.
 
         Used as the basis for ``percent_of_revenue`` coach rates. Sessions
         without a configured ``amount_cents`` are omitted, which surfaces
@@ -1137,6 +1424,17 @@ class _MongoPayableOccurrenceQuery:
         if not price_by_session:
             return {}
 
+        occurrences_by_session: dict[str, int] = dict.fromkeys(price_by_session, 0)
+        for doc in occurrence_docs:
+            session_id = _occurrence_session_id(doc)
+            if session_id not in occurrences_by_session:
+                continue
+            if doc.get("is_payable") is False:
+                continue
+            if str(doc.get("status", "scheduled")) == "cancelled":
+                continue
+            occurrences_by_session[session_id] += 1
+
         enrolled_by_session: dict[str, int] = dict.fromkeys(price_by_session, 0)
         enrollment_cursor = self._db["enrollments"].find(
             {
@@ -1152,8 +1450,13 @@ class _MongoPayableOccurrenceQuery:
             enrolled_by_session[session_id] = enrolled_by_session.get(session_id, 0) + 1
 
         return {
-            session_id: price_by_session[session_id] * enrolled_by_session.get(session_id, 0)
+            session_id: _round_money_minor(
+                Decimal(price_by_session[session_id])
+                * Decimal(enrolled_by_session.get(session_id, 0))
+                / Decimal(occurrences_by_session[session_id])
+            )
             for session_id in price_by_session
+            if occurrences_by_session.get(session_id, 0) > 0
         }
 
 
@@ -1179,18 +1482,7 @@ class _MongoCoachRateRepository:
         )
         if doc is None:
             return None
-        return CoachRate(
-            rate_id=str(doc.get("rate_id") or doc.get("_id")),
-            academy_id=str(doc["academy_id"]),
-            coach_id=str(doc["coach_id"]),
-            billing_unit=doc.get("billing_unit", "per_session"),
-            amount_minor=int(doc.get("amount_minor", doc.get("amount_cents", 0))),
-            percent_bps=(None if doc.get("percent_bps") is None else int(doc["percent_bps"])),
-            currency=str(doc.get("currency", "USD")).upper(),
-            effective_from=doc["effective_from"],
-            effective_until=doc.get("effective_until"),
-            status=doc.get("status", "active"),
-        )
+        return coach_rate_from_mongo_doc(doc)
 
 
 class _FinancePayoutCalculator:
@@ -1283,6 +1575,10 @@ def _occurrence_session_id(doc: dict[str, Any]) -> str:
     """Session the occurrence belongs to — enrollments reference the
     template session, so prefer ``template_session_id`` when present."""
     return str(doc.get("template_session_id") or doc.get("session_id") or "")
+
+
+def _round_money_minor(value: Decimal) -> int:
+    return int(value.quantize(Decimal("1"), rounding=ROUND_HALF_EVEN))
 
 
 def _effective_occurrence_status(doc: dict[str, Any]) -> str:
@@ -2774,6 +3070,28 @@ def compose_admin(
         ):
             invoice_keys.update(_invoice_provider_keys(doc))
             invoice_rows.append(_invoice_to_admin_payment_row(doc))
+        invoice_student_ids = [
+            str(row["student_id"])
+            for row in invoice_rows
+            if isinstance(row.get("student_id"), str) and row.get("student_id")
+        ]
+        if invoice_student_ids:
+            student_names: dict[str, str] = {}
+            async for student in db["students"].find(
+                {
+                    "academy_id": request_academy_id,
+                    "student_id": {"$in": list(dict.fromkeys(invoice_student_ids))},
+                },
+                {"student_id": 1, "full_name": 1},
+            ):
+                student_id = str(student.get("student_id") or "")
+                full_name = str(student.get("full_name") or "").strip()
+                if student_id and full_name:
+                    student_names[student_id] = full_name
+            for row in invoice_rows:
+                student_id = row.get("student_id")
+                if isinstance(student_id, str) and student_id in student_names:
+                    row["student_name"] = student_names[student_id]
 
         cursor = (
             db["payments"]
@@ -3833,6 +4151,7 @@ def compose_admin(
         send_dues_reminders=send_dues_reminders,
         export_report_csv=export_report_csv,
         get_reports_kpis=_make_reports_kpis(db),
+        get_session_economics=_make_session_economics_report(db),
         list_enrollment_events=_make_list_enrollment_events(db),
         comms=comms,
         send_campaign=send_campaign,

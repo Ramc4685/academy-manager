@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
 from typing import Any
 
 from pymongo.errors import DuplicateKeyError
@@ -570,5 +570,7 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
 def _mongo_doc(model: Any) -> dict[str, Any]:
     doc = model.model_dump(mode="python")
     if "due_date" in doc and doc["due_date"] is not None:
-        doc["due_date"] = doc["due_date"].isoformat()
+        due_date = doc["due_date"]
+        if isinstance(due_date, date) and not isinstance(due_date, datetime):
+            doc["due_date"] = datetime.combine(due_date, time.min, tzinfo=UTC)
     return doc
