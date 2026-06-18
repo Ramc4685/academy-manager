@@ -57,7 +57,19 @@ export default function OnboardingStepperPage() {
     })();
   }, []);
 
-  if (!app) return <p className="text-neutral-500">Loading…</p>;
+  if (!app) {
+    return (
+      <section data-testid="parent-onboarding" className="space-y-4">
+        <OnboardingStyles />
+        <div className="h-6 w-40 rounded shimmer" />
+        <div className="space-y-3">
+          <div className="h-11 rounded-xl shimmer" />
+          <div className="h-11 rounded-xl shimmer" />
+          <div className="h-11 rounded-xl shimmer" />
+        </div>
+      </section>
+    );
+  }
 
   async function save(patch: Parameters<typeof patchOnboarding>[1]) {
     if (!app) return;
@@ -109,7 +121,7 @@ export default function OnboardingStepperPage() {
       {error && (
         <div
           role="alert"
-          className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
+          className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800 animate-fade-in"
         >
           {error}
           <button type="button" onClick={() => setError(null)} className="ml-3 underline">
@@ -118,61 +130,64 @@ export default function OnboardingStepperPage() {
         </div>
       )}
 
-      {step === "parent" && (
-        <ParentStep
-          app={app}
-          saving={saving}
-          onSave={async (profile) => {
-            await save({ parent_profile: profile });
-            advance();
-          }}
-        />
-      )}
-      {step === "child" && (
-        <ChildStep
-          app={app}
-          saving={saving}
-          onSave={async (profile) => {
-            await save({ child_profile: profile });
-            advance();
-          }}
-        />
-      )}
-      {step === "waiver" && (
-        <WaiverStep
-          accepted={app.waiver_accepted}
-          saving={saving}
-          onAccept={async () => {
-            await save({ accept_waiver: true });
-            advance();
-          }}
-        />
-      )}
-      {step === "session" && (
-        <SessionStep
-          selected={app.selected_session_id}
-          sessions={sessions}
-          loading={sessionsQuery.isLoading}
-          error={sessionsQuery.isError}
-          onRetry={() => void sessionsQuery.refetch()}
-          saving={saving}
-          onSelect={async (id) => {
-            await save({ selected_session_id: id });
-            advance();
-          }}
-        />
-      )}
-      {step === "review" && (
-        <ReviewStep
-          app={app}
-          selectedSession={selectedSession}
-          quote={quoteQuery.data}
-          quoteLoading={quoteQuery.isLoading}
-          onCheckout={() => void goToCheckout()}
-          onBack={() => setStep("parent")}
-          saving={saving}
-        />
-      )}
+      {/* Keyed wrapper replays the entrance animation each time the step changes */}
+      <div key={step} className="animate-fade-in-up">
+        {step === "parent" && (
+          <ParentStep
+            app={app}
+            saving={saving}
+            onSave={async (profile) => {
+              await save({ parent_profile: profile });
+              advance();
+            }}
+          />
+        )}
+        {step === "child" && (
+          <ChildStep
+            app={app}
+            saving={saving}
+            onSave={async (profile) => {
+              await save({ child_profile: profile });
+              advance();
+            }}
+          />
+        )}
+        {step === "waiver" && (
+          <WaiverStep
+            accepted={app.waiver_accepted}
+            saving={saving}
+            onAccept={async () => {
+              await save({ accept_waiver: true });
+              advance();
+            }}
+          />
+        )}
+        {step === "session" && (
+          <SessionStep
+            selected={app.selected_session_id}
+            sessions={sessions}
+            loading={sessionsQuery.isLoading}
+            error={sessionsQuery.isError}
+            onRetry={() => void sessionsQuery.refetch()}
+            saving={saving}
+            onSelect={async (id) => {
+              await save({ selected_session_id: id });
+              advance();
+            }}
+          />
+        )}
+        {step === "review" && (
+          <ReviewStep
+            app={app}
+            selectedSession={selectedSession}
+            quote={quoteQuery.data}
+            quoteLoading={quoteQuery.isLoading}
+            onCheckout={() => void goToCheckout()}
+            onBack={() => setStep("parent")}
+            saving={saving}
+          />
+        )}
+      </div>
     </section>
   );
 }
@@ -181,24 +196,44 @@ function Progress({ step, onStepClick }: { step: Step; onStepClick: (s: Step) =>
   const i = ORDER.indexOf(step);
   return (
     <ol className="mb-6 flex items-center justify-between text-xs" data-testid="onboarding-progress">
-      {ORDER.map((s, idx) => (
-        <li key={s}>
-          <button
-            type="button"
-            onClick={() => onStepClick(s)}
-            className={`px-1 py-0.5 rounded transition-colors ${
-              idx === i
-                ? "font-semibold text-blue-600"
-                : idx < i
-                  ? "font-medium text-blue-400 hover:text-blue-600"
-                  : "text-neutral-400 hover:text-neutral-600"
-            }`}
-          >
-            {idx + 1}. {s}
-          </button>
-        </li>
-      ))}
+      {ORDER.map((s, idx) => {
+        const done = idx < i;
+        const active = idx === i;
+        return (
+          <li key={s} className="flex flex-1 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => onStepClick(s)}
+              className="flex items-center gap-1.5 rounded transition-colors"
+              style={{ color: active ? "#0a0f1c" : done ? "#854f0b" : "var(--rally-muted)" }}
+            >
+              <span
+                className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold"
+                style={{
+                  background: active
+                    ? "linear-gradient(135deg,#facc15,#f59e0b)"
+                    : done
+                      ? "#faeeda"
+                      : "var(--rally-line)",
+                  color: active ? "#0a0f1c" : done ? "#854f0b" : "var(--rally-muted)",
+                }}
+              >
+                {done ? "✓" : idx + 1}
+              </span>
+              <span className={`capitalize ${active ? "font-semibold" : "font-medium"}`}>{s}</span>
+            </button>
+          </li>
+        );
+      })}
     </ol>
+  );
+}
+
+function StepHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <h2 className="font-display text-xl font-bold tracking-tight" style={{ color: "var(--rally-ink)" }}>
+      {children}
+    </h2>
   );
 }
 
@@ -220,7 +255,7 @@ function ParentStep({
       }}
       className="space-y-3"
     >
-      <h2 className="text-xl font-semibold">Your details</h2>
+      <StepHeading>Your details</StepHeading>
       <Field label="First name">
         <input value={v.first_name} onChange={(e) => setV({ ...v, first_name: e.target.value })} required />
       </Field>
@@ -255,7 +290,7 @@ function ChildStep({
       }}
       className="space-y-3"
     >
-      <h2 className="text-xl font-semibold">Your child</h2>
+      <StepHeading>Your child</StepHeading>
       <Field label="First name">
         <input value={v.first_name} onChange={(e) => setV({ ...v, first_name: e.target.value })} required />
       </Field>
@@ -276,28 +311,33 @@ function ChildStep({
         />
       </Field>
       <fieldset className="space-y-2">
-        <legend className="text-sm font-medium">Skill level</legend>
-        <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Skill level">
-          {(["beginner", "intermediate", "advanced"] as const).map((level) => (
-            <label
-              key={level}
-              className={`relative flex min-h-11 items-center justify-center rounded-md border px-2 text-center text-sm capitalize ${
-                v.skill_level === level
-                  ? "border-blue-600 bg-blue-50 font-semibold text-blue-700 dark:border-blue-400 dark:bg-blue-950/40 dark:text-blue-200"
-                  : "border-neutral-300 text-neutral-700 dark:border-neutral-700 dark:text-neutral-300"
-              }`}
-            >
-              <input
-                type="radio"
-                name="skill-level"
-                value={level}
-                checked={v.skill_level === level}
-                onChange={() => setV({ ...v, skill_level: level })}
-                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-              />
-              {level}
-            </label>
-          ))}
+        <legend className="text-sm font-medium" style={{ color: "var(--rally-ink)" }}>Skill level</legend>
+        <div className="grid grid-cols-3 gap-2 stagger-children" role="radiogroup" aria-label="Skill level">
+          {(["beginner", "intermediate", "advanced"] as const).map((level) => {
+            const selected = v.skill_level === level;
+            return (
+              <label
+                key={level}
+                className="relative flex min-h-11 items-center justify-center rounded-xl border px-2 text-center text-sm capitalize transition-colors"
+                style={{
+                  borderColor: selected ? "#facc15" : "var(--rally-line)",
+                  background: selected ? "#fffbe9" : "white",
+                  color: selected ? "#854f0b" : "var(--rally-ink)",
+                  fontWeight: selected ? 600 : 400,
+                }}
+              >
+                <input
+                  type="radio"
+                  name="skill-level"
+                  value={level}
+                  checked={selected}
+                  onChange={() => setV({ ...v, skill_level: level })}
+                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                />
+                {level}
+              </label>
+            );
+          })}
         </div>
       </fieldset>
       <button type="submit" disabled={saving} className="primary">
@@ -325,8 +365,8 @@ function WaiverStep({
   if (waiverQuery.isLoading) {
     return (
       <div className="space-y-4">
-        <h2 className="text-xl font-semibold">Waiver</h2>
-        <div className="h-32 animate-pulse rounded-lg bg-neutral-100 dark:bg-neutral-800" />
+        <StepHeading>Waiver</StepHeading>
+        <div className="h-32 rounded-2xl shimmer" />
       </div>
     );
   }
@@ -335,8 +375,8 @@ function WaiverStep({
   if (!waiver?.configured) {
     return (
       <div className="space-y-4">
-        <h2 className="text-xl font-semibold">Waiver</h2>
-        <p className="text-sm text-neutral-500 dark:text-neutral-400">
+        <StepHeading>Waiver</StepHeading>
+        <p className="text-sm" style={{ color: "var(--rally-muted)" }}>
           Waiver not configured yet — please contact the academy to proceed.
         </p>
       </div>
@@ -345,11 +385,14 @@ function WaiverStep({
 
   return (
     <div className="space-y-4">
-      <h2 className="text-xl font-semibold">Waiver</h2>
+      <StepHeading>Waiver</StepHeading>
       {waiver.version && (
-        <p className="text-xs text-neutral-400 dark:text-neutral-500">Version {waiver.version}</p>
+        <p className="text-xs" style={{ color: "var(--rally-muted)" }}>Version {waiver.version}</p>
       )}
-      <div className="max-h-60 overflow-y-auto rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-sm dark:border-neutral-800 dark:bg-neutral-900">
+      <div
+        className="max-h-60 overflow-y-auto rounded-2xl border p-3 text-sm"
+        style={{ borderColor: "var(--rally-line)", background: "white", color: "var(--rally-ink)" }}
+      >
         <p className="whitespace-pre-wrap">{waiver.body}</p>
       </div>
       <button onClick={onAccept} disabled={saving} className="primary">
@@ -378,12 +421,12 @@ function SessionStep({
 }) {
   return (
     <div className="space-y-3">
-      <h2 className="text-xl font-semibold">Pick a session</h2>
+      <StepHeading>Pick a session</StepHeading>
 
       {loading && (
         <div className="space-y-2" aria-label="Loading sessions">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="h-24 animate-pulse rounded-lg bg-neutral-100 dark:bg-neutral-800" />
+            <div key={i} className="h-24 rounded-2xl shimmer" />
           ))}
         </div>
       )}
@@ -391,7 +434,7 @@ function SessionStep({
       {error && (
         <div
           role="alert"
-          className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
+          className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800"
         >
           <p>Could not load sessions.</p>
           <button type="button" onClick={onRetry} className="secondary mt-3">
@@ -401,13 +444,16 @@ function SessionStep({
       )}
 
       {!loading && !error && sessions.length === 0 && (
-        <p className="rounded-lg border border-neutral-200 p-4 text-sm text-neutral-500 dark:border-neutral-800">
+        <p
+          className="rounded-2xl border p-4 text-sm"
+          style={{ borderColor: "var(--rally-line)", color: "var(--rally-muted)" }}
+        >
           No sessions are available right now.
         </p>
       )}
 
       {!loading && !error && sessions.length > 0 && (
-        <ul className="space-y-2" aria-label="Available sessions">
+        <ul className="space-y-2 stagger-children" aria-label="Available sessions">
           {sessions.map((session) => {
             const isSelected = selected === session.session_id;
             const hasSeats = session.available_seats > 0;
@@ -418,27 +464,28 @@ function SessionStep({
                   type="button"
                   disabled={saving || !hasSeats}
                   onClick={() => onSelect(session.session_id)}
-                  className={`w-full rounded-lg border p-3 text-left transition ${
-                    isSelected
-                      ? "border-blue-600 bg-blue-50 dark:border-blue-400 dark:bg-blue-950/40"
-                      : "border-neutral-200 bg-white hover:border-blue-300 dark:border-neutral-800 dark:bg-neutral-950"
-                  } ${!hasSeats ? "opacity-55" : ""}`}
+                  className="w-full rounded-2xl border p-3 text-left transition active:scale-[0.99]"
+                  style={{
+                    borderColor: isSelected ? "#facc15" : "var(--rally-line)",
+                    background: isSelected ? "#fffbe9" : "white",
+                    opacity: hasSeats ? 1 : 0.55,
+                  }}
                   aria-pressed={isSelected}
                 >
                   <span className="flex items-start justify-between gap-3">
                     <span>
-                      <span className="block font-semibold text-neutral-950 dark:text-white">
+                      <span className="block font-semibold" style={{ color: "var(--rally-ink)" }}>
                         {session.title}
                       </span>
-                      <span className="mt-1 block text-sm text-neutral-600 dark:text-neutral-400">
+                      <span className="mt-1 block text-sm" style={{ color: "var(--rally-muted)" }}>
                         {session.location} · {formatSessionTime(session)}
                       </span>
                     </span>
-                    <span className="shrink-0 text-sm font-semibold text-neutral-950 dark:text-white">
+                    <span className="shrink-0 text-sm font-semibold" style={{ color: "var(--rally-ink)" }}>
                       {formatCents(session.amount_cents)}
                     </span>
                   </span>
-                  <span className="mt-2 block text-xs text-neutral-500">
+                  <span className="mt-2 block text-xs" style={{ color: "var(--rally-muted)" }}>
                     {session.available_seats} of {session.capacity} seats open
                   </span>
                 </button>
@@ -470,8 +517,11 @@ function ReviewStep({
 }) {
   return (
     <div className="space-y-4">
-      <h2 className="text-xl font-semibold">Review &amp; pay</h2>
-      <ul className="text-sm space-y-1">
+      <StepHeading>Review &amp; pay</StepHeading>
+      <ul
+        className="space-y-1 rounded-2xl border p-4 text-sm"
+        style={{ borderColor: "var(--rally-line)", background: "white", color: "var(--rally-ink)" }}
+      >
         <li>Parent: {app.parent_profile.first_name} {app.parent_profile.last_name}</li>
         <li>Child: {app.child_profile.first_name} {app.child_profile.last_name} ({app.child_profile.skill_level || "—"})</li>
         <li>
@@ -553,18 +603,31 @@ function OnboardingStyles() {
       [data-testid="parent-onboarding"] select {
         width: 100%;
         min-height: 44px;
-        padding: 0 0.75rem;
-        border: 1px solid var(--field-border, #d4d4d8);
-        border-radius: 0.375rem;
-        background: transparent;
+        padding: 0 0.875rem;
+        border: 1px solid var(--rally-line);
+        border-radius: 0.75rem;
+        background: white;
+        color: var(--rally-ink);
+        outline: none;
+        transition: border-color 0.15s, box-shadow 0.15s;
+      }
+      [data-testid="parent-onboarding"] input:not([type="radio"]):not([type="checkbox"]):focus,
+      [data-testid="parent-onboarding"] select:focus {
+        border-color: #facc15;
+        box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.18);
       }
       .primary {
         min-height: 44px;
         width: 100%;
-        background: #2563eb;
-        color: white;
-        border-radius: 0.375rem;
+        background: linear-gradient(135deg, #facc15, #f59e0b);
+        color: #0a0f1c;
+        font-weight: 600;
+        border-radius: 0.75rem;
         padding: 0 1rem;
+        transition: transform 0.1s;
+      }
+      .primary:active {
+        transform: scale(0.97);
       }
       .primary:disabled {
         opacity: 0.5;
@@ -572,8 +635,10 @@ function OnboardingStyles() {
       .secondary {
         min-height: 44px;
         padding: 0 1rem;
-        border: 1px solid #d4d4d8;
-        border-radius: 0.375rem;
+        border: 1px solid var(--rally-line);
+        border-radius: 0.75rem;
+        background: white;
+        color: var(--rally-ink);
       }
     `}</style>
   );
@@ -582,7 +647,7 @@ function OnboardingStyles() {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block text-sm">
-      <span className="mb-1 block font-medium">{label}</span>
+      <span className="mb-1 block font-medium" style={{ color: "var(--rally-ink)" }}>{label}</span>
       <span className="block">
         {children}
       </span>
