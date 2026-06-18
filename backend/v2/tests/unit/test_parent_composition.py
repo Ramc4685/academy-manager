@@ -173,6 +173,8 @@ async def test_parent_payment_history_suppresses_matching_legacy_projection() ->
         academy_id="acad",
     )
 
+    assert callable(parent.start_balance_payment_for_parent)
+
     with tenant_scope("acad"):
         rows = await parent.list_payments_for_parent("parent-1")
 

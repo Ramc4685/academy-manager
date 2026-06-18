@@ -42,20 +42,40 @@ class _FakeCheckoutSession:
         return _StripeObject()
 
 
+class _FakeStripeCustomerObject:
+    """Mirrors a real Stripe object: attribute access works, ``.get`` does not."""
+
+    def __init__(self, **fields: object) -> None:
+        self._data = fields
+
+    def __getattr__(self, name: str) -> object:
+        try:
+            return self._data[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+    def __getitem__(self, key: str) -> object:
+        return self._data[key]
+
+
 class _FakeCustomer:
     calls: ClassVar[list[dict[str, object]]] = []
 
     @classmethod
-    def search(cls, **kwargs: object) -> dict[str, object]:
+    def search(cls, **kwargs: object) -> object:
         cls.calls.append(kwargs)
-        return {
-            "data": [
-                {
-                    "id": "cus_scoped",
-                    "invoice_settings": {"default_payment_method": "pm_scoped"},
-                }
+        # Real ``Customer.search`` returns a SearchResultObject, not a dict;
+        # ``.get`` is not a method on it, so the gateway must use ``.data``.
+        return _FakeStripeCustomerObject(
+            data=[
+                _FakeStripeCustomerObject(
+                    id="cus_scoped",
+                    invoice_settings=_FakeStripeCustomerObject(
+                        default_payment_method="pm_scoped"
+                    ),
+                )
             ]
-        }
+        )
 
 
 @pytest.fixture(autouse=True)
