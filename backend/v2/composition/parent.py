@@ -168,6 +168,7 @@ class ParentComposition:
     list_invoices_for_parent: object
     get_invoice_for_parent: object
     start_invoice_payment_for_parent: object
+    start_balance_payment_for_parent: object
     get_child_schedule: object
     enroll_child: object
     cancel_billing_enrollment: object
@@ -811,7 +812,8 @@ def compose_parent(
     ):
         all_invoices = await billing_ledger_repo.list_invoices_for_parent(parent_id)
         payable = [
-            inv for inv in all_invoices
+            inv
+            for inv in all_invoices
             if inv.status in {"open", "partially_paid"} and inv.balance_due_cents > 0
         ]
         if not payable:
