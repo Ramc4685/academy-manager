@@ -44,6 +44,7 @@ class MongoOutbox:
         *,
         session: AsyncIOMotorClientSession | None = None,
     ) -> None:
+        now = datetime.now(UTC)
         await self._collection.insert_one(
             {
                 "event_id": event.event_id,
@@ -54,7 +55,13 @@ class MongoOutbox:
                 "occurred_at": event.occurred_at,
                 "payload": event.model_dump(mode="json"),
                 "processed": False,
-                "created_at": datetime.now(UTC),
+                "status": "pending",
+                "attempt_count": 0,
+                "next_retry_at": now,
+                "locked_until": None,
+                "lock_owner": None,
+                "created_at": now,
+                "updated_at": now,
             },
             session=session,
         )

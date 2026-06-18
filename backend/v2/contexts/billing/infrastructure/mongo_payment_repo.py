@@ -139,6 +139,22 @@ class MongoPaymentRepository(TenantScopedRepository):
 
     async def save(self, payment: Payment) -> None:
         doc = payment.model_dump(mode="python")
+        ledger_existing = await self._db["ledger_payments"].find_one(
+            {"academy_id": current_academy_id(), "payment_id": payment.payment_id},
+            {"_id": 1},
+        )
+        if ledger_existing is not None:
+            await self._db["ledger_payments"].update_one(
+                {"academy_id": current_academy_id(), "payment_id": payment.payment_id},
+                {
+                    "$set": {
+                        "status": payment.status,
+                        "refunded_cents": payment.refunded_cents,
+                        "updated_at": payment.updated_at,
+                    }
+                },
+            )
+            return
         await self._update_one(
             {"payment_id": payment.payment_id},
             {"$set": {k: v for k, v in doc.items() if k != "academy_id"}},
@@ -147,6 +163,10 @@ class MongoPaymentRepository(TenantScopedRepository):
 
     async def get(self, payment_id: str) -> Payment | None:
         doc = await self._find_one(_payment_lookup(payment_id))
+        if doc is None:
+            doc = await self._db["ledger_payments"].find_one(
+                {"academy_id": current_academy_id(), "payment_id": payment_id}
+            )
         return self._to_domain(doc) if doc else None
 
     async def get_by_stripe_pi(self, stripe_pi: str) -> Payment | None:

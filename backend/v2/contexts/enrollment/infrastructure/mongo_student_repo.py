@@ -1055,7 +1055,7 @@ class MongoStudentRepository(TenantScopedRepository):
             ],
         }
         return {
-            "payments": await self._db["payments"].count_documents(query),
+            "payments": await self._db["invoices"].count_documents(query),
             "waivers": await self._db["waiver_acceptances"].count_documents(query),
             "credits": await self._db["account_credit_ledger"].count_documents(query),
             "waitlist": await self._db["waitlist"].count_documents(query),
@@ -1209,6 +1209,33 @@ class MongoStudentRepository(TenantScopedRepository):
         now = datetime.now(UTC)
         cutoff = now - timedelta(days=30)
         statuses = {student_id: "current" for student_id in student_ids}
+        invoice_cursor = self._db["invoices"].find(
+            {
+                "academy_id": academy_id,
+                "student_id": {"$in": student_ids},
+                "status": {"$in": ["open", "partially_paid", "draft"]},
+                "balance_due_cents": {"$gt": 0},
+                "is_deleted": {"$ne": True},
+            }
+        )
+        invoice_keys: set[str] = set()
+        async for doc in invoice_cursor:
+            invoice_keys.update(
+                str(value)
+                for value in (
+                    doc.get("invoice_id"),
+                    doc.get("invoice_number"),
+                    doc.get("stripe_invoice_id"),
+                    doc.get("stripe_payment_intent_id"),
+                )
+                if value
+            )
+            student_id = str(doc.get("student_id") or "")
+            if self._invoice_is_overdue(doc, now, cutoff):
+                statuses[student_id] = "overdue"
+            elif statuses.get(student_id) != "overdue":
+                statuses[student_id] = "due"
+
         cursor = self._db["payments"].find(
             {
                 "academy_id": academy_id,
@@ -1218,12 +1245,39 @@ class MongoStudentRepository(TenantScopedRepository):
             }
         )
         async for doc in cursor:
+            payment_keys = {
+                str(value)
+                for value in (
+                    doc.get("invoice_id"),
+                    doc.get("invoice_number"),
+                    doc.get("payment_id"),
+                    doc.get("stripe_invoice_id"),
+                    doc.get("stripe_payment_intent_id"),
+                )
+                if value
+            }
+            if payment_keys & invoice_keys:
+                continue
             student_id = str(doc.get("student_id") or "")
             if self._payment_is_overdue(doc, now, cutoff):
                 statuses[student_id] = "overdue"
             elif statuses.get(student_id) != "overdue":
                 statuses[student_id] = "due"
         return statuses
+
+    @staticmethod
+    def _invoice_is_overdue(
+        doc: dict[str, object],
+        now: datetime,
+        cutoff: datetime,
+    ) -> bool:
+        due_at = doc.get("due_at") or doc.get("due_date")
+        if isinstance(due_at, datetime):
+            return MongoStudentRepository._as_utc(due_at) < now
+        created_at = doc.get("created_at")
+        return (
+            isinstance(created_at, datetime) and MongoStudentRepository._as_utc(created_at) < cutoff
+        )
 
     @staticmethod
     def _payment_is_overdue(

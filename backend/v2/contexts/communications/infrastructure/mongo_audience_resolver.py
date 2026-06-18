@@ -129,15 +129,55 @@ class MongoAudienceResolver(AudienceResolver):
 
         academy_id = current_academy_id()
         cutoff = datetime.now(UTC) - timedelta(days=audience.min_days_overdue)
-        cursor = self.db["payments"].find(
-            {"academy_id": academy_id, "status": "pending", "due_date": {"$lt": cutoff}},
-            {"user_id": 1},
+        invoice_cursor = self.db["invoices"].find(
+            {
+                "academy_id": academy_id,
+                "status": {"$in": ["open", "partially_paid", "draft"]},
+                "balance_due_cents": {"$gt": 0},
+                "due_date": {"$lt": cutoff},
+                "is_deleted": {"$ne": True},
+            },
+            {"parent_id": 1, "parent_user_id": 1},
         )
-        user_ids = list({str(doc["user_id"]) async for doc in cursor})
+        user_ids = list(
+            {
+                str(doc.get("parent_id") or doc.get("parent_user_id"))
+                async for doc in invoice_cursor
+                if doc.get("parent_id") or doc.get("parent_user_id")
+            }
+        )
+        if not user_ids:
+            cursor = self.db["payments"].find(
+                {"academy_id": academy_id, "status": "pending", "due_date": {"$lt": cutoff}},
+                {"user_id": 1},
+            )
+            user_ids = list({str(doc["user_id"]) async for doc in cursor if doc.get("user_id")})
         if not user_ids:
             return []
+        membership_cursor = self.db["academy_memberships"].find(
+            {
+                "academy_id": academy_id,
+                "status": "active",
+                "roles": "parent",
+                "user_id": {"$in": user_ids},
+            },
+            {"user_id": 1},
+        )
+        member_user_ids = [
+            str(doc["user_id"]) async for doc in membership_cursor if doc.get("user_id")
+        ]
+        recipient_user_ids = member_user_ids or user_ids
         user_cursor = self.db["users"].find(
-            {"academy_id": academy_id, "user_id": {"$in": user_ids}},
+            {
+                "$or": [
+                    {"user_id": {"$in": recipient_user_ids}},
+                    {"auth_uid": {"$in": recipient_user_ids}},
+                    {
+                        "academy_id": academy_id,
+                        "user_id": {"$in": user_ids},
+                    },
+                ]
+            },
             {"user_id": 1, "email": 1, "display_name": 1, "name": 1},
         )
         return [self._user_to_recipient(doc) async for doc in user_cursor]

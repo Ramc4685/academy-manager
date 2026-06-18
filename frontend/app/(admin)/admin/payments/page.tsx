@@ -14,6 +14,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 
 import {
   applyPaymentDiscount,
+  applyAdminInvoiceAdjustment,
   generateAdminInvoiceArtifact,
   generateMonthlyPayments,
   getAdminInvoiceDetail,
@@ -22,6 +23,8 @@ import {
   listAdminPayments,
   markPaymentPaid,
   reconcileStripeBilling,
+  recordAdminInvoicePayment,
+  refundAdminInvoice,
   refundPayment,
   undoPaymentPaid,
   type AdminPaymentStatus,
@@ -114,6 +117,10 @@ function reconciliationLabel(payment: AdminPaymentView): string | null {
     return "Stripe linked, app ledger pending";
   }
   return null;
+}
+
+function isLedgerInvoiceRow(payment: AdminPaymentView): boolean {
+  return payment.payment_method === "invoice" || payment.payment_method === "stripe";
 }
 
 export default function AdminPaymentsPage() {
@@ -529,6 +536,7 @@ function PaymentActions({
   undoPending: boolean;
 }) {
   const status = adminPaymentStatus(payment);
+  const invoiceRow = isLedgerInvoiceRow(payment);
   const isPending = status === "pending" || status === "partially_paid";
   const isPaid =
     payment.status === "succeeded" ||
@@ -542,13 +550,13 @@ function PaymentActions({
     <div className="flex justify-end gap-2">
       <Button variant="secondary" size="sm" onClick={onInvoice}>Invoice</Button>
       <Button variant="secondary" size="sm" onClick={onSync}>Sync</Button>
-      {isPending && (
+      {isPending && !invoiceRow && (
         <>
           <Button variant="secondary" size="sm" onClick={onDiscount}>Discount</Button>
           <Button variant="primary" size="sm" onClick={onPaid}>Mark paid</Button>
         </>
       )}
-      {isPaid && (
+      {isPaid && !invoiceRow && (
         <>
           <Button
             variant="danger"
@@ -824,15 +832,77 @@ function InvoiceDialog({
   onClose: () => void;
 }) {
   const invoiceId = payment?.invoice_number || payment?.payment_id || "";
+  const queryClient = useQueryClient();
+  const [manualAmountInput, setManualAmountInput] = useState("");
+  const [manualMethod, setManualMethod] = useState("cash");
+  const [manualReference, setManualReference] = useState("");
+  const [manualNotes, setManualNotes] = useState("");
+  const [adjustmentAmountInput, setAdjustmentAmountInput] = useState("");
+  const [adjustmentDescription, setAdjustmentDescription] = useState("");
+  const [adjustmentReason, setAdjustmentReason] = useState("");
+  const [refundAmountInput, setRefundAmountInput] = useState("");
+  const [refundReason, setRefundReason] = useState("");
+  const [invoiceActionError, setInvoiceActionError] = useState<string | null>(null);
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["admin", "invoice-detail", invoiceId],
     queryFn: () => getAdminInvoiceDetail(invoiceId),
     enabled: Boolean(payment),
   });
+  const refreshBillingRows = () => {
+    void refetch();
+    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.payments() });
+  };
   const artifactMutation = useMutation({
     mutationFn: (artifactType: "invoice_pdf" | "receipt") =>
       generateAdminInvoiceArtifact(invoiceId, artifactType),
     onSuccess: () => void refetch(),
+  });
+  const manualPaymentMutation = useMutation({
+    mutationFn: () =>
+      recordAdminInvoicePayment(invoiceId, {
+        amount_cents: Math.round(Number(manualAmountInput) * 100),
+        payment_method: manualMethod,
+        reference_number: manualReference || null,
+        notes: manualNotes,
+      }),
+    onSuccess: () => {
+      setManualAmountInput("");
+      setManualReference("");
+      setManualNotes("");
+      setInvoiceActionError(null);
+      refreshBillingRows();
+    },
+    onError: (err: Error) => setInvoiceActionError(err.message ?? "Payment recording failed."),
+  });
+  const adjustmentMutation = useMutation({
+    mutationFn: () =>
+      applyAdminInvoiceAdjustment(invoiceId, {
+        description: adjustmentDescription,
+        amount_cents: Math.round(Number(adjustmentAmountInput) * 100),
+        reason: adjustmentReason,
+      }),
+    onSuccess: () => {
+      setAdjustmentAmountInput("");
+      setAdjustmentDescription("");
+      setAdjustmentReason("");
+      setInvoiceActionError(null);
+      refreshBillingRows();
+    },
+    onError: (err: Error) => setInvoiceActionError(err.message ?? "Adjustment failed."),
+  });
+  const invoiceRefundMutation = useMutation({
+    mutationFn: () =>
+      refundAdminInvoice(invoiceId, {
+        amount_cents: refundAmountInput ? Math.round(Number(refundAmountInput) * 100) : undefined,
+        reason: refundReason,
+      }),
+    onSuccess: () => {
+      setRefundAmountInput("");
+      setRefundReason("");
+      setInvoiceActionError(null);
+      refreshBillingRows();
+    },
+    onError: (err: Error) => setInvoiceActionError(err.message ?? "Refund failed."),
   });
 
   return (
@@ -849,6 +919,7 @@ function InvoiceDialog({
         <Alert tone="red">Could not load invoice detail.</Alert>
       ) : (
         <div className="space-y-4 text-sm">
+          {invoiceActionError && <Alert tone="red">{invoiceActionError}</Alert>}
           <div className="grid gap-2 rounded-md border border-rally-line bg-rally-paper/50 p-3">
             <SummaryRow label="Paid" value={formatCents(data.paid_amount_cents)} />
             <SummaryRow label="Due" value={formatCents(data.due_amount_cents)} />
@@ -877,6 +948,162 @@ function InvoiceDialog({
                 <SummaryRow key={row.credit_id} label={row.credit_id} value={formatCents(row.amount_cents)} />
               ))}
             </div>
+          )}
+          {data.due_amount_cents > 0 && (
+            <form
+              className="grid gap-3 rounded-md border border-rally-line p-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                manualPaymentMutation.mutate();
+              }}
+            >
+              <div className="font-medium text-rally-ink">Record manual payment</div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Field label="Amount" required>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    required
+                    value={manualAmountInput}
+                    onChange={(event) => setManualAmountInput(event.target.value)}
+                    placeholder={(data.due_amount_cents / 100).toFixed(2)}
+                    className={inputClass}
+                  />
+                </Field>
+                <Field label="Method" required>
+                  <select
+                    required
+                    value={manualMethod}
+                    onChange={(event) => setManualMethod(event.target.value)}
+                    className={inputClass}
+                  >
+                    <option value="cash">Cash</option>
+                    <option value="check">Check</option>
+                    <option value="zelle">Zelle</option>
+                    <option value="venmo">Venmo</option>
+                    <option value="bank_transfer">Bank transfer</option>
+                    <option value="other">Other</option>
+                  </select>
+                </Field>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Field label="Reference">
+                  <input
+                    value={manualReference}
+                    onChange={(event) => setManualReference(event.target.value)}
+                    className={inputClass}
+                  />
+                </Field>
+                <Field label="Notes">
+                  <input
+                    value={manualNotes}
+                    onChange={(event) => setManualNotes(event.target.value)}
+                    className={inputClass}
+                  />
+                </Field>
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  type="submit"
+                  disabled={manualPaymentMutation.isPending}
+                >
+                  {manualPaymentMutation.isPending ? "Recording..." : "Record payment"}
+                </Button>
+              </div>
+            </form>
+          )}
+          <form
+            className="grid gap-3 rounded-md border border-rally-line p-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              adjustmentMutation.mutate();
+            }}
+          >
+            <div className="font-medium text-rally-ink">Adjustment</div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Field label="Amount" required>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  value={adjustmentAmountInput}
+                  onChange={(event) => setAdjustmentAmountInput(event.target.value)}
+                  placeholder="-10.00"
+                  className={inputClass}
+                />
+              </Field>
+              <Field label="Description" required>
+                <input
+                  required
+                  value={adjustmentDescription}
+                  onChange={(event) => setAdjustmentDescription(event.target.value)}
+                  className={inputClass}
+                />
+              </Field>
+            </div>
+            <Field label="Reason" required>
+              <input
+                required
+                value={adjustmentReason}
+                onChange={(event) => setAdjustmentReason(event.target.value)}
+                className={inputClass}
+              />
+            </Field>
+            <div className="flex justify-end">
+              <Button
+                variant="secondary"
+                size="sm"
+                type="submit"
+                disabled={adjustmentMutation.isPending}
+              >
+                {adjustmentMutation.isPending ? "Saving..." : "Apply adjustment"}
+              </Button>
+            </div>
+          </form>
+          {data.allocations.length > 0 && (
+            <form
+              className="grid gap-3 rounded-md border border-rally-line p-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                invoiceRefundMutation.mutate();
+              }}
+            >
+              <div className="font-medium text-rally-ink">Refund allocated payment</div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Field label="Amount">
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={refundAmountInput}
+                    onChange={(event) => setRefundAmountInput(event.target.value)}
+                    placeholder={(data.paid_amount_cents / 100).toFixed(2)}
+                    className={inputClass}
+                  />
+                </Field>
+                <Field label="Reason" required>
+                  <input
+                    required
+                    value={refundReason}
+                    onChange={(event) => setRefundReason(event.target.value)}
+                    className={inputClass}
+                  />
+                </Field>
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  variant="danger"
+                  size="sm"
+                  type="submit"
+                  disabled={invoiceRefundMutation.isPending}
+                >
+                  {invoiceRefundMutation.isPending ? "Refunding..." : "Refund"}
+                </Button>
+              </div>
+            </form>
           )}
           <div className="flex justify-end gap-2">
             <Button
@@ -1162,7 +1389,7 @@ function RallyDialog({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-rally-ink/40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-xl focus:outline-none">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-full max-w-md -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl bg-white p-6 shadow-xl focus:outline-none">
           <Overline>{overline}</Overline>
           <Dialog.Title className="mt-1 font-display text-xl font-semibold tracking-[-0.01em]">
             {title}

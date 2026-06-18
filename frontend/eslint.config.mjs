@@ -18,6 +18,8 @@ const eslintConfig = [
       "public/sw.js",
       "lib/api/generated/**",
       "e2e/**",
+      "playwright-report/**",
+      "test-results/**",
     ],
   },
 ];

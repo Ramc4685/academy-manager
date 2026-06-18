@@ -62,6 +62,9 @@ PATHWAY_SCRIPT = PROJECT_ROOT / "scripts" / "dev" / "seed_badminton_pathway.py"
 VENV_PYTHON    = os.environ.get(
     "VENV_PYTHON", str(PROJECT_ROOT / "backend" / ".venv" / "bin" / "python")
 )
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from backend.scripts.backfill_p4_legacy_payments import map_legacy_payment
 
 ACADEMY_ID           = "blno"
 ACADEMY_SLUG         = "blno"
@@ -405,6 +408,46 @@ def stripe_evt(n: int, kind: str) -> str:
     return f"evt_blno_{kind.replace('.', '_')}_{n:04d}"
 
 
+def _upsert_ledger_from_seed_payment(db: Any, payment_doc: dict[str, Any]) -> None:
+    mapped = map_legacy_payment(payment_doc)
+    if mapped is None:
+        return
+
+    invoice = mapped["invoice"]
+    line = mapped["line"]
+    ledger_payment = mapped["ledger_payment"]
+    allocation = mapped["allocation"]
+
+    db.invoices.update_one(
+        {"academy_id": invoice["academy_id"], "invoice_id": invoice["invoice_id"]},
+        {"$set": invoice},
+        upsert=True,
+    )
+    db.invoice_lines.update_one(
+        {"academy_id": line["academy_id"], "line_id": line["line_id"]},
+        {"$set": line},
+        upsert=True,
+    )
+    if ledger_payment:
+        db.ledger_payments.update_one(
+            {
+                "academy_id": ledger_payment["academy_id"],
+                "payment_id": ledger_payment["payment_id"],
+            },
+            {"$set": ledger_payment},
+            upsert=True,
+        )
+    if allocation:
+        db.payment_allocations.update_one(
+            {
+                "academy_id": allocation["academy_id"],
+                "allocation_id": allocation["allocation_id"],
+            },
+            {"$set": allocation},
+            upsert=True,
+        )
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -414,6 +457,7 @@ def main() -> None:
     _wait_for_services(client)
     db = client[DB_NAME]
     ts = utcnow()
+    db.payments.delete_many({"academy_id": ACADEMY_ID})
 
     # ── 1. Firebase emulator accounts ─────────────────────────────────────────
     print("\n[blno-seed] 1/9  Firebase accounts...", file=sys.stderr)
@@ -546,6 +590,8 @@ def main() -> None:
                     "membership_id": mem_id(uid, roles[0]),
                     "academy_id": ACADEMY_ID,
                     "user_id": uid,
+                    "invited_by": admin_uid,
+                    "invited_at": ts,
                     "accepted_at": ts,
                     "created_at": ts,
                 },
@@ -752,6 +798,22 @@ def main() -> None:
         cus_id    = stripe_cus(s_idx)
         sub_s_id  = stripe_sub(s_idx)
 
+        db.parent_billing_customers.find_one_and_update(
+            {"academy_id": ACADEMY_ID, "parent_id": p_uid},
+            {
+                "$setOnInsert": {
+                    "academy_id": ACADEMY_ID,
+                    "parent_id": p_uid,
+                    "created_at": ts,
+                },
+                "$set": {
+                    "stripe_customer_id": cus_id,
+                    "updated_at": ts,
+                },
+            },
+            upsert=True,
+        )
+
         # Subscription record (one per paying family)
         db.subscriptions.find_one_and_update(
             {"subscription_id": sub_doc_id(p_slug)},
@@ -765,7 +827,10 @@ def main() -> None:
                 "$set": {
                     "updated_at": ts,
                     "stripe_subscription_id": sub_s_id,
-                    "stripe_customer_id": cus_id,
+                    "processor_refs": {
+                        "stripe_customer_id": cus_id,
+                        "stripe_subscription_id": sub_s_id,
+                    },
                     "status": "active",
                     "payment_mode": "monthly",
                 },
@@ -775,32 +840,26 @@ def main() -> None:
 
         # April payment — all succeeded
         if totals["apr"] > 0:
-            db.payments.find_one_and_update(
-                {"payment_id": pay_id(p_slug, "apr2026")},
+            _upsert_ledger_from_seed_payment(
+                db,
                 {
-                    "$setOnInsert": {
-                        "payment_id": pay_id(p_slug, "apr2026"),
-                        "academy_id": ACADEMY_ID,
-                        "parent_id": p_uid,
-                        "enrollment_id": pay_id(p_slug, "apr2026"),
-                        "period": "2026-04",
-                        "created_at": dt.datetime(2026, 4, 1, 0, 0, 0, tzinfo=dt.UTC),
-                    },
-                    "$set": {
-                        "updated_at": dt.datetime(2026, 4, 5, 10, 0, 0, tzinfo=dt.UTC),
-                        "amount_cents": totals["apr"],
-                        "currency": "usd",
-                        "status": "succeeded",
-                        "refunded_cents": 0,
-                        "stripe_payment_intent_id": stripe_pi(pay_counter),
-                        "stripe_checkout_session_id": stripe_cs(pay_counter),
-                        "stripe_customer_id": cus_id,
-                        "billing_month": "2026-04",
-                        "payment_mode": "monthly",
-                        "description": "April 2026 tuition",
-                    },
+                    "payment_id": pay_id(p_slug, "apr2026"),
+                    "academy_id": ACADEMY_ID,
+                    "parent_id": p_uid,
+                    "enrollment_id": pay_id(p_slug, "apr2026"),
+                    "period": "2026-04",
+                    "created_at": dt.datetime(2026, 4, 1, 0, 0, 0, tzinfo=dt.UTC),
+                    "updated_at": dt.datetime(2026, 4, 5, 10, 0, 0, tzinfo=dt.UTC),
+                    "amount_cents": totals["apr"],
+                    "currency": "usd",
+                    "status": "succeeded",
+                    "refunded_cents": 0,
+                    "stripe_payment_intent_id": stripe_pi(pay_counter),
+                    "stripe_checkout_session_id": stripe_cs(pay_counter),
+                    "billing_month": "2026-04",
+                    "payment_mode": "monthly",
+                    "description": "April 2026 tuition",
                 },
-                upsert=True,
             )
             pay_counter += 1
 
@@ -813,64 +872,52 @@ def main() -> None:
             else:
                 may_status, may_pi = "succeeded", stripe_pi(pay_counter)
 
-            db.payments.find_one_and_update(
-                {"payment_id": pay_id(p_slug, "may2026")},
+            _upsert_ledger_from_seed_payment(
+                db,
                 {
-                    "$setOnInsert": {
-                        "payment_id": pay_id(p_slug, "may2026"),
-                        "academy_id": ACADEMY_ID,
-                        "parent_id": p_uid,
-                        "enrollment_id": pay_id(p_slug, "may2026"),
-                        "period": "2026-05",
-                        "created_at": dt.datetime(2026, 5, 1, 0, 0, 0, tzinfo=dt.UTC),
-                    },
-                    "$set": {
-                        "updated_at": dt.datetime(2026, 5, 5, 10, 0, 0, tzinfo=dt.UTC),
-                        "amount_cents": totals["may"],
-                        "currency": "usd",
-                        "status": may_status,
-                        "refunded_cents": 0,
-                        "stripe_payment_intent_id": may_pi,
-                        "stripe_checkout_session_id": stripe_cs(pay_counter),
-                        "stripe_customer_id": cus_id,
-                        "billing_month": "2026-05",
-                        "payment_mode": "monthly",
-                        "description": "May 2026 tuition",
-                    },
+                    "payment_id": pay_id(p_slug, "may2026"),
+                    "academy_id": ACADEMY_ID,
+                    "parent_id": p_uid,
+                    "enrollment_id": pay_id(p_slug, "may2026"),
+                    "period": "2026-05",
+                    "created_at": dt.datetime(2026, 5, 1, 0, 0, 0, tzinfo=dt.UTC),
+                    "updated_at": dt.datetime(2026, 5, 5, 10, 0, 0, tzinfo=dt.UTC),
+                    "amount_cents": totals["may"],
+                    "currency": "usd",
+                    "status": may_status,
+                    "refunded_cents": 0,
+                    "stripe_payment_intent_id": may_pi,
+                    "stripe_checkout_session_id": stripe_cs(pay_counter),
+                    "billing_month": "2026-05",
+                    "payment_mode": "monthly",
+                    "description": "May 2026 tuition",
                 },
-                upsert=True,
             )
             pay_counter += 1
 
         # June payment — all pending (current month, not yet collected)
         june_amount = totals["may"] or totals["apr"]
         if june_amount:
-            db.payments.find_one_and_update(
-                {"payment_id": pay_id(p_slug, "jun2026")},
+            _upsert_ledger_from_seed_payment(
+                db,
                 {
-                    "$setOnInsert": {
-                        "payment_id": pay_id(p_slug, "jun2026"),
-                        "academy_id": ACADEMY_ID,
-                        "parent_id": p_uid,
-                        "enrollment_id": pay_id(p_slug, "jun2026"),
-                        "period": "2026-06",
-                        "created_at": dt.datetime(2026, 6, 1, 0, 0, 0, tzinfo=dt.UTC),
-                    },
-                    "$set": {
-                        "updated_at": dt.datetime(2026, 6, 1, 0, 0, 0, tzinfo=dt.UTC),
-                        "amount_cents": june_amount,
-                        "currency": "usd",
-                        "status": "pending",
-                        "refunded_cents": 0,
-                        "stripe_payment_intent_id": None,
-                        "stripe_checkout_session_id": None,
-                        "stripe_customer_id": cus_id,
-                        "billing_month": "2026-06",
-                        "payment_mode": "monthly",
-                        "description": "June 2026 tuition",
-                    },
+                    "payment_id": pay_id(p_slug, "jun2026"),
+                    "academy_id": ACADEMY_ID,
+                    "parent_id": p_uid,
+                    "enrollment_id": pay_id(p_slug, "jun2026"),
+                    "period": "2026-06",
+                    "created_at": dt.datetime(2026, 6, 1, 0, 0, 0, tzinfo=dt.UTC),
+                    "updated_at": dt.datetime(2026, 6, 1, 0, 0, 0, tzinfo=dt.UTC),
+                    "amount_cents": june_amount,
+                    "currency": "usd",
+                    "status": "pending",
+                    "refunded_cents": 0,
+                    "stripe_payment_intent_id": None,
+                    "stripe_checkout_session_id": None,
+                    "billing_month": "2026-06",
+                    "payment_mode": "monthly",
+                    "description": "June 2026 tuition",
                 },
-                upsert=True,
             )
 
     # Sample stripe_webhook_events for dedup/replay testing
@@ -882,6 +929,7 @@ def main() -> None:
             "object_type": "checkout.session",
             "livemode": False,
             "status": "processed",
+            "retry_count": 0,
             "academy_id": ACADEMY_ID,
             "received_at":  dt.datetime(2026, 4, 5, 10, 0, 0, tzinfo=dt.UTC),
             "processed_at": dt.datetime(2026, 4, 5, 10, 0, 5, tzinfo=dt.UTC),
@@ -893,6 +941,7 @@ def main() -> None:
             "object_type": "subscription",
             "livemode": False,
             "status": "processed",
+            "retry_count": 0,
             "academy_id": ACADEMY_ID,
             "received_at":  dt.datetime(2026, 5, 1, 0, 0, 0, tzinfo=dt.UTC),
             "processed_at": dt.datetime(2026, 5, 1, 0, 0, 3, tzinfo=dt.UTC),
@@ -904,6 +953,7 @@ def main() -> None:
             "object_type": "payment_intent",
             "livemode": False,
             "status": "processed",
+            "retry_count": 0,
             "academy_id": ACADEMY_ID,
             "received_at":  dt.datetime(2026, 5, 5, 10, 15, 0, tzinfo=dt.UTC),
             "processed_at": dt.datetime(2026, 5, 5, 10, 15, 4, tzinfo=dt.UTC),
@@ -915,6 +965,7 @@ def main() -> None:
             "object_type": "charge",
             "livemode": False,
             "status": "processed",
+            "retry_count": 0,
             "academy_id": ACADEMY_ID,
             "received_at":  dt.datetime(2026, 4, 10, 14, 0, 0, tzinfo=dt.UTC),
             "processed_at": dt.datetime(2026, 4, 10, 14, 0, 2, tzinfo=dt.UTC),
@@ -925,7 +976,7 @@ def main() -> None:
             {"$setOnInsert": {**evt_doc, "created_at": evt_doc["received_at"]}},
             upsert=True,
         )
-    print(f"  ~{pay_counter - 1} payment records + 4 webhook events seeded", file=sys.stderr)
+    print(f"  ~{pay_counter - 1} invoice-ledger records + 4 webhook events seeded", file=sys.stderr)
 
     # ── 8. Coach rates + attendance ───────────────────────────────────────────
     print("[blno-seed] 8/9  Coach rates + attendance...", file=sys.stderr)
@@ -998,7 +1049,7 @@ def main() -> None:
                     {"occurrence_id": oid, "student_id": rec["student_id"]},
                     {
                         "$setOnInsert": {
-                            "attendance_id": f"att_{oid[:30]}_{rec['student_id'][:10]}",
+                            "attendance_id": f"att_{oid}_{rec['student_id']}",
                             "academy_id": ACADEMY_ID,
                             "occurrence_id": oid,
                             "session_id": rec["session_id"],
@@ -1147,6 +1198,35 @@ def main() -> None:
         )
     )
     CREDS_FILE.chmod(0o600)
+
+    result = subprocess.run(
+        [
+            VENV_PYTHON,
+            "-c",
+            (
+                "import asyncio, os;"
+                "from motor.motor_asyncio import AsyncIOMotorClient;"
+                "from backend.v2.migrations.runner import run_all_migrations;"
+                "\nasync def main():\n"
+                "    client = AsyncIOMotorClient(os.environ['SAAS_STAGING_MONGO_URL'])\n"
+                "    try:\n"
+                "        replayed = await run_all_migrations(client[os.environ['SAAS_STAGING_DB_NAME']])\n"
+                "        print(f'Replayed {len(replayed)} migrations')\n"
+                "    finally:\n"
+                "        client.close()\n"
+                "asyncio.run(main())\n"
+            ),
+        ],
+        cwd=str(PROJECT_ROOT),
+        env={
+            **os.environ,
+            "PYTHONPATH": str(PROJECT_ROOT),
+            "SAAS_STAGING_MONGO_URL": MONGO_URL,
+            "SAAS_STAGING_DB_NAME": DB_NAME,
+        },
+        check=True,
+    )
+    print(f"  {result.stdout or 'Migrations replayed'}", file=sys.stderr)
 
     # ── Summary ───────────────────────────────────────────────────────────────
     admin_token = mint_id_token(ADMIN_EMAIL, ADMIN_PASSWORD)

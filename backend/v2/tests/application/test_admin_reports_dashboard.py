@@ -266,6 +266,104 @@ async def test_reports_dashboard_composes_monthly_finance_attendance_and_capacit
 
 
 @pytest.mark.asyncio
+async def test_reports_dashboard_uses_ledger_invoices_and_payments_without_legacy_payments() -> (
+    None
+):
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    client = mongomock_motor.AsyncMongoMockClient()
+    db = client["test_db"]
+    await db["invoices"].insert_many(
+        [
+            {
+                "invoice_id": "inv-paid",
+                "academy_id": "acad",
+                "parent_id": "parent-paid",
+                "period": "2026-05",
+                "status": "paid",
+                "total_cents": 10_000,
+                "balance_due_cents": 0,
+                "currency": "usd",
+                "created_at": datetime(2026, 5, 3, tzinfo=UTC),
+                "due_date": datetime(2026, 5, 15, tzinfo=UTC),
+            },
+            {
+                "invoice_id": "inv-partial",
+                "academy_id": "acad",
+                "parent_id": "parent-partial",
+                "period": "2026-05",
+                "status": "partially_paid",
+                "total_cents": 10_000,
+                "balance_due_cents": 6_000,
+                "currency": "usd",
+                "created_at": datetime(2026, 5, 5, tzinfo=UTC),
+                "due_date": datetime(2026, 5, 15, tzinfo=UTC),
+            },
+            {
+                "invoice_id": "inv-failed",
+                "academy_id": "acad",
+                "parent_id": "parent-failed",
+                "period": "2026-05",
+                "status": "open",
+                "total_cents": 3_000,
+                "balance_due_cents": 3_000,
+                "currency": "usd",
+                "created_at": datetime(2026, 5, 6, tzinfo=UTC),
+                "due_date": datetime(2026, 4, 1, tzinfo=UTC),
+            },
+        ]
+    )
+    await db["ledger_payments"].insert_many(
+        [
+            {
+                "payment_id": "lp-paid",
+                "academy_id": "acad",
+                "parent_id": "parent-paid",
+                "amount_cents": 9_000,
+                "currency": "usd",
+                "status": "succeeded",
+                "created_at": datetime(2026, 5, 4, tzinfo=UTC),
+            },
+            {
+                "payment_id": "lp-partial",
+                "academy_id": "acad",
+                "parent_id": "parent-partial",
+                "amount_cents": 4_000,
+                "currency": "usd",
+                "status": "succeeded",
+                "created_at": datetime(2026, 5, 7, tzinfo=UTC),
+            },
+        ]
+    )
+    await db["payment_attempts"].insert_one(
+        {
+            "attempt_id": "attempt-failed",
+            "academy_id": "acad",
+            "invoice_id": "inv-failed",
+            "parent_id": "parent-failed",
+            "amount_cents": 3_000,
+            "currency": "usd",
+            "status": "failed",
+            "created_at": datetime(2026, 5, 8, tzinfo=UTC),
+        }
+    )
+
+    with tenant_scope("acad"):
+        dashboard = await admin_composition._make_reports_dashboard(db)("2026-05")
+
+    assert dashboard["cash_collected_cents"] == 13_000
+    assert dashboard["outstanding_dues_cents"] == 9_000
+    assert dashboard["collections_risk"]["failed_payment_count"] == 1
+    assert dashboard["collections_risk"]["partial_payment_count"] == 1
+    assert dashboard["collections_risk"]["overdue_family_count"] == 2
+    assert dashboard["collections_risk"]["aging_buckets"] == [
+        {"label": "Current", "amount_cents": 0, "family_count": 0},
+        {"label": "1-30", "amount_cents": 6_000, "family_count": 1},
+        {"label": "31-60", "amount_cents": 0, "family_count": 0},
+        {"label": "60+", "amount_cents": 3_000, "family_count": 1},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_reports_dashboard_returns_meaningful_empty_states() -> None:
     mongomock_motor = pytest.importorskip("mongomock_motor")
     client = mongomock_motor.AsyncMongoMockClient()

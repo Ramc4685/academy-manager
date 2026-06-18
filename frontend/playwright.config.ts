@@ -16,7 +16,7 @@ export default defineConfig({
   // post-merge debrief: the admin/students webkit crash flaked through
   // PR review then hard-failed on main). Available since Playwright 1.49.
   failOnFlakyTests: !!process.env.CI,
-  workers: process.env.CI ? 2 : undefined,
+  workers: process.env.CI ? 1 : undefined,
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL: `http://localhost:${PORT}`,
