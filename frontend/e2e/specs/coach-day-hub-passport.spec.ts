@@ -18,6 +18,7 @@ test.describe("Coach Day Hub and Skill Passport", () => {
     await expect(page.getByText("Junior A")).toBeVisible();
 
     await page.getByRole("link", { name: "Open skill updates" }).click();
+    await page.waitForLoadState("networkidle");
     await expect(page.getByTestId("coach-session-skills")).toBeVisible();
     await expect(page.getByRole("button", { name: "By skill" })).toBeVisible();
     await page.getByRole("button", { name: "Update selected students" }).click();
