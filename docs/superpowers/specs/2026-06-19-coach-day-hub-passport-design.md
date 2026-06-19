@@ -48,6 +48,7 @@ The home screen shows:
   "Backhand clear: Nethra, Aarav, Riya".
 - Each session card links to:
   - Open session.
+  - Prepare / teaching plan.
   - Open skill updates.
   - Message parents.
   - I can't attend.
@@ -62,10 +63,40 @@ The session workspace remains the coach's on-court operating screen.
 It includes:
 
 - Attendance.
+- Prepare / teaching plan.
 - Skill focus.
 - Messages.
 - Skill Passport drill-down links.
 - Absence notice action for future assigned sessions.
+
+### Prepare Before Class
+
+Coach prep should reuse the already-coded teaching-plan and lesson-card flow.
+
+Existing coach route:
+
+```text
+/coach/today/plan?date=YYYY-MM-DD
+```
+
+Existing backend routes:
+
+```text
+GET /api/v2/coach/today/plan?date=YYYY-MM-DD
+GET /api/v2/coach/sessions/{session_id}/teaching-plan
+```
+
+The current implementation renders lesson cards with lesson number, goal,
+teaching points, equipment, activity, safety notes, YouTube links, PDF citation
+chips, and per-student focus rows. The Day Hub should link to this as
+**Prepare** or **Teaching plan** from each session card and selected-date
+summary.
+
+If the coach needs a standalone browseable skills library outside assigned
+sessions, that is not currently present in the checked coach UI. The existing
+lesson-card library management is admin-only under the pathway screen. This
+design keeps coach prep session-centered for this slice and does not add a
+new coach-wide curriculum library unless it is separately approved.
 
 ### Session Skill Update Workspace
 

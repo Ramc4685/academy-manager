@@ -31,6 +31,7 @@ Design coach home/passport flow so home prioritizes sessions, attendance, skills
 - 2026-06-19T07:59:35 main/working: Brainstorming approval: Skill update separation accepted. Home summarizes and links; separate session skills workspace handles by-skill and by-student updates.
 - 2026-06-19T07:59:57 main/working: Brainstorming approval: Data/API section accepted: date-aware day hub read model, separate session skills workspace with bulk-by-skill and by-student updates, passport fix, scoped coach-parent messaging, and future-session absence notice.
 - 2026-06-19T08:00:39 main/working: Brainstorming update: Design must reuse the current application/coach theme and design system. Error states must show clean coach-readable messages, not raw API details, stack traces, or route names.
+- 2026-06-19T08:08:28 main/working: Spec review change: checked existing prep/skills library code. Coach prep is already coded as /coach/today/plan with lesson cards, teaching details, videos/PDF citation chips, and student focus rows; session detail links Skill Progress. Full lesson-card library management is admin-only under pathway. Spec should explicitly link Day Hub session cards to Prepare/Teaching plan and note that a standalone coach-wide skills library is not currently coded.
 ## Verification
 
 - No verification recorded yet.
