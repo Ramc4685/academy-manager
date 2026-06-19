@@ -28,6 +28,7 @@ test.describe("Coach Day Hub and Skill Passport", () => {
     await expect(page.getByText("Backhand clear")).toBeVisible();
     await page.getByRole("button", { name: "Save" }).first().click();
     await expect.poll(() => mock.skillStatusCalls.length).toBe(1);
+    await page.waitForLoadState("networkidle");
 
     await page.goto("/coach/students/st1/passport?program_id=prog-001&from_session=s-today-1&student_name=Alice");
     await expect(page.getByTestId("coach-student-passport")).toBeVisible();
