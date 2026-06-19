@@ -657,13 +657,23 @@ test.describe("Rally admin shell", () => {
     await page.getByRole("button", { name: "Log out" }).click();
     await expect(page).toHaveURL(/\/login$/);
 
+    // The logout replaceLocation sets a 100ms timer. On WebKit the timer can
+    // still be pending when the next goto starts, interrupting it. Catch and retry.
     await stubCoachBff(page);
-    await page.goto("/coach/today");
+    await page.goto("/coach/today").catch(async (e: Error) => {
+      if (!e.message.includes("interrupted")) throw e;
+      await page.waitForLoadState("networkidle");
+      await page.goto("/coach/today");
+    });
     await page.getByRole("button", { name: "Log out" }).click();
     await expect(page).toHaveURL(/\/login$/);
 
     await stubParentBff(page);
-    await page.goto("/parent/dashboard");
+    await page.goto("/parent/dashboard").catch(async (e: Error) => {
+      if (!e.message.includes("interrupted")) throw e;
+      await page.waitForLoadState("networkidle");
+      await page.goto("/parent/dashboard");
+    });
     await page.getByRole("button", { name: "Log out" }).click();
     await expect(page).toHaveURL(/\/login$/);
   });
