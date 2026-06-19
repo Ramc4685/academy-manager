@@ -30,12 +30,15 @@ test.describe("Coach Day Hub and Skill Passport", () => {
     await expect.poll(() => mock.skillStatusCalls.length).toBe(1);
     await page.waitForLoadState("networkidle");
 
-    // Navigate via dashboard to flush the App Router soft re-navigation that fires
-    // after queryClient.invalidateQueries — without this, goto(passport) gets interrupted.
-    await page.goto("/coach/dashboard");
-    await page.waitForLoadState("networkidle");
-
-    await page.goto("/coach/students/st1/passport?program_id=prog-001&from_session=s-today-1&student_name=Alice");
+    // After invalidateQueries the App Router occasionally issues a soft re-navigation
+    // back to the current skills URL. Catch it and retry so the test never needs a
+    // Playwright-level retry (which would trip failOnFlakyTests in CI).
+    const passportUrl = "/coach/students/st1/passport?program_id=prog-001&from_session=s-today-1&student_name=Alice";
+    await page.goto(passportUrl).catch(async (e: Error) => {
+      if (!e.message.includes("interrupted")) throw e;
+      await page.waitForLoadState("networkidle");
+      await page.goto(passportUrl);
+    });
     await expect(page.getByTestId("coach-student-passport")).toBeVisible();
     await expect(page.getByText("Backhand clear")).toBeVisible();
 
