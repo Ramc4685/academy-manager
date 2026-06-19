@@ -139,11 +139,15 @@ export default function ParentPaymentsPage() {
     },
     onError: (error) => {
       const detail = error instanceof Error ? error.message : "Request failed";
-      if (detail.includes("Stripe customer") || detail.includes("autopay setup") || detail === "Request failed") {
+      if (detail.includes("Stripe customer") || detail.includes("autopay setup")) {
         setPortalError(BILLING_PORTAL_PREREQUISITE);
         return;
       }
-      setPortalError(`Billing portal could not open. ${detail}`);
+      setPortalError(
+        detail === "Request failed"
+          ? "Billing portal could not open. Please try again."
+          : `Billing portal could not open. ${detail}`,
+      );
     },
   });
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from typing import Any, Protocol
@@ -831,9 +832,19 @@ def compose_parent(
         invoice_stripe = stripe if hasattr(stripe, "create_invoice_checkout_session") else None
         if invoice_stripe is None:
             raise ValueError("balance payment unavailable")
+        currencies = {inv.currency for inv in payable}
+        if len(currencies) != 1:
+            raise ValueError("cannot pay invoices with mixed currencies in one checkout")
+        currency = next(iter(currencies))
         total_cents = sum(inv.balance_due_cents for inv in payable)
-        currency = payable[0].currency
-        invoice_ids = ",".join(inv.invoice_id for inv in payable)
+        invoice_ids_sorted = sorted(inv.invoice_id for inv in payable)
+        invoice_ids = ",".join(invoice_ids_sorted)
+        # Deterministic idempotency key so retries/re-clicks for the same unpaid
+        # invoice set reuse one Stripe Checkout session instead of creating
+        # duplicate collection attempts.
+        fingerprint = hashlib.sha256(
+            f"{academy_id}:{parent_id}:{invoice_ids}".encode()
+        ).hexdigest()
         _, url = await invoice_stripe.create_invoice_checkout_session(
             invoice_id=f"balance-{parent_id[:8]}",
             amount_cents=total_cents,
@@ -846,6 +857,7 @@ def compose_parent(
                 "invoice_ids": invoice_ids,
                 "type": "balance_payment",
             },
+            idempotency_key=f"balance-payment:{fingerprint}",
         )
         return {"redirect_url": url}
 

@@ -57,6 +57,20 @@ export default function OnboardingStepperPage() {
     })();
   }, []);
 
+  if (error && !app) {
+    return (
+      <section data-testid="parent-onboarding" className="space-y-4">
+        <OnboardingStyles />
+        <div
+          role="alert"
+          className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800"
+        >
+          {error}
+        </div>
+      </section>
+    );
+  }
+
   if (!app) {
     return (
       <section data-testid="parent-onboarding" className="space-y-4">
@@ -71,15 +85,17 @@ export default function OnboardingStepperPage() {
     );
   }
 
-  async function save(patch: Parameters<typeof patchOnboarding>[1]) {
-    if (!app) return;
+  async function save(patch: Parameters<typeof patchOnboarding>[1]): Promise<boolean> {
+    if (!app) return false;
     setSaving(true);
     setError(null);
     try {
       const next = await patchOnboarding(app.application_id, patch);
       setApp(next);
+      return true;
     } catch (e) {
       setError((e as Error).message);
+      return false;
     } finally {
       setSaving(false);
     }
@@ -137,8 +153,7 @@ export default function OnboardingStepperPage() {
             app={app}
             saving={saving}
             onSave={async (profile) => {
-              await save({ parent_profile: profile });
-              advance();
+              if (await save({ parent_profile: profile })) advance();
             }}
           />
         )}
@@ -147,8 +162,7 @@ export default function OnboardingStepperPage() {
             app={app}
             saving={saving}
             onSave={async (profile) => {
-              await save({ child_profile: profile });
-              advance();
+              if (await save({ child_profile: profile })) advance();
             }}
           />
         )}
@@ -157,8 +171,7 @@ export default function OnboardingStepperPage() {
             accepted={app.waiver_accepted}
             saving={saving}
             onAccept={async () => {
-              await save({ accept_waiver: true });
-              advance();
+              if (await save({ accept_waiver: true })) advance();
             }}
           />
         )}
@@ -171,8 +184,7 @@ export default function OnboardingStepperPage() {
             onRetry={() => void sessionsQuery.refetch()}
             saving={saving}
             onSelect={async (id) => {
-              await save({ selected_session_id: id });
-              advance();
+              if (await save({ selected_session_id: id })) advance();
             }}
           />
         )}

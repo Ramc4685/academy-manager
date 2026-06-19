@@ -2041,6 +2041,7 @@ def compose_admin(
             sort=[("created_at", -1), ("allocation_id", -1)],
         )
         selected_payment_id: str | None = None
+        selected_amount_cents: int | None = None
         async for allocation in allocation_cursor:
             payment_id = str(allocation.get("payment_id") or "")
             if not payment_id:
@@ -2048,20 +2049,38 @@ def compose_admin(
             payment = await payments_repo.get(payment_id)
             if payment is None or not payment.stripe_payment_intent_id:
                 continue
-            refundable_cents = max(payment.amount_cents - payment.refunded_cents, 0)
+            # Cap the refund to this invoice's allocation, not the whole
+            # payment: a single Stripe payment can be allocated across several
+            # invoices, and refunding the full payment would over-refund.
+            allocated_cents = max(int(allocation.get("amount_cents") or 0), 0)
+            payment_refundable_cents = max(payment.amount_cents - payment.refunded_cents, 0)
+            refundable_cents = min(allocated_cents, payment_refundable_cents)
             if refundable_cents <= 0:
                 continue
-            if amount_cents is None or refundable_cents >= amount_cents:
+            requested_cents = refundable_cents if amount_cents is None else amount_cents
+            if requested_cents <= refundable_cents:
                 selected_payment_id = payment_id
+                selected_amount_cents = requested_cents
                 break
         if selected_payment_id is None:
             raise ValueError("invoice has no refundable allocated payment")
         result = await issue_refund.execute(
             IssueRefundCommand(
                 payment_id=selected_payment_id,
-                amount_cents=amount_cents,
+                amount_cents=selected_amount_cents,
                 reason=reason,
             )
+        )
+        # Reflect the refund on the invoice projection. Admin payment rows for
+        # an allocated invoice are built from the invoice document (the matching
+        # ledger_payments row is intentionally skipped), so without this the
+        # invoice would keep showing refunded_cents=0 after a refund.
+        await db["invoices"].update_one(
+            {"academy_id": academy_id, "invoice_id": invoice_id},
+            {
+                "$inc": {"refunded_cents": int(selected_amount_cents or 0)},
+                "$set": {"updated_at": datetime.now(UTC)},
+            },
         )
         payload = result.model_dump(mode="python")
         payload["invoice_id"] = invoice_id
