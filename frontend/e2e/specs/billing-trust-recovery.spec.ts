@@ -90,7 +90,7 @@ test.describe("billing trust and recovery surfaces", () => {
       retryRequests.push(JSON.parse(route.request().postData() ?? "{}"));
       return fulfillJson(route, {
         invoice_id: "inv-open",
-        redirect_url: "http://localhost:3001/stripe-checkout-stub",
+        redirect_url: "http://localhost:3001/parent/payments?invoice=paid",
       });
     });
     await page.route("**/api/v2/parent/enrollments", (route) => {
