@@ -77,11 +77,13 @@
       "limit": "360 KB"
     }
   ],
-  "overrides": {
-    "@grpc/grpc-js": "1.9.16",
-    "esbuild": "0.28.1",
-    "tmp": "0.2.7",
-    "miniflare>ws": "8.21.0",
-    "undici": "^7.28.0"
+  "pnpm": {
+    "overrides": {
+      "@grpc/grpc-js": "1.9.16",
+      "esbuild": "0.28.1",
+      "tmp": "0.2.7",
+      "miniflare>ws": "8.21.0",
+      "undici": "^7.28.0"
+    }
   }
 }
