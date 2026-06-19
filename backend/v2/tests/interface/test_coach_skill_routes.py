@@ -22,6 +22,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from backend.v2.contexts.enrollment.domain.models import RosterEntry
+from backend.v2.contexts.student_progress.application.errors import StudentNotPlaced
 from backend.v2.contexts.student_progress.application.use_cases.get_progress_summary import (
     ProgressSummaryRequest,
 )
@@ -525,6 +526,20 @@ class _SpyUseCase:
         return self.result
 
 
+class _PassportByStudentUseCase:
+    def __init__(self, results: dict[str, object]) -> None:
+        self.results = results
+        self.calls = 0
+
+    async def execute(self, command: object) -> object:
+        self.calls += 1
+        student_id = command.student_id  # type: ignore[attr-defined]
+        result = self.results[student_id]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
 class _AssignedSessions:
     def __init__(self, assigned_session_ids: set[str]) -> None:
         self._assigned_session_ids = assigned_session_ids
@@ -605,6 +620,7 @@ def _build_real_router_app(
             )
         ]
     )
+    spies.get_roster = get_roster
 
     async def active_session_enrollments_for_student(student_id: str) -> list[SimpleNamespace]:
         if student_id != STUDENT_ID:
@@ -1190,6 +1206,64 @@ def test_real_skill_router_day_hub_returns_date_summary_and_grouped_skill_focus(
         }
     ]
     assert session["students"][0]["top_gaps"][0]["skill_name"] == "Backhand clear"
+
+
+def test_real_skill_router_day_hub_keeps_unplaced_student_from_breaking_date() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    unplaced_student_id = "student-without-level"
+    spies.get_roster.result = [
+        RosterEntry(
+            enrollment_id="enrollment-001",
+            student_id=STUDENT_ID,
+            full_name="Student One",
+            status="active",
+        ),
+        RosterEntry(
+            enrollment_id="enrollment-002",
+            student_id=unplaced_student_id,
+            full_name="Student Without Level",
+            status="active",
+        ),
+    ]
+    spies.get_passport = _PassportByStudentUseCase(
+        {
+            STUDENT_ID: [
+                _Dumpable(
+                    skill_id=SKILL_ID,
+                    skill_name="Backhand clear",
+                    status="LEARNING",
+                    program_id=PROGRAM_ID,
+                    level_id=LEVEL_ID,
+                )
+            ],
+            unplaced_student_id: StudentNotPlaced(
+                student_id=unplaced_student_id,
+                program_id=PROGRAM_ID,
+            ),
+        }
+    )
+    app.dependency_overrides[
+        get_coach_use_cases
+    ]().student_progress.get_passport = spies.get_passport
+    client = TestClient(app)
+
+    response = client.get("/api/v2/coach/day-hub", params={"date": "2026-06-25"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["summary"]["student_count"] == 2
+    assert body["summary"]["skill_focus_count"] == 1
+    students = body["sessions"][0]["students"]
+    assert students[1] == {
+        "student_id": unplaced_student_id,
+        "full_name": "Student Without Level",
+        "enrollment_status": "active",
+        "skills": [],
+        "top_gaps": [],
+    }
 
 
 def test_real_skill_router_session_skills_returns_by_skill_and_by_student_read_model() -> None:

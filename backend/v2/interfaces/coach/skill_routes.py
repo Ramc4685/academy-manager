@@ -209,9 +209,12 @@ async def _build_session_skills(
     grouped: dict[str, dict[str, object]] = {}
 
     for entry in roster:
-        passport_entries = await use_cases.student_progress.get_passport.execute(
-            GetStudentPassportCommand(student_id=entry.student_id, program_id=program_id)
-        )
+        try:
+            passport_entries = await use_cases.student_progress.get_passport.execute(
+                GetStudentPassportCommand(student_id=entry.student_id, program_id=program_id)
+            )
+        except StudentNotPlaced:
+            passport_entries = []
         skills = [_dump(skill) for skill in passport_entries]
         gap_skills = [skill for skill in skills if _is_skill_gap(skill)]
         students.append(
