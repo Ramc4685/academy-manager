@@ -80,9 +80,21 @@ async def test_get_and_save_ledger_payment_without_recreating_legacy_payment(db,
         {"academy_id": acad, "payment_id": "lp-refundable"}
     )
     assert ledger_payment is not None
-    assert ledger_payment["status"] == "partially_refunded"
+    # LedgerPayment only accepts pending/succeeded/failed/refunded, so a
+    # partial refund must be normalized to "succeeded" with the refunded
+    # amount tracked separately; otherwise later ledger reads fail to parse.
+    assert ledger_payment["status"] == "succeeded"
     assert ledger_payment["refunded_cents"] == 4_000
     assert await db["payments"].count_documents({"academy_id": acad}) == 0
+
+    # Regression guard: the persisted doc must round-trip through the ledger
+    # domain model without raising a validation error.
+    from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
+        MongoBillingLedgerRepository,
+    )
+
+    parsed = MongoBillingLedgerRepository._payment_from_doc(ledger_payment)
+    assert parsed.status == "succeeded"
 
 
 @pytest.mark.asyncio
