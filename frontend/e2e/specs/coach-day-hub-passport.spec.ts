@@ -30,6 +30,11 @@ test.describe("Coach Day Hub and Skill Passport", () => {
     await expect.poll(() => mock.skillStatusCalls.length).toBe(1);
     await page.waitForLoadState("networkidle");
 
+    // Navigate via dashboard to flush the App Router soft re-navigation that fires
+    // after queryClient.invalidateQueries — without this, goto(passport) gets interrupted.
+    await page.goto("/coach/dashboard");
+    await page.waitForLoadState("networkidle");
+
     await page.goto("/coach/students/st1/passport?program_id=prog-001&from_session=s-today-1&student_name=Alice");
     await expect(page.getByTestId("coach-student-passport")).toBeVisible();
     await expect(page.getByText("Backhand clear")).toBeVisible();
