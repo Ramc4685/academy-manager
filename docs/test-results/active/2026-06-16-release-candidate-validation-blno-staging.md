@@ -24,6 +24,7 @@ Validate launch readiness for BLNO in staging after PR #198
 - 2026-06-16T21:02:09 codex-stripe-fix/working: Fixed invoice.paid ledger allocation blocker by routing MongoBillingLedgerRepository LedgerPayment reads/writes to ledger_payments, moving fresh 0091 ledger payment indexes to ledger_payments, and adding copy-only migration 0128 for DBs that already recorded old 0091. Added regressions for legacy payments enrollment_id/period unique index collision and session-type invoice.paid webhook allocation.
 - 2026-06-19T10:52:47 main/working: Fixed SaaS staging frontend Docker install failure: pnpm 11 ignores package.json pnpm config, while pnpm-lock.yaml expected undici override. Moved the missing undici override into frontend/pnpm-workspace.yaml and removed the obsolete ignored package.json pnpm block.
 - 2026-06-19T11:02:13 main/working: Fixed BLNO local SaaS seed rerun failures after staging rebuild. Root causes: BLNO seed did not reset parent_billing_customers before rebuilding deterministic fake Stripe customers, causing duplicate academy/stripe_customer_id rows on rerun; stale local outbox/dead-letter rows from prior smoke runs made post-seed launch audit fail.
+- 2026-06-19T11:16:46 main/working: Added shared persona logout button and surfaced Log out in admin, coach, and parent authenticated shells.
 ## Verification
 
 - No verification recorded yet.
@@ -53,6 +54,8 @@ Validate launch readiness for BLNO in staging after PR #198
 - 2026-06-19T10:52:47: SaaS staging verification: cd frontend && CI=true pnpm install --frozen-lockfile --prefer-offline -> passed; scripts/dev/saas_staging.sh up -> backend/frontend images built, containers started, backend health passed; scripts/dev/saas_staging.sh status -> backend/frontend/mongo/firebase running; scripts/dev/saas_staging.sh smoke -> SaaS readiness smoke checks passed; cd frontend && pnpm typecheck -> passed; git diff --check -> passed.
 - 2026-06-19T11:02:13: BLNO seed/login verification: source backend/.venv/bin/activate && pytest backend/v2/tests/unit/test_blno_seed_billing.py -q -> 2 passed; scripts/dev/saas_staging.sh blno-seed -> seed completed and launch-readiness audit status=pass; Firebase emulator password sign-in for gowtham@blno.academy/Coach@12345 via accounts:signInWithPassword -> HTTP 200 registered=true; root auth/user-not-found fixed.
 - 2026-06-19T11:02:40: BLNO seed code verification: source backend/.venv/bin/activate && ruff format scripts/dev/seed_blno_staging.py backend/v2/tests/unit/test_blno_seed_billing.py -> 1 file reformatted; ruff format --check same files -> 2 files already formatted; ruff check same files -> All checks passed; pytest backend/v2/tests/unit/test_blno_seed_billing.py -q -> 2 passed.
+- 2026-06-19T11:16:46: Persona logout final verification: pnpm exec playwright test e2e/specs/admin-shell.spec.ts --grep 'admin, coach, and parent shells expose logout' --project=chromium-mobile --workers=1 -> 1 passed; test clicks Log out for admin, coach, and parent and verifies /login redirect.
+- 2026-06-19T11:16:46: Persona logout static verification: cd frontend && pnpm typecheck -> passed; cd frontend && pnpm lint -> passed with 0 errors, 5 existing warnings; git diff --check -> passed.
 ## Reusable Lessons
 
 - None recorded yet.

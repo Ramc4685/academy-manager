@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -9,11 +8,10 @@ import {
   updateCoachProfile,
   type UpdateCoachProfileRequest,
 } from "@/lib/api/coach";
-import { signOutCurrent } from "@/lib/auth/firebase";
 import { queryKeys } from "@/lib/query/keys";
+import { PersonaLogoutButton } from "@/components/persona/logout-button";
 
 export default function CoachProfilePage() {
-  const router = useRouter();
   const queryClient = useQueryClient();
 
   const { data: profile, isLoading } = useQuery({
@@ -64,11 +62,6 @@ export default function CoachProfilePage() {
       return;
     }
     mutation.mutate(payload);
-  }
-
-  async function signOut() {
-    await signOutCurrent();
-    router.replace("/login");
   }
 
   return (
@@ -182,12 +175,7 @@ export default function CoachProfilePage() {
         </div>
       )}
 
-      <button
-        onClick={() => void signOut()}
-        className="mt-4 min-h-touch rounded-md border border-neutral-300 px-4 text-sm font-medium text-neutral-800 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-100 dark:hover:bg-neutral-900"
-      >
-        Sign out
-      </button>
+      <PersonaLogoutButton className="mt-4 min-h-touch rounded-md border border-neutral-300 px-4 text-sm font-medium text-neutral-800 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-100 dark:hover:bg-neutral-900" />
     </section>
   );
 }
