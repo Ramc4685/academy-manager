@@ -398,6 +398,7 @@ export interface SessionTeachingPlan {
   location: string;
   start_at: string | null;
   end_at: string | null;
+  timezone?: string | null;
   groups: LevelTeachingGroup[];
   unplaced: TeachingUnplacedStudent[];
 }

@@ -92,15 +92,15 @@ export default function CoachStudentPassportPage() {
 
   return (
     <section data-testid="coach-student-passport" className="space-y-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
+      <div className="flex flex-col gap-3 min-[420px]:flex-row min-[420px]:items-start min-[420px]:justify-between">
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold">Skill Passport</h1>
           <p className="text-sm text-neutral-500">{resolvedStudentName}</p>
         </div>
         <button
           disabled={!allRequiredPassed || levelUpMutation.isPending}
           onClick={() => levelUpMutation.mutate()}
-          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+          className="min-h-touch rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {levelUpMutation.isPending ? "Recommending..." : "Recommend Level Up"}
         </button>
@@ -194,7 +194,7 @@ function SkillCard({
   return (
     <li className="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
       {/* Header row */}
-      <div className="flex items-start justify-between gap-3 mb-3">
+      <div className="mb-3 flex flex-col gap-2 min-[420px]:flex-row min-[420px]:items-start min-[420px]:justify-between">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-semibold text-rally-base">{entry.skill_name}</span>
@@ -234,12 +234,12 @@ function SkillCard({
       )}
 
       {/* Controls */}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="grid gap-2 min-[360px]:grid-cols-[minmax(0,1fr)_auto]">
         <select
           value={entry.status}
           onChange={(e) => statusMutation.mutate(e.target.value as SkillStatus)}
           disabled={statusMutation.isPending}
-          className="min-h-[36px] rounded-lg border border-neutral-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-blue-500 focus:outline-none dark:border-neutral-700 dark:bg-neutral-800"
+          className="min-h-[36px] min-w-0 rounded-lg border border-neutral-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-blue-500 focus:outline-none dark:border-neutral-700 dark:bg-neutral-800"
         >
           {STATUS_ORDER.map((s) => (
             <option key={s} value={s}>

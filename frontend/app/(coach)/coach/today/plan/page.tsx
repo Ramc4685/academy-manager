@@ -42,7 +42,7 @@ export default function CoachTeachingPlanPage() {
 
   return (
     <section data-testid="coach-teaching-plan">
-      <header className="mb-4 flex items-center justify-between">
+      <header className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <Link
             href="/coach/today"
@@ -120,13 +120,13 @@ function SessionPlan({
 }) {
   const timeRange =
     session.start_at && session.end_at
-      ? formatSessionTimeRange(session.start_at, session.end_at)
+      ? formatSessionTimeRange(session.start_at, session.end_at, session.timezone)
       : "";
 
   return (
     <section data-testid={`plan-session-${session.session_id}`}>
-      <header className="mb-2 flex items-baseline justify-between gap-2">
-        <div>
+      <header className="mb-2 flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+        <div className="min-w-0">
           <h2 className="text-lg font-semibold">
             {session.title || "Session"}
           </h2>
@@ -135,7 +135,7 @@ function SessionPlan({
           )}
         </div>
         {timeRange && (
-          <p className="text-sm tabular-nums text-neutral-600 dark:text-neutral-300">
+          <p className="shrink-0 text-sm tabular-nums text-neutral-600 dark:text-neutral-300">
             {timeRange}
           </p>
         )}

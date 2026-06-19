@@ -178,7 +178,7 @@ function BySkillWorkspace({
   }
 
   return (
-    <div className="space-y-3 rounded-lg border border-neutral-200 bg-white p-4">
+    <div className="space-y-3 rounded-lg border border-neutral-200 bg-white p-3">
       <label className="block text-sm font-medium text-neutral-600">
         Skill
         <select
@@ -268,7 +268,7 @@ function ByStudentWorkspace({
   }
 
   return (
-    <div className="space-y-3 rounded-lg border border-neutral-200 bg-white p-4">
+    <div className="space-y-3 rounded-lg border border-neutral-200 bg-white p-3">
       <label className="block text-sm font-medium text-neutral-600">
         Student
         <select
@@ -321,11 +321,11 @@ function StudentSkillRow({
   return (
     <li className="rounded-md bg-neutral-50 p-3">
       <p className="text-sm font-semibold text-neutral-900">{skill.skill_name}</p>
-      <div className="mt-2 flex gap-2">
+      <div className="mt-2 grid gap-2 min-[360px]:grid-cols-[minmax(0,1fr)_auto]">
         <select
           value={status}
           onChange={(event) => setStatus(event.target.value as SkillStatus)}
-          className="min-h-touch flex-1 rounded-md border border-neutral-300 bg-white px-2 text-sm"
+          className="min-h-touch min-w-0 rounded-md border border-neutral-300 bg-white px-2 text-sm"
         >
           {STATUS_OPTIONS.map((option) => (
             <option key={option} value={option}>

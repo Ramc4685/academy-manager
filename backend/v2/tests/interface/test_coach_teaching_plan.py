@@ -151,6 +151,7 @@ def _occurrence() -> SimpleNamespace:
         location="Court 2",
         start_at=NOW,
         end_at=NOW,
+        timezone="America/Chicago",
     )
 
 
@@ -290,6 +291,7 @@ def test_today_plan_returns_shape() -> None:
     assert len(body["sessions"]) == 1
     session = body["sessions"][0]
     assert session["session_id"] == SESSION_ID
+    assert session["timezone"] == "America/Chicago"
     group = session["groups"][0]
     assert {
         "level_id",

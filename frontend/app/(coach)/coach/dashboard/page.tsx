@@ -42,9 +42,9 @@ export default function CoachDashboardPage() {
   const sessions = data?.sessions ?? [];
 
   return (
-    <section data-testid="coach-day-hub" className="space-y-5">
+    <section data-testid="coach-day-hub" className="space-y-4">
       <header className="space-y-3">
-        <div>
+        <div className="max-w-[32rem]">
           <h1 className="font-display text-2xl font-semibold tracking-tight">
             Coach Day Hub
           </h1>
@@ -82,7 +82,7 @@ export default function CoachDashboardPage() {
       )}
 
       {data && (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-2">
           <SummaryTile label="Sessions" value={data.summary.session_count} />
           <SummaryTile label="Students" value={data.summary.student_count} />
           <SummaryTile label="Skill focus" value={data.summary.skill_focus_count} />
@@ -131,61 +131,63 @@ function DateControls({
   onChange: (value: string) => void;
 }) {
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="rounded-lg border border-slate-200 bg-white p-2 shadow-sm">
+      <div className="grid grid-cols-[44px_minmax(0,1fr)_44px] gap-2">
         <button
           aria-label="Previous day"
           onClick={() => onChange(shiftDate(date, -1))}
-          className="min-h-touch min-w-touch rounded-md border border-slate-300 px-3"
+          className="min-h-touch min-w-touch rounded-md border border-slate-300 text-lg leading-none"
         >
           ‹
         </button>
+        <label className="block">
+          <span className="sr-only">Selected date</span>
+          <input
+            type="date"
+            value={date}
+            onChange={(event) => onChange(event.target.value)}
+            className="min-h-touch w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-900"
+          />
+        </label>
+        <button
+          aria-label="Next day"
+          onClick={() => onChange(shiftDate(date, 1))}
+          className="min-h-touch min-w-touch rounded-md border border-slate-300 text-lg leading-none"
+        >
+          ›
+        </button>
+      </div>
+      <div className="mt-2 grid grid-cols-3 gap-2">
         <button
           onClick={() => onChange(localISO())}
-          className="min-h-touch rounded-md border border-slate-300 px-3 text-sm font-medium"
+          className="min-h-touch rounded-md border border-slate-300 px-2 text-sm font-medium"
         >
           Today
         </button>
         <button
           onClick={() => onChange(localISO(1))}
-          className="min-h-touch rounded-md border border-slate-300 px-3 text-sm font-medium"
+          className="min-h-touch rounded-md border border-slate-300 px-2 text-sm font-medium"
         >
           Tomorrow
         </button>
         <Link
           href="/coach/sessions"
-          className="inline-flex min-h-touch items-center rounded-md border border-slate-300 px-3 text-sm font-medium"
+          className="inline-flex min-h-touch items-center justify-center rounded-md border border-slate-300 px-2 text-sm font-medium"
         >
-          This week
+          Sessions
         </Link>
-        <button
-          aria-label="Next day"
-          onClick={() => onChange(shiftDate(date, 1))}
-          className="min-h-touch min-w-touch rounded-md border border-slate-300 px-3"
-        >
-          ›
-        </button>
       </div>
-      <label className="block text-sm text-slate-500">
-        <span className="sr-only">Selected date</span>
-        <input
-          type="date"
-          value={date}
-          onChange={(event) => onChange(event.target.value)}
-          className="min-h-touch rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900"
-        />
-      </label>
     </div>
   );
 }
 
 function SummaryTile({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4">
-      <p className="text-xs font-medium uppercase tracking-[0.12em] text-slate-500">
+    <div className="rounded-lg border border-slate-200 bg-white p-3">
+      <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-500">
         {label}
       </p>
-      <p className="mt-2 font-display text-3xl font-semibold text-slate-950">
+      <p className="mt-1 font-display text-3xl font-semibold text-slate-950">
         {value}
       </p>
     </div>
@@ -206,34 +208,39 @@ function SessionCard({
   const planHref = `/coach/today/plan?date=${date}`;
 
   return (
-    <li className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+    <li className="scroll-mb-[calc(var(--coach-bottom-nav-height)+2rem)] rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
       <div className="flex items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <h2 className="font-semibold text-slate-950">{session.title}</h2>
           <p className="text-sm text-slate-500">{session.location}</p>
           <p className="mt-1 text-sm tabular-nums text-slate-600">
             {formatSessionTimeRange(session.start_at, session.end_at, session.timezone)}
           </p>
         </div>
-        <p className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">
+        <p className="shrink-0 rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">
           {session.roster.length} {session.roster.length === 1 ? "student" : "students"}
         </p>
       </div>
 
-      <div className="mt-4">
+      <div className="mt-3">
         <p className="text-sm font-semibold text-slate-700">Grouped skill gaps</p>
         {session.skill_groups.length === 0 ? (
           <p className="mt-1 text-sm text-slate-500">No open skill focus for this session.</p>
         ) : (
           <ul className="mt-2 space-y-2">
-            {session.skill_groups.slice(0, 4).map((group) => (
+            {session.skill_groups.slice(0, 3).map((group) => (
               <SkillGroupLine key={group.skill_id} group={group} />
             ))}
+            {session.skill_groups.length > 3 && (
+              <li className="text-xs font-medium text-slate-500">
+                +{session.skill_groups.length - 3} more in skill updates
+              </li>
+            )}
           </ul>
         )}
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-2">
+      <div className="mt-4 grid grid-cols-1 gap-2 min-[360px]:grid-cols-2">
         <ActionLink href={sessionHref} label="Open session" />
         <ActionLink href={planHref} label="Prepare" />
         <ActionLink href={skillsHref} label="Open skill updates" />
@@ -243,7 +250,7 @@ function SessionCard({
               "Parent messaging needs the coach-scoped messaging service before it can be used here.",
             )
           }
-          className="min-h-touch rounded-md border border-slate-300 px-3 text-sm font-medium text-slate-700"
+          className="min-h-touch scroll-mb-[calc(var(--coach-bottom-nav-height)+2rem)] rounded-md border border-slate-300 px-3 text-sm font-medium text-slate-700"
         >
           Message parents
         </button>
@@ -253,7 +260,7 @@ function SessionCard({
               "Absence notices need a coach-scoped replacement request workflow before they can be sent here.",
             )
           }
-          className="col-span-2 min-h-touch rounded-md border border-slate-300 px-3 text-sm font-medium text-slate-700"
+          className="min-h-touch scroll-mb-[calc(var(--coach-bottom-nav-height)+2rem)] rounded-md border border-slate-300 px-3 text-sm font-medium text-slate-700 min-[360px]:col-span-2"
         >
           I can&apos;t attend
         </button>
@@ -266,7 +273,7 @@ function SkillGroupLine({ group }: { group: CoachSkillGroup }) {
   return (
     <li className="rounded-md bg-slate-50 px-3 py-2">
       <p className="text-sm font-medium text-slate-800">{group.skill_name}</p>
-      <p className="mt-0.5 text-xs text-slate-500">{group.student_names.join(", ")}</p>
+      <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{group.student_names.join(", ")}</p>
     </li>
   );
 }
@@ -275,7 +282,7 @@ function ActionLink({ href, label }: { href: string; label: string }) {
   return (
     <Link
       href={href as Parameters<typeof Link>[0]["href"]}
-      className="inline-flex min-h-touch items-center justify-center rounded-md bg-blue-600 px-3 text-sm font-semibold text-white"
+      className="inline-flex min-h-touch scroll-mb-[calc(var(--coach-bottom-nav-height)+2rem)] items-center justify-center rounded-md bg-blue-600 px-3 text-center text-sm font-semibold text-white"
     >
       {label}
     </Link>

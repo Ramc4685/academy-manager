@@ -165,6 +165,7 @@ def _occurrence(session_id: str) -> SimpleNamespace:
         location="Court 2",
         start_at=NOW,
         end_at=NOW,
+        timezone="America/Chicago",
     )
 
 
@@ -263,6 +264,7 @@ async def test_plan_groups_students_by_level_with_lesson_card_and_focus() -> Non
     session = plan.sessions[0]
     assert session.session_id == SESSION_ID
     assert session.occurrence_id == f"occ-{SESSION_ID}"
+    assert session.timezone == "America/Chicago"
 
     assert len(session.groups) == 1
     group = session.groups[0]
