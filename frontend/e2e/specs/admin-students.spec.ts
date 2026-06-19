@@ -405,13 +405,16 @@ test.describe("admin students", () => {
     await expect(page.getByTestId("admin-student-enrolled-sessions")).toContainText("$150");
 
     await page.getByRole("tab", { name: "Billing" }).click();
+    await expect(page.getByTestId("admin-student-account-balance")).toContainText("$110");
+    await expect(page.getByTestId("admin-student-account-balance")).toContainText(
+      "1 unpaid invoice",
+    );
     await expect(page.getByTestId("admin-student-current-payment")).toContainText("$110");
     await expect(page.getByTestId("admin-student-current-payment")).toContainText(
       "Balance",
     );
-    await expect(page.getByTestId("admin-student-payment-history")).toContainText("2026-06");
-    await expect(page.getByTestId("admin-student-payment-history")).toContainText("$40");
-    await expect(page.getByTestId("admin-student-payment-history")).toContainText("$110");
+    await expect(page.getByTestId("admin-student-invoice-list")).toContainText("2026-06");
+    await expect(page.getByTestId("admin-student-invoice-list")).toContainText("$110");
     await expect(page.getByTestId("admin-student-current-payment")).toContainText(
       "INV-2026-06-001",
     );

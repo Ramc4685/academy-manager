@@ -56,6 +56,12 @@ function makeError(status: number, body: unknown): ApiError {
     err.code = e.code;
     err.message = e.message ?? err.message;
     err.details = e.details;
+  } else if (typeof body === "object" && body !== null && "detail" in body) {
+    // FastAPI raises HTTPException with a `detail` payload. Surface it so the
+    // real reason (e.g. "no saved card") reaches the UI instead of the generic
+    // "Request failed" fallback.
+    const detail = (body as { detail?: unknown }).detail;
+    if (typeof detail === "string" && detail) err.message = detail;
   }
   return err;
 }

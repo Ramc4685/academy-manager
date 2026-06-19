@@ -760,6 +760,104 @@ def test_add_invoice_line_rejects_negative_unit_amount(admin_client):
     assert response.status_code == 422
 
 
+def test_add_invoice_adjustment_allows_negative_discount_line(admin_client):
+    ledger = _FakeLedger(
+        invoices=[
+            _invoice(
+                status="open", subtotal_cents=7_000, total_cents=7_000, balance_due_cents=7_000
+            )
+        ],
+        lines=[_invoice_line(line_id="line-tuition", amount_cents=7_000)],
+    )
+    _override_ledger(admin_client, ledger)
+
+    response = admin_client.post(
+        "/api/v2/admin/billing/invoices/inv-1/adjustments",
+        json={
+            "description": "Sibling discount",
+            "amount_cents": -1_000,
+            "reason": "Manual sibling discount",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["amount_cents"] == -1_000
+    assert body["line_type"] == "adjustment"
+    assert body["invoice_total_cents"] == 6_000
+    assert body["invoice_balance_due_cents"] == 6_000
+    assert body["invoice_status"] == "open"
+
+
+def test_record_invoice_manual_payment_route(admin_client):
+    async def record_manual_payment(**kwargs):
+        assert kwargs == {
+            "invoice_id": "inv-1",
+            "amount_cents": 2_500,
+            "payment_method": "check",
+            "reference_number": "1001",
+            "notes": "Front desk payment",
+        }
+        return {
+            "invoice_id": "inv-1",
+            "payment_id": "manual-1",
+            "invoice_status": "partially_paid",
+            "balance_due_cents": 4_500,
+        }
+
+    admin_client.use_cases.record_manual_payment = record_manual_payment
+
+    response = admin_client.post(
+        "/api/v2/admin/billing/invoices/inv-1/record-payment",
+        json={
+            "amount_cents": 2_500,
+            "payment_method": "check",
+            "reference_number": "1001",
+            "notes": "Front desk payment",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json() == {
+        "invoice_id": "inv-1",
+        "payment_id": "manual-1",
+        "invoice_status": "partially_paid",
+        "balance_due_cents": 4_500,
+    }
+
+
+def test_refund_invoice_route_uses_invoice_native_use_case(admin_client):
+    async def issue_invoice_refund(**kwargs):
+        assert kwargs == {
+            "invoice_id": "inv-1",
+            "amount_cents": 3_000,
+            "reason": "duplicate",
+        }
+        return {
+            "invoice_id": "inv-1",
+            "payment_id": "lp-1",
+            "stripe_refund_id": "re_123",
+            "refunded_cents": 3_000,
+            "total_refunded_cents": 3_000,
+        }
+
+    admin_client.use_cases.issue_invoice_refund = issue_invoice_refund
+
+    response = admin_client.post(
+        "/api/v2/admin/billing/invoices/inv-1/refund",
+        json={"amount_cents": 3_000, "reason": "duplicate"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "invoice_id": "inv-1",
+        "payment_id": "lp-1",
+        "stripe_refund_id": "re_123",
+        "refunded_cents": 3_000,
+        "total_refunded_cents": 3_000,
+    }
+
+
 def test_remove_invoice_line_allows_draft_and_recomputes_totals(admin_client):
     ledger = _FakeLedger(
         invoices=[_invoice(status="draft")],

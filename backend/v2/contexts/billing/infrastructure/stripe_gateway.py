@@ -333,11 +333,12 @@ class RealStripeGateway(StripeGateway):
                 query=query,
                 limit=1,
             )
-            data = customers.get("data", [])
+            data = getattr(customers, "data", None) or []
             if not data:
                 return None
             customer = data[0]
-            pm_id = (customer.get("invoice_settings") or {}).get("default_payment_method")
+            invoice_settings = getattr(customer, "invoice_settings", None)
+            pm_id = getattr(invoice_settings, "default_payment_method", None)
             if not pm_id:
                 return None
             return str(customer["id"]), str(pm_id)

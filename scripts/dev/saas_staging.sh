@@ -12,6 +12,7 @@
 #   scripts/dev/saas_staging.sh seed       # seed tenant + Firebase test user
 #   scripts/dev/saas_staging.sh status     # show containers + URLs + creds
 #   scripts/dev/saas_staging.sh smoke      # run the SaaS readiness smoke
+#   scripts/dev/saas_staging.sh audit blno # run launch-readiness audit for a tenant
 #
 # Rebuild individual services without restarting the whole stack:
 #   scripts/dev/saas_staging.sh rebuild-ui  # rebuild + restart frontend only (staging build)
@@ -225,6 +226,48 @@ wait_for_url() {
   return 1
 }
 
+replay_migrations() {
+  log "Replaying v2 migrations against SaaS staging Mongo..."
+  PYTHONPATH="${REPO_ROOT}" \
+  MONGO_URL="mongodb://127.0.0.1:27017" \
+  DB_NAME="academy_manager_saas_staging" \
+  "${VENV_PYTHON}" - <<'PY'
+import asyncio
+import os
+
+from motor.motor_asyncio import AsyncIOMotorClient
+
+from backend.v2.migrations.runner import run_all_migrations
+
+
+async def main() -> None:
+    client = AsyncIOMotorClient(os.environ["MONGO_URL"])
+    try:
+        replayed = await run_all_migrations(client[os.environ["DB_NAME"]])
+        print(f"Replayed {len(replayed)} migrations")
+    finally:
+        client.close()
+
+
+asyncio.run(main())
+PY
+}
+
+launch_audit() {
+  local academy_id="${1:-blno}"
+  log "Running launch-readiness audit for academy_id=${academy_id}..."
+  PYTHONPATH="${REPO_ROOT}" \
+  APP_TENANCY_MODE=single_academy \
+  ENABLE_PLATFORM_ROUTES=false \
+  ENABLE_OWNER_ROLE=false \
+  ENABLE_STUDENT_LOGIN=false \
+  PRIMARY_ACADEMY_ID="${academy_id}" \
+  "${VENV_PYTHON}" "${REPO_ROOT}/backend/scripts/launch_readiness_audit.py" \
+    --mongo-url mongodb://127.0.0.1:27017 \
+    --db-name academy_manager_saas_staging \
+    --primary-academy-id "${academy_id}"
+}
+
 # --- commands ---------------------------------------------------------------
 
 cmd_up() {
@@ -283,14 +326,16 @@ cmd_seed() {
   fi
   log "Seeding tenant + Firebase emulator user..."
   "${VENV_PYTHON}" "${SEED_SCRIPT}" "$@"
+  replay_migrations
 }
 
 cmd_blno_seed() {
   if [[ ! -x "${VENV_PYTHON}" ]]; then
     die "backend/.venv not found. Run preflight check or create the venv first."
   fi
-  log "Seeding BLno Badminton Academy (parents, students, sessions, payments, pathway)..."
+  log "Seeding BLno Badminton Academy (parents, students, sessions, invoice ledger, pathway)..."
   "${VENV_PYTHON}" "${BLNO_SEED_SCRIPT}" "$@"
+  launch_audit blno
 }
 
 # Reset: wipe seeded test data + emulator users, but keep the stack running.
@@ -345,8 +390,19 @@ cmd_status() {
 import json
 try:
     d = json.load(open("${CREDS_FILE}"))
-    print(f"    Email:    {d.get('owner_email','(unknown)')}")
-    print(f"    Password: {d.get('owner_password','(unknown)')}")
+    owners = d.get("owners")
+    if isinstance(owners, dict) and owners:
+        first = next(iter(owners.values()))
+        print(f"    Admin:    {first.get('owner_email','(unknown)')} / {first.get('owner_password','(unknown)')}")
+    else:
+        print(f"    Admin:    {d.get('owner_email','(unknown)')} / {d.get('owner_password','(unknown)')}")
+    sample_parent = d.get("sample_parent")
+    if isinstance(sample_parent, dict):
+        print(f"    Parent:   {sample_parent.get('email','(unknown)')} / {sample_parent.get('password','(unknown)')}")
+    coaches = d.get("coaches")
+    if isinstance(coaches, dict) and coaches:
+        email, password = next(iter(coaches.items()))
+        print(f"    Coach:    {email} / {password}")
     print(f"    File:     ${CREDS_FILE}")
 except Exception as e:
     print(f"    (could not read creds: {e})")
@@ -400,6 +456,7 @@ cmd_smoke() {
   log "Generating fresh smoke env from seed..."
   local seed_json
   seed_json="$("${VENV_PYTHON}" "${SEED_SCRIPT}" --json "$@")"
+  replay_migrations
 
   local api_url frontend_url tenant_frontend_url tenant_host hdr_name hdr_val id_token
   api_url="$(printf '%s' "${seed_json}"      | "${VENV_PYTHON}" -c 'import json,sys;print(json.load(sys.stdin)["api_url"])')"
@@ -419,6 +476,14 @@ cmd_smoke() {
   INTERNAL_TENANT_HEADER_VALUE="${hdr_val}" \
   AUTH_TOKEN="${id_token}" \
     "${SMOKE_SCRIPT}"
+}
+
+cmd_audit() {
+  if [[ ! -x "${VENV_PYTHON}" ]]; then
+    die "backend/.venv not found."
+  fi
+  local academy_id="${1:-blno}"
+  launch_audit "${academy_id}"
 }
 
 cmd_token() { cmd_seed "$@"; }
@@ -469,8 +534,10 @@ cmd_up_dev() {
 }
 
 cmd_rebuild_ui() {
+  local api_key
+  api_key="$(require_firebase_api_key)"
   log "Rebuilding frontend (deps layer cached if pnpm-lock.yaml unchanged)..."
-  "${COMPOSE[@]}" up -d --no-deps --build frontend
+  NEXT_PUBLIC_FIREBASE_API_KEY="${api_key}" "${COMPOSE[@]}" up -d --no-deps --build frontend
   log "Frontend rebuilt and restarted at http://localhost:3000"
 }
 
@@ -503,6 +570,7 @@ main() {
     urls)   cmd_urls "$@" ;;
     token)  cmd_token "$@" ;;
     smoke)  cmd_smoke "$@" ;;
+    audit)  cmd_audit "$@" ;;
     stripe-listen) cmd_stripe_listen "$@" ;;
     logs)   cmd_logs "$@" ;;
     ps)     cmd_ps "$@" ;;

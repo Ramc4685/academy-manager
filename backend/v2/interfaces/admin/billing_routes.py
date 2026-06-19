@@ -560,6 +560,12 @@ class AddInvoiceLineRequest(BaseModel):
     unit_amount_cents: int = Field(ge=0)
 
 
+class AddInvoiceAdjustmentRequest(BaseModel):
+    description: str = Field(min_length=1)
+    amount_cents: int
+    reason: str = Field(min_length=1)
+
+
 class InvoiceLineResponse(BaseModel):
     line_id: str
     invoice_id: str
@@ -722,6 +728,45 @@ async def add_invoice_line(
     )
 
 
+@router.post(
+    "/billing/invoices/{invoice_id}/adjustments",
+    response_model=InvoiceLineResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_invoice_adjustment(
+    invoice_id: str,
+    body: AddInvoiceAdjustmentRequest,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> InvoiceLineResponse:
+    add_line = _required_callable(use_cases.add_invoice_line, "Invoice adjustment management")
+    try:
+        result = await add_line(  # type: ignore[operator]
+            invoice_id=invoice_id,
+            description=body.description,
+            line_type="adjustment",
+            quantity=1,
+            unit_amount_cents=body.amount_cents,
+            product_id=None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    line = result["line"]
+    invoice = result["invoice"]
+    return InvoiceLineResponse(
+        line_id=str(line["line_id"]),
+        invoice_id=str(line["invoice_id"]),
+        line_type=str(line["line_type"]),
+        description=str(line["description"]),
+        quantity=int(line["quantity"]),
+        unit_amount_cents=int(line["unit_amount_cents"]),
+        amount_cents=int(line["amount_cents"]),
+        invoice_total_cents=int(invoice["total_cents"]),
+        invoice_balance_due_cents=int(invoice["balance_due_cents"]),
+        invoice_status=str(invoice["status"]),
+    )
+
+
 @router.delete(
     "/billing/invoices/{invoice_id}/lines/{line_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -776,6 +821,19 @@ class RecordManualPaymentResponse(BaseModel):
     balance_due_cents: int
 
 
+class InvoiceRefundRequest(BaseModel):
+    amount_cents: int | None = Field(default=None, gt=0)
+    reason: str = "admin_initiated"
+
+
+class InvoiceRefundResponse(BaseModel):
+    invoice_id: str
+    payment_id: str
+    stripe_refund_id: str
+    refunded_cents: int
+    total_refunded_cents: int
+
+
 @router.post(
     "/billing/invoices/{invoice_id}/record-payment",
     response_model=RecordManualPaymentResponse,
@@ -811,6 +869,37 @@ async def record_manual_payment(
         payment_id=str(result["payment_id"]),
         invoice_status=str(result["invoice_status"]),
         balance_due_cents=int(result["balance_due_cents"]),
+    )
+
+
+@router.post(
+    "/billing/invoices/{invoice_id}/refund",
+    response_model=InvoiceRefundResponse,
+)
+async def refund_invoice(
+    invoice_id: str,
+    body: InvoiceRefundRequest,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> InvoiceRefundResponse:
+    issue_refund = _required_callable(use_cases.issue_invoice_refund, "Invoice refund")
+    try:
+        result = await issue_refund(  # type: ignore[operator]
+            invoice_id=invoice_id,
+            amount_cents=body.amount_cents,
+            reason=body.reason,
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=409, detail=msg) from exc
+    return InvoiceRefundResponse(
+        invoice_id=str(result["invoice_id"]),
+        payment_id=str(result["payment_id"]),
+        stripe_refund_id=str(result["stripe_refund_id"]),
+        refunded_cents=int(result["refunded_cents"]),
+        total_refunded_cents=int(result["total_refunded_cents"]),
     )
 
 

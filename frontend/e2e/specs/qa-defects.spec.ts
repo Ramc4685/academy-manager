@@ -153,7 +153,7 @@ test.describe("QA defect regressions", () => {
     });
 
     await page.goto("/parent/payments");
-    await page.getByRole("button", { name: "Start autopay" }).click();
+    await page.getByRole("button", { name: "Subscribe to autopay" }).click();
 
     await expect(page.getByTestId("autopay-error")).toContainText(
       "Autopay could not start",
@@ -295,8 +295,8 @@ test.describe("QA defect regressions", () => {
     );
 
     await page.goto("/parent/payments");
-    await page.getByRole("button", { name: "Request pause" }).click();
-    await page.getByLabel("Requested resume date").fill("2026-07-15");
+    await page.getByRole("button", { name: "Pause", exact: true }).click();
+    await page.getByLabel("Resume date").fill("2026-07-15");
     await page.getByLabel("Reason").fill("Summer travel");
 
     const pausePost = page.waitForRequest((request) => {

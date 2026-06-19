@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""seed_blno_staging.py — Full BLNO Badminton Academy seed for local SaaS staging.
+"""seed_blno_staging.py - Full BLNO Badminton Academy seed for local SaaS staging.
 
 Creates all BLNO data in one shot:
   Academy       BLno Badminton Academy  blno-academy.localhost  America/Chicago
   Users         Admin + 2 coaches + 36 parent accounts (Firebase emulator auth)
   Students      46 students linked to parents
   Sessions      4 recurring weekly classes (Wed + Thu)
-  Occurrences   Apr 1 – Jun 30 2026 (past = completed, future = scheduled)
+  Occurrences   Apr 1 - Jun 30 2026 (past = completed, future = scheduled)
   Enrollments   All active / hold students
   Attendance    All past occurrences (~88% present, coach + student)
   Coach rates   30% revenue-share on expected revenue
   Payments      April + May + June 2026 with Stripe test IDs
-                  April  — all succeeded
-                  May    — mix: most succeeded, some pending, one failed
-                  June   — all pending (current month)
+                  April  - all succeeded
+                  May    - mix: most succeeded, some pending, one failed
+                  June   - all pending (current month)
   Subscriptions Monthly subscription per paying family
   Webhooks      Sample stripe_webhook_events for dedup testing
   Platform role Admin is platform_admin
@@ -49,43 +49,48 @@ from pymongo import MongoClient
 
 # ── configuration ─────────────────────────────────────────────────────────────
 
-MONGO_URL    = os.environ.get("SAAS_STAGING_MONGO_URL",    "mongodb://127.0.0.1:27017")
-DB_NAME      = os.environ.get("SAAS_STAGING_DB_NAME",      "academy_manager_saas_staging")
+MONGO_URL = os.environ.get("SAAS_STAGING_MONGO_URL", "mongodb://127.0.0.1:27017")
+DB_NAME = os.environ.get("SAAS_STAGING_DB_NAME", "academy_manager_saas_staging")
 EMULATOR_URL = os.environ.get("SAAS_STAGING_EMULATOR_URL", "http://127.0.0.1:9099")
-PROJECT_ID   = "academy-courtmastr"
+PROJECT_ID = "academy-courtmastr"
 EMULATOR_API_KEY = f"emu-{PROJECT_ID}"
 
-PROJECT_ROOT   = Path(__file__).resolve().parents[2]
-LOCAL_DIR      = PROJECT_ROOT / ".local"
-CREDS_FILE     = LOCAL_DIR / "saas-staging-credentials.json"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+LOCAL_DIR = PROJECT_ROOT / ".local"
+CREDS_FILE = LOCAL_DIR / "saas-staging-credentials.json"
 PATHWAY_SCRIPT = PROJECT_ROOT / "scripts" / "dev" / "seed_badminton_pathway.py"
-VENV_PYTHON    = os.environ.get(
+VENV_PYTHON = os.environ.get(
     "VENV_PYTHON", str(PROJECT_ROOT / "backend" / ".venv" / "bin" / "python")
 )
+sys.path.insert(0, str(PROJECT_ROOT))
 
-ACADEMY_ID           = "blno"
-ACADEMY_SLUG         = "blno"
-ACADEMY_DOMAIN       = "blno-academy.localhost"
+from backend.scripts.backfill_p4_legacy_payments import map_legacy_payment  # noqa: E402
+
+ACADEMY_ID = "blno"
+ACADEMY_SLUG = "blno"
+ACADEMY_DOMAIN = "blno-academy.localhost"
 ACADEMY_DISPLAY_NAME = "BLno Badminton Academy"
-ACADEMY_TZ           = "America/Chicago"
-CHICAGO              = ZoneInfo(ACADEMY_TZ)
+ACADEMY_TZ = "America/Chicago"
+CHICAGO = ZoneInfo(ACADEMY_TZ)
 
-ADMIN_EMAIL     = os.environ.get("SAAS_STAGING_OWNER_EMAIL", "ramchand4685@gmail.com")
-ADMIN_NAME      = "RamC Venkatasamy"
-ADMIN_PASSWORD  = "Admin@12345"
-COACH_PASSWORD  = "Coach@12345"
+ADMIN_EMAIL = os.environ.get("SAAS_STAGING_OWNER_EMAIL", "ramchand4685@gmail.com")
+ADMIN_NAME = "RamC Venkatasamy"
+ADMIN_PASSWORD = "Admin@12345"
+COACH_PASSWORD = "Coach@12345"
 PARENT_PASSWORD = "Parent@12345"
 
 # Season date range for occurrences
 SEASON_START = dt.date(2026, 4, 1)
-SEASON_END   = dt.date(2026, 6, 30)
-TODAY        = dt.date(2026, 6, 16)  # splits past (completed) from future (scheduled)
+SEASON_END = dt.date(2026, 6, 30)
+TODAY = dt.date(2026, 6, 16)  # splits past (completed) from future (scheduled)
 
 
 # ── safety guard ──────────────────────────────────────────────────────────────
 
+
 def _assert_local() -> None:
     import urllib.parse as _up
+
     allowed = {"127.0.0.1", "localhost", "::1", "mongo", "firebase-emulator"}
     for label, url in (("mongo", MONGO_URL), ("emulator", EMULATOR_URL)):
         host = (_up.urlparse(url).hostname or "").lower()
@@ -97,6 +102,7 @@ def _assert_local() -> None:
 
 
 # ── datetime helpers ──────────────────────────────────────────────────────────
+
 
 def utcnow() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
@@ -119,6 +125,7 @@ def all_weekdays(start: dt.date, end: dt.date, weekday: int) -> list[dt.date]:
 
 
 # ── Firebase helpers ──────────────────────────────────────────────────────────
+
 
 def _wait_for_services(client: Any) -> None:
     print("[blno-seed] Waiting for Firebase emulator...", file=sys.stderr)
@@ -191,9 +198,7 @@ def upsert_firebase_user(email: str, password: str, display_name: str) -> str:
             params={"email": email},
             timeout=5.0,
         )
-        uid = _firebase_signup(email, password, display_name) or _firebase_signin(
-            email, password
-        )
+        uid = _firebase_signup(email, password, display_name) or _firebase_signin(email, password)
         _mark_firebase_email_verified(uid)
         return uid
 
@@ -245,44 +250,44 @@ def mint_id_token(email: str, password: str) -> str:
 SESSIONS_DEF: list[dict[str, Any]] = [
     {
         "key": "thu_beginner",
-        "title": "Thursday 6:00 PM – 6:45 PM Beginner (Coach - Gowtham)",
+        "title": "Thursday 6:00 PM - 6:45 PM Beginner (Coach - Gowtham)",
         "coach_email": "gowtham@blno.academy",
-        "weekday": 3,          # Thursday
+        "weekday": 3,  # Thursday
         "start_time": "18:00",
-        "end_time":   "18:45",
+        "end_time": "18:45",
         "skill_level": "beginner",
         "amount_cents": 6000,
         "capacity": 15,
     },
     {
         "key": "wed_intermediate",
-        "title": "Wednesday 6:15 PM – 7:00 PM Intermediate (Coach - Kishore)",
+        "title": "Wednesday 6:15 PM - 7:00 PM Intermediate (Coach - Kishore)",
         "coach_email": "kishore@blno.academy",
-        "weekday": 2,          # Wednesday
+        "weekday": 2,  # Wednesday
         "start_time": "18:15",
-        "end_time":   "19:00",
+        "end_time": "19:00",
         "skill_level": "intermediate",
         "amount_cents": 7000,
         "capacity": 15,
     },
     {
         "key": "thu_intermediate",
-        "title": "Thursday 6:45 PM – 7:30 PM Intermediate (Coach - Gowtham)",
+        "title": "Thursday 6:45 PM - 7:30 PM Intermediate (Coach - Gowtham)",
         "coach_email": "gowtham@blno.academy",
-        "weekday": 3,          # Thursday
+        "weekday": 3,  # Thursday
         "start_time": "18:45",
-        "end_time":   "19:30",
+        "end_time": "19:30",
         "skill_level": "intermediate",
         "amount_cents": 7000,
         "capacity": 15,
     },
     {
         "key": "wed_beginner",
-        "title": "Wednesday 5:45 PM – 6:30 PM Beginner (Coach - Kishore)",
+        "title": "Wednesday 5:45 PM - 6:30 PM Beginner (Coach - Kishore)",
         "coach_email": "kishore@blno.academy",
-        "weekday": 2,          # Wednesday
+        "weekday": 2,  # Wednesday
         "start_time": "17:45",
-        "end_time":   "18:30",
+        "end_time": "18:30",
         "skill_level": "beginner",
         "amount_cents": 6000,
         "capacity": 15,
@@ -295,56 +300,609 @@ SESSIONS_DEF: list[dict[str, Any]] = [
 # status  : "active" | "hold" | "dropped"
 # *_paid  : None = not paid / not applicable
 ROSTER: list[tuple[Any, ...]] = [
-    ("Nigazhini Manoj",              "Manoj Edward",                       "manojedward.btech@gmail.com",       "3095308920",  6,  "beginner",     "thu_beginner",    "standard", "active",  6000, 6000),
-    ("Athiksha Sakthivel",           "Sakthivel Shanmugam",                "sakthivelplan@gmail.com",           "3095326987",  9,  "beginner",     "wed_intermediate", "standard", "active",  7000, 7000),
-    ("Arjun V",                      "Viswanathan N",                      "viswanathan.kn@gmail.com",          "3097507837",  12, "intermediate", "wed_intermediate", "standard", "active",  7000, 7000),
-    ("Surya Balakrishnan",           "Krishna Balakrishnan",               "krishnaswamib@gmail.com",           "2487033410",  12, "intermediate", "thu_intermediate", "standard", "active",  7000, 7000),
-    ("Harshith Bhaskar",             "Mohana Anandhan",                    "monaa1384@gmail.com",               "3093100227",  13, "beginner",     "thu_intermediate", "standard", "active",  7000, 7000),
-    ("Pradhyun Bhaskar",             "Mohana Anandhan",                    "monaa1384@gmail.com",               "3093100227",  10, "beginner",     "thu_intermediate", "standard", "active",  7000, None),
-    ("Netra Murugesan Ramya",        "Murugesan Kollanur Palaniappan",     "kpmpalaniappan@gmail.com",          "3095315676",  7,  "beginner",     "wed_beginner",    "standard", "active",  6000, 6000),
-    ("Hannah Sahaya Vinodh",         "Sahaya Vinodh",                      "sahayavinodh@gmail.com",            "3098077373",  11, "intermediate", "wed_intermediate", "standard", "hold",    7000, None),
-    ("Vrushali Kariveda",            "Rohith Kariveda",                    "rohith.myway@gmail.com",            "8722029449",  6,  "beginner",     "thu_beginner",    "standard", "active",  6000, 6000),
-    ("Varshali Kariveda",            "Rohith Kariveda",                    "rohith.myway@gmail.com",            "8722029449",  6,  "beginner",     "thu_beginner",    "standard", "active",  6000, 6000),
-    ("Sadhvi Amireddy",              "Uvaraju Amireddy",                   "uvaraju.a@gmail.com",               "3095314079",  11, "beginner",     "wed_intermediate", "standard", "active",  7000, 7000),
-    ("Jaanvi",                       "Raja Kakani",                        "rkakani8j378b@gmail.com",           "7323575966",  11, "beginner",     "thu_intermediate", "standard", "active",  7000, 7000),
-    ("Adhvik Saran",                 "Saran Maharajan",                    "saran.7176@gmail.com",              "3093070358",  8,  "beginner",     "thu_intermediate", "standard", "active",  7000, None),
-    ("Jayaparthiban Jawaharbabu",    "Jawaharbabu Jeyaraman",              "jawaharbabuj@gmail.com",            "3098254798",  6,  "beginner",     "wed_beginner",    "standard", "active",  6000, 6000),
-    ("Benjamin D'Mello",             "Annalyn D'Mello",                    "annalynvaz@hotmail.com",            "2242349703",  12, "beginner",     "wed_intermediate", "standard", "active",  7000, 7000),
-    ("Jia Vidharthi Manoj Kumar",    "Manoj Kumar M S",                    "msmanojreg@gmail.com",              "3096125381",  12, "intermediate", "wed_intermediate", "standard", "active",  7000, 7000),
-    ("Sakshi Kishore",               "Kishore Subbarao",                   "kishoreraosubbarao@gmail.com",      "3095318717",  11, "beginner",     "thu_intermediate", "nocharge", "active",  None, None),
-    ("Vehith Kishore",               "Kishore Subbarao",                   "kishoreraosubbarao@gmail.com",      "3095318717",  7,  "beginner",     "wed_intermediate", "nocharge", "active",  None, None),
-    ("Akshaya Senthilkumar",         "Senthilkumar Mohan Raj",             "msenthilvpm@gmail.com",             "3098319331",  10, "beginner",     "thu_beginner",    "standard", "active",  6000, 6000),
-    ("Viha Ramchand",                "RamC Venkatasamy",                   "ramchand4685@gmail.com",            "2488859243",  10, "beginner",     "wed_intermediate", "nocharge", "active",  None, None),
-    ("Nilan Swaminathan Devi",       "Devi Kumar",                         "devikv.devi@gmail.com",             "3092054252",  6,  "beginner",     "wed_beginner",    "standard", "active",  6000, 6000),
-    ("Aryan LK",                     "Kumaran Thirunavukkarasu",            "kumar.thirunavukarasu1@gmail.com",  "3095315600",  7,  "beginner",     "wed_beginner",    "standard", "active",  6000, 6000),
-    ("Rihanth Sureshbabu",           "Sureshbabu Dhandapani",              "sureshbabu.dhandapani16@gmail.com", "3097509549",  8,  "intermediate", "wed_intermediate", "standard", "active",  7000, 7000),
-    ("Suhaas Velaga",                "Shravan Velaga",                     "velaga.shravan@gmail.com",          "4255034059",  6,  "beginner",     "thu_beginner",    "standard", "active",  6000, 6000),
-    ("Aishani Tummala",              "Sri Tummala",                        "vasu.0145@gmail.com",               "2488859206",  6,  "beginner",     "wed_beginner",    "standard", "dropped", 6000, None),
-    ("Anjana Sana",                  "Adi Sekhara Reddy Sana",             "adisekharreddy@gmail.com",          "5756391240",  9,  "beginner",     "wed_beginner",    "standard", "active",  6000, 6000),
-    ("Abhishta Boddapati",           "Prashanth Boddapati",                "prasanthboddapati0805@gmail.com",   "3095335123",  10, "beginner",     "wed_beginner",    "standard", "active",  6000, 6000),
-    ("Titiksha Vinothini Nirmalraj", "Nirmalraj",                          "nirmal16a@gmail.com",               "3095315537",  10, "beginner",     "thu_intermediate", "standard", "active",  7000, 7000),
-    ("Shamshritha Shivanuri",        "Prem Kumar Shivanuri",               "shivanuriprem@gmail.com",           "3092629464",  6,  "beginner",     "thu_beginner",    "standard", "dropped", 6000, None),
-    ("Prisha",                       "Srinivasa Ramanujan",                "sudharsan1987@gmail.com",           "3092054741",  6,  "beginner",     "wed_beginner",    "standard", "active",  6000, None),
-    ("Kabilan Chandran",             "Jayachandran Mallika Ramachandran",  "m.r.jayachandran@gmail.com",        "5623666960",  14, "intermediate", "thu_intermediate", "standard", "active",  7000, 7000),
-    ("Ethan Victor",                 "Victor Rajan",                       "mail2victors@gmail.com",            "3093972925",  14, "intermediate", "thu_intermediate", "standard", "active",  7000, 7000),
-    ("Diya Saggu",                   "Anil Saggu",                         "sr_anilkumar@yahoo.com",            "6307305638",  8,  "beginner",     "wed_beginner",    "standard", "active",  6000, 6000),
-    ("Shakshitha Selvakumar",        "Selvakumar Ramaiyah",                "rselvakumarrsk@gmail.com",          "3095300305",  10, "intermediate", "thu_intermediate", "standard", "active",  7000, 7000),
-    ("Yantraa Santosh",              "Santosh Subramanian",                "san6031@gmail.com",                 "3095324552",  7,  "beginner",     "thu_beginner",    "standard", "active",  6000, 6000),
-    ("Vishwesh Srikanth",            "Srikanth Marikkannu",                "srimarikk@gmail.com",               "3096602532",  15, "intermediate", "thu_intermediate", "standard", "active",  7000, 7000),
-    ("Ananyhaa Sudhakar",            "Sudhakar Panneerselvam",             "f1sudhakar@gmail.com",              "2012388279",  13, "beginner",     "thu_beginner",    "standard", "active",  6000, 7000),
-    ("Maithri Kandula",              "Mahesh Kandula",                     "mahesh.kandula34@gmail.com",        "5713635113",  6,  "beginner",     "thu_beginner",    "standard", "active",  6000, 6000),
-    ("Harini Manikandan",            "Mohana Divya Lalitha Gunasekaran",   "mohanadivya15@gmail.com",           "3095855661",  14, "beginner",     "wed_intermediate", "standard", "active",  7000, 7000),
-    ("Pooja Naran",                  "Maran Mani",                         "maran27.mani@gmail.com",            "3094344206",  11, "beginner",     "wed_intermediate", "standard", "active",  7000, 7000),
-    ("Divina",                       "David Jacob",                        "davidgentleguy@gmail.com",          "3097504827",  13, "intermediate", "wed_intermediate", "standard", "active",  7000, 7000),
-    ("Radhesh Saravanan",            "Saravanan Ramakrishnan",             "saravananoff@hotmail.com",          "3095320232",  12, "beginner",     "thu_beginner",    "standard", "active",  6000, 6000),
-    ("Dhanesh Saravanan",            "Saravanan Ramakrishnan",             "saravananoff@hotmail.com",          "3095320232",  10, "beginner",     "thu_beginner",    "standard", "active",  6000, None),
-    ("Aadhya Abhishek",              "Abhishek Ajithkumar",                "abhishekak.off@gmail.com",          "3095315171",  7,  "beginner",     "wed_beginner",    "standard", "active",  6000, 6000),
-    ("Kavishayashree Senthilkumar",  "Senthilkumar Krishnan",              "spsfamily7428@gmail.com",           "3096848687",  7,  "beginner",     "wed_beginner",    "standard", "active",  6000, 6000),
-    ("Riaan Pitale",                 "Rashmi Pitale",                      "rashmi.luniya@gmail.com",           "3095313691",  8,  "beginner",     "thu_beginner",    "standard", "active",  6000, 6000),
+    (
+        "Nigazhini Manoj",
+        "Manoj Edward",
+        "manojedward.btech@gmail.com",
+        "3095308920",
+        6,
+        "beginner",
+        "thu_beginner",
+        "standard",
+        "active",
+        6000,
+        6000,
+    ),
+    (
+        "Athiksha Sakthivel",
+        "Sakthivel Shanmugam",
+        "sakthivelplan@gmail.com",
+        "3095326987",
+        9,
+        "beginner",
+        "wed_intermediate",
+        "standard",
+        "active",
+        7000,
+        7000,
+    ),
+    (
+        "Arjun V",
+        "Viswanathan N",
+        "viswanathan.kn@gmail.com",
+        "3097507837",
+        12,
+        "intermediate",
+        "wed_intermediate",
+        "standard",
+        "active",
+        7000,
+        7000,
+    ),
+    (
+        "Surya Balakrishnan",
+        "Krishna Balakrishnan",
+        "krishnaswamib@gmail.com",
+        "2487033410",
+        12,
+        "intermediate",
+        "thu_intermediate",
+        "standard",
+        "active",
+        7000,
+        7000,
+    ),
+    (
+        "Harshith Bhaskar",
+        "Mohana Anandhan",
+        "monaa1384@gmail.com",
+        "3093100227",
+        13,
+        "beginner",
+        "thu_intermediate",
+        "standard",
+        "active",
+        7000,
+        7000,
+    ),
+    (
+        "Pradhyun Bhaskar",
+        "Mohana Anandhan",
+        "monaa1384@gmail.com",
+        "3093100227",
+        10,
+        "beginner",
+        "thu_intermediate",
+        "standard",
+        "active",
+        7000,
+        None,
+    ),
+    (
+        "Netra Murugesan Ramya",
+        "Murugesan Kollanur Palaniappan",
+        "kpmpalaniappan@gmail.com",
+        "3095315676",
+        7,
+        "beginner",
+        "wed_beginner",
+        "standard",
+        "active",
+        6000,
+        6000,
+    ),
+    (
+        "Hannah Sahaya Vinodh",
+        "Sahaya Vinodh",
+        "sahayavinodh@gmail.com",
+        "3098077373",
+        11,
+        "intermediate",
+        "wed_intermediate",
+        "standard",
+        "hold",
+        7000,
+        None,
+    ),
+    (
+        "Vrushali Kariveda",
+        "Rohith Kariveda",
+        "rohith.myway@gmail.com",
+        "8722029449",
+        6,
+        "beginner",
+        "thu_beginner",
+        "standard",
+        "active",
+        6000,
+        6000,
+    ),
+    (
+        "Varshali Kariveda",
+        "Rohith Kariveda",
+        "rohith.myway@gmail.com",
+        "8722029449",
+        6,
+        "beginner",
+        "thu_beginner",
+        "standard",
+        "active",
+        6000,
+        6000,
+    ),
+    (
+        "Sadhvi Amireddy",
+        "Uvaraju Amireddy",
+        "uvaraju.a@gmail.com",
+        "3095314079",
+        11,
+        "beginner",
+        "wed_intermediate",
+        "standard",
+        "active",
+        7000,
+        7000,
+    ),
+    (
+        "Jaanvi",
+        "Raja Kakani",
+        "rkakani8j378b@gmail.com",
+        "7323575966",
+        11,
+        "beginner",
+        "thu_intermediate",
+        "standard",
+        "active",
+        7000,
+        7000,
+    ),
+    (
+        "Adhvik Saran",
+        "Saran Maharajan",
+        "saran.7176@gmail.com",
+        "3093070358",
+        8,
+        "beginner",
+        "thu_intermediate",
+        "standard",
+        "active",
+        7000,
+        None,
+    ),
+    (
+        "Jayaparthiban Jawaharbabu",
+        "Jawaharbabu Jeyaraman",
+        "jawaharbabuj@gmail.com",
+        "3098254798",
+        6,
+        "beginner",
+        "wed_beginner",
+        "standard",
+        "active",
+        6000,
+        6000,
+    ),
+    (
+        "Benjamin D'Mello",
+        "Annalyn D'Mello",
+        "annalynvaz@hotmail.com",
+        "2242349703",
+        12,
+        "beginner",
+        "wed_intermediate",
+        "standard",
+        "active",
+        7000,
+        7000,
+    ),
+    (
+        "Jia Vidharthi Manoj Kumar",
+        "Manoj Kumar M S",
+        "msmanojreg@gmail.com",
+        "3096125381",
+        12,
+        "intermediate",
+        "wed_intermediate",
+        "standard",
+        "active",
+        7000,
+        7000,
+    ),
+    (
+        "Sakshi Kishore",
+        "Kishore Subbarao",
+        "kishoreraosubbarao@gmail.com",
+        "3095318717",
+        11,
+        "beginner",
+        "thu_intermediate",
+        "nocharge",
+        "active",
+        None,
+        None,
+    ),
+    (
+        "Vehith Kishore",
+        "Kishore Subbarao",
+        "kishoreraosubbarao@gmail.com",
+        "3095318717",
+        7,
+        "beginner",
+        "wed_intermediate",
+        "nocharge",
+        "active",
+        None,
+        None,
+    ),
+    (
+        "Akshaya Senthilkumar",
+        "Senthilkumar Mohan Raj",
+        "msenthilvpm@gmail.com",
+        "3098319331",
+        10,
+        "beginner",
+        "thu_beginner",
+        "standard",
+        "active",
+        6000,
+        6000,
+    ),
+    (
+        "Viha Ramchand",
+        "RamC Venkatasamy",
+        "ramchand4685@gmail.com",
+        "2488859243",
+        10,
+        "beginner",
+        "wed_intermediate",
+        "nocharge",
+        "active",
+        None,
+        None,
+    ),
+    (
+        "Nilan Swaminathan Devi",
+        "Devi Kumar",
+        "devikv.devi@gmail.com",
+        "3092054252",
+        6,
+        "beginner",
+        "wed_beginner",
+        "standard",
+        "active",
+        6000,
+        6000,
+    ),
+    (
+        "Aryan LK",
+        "Kumaran Thirunavukkarasu",
+        "kumar.thirunavukarasu1@gmail.com",
+        "3095315600",
+        7,
+        "beginner",
+        "wed_beginner",
+        "standard",
+        "active",
+        6000,
+        6000,
+    ),
+    (
+        "Rihanth Sureshbabu",
+        "Sureshbabu Dhandapani",
+        "sureshbabu.dhandapani16@gmail.com",
+        "3097509549",
+        8,
+        "intermediate",
+        "wed_intermediate",
+        "standard",
+        "active",
+        7000,
+        7000,
+    ),
+    (
+        "Suhaas Velaga",
+        "Shravan Velaga",
+        "velaga.shravan@gmail.com",
+        "4255034059",
+        6,
+        "beginner",
+        "thu_beginner",
+        "standard",
+        "active",
+        6000,
+        6000,
+    ),
+    (
+        "Aishani Tummala",
+        "Sri Tummala",
+        "vasu.0145@gmail.com",
+        "2488859206",
+        6,
+        "beginner",
+        "wed_beginner",
+        "standard",
+        "dropped",
+        6000,
+        None,
+    ),
+    (
+        "Anjana Sana",
+        "Adi Sekhara Reddy Sana",
+        "adisekharreddy@gmail.com",
+        "5756391240",
+        9,
+        "beginner",
+        "wed_beginner",
+        "standard",
+        "active",
+        6000,
+        6000,
+    ),
+    (
+        "Abhishta Boddapati",
+        "Prashanth Boddapati",
+        "prasanthboddapati0805@gmail.com",
+        "3095335123",
+        10,
+        "beginner",
+        "wed_beginner",
+        "standard",
+        "active",
+        6000,
+        6000,
+    ),
+    (
+        "Titiksha Vinothini Nirmalraj",
+        "Nirmalraj",
+        "nirmal16a@gmail.com",
+        "3095315537",
+        10,
+        "beginner",
+        "thu_intermediate",
+        "standard",
+        "active",
+        7000,
+        7000,
+    ),
+    (
+        "Shamshritha Shivanuri",
+        "Prem Kumar Shivanuri",
+        "shivanuriprem@gmail.com",
+        "3092629464",
+        6,
+        "beginner",
+        "thu_beginner",
+        "standard",
+        "dropped",
+        6000,
+        None,
+    ),
+    (
+        "Prisha",
+        "Srinivasa Ramanujan",
+        "sudharsan1987@gmail.com",
+        "3092054741",
+        6,
+        "beginner",
+        "wed_beginner",
+        "standard",
+        "active",
+        6000,
+        None,
+    ),
+    (
+        "Kabilan Chandran",
+        "Jayachandran Mallika Ramachandran",
+        "m.r.jayachandran@gmail.com",
+        "5623666960",
+        14,
+        "intermediate",
+        "thu_intermediate",
+        "standard",
+        "active",
+        7000,
+        7000,
+    ),
+    (
+        "Ethan Victor",
+        "Victor Rajan",
+        "mail2victors@gmail.com",
+        "3093972925",
+        14,
+        "intermediate",
+        "thu_intermediate",
+        "standard",
+        "active",
+        7000,
+        7000,
+    ),
+    (
+        "Diya Saggu",
+        "Anil Saggu",
+        "sr_anilkumar@yahoo.com",
+        "6307305638",
+        8,
+        "beginner",
+        "wed_beginner",
+        "standard",
+        "active",
+        6000,
+        6000,
+    ),
+    (
+        "Shakshitha Selvakumar",
+        "Selvakumar Ramaiyah",
+        "rselvakumarrsk@gmail.com",
+        "3095300305",
+        10,
+        "intermediate",
+        "thu_intermediate",
+        "standard",
+        "active",
+        7000,
+        7000,
+    ),
+    (
+        "Yantraa Santosh",
+        "Santosh Subramanian",
+        "san6031@gmail.com",
+        "3095324552",
+        7,
+        "beginner",
+        "thu_beginner",
+        "standard",
+        "active",
+        6000,
+        6000,
+    ),
+    (
+        "Vishwesh Srikanth",
+        "Srikanth Marikkannu",
+        "srimarikk@gmail.com",
+        "3096602532",
+        15,
+        "intermediate",
+        "thu_intermediate",
+        "standard",
+        "active",
+        7000,
+        7000,
+    ),
+    (
+        "Ananyhaa Sudhakar",
+        "Sudhakar Panneerselvam",
+        "f1sudhakar@gmail.com",
+        "2012388279",
+        13,
+        "beginner",
+        "thu_beginner",
+        "standard",
+        "active",
+        6000,
+        7000,
+    ),
+    (
+        "Maithri Kandula",
+        "Mahesh Kandula",
+        "mahesh.kandula34@gmail.com",
+        "5713635113",
+        6,
+        "beginner",
+        "thu_beginner",
+        "standard",
+        "active",
+        6000,
+        6000,
+    ),
+    (
+        "Harini Manikandan",
+        "Mohana Divya Lalitha Gunasekaran",
+        "mohanadivya15@gmail.com",
+        "3095855661",
+        14,
+        "beginner",
+        "wed_intermediate",
+        "standard",
+        "active",
+        7000,
+        7000,
+    ),
+    (
+        "Pooja Naran",
+        "Maran Mani",
+        "maran27.mani@gmail.com",
+        "3094344206",
+        11,
+        "beginner",
+        "wed_intermediate",
+        "standard",
+        "active",
+        7000,
+        7000,
+    ),
+    (
+        "Divina",
+        "David Jacob",
+        "davidgentleguy@gmail.com",
+        "3097504827",
+        13,
+        "intermediate",
+        "wed_intermediate",
+        "standard",
+        "active",
+        7000,
+        7000,
+    ),
+    (
+        "Radhesh Saravanan",
+        "Saravanan Ramakrishnan",
+        "saravananoff@hotmail.com",
+        "3095320232",
+        12,
+        "beginner",
+        "thu_beginner",
+        "standard",
+        "active",
+        6000,
+        6000,
+    ),
+    (
+        "Dhanesh Saravanan",
+        "Saravanan Ramakrishnan",
+        "saravananoff@hotmail.com",
+        "3095320232",
+        10,
+        "beginner",
+        "thu_beginner",
+        "standard",
+        "active",
+        6000,
+        None,
+    ),
+    (
+        "Aadhya Abhishek",
+        "Abhishek Ajithkumar",
+        "abhishekak.off@gmail.com",
+        "3095315171",
+        7,
+        "beginner",
+        "wed_beginner",
+        "standard",
+        "active",
+        6000,
+        6000,
+    ),
+    (
+        "Kavishayashree Senthilkumar",
+        "Senthilkumar Krishnan",
+        "spsfamily7428@gmail.com",
+        "3096848687",
+        7,
+        "beginner",
+        "wed_beginner",
+        "standard",
+        "active",
+        6000,
+        6000,
+    ),
+    (
+        "Riaan Pitale",
+        "Rashmi Pitale",
+        "rashmi.luniya@gmail.com",
+        "3095313691",
+        8,
+        "beginner",
+        "thu_beginner",
+        "standard",
+        "active",
+        6000,
+        6000,
+    ),
 ]
 
 
 # ── ID generators ─────────────────────────────────────────────────────────────
+
 
 def _slug(text: str, max_len: int = 24) -> str:
     return (
@@ -352,8 +910,7 @@ def _slug(text: str, max_len: int = 24) -> str:
         .replace(" ", "_")
         .replace("'", "")
         .replace("@", "_at_")
-        .replace(".", "_")
-        [:max_len]
+        .replace(".", "_")[:max_len]
     )
 
 
@@ -405,7 +962,84 @@ def stripe_evt(n: int, kind: str) -> str:
     return f"evt_blno_{kind.replace('.', '_')}_{n:04d}"
 
 
+def build_student_tuition_payment_doc(
+    *,
+    payment_id: str,
+    parent_id: str,
+    student_id: str,
+    enrollment_id: str,
+    period: str,
+    amount_cents: int,
+    status: str,
+    created_at: dt.datetime,
+    updated_at: dt.datetime,
+    stripe_payment_intent_id: str | None,
+    stripe_checkout_session_id: str | None,
+    description: str,
+) -> dict[str, Any]:
+    return {
+        "payment_id": payment_id,
+        "academy_id": ACADEMY_ID,
+        "parent_id": parent_id,
+        "student_id": student_id,
+        "enrollment_id": enrollment_id,
+        "period": period,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "amount_cents": amount_cents,
+        "currency": "usd",
+        "status": status,
+        "refunded_cents": 0,
+        "stripe_payment_intent_id": stripe_payment_intent_id,
+        "stripe_checkout_session_id": stripe_checkout_session_id,
+        "billing_month": period,
+        "payment_mode": "monthly",
+        "description": description,
+    }
+
+
+def _upsert_ledger_from_seed_payment(db: Any, payment_doc: dict[str, Any]) -> None:
+    mapped = map_legacy_payment(payment_doc)
+    if mapped is None:
+        return
+
+    invoice = mapped["invoice"]
+    line = mapped["line"]
+    ledger_payment = mapped["ledger_payment"]
+    allocation = mapped["allocation"]
+
+    db.invoices.update_one(
+        {"academy_id": invoice["academy_id"], "invoice_id": invoice["invoice_id"]},
+        {"$set": invoice},
+        upsert=True,
+    )
+    db.invoice_lines.update_one(
+        {"academy_id": line["academy_id"], "line_id": line["line_id"]},
+        {"$set": line},
+        upsert=True,
+    )
+    if ledger_payment:
+        db.ledger_payments.update_one(
+            {
+                "academy_id": ledger_payment["academy_id"],
+                "payment_id": ledger_payment["payment_id"],
+            },
+            {"$set": ledger_payment},
+            upsert=True,
+        )
+    if allocation:
+        db.payment_allocations.update_one(
+            {
+                "academy_id": allocation["academy_id"],
+                "allocation_id": allocation["allocation_id"],
+            },
+            {"$set": allocation},
+            upsert=True,
+        )
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     _assert_local()
@@ -414,11 +1048,12 @@ def main() -> None:
     _wait_for_services(client)
     db = client[DB_NAME]
     ts = utcnow()
+    db.payments.delete_many({"academy_id": ACADEMY_ID})
 
     # ── 1. Firebase emulator accounts ─────────────────────────────────────────
     print("\n[blno-seed] 1/9  Firebase accounts...", file=sys.stderr)
 
-    admin_uid   = upsert_firebase_user(ADMIN_EMAIL,           ADMIN_PASSWORD,  ADMIN_NAME)
+    admin_uid = upsert_firebase_user(ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME)
     gowtham_uid = upsert_firebase_user("gowtham@blno.academy", COACH_PASSWORD, "Gowtham")
     kishore_uid = upsert_firebase_user("kishore@blno.academy", COACH_PASSWORD, "Kishore Subbarao")
     print(f"  admin   {ADMIN_EMAIL} -> {admin_uid}", file=sys.stderr)
@@ -511,9 +1146,7 @@ def main() -> None:
     # ── 3. Users + memberships ────────────────────────────────────────────────
     print("[blno-seed] 3/9  Users + memberships...", file=sys.stderr)
 
-    def _upsert_user(
-        uid: str, email: str, name: str, phone: str | None, roles: list[str]
-    ) -> None:
+    def _upsert_user(uid: str, email: str, name: str, phone: str | None, roles: list[str]) -> None:
         db.users.find_one_and_update(
             {"email": email},
             {
@@ -546,6 +1179,8 @@ def main() -> None:
                     "membership_id": mem_id(uid, roles[0]),
                     "academy_id": ACADEMY_ID,
                     "user_id": uid,
+                    "invited_by": admin_uid,
+                    "invited_at": ts,
                     "accepted_at": ts,
                     "created_at": ts,
                 },
@@ -571,9 +1206,9 @@ def main() -> None:
     )
 
     # Coaches
-    _upsert_user(gowtham_uid, "gowtham@blno.academy", "Gowtham",          None,           ["coach"])
+    _upsert_user(gowtham_uid, "gowtham@blno.academy", "Gowtham", None, ["coach"])
     _upsert_membership(gowtham_uid, ["coach"])
-    _upsert_user(kishore_uid, "kishore@blno.academy", "Kishore Subbarao", "3095318717",   ["coach"])
+    _upsert_user(kishore_uid, "kishore@blno.academy", "Kishore Subbarao", "3095318717", ["coach"])
     _upsert_membership(kishore_uid, ["coach", "parent"])  # Kishore is also a parent
 
     # Parents
@@ -625,11 +1260,11 @@ def main() -> None:
     print("[blno-seed] 5/9  Occurrences...", file=sys.stderr)
     occ_count = 0
     for sdef in SESSIONS_DEF:
-        sid   = ses_id(sdef["key"])
+        sid = ses_id(sdef["key"])
         c_uid = coach_uid_map[sdef["coach_email"]]
         for date in all_weekdays(SEASON_START, SEASON_END, sdef["weekday"]):
-            oid      = occ_id(sdef["key"], date)
-            is_past  = date < TODAY
+            oid = occ_id(sdef["key"], date)
+            is_past = date < TODAY
             db.session_occurrences.find_one_and_update(
                 {"occurrence_id": oid},
                 {
@@ -642,14 +1277,14 @@ def main() -> None:
                     },
                     "$set": {
                         "updated_at": ts,
-                        "start_at":  chicago_to_utc(date, sdef["start_time"]),
-                        "end_at":    chicago_to_utc(date, sdef["end_time"]),
+                        "start_at": chicago_to_utc(date, sdef["start_time"]),
+                        "end_at": chicago_to_utc(date, sdef["end_time"]),
                         "status": "completed" if is_past else "scheduled",
                         "scheduled_coach_id": c_uid,
                         "actual_coach_id": c_uid if is_past else None,
                         "substitute_coach_id": None,
                         "is_billable": True,
-                        "is_payable":  True,
+                        "is_payable": True,
                         "cancellation_reason": None,
                     },
                 },
@@ -664,13 +1299,24 @@ def main() -> None:
     enr_status_map = {"active": "active", "hold": "paused", "dropped": "withdrawn"}
 
     for i, row in enumerate(ROSTER):
-        (student_name, _parent_name, parent_email, _phone, age, skill_level,
-         session_key, billing, status, apr_paid, may_paid) = row
+        (
+            student_name,
+            _parent_name,
+            parent_email,
+            _phone,
+            age,
+            skill_level,
+            session_key,
+            billing,
+            status,
+            apr_paid,
+            may_paid,
+        ) = row
 
         p_uid = parent_meta[parent_email]["uid"]
-        sid   = std_id(student_name, i)
-        s_id  = ses_id(session_key)
-        e_id  = enr_id(sid, session_key)
+        sid = std_id(student_name, i)
+        s_id = ses_id(session_key)
+        e_id = enr_id(sid, session_key)
 
         db.students.find_one_and_update(
             {"student_id": sid},
@@ -709,48 +1355,52 @@ def main() -> None:
             },
             upsert=True,
         )
-        student_records.append({
-            "student_id": sid,
-            "student_name": student_name,
-            "parent_email": parent_email,
-            "parent_uid": p_uid,
-            "session_key": session_key,
-            "session_id": s_id,
-            "enrollment_id": e_id,
-            "billing": billing,
-            "status": status,
-            "apr_paid": apr_paid,
-            "may_paid": may_paid,
-        })
+        student_records.append(
+            {
+                "student_id": sid,
+                "student_name": student_name,
+                "parent_email": parent_email,
+                "parent_uid": p_uid,
+                "session_key": session_key,
+                "session_id": s_id,
+                "enrollment_id": e_id,
+                "billing": billing,
+                "status": status,
+                "apr_paid": apr_paid,
+                "may_paid": may_paid,
+            }
+        )
     print(f"  {len(student_records)} students, {len(student_records)} enrollments", file=sys.stderr)
 
     # ── 7. Payments + Subscriptions (Stripe test data) ────────────────────────
     print("[blno-seed] 7/9  Payments + Stripe...", file=sys.stderr)
 
-    # Aggregate monthly totals per parent across all their children
-    parent_totals: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {"apr": 0, "may": 0, "has_standard": False}
-    )
-    for rec in student_records:
-        if rec["billing"] != "standard":
-            continue
-        pe = rec["parent_email"]
-        parent_totals[pe]["has_standard"] = True
-        if rec["apr_paid"]:
-            parent_totals[pe]["apr"] += rec["apr_paid"]
-        if rec["may_paid"]:
-            parent_totals[pe]["may"] += rec["may_paid"]
-
+    standard_student_records = [rec for rec in student_records if rec["billing"] == "standard"]
+    paying_parent_emails = sorted({rec["parent_email"] for rec in standard_student_records})
     pay_counter = 1
-    for email, totals in parent_totals.items():
-        if not totals["has_standard"]:
-            continue
-        meta      = parent_meta[email]
-        p_uid     = meta["uid"]
-        p_slug    = _slug(email.split("@")[0], 24)
-        s_idx     = meta["stripe_idx"]
-        cus_id    = stripe_cus(s_idx)
-        sub_s_id  = stripe_sub(s_idx)
+    for email in paying_parent_emails:
+        meta = parent_meta[email]
+        p_uid = meta["uid"]
+        p_slug = _slug(email.split("@")[0], 24)
+        s_idx = meta["stripe_idx"]
+        cus_id = stripe_cus(s_idx)
+        sub_s_id = stripe_sub(s_idx)
+
+        db.parent_billing_customers.find_one_and_update(
+            {"academy_id": ACADEMY_ID, "parent_id": p_uid},
+            {
+                "$setOnInsert": {
+                    "academy_id": ACADEMY_ID,
+                    "parent_id": p_uid,
+                    "created_at": ts,
+                },
+                "$set": {
+                    "stripe_customer_id": cus_id,
+                    "updated_at": ts,
+                },
+            },
+            upsert=True,
+        )
 
         # Subscription record (one per paying family)
         db.subscriptions.find_one_and_update(
@@ -765,7 +1415,10 @@ def main() -> None:
                 "$set": {
                     "updated_at": ts,
                     "stripe_subscription_id": sub_s_id,
-                    "stripe_customer_id": cus_id,
+                    "processor_refs": {
+                        "stripe_customer_id": cus_id,
+                        "stripe_subscription_id": sub_s_id,
+                    },
                     "status": "active",
                     "payment_mode": "monthly",
                 },
@@ -773,39 +1426,39 @@ def main() -> None:
             upsert=True,
         )
 
-        # April payment — all succeeded
-        if totals["apr"] > 0:
-            db.payments.find_one_and_update(
-                {"payment_id": pay_id(p_slug, "apr2026")},
-                {
-                    "$setOnInsert": {
-                        "payment_id": pay_id(p_slug, "apr2026"),
-                        "academy_id": ACADEMY_ID,
-                        "parent_id": p_uid,
-                        "enrollment_id": pay_id(p_slug, "apr2026"),
-                        "period": "2026-04",
-                        "created_at": dt.datetime(2026, 4, 1, 0, 0, 0, tzinfo=dt.UTC),
-                    },
-                    "$set": {
-                        "updated_at": dt.datetime(2026, 4, 5, 10, 0, 0, tzinfo=dt.UTC),
-                        "amount_cents": totals["apr"],
-                        "currency": "usd",
-                        "status": "succeeded",
-                        "refunded_cents": 0,
-                        "stripe_payment_intent_id": stripe_pi(pay_counter),
-                        "stripe_checkout_session_id": stripe_cs(pay_counter),
-                        "stripe_customer_id": cus_id,
-                        "billing_month": "2026-04",
-                        "payment_mode": "monthly",
-                        "description": "April 2026 tuition",
-                    },
-                },
-                upsert=True,
+    for rec in standard_student_records:
+        email = rec["parent_email"]
+        meta = parent_meta[email]
+        p_uid = meta["uid"]
+        p_slug = _slug(email.split("@")[0], 24)
+        s_idx = meta["stripe_idx"]
+        student_slug = _slug(rec["student_name"], 24)
+        apr_paid = int(rec["apr_paid"] or 0)
+        may_paid = int(rec["may_paid"] or 0)
+
+        # April payment - all succeeded
+        if apr_paid > 0:
+            _upsert_ledger_from_seed_payment(
+                db,
+                build_student_tuition_payment_doc(
+                    payment_id=pay_id(f"{p_slug}_{student_slug}", "apr2026"),
+                    parent_id=p_uid,
+                    student_id=rec["student_id"],
+                    enrollment_id=rec["enrollment_id"],
+                    period="2026-04",
+                    created_at=dt.datetime(2026, 4, 1, 0, 0, 0, tzinfo=dt.UTC),
+                    updated_at=dt.datetime(2026, 4, 5, 10, 0, 0, tzinfo=dt.UTC),
+                    amount_cents=apr_paid,
+                    status="succeeded",
+                    stripe_payment_intent_id=stripe_pi(pay_counter),
+                    stripe_checkout_session_id=stripe_cs(pay_counter),
+                    description="April 2026 tuition",
+                ),
             )
             pay_counter += 1
 
-        # May payment — varied: succeeded / pending / failed
-        if totals["may"] > 0:
+        # May payment - varied: succeeded / pending / failed
+        if may_paid > 0:
             if s_idx % 10 == 7:
                 may_status, may_pi = "failed", stripe_pi(pay_counter)
             elif s_idx % 5 == 0:
@@ -813,64 +1466,44 @@ def main() -> None:
             else:
                 may_status, may_pi = "succeeded", stripe_pi(pay_counter)
 
-            db.payments.find_one_and_update(
-                {"payment_id": pay_id(p_slug, "may2026")},
-                {
-                    "$setOnInsert": {
-                        "payment_id": pay_id(p_slug, "may2026"),
-                        "academy_id": ACADEMY_ID,
-                        "parent_id": p_uid,
-                        "enrollment_id": pay_id(p_slug, "may2026"),
-                        "period": "2026-05",
-                        "created_at": dt.datetime(2026, 5, 1, 0, 0, 0, tzinfo=dt.UTC),
-                    },
-                    "$set": {
-                        "updated_at": dt.datetime(2026, 5, 5, 10, 0, 0, tzinfo=dt.UTC),
-                        "amount_cents": totals["may"],
-                        "currency": "usd",
-                        "status": may_status,
-                        "refunded_cents": 0,
-                        "stripe_payment_intent_id": may_pi,
-                        "stripe_checkout_session_id": stripe_cs(pay_counter),
-                        "stripe_customer_id": cus_id,
-                        "billing_month": "2026-05",
-                        "payment_mode": "monthly",
-                        "description": "May 2026 tuition",
-                    },
-                },
-                upsert=True,
+            _upsert_ledger_from_seed_payment(
+                db,
+                build_student_tuition_payment_doc(
+                    payment_id=pay_id(f"{p_slug}_{student_slug}", "may2026"),
+                    parent_id=p_uid,
+                    student_id=rec["student_id"],
+                    enrollment_id=rec["enrollment_id"],
+                    period="2026-05",
+                    created_at=dt.datetime(2026, 5, 1, 0, 0, 0, tzinfo=dt.UTC),
+                    updated_at=dt.datetime(2026, 5, 5, 10, 0, 0, tzinfo=dt.UTC),
+                    amount_cents=may_paid,
+                    status=may_status,
+                    stripe_payment_intent_id=may_pi,
+                    stripe_checkout_session_id=stripe_cs(pay_counter),
+                    description="May 2026 tuition",
+                ),
             )
             pay_counter += 1
 
-        # June payment — all pending (current month, not yet collected)
-        june_amount = totals["may"] or totals["apr"]
+        # June payment - all pending (current month, not yet collected)
+        june_amount = may_paid or apr_paid
         if june_amount:
-            db.payments.find_one_and_update(
-                {"payment_id": pay_id(p_slug, "jun2026")},
-                {
-                    "$setOnInsert": {
-                        "payment_id": pay_id(p_slug, "jun2026"),
-                        "academy_id": ACADEMY_ID,
-                        "parent_id": p_uid,
-                        "enrollment_id": pay_id(p_slug, "jun2026"),
-                        "period": "2026-06",
-                        "created_at": dt.datetime(2026, 6, 1, 0, 0, 0, tzinfo=dt.UTC),
-                    },
-                    "$set": {
-                        "updated_at": dt.datetime(2026, 6, 1, 0, 0, 0, tzinfo=dt.UTC),
-                        "amount_cents": june_amount,
-                        "currency": "usd",
-                        "status": "pending",
-                        "refunded_cents": 0,
-                        "stripe_payment_intent_id": None,
-                        "stripe_checkout_session_id": None,
-                        "stripe_customer_id": cus_id,
-                        "billing_month": "2026-06",
-                        "payment_mode": "monthly",
-                        "description": "June 2026 tuition",
-                    },
-                },
-                upsert=True,
+            _upsert_ledger_from_seed_payment(
+                db,
+                build_student_tuition_payment_doc(
+                    payment_id=pay_id(f"{p_slug}_{student_slug}", "jun2026"),
+                    parent_id=p_uid,
+                    student_id=rec["student_id"],
+                    enrollment_id=rec["enrollment_id"],
+                    period="2026-06",
+                    created_at=dt.datetime(2026, 6, 1, 0, 0, 0, tzinfo=dt.UTC),
+                    updated_at=dt.datetime(2026, 6, 1, 0, 0, 0, tzinfo=dt.UTC),
+                    amount_cents=june_amount,
+                    status="pending",
+                    stripe_payment_intent_id=None,
+                    stripe_checkout_session_id=None,
+                    description="June 2026 tuition",
+                ),
             )
 
     # Sample stripe_webhook_events for dedup/replay testing
@@ -882,8 +1515,9 @@ def main() -> None:
             "object_type": "checkout.session",
             "livemode": False,
             "status": "processed",
+            "retry_count": 0,
             "academy_id": ACADEMY_ID,
-            "received_at":  dt.datetime(2026, 4, 5, 10, 0, 0, tzinfo=dt.UTC),
+            "received_at": dt.datetime(2026, 4, 5, 10, 0, 0, tzinfo=dt.UTC),
             "processed_at": dt.datetime(2026, 4, 5, 10, 0, 5, tzinfo=dt.UTC),
         },
         {
@@ -893,8 +1527,9 @@ def main() -> None:
             "object_type": "subscription",
             "livemode": False,
             "status": "processed",
+            "retry_count": 0,
             "academy_id": ACADEMY_ID,
-            "received_at":  dt.datetime(2026, 5, 1, 0, 0, 0, tzinfo=dt.UTC),
+            "received_at": dt.datetime(2026, 5, 1, 0, 0, 0, tzinfo=dt.UTC),
             "processed_at": dt.datetime(2026, 5, 1, 0, 0, 3, tzinfo=dt.UTC),
         },
         {
@@ -904,8 +1539,9 @@ def main() -> None:
             "object_type": "payment_intent",
             "livemode": False,
             "status": "processed",
+            "retry_count": 0,
             "academy_id": ACADEMY_ID,
-            "received_at":  dt.datetime(2026, 5, 5, 10, 15, 0, tzinfo=dt.UTC),
+            "received_at": dt.datetime(2026, 5, 5, 10, 15, 0, tzinfo=dt.UTC),
             "processed_at": dt.datetime(2026, 5, 5, 10, 15, 4, tzinfo=dt.UTC),
         },
         {
@@ -915,8 +1551,9 @@ def main() -> None:
             "object_type": "charge",
             "livemode": False,
             "status": "processed",
+            "retry_count": 0,
             "academy_id": ACADEMY_ID,
-            "received_at":  dt.datetime(2026, 4, 10, 14, 0, 0, tzinfo=dt.UTC),
+            "received_at": dt.datetime(2026, 4, 10, 14, 0, 0, tzinfo=dt.UTC),
             "processed_at": dt.datetime(2026, 4, 10, 14, 0, 2, tzinfo=dt.UTC),
         },
     ]:
@@ -925,12 +1562,12 @@ def main() -> None:
             {"$setOnInsert": {**evt_doc, "created_at": evt_doc["received_at"]}},
             upsert=True,
         )
-    print(f"  ~{pay_counter - 1} payment records + 4 webhook events seeded", file=sys.stderr)
+    print(f"  ~{pay_counter - 1} invoice-ledger records + 4 webhook events seeded", file=sys.stderr)
 
     # ── 8. Coach rates + attendance ───────────────────────────────────────────
     print("[blno-seed] 8/9  Coach rates + attendance...", file=sys.stderr)
 
-    for c_email, c_uid in coach_uid_map.items():
+    for _c_email, c_uid in coach_uid_map.items():
         db.coach_rates.find_one_and_update(
             {"coach_id": c_uid, "academy_id": ACADEMY_ID},
             {
@@ -942,6 +1579,10 @@ def main() -> None:
                 },
                 "$set": {
                     "updated_at": ts,
+                    "billing_unit": "percent_of_revenue",
+                    "amount_minor": 0,
+                    "percent_bps": 3000,
+                    "currency": "USD",
                     "rate_type": "percentage_of_expected_revenue",
                     "percentage": 30.0,
                     "basis": "expected",
@@ -961,10 +1602,10 @@ def main() -> None:
 
     att_count = 0
     for sdef in SESSIONS_DEF:
-        c_uid    = coach_uid_map[sdef["coach_email"]]
+        c_uid = coach_uid_map[sdef["coach_email"]]
         enrolled = session_students[sdef["key"]]
         for date in all_weekdays(SEASON_START, TODAY - dt.timedelta(days=1), sdef["weekday"]):
-            oid     = occ_id(sdef["key"], date)
+            oid = occ_id(sdef["key"], date)
             end_utc = chicago_to_utc(date, sdef["end_time"])
 
             # Coach always present in seed data
@@ -998,14 +1639,12 @@ def main() -> None:
                     {"occurrence_id": oid, "student_id": rec["student_id"]},
                     {
                         "$setOnInsert": {
-                            "attendance_id": f"att_{oid[:30]}_{rec['student_id'][:10]}",
+                            "attendance_id": f"att_{oid}_{rec['student_id']}",
                             "academy_id": ACADEMY_ID,
                             "occurrence_id": oid,
                             "session_id": rec["session_id"],
                             "student_id": rec["student_id"],
-                            "date": dt.datetime(
-                                date.year, date.month, date.day, tzinfo=dt.UTC
-                            ),
+                            "date": dt.datetime(date.year, date.month, date.day, tzinfo=dt.UTC),
                             "created_at": ts,
                         },
                         "$set": {
@@ -1057,9 +1696,9 @@ def main() -> None:
         )
         all_skills = list(db.skills.find({"academy_id": ACADEMY_ID, "program_id": program_id}))
         if level and all_skills:
-            level_id     = level["level_id"]
+            level_id = level["level_id"]
             level1_skills = [s for s in all_skills if s.get("level_id") == level_id]
-            statuses      = ["NOT_STARTED", "INTRODUCED", "LEARNING", "PRACTICING", "PASSED"]
+            statuses = ["NOT_STARTED", "INTRODUCED", "LEARNING", "PRACTICING", "PASSED"]
             active_sample = [r for r in student_records if r["status"] == "active"][:20]
 
             for i, rec in enumerate(active_sample):
@@ -1105,7 +1744,8 @@ def main() -> None:
                                 "skill_id": skill["skill_id"],
                                 "introduced_at": (
                                     dt.datetime(2026, 4, 5, 0, 0, 0, tzinfo=dt.UTC)
-                                    if skill_status != "NOT_STARTED" else None
+                                    if skill_status != "NOT_STARTED"
+                                    else None
                                 ),
                                 "created_at": ts,
                             },
@@ -1117,9 +1757,7 @@ def main() -> None:
                         },
                         upsert=True,
                     )
-            print(
-                f"  Level 1 progress seeded for {len(active_sample)} students", file=sys.stderr
-            )
+            print(f"  Level 1 progress seeded for {len(active_sample)} students", file=sys.stderr)
 
     # ── Write credentials file ────────────────────────────────────────────────
     LOCAL_DIR.mkdir(parents=True, exist_ok=True)
@@ -1148,6 +1786,35 @@ def main() -> None:
     )
     CREDS_FILE.chmod(0o600)
 
+    result = subprocess.run(
+        [
+            VENV_PYTHON,
+            "-c",
+            (
+                "import asyncio, os;"
+                "from motor.motor_asyncio import AsyncIOMotorClient;"
+                "from backend.v2.migrations.runner import run_all_migrations;"
+                "\nasync def main():\n"
+                "    client = AsyncIOMotorClient(os.environ['SAAS_STAGING_MONGO_URL'])\n"
+                "    try:\n"
+                "        replayed = await run_all_migrations(client[os.environ['SAAS_STAGING_DB_NAME']])\n"
+                "        print(f'Replayed {len(replayed)} migrations')\n"
+                "    finally:\n"
+                "        client.close()\n"
+                "asyncio.run(main())\n"
+            ),
+        ],
+        cwd=str(PROJECT_ROOT),
+        env={
+            **os.environ,
+            "PYTHONPATH": str(PROJECT_ROOT),
+            "SAAS_STAGING_MONGO_URL": MONGO_URL,
+            "SAAS_STAGING_DB_NAME": DB_NAME,
+        },
+        check=True,
+    )
+    print(f"  {result.stdout or 'Migrations replayed'}", file=sys.stderr)
+
     # ── Summary ───────────────────────────────────────────────────────────────
     admin_token = mint_id_token(ADMIN_EMAIL, ADMIN_PASSWORD)
 
@@ -1159,13 +1826,16 @@ def main() -> None:
     print(f"  Coach Kishore:  kishore@blno.academy  /  {COACH_PASSWORD}", file=sys.stderr)
     print(f"  Parent (eg):    manojedward.btech@gmail.com  /  {PARENT_PASSWORD}", file=sys.stderr)
     print(f"  Students:       {len(student_records)} across 4 sessions", file=sys.stderr)
-    print(f"  Stripe test:    cus_blno_test_0001 … cus_blno_test_{len(parent_meta):04d}", file=sys.stderr)
+    print(
+        f"  Stripe test:    cus_blno_test_0001 … cus_blno_test_{len(parent_meta):04d}",
+        file=sys.stderr,
+    )
     print(f"  Creds file:     {CREDS_FILE}", file=sys.stderr)
     print(file=sys.stderr)
-    print(f"  export API_URL='http://127.0.0.1:8001'", file=sys.stderr)
-    print(f"  export FRONTEND_URL='http://localhost:3000'", file=sys.stderr)
+    print("  export API_URL='http://127.0.0.1:8001'", file=sys.stderr)
+    print("  export FRONTEND_URL='http://localhost:3000'", file=sys.stderr)
     print(f"  export TENANT_FRONTEND_URL='http://{ACADEMY_DOMAIN}:3000'", file=sys.stderr)
-    print(f"  export INTERNAL_TENANT_HEADER_NAME='x-internal-tenant-id'", file=sys.stderr)
+    print("  export INTERNAL_TENANT_HEADER_NAME='x-internal-tenant-id'", file=sys.stderr)
     print(f"  export INTERNAL_TENANT_HEADER_VALUE='{ACADEMY_ID}'", file=sys.stderr)
     print(f"  export AUTH_TOKEN='{admin_token}'", file=sys.stderr)
 

@@ -253,6 +253,7 @@ class AdminUseCases:
     get_coach_utilization: object | None = (
         None  # async (periods: list[str]) -> CoachUtilizationResult
     )
+    get_session_economics: object | None = None  # async (period: str) -> dict[str, Any]
     curriculum: CurriculumComposition | None = None
     student_progress: StudentProgressComposition | None = None
     generate_daily_teaching_plan: GenerateDailyTeachingPlan | None = None
@@ -271,6 +272,7 @@ class AdminUseCases:
     remove_invoice_line: object | None = None
     void_billing_invoice: object | None = None
     record_manual_payment: object | None = None
+    issue_invoice_refund: object | None = None
     create_student_invoice: object | None = None
     list_billing_products: object | None = None
     create_billing_product: object | None = None

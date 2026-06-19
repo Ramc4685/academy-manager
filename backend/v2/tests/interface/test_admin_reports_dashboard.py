@@ -20,6 +20,7 @@ from backend.v2.shared.http import register_exception_handlers
 def reports_admin_client() -> Iterator[TestClient]:
     use_cases = SimpleNamespace(
         get_reports_dashboard=AsyncMock(),
+        get_session_economics=AsyncMock(),
     )
     app = FastAPI()
     register_exception_handlers(app)
@@ -225,5 +226,64 @@ def test_admin_reports_dashboard_empty_state(reports_admin_client) -> None:
 
 def test_admin_reports_dashboard_rejects_invalid_period(reports_admin_client) -> None:
     response = reports_admin_client.get("/api/v2/admin/reports/dashboard?period=May-2026")
+
+    assert response.status_code == 422
+
+
+def test_admin_session_economics_returns_session_level_finance_shape(
+    reports_admin_client,
+) -> None:
+    reports_admin_client.use_cases.get_session_economics = AsyncMock(  # type: ignore[attr-defined]
+        return_value={
+            "period": "2026-04",
+            "summary": {
+                "expected_revenue_cents": 137_000,
+                "paid_cents": 100_000,
+                "unpaid_cents": 37_000,
+                "coach_payroll_cents": 41_100,
+                "rent_cents": 10_000,
+                "other_expenses_cents": 5_000,
+                "expected_profit_cents": 80_900,
+                "profit_margin": 0.5905,
+            },
+            "sessions": [
+                {
+                    "session_id": "sess-beginner",
+                    "title": "Wednesday Beginner",
+                    "coach_name": "Kishore",
+                    "active_enrollment_count": 1,
+                    "paid_student_count": 1,
+                    "unpaid_student_count": 0,
+                    "monthly_fee_cents": 60_000,
+                    "payable_occurrence_count": 4,
+                    "expected_revenue_per_occurrence_cents": 15_000,
+                    "expected_revenue_cents": 60_000,
+                    "paid_cents": 60_000,
+                    "unpaid_cents": 0,
+                    "coach_payroll_cents": 18_000,
+                    "rent_cents": 4_380,
+                    "other_expenses_cents": 2_190,
+                    "expected_profit_cents": 35_430,
+                    "profit_margin": 0.5905,
+                }
+            ],
+            "empty_states": [],
+        }
+    )
+
+    response = reports_admin_client.get("/api/v2/admin/reports/session-economics?period=2026-04")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["period"] == "2026-04"
+    assert body["summary"]["expected_revenue_cents"] == 137000
+    assert body["sessions"][0]["expected_revenue_per_occurrence_cents"] == 15000
+    reports_admin_client.use_cases.get_session_economics.assert_awaited_once_with(  # type: ignore[attr-defined]
+        "2026-04"
+    )
+
+
+def test_admin_session_economics_rejects_invalid_period(reports_admin_client) -> None:
+    response = reports_admin_client.get("/api/v2/admin/reports/session-economics?period=April-2026")
 
     assert response.status_code == 422

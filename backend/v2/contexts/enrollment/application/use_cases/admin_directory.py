@@ -111,6 +111,7 @@ class AdminStudentDetail(AdminStudentSummary):
     enrolled_sessions: list[AdminStudentSessionSummary] = Field(default_factory=list)
     payment_history: list[AdminStudentPaymentSummary] = Field(default_factory=list)
     current_payment: AdminStudentCurrentPaymentSummary | None = None
+    outstanding_balance_cents: int = 0
 
 
 class UpdateAdminStudentCommand(BaseModel):

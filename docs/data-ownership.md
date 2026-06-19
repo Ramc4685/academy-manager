@@ -26,7 +26,12 @@ This map prevents that collapse.
 | `attendance` | Coaching | Admin BFF, Parent BFF (own child) | Idempotency keyed on `(academy_id, session_id, student_id)` unique. |
 | `lesson_plans` | Coaching | Admin BFF | Coach-created, optionally admin-reviewed. |
 | `progress_notes` | Coaching | Parent BFF (own child), Admin BFF | |
-| `payments` | Billing | Admin BFF, Parent BFF (own) | Stripe webhook is a Billing-owned interface; produces `Billing.PaymentSucceeded`/`PaymentFailed`/`PaymentRefunded` events. |
+| `invoices` | Billing | Admin BFF, Parent BFF (own) | Source of truth for what is owed. Totals are derived from `invoice_lines`. |
+| `invoice_lines` | Billing | Admin BFF, Parent BFF (own) | Itemized billing lines for tuition, fees, adjustments, and add-ons. |
+| `ledger_payments` | Billing | Admin BFF, Parent BFF (own) | Source of truth for received money. Stripe/manual payments are allocated to invoices through `payment_allocations`. |
+| `payment_allocations` | Billing | Admin BFF, Parent BFF (own) | Connects payments to invoices; must be idempotent. |
+| `account_credit_ledger` | Billing | Admin BFF, Parent BFF (own) | Source of truth for credits and overpayments. |
+| `payments` | Billing | Admin BFF, Parent BFF (own) | Legacy transition/archive only. New billing writes must not use this collection; retire via `docs/runbooks/legacy-payments-retirement.md`. |
 | `subscriptions` | Billing | Admin BFF, Parent BFF (own) | |
 | `payouts` | Billing (Finance subset) | Admin BFF, Coach BFF (self only) | Marked `# FINANCE` in code per ADR-0006 promotion trigger. |
 | `expenses` | Billing (Finance subset) | Admin BFF | Marked `# FINANCE`. |

@@ -109,6 +109,7 @@ class AdminStudentDetailView(AdminStudentView):
     enrolled_sessions: list[AdminStudentSessionSummaryView] = Field(default_factory=list)
     payment_history: list[AdminStudentPaymentSummaryView] = Field(default_factory=list)
     current_payment: AdminStudentCurrentPaymentSummaryView | None = None
+    outstanding_balance_cents: int = 0
 
 
 class AdminStudentList(BaseModel):
@@ -1407,6 +1408,44 @@ class AdminReportsDashboardResponse(BaseModel):
     )
     profit_and_loss: AdminReportsProfitAndLoss = Field(default_factory=AdminReportsProfitAndLoss)
     payroll: AdminReportsPayrollSummary = Field(default_factory=AdminReportsPayrollSummary)
+    empty_states: list[str] = []
+
+
+class AdminSessionEconomicsSummary(BaseModel):
+    expected_revenue_cents: int = 0
+    paid_cents: int = 0
+    unpaid_cents: int = 0
+    coach_payroll_cents: int = 0
+    rent_cents: int = 0
+    other_expenses_cents: int = 0
+    expected_profit_cents: int = 0
+    profit_margin: float | None = None
+
+
+class AdminSessionEconomicsRow(BaseModel):
+    session_id: str
+    title: str
+    coach_name: str | None = None
+    active_enrollment_count: int = 0
+    paid_student_count: int = 0
+    unpaid_student_count: int = 0
+    monthly_fee_cents: int = 0
+    payable_occurrence_count: int = 0
+    expected_revenue_per_occurrence_cents: int = 0
+    expected_revenue_cents: int = 0
+    paid_cents: int = 0
+    unpaid_cents: int = 0
+    coach_payroll_cents: int = 0
+    rent_cents: int = 0
+    other_expenses_cents: int = 0
+    expected_profit_cents: int = 0
+    profit_margin: float | None = None
+
+
+class AdminSessionEconomicsResponse(BaseModel):
+    period: str
+    summary: AdminSessionEconomicsSummary = Field(default_factory=AdminSessionEconomicsSummary)
+    sessions: list[AdminSessionEconomicsRow] = []
     empty_states: list[str] = []
 
 

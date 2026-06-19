@@ -197,6 +197,90 @@ async def test_list_admin_students_returns_rich_default_page_without_per_student
 
 
 @pytest.mark.asyncio
+async def test_list_admin_students_uses_ledger_invoice_balances_for_dues_status(db, acad) -> None:
+    now = datetime.now(UTC)
+    await db["students"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "student_id": "st-current",
+                "full_name": "Current Student",
+                "parent_id": "parent-1",
+                "status": "active",
+            },
+            {
+                "academy_id": acad,
+                "student_id": "st-due",
+                "full_name": "Due Student",
+                "parent_id": "parent-1",
+                "status": "active",
+            },
+            {
+                "academy_id": acad,
+                "student_id": "st-overdue",
+                "full_name": "Overdue Student",
+                "parent_id": "parent-1",
+                "status": "active",
+            },
+        ]
+    )
+    await db["invoices"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "invoice_id": "inv-current-paid",
+                "student_id": "st-current",
+                "parent_id": "parent-1",
+                "period": "2026-06",
+                "status": "paid",
+                "total_cents": 1000,
+                "balance_due_cents": 0,
+                "created_at": now,
+                "due_date": now - timedelta(days=10),
+            },
+            {
+                "academy_id": acad,
+                "invoice_id": "inv-due",
+                "student_id": "st-due",
+                "parent_id": "parent-1",
+                "period": "2026-06",
+                "status": "open",
+                "total_cents": 1000,
+                "balance_due_cents": 1000,
+                "created_at": now,
+                "due_date": now + timedelta(days=5),
+            },
+            {
+                "academy_id": acad,
+                "invoice_id": "inv-overdue",
+                "student_id": "st-overdue",
+                "parent_id": "parent-1",
+                "period": "2026-06",
+                "status": "open",
+                "total_cents": 1000,
+                "balance_due_cents": 1000,
+                "created_at": now,
+                "due_date": now - timedelta(days=1),
+            },
+        ]
+    )
+
+    page = await MongoStudentRepository(db).list_admin_students(
+        search=None,
+        status=None,
+        limit=50,
+        cursor=None,
+    )
+
+    dues = {student.student_id: student.dues_status for student in page.students}
+    assert dues == {
+        "st-current": "current",
+        "st-due": "due",
+        "st-overdue": "overdue",
+    }
+
+
+@pytest.mark.asyncio
 async def test_list_admin_students_filters_search_and_status(db, acad) -> None:
     await _seed_directory(db, acad)
     repo = MongoStudentRepository(db)
@@ -374,6 +458,19 @@ async def test_get_admin_student_enriches_sessions_payments_and_current_invoice(
             },
             {
                 "academy_id": acad,
+                "payment_id": "pay-open-older",
+                "student_id": "st-alice",
+                "session_id": "sess-active",
+                "period": "2026-05",
+                "amount_cents": 6_000,
+                "paid_amount_cents": 0,
+                "balance_due_cents": 6_000,
+                "status": "unpaid",
+                "payment_method": "invoice",
+                "created_at": now - timedelta(days=2),
+            },
+            {
+                "academy_id": acad,
                 "payment_id": "pay-other-student",
                 "student_id": "st-bob",
                 "session_id": "sess-active",
@@ -463,12 +560,15 @@ async def test_get_admin_student_enriches_sessions_payments_and_current_invoice(
     assert [row.payment_id for row in detail.payment_history] == [
         "pay-stripe-subscription",
         "pay-open",
+        "pay-open-older",
         "pay-paid",
     ]
     assert detail.payment_history[0].balance_due_cents == 0
     assert detail.payment_history[0].payment_method == "stripe"
     assert detail.payment_history[1].balance_due_cents == 11_000
     assert detail.payment_history[1].payment_method == "cash"
+    assert detail.payment_history[2].balance_due_cents == 6_000
+    assert detail.outstanding_balance_cents == 17_000
     assert detail.current_payment is not None
     assert detail.current_payment.payment_id == "pay-open"
     assert detail.current_payment.session_id == "sess-active"
@@ -796,7 +896,7 @@ async def _seed_parent_change(db, academy_id: str) -> None:
         "parent_id": "parent-old",
         "parent_user_id": "parent-old",
     }
-    await db["payments"].insert_one({"payment_id": "pay-1", **historical})
+    await db["invoices"].insert_one({"invoice_id": "inv-1", **historical})
     await db["waiver_acceptances"].insert_one({"acceptance_id": "waiver-1", **historical})
     await db["account_credit_ledger"].insert_one({"credit_id": "credit-1", **historical})
     await db["waitlist"].insert_one({"waitlist_id": "wait-1", **historical})
@@ -830,7 +930,7 @@ async def test_change_student_parent_updates_only_student_fields_and_writes_audi
     student = await db["students"].find_one({"academy_id": acad, "student_id": "st-alice"})
     assert student["parent_id"] == "parent-new"
     assert student["parent_user_id"] == "parent-new"
-    payment = await db["payments"].find_one({"academy_id": acad, "payment_id": "pay-1"})
+    invoice = await db["invoices"].find_one({"academy_id": acad, "invoice_id": "inv-1"})
     waiver = await db["waiver_acceptances"].find_one(
         {"academy_id": acad, "acceptance_id": "waiver-1"}
     )
@@ -838,7 +938,7 @@ async def test_change_student_parent_updates_only_student_fields_and_writes_audi
         {"academy_id": acad, "credit_id": "credit-1"}
     )
     waitlist = await db["waitlist"].find_one({"academy_id": acad, "waitlist_id": "wait-1"})
-    assert payment["parent_id"] == "parent-old"
+    assert invoice["parent_id"] == "parent-old"
     assert waiver["parent_user_id"] == "parent-old"
     assert credit["parent_id"] == "parent-old"
     assert waitlist["parent_id"] == "parent-old"
