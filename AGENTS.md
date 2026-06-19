@@ -73,6 +73,7 @@ Do not manually restore the old global YAML ledger in `test_result.md`.
 | Frontend / React / UI / PWA | `docs/agent/frontend-rules.md` |
 | Testing / verification / bug fixing | `docs/agent/testing-verification.md` |
 | Status handoff / agent loop / ticket updates | `docs/agent/feedback-loop.md` |
+| Drafting Codex prompts / goals / agent handoffs | `docs/agent/codex-prompting.md` |
 
 ---
 

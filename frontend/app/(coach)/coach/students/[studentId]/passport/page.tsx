@@ -64,7 +64,7 @@ export default function CoachStudentPassportPage() {
 
   const passportKey = ["coach", "passport", studentId, programId || "default"];
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: passportKey,
     queryFn: () => getStudentPassport(studentId, programId || undefined),
     enabled: Boolean(studentId),
@@ -118,14 +118,20 @@ export default function CoachStudentPassportPage() {
       )}
 
       {isError && (
-        <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-          Could not load passport.
-        </p>
+        <div role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+          <p>Couldn&apos;t load skill passport. Try again.</p>
+          <button
+            onClick={() => void refetch()}
+            className="mt-2 min-h-[36px] rounded-md border border-red-200 px-3 text-sm font-medium"
+          >
+            Retry
+          </button>
+        </div>
       )}
 
       {isLoading ? (
         <SkeletonList />
-      ) : skills.length === 0 ? (
+      ) : isError ? null : skills.length === 0 ? (
         <p className="text-sm text-neutral-500">No skills found for this student/program.</p>
       ) : (
         <ul className="space-y-3">

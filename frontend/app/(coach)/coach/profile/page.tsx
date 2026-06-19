@@ -81,27 +81,39 @@ export default function CoachProfilePage() {
       {isLoading && <p className="text-neutral-500">Loading profile...</p>}
 
       {!isLoading && profile && !editing && (
-        <div className="rounded-lg border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
-          <dl className="space-y-3">
-            <div>
-              <dt className="text-sm text-neutral-500">Name</dt>
-              <dd className="mt-0.5 font-medium">{profile.display_name}</dd>
-            </div>
-            <div>
-              <dt className="text-sm text-neutral-500">Email</dt>
-              <dd className="mt-0.5 font-medium">{profile.email}</dd>
-            </div>
-            <div>
-              <dt className="text-sm text-neutral-500">Phone</dt>
-              <dd className="mt-0.5 font-medium">{profile.phone ?? "—"}</dd>
-            </div>
-          </dl>
-          <button
-            onClick={startEditing}
-            className="mt-4 min-h-touch rounded-md border border-neutral-300 px-4 text-sm font-medium text-neutral-800 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-100 dark:hover:bg-neutral-900"
-          >
-            Edit
-          </button>
+        <div className="space-y-4">
+          <div className="rounded-lg border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+            <dl className="space-y-3">
+              <div>
+                <dt className="text-sm text-neutral-500">Name</dt>
+                <dd className="mt-0.5 font-medium">{profile.display_name}</dd>
+              </div>
+              <div>
+                <dt className="text-sm text-neutral-500">Email</dt>
+                <dd className="mt-0.5 font-medium">{profile.email}</dd>
+              </div>
+              <div>
+                <dt className="text-sm text-neutral-500">Phone</dt>
+                <dd className="mt-0.5 font-medium">{profile.phone ?? "—"}</dd>
+              </div>
+            </dl>
+            <button
+              onClick={startEditing}
+              className="mt-4 min-h-touch rounded-md border border-neutral-300 px-4 text-sm font-medium text-neutral-800 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-100 dark:hover:bg-neutral-900"
+            >
+              Edit
+            </button>
+          </div>
+
+          <section className="rounded-lg border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+            <h2 className="font-semibold">Pay &amp; statements</h2>
+            <p className="mt-1 text-sm text-neutral-500">
+              Pay information lives here, separate from Coach Home.
+            </p>
+            <p className="mt-3 rounded-md bg-neutral-50 p-3 text-sm text-neutral-600 dark:bg-neutral-800">
+              Statement downloads are not available in this workspace yet.
+            </p>
+          </section>
         </div>
       )}
 

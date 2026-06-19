@@ -1,7 +1,8 @@
 import type { NextRequest } from "next/server";
 import { buildProxyHeaders, buildProxyResponseHeaders } from "@/lib/api/proxy-headers";
+import { resolveBffApiOrigin } from "@/lib/api/proxy-origin";
 
-const BFF_API_ORIGIN = process.env.BFF_API_ORIGIN ?? "https://api.academy.courtmastr.com";
+const BFF_API_ORIGIN = resolveBffApiOrigin(process.env);
 
 type RouteContext = {
   params: Promise<{
