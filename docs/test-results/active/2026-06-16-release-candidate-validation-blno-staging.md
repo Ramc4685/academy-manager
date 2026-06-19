@@ -25,6 +25,7 @@ Validate launch readiness for BLNO in staging after PR #198
 - 2026-06-19T10:52:47 main/working: Fixed SaaS staging frontend Docker install failure: pnpm 11 ignores package.json pnpm config, while pnpm-lock.yaml expected undici override. Moved the missing undici override into frontend/pnpm-workspace.yaml and removed the obsolete ignored package.json pnpm block.
 - 2026-06-19T11:02:13 main/working: Fixed BLNO local SaaS seed rerun failures after staging rebuild. Root causes: BLNO seed did not reset parent_billing_customers before rebuilding deterministic fake Stripe customers, causing duplicate academy/stripe_customer_id rows on rerun; stale local outbox/dead-letter rows from prior smoke runs made post-seed launch audit fail.
 - 2026-06-19T11:16:46 main/working: Added shared persona logout button and surfaced Log out in admin, coach, and parent authenticated shells.
+- 2026-06-19T11:34:18 main/working: Fixed SaaS staging up failure caused by pnpm frozen install override metadata mismatch; restored frontend/pnpm-lock.yaml overrides to match frontend/pnpm-workspace.yaml.
 ## Verification
 
 - No verification recorded yet.
@@ -56,6 +57,7 @@ Validate launch readiness for BLNO in staging after PR #198
 - 2026-06-19T11:02:40: BLNO seed code verification: source backend/.venv/bin/activate && ruff format scripts/dev/seed_blno_staging.py backend/v2/tests/unit/test_blno_seed_billing.py -> 1 file reformatted; ruff format --check same files -> 2 files already formatted; ruff check same files -> All checks passed; pytest backend/v2/tests/unit/test_blno_seed_billing.py -q -> 2 passed.
 - 2026-06-19T11:16:46: Persona logout final verification: pnpm exec playwright test e2e/specs/admin-shell.spec.ts --grep 'admin, coach, and parent shells expose logout' --project=chromium-mobile --workers=1 -> 1 passed; test clicks Log out for admin, coach, and parent and verifies /login redirect.
 - 2026-06-19T11:16:46: Persona logout static verification: cd frontend && pnpm typecheck -> passed; cd frontend && pnpm lint -> passed with 0 errors, 5 existing warnings; git diff --check -> passed.
+- 2026-06-19T11:34:24: SaaS staging pnpm lock verification: cd frontend && CI=true pnpm install --frozen-lockfile --prefer-offline -> passed. scripts/dev/saas_staging.sh up -> backend/frontend images built, containers started, backend health passed. Existing port warning was non-fatal in this run.
 ## Reusable Lessons
 
 - None recorded yet.
