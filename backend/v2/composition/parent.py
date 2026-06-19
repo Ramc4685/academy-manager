@@ -842,9 +842,7 @@ def compose_parent(
         # Deterministic idempotency key so retries/re-clicks for the same unpaid
         # invoice set reuse one Stripe Checkout session instead of creating
         # duplicate collection attempts.
-        fingerprint = hashlib.sha256(
-            f"{academy_id}:{parent_id}:{invoice_ids}".encode()
-        ).hexdigest()
+        fingerprint = hashlib.sha256(f"{academy_id}:{parent_id}:{invoice_ids}".encode()).hexdigest()
         _, url = await invoice_stripe.create_invoice_checkout_session(
             invoice_id=f"balance-{parent_id[:8]}",
             amount_cents=total_cents,
