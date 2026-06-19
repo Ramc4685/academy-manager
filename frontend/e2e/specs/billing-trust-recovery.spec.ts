@@ -131,7 +131,7 @@ test.describe("billing trust and recovery surfaces", () => {
     await expect(page.getByText("Balance due")).toBeVisible();
     await expect(page.getByText("open", { exact: true })).toBeVisible();
     await expect(page.getByText("$45.00").first()).toBeVisible();
-    await expect(page.getByRole("button", { name: /Pay/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Pay $45.00", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Billing portal" })).toBeVisible();
     await expect(page.getByText("Autopay active, payment issue")).toBeVisible();
     await expect(
@@ -143,7 +143,7 @@ test.describe("billing trust and recovery surfaces", () => {
     await page.getByRole("button", { name: "View" }).click();
     await expect(page.getByText("Alice Chen monthly tuition × 1")).toBeVisible();
 
-    await page.getByRole("button", { name: /Pay/ }).click();
+    await page.getByRole("button", { name: "Pay $45.00", exact: true }).click();
     await expect.poll(() => retryRequests.length).toBe(1);
     expect(retryRequests[0]).toMatchObject({
       success_url: expect.stringContaining("/parent/payments?invoice=paid"),

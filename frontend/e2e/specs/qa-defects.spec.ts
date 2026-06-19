@@ -295,7 +295,7 @@ test.describe("QA defect regressions", () => {
     );
 
     await page.goto("/parent/payments");
-    await page.getByRole("button", { name: "Pause" }).click();
+    await page.getByRole("button", { name: "Pause", exact: true }).click();
     await page.getByLabel("Resume date").fill("2026-07-15");
     await page.getByLabel("Reason").fill("Summer travel");
 
