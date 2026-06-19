@@ -650,4 +650,21 @@ test.describe("Rally admin shell", () => {
       `Console errors on parent route: ${errors.join("\n")}`,
     ).toEqual([]);
   });
+
+  test("admin, coach, and parent shells expose logout", async ({ page }) => {
+    await stubAdminBff(page);
+    await page.goto("/admin");
+    await page.getByRole("button", { name: "Log out" }).click();
+    await expect(page).toHaveURL(/\/login$/);
+
+    await stubCoachBff(page);
+    await page.goto("/coach/today");
+    await page.getByRole("button", { name: "Log out" }).click();
+    await expect(page).toHaveURL(/\/login$/);
+
+    await stubParentBff(page);
+    await page.goto("/parent/dashboard");
+    await page.getByRole("button", { name: "Log out" }).click();
+    await expect(page).toHaveURL(/\/login$/);
+  });
 });

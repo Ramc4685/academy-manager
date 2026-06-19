@@ -32,7 +32,7 @@ export default function CoachTodayPage() {
 
   return (
     <section data-testid="coach-today">
-      <header className="mb-4 flex items-center justify-between">
+      <header className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Today</h1>
           <p className="text-sm text-neutral-500">{date}</p>
@@ -72,15 +72,15 @@ export default function CoachTodayPage() {
                   typeof Link
                 >[0]["href"]
               }
-              className="block rounded-lg border border-neutral-200 bg-white p-4 hover:border-blue-400 dark:border-neutral-800 dark:bg-neutral-900"
+              className="block rounded-lg border border-neutral-200 bg-white p-3 hover:border-blue-400 dark:border-neutral-800 dark:bg-neutral-900"
               data-testid={`session-${s.session_id}`}
             >
-              <div className="flex items-center justify-between">
-                <div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
                   <p className="font-semibold">{s.title}</p>
                   <p className="text-sm text-neutral-500">{s.location}</p>
                 </div>
-                <p className="text-sm tabular-nums text-neutral-600 dark:text-neutral-300">
+                <p className="shrink-0 text-sm tabular-nums text-neutral-600 dark:text-neutral-300">
                   {formatSessionTimeRange(s.start_at, s.end_at, s.timezone)}
                 </p>
               </div>

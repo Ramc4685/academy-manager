@@ -44,3 +44,30 @@ def test_seed_tuition_payment_doc_maps_to_student_owned_invoice() -> None:
     assert mapped["invoice"]["enrollment_id"] == "enr_std_blno_043_aadhya__wed_beginner"
     assert mapped["invoice"]["parent_id"] == "parent-aadhya"
     assert mapped["invoice"]["period"] == "2026-06"
+
+
+def test_blno_seed_resets_parent_billing_customers_before_reseeding() -> None:
+    module = _load_seed_module()
+
+    class _Collection:
+        def __init__(self) -> None:
+            self.delete_filters: list[dict[str, str]] = []
+
+        def delete_many(self, filter_doc: dict[str, str]) -> None:
+            self.delete_filters.append(filter_doc)
+
+    class _Db:
+        def __init__(self) -> None:
+            self.payments = _Collection()
+            self.parent_billing_customers = _Collection()
+            self.dead_letter_events = _Collection()
+            self.outbox_events = _Collection()
+
+    db = _Db()
+
+    module.reset_blno_seed_billing_collections(db)
+
+    assert db.payments.delete_filters == [{"academy_id": module.ACADEMY_ID}]
+    assert db.parent_billing_customers.delete_filters == [{"academy_id": module.ACADEMY_ID}]
+    assert db.dead_letter_events.delete_filters == [{}]
+    assert db.outbox_events.delete_filters == [{}]

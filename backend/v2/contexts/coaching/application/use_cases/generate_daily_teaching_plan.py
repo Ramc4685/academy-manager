@@ -155,6 +155,7 @@ class SessionTeachingPlan(BaseModel):
     location: str = ""
     start_at: Any | None = None
     end_at: Any | None = None
+    timezone: str | None = None
     groups: list[LevelTeachingGroup] = Field(default_factory=list)
     unplaced: list[UnplacedStudent] = Field(default_factory=list)
 
@@ -282,6 +283,7 @@ class GenerateDailyTeachingPlan:
             location=str(getattr(occurrence, "location", "")),
             start_at=getattr(occurrence, "start_at", None),
             end_at=getattr(occurrence, "end_at", None),
+            timezone=getattr(occurrence, "timezone", None),
             groups=groups.groups,
             unplaced=groups.unplaced,
         )

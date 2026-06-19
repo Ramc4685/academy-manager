@@ -84,13 +84,6 @@
       "tmp": "0.2.7",
       "miniflare>ws": "8.21.0",
       "undici": "^7.28.0"
-    },
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "protobufjs",
-      "sharp",
-      "unrs-resolver",
-      "workerd"
-    ]
+    }
   }
 }

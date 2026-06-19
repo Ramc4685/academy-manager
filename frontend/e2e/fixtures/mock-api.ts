@@ -27,6 +27,8 @@ export interface MockState {
     }>;
   };
   attendanceCalls: Array<Record<string, unknown>>;
+  bulkSkillCalls: Array<Record<string, unknown>>;
+  skillStatusCalls: Array<Record<string, unknown>>;
   attendanceResponder?: (body: Record<string, unknown>) => {
     status: number;
     body: Record<string, unknown>;
@@ -137,6 +139,8 @@ export const test = base.extend<{
         ],
       },
       attendanceCalls: [],
+      bulkSkillCalls: [],
+      skillStatusCalls: [],
       statusCalls: [],
       testCalls: [],
       failTeachingPlan: false,
@@ -229,6 +233,81 @@ export const test = base.extend<{
       },
     };
 
+    const skillGroups = [
+      {
+        skill_id: "skill-backhand",
+        skill_name: "Backhand clear",
+        student_ids: ["st1", "st2"],
+        student_names: ["Alice", "Bob"],
+        status: "LEARNING",
+      },
+    ];
+    const skillStudents = [
+      {
+        student_id: "st1",
+        full_name: "Alice",
+        enrollment_status: "active",
+        top_gaps: [
+          {
+            skill_id: "skill-backhand",
+            skill_name: "Backhand clear",
+            status: "LEARNING",
+            program_id: "prog-001",
+            level_id: "level-001",
+          },
+        ],
+        skills: [
+          {
+            skill_id: "skill-backhand",
+            skill_name: "Backhand clear",
+            status: "LEARNING",
+            program_id: "prog-001",
+            level_id: "level-001",
+          },
+        ],
+      },
+      {
+        student_id: "st2",
+        full_name: "Bob",
+        enrollment_status: "active",
+        top_gaps: [
+          {
+            skill_id: "skill-backhand",
+            skill_name: "Backhand clear",
+            status: "LEARNING",
+            program_id: "prog-001",
+            level_id: "level-001",
+          },
+        ],
+        skills: [
+          {
+            skill_id: "skill-backhand",
+            skill_name: "Backhand clear",
+            status: "LEARNING",
+            program_id: "prog-001",
+            level_id: "level-001",
+          },
+        ],
+      },
+    ];
+
+    const dayHub = {
+      date: state.today.date,
+      summary: {
+        session_count: 1,
+        student_count: 2,
+        attendance_state: "not_started",
+        skill_focus_count: 1,
+        parent_message_count: 0,
+        absence_notice_count: 0,
+      },
+      sessions: state.today.sessions.map((session) => ({
+        ...session,
+        skill_groups: skillGroups,
+        students: skillStudents,
+      })),
+    };
+
     await page.route("**/api/v2/me", async (route: Route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return route.fulfill({
@@ -249,6 +328,67 @@ export const test = base.extend<{
         status: 200,
         contentType: "application/json",
         body: JSON.stringify(state.today),
+      });
+    });
+
+    await page.route("**/api/v2/coach/day-hub*", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      const url = new URL(route.request().url());
+      const date = url.searchParams.get("date") ?? state.today.date;
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ...dayHub, date }),
+      });
+    });
+
+    await page.route("**/api/v2/coach/sessions/*/skills/bulk-status", async (route: Route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      const body = JSON.parse(route.request().postData() ?? "{}");
+      state.bulkSkillCalls.push(body);
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ updated: body.student_ids?.length ?? 0, student_ids: body.student_ids ?? [] }),
+      });
+    });
+
+    await page.route("**/api/v2/coach/sessions/*/skills**", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      const url = new URL(route.request().url());
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ...dayHub.sessions[0],
+          date: url.searchParams.get("date") ?? state.today.date,
+          roster: state.today.sessions[0].roster,
+        }),
+      });
+    });
+
+    await page.route("**/api/v2/coach/students/*/passport*", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          passport: [
+            {
+              skill_id: "skill-backhand",
+              level_id: "level-001",
+              program_id: "prog-001",
+              skill_name: "Backhand clear",
+              skill_description: "Clear from the back court",
+              sequence: 1,
+              is_required: true,
+              status: "LEARNING",
+              last_test_passed: null,
+              last_tested_at: null,
+              test_attempt_count: 0,
+            },
+          ],
+        }),
       });
     });
 
@@ -334,6 +474,7 @@ export const test = base.extend<{
           .url()
           .match(/students\/([^/]+)\/skills\/([^/?]+)\/status/);
         const body = JSON.parse(route.request().postData() ?? "{}");
+        state.skillStatusCalls.push(body);
         state.statusCalls.push({
           studentId: m?.[1] ?? "",
           skillId: m?.[2] ?? "",

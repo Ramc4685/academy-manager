@@ -10,6 +10,7 @@
  */
 
 import { apiFetch } from "./client";
+import { coachStudentPassportPath } from "./coach-paths";
 
 // ---------------------------------------------------------------------------
 // Curriculum types
@@ -425,9 +426,8 @@ export function getStudentPassport(
   studentId: string,
   programId?: string,
 ): Promise<SkillPassportEntry[]> {
-  const q = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
   return apiFetch<{ passport: SkillPassportEntry[] }>(
-    `/coach/students/${encodeURIComponent(studentId)}/passport${q}`,
+    coachStudentPassportPath(studentId, programId),
     { method: "GET" },
   ).then((d) => d.passport);
 }

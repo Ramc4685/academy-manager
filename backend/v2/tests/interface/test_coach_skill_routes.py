@@ -22,8 +22,12 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from backend.v2.contexts.enrollment.domain.models import RosterEntry
+from backend.v2.contexts.student_progress.application.errors import StudentNotPlaced
 from backend.v2.contexts.student_progress.application.use_cases.get_progress_summary import (
     ProgressSummaryRequest,
+)
+from backend.v2.contexts.student_progress.application.use_cases.get_skill_board import (
+    GetSkillBoard,
 )
 from backend.v2.contexts.student_progress.application.use_cases.get_student_progress import (
     GetStudentPassport,
@@ -522,6 +526,20 @@ class _SpyUseCase:
         return self.result
 
 
+class _PassportByStudentUseCase:
+    def __init__(self, results: dict[str, object]) -> None:
+        self.results = results
+        self.calls = 0
+
+    async def execute(self, command: object) -> object:
+        self.calls += 1
+        student_id = command.student_id  # type: ignore[attr-defined]
+        result = self.results[student_id]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
 class _AssignedSessions:
     def __init__(self, assigned_session_ids: set[str]) -> None:
         self._assigned_session_ids = assigned_session_ids
@@ -546,9 +564,20 @@ def _build_real_router_app(
     student_session_ids: list[str],
     assigned_session_ids: set[str],
 ) -> tuple[FastAPI, SimpleNamespace]:
+    today_session = SimpleNamespace(
+        session_id=SESSION_ID,
+        occurrence_id="occurrence-001",
+        roster_session_id=SESSION_ID,
+        title="Friday Training",
+        location="Court 1",
+        timezone="America/Chicago",
+        start_at=datetime(2026, 6, 19, 14, 0, tzinfo=UTC),
+        end_at=datetime(2026, 6, 19, 15, 0, tzinfo=UTC),
+    )
     assigned_sessions = _AssignedSessions(assigned_session_ids)
     spies = SimpleNamespace(
         assigned_sessions=assigned_sessions,
+        list_today=_SpyUseCase([today_session]),
         get_passport=_SpyUseCase([_Dumpable(skill_id=SKILL_ID)]),
         update_skill_status=_SpyUseCase(_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)),
         record_test_attempt=_SpyUseCase(_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)),
@@ -591,6 +620,7 @@ def _build_real_router_app(
             )
         ]
     )
+    spies.get_roster = get_roster
 
     async def active_session_enrollments_for_student(student_id: str) -> list[SimpleNamespace]:
         if student_id != STUDENT_ID:
@@ -598,7 +628,7 @@ def _build_real_router_app(
         return [SimpleNamespace(session_id=session_id) for session_id in student_session_ids]
 
     use_cases = CoachUseCases(
-        list_today=AsyncMock(),  # type: ignore[arg-type]
+        list_today=spies.list_today,  # type: ignore[arg-type]
         get_roster=get_roster,  # type: ignore[arg-type]
         mark_attendance=AsyncMock(),  # type: ignore[arg-type]
         bulk_mark_attendance=AsyncMock(),  # type: ignore[arg-type]
@@ -923,13 +953,6 @@ def test_real_skill_router_session_students_progress_unassigned_returns_404_befo
 # ---------------------------------------------------------------------------
 
 
-import pytest
-
-from backend.v2.contexts.student_progress.application.use_cases.get_skill_board import (
-    GetSkillBoard,
-)
-
-
 class _FakeLevelProgressRepoBoard:
     """Minimal fake for GetSkillBoard — supports get_active only."""
 
@@ -1138,3 +1161,219 @@ def test_session_skill_board_unassigned_coach_404(client_unassigned: TestClient)
 def test_session_skill_board_wrong_persona_rejected(client_parent_persona: TestClient) -> None:
     response = client_parent_persona.get(f"/api/v2/coach/sessions/{SESSION_ID}/skill-board")
     assert response.status_code in (401, 403, 404)
+
+
+def test_real_skill_router_day_hub_returns_date_summary_and_grouped_skill_focus() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    spies.get_passport.result = [
+        _Dumpable(
+            skill_id=SKILL_ID,
+            skill_name="Backhand clear",
+            skill_description="Clear from back court",
+            status="LEARNING",
+            program_id=PROGRAM_ID,
+            level_id=LEVEL_ID,
+        )
+    ]
+    client = TestClient(app)
+
+    response = client.get("/api/v2/coach/day-hub", params={"date": "2026-06-19"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["date"] == "2026-06-19"
+    assert body["summary"] == {
+        "session_count": 1,
+        "student_count": 1,
+        "attendance_state": "not_started",
+        "skill_focus_count": 1,
+        "parent_message_count": 0,
+        "absence_notice_count": 0,
+    }
+    assert "expected_cut_cents" not in str(body)
+    session = body["sessions"][0]
+    assert session["occurrence_id"] == "occurrence-001"
+    assert session["skill_groups"] == [
+        {
+            "skill_id": SKILL_ID,
+            "skill_name": "Backhand clear",
+            "student_ids": [STUDENT_ID],
+            "student_names": ["Student One"],
+            "status": "LEARNING",
+        }
+    ]
+    assert session["students"][0]["top_gaps"][0]["skill_name"] == "Backhand clear"
+
+
+def test_real_skill_router_day_hub_keeps_unplaced_student_from_breaking_date() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    unplaced_student_id = "student-without-level"
+    spies.get_roster.result = [
+        RosterEntry(
+            enrollment_id="enrollment-001",
+            student_id=STUDENT_ID,
+            full_name="Student One",
+            status="active",
+        ),
+        RosterEntry(
+            enrollment_id="enrollment-002",
+            student_id=unplaced_student_id,
+            full_name="Student Without Level",
+            status="active",
+        ),
+    ]
+    spies.get_passport = _PassportByStudentUseCase(
+        {
+            STUDENT_ID: [
+                _Dumpable(
+                    skill_id=SKILL_ID,
+                    skill_name="Backhand clear",
+                    status="LEARNING",
+                    program_id=PROGRAM_ID,
+                    level_id=LEVEL_ID,
+                )
+            ],
+            unplaced_student_id: StudentNotPlaced(
+                student_id=unplaced_student_id,
+                program_id=PROGRAM_ID,
+            ),
+        }
+    )
+    app.dependency_overrides[
+        get_coach_use_cases
+    ]().student_progress.get_passport = spies.get_passport
+    client = TestClient(app)
+
+    response = client.get("/api/v2/coach/day-hub", params={"date": "2026-06-25"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["summary"]["student_count"] == 2
+    assert body["summary"]["skill_focus_count"] == 1
+    students = body["sessions"][0]["students"]
+    assert students[1] == {
+        "student_id": unplaced_student_id,
+        "full_name": "Student Without Level",
+        "enrollment_status": "active",
+        "skills": [],
+        "top_gaps": [],
+    }
+
+
+def test_real_skill_router_session_skills_returns_by_skill_and_by_student_read_model() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    spies.get_passport.result = [
+        _Dumpable(
+            skill_id=SKILL_ID,
+            skill_name="Backhand clear",
+            status="LEARNING",
+            program_id=PROGRAM_ID,
+            level_id=LEVEL_ID,
+        ),
+        _Dumpable(
+            skill_id=SKILL_ID_2,
+            skill_name="Serve consistency",
+            status="PASSED",
+            program_id=PROGRAM_ID,
+            level_id=LEVEL_ID,
+        ),
+    ]
+    client = TestClient(app)
+
+    response = client.get(
+        f"/api/v2/coach/sessions/{SESSION_ID}/skills",
+        params={"date": "2026-06-19"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["session_id"] == SESSION_ID
+    assert body["occurrence_id"] == "occurrence-001"
+    assert body["date"] == "2026-06-19"
+    assert body["roster"] == [
+        {
+            "student_id": STUDENT_ID,
+            "full_name": "Student One",
+            "enrollment_status": "active",
+        }
+    ]
+    assert [group["skill_name"] for group in body["skill_groups"]] == ["Backhand clear"]
+    assert [skill["skill_name"] for skill in body["students"][0]["skills"]] == [
+        "Backhand clear",
+        "Serve consistency",
+    ]
+
+
+def test_real_skill_router_session_skills_unassigned_returns_404_before_roster() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids=set(),
+    )
+    client = TestClient(app)
+
+    response = client.get(
+        f"/api/v2/coach/sessions/{SESSION_ID}/skills",
+        params={"date": "2026-06-19"},
+    )
+
+    assert response.status_code == 404, response.text
+    assert spies.assigned_sessions.calls == [(COACH_ID, SESSION_ID)]
+    assert spies.get_passport.calls == 0
+
+
+def test_real_skill_router_bulk_status_updates_selected_session_students_only() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        f"/api/v2/coach/sessions/{SESSION_ID}/skills/bulk-status",
+        json={
+            "skill_id": SKILL_ID,
+            "program_id": PROGRAM_ID,
+            "level_id": LEVEL_ID,
+            "student_ids": [STUDENT_ID],
+            "status": "PRACTICING",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"updated": 1, "student_ids": [STUDENT_ID]}
+    assert spies.update_skill_status.calls == 1
+    command = spies.update_skill_status.args[0]
+    assert command.student_id == STUDENT_ID
+    assert command.skill_id == SKILL_ID
+    assert command.new_status == "PRACTICING"
+
+
+def test_real_skill_router_bulk_status_rejects_student_outside_session() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        f"/api/v2/coach/sessions/{SESSION_ID}/skills/bulk-status",
+        json={
+            "skill_id": SKILL_ID,
+            "program_id": PROGRAM_ID,
+            "level_id": LEVEL_ID,
+            "student_ids": ["other-student"],
+            "status": "PRACTICING",
+        },
+    )
+
+    assert response.status_code == 404, response.text
+    assert spies.update_skill_status.calls == 0

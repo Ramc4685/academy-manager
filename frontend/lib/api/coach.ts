@@ -7,6 +7,11 @@
  */
 
 import { apiFetch } from "./client";
+import {
+  coachDayHubPath,
+  coachSessionBulkSkillStatusPath,
+  coachSessionSkillsPath,
+} from "./coach-paths";
 
 export type EnrollmentStatus = "active" | "paused" | "cancelled";
 export type AttendanceStatus = "present" | "absent" | "late";
@@ -31,6 +36,83 @@ export interface CoachSession {
 export interface CoachTodayResponse {
   date: string; // YYYY-MM-DD
   sessions: CoachSession[];
+}
+
+export interface CoachSkillGap {
+  skill_id: string;
+  skill_name: string;
+  status: string;
+  program_id?: string;
+  level_id?: string;
+}
+
+export interface CoachSkillGroup {
+  skill_id: string;
+  skill_name: string;
+  student_ids: string[];
+  student_names: string[];
+  status: string;
+}
+
+export interface CoachDayHubStudent {
+  student_id: string;
+  full_name: string;
+  enrollment_status: EnrollmentStatus;
+  top_gaps: CoachSkillGap[];
+}
+
+export interface CoachDayHubSession {
+  session_id: string;
+  occurrence_id: string;
+  title: string;
+  location: string;
+  timezone?: string | null;
+  start_at: string;
+  end_at: string;
+  roster: CoachRosterEntry[];
+  skill_groups: CoachSkillGroup[];
+  students: CoachDayHubStudent[];
+}
+
+export interface CoachDayHubSummary {
+  session_count: number;
+  student_count: number;
+  attendance_state: "not_started" | "in_progress" | "complete" | "no_sessions" | string;
+  skill_focus_count: number;
+  parent_message_count: number;
+  absence_notice_count: number;
+}
+
+export interface CoachDayHubResponse {
+  date: string;
+  summary: CoachDayHubSummary;
+  sessions: CoachDayHubSession[];
+}
+
+export interface CoachSessionSkillsStudent {
+  student_id: string;
+  full_name: string;
+  enrollment_status: EnrollmentStatus;
+  skills: CoachSkillGap[];
+  top_gaps: CoachSkillGap[];
+}
+
+export interface CoachSessionSkillsResponse extends CoachDayHubSession {
+  date: string | null;
+  students: CoachSessionSkillsStudent[];
+}
+
+export interface BulkSkillStatusRequest {
+  skill_id: string;
+  program_id: string;
+  level_id: string;
+  student_ids: string[];
+  status: string;
+}
+
+export interface BulkSkillStatusResponse {
+  updated: number;
+  student_ids: string[];
 }
 
 export interface CoachDashboardResponse {
@@ -110,6 +192,29 @@ export async function getCoachToday(
 ): Promise<CoachTodayResponse> {
   const q = date ? `?date=${encodeURIComponent(date)}` : "";
   return apiFetch<CoachTodayResponse>(`/coach/today${q}`, { method: "GET" });
+}
+
+export async function getCoachDayHub(date?: string): Promise<CoachDayHubResponse> {
+  return apiFetch<CoachDayHubResponse>(coachDayHubPath(date), { method: "GET" });
+}
+
+export async function getCoachSessionSkills(
+  occurrenceId: string,
+  options: { date?: string; programId?: string } = {},
+): Promise<CoachSessionSkillsResponse> {
+  return apiFetch<CoachSessionSkillsResponse>(coachSessionSkillsPath(occurrenceId, options), {
+    method: "GET",
+  });
+}
+
+export async function bulkUpdateCoachSessionSkillStatus(
+  occurrenceId: string,
+  payload: BulkSkillStatusRequest,
+): Promise<BulkSkillStatusResponse> {
+  return apiFetch<BulkSkillStatusResponse>(coachSessionBulkSkillStatusPath(occurrenceId), {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function getCoachDashboard(): Promise<CoachDashboardResponse> {
@@ -293,6 +398,7 @@ export interface SessionTeachingPlan {
   location: string;
   start_at: string | null;
   end_at: string | null;
+  timezone?: string | null;
   groups: LevelTeachingGroup[];
   unplaced: TeachingUnplacedStudent[];
 }
