@@ -18,6 +18,10 @@
 #   scripts/dev/saas_staging.sh rebuild-ui  # rebuild + restart frontend only (staging build)
 #   scripts/dev/saas_staging.sh rebuild-api # rebuild + restart backend only
 #
+# Rebuild individual services without restarting the whole stack:
+#   scripts/dev/saas_staging.sh rebuild-ui  # rebuild + restart frontend only (staging build)
+#   scripts/dev/saas_staging.sh rebuild-api # rebuild + restart backend only
+#
 # Custom test data:
 #   scripts/dev/saas_staging.sh seed --slug blno --domain blno.localhost ...
 #   scripts/dev/saas_staging.sh blno-seed   # seed BLno academy with full realistic data
