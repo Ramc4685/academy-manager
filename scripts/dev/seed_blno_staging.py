@@ -198,7 +198,9 @@ def upsert_firebase_user(email: str, password: str, display_name: str) -> str:
             params={"email": email},
             timeout=5.0,
         )
-        uid = _firebase_signup(email, password, display_name) or _firebase_signin(email, password)
+        uid = _firebase_signup(email, password, display_name) or _firebase_signin(
+            email, password
+        )
         _mark_firebase_email_verified(uid)
         return uid
 
@@ -998,6 +1000,16 @@ def build_student_tuition_payment_doc(
     }
 
 
+def reset_blno_seed_billing_collections(db: Any) -> None:
+    """Clear generated BLNO billing docs that are rebuilt with deterministic IDs."""
+    db.payments.delete_many({"academy_id": ACADEMY_ID})
+    db.parent_billing_customers.delete_many({"academy_id": ACADEMY_ID})
+    # Local staging should audit the freshly seeded state, not stale terminal
+    # queue rows left by earlier smoke runs.
+    db.dead_letter_events.delete_many({})
+    db.outbox_events.delete_many({})
+
+
 def _upsert_ledger_from_seed_payment(db: Any, payment_doc: dict[str, Any]) -> None:
     mapped = map_legacy_payment(payment_doc)
     if mapped is None:
@@ -1048,14 +1060,18 @@ def main() -> None:
     _wait_for_services(client)
     db = client[DB_NAME]
     ts = utcnow()
-    db.payments.delete_many({"academy_id": ACADEMY_ID})
+    reset_blno_seed_billing_collections(db)
 
     # ── 1. Firebase emulator accounts ─────────────────────────────────────────
     print("\n[blno-seed] 1/9  Firebase accounts...", file=sys.stderr)
 
     admin_uid = upsert_firebase_user(ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME)
-    gowtham_uid = upsert_firebase_user("gowtham@blno.academy", COACH_PASSWORD, "Gowtham")
-    kishore_uid = upsert_firebase_user("kishore@blno.academy", COACH_PASSWORD, "Kishore Subbarao")
+    gowtham_uid = upsert_firebase_user(
+        "gowtham@blno.academy", COACH_PASSWORD, "Gowtham"
+    )
+    kishore_uid = upsert_firebase_user(
+        "kishore@blno.academy", COACH_PASSWORD, "Kishore Subbarao"
+    )
     print(f"  admin   {ADMIN_EMAIL} -> {admin_uid}", file=sys.stderr)
     print(f"  coach   gowtham@blno.academy -> {gowtham_uid}", file=sys.stderr)
     print(f"  coach   kishore@blno.academy -> {kishore_uid}", file=sys.stderr)
@@ -1146,7 +1162,9 @@ def main() -> None:
     # ── 3. Users + memberships ────────────────────────────────────────────────
     print("[blno-seed] 3/9  Users + memberships...", file=sys.stderr)
 
-    def _upsert_user(uid: str, email: str, name: str, phone: str | None, roles: list[str]) -> None:
+    def _upsert_user(
+        uid: str, email: str, name: str, phone: str | None, roles: list[str]
+    ) -> None:
         db.users.find_one_and_update(
             {"email": email},
             {
@@ -1208,7 +1226,9 @@ def main() -> None:
     # Coaches
     _upsert_user(gowtham_uid, "gowtham@blno.academy", "Gowtham", None, ["coach"])
     _upsert_membership(gowtham_uid, ["coach"])
-    _upsert_user(kishore_uid, "kishore@blno.academy", "Kishore Subbarao", "3095318717", ["coach"])
+    _upsert_user(
+        kishore_uid, "kishore@blno.academy", "Kishore Subbarao", "3095318717", ["coach"]
+    )
     _upsert_membership(kishore_uid, ["coach", "parent"])  # Kishore is also a parent
 
     # Parents
@@ -1370,13 +1390,20 @@ def main() -> None:
                 "may_paid": may_paid,
             }
         )
-    print(f"  {len(student_records)} students, {len(student_records)} enrollments", file=sys.stderr)
+    print(
+        f"  {len(student_records)} students, {len(student_records)} enrollments",
+        file=sys.stderr,
+    )
 
     # ── 7. Payments + Subscriptions (Stripe test data) ────────────────────────
     print("[blno-seed] 7/9  Payments + Stripe...", file=sys.stderr)
 
-    standard_student_records = [rec for rec in student_records if rec["billing"] == "standard"]
-    paying_parent_emails = sorted({rec["parent_email"] for rec in standard_student_records})
+    standard_student_records = [
+        rec for rec in student_records if rec["billing"] == "standard"
+    ]
+    paying_parent_emails = sorted(
+        {rec["parent_email"] for rec in standard_student_records}
+    )
     pay_counter = 1
     for email in paying_parent_emails:
         meta = parent_meta[email]
@@ -1562,7 +1589,10 @@ def main() -> None:
             {"$setOnInsert": {**evt_doc, "created_at": evt_doc["received_at"]}},
             upsert=True,
         )
-    print(f"  ~{pay_counter - 1} invoice-ledger records + 4 webhook events seeded", file=sys.stderr)
+    print(
+        f"  ~{pay_counter - 1} invoice-ledger records + 4 webhook events seeded",
+        file=sys.stderr,
+    )
 
     # ── 8. Coach rates + attendance ───────────────────────────────────────────
     print("[blno-seed] 8/9  Coach rates + attendance...", file=sys.stderr)
@@ -1604,7 +1634,9 @@ def main() -> None:
     for sdef in SESSIONS_DEF:
         c_uid = coach_uid_map[sdef["coach_email"]]
         enrolled = session_students[sdef["key"]]
-        for date in all_weekdays(SEASON_START, TODAY - dt.timedelta(days=1), sdef["weekday"]):
+        for date in all_weekdays(
+            SEASON_START, TODAY - dt.timedelta(days=1), sdef["weekday"]
+        ):
             oid = occ_id(sdef["key"], date)
             end_utc = chicago_to_utc(date, sdef["end_time"])
 
@@ -1644,7 +1676,9 @@ def main() -> None:
                             "occurrence_id": oid,
                             "session_id": rec["session_id"],
                             "student_id": rec["student_id"],
-                            "date": dt.datetime(date.year, date.month, date.day, tzinfo=dt.UTC),
+                            "date": dt.datetime(
+                                date.year, date.month, date.day, tzinfo=dt.UTC
+                            ),
                             "created_at": ts,
                         },
                         "$set": {
@@ -1679,7 +1713,10 @@ def main() -> None:
             text=True,
         )
         if result.returncode != 0:
-            print(f"  WARNING: pathway seed failed:\n{result.stderr[-500:]}", file=sys.stderr)
+            print(
+                f"  WARNING: pathway seed failed:\n{result.stderr[-500:]}",
+                file=sys.stderr,
+            )
         else:
             print("  Badminton pathway seeded OK", file=sys.stderr)
             try:
@@ -1694,7 +1731,9 @@ def main() -> None:
         level = db.skill_levels.find_one(
             {"academy_id": ACADEMY_ID, "program_id": program_id, "sequence": 1}
         )
-        all_skills = list(db.skills.find({"academy_id": ACADEMY_ID, "program_id": program_id}))
+        all_skills = list(
+            db.skills.find({"academy_id": ACADEMY_ID, "program_id": program_id})
+        )
         if level and all_skills:
             level_id = level["level_id"]
             level1_skills = [s for s in all_skills if s.get("level_id") == level_id]
@@ -1718,7 +1757,9 @@ def main() -> None:
                             "program_id": program_id,
                             "level_id": level_id,
                             "status": "active",
-                            "started_at": dt.datetime(2026, 4, 1, 0, 0, 0, tzinfo=dt.UTC),
+                            "started_at": dt.datetime(
+                                2026, 4, 1, 0, 0, 0, tzinfo=dt.UTC
+                            ),
                             "completed_at": None,
                             "created_at": ts,
                         },
@@ -1757,7 +1798,10 @@ def main() -> None:
                         },
                         upsert=True,
                     )
-            print(f"  Level 1 progress seeded for {len(active_sample)} students", file=sys.stderr)
+            print(
+                f"  Level 1 progress seeded for {len(active_sample)} students",
+                file=sys.stderr,
+            )
 
     # ── Write credentials file ────────────────────────────────────────────────
     LOCAL_DIR.mkdir(parents=True, exist_ok=True)
@@ -1765,7 +1809,10 @@ def main() -> None:
         json.dumps(
             {
                 "owners": {
-                    ADMIN_EMAIL: {"owner_email": ADMIN_EMAIL, "owner_password": ADMIN_PASSWORD}
+                    ADMIN_EMAIL: {
+                        "owner_email": ADMIN_EMAIL,
+                        "owner_password": ADMIN_PASSWORD,
+                    }
                 },
                 "coaches": {
                     "gowtham@blno.academy": COACH_PASSWORD,
@@ -1822,10 +1869,19 @@ def main() -> None:
     print(f"  Academy:        {ACADEMY_ID}  ({ACADEMY_DISPLAY_NAME})", file=sys.stderr)
     print(f"  Login URL:      http://{ACADEMY_DOMAIN}:3000/login", file=sys.stderr)
     print(f"  Admin:          {ADMIN_EMAIL}  /  {ADMIN_PASSWORD}", file=sys.stderr)
-    print(f"  Coach Gowtham:  gowtham@blno.academy  /  {COACH_PASSWORD}", file=sys.stderr)
-    print(f"  Coach Kishore:  kishore@blno.academy  /  {COACH_PASSWORD}", file=sys.stderr)
-    print(f"  Parent (eg):    manojedward.btech@gmail.com  /  {PARENT_PASSWORD}", file=sys.stderr)
-    print(f"  Students:       {len(student_records)} across 4 sessions", file=sys.stderr)
+    print(
+        f"  Coach Gowtham:  gowtham@blno.academy  /  {COACH_PASSWORD}", file=sys.stderr
+    )
+    print(
+        f"  Coach Kishore:  kishore@blno.academy  /  {COACH_PASSWORD}", file=sys.stderr
+    )
+    print(
+        f"  Parent (eg):    manojedward.btech@gmail.com  /  {PARENT_PASSWORD}",
+        file=sys.stderr,
+    )
+    print(
+        f"  Students:       {len(student_records)} across 4 sessions", file=sys.stderr
+    )
     print(
         f"  Stripe test:    cus_blno_test_0001 … cus_blno_test_{len(parent_meta):04d}",
         file=sys.stderr,
@@ -1834,8 +1890,12 @@ def main() -> None:
     print(file=sys.stderr)
     print("  export API_URL='http://127.0.0.1:8001'", file=sys.stderr)
     print("  export FRONTEND_URL='http://localhost:3000'", file=sys.stderr)
-    print(f"  export TENANT_FRONTEND_URL='http://{ACADEMY_DOMAIN}:3000'", file=sys.stderr)
-    print("  export INTERNAL_TENANT_HEADER_NAME='x-internal-tenant-id'", file=sys.stderr)
+    print(
+        f"  export TENANT_FRONTEND_URL='http://{ACADEMY_DOMAIN}:3000'", file=sys.stderr
+    )
+    print(
+        "  export INTERNAL_TENANT_HEADER_NAME='x-internal-tenant-id'", file=sys.stderr
+    )
     print(f"  export INTERNAL_TENANT_HEADER_VALUE='{ACADEMY_ID}'", file=sys.stderr)
     print(f"  export AUTH_TOKEN='{admin_token}'", file=sys.stderr)
 
