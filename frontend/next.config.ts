@@ -1,4 +1,4 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from "next/types";
 import withSerwistInit from "@serwist/next";
 
 import { CANONICAL_HOST_REDIRECTS } from "./lib/canonical-host";
@@ -19,6 +19,7 @@ const config: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   typedRoutes: true,
+  turbopack: {},
   images: {
     formats: ["image/avif", "image/webp"],
     remotePatterns: [
