@@ -306,6 +306,9 @@ class _EnrollmentWriterAdapter:
     async def update_session(self, enrollment_id: str, session_id: str) -> None:
         pass
 
+    async def update_amount_cents(self, enrollment_id: str, amount_cents: int | None) -> None:
+        pass
+
     async def get(self, enrollment_id: str) -> Enrollment | None:
         return self._store._enrollments.get(enrollment_id)
 
@@ -753,6 +756,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     EditRosterAdd,
     EditSession,
     JoinWaitlist,
+    OverrideEnrollmentFee,
     PauseEnrollment,
     RemoveFromWaitlist,
     ResumeEnrollment,
@@ -940,6 +944,7 @@ class FakeAdminCoachAttendanceRepo:
 @dataclass
 class FakeEnrollmentWriter:
     rows: dict[str, Any] = field(default_factory=dict)
+    amounts: dict[str, int | None] = field(default_factory=dict)
     move_history: list[dict[str, str]] = field(default_factory=list)
 
     async def create(self, enrollment):
@@ -961,6 +966,10 @@ class FakeEnrollmentWriter:
                 }
             )
             self.rows[enrollment_id] = e.model_copy(update={"session_id": session_id})
+
+    async def update_amount_cents(self, enrollment_id, amount_cents):
+        if enrollment_id in self.rows:
+            self.amounts[enrollment_id] = amount_cents
 
     async def get(self, enrollment_id):
         return self.rows.get(enrollment_id)
@@ -1497,6 +1506,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         enrollment_events=enrollment_events,
         billing=lifecycle_billing,
     )
+    override_enrollment_fee = OverrideEnrollmentFee(enrollments=enrollments_w)
     pause_enrollment = PauseEnrollment(
         enrollments=enrollments_w,
         sessions=sessions,
@@ -1786,6 +1796,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         edit_roster_add=edit_roster_add,
         cancel_enrollment=cancel_enrollment,
         transfer_enrollment=transfer_enrollment,
+        override_enrollment_fee=override_enrollment_fee,
         pause_enrollment=pause_enrollment,
         resume_enrollment=resume_enrollment,
         withdraw_enrollment=withdraw_enrollment,

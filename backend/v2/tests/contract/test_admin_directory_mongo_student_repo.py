@@ -748,6 +748,49 @@ async def test_get_admin_student_current_payment_none_when_all_paid_no_open_invo
 
 
 @pytest.mark.asyncio
+async def test_get_admin_student_preserves_zero_enrollment_fee_override(db, acad) -> None:
+    now = datetime.now(UTC)
+    await db["students"].insert_one(
+        {
+            "academy_id": acad,
+            "student_id": "st-alice",
+            "full_name": "Alice Chen",
+            "parent_id": "parent-1",
+            "status": "active",
+        }
+    )
+    await db["sessions"].insert_one(
+        {
+            "academy_id": acad,
+            "session_id": "sess-active",
+            "title": "Beginner Group",
+            "location": "Court 2",
+            "start_at": now + timedelta(days=5),
+            "end_at": now + timedelta(days=5, hours=1),
+            "status": "scheduled",
+            "monthly_price_cents": 12_500,
+        }
+    )
+    await db["enrollments"].insert_one(
+        {
+            "academy_id": acad,
+            "enrollment_id": "enr-active",
+            "student_id": "st-alice",
+            "session_id": "sess-active",
+            "status": "active",
+            "amount_cents": 0,
+            "final_amount_cents": 0,
+        }
+    )
+
+    repo = MongoStudentRepository(db)
+    detail = await repo.get_admin_student("st-alice")
+
+    assert detail is not None
+    assert detail.enrolled_sessions[0].amount_cents == 0
+
+
+@pytest.mark.asyncio
 async def test_get_admin_student_includes_enrollment_linked_paid_ledger_invoice_once(
     db, acad
 ) -> None:

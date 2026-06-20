@@ -16,6 +16,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     DuplicateSessionSeries,
     EditRosterAddCommand,
     EditSessionCommand,
+    OverrideEnrollmentFeeCommand,
     PauseEnrollmentCommand,
     TransferEnrollmentCommand,
     WithdrawEnrollmentCommand,
@@ -35,6 +36,7 @@ from backend.v2.interfaces.admin.views import (
     EditSessionRequest,
     EnrollmentEventDto,
     EnrollmentEventsResponse,
+    OverrideEnrollmentFeeRequest,
     PauseEnrollmentRequest,
     RemoveEnrollmentRequest,
     TransferEnrollmentRequest,
@@ -382,6 +384,26 @@ async def transfer_enrollment(
         status=enrollment.status,
         enrolled_at=datetime.now(UTC),
     )
+
+
+@router.post("/enrollments/{enrollment_id}/fee", status_code=204, response_model=None)
+async def override_enrollment_fee(
+    enrollment_id: str,
+    body: OverrideEnrollmentFeeRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> None:
+    try:
+        await use_cases.override_enrollment_fee.execute(
+            OverrideEnrollmentFeeCommand(
+                enrollment_id=enrollment_id,
+                amount_cents=body.amount_cents,
+                actor_id=claims.user_id,
+                reason=body.reason,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/enrollments/{enrollment_id}/pause", status_code=204, response_model=None)

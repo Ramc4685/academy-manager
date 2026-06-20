@@ -80,6 +80,7 @@ def _minimal_admin_use_cases(
         edit_roster_add=mock,  # type: ignore[arg-type]
         cancel_enrollment=mock,  # type: ignore[arg-type]
         transfer_enrollment=mock,  # type: ignore[arg-type]
+        override_enrollment_fee=mock,  # type: ignore[arg-type]
         pause_enrollment=mock,  # type: ignore[arg-type]
         resume_enrollment=mock,  # type: ignore[arg-type]
         withdraw_enrollment=mock,  # type: ignore[arg-type]
