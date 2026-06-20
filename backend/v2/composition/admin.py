@@ -621,6 +621,7 @@ def _invoice_to_admin_payment_row(invoice: dict[str, Any]) -> dict[str, Any]:
     )
     return {
         "payment_id": str(invoice.get("invoice_id") or invoice.get("_id") or ""),
+        "invoice_id": str(invoice.get("invoice_id") or "") or None,
         "parent_id": str(invoice.get("parent_id") or invoice.get("parent_user_id") or ""),
         "parent_name": None,
         "student_id": str(invoice.get("student_id") or "") or None,

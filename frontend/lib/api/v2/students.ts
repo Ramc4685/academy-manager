@@ -93,7 +93,7 @@ export interface UpdateAdminStudentRequest {
   full_name?: string;
   date_of_birth?: string | null;
   level?: string | null;
-  status?: "active" | "paused" | "inactive";
+  status?: "active" | "paused" | "inactive" | "cancelled";
   parent_id?: string;
   notes?: string | null;
   previous_experience?: string | null;
@@ -142,6 +142,36 @@ export function transferEnrollment(
 ): Promise<AdminEnrollmentView> {
   return apiFetch<AdminEnrollmentView>(
     `/admin/enrollments/${encodeURIComponent(enrollmentId)}/transfer`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export interface AdminStudentBillingEnrollmentView {
+  enrollment_id: string;
+  student_id: string;
+  parent_id: string;
+  session_type_id: string;
+  stripe_subscription_id?: string | null;
+  billing_start_date: string;
+  status: "active" | "paused" | "cancelled" | "transferred_out";
+  override_price_cents?: number | null;
+  enrolled_at: string;
+  updated_at: string;
+}
+
+export interface OverrideBillingEnrollmentPriceRequest {
+  override_price_cents: number | null;
+}
+
+export function overrideBillingEnrollmentPrice(
+  enrollmentId: string,
+  payload: OverrideBillingEnrollmentPriceRequest,
+): Promise<AdminStudentBillingEnrollmentView> {
+  return apiFetch<AdminStudentBillingEnrollmentView>(
+    `/admin/billing-enrollments/${encodeURIComponent(enrollmentId)}/override`,
     {
       method: "POST",
       body: JSON.stringify(payload),

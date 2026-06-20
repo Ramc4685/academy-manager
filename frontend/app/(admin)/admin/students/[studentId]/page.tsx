@@ -52,6 +52,7 @@ import {
 import {
   createAdminStudentInvoice,
   getAdminStudent,
+  overrideBillingEnrollmentPrice,
   transferEnrollment,
   updateAdminStudent,
   type AdminStudentDetail,
@@ -69,7 +70,7 @@ import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
 
-type EditableStatus = "active" | "paused" | "inactive";
+type EditableStatus = "active" | "paused" | "inactive" | "cancelled";
 type StudentTab = "overview" | "training" | "sessions" | "billing" | "family";
 type StudentEditMode = "overview" | "training" | "family";
 type BillingModal = "add-line" | "manual-payment" | "void" | "create-invoice" | null;
@@ -1250,6 +1251,9 @@ function SessionsPanel({
   queryClient: ReturnType<typeof useQueryClient>;
 }) {
   const [moving, setMoving] = useState<AdminStudentSessionSummary | null>(null);
+  const [billingOverride, setBillingOverride] =
+    useState<AdminStudentSessionSummary | null>(null);
+  const [overrideAmount, setOverrideAmount] = useState("");
   const [targetSessionId, setTargetSessionId] = useState("");
   const [effectiveDate, setEffectiveDate] = useState(() =>
     new Date().toISOString().slice(0, 10),
@@ -1279,20 +1283,47 @@ function SessionsPanel({
     },
   });
 
+  const overrideMutation = useMutation({
+    mutationFn: (overridePriceCents: number | null) =>
+      overrideBillingEnrollmentPrice(billingOverride!.enrollment_id, {
+        override_price_cents: overridePriceCents,
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.admin.studentDetail(studentId),
+      });
+      setBillingOverride(null);
+      setOverrideAmount("");
+    },
+  });
+
   const availableSessions: AdminSessionView[] = (
     sessionsQuery.data?.sessions ?? []
   ).filter((s) => s.session_id !== moving?.session_id);
 
   useEffect(() => {
-    if (!moving) return;
+    if (!moving && !billingOverride) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !transferMutation.isPending) {
         setMoving(null);
       }
+      if (event.key === "Escape" && !overrideMutation.isPending) {
+        setBillingOverride(null);
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [moving, transferMutation.isPending]);
+  }, [
+    billingOverride,
+    moving,
+    overrideMutation.isPending,
+    transferMutation.isPending,
+  ]);
+
+  const overridePriceCents = dollarsToCents(overrideAmount);
+  const overrideAmountInvalid =
+    Boolean(billingOverride) &&
+    (overrideAmount.trim() === "" || overridePriceCents < 0);
 
   return (
     <>
@@ -1357,19 +1388,34 @@ function SessionsPanel({
                       />
                     </td>
                     <td className="py-3 align-top">
-                      <button
-                        className="text-xs font-medium text-rally-blue hover:underline"
-                        onClick={() => {
-                          setMoving(session);
-                          setTargetSessionId("");
-                          setReason("");
-                          setEffectiveDate(
-                            new Date().toISOString().slice(0, 10),
-                          );
-                        }}
-                      >
-                        Move
-                      </button>
+                      <div className="flex items-center justify-end gap-3">
+                        <button
+                          className="text-xs font-medium text-rally-blue hover:underline"
+                          onClick={() => {
+                            setBillingOverride(session);
+                            setOverrideAmount(
+                              session.amount_cents == null
+                                ? ""
+                                : centsToDollarInput(session.amount_cents),
+                            );
+                          }}
+                        >
+                          Fee
+                        </button>
+                        <button
+                          className="text-xs font-medium text-rally-blue hover:underline"
+                          onClick={() => {
+                            setMoving(session);
+                            setTargetSessionId("");
+                            setReason("");
+                            setEffectiveDate(
+                              new Date().toISOString().slice(0, 10),
+                            );
+                          }}
+                        >
+                          Move
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1466,6 +1512,98 @@ function SessionsPanel({
                 disabled={!targetSessionId || transferMutation.isPending}
               >
                 {transferMutation.isPending ? "Moving…" : "Move student"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {billingOverride && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="session-fee-title"
+            className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl dark:bg-neutral-900"
+          >
+            <h2
+              id="session-fee-title"
+              className="mb-1 text-base font-semibold text-rally-ink"
+            >
+              Update session fee
+            </h2>
+            <p className="mb-4 text-sm text-rally-muted">
+              {billingOverride.session_title}
+            </p>
+
+            {overrideMutation.isError && (
+              <p className="mb-3 rounded bg-red-50 px-3 py-2 text-xs text-red-600">
+                {getErrorMessage(overrideMutation.error)}
+              </p>
+            )}
+
+            <div className="space-y-3">
+              <div className="rounded-lg border border-neutral-200 p-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-rally-muted">Current fee</span>
+                  <span className="font-mono text-rally-ink tabular-nums">
+                    {billingOverride.amount_cents == null
+                      ? "—"
+                      : formatCurrencyCents(billingOverride.amount_cents)}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label
+                  className="mb-1 block text-xs font-medium uppercase tracking-overline text-rally-muted"
+                  htmlFor="session-fee-amount"
+                >
+                  Monthly fee
+                </label>
+                <input
+                  id="session-fee-amount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  value={overrideAmount}
+                  onChange={(event) => setOverrideAmount(event.target.value)}
+                />
+                <p className="mt-1 text-xs text-rally-muted">
+                  Use 0.00 to waive this student&apos;s session fee.
+                </p>
+                {overrideAmountInvalid && (
+                  <p className="mt-1 text-xs text-red-600">
+                    Enter a valid amount.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setBillingOverride(null)}
+                disabled={overrideMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => overrideMutation.mutate(null)}
+                disabled={overrideMutation.isPending}
+              >
+                Use default fee
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => overrideMutation.mutate(overridePriceCents)}
+                disabled={overrideAmountInvalid || overrideMutation.isPending}
+              >
+                {overrideMutation.isPending ? "Saving…" : "Save fee"}
               </Button>
             </div>
           </div>
@@ -2186,6 +2324,7 @@ function StudentEditForm({
               <option value="active">Active</option>
               <option value="paused">Paused</option>
               <option value="inactive">Inactive</option>
+              <option value="cancelled">Cancelled</option>
             </select>
           </Field>
 

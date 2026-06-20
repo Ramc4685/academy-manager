@@ -245,6 +245,7 @@ export type AdminPaymentStatus = PaymentStatus | "partially_paid";
 
 export interface AdminPaymentView {
   payment_id: string;
+  invoice_id?: string | null;
   parent_id: string;
   parent_name?: string | null;
   student_id: string | null;

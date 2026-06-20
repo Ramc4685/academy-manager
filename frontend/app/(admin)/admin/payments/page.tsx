@@ -8,7 +8,7 @@
  * payment isn't eligible.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 
@@ -123,6 +123,18 @@ function isLedgerInvoiceRow(payment: AdminPaymentView): boolean {
   return payment.payment_method === "invoice" || payment.payment_method === "stripe";
 }
 
+function invoiceActionId(payment: AdminPaymentView | null): string {
+  return payment?.invoice_id || payment?.payment_id || "";
+}
+
+function sessionFilterKey(payment: AdminPaymentView): string {
+  return payment.session_id || "__none__";
+}
+
+function sessionFilterLabel(value: string): string {
+  return value === "__none__" ? "No session" : value;
+}
+
 export default function AdminPaymentsPage() {
   const [refundTarget, setRefundTarget] = useState<AdminPaymentView | null>(null);
   const [paidTarget, setPaidTarget] = useState<AdminPaymentView | null>(null);
@@ -131,6 +143,8 @@ export default function AdminPaymentsPage() {
   const [syncTarget, setSyncTarget] = useState<AdminPaymentView | null>(null);
   const [syncOpen, setSyncOpen] = useState(false);
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [periodFilter, setPeriodFilter] = useState("all");
+  const [sessionFilter, setSessionFilter] = useState("all");
   const queryClient = useQueryClient();
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -147,7 +161,30 @@ export default function AdminPaymentsPage() {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.admin.payments() }),
   });
 
-  const payments = data?.payments ?? [];
+  const payments = useMemo(() => data?.payments ?? [], [data?.payments]);
+  const periodOptions = useMemo(
+    () =>
+      Array.from(new Set(payments.map((payment) => payment.period).filter(Boolean)))
+        .sort()
+        .reverse() as string[],
+    [payments],
+  );
+  const sessionOptions = useMemo(
+    () =>
+      Array.from(new Set(payments.map((payment) => sessionFilterKey(payment)))).sort((a, b) =>
+        sessionFilterLabel(a).localeCompare(sessionFilterLabel(b)),
+      ),
+    [payments],
+  );
+  const filteredPayments = useMemo(
+    () =>
+      payments.filter((payment) => {
+        if (periodFilter !== "all" && payment.period !== periodFilter) return false;
+        if (sessionFilter !== "all" && sessionFilterKey(payment) !== sessionFilter) return false;
+        return true;
+      }),
+    [payments, periodFilter, sessionFilter],
+  );
   const webhookEvents = webhookQueueQuery.data?.events ?? [];
   const pendingCount = payments.filter((p) => {
     const status = adminPaymentStatus(p);
@@ -230,6 +267,53 @@ export default function AdminPaymentsPage() {
 
       <ReconciliationReportPanel />
 
+      <Card p={16}>
+        <div className="grid gap-3 md:grid-cols-[minmax(180px,240px)_minmax(180px,280px)_1fr_auto] md:items-end">
+          <Field label="Month">
+            <select
+              value={periodFilter}
+              onChange={(event) => setPeriodFilter(event.target.value)}
+              className={inputClass}
+            >
+              <option value="all">All months</option>
+              {periodOptions.map((period) => (
+                <option key={period} value={period}>
+                  {period}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Session">
+            <select
+              value={sessionFilter}
+              onChange={(event) => setSessionFilter(event.target.value)}
+              className={inputClass}
+            >
+              <option value="all">All sessions</option>
+              {sessionOptions.map((session) => (
+                <option key={session} value={session}>
+                  {sessionFilterLabel(session)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <div className="text-sm text-rally-subtle md:pb-2">
+            Showing {filteredPayments.length} of {payments.length} records
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setPeriodFilter("all");
+              setSessionFilter("all");
+            }}
+            disabled={periodFilter === "all" && sessionFilter === "all"}
+          >
+            Reset
+          </Button>
+        </div>
+      </Card>
+
       {isError && (
         <Card p={16} style={{ borderColor: "#fecaca", background: "#fef2f2" }}>
           <div role="alert" className="flex items-center justify-between gap-3">
@@ -248,6 +332,10 @@ export default function AdminPaymentsPage() {
           <p className="p-8 text-center text-sm text-rally-subtle" data-testid="payments-empty">
             No payments found.
           </p>
+        ) : filteredPayments.length === 0 ? (
+          <p className="p-8 text-center text-sm text-rally-subtle" data-testid="payments-filter-empty">
+            No payments match these filters.
+          </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[980px] text-sm" data-testid="admin-payments-table">
@@ -265,7 +353,7 @@ export default function AdminPaymentsPage() {
                 </tr>
               </thead>
               <tbody>
-                {payments.map((p) => {
+                {filteredPayments.map((p) => {
                   const chip = statusChip(p.status);
                   const method = methodChip(p);
                   const rowPaidCents = paidCents(p);
@@ -831,7 +919,7 @@ function InvoiceDialog({
   payment: AdminPaymentView | null;
   onClose: () => void;
 }) {
-  const invoiceId = payment?.invoice_number || payment?.payment_id || "";
+  const invoiceId = invoiceActionId(payment);
   const queryClient = useQueryClient();
   const [manualAmountInput, setManualAmountInput] = useState("");
   const [manualMethod, setManualMethod] = useState("cash");
