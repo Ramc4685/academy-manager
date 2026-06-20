@@ -3145,16 +3145,7 @@ def compose_admin(
                 if isinstance(student_id, str) and student_id in student_names:
                     row["student_name"] = student_names[student_id]
 
-        cursor = (
-            db["payments"]
-            .find({"academy_id": request_academy_id, "is_deleted": {"$ne": True}})
-            .sort([("created_at", -1)])
-            .limit(200)
-        )
-        legacy = [
-            payments_repo._to_admin_row(payment, None)  # type: ignore[attr-defined]
-            async for payment in cursor
-        ]
+        legacy = await payments_repo.list_recent_admin(limit=200)
         ledger_rows: list[dict[str, Any]] = []
         ledger_keys: set[str] = set()
         async for doc in db["ledger_payments"].find(
