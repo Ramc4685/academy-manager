@@ -1839,6 +1839,33 @@ def test_transfer_enrollment_reserves_target_and_releases_source(admin_client):
     assert admin_client.seed["sessions"].reserved["sess-1"] == 0
 
 
+def test_override_enrollment_fee_updates_regular_enrollment(admin_client):
+    add = admin_client.post(
+        "/api/v2/admin/enrollments",
+        json={
+            "session_id": "sess-1",
+            "student_id": "st-1",
+            "parent_id": "p-1",
+            "full_name": "Alice",
+        },
+    )
+    enrollment_id = add.json()["enrollment_id"]
+
+    waived = admin_client.post(
+        f"/api/v2/admin/enrollments/{enrollment_id}/fee",
+        json={"amount_cents": 0, "reason": "scholarship"},
+    )
+    assert waived.status_code == 204, waived.text
+    assert admin_client.seed["enrollments"].amounts[enrollment_id] == 0
+
+    cleared = admin_client.post(
+        f"/api/v2/admin/enrollments/{enrollment_id}/fee",
+        json={"amount_cents": None, "reason": "restore default"},
+    )
+    assert cleared.status_code == 204, cleared.text
+    assert admin_client.seed["enrollments"].amounts[enrollment_id] is None
+
+
 def test_cancel_enrollment_emits_event(admin_client):
     r = admin_client.post(
         "/api/v2/admin/enrollments",

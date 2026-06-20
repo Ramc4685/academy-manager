@@ -52,7 +52,7 @@ import {
 import {
   createAdminStudentInvoice,
   getAdminStudent,
-  overrideBillingEnrollmentPrice,
+  overrideEnrollmentFee,
   transferEnrollment,
   updateAdminStudent,
   type AdminStudentDetail,
@@ -1284,9 +1284,9 @@ function SessionsPanel({
   });
 
   const overrideMutation = useMutation({
-    mutationFn: (overridePriceCents: number | null) =>
-      overrideBillingEnrollmentPrice(billingOverride!.enrollment_id, {
-        override_price_cents: overridePriceCents,
+    mutationFn: (amountCents: number | null) =>
+      overrideEnrollmentFee(billingOverride!.enrollment_id, {
+        amount_cents: amountCents,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({

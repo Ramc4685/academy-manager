@@ -162,16 +162,17 @@ export interface AdminStudentBillingEnrollmentView {
   updated_at: string;
 }
 
-export interface OverrideBillingEnrollmentPriceRequest {
-  override_price_cents: number | null;
+export interface OverrideEnrollmentFeeRequest {
+  amount_cents: number | null;
+  reason?: string | null;
 }
 
-export function overrideBillingEnrollmentPrice(
+export function overrideEnrollmentFee(
   enrollmentId: string,
-  payload: OverrideBillingEnrollmentPriceRequest,
-): Promise<AdminStudentBillingEnrollmentView> {
-  return apiFetch<AdminStudentBillingEnrollmentView>(
-    `/admin/billing-enrollments/${encodeURIComponent(enrollmentId)}/override`,
+  payload: OverrideEnrollmentFeeRequest,
+): Promise<void> {
+  return apiFetch<void>(
+    `/admin/enrollments/${encodeURIComponent(enrollmentId)}/fee`,
     {
       method: "POST",
       body: JSON.stringify(payload),

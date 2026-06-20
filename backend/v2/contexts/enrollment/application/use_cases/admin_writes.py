@@ -610,6 +610,29 @@ class TransferEnrollment:
         return enrollment.model_copy(update={"session_id": cmd.target_session_id})
 
 
+class OverrideEnrollmentFeeCommand(BaseModel):
+    model_config = {"frozen": True}
+    enrollment_id: str
+    amount_cents: int | None = Field(default=None, ge=0)
+    actor_id: str | None = None
+    reason: str | None = None
+
+
+class OverrideEnrollmentFee:
+    def __init__(self, *, enrollments: EnrollmentWriter) -> None:
+        self._enrollments = enrollments
+
+    async def execute(self, cmd: OverrideEnrollmentFeeCommand) -> Enrollment:
+        enrollment = await self._enrollments.get(cmd.enrollment_id)
+        if enrollment is None:
+            raise EnrollmentNotFound("enrollment missing", enrollment_id=cmd.enrollment_id)
+        await self._enrollments.update_amount_cents(
+            enrollment.enrollment_id,
+            cmd.amount_cents,
+        )
+        return enrollment
+
+
 class PauseEnrollmentCommand(BaseModel):
     model_config = {"frozen": True}
     enrollment_id: str
