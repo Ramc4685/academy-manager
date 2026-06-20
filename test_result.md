@@ -35,6 +35,7 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-06-18-coach-experience-passport-redesign](docs/test-results/active/2026-06-18-coach-experience-passport-redesign.md)
 - [2026-06-18-production-migration-readiness](docs/test-results/active/2026-06-18-production-migration-readiness.md)
 - [2026-06-19-ci-webkit-coach-passport-production-flow](docs/test-results/active/2026-06-19-ci-webkit-coach-passport-production-flow.md)
+- [2026-06-19-prod-payments-parent-on-file-unassigned](docs/test-results/active/2026-06-19-prod-payments-parent-on-file-unassigned.md)
 
 ## Required Workflow
 
