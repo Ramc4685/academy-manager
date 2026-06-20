@@ -378,6 +378,7 @@ jobs:
     timeout-minutes: 20
     needs: [production-approval, changes]
     if: >
+      always() &&
       needs.production-approval.result == 'success' &&
       (needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch') &&
       github.ref == 'refs/heads/main' &&
@@ -401,6 +402,7 @@ jobs:
     timeout-minutes: 20
     needs: [production-approval, changes]
     if: >
+      always() &&
       needs.production-approval.result == 'success' &&
       (needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch') &&
       github.ref == 'refs/heads/main' &&
