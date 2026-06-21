@@ -383,13 +383,31 @@ function WaiverStep({
     );
   }
 
+  if (waiverQuery.isError) {
+    return (
+      <div className="space-y-4">
+        <StepHeading>Waiver</StepHeading>
+        <div
+          role="alert"
+          className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800"
+        >
+          Could not load the waiver. Please try again.
+        </div>
+        <button type="button" onClick={() => void waiverQuery.refetch()} className="secondary">
+          Retry
+        </button>
+      </div>
+    );
+  }
+
   const waiver = waiverQuery.data;
   if (!waiver?.configured) {
     return (
       <div className="space-y-4">
         <StepHeading>Waiver</StepHeading>
         <p className="text-sm" style={{ color: "var(--rally-muted)" }}>
-          Waiver not configured yet — please contact the academy to proceed.
+          Waiver not configured yet — an academy admin must publish a waiver template and
+          assign it to registration.
         </p>
       </div>
     );

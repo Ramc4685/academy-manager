@@ -127,7 +127,10 @@ async def test_bootstrap_creates_tenant_owner_membership_and_defaults() -> None:
 
     assert store.settings[result.academy_id]["timezone"] == "America/Chicago"
     assert store.billing_policies[result.academy_id]["currency"] == "usd"
-    assert store.waivers[result.academy_id]["version"] == "v1"
+    assert store.waivers[result.academy_id]["version"] == "1"
+    assert store.waivers[result.academy_id]["status"] == "active"
+    assert store.waivers[result.academy_id]["assigned_to_registration"] is True
+    assert store.waivers[result.academy_id]["body"]
     assert [role["role"] for role in store.roles[result.academy_id]] == [
         "admin",
         "coach",

@@ -9,6 +9,7 @@ Verifies:
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from hashlib import sha256
 
 import pytest
 
@@ -59,6 +60,33 @@ async def test_resolves_assigned_active_template(db, acad):
     assert waiver.version == "2026.1"
     assert waiver.text == WAIVER_TEXT
     assert waiver.content_hash == CONTENT_HASH
+    assert waiver.academy_id == acad
+
+
+@pytest.mark.asyncio
+async def test_resolves_legacy_published_template_shape_from_production(db, acad):
+    body = "BLNO Liability Waiver\nParent agrees to academy safety rules."
+    result = await db["waiver_templates"].insert_one(
+        {
+            "academy_id": acad,
+            "title": "BLNO Liability Waiver",
+            "version": "1.0",
+            "body": body,
+            "status": "published",
+            "published_at": NOW,
+            "effective_from": NOW,
+            "updated_at": NOW,
+        }
+    )
+    repo = MongoRegistrationWaiverRepository(db)
+
+    waiver = await repo.get_active()
+
+    assert waiver is not None
+    assert waiver.waiver_id == str(result.inserted_id)
+    assert waiver.version == "1.0"
+    assert waiver.text == body
+    assert waiver.content_hash == sha256(body.encode("utf-8")).hexdigest()
     assert waiver.academy_id == acad
 
 
