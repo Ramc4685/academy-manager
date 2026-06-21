@@ -104,9 +104,12 @@ class AdminWaiverTemplateDetail(BaseModel):
     waiver_id: str
     title: str
     version: str
+    status: Literal["draft", "active", "superseded", "retired"] = "active"
     body: str | None = None
     content_hash: str | None = None
     effective_from: datetime | None = None
+    assigned_to_registration: bool = False
+    assigned_at: datetime | None = None
     artifact_status: str = "unavailable"
     share_status: str = "unavailable"
     gap_note: str = "Signed PDF artifact/share links are not implemented yet."

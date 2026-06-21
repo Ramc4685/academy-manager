@@ -193,6 +193,32 @@ async def test_template_detail_is_tenant_isolated(db, acad) -> None:
 
 
 @pytest.mark.asyncio
+async def test_template_detail_includes_registration_assignment_state(db, acad) -> None:
+    result = await db["waiver_templates"].insert_one(
+        {
+            "academy_id": acad,
+            "title": "BLNO Liability Waiver",
+            "version": "1.0",
+            "content_hash": "hash-production",
+            "body": "Parent agrees to academy safety rules.",
+            "published_at": NOW,
+            "updated_at": NOW,
+            "status": "published",
+            "assigned_to_registration": False,
+        }
+    )
+    repo = MongoAdminWaiverRepository(db)
+
+    detail = await repo.get_template_detail(str(result.inserted_id))
+
+    assert detail is not None
+    assert detail.waiver_id == str(result.inserted_id)
+    assert detail.status == "active"
+    assert detail.assigned_to_registration is False
+    assert detail.assigned_at is None
+
+
+@pytest.mark.asyncio
 async def test_signature_detail_is_tenant_isolated(db, acad) -> None:
     await db["waiver_templates"].insert_one(
         {

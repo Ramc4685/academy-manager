@@ -68,14 +68,20 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
             waiver_id=str(doc.get("waiver_template_id") or doc.get("waiver_id") or doc.get("_id")),
             title=title,
             version=str(doc.get("version") or ""),
+            status=self._template_status(doc),
             body=str(doc.get("body") or doc.get("text") or doc.get("waiver_text") or "") or None,
             content_hash=str(doc.get("content_hash") or doc.get("waiver_text_hash") or "") or None,
             effective_from=self._as_datetime(
                 doc.get("effective_from")
                 or doc.get("effective_at")
                 or doc.get("effective_date")
+                or doc.get("published_at")
+                or doc.get("assigned_at")
+                or doc.get("updated_at")
                 or doc.get("created_at")
             ),
+            assigned_to_registration=bool(doc.get("assigned_to_registration") or False),
+            assigned_at=self._as_datetime(doc.get("assigned_at")),
         )
 
     async def get_signature_detail(self, signature_id: str) -> AdminWaiverSignatureDetail | None:
@@ -469,6 +475,13 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
         if BsonObjectId.is_valid(value):
             filters.append({"_id": BsonObjectId(value)})
         return filters
+
+    @staticmethod
+    def _template_status(doc: dict[str, Any]) -> str:
+        status = str(doc.get("status") or "active")
+        if status == "published":
+            return "active"
+        return status
 
     def _to_acceptance(
         self,
