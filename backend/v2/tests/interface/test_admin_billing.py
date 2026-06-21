@@ -349,6 +349,42 @@ def test_list_payments_returns_recent(admin_client):
     assert ids == {"pay-1", "pay-2"}
 
 
+def test_list_payments_exposes_invoice_id_for_invoice_actions(admin_client):
+    async def list_payments_recent():
+        return [
+            {
+                "payment_id": "inv-display-row",
+                "invoice_id": "inv-internal-1",
+                "parent_id": "parent-1",
+                "student_id": "student-1",
+                "student_name": "Student One",
+                "session_id": "session-1",
+                "period": "2026-06",
+                "amount_cents": 6000,
+                "discount_cents": 0,
+                "final_amount_cents": 6000,
+                "amount_received_cents": 0,
+                "paid_amount_cents": 0,
+                "balance_due_cents": 6000,
+                "overpayment_credit_cents": 0,
+                "currency": "usd",
+                "status": "pending",
+                "refunded_cents": 0,
+                "invoice_number": "INV-202606-DISPLAY",
+                "payment_method": "invoice",
+                "stripe_linked": False,
+                "created_at": NOW,
+            }
+        ]
+
+    admin_client.use_cases.list_payments_recent = list_payments_recent
+    r = admin_client.get("/api/v2/admin/payments")
+    assert r.status_code == 200, r.text
+    payment = r.json()["payments"][0]
+    assert payment["invoice_id"] == "inv-internal-1"
+    assert payment["invoice_number"] == "INV-202606-DISPLAY"
+
+
 def test_list_payments_wrong_persona_404(coach_on_admin_client):
     r = coach_on_admin_client.get("/api/v2/admin/payments")
     assert r.status_code == 404

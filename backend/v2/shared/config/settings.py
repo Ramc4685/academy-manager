@@ -85,6 +85,7 @@ class Settings(BaseSettings):
     frontend_url: str | None = Field(default=None)
     scheduler_tz: str = Field(default="UTC")
     resend_api_key: str | None = Field(default=None)
+    sender_email: str | None = Field(default=None)
     email_delivery_enabled: bool = Field(
         default=False,
         description="When True and resend_api_key is set, emails are sent via Resend. Stub adapter used otherwise.",
@@ -170,6 +171,13 @@ class Settings(BaseSettings):
             self.frontend_url = os.environ.get("FRONTEND_URL", self.frontend_url)
         if "V2_SCHEDULER_TZ" not in os.environ:
             self.scheduler_tz = os.environ.get("SCHEDULER_TZ", self.scheduler_tz)
+        if "V2_SENDER_EMAIL" not in os.environ:
+            self.sender_email = os.environ.get("SENDER_EMAIL", self.sender_email)
+        if "V2_EMAIL_DELIVERY_ENABLED" not in os.environ:
+            self.email_delivery_enabled = _env_bool(
+                "EMAIL_DELIVERY_ENABLED",
+                self.email_delivery_enabled,
+            )
         self._validate_launch_settings()
         self._validate_production_settings()
         return self

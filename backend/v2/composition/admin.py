@@ -325,6 +325,9 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_admin_waiver_repo impor
 from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import (
     MongoApplicationRepository,
 )
+from backend.v2.contexts.onboarding.infrastructure.mongo_parent_waiver_repo import (
+    MongoParentWaiverRepository,
+)
 from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_template_repo import (
     MongoWaiverTemplateRepository,
 )
@@ -621,6 +624,7 @@ def _invoice_to_admin_payment_row(invoice: dict[str, Any]) -> dict[str, Any]:
     )
     return {
         "payment_id": str(invoice.get("invoice_id") or invoice.get("_id") or ""),
+        "invoice_id": str(invoice.get("invoice_id") or "") or None,
         "parent_id": str(invoice.get("parent_id") or invoice.get("parent_user_id") or ""),
         "parent_name": None,
         "student_id": str(invoice.get("student_id") or "") or None,
@@ -1880,7 +1884,7 @@ def compose_admin(
     comms = CommsService(messages=messages_repo, academy_id=academy_id)
 
     _s = settings
-    _from_addr = (
+    _from_addr = _s.sender_email or (
         f"noreply@{_s.frontend_url.replace('https://', '').replace('http://', '').split('/')[0]}"
         if _s.frontend_url
         else "noreply@academy.app"
@@ -2139,6 +2143,7 @@ def compose_admin(
         enrollments=enrollments_w,
         waitlist=waitlist,
         waiver_templates=waiver_templates_repo,
+        waiver_signatures=MongoParentWaiverRepository(db),
         enrollment_events=enrollment_events,
         academy_id=academy_id,
     )
@@ -3145,16 +3150,7 @@ def compose_admin(
                 if isinstance(student_id, str) and student_id in student_names:
                     row["student_name"] = student_names[student_id]
 
-        cursor = (
-            db["payments"]
-            .find({"academy_id": request_academy_id, "is_deleted": {"$ne": True}})
-            .sort([("created_at", -1)])
-            .limit(200)
-        )
-        legacy = [
-            payments_repo._to_admin_row(payment, None)  # type: ignore[attr-defined]
-            async for payment in cursor
-        ]
+        legacy = await payments_repo.list_recent_admin(limit=200)
         ledger_rows: list[dict[str, Any]] = []
         ledger_keys: set[str] = set()
         async for doc in db["ledger_payments"].find(

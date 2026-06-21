@@ -72,3 +72,34 @@ async def test_archive_legacy_payments_archives_backfilled_rows_before_delete(db
     )
     assert archive is not None
     assert archive["archive_reason"] == "legacy_payment_collection_retired"
+
+
+@pytest.mark.asyncio
+async def test_archive_allows_invoice_number_preserving_backfill(db) -> None:
+    now = datetime(2026, 6, 18, 12, 0, tzinfo=UTC)
+    await db["payments"].insert_one(
+        {
+            "academy_id": "acad-1",
+            "payment_id": "pay_28505f6db2b4a5b11917",
+            "invoice_number": "BLNO-202605-b11917",
+            "parent_id": "parent-1",
+            "amount_cents": 6000,
+            "status": "pending",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    await db["invoices"].insert_one(
+        {
+            "academy_id": "acad-1",
+            "invoice_id": "inv-from-pay_28505f6db2b4a5b11917",
+            "invoice_number": "BLNO-202605-b11917",
+            "backfill_payment_id": "pay_28505f6db2b4a5b11917",
+        }
+    )
+
+    result = await archive_legacy_payments(db, academy_id="acad-1", apply=False)
+
+    assert result["status"] == "ready"
+    assert result["archiveable"] == 1
+    assert result["blockers"] == []

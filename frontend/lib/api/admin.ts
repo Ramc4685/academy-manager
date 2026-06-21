@@ -245,6 +245,7 @@ export type AdminPaymentStatus = PaymentStatus | "partially_paid";
 
 export interface AdminPaymentView {
   payment_id: string;
+  invoice_id?: string | null;
   parent_id: string;
   parent_name?: string | null;
   student_id: string | null;
@@ -874,9 +875,12 @@ export interface AdminWaiverTemplateDetail {
   waiver_id: string;
   title: string;
   version: string;
+  status: AdminWaiverTemplateStatus;
   body: string | null;
   content_hash: string | null;
   effective_at: string | null;
+  assigned_to_registration: boolean;
+  assigned_at: string | null;
   artifact_status: string;
   share_status: string;
   gap_note: string;
@@ -894,6 +898,8 @@ export interface AdminWaiverSignatureDetail {
   waiver_version: string | null;
   template_reference: string | null;
   content_hash: string | null;
+  artifact_reference: string | null;
+  share_link_reference: string | null;
   artifact_status: string;
   share_status: string;
   gap_note: string;

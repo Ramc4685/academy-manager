@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Academy Financial Flows</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8fafc; color: #111; }
+  .root { padding: 24px; max-width: 980px; margin: 0 auto; }
+  .header { margin-bottom: 20px; }
+  .header h1 { font-size: 22px; font-weight: 700; }
+  .header p { font-size: 13px; color: #666; margin-top: 4px; }
+  .verified-note { background:#eff6ff; border:1.5px solid #93c5fd; color:#1e40af; border-radius:8px; padding:10px 14px; font-size:12.5px; margin-bottom:18px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; }
+  .tab { padding: 7px 16px; border-radius: 20px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1.5px solid transparent; transition: all 0.15s; background:#fff; }
+  .tab.active { color: #fff; }
+  .tab[data-tab="student"] { border-color: #4f7df7; color: #4f7df7; }
+  .tab[data-tab="student"].active { background: #4f7df7; }
+  .tab[data-tab="profit"] { border-color: #22c55e; color: #22c55e; }
+  .tab[data-tab="profit"].active { background: #22c55e; }
+  .tab[data-tab="coach"] { border-color: #f59e0b; color: #f59e0b; }
+  .tab[data-tab="coach"].active { background: #f59e0b; }
+  .tab[data-tab="leakage"] { border-color: #ef4444; color: #ef4444; }
+  .tab[data-tab="leakage"].active { background: #ef4444; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  .step-row { display: flex; align-items: stretch; gap: 0; }
+  .step { flex: 1; border-radius: 10px; padding: 12px 14px; border: 1.5px solid; position: relative; }
+  .step-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.6; margin-bottom: 4px; }
+  .step-name { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+  .step-detail { font-size: 12px; line-height: 1.5; opacity: 0.85; }
+  .step.blue { border-color: #bfdbfe; background: #eff6ff; color: #1e40af; }
+  .step.green { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
+  .step.amber { border-color: #fde68a; background: #fffbeb; color: #92400e; }
+  .step.red { border-color: #fecaca; background: #fef2f2; color: #991b1b; }
+  .step.purple { border-color: #e9d5ff; background: #faf5ff; color: #6b21a8; }
+  .step.gray { border-color: #e5e7eb; background: #f9fafb; color: #374151; }
+  .arrow-down { display: flex; justify-content: center; padding: 4px 0; font-size: 18px; color: #9ca3af; }
+  .arrow-right { display: flex; align-items: center; padding: 0 6px; font-size: 18px; color: #9ca3af; }
+  .badge { display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; margin-top: 6px; }
+  .badge.warn { background: #fef3c7; color: #92400e; border: 1px solid #fbbf24; }
+  .badge.danger { background: #fee2e2; color: #991b1b; border: 1px solid #f87171; }
+  .badge.ok { background: #dcfce7; color: #166534; border: 1px solid #4ade80; }
+  .badge.info { background: #dbeafe; color: #1e40af; border: 1px solid #60a5fa; }
+  .formula { background: #1e293b; color: #e2e8f0; border-radius: 8px; padding: 12px 16px; font-family: 'SF Mono', 'Monaco', monospace; font-size: 12px; line-height: 1.8; margin: 12px 0; white-space: pre-wrap; }
+  .formula .kw { color: #93c5fd; }
+  .formula .val { color: #86efac; }
+  .formula .comment { color: #64748b; }
+  .formula .warn { color: #fbbf24; }
+  .leak-table { width: 100%; border-collapse: collapse; font-size: 12.5px; background:#fff; border-radius:8px; overflow:hidden; }
+  .leak-table th { text-align: left; padding: 8px 10px; background: #f1f5f9; color: #475569; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 2px solid #e2e8f0; }
+  .leak-table td { padding: 9px 10px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+  .leak-table tr:hover td { background: #f8fafc; }
+  .sev { display: inline-block; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 11px; }
+  .sev.high { background: #fee2e2; color: #991b1b; }
+  .sev.med { background: #fef3c7; color: #92400e; }
+  .sev.low { background: #e0f2fe; color: #075985; }
+  .leak-name { font-weight: 600; color: #1e293b; }
+  .leak-file { font-family: monospace; font-size: 11px; color: #64748b; margin-top: 3px; }
+  .section-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #9ca3af; margin: 16px 0 8px; }
+  .multi-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .callout { border-radius: 8px; padding: 10px 14px; font-size: 13px; margin: 8px 0; display: flex; gap: 10px; align-items: flex-start; }
+  .callout.warn { background: #fffbeb; border: 1.5px solid #fbbf24; color: #92400e; }
+  .callout.danger { background: #fef2f2; border: 1.5px solid #f87171; color: #991b1b; }
+  .callout.info { background: #eff6ff; border: 1.5px solid #93c5fd; color: #1e40af; }
+  .callout-icon { font-size: 16px; flex-shrink: 0; }
+  .callout-text strong { display: block; font-weight: 700; font-size: 13px; margin-bottom: 2px; }
+  .callout-text span { font-size: 12px; line-height: 1.5; }
+  code { font-family:'SF Mono','Monaco',monospace; font-size: 0.92em; }
+</style>
+</head>
+<body>
+<div class="root">
+  <div class="header">
+    <h1>Academy Financial Flows</h1>
+    <p>End-to-end money movement — student dues &rarr; revenue &rarr; profit &rarr; coach payroll. Verified against source at <code>backend/v2</code>.</p>
+  </div>
+
+  <div class="verified-note">
+    <strong>Note on severities:</strong> labels below reflect the <em>code-verified</em> reassessment. Several risks the first pass marked HIGH were found to have guards (payroll-None returns <code>null</code> + a blocked banner; rate-gap &amp; %-revenue occurrences are reported in <code>unpaid_occurrence_ids</code>; credit double-apply is guarded by <code>_applied_credit_cents</code>). The two to act on first: <strong>autopay reconciliation</strong> and <strong>partial-payroll profit overstatement</strong>.
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="student">Student Dues</div>
+    <div class="tab" data-tab="profit">Profit Calc</div>
+    <div class="tab" data-tab="coach">Coach Payroll</div>
+    <div class="tab" data-tab="leakage">Leakage Points</div>
+  </div>
+
+  <!-- STUDENT DUES -->
+  <div class="panel active" id="panel-student">
+    <div class="section-label">Trigger</div>
+    <div class="step-row">
+      <div class="step blue">
+        <div class="step-title">Admin Action</div>
+        <div class="step-name">POST /admin/billing/generate-monthly-payments</div>
+        <div class="step-detail">Admin provides <strong>period</strong> (YYYY-MM). Manual trigger — no auto-scheduler.<br>File: <code>mongo_payment_repo.py:495</code></div>
+        <span class="badge info">Manual only</span>
+      </div>
+    </div>
+    <div class="arrow-down">&darr;</div>
+
+    <div class="section-label">Eligibility Filter</div>
+    <div class="step-row">
+      <div class="step gray">
+        <div class="step-title">Who gets a bill?</div>
+        <div class="step-name">Enrollment Query + Skips</div>
+        <div class="step-detail">Queries <strong>enrollments</strong> where <code>status &isin; {active, paused}</code>. Then excludes:</div>
+        <div style="margin-top: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 12px;">
+          <div style="background:#fef2f2;border-radius:6px;padding:7px 9px;color:#991b1b;border:1px solid #fecaca;"><strong>&#10060; Skipped</strong><br>Autopay + active Stripe sub<br>Status = paused OR period in skip_periods<br>Billing type = non-standard<br>Already has payment this period<br>No parent_id found</div>
+          <div style="background:#f0fdf4;border-radius:6px;padding:7px 9px;color:#166534;border:1px solid #bbf7d0;"><strong>&#10003; Included</strong><br>Active manual enrollments<br>Paused without skip_period<br>No active Stripe subscription</div>
+        </div>
+        <span class="badge warn">&#9888; Pause has no enforced resume date</span>
+      </div>
+    </div>
+    <div class="arrow-down">&darr;</div>
+
+    <div class="section-label">Amount Calculation</div>
+    <div class="step-row">
+      <div class="step blue" style="flex: 1.1;">
+        <div class="step-title">Not first month</div>
+        <div class="step-name">Full Monthly Tuition</div>
+        <div class="step-detail">Uses <code>session.amount_cents</code> unchanged.<br>Snapshot type: <code>MONTHLY_TUITION</code></div>
+        <span class="badge ok">Simple — no edge cases</span>
+      </div>
+      <div class="arrow-right">|</div>
+      <div class="step purple" style="flex: 1.1;">
+        <div class="step-title">First month</div>
+        <div class="step-name">Proration Calc</div>
+        <div class="step-detail"><code>days_from_start_to_month_end / total_days &times; monthly_price</code><br>Snapshot: <code>FIRST_MONTH_PRORATION</code>, marked CONSUMED<br>File: <code>proration.py</code></div>
+        <span class="badge warn">&#9888; CONSUMED prevents re-proration on rerun</span>
+      </div>
+    </div>
+    <div class="arrow-down">&darr;</div>
+
+    <div class="section-label">Credit Deduction</div>
+    <div class="step-row">
+      <div class="step amber">
+        <div class="step-title">Credit Ledger</div>
+        <div class="step-name">apply_available_credits(parent_id, invoice_id, amount)</div>
+        <div class="step-detail">Final amount = <code>max(gross &minus; credit, 0)</code><br>File: <code>mongo_payment_repo.py:602-609</code></div>
+        <span class="badge ok">Re-run guarded by _applied_credit_cents (idempotent)</span>
+      </div>
+    </div>
+    <div class="arrow-down">&darr;</div>
+
+    <div class="section-label">Storage (Dual-Write Phase 2A)</div>
+    <div class="multi-row">
+      <div class="step blue">
+        <div class="step-title">Idempotency Guard</div>
+        <div class="step-name">billing_invoice_keys</div>
+        <div class="step-detail">Unique index <code>(academy_id, enrollment_id, period)</code>. DuplicateKeyError &rarr; recovery path.<br>File: <code>mongo_payment_repo.py:570</code></div>
+        <span class="badge warn">&#9888; Self-heals on next run — but no scheduler; non-atomic write</span>
+      </div>
+      <div class="step green">
+        <div class="step-title">Invoice Record</div>
+        <div class="step-name">ledger_invoices</div>
+        <div class="step-detail">Writes <code>status:open</code>, <code>balance_due_cents</code>, <code>due_date</code> (end of period month).</div>
+        <span class="badge ok">Primary invoice record</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- PROFIT CALC -->
+  <div class="panel" id="panel-profit">
+    <div class="callout info">
+      <div class="callout-icon">&#128205;</div>
+      <div class="callout-text">
+        <strong>Entry: get_reports_dashboard(period) &rarr; profit_and_loss block</strong>
+        <span>File: <code>composition/admin.py:700-1019</code> — independent queries, then one formula.</span>
+      </div>
+    </div>
+
+    <div class="section-label">Revenue Input (two date semantics!)</div>
+    <div class="step-row">
+      <div class="step green">
+        <div class="step-title">cash_collected_cents</div>
+        <div class="step-name">ledger_payments + legacy payments</div>
+        <div class="step-detail"><code>ledger_payments</code>: filtered by <strong>created_at</strong> &isin; [start,end), status &isin; {succeeded, partially_refunded, refunded} &nbsp;<code>(admin.py:748-760)</code><br><code>payments</code> (legacy): filtered by <strong>period</strong> label, de-duped vs invoice keys <code>(admin.py:772-798)</code></div>
+        <span class="badge warn">&#9888; created_at, not paid_at — and mixes date-window with period-label</span>
+      </div>
+    </div>
+    <div class="arrow-down">&darr;</div>
+
+    <div class="section-label">Expense Inputs</div>
+    <div class="multi-row">
+      <div class="step amber">
+        <div class="step-title">expenses collection</div>
+        <div class="step-name">Operating Expenses</div>
+        <div class="step-detail">Filtered by <code>incurred_on</code>. Split into <code>rent_cents</code> + <code>misc_expenses_cents</code>. <code>(admin.py:909-910)</code></div>
+      </div>
+      <div class="step amber">
+        <div class="step-title">payout_periods collection</div>
+        <div class="step-name">Coach Payroll</div>
+        <div class="step-detail">Filtered by <code>period_start</code>.<br>Priority: <code>approved &rarr; estimated &rarr; None</code> <code>(admin.py:933-939)</code></div>
+        <span class="badge danger">&#9888; PARTIAL generation &rarr; understated payroll &rarr; overstated profit, no warning</span>
+      </div>
+    </div>
+    <div class="arrow-down">&darr;</div>
+
+    <div class="section-label">Profit Formula (admin.py:940-949)</div>
+    <div class="formula"><span class="kw">payroll_for_pnl</span> = <span class="val">approved</span> if approved&gt;0 else <span class="val">estimated</span> if estimated&gt;0 else <span class="warn">None</span>
+
+<span class="kw">net_profit</span> = (<span class="val">cash</span> &minus; <span class="val">expenses</span> &minus; <span class="val">payroll_for_pnl</span>) if payroll_for_pnl is not None else <span class="warn">None</span>
+
+<span class="kw">profit_margin</span> = net_profit / cash   <span class="comment"># None if net_profit is None or cash == 0</span>
+
+<span class="comment"># Zero payout periods &rarr; net_profit = None + payroll.blocked_by banner. Handled.</span>
+<span class="warn"># Three date fields across the three queries:</span>
+<span class="comment">  revenue   &rarr; ledger_payment.created_at  /  legacy payment.period</span>
+<span class="comment">  expenses  &rarr; expense.incurred_on</span>
+<span class="comment">  payroll   &rarr; payout_period.period_start</span></div>
+
+    <div class="callout warn" style="margin-top: 12px;">
+      <div class="callout-icon">&#9888;&#65039;</div>
+      <div class="callout-text">
+        <strong>Two Sources of Truth for Revenue</strong>
+        <span>P&amp;L revenue = <em>actual cash collected</em>. Coach percent-of-revenue pay uses <code>occurrence.expected_revenue_minor = session.amount_cents &times; active_enrollments</code> (<em>expected gross</em>). A coach on % billing is paid on revenue the academy may never have collected.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- COACH PAYROLL -->
+  <div class="panel" id="panel-coach">
+    <div class="section-label">Rate Setup</div>
+    <div class="step-row">
+      <div class="step amber">
+        <div class="step-title">Collection: coach_rates</div>
+        <div class="step-name">Rate Sheet per Coach</div>
+        <div class="step-detail">Lookup window: <code>effective_from &le; t &lt; effective_until</code> (half-open). <code>(admin.py:1504-1522)</code><br>billing_unit &isin; per_session | per_hour | percent_of_revenue</div>
+        <span class="badge warn">&#9888; supersede() sets effective_until with no contiguity validation &rarr; holes possible</span>
+      </div>
+    </div>
+    <div class="arrow-down">&darr;</div>
+
+    <div class="section-label">Eligibility per Occurrence (compute_payout.py:161-181)</div>
+    <div class="step-row">
+      <div class="step gray">
+        <div class="step-name">6 conditions — all must pass</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; font-size: 12px;">
+          <div style="background:#f0fdf4;padding:7px 9px;border-radius:6px;color:#166534;border:1px solid #bbf7d0;">&#10003; is_payable = true<br>&#10003; status = "completed"<br>&#10003; in period window</div>
+          <div style="background:#f0fdf4;padding:7px 9px;border-radius:6px;color:#166534;border:1px solid #bbf7d0;">&#10003; paying coach == this coach<br>&#10003; not marked "absent"<br>&#10003; rate OR override exists</div>
+        </div>
+        <span class="badge danger">&#9888; paying coach = actual_coach_id ?? scheduled_coach_id — substitute set &rarr; scheduled coach occurrence skipped entirely (no trace)</span>
+      </div>
+    </div>
+    <div class="arrow-down">&darr;</div>
+
+    <div class="section-label">Amount per Occurrence (precedence)</div>
+    <div class="step-row" style="gap: 8px; flex-wrap: wrap;">
+      <div class="step blue" style="flex: 1; min-width: 150px;">
+        <div class="step-title">Priority 1</div>
+        <div class="step-name">Admin Override</div>
+        <div class="step-detail"><code>attendance.rate_override_minor</code></div>
+      </div>
+      <div class="arrow-right">&rarr;</div>
+      <div class="step green" style="flex: 1; min-width: 150px;">
+        <div class="step-title">per_session</div>
+        <div class="step-name">Flat Rate</div>
+        <div class="step-detail"><code>rate.amount_minor</code></div>
+      </div>
+      <div class="arrow-right">&rarr;</div>
+      <div class="step purple" style="flex: 1; min-width: 150px;">
+        <div class="step-title">per_hour</div>
+        <div class="step-name">Hourly</div>
+        <div class="step-detail"><code>amount_minor &times; (min/60)</code> round half-even</div>
+      </div>
+      <div class="arrow-right">&rarr;</div>
+      <div class="step amber" style="flex: 1; min-width: 170px;">
+        <div class="step-title">percent_of_revenue</div>
+        <div class="step-name">% of Revenue</div>
+        <div class="step-detail"><code>expected_revenue &times; percent_bps / 10000</code><br>If no expected_revenue &rarr; returns None</div>
+        <span class="badge warn">&#9888; reported in unpaid_occurrence_ids (not silent at compute layer)</span>
+      </div>
+    </div>
+    <div class="arrow-down">&darr;</div>
+
+    <div class="section-label">Payout Statement &amp; Persistence</div>
+    <div class="multi-row">
+      <div class="step blue">
+        <div class="step-title">In-memory result</div>
+        <div class="step-name">PayoutStatement</div>
+        <div class="step-detail"><code>lines[]</code> &middot; <code>total_minor</code><br><code>unpaid_occurrence_ids[]</code> (rate gap / no price)<br><code>absent_occurrence_ids[]</code></div>
+        <span class="badge warn">&#9888; unpaid/absent IDs only as useful as the UI that surfaces them</span>
+      </div>
+      <div class="step green">
+        <div class="step-title">Collection: payout_periods</div>
+        <div class="step-name">Frozen Payout Record</div>
+        <div class="step-detail">Status: <code>draft &rarr; approved &rarr; paid</code><br>Unique: <code>(academy_id, coach_id, period_start, period_end)</code><br>Re-run returns existing — no recompute once approved/paid.</div>
+        <span class="badge ok">Audit log: payout_audit_log</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- LEAKAGE -->
+  <div class="panel" id="panel-leakage">
+    <div class="callout danger" style="margin-bottom: 14px;">
+      <div class="callout-icon">&#128680;</div>
+      <div class="callout-text">
+        <strong>Code-verified reassessment — 2 priorities, rest guarded or observability-only</strong>
+        <span>Severities downgraded from the first pass where the code was found to have guards.</span>
+      </div>
+    </div>
+    <table class="leak-table">
+      <thead>
+        <tr><th style="width: 80px;">Severity</th><th>Issue</th><th style="width: 110px;">Area</th><th>Verified reality</th><th style="width: 170px;">File</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="sev high">HIGH</span></td>
+          <td><span class="leak-name">&#128179; Autopay Fallback Gap</span></td>
+          <td>Student Dues</td>
+          <td>Autopay skipped in monthly gen; invoices come ONLY from Stripe webhooks. Missed webhook = no invoice, no payment row. Reconcile is admin-triggered only — no cron.</td>
+          <td class="leak-file">mongo_payment_repo.py:517-523<br>handle_webhook_event.py:282</td>
+        </tr>
+        <tr>
+          <td><span class="sev med">MED-HI</span></td>
+          <td><span class="leak-name">&#128202; Partial-Payroll Profit Overstatement</span></td>
+          <td>Profit Calc</td>
+          <td>Zero payout periods is handled (net_profit=None + banner). But if SOME exist (not all coaches, or still draft), payroll is understated, profit overstated, and no blocked_by fires.</td>
+          <td class="leak-file">admin.py:922-944</td>
+        </tr>
+        <tr>
+          <td><span class="sev med">MED-HI</span></td>
+          <td><span class="leak-name">&#128178; Two Revenue Sources</span></td>
+          <td>Both</td>
+          <td>P&amp;L = actual collected; coach % = expected gross (session price &times; enrollments). Coach paid on revenue possibly never collected.</td>
+          <td class="leak-file">admin.py:1004 + compute_payout.py:116</td>
+        </tr>
+        <tr>
+          <td><span class="sev med">MED</span></td>
+          <td><span class="leak-name">&#128100; Substitute Coach Attribution</span></td>
+          <td>Coach Payroll</td>
+          <td>By design: actual_coach_id &ne; scheduled &rarr; scheduled coach occurrence skipped entirely, not even in unpaid list. Risk = bad actual_coach_id zeroes a coach with zero audit trace.</td>
+          <td class="leak-file">compute_payout.py:77-82, :169</td>
+        </tr>
+        <tr>
+          <td><span class="sev med">MED</span></td>
+          <td><span class="leak-name">&#128336; Revenue Timing (created_at)</span></td>
+          <td>Profit Calc</td>
+          <td>cash_collected uses ledger_payment.created_at (not paid_at) + legacy payment.period label. Late-entered payment lands in wrong month; mixed semantics.</td>
+          <td class="leak-file">admin.py:748-798</td>
+        </tr>
+        <tr>
+          <td><span class="sev med">MED</span></td>
+          <td><span class="leak-name">&#9201; Rate Window Gap</span></td>
+          <td>Coach Payroll</td>
+          <td>Contiguous windows are fine (half-open). A real hole &rarr; occurrence reported in unpaid_occurrence_ids (NOT silently dropped). supersede() lacks contiguity validation.</td>
+          <td class="leak-file">admin.py:1504-1522, compute_payout.py:179</td>
+        </tr>
+        <tr>
+          <td><span class="sev med">MED</span></td>
+          <td><span class="leak-name">&#9208; Pause / skip_periods Deferral</span></td>
+          <td>Student Dues</td>
+          <td>status="paused" skips every month with no enforced resume. skip_periods = per-month, no audit/expiry. Enrollment can fall out of billing indefinitely.</td>
+          <td class="leak-file">mongo_payment_repo.py:512</td>
+        </tr>
+        <tr>
+          <td><span class="sev med">MED</span></td>
+          <td><span class="leak-name">&#128274; Orphan Invoice Key</span></td>
+          <td>Student Dues</td>
+          <td>Key written before invoice, no transaction. Crash &rarr; orphan. Self-heals on next run via recovery path; but no scheduler, and skipped_existing counter masks it. Partial invoice (header w/o lines) not repaired.</td>
+          <td class="leak-file">mongo_payment_repo.py:445-485, :569</td>
+        </tr>
+        <tr>
+          <td><span class="sev low">% rev</span></td>
+          <td><span class="leak-name">&#128201; % Revenue No-Price</span></td>
+          <td>Coach Payroll</td>
+          <td>Session with no amount_cents &rarr; computed None &rarr; occurrence reported in unpaid_occurrence_ids. Silence is downstream (UI surfacing), not data loss.</td>
+          <td class="leak-file">compute_payout.py:112-117, :188-191</td>
+        </tr>
+        <tr>
+          <td><span class="sev low">LOW-MED</span></td>
+          <td><span class="leak-name">&#128176; Credit Double-Apply</span></td>
+          <td>Student Dues</td>
+          <td>Guarded: key inserted before credits forces reruns into idempotent recovery; _applied_credit_cents prevents re-apply. Residual only if credit ledger's own audit write is non-atomic.</td>
+          <td class="leak-file">mongo_payment_repo.py:467-473, 602-609</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+<script>
+  document.querySelectorAll('.tab').forEach(function(tab){
+    tab.addEventListener('click', function(){
+      document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
+      document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('active'); });
+      tab.classList.add('active');
+      document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+    });
+  });
+</script>
+</body>
+</html>

@@ -98,6 +98,86 @@ test.describe("QA defect regressions", () => {
     await expect(page.getByRole("radio", { name: "Beginner" })).toBeChecked();
   });
 
+  test("parent onboarding shows waiver text and advances to session after accept", async ({
+    page,
+  }) => {
+    await stubParentShell(page);
+    let acceptedWaiver = false;
+    let currentApplication = { ...draftApplication };
+
+    await page.route("**/api/v2/parent/onboarding/start", (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      return fulfillJson(route, currentApplication);
+    });
+    await page.route("**/api/v2/parent/onboarding/waiver", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        configured: true,
+        version: "1.0",
+        body: "BLNO Liability Waiver\nParent agrees to academy safety rules.",
+      });
+    });
+    await page.route("**/api/v2/parent/onboarding/app-qa-1", async (route) => {
+      if (route.request().method() !== "PATCH") return route.fallback();
+      const patch = JSON.parse(route.request().postData() ?? "{}");
+      if (patch.accept_waiver === true) acceptedWaiver = true;
+      currentApplication = {
+        ...currentApplication,
+        parent_profile: {
+          ...currentApplication.parent_profile,
+          ...(patch.parent_profile ?? {}),
+        },
+        child_profile: {
+          ...currentApplication.child_profile,
+          ...(patch.child_profile ?? {}),
+        },
+        waiver_accepted: currentApplication.waiver_accepted || patch.accept_waiver === true,
+      };
+      return fulfillJson(route, currentApplication);
+    });
+    await page.route("**/api/v2/parent/sessions/available", (route) =>
+      fulfillJson(route, {
+        sessions: [
+          {
+            session_id: "session-qa-1",
+            title: "Thursday Beginner",
+            location: "Court 1",
+            start_at: "2026-06-25T23:00:00Z",
+            end_at: "2026-06-26T00:00:00Z",
+            capacity: 8,
+            enrolled_count: 3,
+            available_seats: 5,
+            amount_cents: 7000,
+          },
+        ],
+      }),
+    );
+
+    await page.goto("/parent/onboarding");
+    const parentForm = page.locator("form").filter({ hasText: "Your details" });
+    await expect(parentForm.getByRole("heading", { name: "Your details" })).toBeVisible();
+    await parentForm.getByLabel("First name").fill("Rina");
+    await parentForm.getByLabel("Last name").fill("Patel");
+    await parentForm.getByRole("button", { name: "Next" }).click();
+
+    const childForm = page.locator("form").filter({ hasText: "Your child" });
+    await expect(childForm.getByRole("heading", { name: "Your child" })).toBeVisible();
+    await childForm.getByLabel("First name").fill("Ava");
+    await childForm.getByLabel("Last name").fill("Patel");
+    await childForm.getByLabel("Date of birth").fill("2014-02-03");
+    await expect(childForm.getByLabel("First name")).toHaveValue("Ava");
+    await childForm.getByRole("radio", { name: "Beginner" }).click();
+    await childForm.getByRole("button", { name: "Next" }).click();
+
+    await expect(page.getByText("BLNO Liability Waiver")).toBeVisible();
+    await expect(page.getByText("Parent agrees to academy safety rules.")).toBeVisible();
+    await page.getByRole("button", { name: "I Accept" }).click();
+
+    await expect(page.getByRole("heading", { name: "Pick a session" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Thursday Beginner/ })).toBeVisible();
+    expect(acceptedWaiver).toBe(true);
+  });
+
   test("billing portal failures are visible to parents", async ({ page }) => {
     await stubParentShell(page);
     await stubParentPayments(page);

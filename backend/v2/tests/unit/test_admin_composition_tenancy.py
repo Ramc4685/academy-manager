@@ -563,6 +563,43 @@ async def test_admin_payments_recent_suppresses_matching_legacy_projection(mongo
 
 
 @pytest.mark.asyncio
+async def test_admin_payments_recent_enriches_legacy_payment_student_name(mongo_db) -> None:
+    now = datetime(2026, 6, 17, tzinfo=UTC)
+    await mongo_db["students"].insert_one(
+        {
+            "academy_id": "request-acad",
+            "student_id": "student-request",
+            "full_name": "Aadhya Abhishek",
+            "parent_id": "parent-request",
+            "status": "active",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    await mongo_db["payments"].insert_one(
+        {
+            "payment_id": "legacy-pay-request",
+            "academy_id": "request-acad",
+            "parent_id": "parent-request",
+            "student_id": "student-request",
+            "status": "pending",
+            "amount_cents": 12000,
+            "currency": "usd",
+            "period": "2026-06",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope("request-acad"):
+        rows = await admin.list_payments_recent()
+
+    assert rows[0]["payment_id"] == "legacy-pay-request"
+    assert rows[0]["student_name"] == "Aadhya Abhishek"
+
+
+@pytest.mark.asyncio
 async def test_admin_payments_recent_returns_invoice_rows_without_legacy_payments(
     mongo_db,
 ) -> None:

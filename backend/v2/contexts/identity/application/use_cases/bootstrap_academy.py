@@ -259,12 +259,18 @@ def _default_waiver(
         "accepting student registrations."
     )
     return {
-        "waiver_id": id_factory("waiver_"),
+        "waiver_template_id": id_factory("wt_"),
         "academy_id": academy_id,
-        "version": "v1",
-        "text": text,
+        "name": "Default participation waiver",
+        "title": "Default participation waiver",
+        "version": "1",
+        "body": text,
+        "status": "active",
         "content_hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
         "effective_from": now,
+        "published_at": now,
+        "assigned_to_registration": True,
+        "assigned_at": now,
         "created_at": now,
         "updated_at": now,
     }
