@@ -37,6 +37,7 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-06-19-ci-webkit-coach-passport-production-flow](docs/test-results/active/2026-06-19-ci-webkit-coach-passport-production-flow.md)
 - [2026-06-19-prod-payments-parent-on-file-unassigned](docs/test-results/active/2026-06-19-prod-payments-parent-on-file-unassigned.md)
 - [2026-06-20-billing-payments-ui-production-deploy](docs/test-results/active/2026-06-20-billing-payments-ui-production-deploy.md)
+- [2026-06-20-complete-waiver-system](docs/test-results/active/2026-06-20-complete-waiver-system.md)
 - [2026-06-20-production-session-fee-override-hotfix](docs/test-results/active/2026-06-20-production-session-fee-override-hotfix.md)
 
 ## Required Workflow

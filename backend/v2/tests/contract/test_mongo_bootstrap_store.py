@@ -58,5 +58,13 @@ async def test_mongo_bootstrap_store_creates_idempotent_tenant_defaults(db) -> N
     assert await db["academy_settings"].count_documents({"academy_id": first.academy_id}) == 1
     assert await db["billing_policies"].count_documents({"academy_id": first.academy_id}) == 1
     assert await db["waiver_templates"].count_documents({"academy_id": first.academy_id}) == 1
+    waiver = await db["waiver_templates"].find_one({"academy_id": first.academy_id})
+    assert waiver is not None
+    assert waiver["waiver_template_id"].startswith("wt_")
+    assert waiver["status"] == "active"
+    assert waiver["assigned_to_registration"] is True
+    assert waiver["body"]
+    assert waiver["content_hash"]
+    assert waiver["effective_from"] is not None
     assert await db["academy_roles"].count_documents({"academy_id": first.academy_id}) == 3
     assert await db["academy_feature_flags"].count_documents({"academy_id": first.academy_id}) == 1
