@@ -434,6 +434,11 @@ class TransferEnrollmentRequest(BaseModel):
     reason: str | None = None
 
 
+class OverrideEnrollmentFeeRequest(BaseModel):
+    amount_cents: int | None = Field(default=None, ge=0)
+    reason: str | None = Field(default=None, max_length=500)
+
+
 class PauseEnrollmentRequest(BaseModel):
     effective_date: date
     reason: str | None = None

@@ -172,6 +172,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     EditRosterAdd,
     EditSession,
     JoinWaitlist,
+    OverrideEnrollmentFee,
     PauseEnrollment,
     RemoveFromWaitlist,
     ResumeEnrollment,
@@ -1703,6 +1704,7 @@ def compose_admin(
         sessions=sessions_w,
         enrollment_events=enrollment_events,
     )
+    override_enrollment_fee = OverrideEnrollmentFee(enrollments=enrollments_w)
     pause_enrollment = PauseEnrollment(
         enrollments=enrollments_w,
         sessions=sessions_w,
@@ -4112,6 +4114,7 @@ def compose_admin(
         edit_roster_add=edit_roster_add,
         cancel_enrollment=cancel_enrollment,
         transfer_enrollment=transfer_enrollment,
+        override_enrollment_fee=override_enrollment_fee,
         pause_enrollment=pause_enrollment,
         resume_enrollment=resume_enrollment,
         withdraw_enrollment=withdraw_enrollment,

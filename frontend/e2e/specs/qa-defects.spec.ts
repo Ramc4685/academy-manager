@@ -403,7 +403,11 @@ test.describe("QA defect regressions", () => {
     await stubParentShell(page);
     await stubParentPayments(page);
 
+    const meResponse = page.waitForResponse((response) =>
+      response.url().endsWith("/api/v2/me") && response.status() === 200,
+    );
     await page.goto("/admin");
+    await meResponse;
 
     await expect(page).toHaveURL(/\/parent\/payments\?access_denied=admin/);
     await expect(page.getByTestId("persona-access-denied")).toContainText(
@@ -418,7 +422,11 @@ test.describe("QA defect regressions", () => {
     await stubParentShell(page);
     await stubParentPayments(page);
 
+    const meResponse = page.waitForResponse((response) =>
+      response.url().endsWith("/api/v2/me") && response.status() === 200,
+    );
     await page.goto("/coach/sessions");
+    await meResponse;
 
     await expect(page).toHaveURL(/\/parent\/payments\?access_denied=coach/, {
       timeout: 15000,

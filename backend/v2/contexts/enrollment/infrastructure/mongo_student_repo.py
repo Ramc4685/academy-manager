@@ -885,10 +885,12 @@ class MongoStudentRepository(TenantScopedRepository):
         enrollment: dict[str, object],
         session: dict[str, object],
     ) -> int | None:
-        for doc in (enrollment, session):
-            amount = cls._amount_cents(doc)
-            if amount > 0:
-                return amount
+        enrollment_amount = cls._explicit_amount_cents(enrollment)
+        if enrollment_amount is not None:
+            return max(enrollment_amount, 0)
+        session_amount = cls._explicit_amount_cents(session)
+        if session_amount is not None:
+            return max(session_amount, 0)
         return None
 
     @staticmethod
@@ -897,6 +899,20 @@ class MongoStudentRepository(TenantScopedRepository):
             return None
         text = str(value)
         return text or None
+
+    @classmethod
+    def _explicit_amount_cents(cls, doc: dict[str, object]) -> int | None:
+        return cls._cents_value(
+            doc,
+            (
+                "final_amount_cents",
+                "amount_cents",
+                "gross_amount_cents",
+                "monthly_price_cents",
+                "price_cents",
+            ),
+            ("final_amount", "amount"),
+        )
 
     @classmethod
     def _amount_cents(cls, doc: dict[str, object]) -> int:

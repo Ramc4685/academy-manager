@@ -326,7 +326,7 @@ test.describe("admin session creation and fee settings UI", () => {
 
     await page.goto("/admin/sessions/series-wed");
 
-    await expect(page.getByText("Replacement coaches")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Replacement coaches" })).toBeVisible();
     await expect(page.getByText("Occurrences")).toHaveCount(0);
     await expect(page.getByText("No replacement coaches added.")).toBeVisible();
 

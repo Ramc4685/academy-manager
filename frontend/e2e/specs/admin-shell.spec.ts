@@ -289,6 +289,23 @@ async function stubParentBff(page: Page) {
   );
 }
 
+async function expectShellLogout(
+  page: Page,
+  path: string,
+  readyTestId: string,
+  stubBff: (page: Page) => Promise<void>,
+) {
+  await stubBff(page);
+  await page.goto(path);
+  await expect(page.getByTestId(readyTestId)).toBeVisible();
+  const logout = page.getByTestId("persona-logout-button");
+  await expect(logout).toBeEnabled();
+  await Promise.all([
+    page.waitForURL(/\/login$/, { timeout: 10_000 }),
+    logout.click(),
+  ]);
+}
+
 async function openAdminDrawer(page: Page) {
   const button = page.getByTestId("admin-open-drawer");
   await expect(button).toBeVisible();
@@ -652,29 +669,8 @@ test.describe("Rally admin shell", () => {
   });
 
   test("admin, coach, and parent shells expose logout", async ({ page }) => {
-    await stubAdminBff(page);
-    await page.goto("/admin");
-    await page.getByRole("button", { name: "Log out" }).click();
-    await expect(page).toHaveURL(/\/login$/);
-
-    // The logout replaceLocation sets a 100ms timer. On WebKit the timer can
-    // still be pending when the next goto starts, interrupting it. Catch and retry.
-    await stubCoachBff(page);
-    await page.goto("/coach/today").catch(async (e: Error) => {
-      if (!e.message.includes("interrupted")) throw e;
-      await page.waitForLoadState("networkidle");
-      await page.goto("/coach/today");
-    });
-    await page.getByRole("button", { name: "Log out" }).click();
-    await expect(page).toHaveURL(/\/login$/);
-
-    await stubParentBff(page);
-    await page.goto("/parent/dashboard").catch(async (e: Error) => {
-      if (!e.message.includes("interrupted")) throw e;
-      await page.waitForLoadState("networkidle");
-      await page.goto("/parent/dashboard");
-    });
-    await page.getByRole("button", { name: "Log out" }).click();
-    await expect(page).toHaveURL(/\/login$/);
+    await expectShellLogout(page, "/admin", "admin-dashboard", stubAdminBff);
+    await expectShellLogout(page, "/coach/today", "coach-today", stubCoachBff);
+    await expectShellLogout(page, "/parent/dashboard", "parent-dashboard", stubParentBff);
   });
 });

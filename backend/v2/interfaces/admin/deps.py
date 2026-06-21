@@ -58,6 +58,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     EditRosterAdd,
     EditSession,
     JoinWaitlist,
+    OverrideEnrollmentFee,
     PauseEnrollment,
     RemoveFromWaitlist,
     ResumeEnrollment,
@@ -148,6 +149,7 @@ class AdminUseCases:
     edit_roster_add: EditRosterAdd
     cancel_enrollment: CancelEnrollment
     transfer_enrollment: TransferEnrollment
+    override_enrollment_fee: OverrideEnrollmentFee
     pause_enrollment: PauseEnrollment
     resume_enrollment: ResumeEnrollment
     withdraw_enrollment: WithdrawEnrollment

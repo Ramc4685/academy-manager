@@ -47,6 +47,30 @@ class MongoEnrollmentWriter(TenantScopedRepository):
             },
         )
 
+    async def update_amount_cents(self, enrollment_id: str, amount_cents: int | None) -> None:
+        update: dict[str, object]
+        if amount_cents is None:
+            update = {
+                "$unset": {
+                    "amount_cents": "",
+                    "gross_amount_cents": "",
+                    "final_amount_cents": "",
+                    "monthly_price_cents": "",
+                    "price_cents": "",
+                },
+                "$set": {"updated_at": datetime.now(UTC)},
+            }
+        else:
+            update = {
+                "$set": {
+                    "amount_cents": amount_cents,
+                    "gross_amount_cents": amount_cents,
+                    "final_amount_cents": amount_cents,
+                    "updated_at": datetime.now(UTC),
+                }
+            }
+        await self._update_one({"enrollment_id": enrollment_id}, update)
+
     @staticmethod
     def _to_domain(doc: dict[str, object]) -> Enrollment:
         return Enrollment(
