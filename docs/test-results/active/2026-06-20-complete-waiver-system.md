@@ -20,6 +20,7 @@ Complete v2 waiver templates, parent signing, admin status, and signed record wo
 - 2026-06-20T19:49:00 main/working: Continuing goal with artifact/share-link slice. Evidence gathered: billing has metadata-only billing_artifacts generation; waiver signatures currently store artifact_id but no automatic artifact/share metadata and admin details still report unavailable share links. Next TDD slice targets MongoParentWaiverRepository.save_signature and admin signed-detail read model.
 - 2026-06-20T20:05:59 main/working: Artifact/share-link slice: parent waiver signatures now create idempotent signed-waiver artifact metadata and active non-guessable share-link records; admin waiver rows/details surface stored/available artifact and share states plus admin-only artifact/share references.
 - 2026-06-20T21:31:03 main/working: Resolved PR #222 merge conflict in backend/v2/tests/application/test_bootstrap_academy.py by keeping the waiver variable binding and all active/assigned/body assertions from main.
+- 2026-06-20T21:34:35 main/working: Merged updated origin/main after PR #223; backend bootstrap conflict remained resolved, and the new admin-waivers E2E conflict was resolved by keeping the signed waiver artifact/share reference coverage from this PR.
 ## Verification
 
 - No verification recorded yet.
@@ -34,6 +35,7 @@ Complete v2 waiver templates, parent signing, admin status, and signed record wo
 - 2026-06-20T19:46:19: Focused browser verification: cd frontend && PLAYWRIGHT_PORT=3104 pnpm exec playwright test e2e/specs/admin-waivers.spec.ts e2e/specs/qa-defects.spec.ts -g 'admin waivers|parent onboarding shows waiver text' => 6 passed across chromium-mobile and webkit-mobile. Warnings were existing NO_COLOR/FORCE_COLOR and package module type warnings.
 - 2026-06-20T20:05:59: Artifact/share-link verification: pytest v2/tests/contract/test_parent_waiver_repo.py v2/tests/contract/test_admin_waivers_mongo_repo.py v2/tests/application/test_admin_waivers.py v2/tests/application/test_admin_waiver_details.py v2/tests/interface/test_admin_ops_detail_routes.py -q -> 18 passed, 1 existing Starlette warning; ruff check touched backend files -> passed; pnpm typecheck -> passed; pnpm lint -> 0 errors, 5 existing warnings; PLAYWRIGHT_PORT=3105 pnpm exec playwright test e2e/specs/admin-waivers.spec.ts -> 6 passed; full backend pytest v2/tests -q -> 1458 passed, 5 existing warnings.
 - 2026-06-20T21:31:03: source backend/.venv/bin/activate && pytest v2/tests/application/test_bootstrap_academy.py -q passed: 5 passed in 1.52s
+- 2026-06-20T21:35:22: After merging updated origin/main: source backend/.venv/bin/activate && pytest v2/tests/application/test_bootstrap_academy.py -q => 5 passed; PLAYWRIGHT_PORT=3116 pnpm exec playwright test e2e/specs/admin-waivers.spec.ts => 8 passed.
 ## Reusable Lessons
 
 - None recorded yet.
