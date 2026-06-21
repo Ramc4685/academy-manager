@@ -481,6 +481,7 @@ function WaiversTable({ waivers }: { waivers: AdminWaiverStudentRow[] }) {
 }
 
 function artifactLabel(status: string | null | undefined): string {
+  if (status === "stored") return "Stored";
   if (status === "stored_reference") return "Stored reference";
   return "Unavailable";
 }

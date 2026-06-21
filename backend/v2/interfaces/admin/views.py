@@ -1133,9 +1133,12 @@ class AdminWaiverTemplateDetailView(BaseModel):
     waiver_id: str
     title: str
     version: str
+    status: AdminWaiverTemplateStatus = "active"
     body: str | None = None
     content_hash: str | None = None
     effective_at: datetime | None = None
+    assigned_to_registration: bool = False
+    assigned_at: datetime | None = None
     artifact_status: str
     share_status: str
     gap_note: str
@@ -1199,6 +1202,8 @@ class AdminWaiverSignatureDetailView(BaseModel):
     waiver_version: str | None = None
     template_reference: str | None = None
     content_hash: str | None = None
+    artifact_reference: str | None = None
+    share_link_reference: str | None = None
     artifact_status: str
     share_status: str
     gap_note: str

@@ -50,6 +50,7 @@ class AdminWaiverAcceptance(BaseModel):
     signer_name: str | None = None
     signer_email: str | None = None
     artifact_id: str | None = None
+    share_link_id: str | None = None
 
 
 class AdminWaiverData(BaseModel):
@@ -104,9 +105,12 @@ class AdminWaiverTemplateDetail(BaseModel):
     waiver_id: str
     title: str
     version: str
+    status: Literal["draft", "active", "superseded", "retired"] = "active"
     body: str | None = None
     content_hash: str | None = None
     effective_from: datetime | None = None
+    assigned_to_registration: bool = False
+    assigned_at: datetime | None = None
     artifact_status: str = "unavailable"
     share_status: str = "unavailable"
     gap_note: str = "Signed PDF artifact/share links are not implemented yet."
@@ -128,6 +132,8 @@ class AdminWaiverSignatureDetail(BaseModel):
     waiver_title: str | None = None
     waiver_version: str | None = None
     content_hash: str | None = None
+    artifact_id: str | None = None
+    share_link_id: str | None = None
     artifact_status: str = "unavailable"
     share_status: str = "unavailable"
     gap_note: str = "Signed PDF artifact/share links are not implemented yet."
@@ -192,7 +198,9 @@ class ListAdminWaivers:
                         if acceptance and acceptance.artifact_id
                         else "unavailable"
                     ),
-                    share_status="unavailable",
+                    share_status=(
+                        "available" if acceptance and acceptance.share_link_id else "unavailable"
+                    ),
                 )
             )
 
