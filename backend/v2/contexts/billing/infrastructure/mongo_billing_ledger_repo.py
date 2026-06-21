@@ -155,6 +155,28 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         return self._invoice_from_doc(doc) if doc else None
 
+    async def get_payment_by_stripe_payment_intent_id(
+        self, stripe_payment_intent_id: str
+    ) -> LedgerPayment | None:
+        doc = await self.ledger_payments.find_one(
+            {
+                "academy_id": current_academy_id(),
+                "stripe_payment_intent_id": stripe_payment_intent_id,
+            }
+        )
+        return self._payment_from_doc(doc) if doc else None
+
+    async def get_payment_allocation_by_idempotency_key(
+        self, idempotency_key: str
+    ) -> PaymentAllocation | None:
+        doc = await self._db["payment_allocations"].find_one(
+            {
+                "academy_id": current_academy_id(),
+                "idempotency_key": idempotency_key,
+            }
+        )
+        return self._allocation_from_doc(doc) if doc else None
+
     async def record_payment(
         self,
         payment: LedgerPayment,

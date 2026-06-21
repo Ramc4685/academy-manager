@@ -512,15 +512,6 @@ class MongoPaymentRepository(TenantScopedRepository):
             if status == "paused" or period in set(enrollment.get("skip_periods") or []):
                 skipped_paused += 1
                 continue
-            payment_mode = str(enrollment.get("payment_mode") or "").lower()
-            subscription_status = str(enrollment.get("subscription_status") or "").lower()
-            if payment_mode in {"autopay", "monthly"} and subscription_status in {
-                "active",
-                "trialing",
-                "past_due",
-            }:
-                skipped_autopay += 1
-                continue
             billing_type = str(enrollment.get("billing_type") or "standard").lower()
             if billing_type not in {"", "standard", "monthly", "manual"}:
                 skipped_no_charge += 1

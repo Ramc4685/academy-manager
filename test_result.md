@@ -34,6 +34,14 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-06-17-pr-200-rebase-with-main](docs/test-results/active/2026-06-17-pr-200-rebase-with-main.md)
 - [2026-06-18-coach-experience-passport-redesign](docs/test-results/active/2026-06-18-coach-experience-passport-redesign.md)
 - [2026-06-18-production-migration-readiness](docs/test-results/active/2026-06-18-production-migration-readiness.md)
+- [2026-06-19-historical-batch-session-membership-billing-investigation](docs/test-results/active/2026-06-19-historical-batch-session-membership-billing-investigation.md)
+- [2026-06-19-open-github-issue-code-validity-audit](docs/test-results/active/2026-06-19-open-github-issue-code-validity-audit.md)
+- [2026-06-19-prod-payments-parent-on-file-unassigned](docs/test-results/active/2026-06-19-prod-payments-parent-on-file-unassigned.md)
+- [2026-06-19-production-invoice-date-correction](docs/test-results/active/2026-06-19-production-invoice-date-correction.md)
+- [2026-06-19-production-legacy-conversion-review](docs/test-results/active/2026-06-19-production-legacy-conversion-review.md)
+- [2026-06-19-production-manual-payment-invoice-id-mismatch](docs/test-results/active/2026-06-19-production-manual-payment-invoice-id-mismatch.md)
+- [2026-06-20-complete-waiver-system](docs/test-results/active/2026-06-20-complete-waiver-system.md)
+- [2026-06-21-app-owned-billing-stripe-processor-only](docs/test-results/active/2026-06-21-app-owned-billing-stripe-processor-only.md)
 
 ## Required Workflow
 

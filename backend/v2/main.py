@@ -29,6 +29,15 @@ from backend.v2.composition.digests import (
 )
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.contexts.billing.application.ports import StripeGateway
+from backend.v2.contexts.billing.application.use_cases.reconcile_stripe_payment_intents import (
+    ReconcileStripePaymentIntents,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
+    MongoBillingLedgerRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_billing_reconciliation_run_repo import (
+    MongoBillingReconciliationRunRepository,
+)
 from backend.v2.contexts.communications.application.use_cases.send_coach_daily_digest import (
     SendCoachDailyDigestCommand,
 )
@@ -285,6 +294,35 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if totals["processed"] or totals["failed"]:
             log.info("stripe_webhook_events_processed", extra=totals)
 
+    async def _reconcile_stripe_payment_intents() -> None:
+        totals = {
+            "academy_count": 0,
+            "scanned": 0,
+            "repaired": 0,
+            "skipped": 0,
+            "quarantined": 0,
+            "failed": 0,
+        }
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            runtime_academy_id,
+        ):
+            with tenant_scope(academy_id):
+                result = await ReconcileStripePaymentIntents(
+                    stripe=stripe_gw,
+                    ledger=MongoBillingLedgerRepository(db),
+                    run_recorder=MongoBillingReconciliationRunRepository(db),
+                    academy_id=academy_id,
+                ).execute(limit=100)
+            totals["academy_count"] += 1
+            totals["scanned"] += int(result.get("scanned") or 0)
+            totals["repaired"] += int(result.get("repaired") or 0)
+            totals["skipped"] += int(result.get("skipped") or 0)
+            totals["quarantined"] += int(result.get("quarantined") or 0)
+            totals["failed"] += int(result.get("failed") or 0)
+        if totals["repaired"] or totals["quarantined"] or totals["failed"]:
+            log.info("stripe_payment_intent_reconciliation_processed", extra=totals)
+
     async def _send_coach_daily_digests() -> None:
         # Hourly tick. The job runs every hour and only sends for academies whose
         # *effective* digest hour matches the current scheduler-TZ hour. The env
@@ -352,6 +390,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         "interval",
         seconds=60,
         id="process_stripe_webhook_events",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _reconcile_stripe_payment_intents,
+        "interval",
+        minutes=10,
+        id="reconcile_stripe_payment_intents",
         replace_existing=True,
         max_instances=1,
     )

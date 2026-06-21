@@ -143,7 +143,7 @@ async def test_override_student_price_updates_billing_enrollment() -> None:
 
 
 @pytest.mark.asyncio
-async def test_move_student_session_type_prorates_updates_stripe_and_emits_event() -> None:
+async def test_move_student_session_type_records_local_proration_without_stripe_invoice() -> None:
     session_types = FakeSessionTypeRepo()
     enrollments = FakeBillingEnrollmentRepo()
     stripe = FakeStripeGateway()
@@ -203,13 +203,6 @@ async def test_move_student_session_type_prorates_updates_stripe_and_emits_event
 
     assert result.enrollment.session_type_id == "type-elite"
     assert result.proration.net_cents == 3_871
-    assert result.stripe_invoice_id.startswith("in_proration_")
-    assert stripe.subscription_prorations == [
-        {
-            "stripe_subscription_id": "sub_123",
-            "new_price_cents": 20_000,
-            "billing_period_start": datetime(2026, 5, 1, tzinfo=UTC),
-            "billing_period_end": datetime(2026, 6, 1, tzinfo=UTC),
-        }
-    ]
+    assert result.stripe_invoice_id is None
+    assert stripe.subscription_prorations == []
     assert [event.name for event in event_sink.events] == ["Enrollment.SessionTypeChanged"]

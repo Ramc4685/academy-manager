@@ -291,14 +291,6 @@ class MoveStudentSessionType:
             period_end=cmd.period_end,
         )
         stripe_invoice_id = None
-        effective_price = existing.override_price_cents or to_type.price_cents
-        if existing.stripe_subscription_id:
-            stripe_invoice_id = await self._stripe.update_subscription_proration(
-                existing.stripe_subscription_id,
-                new_price_cents=effective_price,
-                billing_period_start=cmd.period_start,
-                billing_period_end=cmd.period_end,
-            )
         updated = existing.model_copy(
             update={
                 "session_type_id": to_type.session_type_id,

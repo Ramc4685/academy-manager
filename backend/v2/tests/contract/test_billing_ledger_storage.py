@@ -128,6 +128,35 @@ async def test_allocate_payment_reads_from_ledger_payments(db, acad) -> None:
 
 
 @pytest.mark.asyncio
+async def test_reconciliation_lookup_methods_are_tenant_scoped(db, acad) -> None:
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    invoice = _make_invoice("inv-reconcile-lookup", acad, now)
+    payment = _make_payment("pay-reconcile-lookup", acad, now).model_copy(
+        update={"stripe_payment_intent_id": "pi_reconcile_lookup"}
+    )
+
+    await repo.create_invoice(invoice, lines=[], idempotency_key="inv:reconcile:lookup")
+    await repo.record_payment(payment, idempotency_key="pay:reconcile:lookup")
+    await repo.allocate_payment(
+        payment_id=payment.payment_id,
+        invoice_id=invoice.invoice_id,
+        amount_cents=10_000,
+        idempotency_key="alloc:reconcile:lookup",
+    )
+
+    found_payment = await repo.get_payment_by_stripe_payment_intent_id("pi_reconcile_lookup")
+    found_allocation = await repo.get_payment_allocation_by_idempotency_key(
+        "alloc:reconcile:lookup"
+    )
+
+    assert found_payment is not None
+    assert found_payment.payment_id == payment.payment_id
+    assert found_allocation is not None
+    assert found_allocation.invoice_id == invoice.invoice_id
+
+
+@pytest.mark.asyncio
 async def test_no_cross_collection_contamination(db, acad) -> None:
     """A payment recorded via record_payment must never appear in payments."""
     repo = MongoBillingLedgerRepository(db)

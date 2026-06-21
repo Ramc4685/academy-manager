@@ -16,7 +16,7 @@ from typing import Protocol
 from pydantic import BaseModel
 
 from backend.v2.contexts.billing.application.ports import LedgerRepository
-from backend.v2.contexts.billing.domain.ledger import LedgerPayment
+from backend.v2.contexts.billing.domain.ledger import LedgerInvoice, LedgerPayment
 
 log = logging.getLogger(__name__)
 
@@ -167,6 +167,14 @@ class ChargeInvoiceViaAutopay:
         except Exception as exc:
             # Stripe card decline or API error — do NOT change invoice status
             decline_str = str(exc)
+            await self._record_attempt(
+                invoice=invoice,
+                amount_cents=invoice.balance_due_cents,
+                status="failed",
+                stripe_payment_intent_id=None,
+                failure_code=decline_str,
+                failure_message=decline_str,
+            )
             log.warning(
                 "charge_autopay: stripe error invoice=%s err=%s",
                 invoice_id,
@@ -182,6 +190,14 @@ class ChargeInvoiceViaAutopay:
 
         # 5a. PI declined (gateway returned a decline_code without raising)
         if decline_code is not None:
+            await self._record_attempt(
+                invoice=invoice,
+                amount_cents=invoice.balance_due_cents,
+                status="failed",
+                stripe_payment_intent_id=pi_id,
+                failure_code=decline_code,
+                failure_message=decline_code,
+            )
             log.warning(
                 "charge_autopay: PI declined invoice=%s pi=%s code=%s",
                 invoice_id,
@@ -198,6 +214,14 @@ class ChargeInvoiceViaAutopay:
 
         # 5b. PI requires further action (3DS, etc.)
         if pi_status != "succeeded":
+            await self._record_attempt(
+                invoice=invoice,
+                amount_cents=invoice.balance_due_cents,
+                status="requires_action",
+                stripe_payment_intent_id=pi_id,
+                failure_code=None,
+                failure_message=None,
+            )
             log.info(
                 "charge_autopay: PI requires_action invoice=%s pi=%s status=%s",
                 invoice_id,
@@ -213,6 +237,14 @@ class ChargeInvoiceViaAutopay:
             )
 
         # 6. PI succeeded — record LedgerPayment + allocate
+        await self._record_attempt(
+            invoice=invoice,
+            amount_cents=invoice.balance_due_cents,
+            status="succeeded",
+            stripe_payment_intent_id=pi_id,
+            failure_code=None,
+            failure_message=None,
+        )
         payment_id = f"ledger-pay-autopay:{pi_id}"
         payment = await self._ledger.record_payment(
             LedgerPayment(
@@ -252,4 +284,29 @@ class ChargeInvoiceViaAutopay:
             invoice_id=invoice_id,
             status=updated_invoice.status,
             balance_due_cents=updated_invoice.balance_due_cents,
+        )
+
+    async def _record_attempt(
+        self,
+        *,
+        invoice: LedgerInvoice,
+        amount_cents: int,
+        status: str,
+        stripe_payment_intent_id: str | None,
+        failure_code: str | None,
+        failure_message: str | None,
+    ) -> None:
+        attempt_key_suffix = stripe_payment_intent_id or "stripe-error"
+        await self._ledger.record_payment_attempt(
+            invoice_id=invoice.invoice_id,
+            parent_id=invoice.parent_id,
+            amount_cents=amount_cents,
+            currency=invoice.currency,
+            status=status,
+            stripe_payment_intent_id=stripe_payment_intent_id,
+            stripe_checkout_session_id=None,
+            failure_code=failure_code,
+            failure_message=failure_message,
+            idempotency_key=f"autopay-attempt:{invoice.invoice_id}:{attempt_key_suffix}",
+            created_by_event_id=None,
         )

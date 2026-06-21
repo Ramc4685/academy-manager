@@ -109,6 +109,7 @@ class FakeLedgerRepo:
         )
         self.recorded_payments: list[tuple[LedgerPayment, str]] = []
         self.allocation_calls: list[tuple[str, str, int, str]] = []
+        self.payment_attempts: list[dict] = []
 
     async def get_invoice(self, invoice_id: str) -> LedgerInvoice | None:
         return self._invoices.get(invoice_id)
@@ -139,6 +140,37 @@ class FakeLedgerRepo:
     ) -> LedgerPayment:
         self.recorded_payments.append((payment, idempotency_key))
         return payment
+
+    async def record_payment_attempt(
+        self,
+        *,
+        invoice_id: str,
+        parent_id: str,
+        amount_cents: int,
+        currency: str,
+        status: str,
+        stripe_payment_intent_id: str | None,
+        stripe_checkout_session_id: str | None,
+        failure_code: str | None,
+        failure_message: str | None,
+        idempotency_key: str,
+        created_by_event_id: str | None = None,
+    ) -> dict:
+        attempt = {
+            "invoice_id": invoice_id,
+            "parent_id": parent_id,
+            "amount_cents": amount_cents,
+            "currency": currency,
+            "status": status,
+            "stripe_payment_intent_id": stripe_payment_intent_id,
+            "stripe_checkout_session_id": stripe_checkout_session_id,
+            "failure_code": failure_code,
+            "failure_message": failure_message,
+            "idempotency_key": idempotency_key,
+            "created_by_event_id": created_by_event_id,
+        }
+        self.payment_attempts.append(attempt)
+        return attempt
 
     async def allocate_payment(
         self, *, payment_id: str, invoice_id: str, amount_cents: int, idempotency_key: str
@@ -288,6 +320,21 @@ async def test_happy_path_open_invoice_pi_succeeds() -> None:
     assert recorded_payment.amount_cents == 10_000
     assert recorded_payment.payment_method == "stripe_autopay"
     assert stripe.lookup_calls == [{"academy_id": "acad-1", "parent_id": "parent-1"}]
+    assert repo.payment_attempts == [
+        {
+            "invoice_id": "inv-1",
+            "parent_id": "parent-1",
+            "amount_cents": 10_000,
+            "currency": "usd",
+            "status": "succeeded",
+            "stripe_payment_intent_id": "pi_test_123",
+            "stripe_checkout_session_id": None,
+            "failure_code": None,
+            "failure_message": None,
+            "idempotency_key": "autopay-attempt:inv-1:pi_test_123",
+            "created_by_event_id": None,
+        }
+    ]
 
     # Exactly one allocation
     assert len(repo.allocation_calls) == 1
@@ -406,6 +453,21 @@ async def test_decline_returns_charge_result_false_status_unchanged() -> None:
     # No payment recorded, no allocation
     assert repo.recorded_payments == []
     assert repo.allocation_calls == []
+    assert repo.payment_attempts == [
+        {
+            "invoice_id": "inv-1",
+            "parent_id": "parent-1",
+            "amount_cents": 10_000,
+            "currency": "usd",
+            "status": "failed",
+            "stripe_payment_intent_id": "pi_declined",
+            "stripe_checkout_session_id": None,
+            "failure_code": "insufficient_funds",
+            "failure_message": "insufficient_funds",
+            "idempotency_key": "autopay-attempt:inv-1:pi_declined",
+            "created_by_event_id": None,
+        }
+    ]
 
 
 async def test_stripe_exception_returns_charge_result_false() -> None:

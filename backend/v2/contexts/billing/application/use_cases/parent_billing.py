@@ -94,15 +94,10 @@ class StartSubscriptionCheckout:
         subscription_id = str(new_ulid())
         success_url = _success_url_with_checkout_session_placeholder(cmd.success_url)
         try:
-            (
-                checkout_id,
-                url,
-                stripe_subscription_id,
-            ) = await self._stripe.create_subscription_checkout_session(
+            checkout_id, url = await self._stripe.create_autopay_setup_checkout_session(
                 parent_id=cmd.parent_id,
                 enrollment_id=cmd.enrollment_id,
                 session_id=cmd.session_id,
-                amount_cents=cmd.amount_cents,
                 success_url=success_url,
                 cancel_url=cmd.cancel_url,
                 metadata={
@@ -114,6 +109,7 @@ class StartSubscriptionCheckout:
                     "parent_id": cmd.parent_id,
                     "enrollment_id": cmd.enrollment_id,
                     "session_id": cmd.session_id,
+                    "source": "autopay_setup",
                 },
             )
         except Exception as exc:  # pragma: no cover - infra path
@@ -127,7 +123,7 @@ class StartSubscriptionCheckout:
                 parent_id=cmd.parent_id,
                 enrollment_id=cmd.enrollment_id,
                 session_id=cmd.session_id,
-                stripe_subscription_id=stripe_subscription_id,
+                stripe_subscription_id="",
                 stripe_checkout_session_id=checkout_id,
                 status="incomplete",
                 payment_mode="monthly",
@@ -234,7 +230,16 @@ class GetCheckoutStatus:
     ) -> Subscription:
         status = str(checkout.get("status") or "")
         stripe_subscription_id = str(checkout.get("subscription") or "")
-        if status != "complete" or not stripe_subscription_id:
+        metadata = checkout.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        is_setup_checkout = (
+            str(checkout.get("mode") or "") == "setup"
+            or str(metadata.get("source") or "") == "autopay_setup"
+        )
+        if status != "complete":
+            return subscription
+        if not stripe_subscription_id and not is_setup_checkout:
             return subscription
         updated = subscription.model_copy(
             update={
@@ -254,7 +259,7 @@ class GetCheckoutStatus:
             await self._enrollment_autopay.set_autopay_state(
                 enrollment_id=updated.enrollment_id,
                 subscription_status="active",
-                stripe_subscription_id=stripe_subscription_id,
+                stripe_subscription_id=stripe_subscription_id or None,
             )
         return updated
 
