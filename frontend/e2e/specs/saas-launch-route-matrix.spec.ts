@@ -250,7 +250,7 @@ test.describe("Wave 12 SaaS launch route matrix scaffold", () => {
       const errors = collectConsoleErrors(page);
 
       await stubAdminLaunchBff(page);
-      await page.goto(route.href, { waitUntil: "domcontentloaded" });
+      await page.goto(route.href, { waitUntil: "commit" });
 
       await expect(page.getByTestId(route.testId)).toBeVisible({ timeout: 30_000 });
       expect(guard.v2Requests.length).toBeGreaterThan(0);

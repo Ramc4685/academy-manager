@@ -117,6 +117,60 @@ async def test_waiver_template_repo_round_trips_and_scopes_by_tenant(db, acad) -
 
 
 @pytest.mark.asyncio
+async def test_waiver_template_repo_lists_production_published_rows_as_active(db, acad) -> None:
+    result = await db["waiver_templates"].insert_one(
+        {
+            "academy_id": acad,
+            "title": "BLNO Liability Waiver",
+            "version": "1.0",
+            "content_hash": "hash-production",
+            "body": "Parent agrees to academy safety rules.",
+            "published_at": _dt("2026-06-20T12:00:00"),
+            "updated_at": _dt("2026-06-20T12:00:00"),
+            "status": "published",
+        }
+    )
+    repo = MongoWaiverTemplateRepository(db)
+
+    templates = await repo.list_templates()
+
+    assert len(templates) == 1
+    assert templates[0].waiver_template_id == str(result.inserted_id)
+    assert templates[0].status == "active"
+    assert templates[0].effective_from == _dt("2026-06-20T12:00:00")
+
+
+@pytest.mark.asyncio
+async def test_waiver_template_repo_assigns_production_row_by_object_id(db, acad) -> None:
+    result = await db["waiver_templates"].insert_one(
+        {
+            "academy_id": acad,
+            "title": "BLNO Liability Waiver",
+            "version": "1.0",
+            "content_hash": "hash-production",
+            "body": "Parent agrees to academy safety rules.",
+            "published_at": _dt("2026-06-20T12:00:00"),
+            "updated_at": _dt("2026-06-20T12:00:00"),
+            "status": "published",
+        }
+    )
+    repo = MongoWaiverTemplateRepository(db)
+    template_id = str(result.inserted_id)
+
+    template = await repo.get_template(template_id)
+    assigned = await repo.assign_to_registration(
+        waiver_template_id=template_id,
+        assigned_at=_dt("2026-06-21T12:00:00"),
+    )
+
+    stored = await db["waiver_templates"].find_one({"_id": result.inserted_id})
+    assert template is not None
+    assert template.waiver_template_id == template_id
+    assert assigned.assigned_to_registration is True
+    assert stored["assigned_to_registration"] is True
+
+
+@pytest.mark.asyncio
 async def test_waiver_signature_repo_upsert_and_latest_for_student(db, acad) -> None:
     repo = MongoWaiverSignatureRepository(db)
 

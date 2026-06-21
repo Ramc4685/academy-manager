@@ -172,6 +172,107 @@ async def test_load_admin_waiver_data_returns_truthful_empty_when_no_students(db
 
 
 @pytest.mark.asyncio
+async def test_load_admin_waiver_data_ignores_other_tenant_signatures_for_same_student_id(
+    db, acad
+) -> None:
+    await db["waiver_templates"].insert_one(
+        {
+            "academy_id": acad,
+            "waiver_template_id": "wt-current",
+            "name": "Current waiver",
+            "version": "2026.1",
+            "content_hash": "hash-current",
+            "body": "Current waiver text",
+            "effective_from": NOW,
+            "status": "active",
+        }
+    )
+    await db["students"].insert_one(
+        {
+            "academy_id": acad,
+            "student_id": "shared-student-id",
+            "full_name": "Current Tenant Student",
+            "parent_id": "p-current",
+            "status": "active",
+        }
+    )
+    await db["waiver_signatures"].insert_one(
+        {
+            "academy_id": "other-academy",
+            "waiver_signature_id": "ws-other",
+            "waiver_template_id": "wt-current",
+            "student_id": "shared-student-id",
+            "parent_user_id": "p-other",
+            "signed_at": NOW,
+            "signer_name": "Other Parent",
+            "signer_email": "other@example.com",
+            "content_hash": "hash-current",
+        }
+    )
+    repo = MongoAdminWaiverRepository(db)
+
+    data = await repo.load_admin_waiver_data()
+
+    assert data.acceptances_by_student == {}
+
+
+@pytest.mark.asyncio
+async def test_load_admin_waiver_data_includes_share_link_for_signed_rows(db, acad) -> None:
+    await db["waiver_templates"].insert_one(
+        {
+            "academy_id": acad,
+            "waiver_template_id": "wt-current",
+            "name": "Current waiver",
+            "version": "2026.1",
+            "content_hash": "hash-current",
+            "body": "Current waiver text",
+            "effective_from": NOW,
+            "status": "active",
+        }
+    )
+    await db["students"].insert_one(
+        {
+            "academy_id": acad,
+            "student_id": "st-signed",
+            "full_name": "Signed Student",
+            "parent_id": "p-current",
+            "status": "active",
+        }
+    )
+    await db["waiver_signatures"].insert_one(
+        {
+            "academy_id": acad,
+            "waiver_signature_id": "ws-signed",
+            "waiver_template_id": "wt-current",
+            "student_id": "st-signed",
+            "parent_user_id": "p-current",
+            "signed_at": NOW,
+            "signer_name": "Parent One",
+            "signer_email": "parent@example.com",
+            "content_hash": "hash-current",
+            "artifact_id": "wa_ws-signed",
+        }
+    )
+    await db["waiver_share_links"].insert_one(
+        {
+            "academy_id": acad,
+            "share_link_id": "wsl_active_row_link",
+            "artifact_id": "wa_ws-signed",
+            "signature_id": "ws-signed",
+            "status": "active",
+            "created_at": NOW,
+        }
+    )
+    repo = MongoAdminWaiverRepository(db)
+
+    data = await repo.load_admin_waiver_data()
+
+    acceptance = data.acceptances_by_student["st-signed"]
+    assert acceptance.artifact_id == "wa_ws-signed"
+    assert acceptance.share_link_id == "wsl_active_row_link"
+
+
+@pytest.mark.asyncio
 async def test_template_detail_is_tenant_isolated(db, acad) -> None:
     await db["waiver_templates"].insert_one(
         {
@@ -250,3 +351,79 @@ async def test_signature_detail_is_tenant_isolated(db, acad) -> None:
     detail = await repo.get_signature_detail("ws-other")
 
     assert detail is None
+
+
+@pytest.mark.asyncio
+async def test_signature_detail_surfaces_stored_artifact_and_active_share_link(db, acad) -> None:
+    await db["students"].insert_one(
+        {
+            "academy_id": acad,
+            "student_id": "st-1",
+            "full_name": "Signed Student",
+            "parent_id": "p-1",
+            "status": "active",
+        }
+    )
+    await db["users"].insert_one(
+        {
+            "academy_id": acad,
+            "user_id": "p-1",
+            "display_name": "Parent One",
+            "email": "parent@example.com",
+        }
+    )
+    await db["waiver_templates"].insert_one(
+        {
+            "academy_id": acad,
+            "waiver_template_id": "wt-1",
+            "title": "Annual waiver",
+            "version": "2026.1",
+            "content_hash": "hash-1",
+            "body": "Waiver text",
+            "effective_from": NOW,
+            "status": "active",
+        }
+    )
+    await db["waiver_signatures"].insert_one(
+        {
+            "academy_id": acad,
+            "waiver_signature_id": "ws-1",
+            "waiver_template_id": "wt-1",
+            "student_id": "st-1",
+            "parent_user_id": "p-1",
+            "signed_at": NOW,
+            "signer_name": "Parent One",
+            "signer_email": "parent@example.com",
+            "content_hash": "hash-1",
+            "artifact_id": "wa_ws-1",
+        }
+    )
+    await db["waiver_artifacts"].insert_one(
+        {
+            "academy_id": acad,
+            "artifact_id": "wa_ws-1",
+            "artifact_type": "signed_waiver",
+            "status": "stored",
+            "signature_id": "ws-1",
+        }
+    )
+    await db["waiver_share_links"].insert_one(
+        {
+            "academy_id": acad,
+            "share_link_id": "wsl_non_guessable_token_for_test",
+            "artifact_id": "wa_ws-1",
+            "signature_id": "ws-1",
+            "status": "active",
+            "created_at": NOW,
+        }
+    )
+    repo = MongoAdminWaiverRepository(db)
+
+    detail = await repo.get_signature_detail("ws-1")
+
+    assert detail is not None
+    assert detail.artifact_id == "wa_ws-1"
+    assert detail.share_link_id == "wsl_non_guessable_token_for_test"
+    assert detail.artifact_status == "stored"
+    assert detail.share_status == "available"
+    assert "stored" in detail.gap_note

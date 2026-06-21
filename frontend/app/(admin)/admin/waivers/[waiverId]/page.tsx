@@ -166,6 +166,8 @@ function Meta({ label, value }: { label: string; value: string }) {
 }
 
 function statusLabel(status: string): string {
+  if (status === "stored") return "Stored";
+  if (status === "available") return "Available";
   if (status === "stored_reference") return "Stored reference";
   return "Unavailable";
 }

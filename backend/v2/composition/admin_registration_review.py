@@ -31,12 +31,16 @@ from backend.v2.contexts.onboarding.domain.errors import (
     IncompleteApplication,
     WaiverNotAccepted,
 )
-from backend.v2.contexts.onboarding.domain.models import Application
+from backend.v2.contexts.onboarding.domain.models import Application, WaiverSignature
 from backend.v2.shared.ids import new_ulid
 
 
 class RegistrationWaiverTemplateQuery(Protocol):
     async def get_registration_template(self) -> AdminWaiverTemplateRecord | None: ...
+
+
+class RegistrationWaiverSignatureWriter(Protocol):
+    async def save_signature(self, signature: WaiverSignature) -> None: ...
 
 
 class AdminRegistrationRow(BaseModel):
@@ -107,6 +111,7 @@ class AdminRegistrationReview:
         waitlist: WaitlistRepository,
         academy_id: str,
         waiver_templates: RegistrationWaiverTemplateQuery | None = None,
+        waiver_signatures: RegistrationWaiverSignatureWriter | None = None,
         enrollment_events: EnrollmentEventRepository | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -117,6 +122,7 @@ class AdminRegistrationReview:
         self._waitlist = waitlist
         self._academy_id = academy_id
         self._waiver_templates = waiver_templates
+        self._waiver_signatures = waiver_signatures
         self._enrollment_events = enrollment_events
         self._now = clock
 
@@ -179,6 +185,7 @@ class AdminRegistrationReview:
             reason=command.waiver_override_reason or "registration_approved",
             effective_at=effective_at,
         )
+        await self._record_registration_waiver_signature(app, student_id)
         decided = app.model_copy(
             update={
                 "status": "APPROVED",
@@ -240,6 +247,7 @@ class AdminRegistrationReview:
             reason=command.reason or "registration_waitlisted",
             effective_at=now,
         )
+        await self._record_registration_waiver_signature(app, student_id)
         decided = app.model_copy(
             update={
                 "status": "WAITLISTED",
@@ -300,6 +308,32 @@ class AdminRegistrationReview:
         if waiver_override_reason and waiver_override_reason.strip():
             return
         raise WaiverNotAccepted("Required registration waiver is not signed")
+
+    async def _record_registration_waiver_signature(
+        self, app: Application, student_id: str
+    ) -> None:
+        if self._waiver_signatures is None or app.waiver_acceptance is None:
+            return
+        acceptance = app.waiver_acceptance
+        if not acceptance.waiver_template_id:
+            return
+        signer_name = self._parent_name(app) or str(app.parent_email)
+        await self._waiver_signatures.save_signature(
+            WaiverSignature(
+                waiver_signature_id=(
+                    "ws_registration_"
+                    f"{app.application_id}_{student_id}_{acceptance.waiver_template_id}"
+                ),
+                academy_id=self._academy_id,
+                waiver_template_id=acceptance.waiver_template_id,
+                student_id=student_id,
+                parent_user_id=app.parent_user_id,
+                signed_at=acceptance.accepted_at,
+                signer_name=signer_name,
+                signer_email=app.parent_email,
+                content_hash=acceptance.content_hash,
+            )
+        )
 
     async def _row(self, app: Application) -> AdminRegistrationRow:
         template = await self._registration_template()

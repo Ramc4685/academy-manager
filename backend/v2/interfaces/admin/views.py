@@ -1202,6 +1202,8 @@ class AdminWaiverSignatureDetailView(BaseModel):
     waiver_version: str | None = None
     template_reference: str | None = None
     content_hash: str | None = None
+    artifact_reference: str | None = None
+    share_link_reference: str | None = None
     artifact_status: str
     share_status: str
     gap_note: str

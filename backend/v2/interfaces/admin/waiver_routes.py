@@ -155,6 +155,8 @@ async def get_signed_waiver_detail(
         waiver_version=detail.waiver_version,
         template_reference=detail.waiver_template_id,
         content_hash=detail.content_hash,
+        artifact_reference=detail.artifact_id,
+        share_link_reference=detail.share_link_id,
         artifact_status=detail.artifact_status,
         share_status=detail.share_status,
         gap_note=detail.gap_note,

@@ -18,6 +18,8 @@ from backend.v2.contexts.onboarding.domain.models import (
     Application,
     ChildProfile,
     ParentProfile,
+    WaiverAcceptance,
+    WaiverSignature,
 )
 
 NOW = datetime(2026, 5, 24, tzinfo=UTC)
@@ -83,6 +85,14 @@ class InMemoryStudents:
 
     async def upsert(self, student: Student) -> None:
         self.upserts.append(student)
+
+
+class InMemoryWaiverSignatures:
+    def __init__(self) -> None:
+        self.saved: list[WaiverSignature] = []
+
+    async def save_signature(self, signature: WaiverSignature) -> None:
+        self.saved.append(signature)
 
 
 class InMemoryEnrollments:
@@ -211,6 +221,46 @@ async def test_approve_reuses_existing_enrollment_without_reserving_seat() -> No
     assert enrollments.created == []
     assert detail.enrollment_id == "enroll-existing"
     assert apps.saved[-1].enrollment_id == "enroll-existing"
+
+
+@pytest.mark.asyncio
+async def test_approve_writes_per_student_waiver_signature_from_registration_acceptance() -> None:
+    app = _application(student_id="student-1").model_copy(
+        update={
+            "waiver_acceptance": WaiverAcceptance(
+                waiver_template_id="wt-2026",
+                waiver_version="2026.1",
+                content_hash="hash-2026",
+                accepted_at=NOW - timedelta(hours=1),
+            )
+        }
+    )
+    apps = InMemoryApplications(app)
+    signatures = InMemoryWaiverSignatures()
+
+    review = AdminRegistrationReview(
+        apps=apps,
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        waiver_signatures=signatures,
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    assert len(signatures.saved) == 1
+    signature = signatures.saved[0]
+    assert signature.academy_id == ACADEMY_ID
+    assert signature.waiver_template_id == "wt-2026"
+    assert signature.student_id == "student-1"
+    assert signature.parent_user_id == "parent-1"
+    assert signature.signed_at == NOW - timedelta(hours=1)
+    assert signature.signer_name == "Pat Parent"
+    assert str(signature.signer_email) == "parent@example.com"
+    assert signature.content_hash == "hash-2026"
 
 
 @pytest.mark.asyncio

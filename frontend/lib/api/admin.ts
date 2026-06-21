@@ -898,6 +898,8 @@ export interface AdminWaiverSignatureDetail {
   waiver_version: string | null;
   template_reference: string | null;
   content_hash: string | null;
+  artifact_reference: string | null;
+  share_link_reference: string | null;
   artifact_status: string;
   share_status: string;
   gap_note: string;

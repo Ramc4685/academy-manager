@@ -326,6 +326,9 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_admin_waiver_repo impor
 from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import (
     MongoApplicationRepository,
 )
+from backend.v2.contexts.onboarding.infrastructure.mongo_parent_waiver_repo import (
+    MongoParentWaiverRepository,
+)
 from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_template_repo import (
     MongoWaiverTemplateRepository,
 )
@@ -2142,6 +2145,7 @@ def compose_admin(
         enrollments=enrollments_w,
         waitlist=waitlist,
         waiver_templates=waiver_templates_repo,
+        waiver_signatures=MongoParentWaiverRepository(db),
         enrollment_events=enrollment_events,
         academy_id=academy_id,
     )
