@@ -64,6 +64,7 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
         icon: "pay",
         match: startsWith("/admin/payments"),
       },
+      { href: "/admin/billing-health", label: "Billing Health", icon: "signal", match: startsWith("/admin/billing-health") },
       { href: "/admin/dues", label: "Dues follow-up", icon: "bell", match: startsWith("/admin/dues") },
       {
         href: "/admin/expenses",
@@ -112,6 +113,7 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin/waitlist": { title: "Waitlist", subtitle: "Pending offers and queues", breadcrumbs: ["Admin", "Waitlist"] },
   "/admin/pause-requests": { title: "Pause requests", subtitle: "Pending parent requests", breadcrumbs: ["Admin", "Pause requests"] },
   "/admin/payments": { title: "Payments", subtitle: "Transactions and refunds", breadcrumbs: ["Admin", "Money", "Payments"] },
+  "/admin/billing-health": { title: "Billing Health", subtitle: "Reconciliation, failed payments, webhook recovery", breadcrumbs: ["Admin", "Money", "Billing Health"] },
   "/admin/dues": { title: "Dues follow-up", subtitle: "Outstanding balances", breadcrumbs: ["Admin", "Money", "Dues"] },
   "/admin/expenses": { title: "Expenses", subtitle: "Categorised academy spend", breadcrumbs: ["Admin", "Money", "Expenses"] },
   "/admin/payouts": { title: "Coach payouts", subtitle: "Payout cycles", breadcrumbs: ["Admin", "Money", "Payouts"] },
