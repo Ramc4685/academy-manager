@@ -27,6 +27,9 @@ class GenerateMonthlyPaymentsResult(BaseModel):
     skipped_no_charge: int = 0
     skipped_autopay: int = 0
     skipped_paused: int = 0
+    repaired_orphan_keys: int = 0
+    repaired_partial_invoices: int = 0
+    failed_repair: int = 0
 
 
 class MarkPaymentPaidCommand(BaseModel):

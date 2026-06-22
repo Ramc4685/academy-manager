@@ -14,6 +14,7 @@ from backend.v2.contexts.billing.domain.ledger import (
     LedgerPayment,
     PaymentAllocation,
     allocate_payment_to_invoice,
+    recompute_totals,
 )
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 from backend.v2.shared.ids import new_ulid
@@ -79,24 +80,63 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
     ) -> LedgerInvoice:
         existing = await self._find_one({"idempotency_key": idempotency_key})
         if existing is not None:
-            return self._invoice_from_doc(existing)
+            existing_invoice = self._invoice_from_doc(existing)
+            repaired_lines = await self._ensure_invoice_lines(
+                existing_invoice.invoice_id,
+                lines=lines,
+                idempotency_key=idempotency_key,
+            )
+            if repaired_lines:
+                stored_lines = await self.get_lines_for_invoice(existing_invoice.invoice_id)
+                repaired_invoice = recompute_totals(existing_invoice, stored_lines).model_copy(
+                    update={"updated_at": self._clock()}
+                )
+                await self.save_invoice(repaired_invoice)
+                return repaired_invoice
+            return existing_invoice
 
         doc = _mongo_doc(invoice)
         doc["idempotency_key"] = idempotency_key
         await self._insert_one({k: v for k, v in doc.items() if k != "academy_id"})
-        for line in lines:
-            line_doc = _mongo_doc(line)
-            line_doc["idempotency_key"] = idempotency_key
-            await self._db["invoice_lines"].insert_one(
-                {
-                    **{k: v for k, v in line_doc.items() if k != "academy_id"},
-                    "academy_id": current_academy_id(),
-                }
-            )
+        await self._ensure_invoice_lines(
+            invoice.invoice_id,
+            lines=lines,
+            idempotency_key=idempotency_key,
+        )
         stored = await self.get_invoice(invoice.invoice_id)
         if stored is None:
             raise ValueError("invoice insert failed")
         return stored
+
+    async def _ensure_invoice_lines(
+        self,
+        invoice_id: str,
+        *,
+        lines: list[InvoiceLine],
+        idempotency_key: str,
+    ) -> bool:
+        academy_id = current_academy_id()
+        repaired = False
+        for line in lines:
+            line_doc = _mongo_doc(line)
+            line_doc["idempotency_key"] = idempotency_key
+            result = await self._db["invoice_lines"].update_one(
+                {
+                    "academy_id": academy_id,
+                    "invoice_id": invoice_id,
+                    "line_id": line.line_id,
+                },
+                {
+                    "$setOnInsert": {
+                        **{k: v for k, v in line_doc.items() if k != "academy_id"},
+                        "academy_id": academy_id,
+                    }
+                },
+                upsert=True,
+            )
+            if getattr(result, "upserted_id", None) is not None:
+                repaired = True
+        return repaired
 
     async def get_invoice(self, invoice_id: str) -> LedgerInvoice | None:
         doc = await self._find_one({"invoice_id": invoice_id})
