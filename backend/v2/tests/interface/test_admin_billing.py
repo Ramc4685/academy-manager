@@ -1079,3 +1079,140 @@ def test_create_student_invoice_allows_matching_student_parent_and_enrollment(ad
     assert body["enrollment_id"] == "enroll-1"
     assert body["status"] == "draft"
     assert len(ledger.invoices) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Billing Health (#235)
+# --------------------------------------------------------------------------- #
+def test_list_reconciliation_runs(admin_client):
+    runs = [
+        {
+            "run_id": "r-new",
+            "academy_id": "acad",
+            "started_at": datetime(2026, 6, 21, 10, 2, tzinfo=UTC),
+            "finished_at": datetime(2026, 6, 21, 10, 2, 1, tzinfo=UTC),
+            "scanned": 8,
+            "repaired": 0,
+            "skipped": 8,
+            "quarantined": 0,
+            "failed": 0,
+            "errors": [],
+        }
+    ]
+
+    async def list_reconciliation_runs():
+        return runs
+
+    admin_client.use_cases.list_reconciliation_runs = list_reconciliation_runs
+    r = admin_client.get("/api/v2/admin/billing/reconciliation-runs")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert [x["run_id"] for x in body["runs"]] == ["r-new"]
+    assert body["runs"][0]["scanned"] == 8
+
+
+def test_run_reconciliation_now(admin_client):
+    async def run_reconciliation():
+        return {
+            "run_id": "r1",
+            "scanned": 3,
+            "repaired": 1,
+            "skipped": 2,
+            "quarantined": 0,
+            "failed": 0,
+            "errors": [],
+        }
+
+    admin_client.use_cases.run_reconciliation = run_reconciliation
+    r = admin_client.post("/api/v2/admin/billing/reconcile-now")
+    assert r.status_code == 200, r.text
+    assert r.json()["repaired"] == 1
+
+
+def test_run_reconciliation_unconfigured_returns_503(admin_client):
+    async def run_reconciliation():
+        raise RuntimeError("Stripe reconciliation not configured")
+
+    admin_client.use_cases.run_reconciliation = run_reconciliation
+    r = admin_client.post("/api/v2/admin/billing/reconcile-now")
+    assert r.status_code == 503
+
+
+def test_list_failed_payment_attempts(admin_client):
+    rows = [
+        {
+            "invoice_id": "inv-1",
+            "parent_id": "p1",
+            "parent_name": "Sarah M.",
+            "period": "2026-06",
+            "total_cents": 12000,
+            "balance_due_cents": 12000,
+            "currency": "usd",
+            "latest_attempt_at": datetime(2026, 6, 21, 9, 45, tzinfo=UTC),
+            "latest_decline_code": "card_declined",
+            "attempt_count": 2,
+        }
+    ]
+
+    async def list_failed_payment_attempts():
+        return rows
+
+    admin_client.use_cases.list_failed_payment_attempts = list_failed_payment_attempts
+    r = admin_client.get("/api/v2/admin/billing/failed-payment-attempts")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["rows"][0]["latest_decline_code"] == "card_declined"
+    assert body["rows"][0]["attempt_count"] == 2
+
+
+def test_list_invoice_attempts(admin_client):
+    attempts = [
+        {
+            "attempt_id": "a2",
+            "status": "failed",
+            "amount_cents": 12000,
+            "currency": "usd",
+            "stripe_payment_intent_id": "pi_2",
+            "failure_code": "card_declined",
+            "failure_message": "Your card was declined.",
+            "created_at": datetime(2026, 6, 21, 9, 45, tzinfo=UTC),
+        }
+    ]
+
+    async def list_invoice_attempts(invoice_id):
+        assert invoice_id == "inv-1"
+        return attempts
+
+    admin_client.use_cases.list_invoice_attempts = list_invoice_attempts
+    r = admin_client.get("/api/v2/admin/billing/invoices/inv-1/attempts")
+    assert r.status_code == 200, r.text
+    assert r.json()["attempts"][0]["status"] == "failed"
+
+
+def test_list_invoice_attempts_not_found_returns_404(admin_client):
+    async def list_invoice_attempts(invoice_id):
+        raise ValueError("invoice not found")
+
+    admin_client.use_cases.list_invoice_attempts = list_invoice_attempts
+    r = admin_client.get("/api/v2/admin/billing/invoices/missing/attempts")
+    assert r.status_code == 404
+
+
+def test_replay_webhook_event(admin_client):
+    async def replay_webhook_event(event_id):
+        assert event_id == "evt_1"
+        return True
+
+    admin_client.use_cases.replay_webhook_event = replay_webhook_event
+    r = admin_client.post("/api/v2/admin/billing/webhook-events/evt_1/replay")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"replayed": True, "event_id": "evt_1"}
+
+
+def test_replay_webhook_event_not_found_returns_404(admin_client):
+    async def replay_webhook_event(event_id):
+        raise ValueError("quarantined event not found")
+
+    admin_client.use_cases.replay_webhook_event = replay_webhook_event
+    r = admin_client.post("/api/v2/admin/billing/webhook-events/missing/replay")
+    assert r.status_code == 404

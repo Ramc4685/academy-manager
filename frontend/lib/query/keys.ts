@@ -69,6 +69,13 @@ export const queryKeys = {
     lessonCards: (programId: string) =>
       ["admin", "pathway", programId, "lesson-cards"] as const,
     coachDigestLog: () => ["admin", "comms", "digests", "log"] as const,
+    reconciliationRuns: () =>
+      ["admin", "billing", "reconciliation-runs"] as const,
+    failedAttempts: () => ["admin", "billing", "failed-attempts"] as const,
+    quarantinedEvents: () =>
+      ["admin", "billing", "quarantined-events"] as const,
+    invoiceAttempts: (invoiceId: string) =>
+      ["admin", "billing", "invoice-attempts", invoiceId] as const,
   },
 } as const;
 

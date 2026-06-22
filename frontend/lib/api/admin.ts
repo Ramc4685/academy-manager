@@ -1569,6 +1569,87 @@ export function listBillingWebhookEvents(params: {
   return apiFetch<BillingWebhookQueue>(`/admin/billing/webhooks${suffix}`, { method: "GET" });
 }
 
+// --- Billing Health (#235) ------------------------------------------------- //
+export interface ReconciliationRun {
+  run_id: string;
+  started_at: string | null;
+  finished_at: string | null;
+  scanned: number;
+  repaired: number;
+  skipped: number;
+  quarantined: number;
+  failed: number;
+  errors: unknown[];
+}
+
+export interface ReconciliationRunsResponse {
+  runs: ReconciliationRun[];
+}
+
+export interface FailedPaymentRow {
+  invoice_id: string;
+  parent_id: string;
+  parent_name: string | null;
+  period: string;
+  total_cents: number;
+  balance_due_cents: number;
+  currency: string;
+  latest_attempt_at: string | null;
+  latest_decline_code: string | null;
+  attempt_count: number;
+}
+
+export interface FailedPaymentsResponse {
+  rows: FailedPaymentRow[];
+}
+
+export interface BillingPaymentAttempt {
+  attempt_id: string;
+  status: string;
+  amount_cents: number;
+  currency: string;
+  stripe_payment_intent_id: string | null;
+  failure_code: string | null;
+  failure_message: string | null;
+  created_at: string | null;
+}
+
+export interface InvoiceAttemptsResponse {
+  attempts: BillingPaymentAttempt[];
+}
+
+export function fetchReconciliationRuns(): Promise<ReconciliationRunsResponse> {
+  return apiFetch<ReconciliationRunsResponse>("/admin/billing/reconciliation-runs", {
+    method: "GET",
+  });
+}
+
+export function triggerReconciliation(): Promise<ReconciliationRun> {
+  return apiFetch<ReconciliationRun>("/admin/billing/reconcile-now", { method: "POST" });
+}
+
+export function fetchFailedPaymentAttempts(): Promise<FailedPaymentsResponse> {
+  return apiFetch<FailedPaymentsResponse>("/admin/billing/failed-payment-attempts", {
+    method: "GET",
+  });
+}
+
+export function fetchInvoiceAttempts(invoiceId: string): Promise<InvoiceAttemptsResponse> {
+  return apiFetch<InvoiceAttemptsResponse>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/attempts`,
+    { method: "GET" },
+  );
+}
+
+export function replayWebhookEvent(
+  eventId: string,
+): Promise<{ replayed: boolean; event_id: string }> {
+  return apiFetch<{ replayed: boolean; event_id: string }>(
+    `/admin/billing/webhook-events/${encodeURIComponent(eventId)}/replay`,
+    { method: "POST" },
+  );
+}
+
 export function listBillingProducts(): Promise<AdminBillingProductList> {
   return apiFetch<AdminBillingProductList>("/admin/billing/products", {
     method: "GET",
