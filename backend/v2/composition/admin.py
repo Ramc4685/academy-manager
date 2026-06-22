@@ -525,27 +525,57 @@ def _month_bounds(period: str) -> tuple[datetime, datetime]:
     return start, end
 
 
-def _payment_final_amount_cents(payment: dict[str, Any]) -> int:
-    for key in ("final_amount_cents", "amount_cents", "gross_amount_cents"):
+def _money_to_cents(value: Any) -> int:
+    if value is None:
+        return 0
+    return round(float(value) * 100)
+
+
+def _payment_discount_cents(payment: dict[str, Any]) -> int:
+    value = payment.get("discount_cents")
+    if value is not None:
+        return int(value)
+    return _money_to_cents(payment.get("discount"))
+
+
+def _payment_received_cents(payment: dict[str, Any]) -> int | None:
+    for key in ("paid_amount_cents", "amount_received_cents"):
         value = payment.get(key)
         if value is not None:
             return int(value)
+    for key in ("paid_amount", "amount_received"):
+        value = payment.get(key)
+        if value is not None:
+            return _money_to_cents(value)
+    return None
+
+
+def _payment_final_amount_cents(payment: dict[str, Any]) -> int:
+    for key in ("final_amount_cents", "final_amount"):
+        value = payment.get(key)
+        if value is not None:
+            if key.endswith("_cents"):
+                return int(value)
+            return _money_to_cents(value)
+    for key in ("amount_cents", "gross_amount_cents"):
+        value = payment.get(key)
+        if value is not None:
+            return max(int(value) - _payment_discount_cents(payment), 0)
+    for key in ("amount", "gross_amount"):
+        value = payment.get(key)
+        if value is not None:
+            return max(_money_to_cents(value) - _payment_discount_cents(payment), 0)
     return 0
 
 
 def _payment_collected_cents(payment: dict[str, Any]) -> int:
     status = str(payment.get("status") or "")
     if status in {"partially_paid", "pending", "failed"}:
-        return max(
-            int(payment.get("paid_amount_cents") or payment.get("amount_received_cents") or 0),
-            0,
-        )
+        return max(_payment_received_cents(payment) or 0, 0)
     if status in {"succeeded", "paid", "partially_refunded", "refunded"}:
-        paid = int(
-            payment.get("paid_amount_cents")
-            or payment.get("amount_received_cents")
-            or _payment_final_amount_cents(payment)
-        )
+        paid = _payment_received_cents(payment)
+        if paid is None:
+            paid = _payment_final_amount_cents(payment)
         return max(paid - int(payment.get("refunded_cents") or 0), 0)
     return 0
 
@@ -616,14 +646,16 @@ def _payment_provider_keys(payment: dict[str, Any]) -> set[str]:
             payment.get("stripe_invoice_id"),
             payment.get("stripe_payment_intent_id"),
             payment.get("stripe_checkout_session_id"),
-            payment.get("stripe_subscription_id"),
         )
         if value
     }
 
 
 def _payment_revenue_net_cents(payment: dict[str, Any]) -> int:
-    return _payment_final_amount_cents(payment) - int(payment.get("refunded_cents") or 0)
+    paid = _payment_received_cents(payment)
+    if paid is None:
+        paid = _payment_final_amount_cents(payment)
+    return max(paid - int(payment.get("refunded_cents") or 0), 0)
 
 
 def _invoice_to_admin_payment_row(invoice: dict[str, Any]) -> dict[str, Any]:
@@ -853,7 +885,7 @@ class _AdminEffectiveRevenueQuery:
         result: dict[str, int] = {}
         ledger_keys: set[str] = set()
         ledger_payment_ids: list[str] = []
-        successful_statuses = ["succeeded", "partially_refunded", "refunded"]
+        successful_statuses = ["succeeded", "paid", "partially_refunded", "refunded"]
         provider_key_fields = [
             "payment_id",
             "invoice_id",
@@ -861,7 +893,6 @@ class _AdminEffectiveRevenueQuery:
             "stripe_invoice_id",
             "stripe_payment_intent_id",
             "stripe_checkout_session_id",
-            "stripe_subscription_id",
         ]
 
         ledger_query: dict[str, Any] = {
@@ -939,20 +970,75 @@ class _AdminEffectiveRevenueQuery:
 
     @staticmethod
     def _net_cents_expression() -> dict[str, Any]:
-        return {
-            "$subtract": [
+        legacy_final_cents = {"$multiply": ["$final_amount", 100]}
+        legacy_gross_cents = {
+            "$multiply": [
+                {"$ifNull": ["$amount", {"$ifNull": ["$gross_amount", 0]}]},
+                100,
+            ]
+        }
+        discount_cents = {
+            "$ifNull": [
+                "$discount_cents",
+                {"$multiply": [{"$ifNull": ["$discount", 0]}, 100]},
+            ]
+        }
+        payable_cents = {
+            "$ifNull": [
+                "$final_amount_cents",
                 {
                     "$ifNull": [
-                        "$final_amount_cents",
+                        legacy_final_cents,
                         {
-                            "$ifNull": [
-                                "$amount_cents",
-                                {"$ifNull": ["$gross_amount_cents", 0]},
+                            "$subtract": [
+                                {
+                                    "$ifNull": [
+                                        "$amount_cents",
+                                        {
+                                            "$ifNull": [
+                                                "$gross_amount_cents",
+                                                legacy_gross_cents,
+                                            ]
+                                        },
+                                    ]
+                                },
+                                discount_cents,
                             ]
                         },
                     ]
                 },
-                {"$ifNull": ["$refunded_cents", 0]},
+            ]
+        }
+        received_cents = {
+            "$ifNull": [
+                "$paid_amount_cents",
+                {
+                    "$ifNull": [
+                        "$amount_received_cents",
+                        {
+                            "$ifNull": [
+                                {"$multiply": ["$paid_amount", 100]},
+                                {
+                                    "$ifNull": [
+                                        {"$multiply": ["$amount_received", 100]},
+                                        payable_cents,
+                                    ]
+                                },
+                            ]
+                        },
+                    ]
+                },
+            ]
+        }
+        return {
+            "$max": [
+                {
+                    "$subtract": [
+                        received_cents,
+                        {"$ifNull": ["$refunded_cents", 0]},
+                    ]
+                },
+                0,
             ]
         }
 
@@ -1111,6 +1197,15 @@ class _AdminEffectiveRevenueQuery:
             "amount_cents": 1,
             "final_amount_cents": 1,
             "gross_amount_cents": 1,
+            "amount": 1,
+            "final_amount": 1,
+            "gross_amount": 1,
+            "discount_cents": 1,
+            "discount": 1,
+            "paid_amount_cents": 1,
+            "amount_received_cents": 1,
+            "paid_amount": 1,
+            "amount_received": 1,
             "refunded_cents": 1,
             "paid_at": 1,
             "created_at": 1,
@@ -1127,6 +1222,15 @@ class _AdminEffectiveRevenueQuery:
             "amount_cents": 1,
             "final_amount_cents": 1,
             "gross_amount_cents": 1,
+            "amount": 1,
+            "final_amount": 1,
+            "gross_amount": 1,
+            "discount_cents": 1,
+            "discount": 1,
+            "paid_amount_cents": 1,
+            "amount_received_cents": 1,
+            "paid_amount": 1,
+            "amount_received": 1,
             "refunded_cents": 1,
             "paid_at": 1,
             "payment_date": 1,
@@ -1170,6 +1274,15 @@ class _AdminEffectiveRevenueQuery:
             "amount_cents": 1,
             "final_amount_cents": 1,
             "gross_amount_cents": 1,
+            "amount": 1,
+            "final_amount": 1,
+            "gross_amount": 1,
+            "discount_cents": 1,
+            "discount": 1,
+            "paid_amount_cents": 1,
+            "amount_received_cents": 1,
+            "paid_amount": 1,
+            "amount_received": 1,
             "refunded_cents": 1,
             "paid_at": 1,
             "payment_date": 1,
@@ -1215,6 +1328,9 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             for label in ("Current", "1-30", "31-60", "60+")
         }
         invoice_keys: set[str] = set()
+        ledger_payment_keys: set[str] = set()
+        ledger_payment_ids: set[str] = set()
+        successful_ledger_statuses = ["succeeded", "paid", "partially_refunded", "refunded"]
         invoices_cursor = db["invoices"].find(
             {
                 "academy_id": academy_id,
@@ -1252,18 +1368,75 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             {
                 "academy_id": academy_id,
                 **_ledger_payment_effective_window_query(start, end),
-                "status": {"$in": ["succeeded", "partially_refunded", "refunded"]},
+                "status": {"$in": successful_ledger_statuses},
             },
-            {"amount_cents": 1, "refunded_cents": 1, "paid_at": 1, "created_at": 1},
+            {
+                "payment_id": 1,
+                "invoice_id": 1,
+                "invoice_number": 1,
+                "stripe_invoice_id": 1,
+                "stripe_payment_intent_id": 1,
+                "stripe_checkout_session_id": 1,
+                "amount_cents": 1,
+                "final_amount_cents": 1,
+                "gross_amount_cents": 1,
+                "amount": 1,
+                "final_amount": 1,
+                "gross_amount": 1,
+                "discount_cents": 1,
+                "discount": 1,
+                "paid_amount_cents": 1,
+                "amount_received_cents": 1,
+                "paid_amount": 1,
+                "amount_received": 1,
+                "refunded_cents": 1,
+                "paid_at": 1,
+                "created_at": 1,
+            },
         )
         async for ledger_payment in ledger_payments_cursor:
             if _ledger_payment_effective_month(ledger_payment) != period:
                 continue
-            cash_collected_cents += max(
-                int(ledger_payment.get("amount_cents") or 0)
-                - int(ledger_payment.get("refunded_cents") or 0),
-                0,
+            ledger_payment_keys.update(_payment_provider_keys(ledger_payment))
+            payment_id = str(ledger_payment.get("payment_id") or "")
+            if payment_id:
+                ledger_payment_ids.add(payment_id)
+            cash_collected_cents += _payment_revenue_net_cents(ledger_payment)
+
+        ledger_key_cursor = db["ledger_payments"].find(
+            {
+                "academy_id": academy_id,
+                "status": {"$in": successful_ledger_statuses},
+            },
+            {
+                "payment_id": 1,
+                "invoice_id": 1,
+                "invoice_number": 1,
+                "stripe_invoice_id": 1,
+                "stripe_payment_intent_id": 1,
+                "stripe_checkout_session_id": 1,
+            },
+        )
+        async for ledger_payment in ledger_key_cursor:
+            ledger_payment_keys.update(_payment_provider_keys(ledger_payment))
+            payment_id = str(ledger_payment.get("payment_id") or "")
+            if payment_id:
+                ledger_payment_ids.add(payment_id)
+
+        ledger_payment_id_list = sorted(ledger_payment_ids)
+        for index in range(0, len(ledger_payment_id_list), 500):
+            payment_id_batch = ledger_payment_id_list[index : index + 500]
+            allocation_cursor = db["payment_allocations"].find(
+                {
+                    "academy_id": academy_id,
+                    "payment_id": {"$in": payment_id_batch},
+                },
+                {"invoice_id": 1},
             )
+            async for allocation in allocation_cursor:
+                invoice_id = str(allocation.get("invoice_id") or "")
+                if invoice_id:
+                    ledger_payment_keys.add(invoice_id)
 
         failed_attempts_cursor = db["payment_attempts"].find(
             {
@@ -1284,13 +1457,19 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 "stripe_invoice_id": 1,
                 "stripe_payment_intent_id": 1,
                 "stripe_checkout_session_id": 1,
-                "stripe_subscription_id": 1,
                 "status": 1,
                 "amount_cents": 1,
                 "final_amount_cents": 1,
                 "gross_amount_cents": 1,
+                "amount": 1,
+                "final_amount": 1,
+                "gross_amount": 1,
+                "discount_cents": 1,
+                "discount": 1,
                 "paid_amount_cents": 1,
                 "amount_received_cents": 1,
+                "paid_amount": 1,
+                "amount_received": 1,
                 "refunded_cents": 1,
                 "paid_at": 1,
                 "payment_date": 1,
@@ -1302,7 +1481,7 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             if _payment_effective_month(payment) != period:
                 continue
             payment_keys = _payment_provider_keys(payment)
-            if payment_keys & invoice_keys:
+            if payment_keys & (invoice_keys | ledger_payment_keys):
                 continue
             cash_collected_cents += _payment_collected_cents(payment)
 
@@ -1319,7 +1498,6 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 "stripe_invoice_id": 1,
                 "stripe_payment_intent_id": 1,
                 "stripe_checkout_session_id": 1,
-                "stripe_subscription_id": 1,
                 "status": 1,
                 "parent_id": 1,
                 "family_id": 1,

@@ -519,14 +519,81 @@ async def test_reports_dashboard_uses_legacy_effective_payment_date_before_perio
                 "created_at": datetime(2026, 6, 4, tzinfo=UTC),
                 "due_date": "2026-06-15",
             },
+            {
+                "payment_id": "legacy-ledger-duplicate-without-invoice-key",
+                "academy_id": "acad",
+                "period": "2026-05",
+                "status": "succeeded",
+                "final_amount_cents": 8_000,
+                "stripe_payment_intent_id": "pi_ledger_duplicate",
+                "paid_at": datetime(2026, 5, 30, tzinfo=UTC),
+                "created_at": datetime(2026, 5, 30, tzinfo=UTC),
+            },
+            {
+                "payment_id": "legacy-cross-period-ledger-duplicate",
+                "academy_id": "acad",
+                "period": "2026-05",
+                "status": "succeeded",
+                "final_amount_cents": 7_000,
+                "stripe_payment_intent_id": "pi_cross_period_duplicate",
+                "paid_at": datetime(2026, 5, 29, tzinfo=UTC),
+                "created_at": datetime(2026, 5, 29, tzinfo=UTC),
+            },
+            {
+                "payment_id": "legacy-allocation-duplicate",
+                "academy_id": "acad",
+                "period": "2026-05",
+                "status": "succeeded",
+                "final_amount_cents": 5_000,
+                "invoice_id": "inv_allocation_duplicate",
+                "paid_at": datetime(2026, 5, 30, tzinfo=UTC),
+                "created_at": datetime(2026, 5, 30, tzinfo=UTC),
+            },
         ]
+    )
+    await db["ledger_payments"].insert_many(
+        [
+            {
+                "payment_id": "ledger-duplicate-without-invoice-key",
+                "academy_id": "acad",
+                "status": "succeeded",
+                "amount_cents": 8_000,
+                "stripe_payment_intent_id": "pi_ledger_duplicate",
+                "paid_at": datetime(2026, 5, 30, tzinfo=UTC),
+                "created_at": datetime(2026, 5, 30, tzinfo=UTC),
+            },
+            {
+                "payment_id": "ledger-cross-period-duplicate",
+                "academy_id": "acad",
+                "status": "succeeded",
+                "amount_cents": 7_000,
+                "stripe_payment_intent_id": "pi_cross_period_duplicate",
+                "paid_at": datetime(2026, 6, 3, tzinfo=UTC),
+                "created_at": datetime(2026, 6, 3, tzinfo=UTC),
+            },
+            {
+                "payment_id": "ledger-allocation-duplicate",
+                "academy_id": "acad",
+                "status": "succeeded",
+                "amount_cents": 5_000,
+                "paid_at": datetime(2026, 5, 30, tzinfo=UTC),
+                "created_at": datetime(2026, 5, 30, tzinfo=UTC),
+            },
+        ]
+    )
+    await db["payment_allocations"].insert_one(
+        {
+            "academy_id": "acad",
+            "payment_id": "ledger-allocation-duplicate",
+            "invoice_id": "inv_allocation_duplicate",
+        }
     )
 
     with tenant_scope("acad"):
         may_dashboard = await admin_composition._make_reports_dashboard(db)("2026-05")
         june_dashboard = await admin_composition._make_reports_dashboard(db)("2026-06")
 
-    assert may_dashboard["cash_collected_cents"] == 16_000
+    assert may_dashboard["cash_collected_cents"] == 29_000
     assert may_dashboard["collections_risk"]["failed_payment_count"] == 1
     assert may_dashboard["collections_risk"]["partial_payment_count"] == 1
     assert may_dashboard["collections_risk"]["overdue_family_count"] == 2
@@ -537,7 +604,7 @@ async def test_reports_dashboard_uses_legacy_effective_payment_date_before_perio
         {"label": "31-60", "amount_cents": 0, "family_count": 0},
         {"label": "60+", "amount_cents": 3_000, "family_count": 1},
     ]
-    assert june_dashboard["cash_collected_cents"] == 14_000
+    assert june_dashboard["cash_collected_cents"] == 21_000
     assert june_dashboard["collections_risk"]["failed_payment_count"] == 0
     assert june_dashboard["collections_risk"]["partial_payment_count"] == 1
     assert june_dashboard["collections_risk"]["overdue_family_count"] == 1

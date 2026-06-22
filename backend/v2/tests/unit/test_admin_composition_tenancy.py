@@ -1075,6 +1075,7 @@ async def test_admin_revenue_query_uses_ledger_paid_at_and_dedupes_legacy_projec
                 "status": "succeeded",
                 "amount_cents": 7000,
                 "currency": "usd",
+                # Ledger revenue intentionally ignores legacy payment_date/period.
                 "payment_date": datetime(2026, 5, 31, tzinfo=UTC),
                 "period": "2026-05",
                 "created_at": created_at,
@@ -1121,6 +1122,28 @@ async def test_admin_revenue_query_uses_ledger_paid_at_and_dedupes_legacy_projec
                 "payment_date": "2026-06-02",
                 "created_at": created_at,
             },
+            {
+                "payment_id": "legacy-paid-status-discount",
+                "academy_id": "request-acad",
+                "parent_id": "parent-request",
+                "status": "paid",
+                "amount": 90.0,
+                "discount_cents": 1000,
+                "currency": "usd",
+                "payment_date": "2026-06-03",
+                "created_at": created_at,
+            },
+            {
+                "payment_id": "legacy-received-precedes-final",
+                "academy_id": "request-acad",
+                "parent_id": "parent-request",
+                "status": "succeeded",
+                "final_amount_cents": 10000,
+                "amount_received_cents": 6000,
+                "currency": "usd",
+                "payment_date": "2026-06-04",
+                "created_at": created_at,
+            },
         ]
     )
 
@@ -1128,7 +1151,7 @@ async def test_admin_revenue_query_uses_ledger_paid_at_and_dedupes_legacy_projec
     with tenant_scope("request-acad"):
         by_month = await admin.revenue_query.execute()
 
-    assert by_month == {"2026-05": 10000, "2026-06": 11000}
+    assert by_month == {"2026-05": 10000, "2026-06": 25000}
 
 
 @pytest.mark.asyncio
