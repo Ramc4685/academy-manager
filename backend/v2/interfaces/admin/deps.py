@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol
 
 from fastapi import Request
 
@@ -18,7 +19,6 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     UndoPaymentPaid,
 )
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
-    AcademyRevenueQuery,
     DeleteExpense,
     EditExpense,
     MongoExpenseRepository,
@@ -137,6 +137,10 @@ from backend.v2.contexts.student_progress.application.use_cases.get_coach_engage
 from backend.v2.shared.comms import CommsService
 
 
+class AdminRevenueQuery(Protocol):
+    async def execute(self, parent_id_filter: str | None = None) -> dict[str, int]: ...
+
+
 @dataclass
 class AdminUseCases:
     # directory
@@ -181,7 +185,7 @@ class AdminUseCases:
     delete_expense: DeleteExpense
     expenses: MongoExpenseRepository
     payouts: MongoPayoutRepository
-    revenue_query: AcademyRevenueQuery
+    revenue_query: AdminRevenueQuery
     # reads
     list_admin_sessions: object  # callable
     list_session_occurrences: object  # async (session_id: str) -> list[dict]

@@ -364,6 +364,254 @@ async def test_reports_dashboard_uses_ledger_invoices_and_payments_without_legac
 
 
 @pytest.mark.asyncio
+async def test_reports_dashboard_buckets_ledger_cash_by_paid_at_with_created_at_fallback() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    client = mongomock_motor.AsyncMongoMockClient()
+    db = client["test_db"]
+    await db["ledger_payments"].insert_many(
+        [
+            {
+                "payment_id": "paid-in-may-created-in-june",
+                "academy_id": "acad",
+                "parent_id": "parent-1",
+                "amount_cents": 10_000,
+                "currency": "usd",
+                "status": "succeeded",
+                "paid_at": datetime(2026, 5, 31, 23, 59, tzinfo=UTC),
+                "created_at": datetime(2026, 6, 1, 0, 5, tzinfo=UTC),
+            },
+            {
+                "payment_id": "paid-in-june-created-in-may",
+                "academy_id": "acad",
+                "parent_id": "parent-2",
+                "amount_cents": 20_000,
+                "currency": "usd",
+                "status": "succeeded",
+                "paid_at": datetime(2026, 6, 1, 0, 1, tzinfo=UTC),
+                "created_at": datetime(2026, 5, 31, 23, 58, tzinfo=UTC),
+            },
+            {
+                "payment_id": "missing-paid-at",
+                "academy_id": "acad",
+                "parent_id": "parent-3",
+                "amount_cents": 3_000,
+                "currency": "usd",
+                "status": "succeeded",
+                "created_at": datetime(2026, 5, 15, tzinfo=UTC),
+            },
+            {
+                "payment_id": "empty-paid-at",
+                "academy_id": "acad",
+                "parent_id": "parent-4",
+                "amount_cents": 4_000,
+                "currency": "usd",
+                "status": "succeeded",
+                "paid_at": "",
+                "created_at": datetime(2026, 5, 16, tzinfo=UTC),
+            },
+            {
+                "payment_id": "ledger-ignores-payment-date-and-period",
+                "academy_id": "acad",
+                "parent_id": "parent-5",
+                "amount_cents": 7_000,
+                "currency": "usd",
+                "status": "succeeded",
+                "payment_date": datetime(2026, 5, 15, tzinfo=UTC),
+                "period": "2026-05",
+                "created_at": datetime(2026, 6, 2, tzinfo=UTC),
+            },
+        ]
+    )
+
+    with tenant_scope("acad"):
+        may_dashboard = await admin_composition._make_reports_dashboard(db)("2026-05")
+        june_dashboard = await admin_composition._make_reports_dashboard(db)("2026-06")
+
+    assert may_dashboard["cash_collected_cents"] == 17_000
+    assert may_dashboard["profit_and_loss"]["revenue_cents"] == 17_000
+    assert june_dashboard["cash_collected_cents"] == 27_000
+    assert june_dashboard["profit_and_loss"]["revenue_cents"] == 27_000
+
+
+@pytest.mark.asyncio
+async def test_reports_dashboard_uses_legacy_effective_payment_date_before_period() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    client = mongomock_motor.AsyncMongoMockClient()
+    db = client["test_db"]
+    await db["payments"].insert_many(
+        [
+            {
+                "payment_id": "legacy-paid-at-may",
+                "academy_id": "acad",
+                "period": "2026-06",
+                "status": "succeeded",
+                "final_amount_cents": 1_000,
+                "paid_at": datetime(2026, 5, 31, tzinfo=UTC),
+                "payment_date": datetime(2026, 6, 1, tzinfo=UTC),
+                "created_at": datetime(2026, 6, 2, tzinfo=UTC),
+            },
+            {
+                "payment_id": "legacy-payment-date-may",
+                "academy_id": "acad",
+                "period": "2026-06",
+                "status": "succeeded",
+                "final_amount_cents": 2_000,
+                "payment_date": "2026-05-30",
+                "created_at": datetime(2026, 6, 2, tzinfo=UTC),
+            },
+            {
+                "payment_id": "legacy-created-at-may",
+                "academy_id": "acad",
+                "period": "2026-06",
+                "status": "succeeded",
+                "final_amount_cents": 3_000,
+                "created_at": datetime(2026, 5, 29, tzinfo=UTC),
+            },
+            {
+                "payment_id": "legacy-period-fallback-may",
+                "academy_id": "acad",
+                "period": "2026-05",
+                "status": "succeeded",
+                "final_amount_cents": 4_000,
+            },
+            {
+                "payment_id": "legacy-paid-at-june-period-may",
+                "academy_id": "acad",
+                "period": "2026-05",
+                "status": "succeeded",
+                "final_amount_cents": 9_000,
+                "paid_at": datetime(2026, 6, 1, tzinfo=UTC),
+                "created_at": datetime(2026, 5, 31, tzinfo=UTC),
+            },
+            {
+                "payment_id": "legacy-partial-risk-may-cash-june",
+                "academy_id": "acad",
+                "period": "2026-05",
+                "status": "partially_paid",
+                "parent_id": "parent-partial-may",
+                "final_amount_cents": 10_000,
+                "amount_received_cents": 5_000,
+                "balance_due_cents": 5_000,
+                "paid_at": datetime(2026, 6, 2, tzinfo=UTC),
+                "created_at": datetime(2026, 5, 31, tzinfo=UTC),
+                "due_date": "2026-05-15",
+            },
+            {
+                "payment_id": "legacy-failed-risk-may-created-june",
+                "academy_id": "acad",
+                "period": "2026-05",
+                "status": "failed",
+                "parent_id": "parent-failed-may",
+                "final_amount_cents": 3_000,
+                "created_at": datetime(2026, 6, 3, tzinfo=UTC),
+                "due_date": "2026-04-01",
+            },
+            {
+                "payment_id": "legacy-partial-risk-june-cash-may",
+                "academy_id": "acad",
+                "period": "2026-06",
+                "status": "partially_paid",
+                "parent_id": "parent-partial-june",
+                "final_amount_cents": 10_000,
+                "amount_received_cents": 6_000,
+                "balance_due_cents": 4_000,
+                "payment_date": "2026-05-30",
+                "created_at": datetime(2026, 6, 4, tzinfo=UTC),
+                "due_date": "2026-06-15",
+            },
+            {
+                "payment_id": "legacy-ledger-duplicate-without-invoice-key",
+                "academy_id": "acad",
+                "period": "2026-05",
+                "status": "succeeded",
+                "final_amount_cents": 8_000,
+                "stripe_payment_intent_id": "pi_ledger_duplicate",
+                "paid_at": datetime(2026, 5, 30, tzinfo=UTC),
+                "created_at": datetime(2026, 5, 30, tzinfo=UTC),
+            },
+            {
+                "payment_id": "legacy-cross-period-ledger-duplicate",
+                "academy_id": "acad",
+                "period": "2026-05",
+                "status": "succeeded",
+                "final_amount_cents": 7_000,
+                "stripe_payment_intent_id": "pi_cross_period_duplicate",
+                "paid_at": datetime(2026, 5, 29, tzinfo=UTC),
+                "created_at": datetime(2026, 5, 29, tzinfo=UTC),
+            },
+            {
+                "payment_id": "legacy-allocation-duplicate",
+                "academy_id": "acad",
+                "period": "2026-05",
+                "status": "succeeded",
+                "final_amount_cents": 5_000,
+                "invoice_id": "inv_allocation_duplicate",
+                "paid_at": datetime(2026, 5, 30, tzinfo=UTC),
+                "created_at": datetime(2026, 5, 30, tzinfo=UTC),
+            },
+        ]
+    )
+    await db["ledger_payments"].insert_many(
+        [
+            {
+                "payment_id": "ledger-duplicate-without-invoice-key",
+                "academy_id": "acad",
+                "status": "succeeded",
+                "amount_cents": 8_000,
+                "stripe_payment_intent_id": "pi_ledger_duplicate",
+                "paid_at": datetime(2026, 5, 30, tzinfo=UTC),
+                "created_at": datetime(2026, 5, 30, tzinfo=UTC),
+            },
+            {
+                "payment_id": "ledger-cross-period-duplicate",
+                "academy_id": "acad",
+                "status": "succeeded",
+                "amount_cents": 7_000,
+                "stripe_payment_intent_id": "pi_cross_period_duplicate",
+                "paid_at": datetime(2026, 6, 3, tzinfo=UTC),
+                "created_at": datetime(2026, 6, 3, tzinfo=UTC),
+            },
+            {
+                "payment_id": "ledger-allocation-duplicate",
+                "academy_id": "acad",
+                "status": "succeeded",
+                "amount_cents": 5_000,
+                "paid_at": datetime(2026, 5, 30, tzinfo=UTC),
+                "created_at": datetime(2026, 5, 30, tzinfo=UTC),
+            },
+        ]
+    )
+    await db["payment_allocations"].insert_one(
+        {
+            "academy_id": "acad",
+            "payment_id": "ledger-allocation-duplicate",
+            "invoice_id": "inv_allocation_duplicate",
+        }
+    )
+
+    with tenant_scope("acad"):
+        may_dashboard = await admin_composition._make_reports_dashboard(db)("2026-05")
+        june_dashboard = await admin_composition._make_reports_dashboard(db)("2026-06")
+
+    assert may_dashboard["cash_collected_cents"] == 29_000
+    assert may_dashboard["collections_risk"]["failed_payment_count"] == 1
+    assert may_dashboard["collections_risk"]["partial_payment_count"] == 1
+    assert may_dashboard["collections_risk"]["overdue_family_count"] == 2
+    assert may_dashboard["collections_risk"]["overdue_cents"] == 8_000
+    assert may_dashboard["collections_risk"]["aging_buckets"] == [
+        {"label": "Current", "amount_cents": 0, "family_count": 0},
+        {"label": "1-30", "amount_cents": 5_000, "family_count": 1},
+        {"label": "31-60", "amount_cents": 0, "family_count": 0},
+        {"label": "60+", "amount_cents": 3_000, "family_count": 1},
+    ]
+    assert june_dashboard["cash_collected_cents"] == 21_000
+    assert june_dashboard["collections_risk"]["failed_payment_count"] == 0
+    assert june_dashboard["collections_risk"]["partial_payment_count"] == 1
+    assert june_dashboard["collections_risk"]["overdue_family_count"] == 1
+    assert june_dashboard["collections_risk"]["overdue_cents"] == 4_000
+
+
+@pytest.mark.asyncio
 async def test_reports_dashboard_returns_meaningful_empty_states() -> None:
     mongomock_motor = pytest.importorskip("mongomock_motor")
     client = mongomock_motor.AsyncMongoMockClient()
