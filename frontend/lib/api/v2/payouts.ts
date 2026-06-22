@@ -66,7 +66,15 @@ export interface AdminUnpaidOccurrenceView {
   occurred_at: string | null;
   session_id: string | null;
   session_title: string | null;
-  reason: PayoutWarningReason | null;
+  reason:
+    | "no_rate_configured"
+    | "rate_gap"
+    | "missing_session_price_for_percent_revenue"
+    | "attendance_override"
+    | "unknown_unpaid_reason"
+    | PayoutWarningReason;
+  detail: string | null;
+  unresolved: boolean;
   severity: PayoutWarningSeverity | null;
   message: string | null;
   coach_id: string | null;

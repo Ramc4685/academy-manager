@@ -241,6 +241,7 @@ class AdminUseCases:
     describe_payout_occurrences: object | None = None  # async (ids) -> dict[str, dict]
     set_coach_pay_rate: object | None = None  # SetCoachPayRate
     list_coach_pay_rates: object | None = None  # ListCoachPayRates
+    repair_coach_pay_rate_window: object | None = None  # RepairCoachRateWindow
     create_session_type: CreateSessionType | None = None
     list_session_types: ListSessionTypes | None = None
     update_session_type: UpdateSessionType | None = None
@@ -274,6 +275,12 @@ class AdminUseCases:
     get_digest_delivery_log: object | None = None  # GetDigestDeliveryLog
     send_billing_invoice: object | None = None
     charge_invoice_via_autopay: object | None = None
+    # Billing Health (#235): observability + recovery actions.
+    list_reconciliation_runs: object | None = None  # async () -> list[dict]
+    run_reconciliation: object | None = None  # async () -> dict
+    list_failed_payment_attempts: object | None = None  # async () -> list[dict]
+    list_invoice_attempts: object | None = None  # async (invoice_id) -> list[dict]
+    replay_webhook_event: object | None = None  # async (event_id) -> bool
     add_invoice_line: object | None = None
     remove_invoice_line: object | None = None
     void_billing_invoice: object | None = None

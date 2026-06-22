@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date
-from typing import Annotated
+from datetime import date, datetime
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, StringConstraints
@@ -956,3 +956,134 @@ def _payment_view(row: object) -> AdminPaymentView:
 
 def _format_cents(cents: int) -> str:
     return f"${cents / 100:.2f}"
+
+
+# --------------------------------------------------------------------------- #
+# Billing Health (#235): reconciliation runs, failed payments, webhook replay
+# --------------------------------------------------------------------------- #
+class ReconciliationRunDto(BaseModel):
+    model_config = {"extra": "ignore"}
+
+    run_id: str
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    scanned: int = 0
+    repaired: int = 0
+    skipped: int = 0
+    quarantined: int = 0
+    failed: int = 0
+    errors: list[Any] = Field(default_factory=list)
+
+
+class ReconciliationRunsResponse(BaseModel):
+    runs: list[ReconciliationRunDto]
+
+
+class FailedPaymentRowDto(BaseModel):
+    model_config = {"extra": "ignore"}
+
+    invoice_id: str
+    parent_id: str
+    parent_name: str | None = None
+    period: str
+    total_cents: int
+    balance_due_cents: int
+    currency: str = "usd"
+    latest_attempt_at: datetime | None = None
+    latest_decline_code: str | None = None
+    attempt_count: int = 0
+
+
+class FailedPaymentsResponse(BaseModel):
+    rows: list[FailedPaymentRowDto]
+
+
+class PaymentAttemptDto(BaseModel):
+    model_config = {"extra": "ignore"}
+
+    attempt_id: str
+    status: str
+    amount_cents: int
+    currency: str = "usd"
+    stripe_payment_intent_id: str | None = None
+    failure_code: str | None = None
+    failure_message: str | None = None
+    created_at: datetime | None = None
+
+
+class InvoiceAttemptsResponse(BaseModel):
+    attempts: list[PaymentAttemptDto]
+
+
+class ReplayWebhookResponse(BaseModel):
+    replayed: bool
+    event_id: str
+
+
+@router.get("/billing/reconciliation-runs", response_model=ReconciliationRunsResponse)
+async def list_reconciliation_runs(
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> ReconciliationRunsResponse:
+    list_runs = _required_callable(use_cases.list_reconciliation_runs, "Reconciliation runs")
+    rows = await list_runs()  # type: ignore[operator]
+    return ReconciliationRunsResponse(runs=[ReconciliationRunDto(**r) for r in rows])
+
+
+@router.post("/billing/reconcile-now", response_model=ReconciliationRunDto)
+async def run_reconciliation_now(
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> ReconciliationRunDto:
+    run = _required_callable(use_cases.run_reconciliation, "Reconciliation")
+    try:
+        result = await run()  # type: ignore[operator]
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return ReconciliationRunDto(**result)
+
+
+@router.get("/billing/failed-payment-attempts", response_model=FailedPaymentsResponse)
+async def list_failed_payment_attempts(
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> FailedPaymentsResponse:
+    list_failed = _required_callable(
+        use_cases.list_failed_payment_attempts, "Failed payment attempts"
+    )
+    rows = await list_failed()  # type: ignore[operator]
+    return FailedPaymentsResponse(rows=[FailedPaymentRowDto(**r) for r in rows])
+
+
+@router.get(
+    "/billing/invoices/{invoice_id}/attempts",
+    response_model=InvoiceAttemptsResponse,
+)
+async def list_invoice_attempts(
+    invoice_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> InvoiceAttemptsResponse:
+    list_attempts = _required_callable(use_cases.list_invoice_attempts, "Invoice attempts")
+    try:
+        rows = await list_attempts(invoice_id)  # type: ignore[operator]
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return InvoiceAttemptsResponse(attempts=[PaymentAttemptDto(**a) for a in rows])
+
+
+@router.post(
+    "/billing/webhook-events/{event_id}/replay",
+    response_model=ReplayWebhookResponse,
+)
+async def replay_webhook_event(
+    event_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> ReplayWebhookResponse:
+    replay = _required_callable(use_cases.replay_webhook_event, "Webhook replay")
+    try:
+        await replay(event_id)  # type: ignore[operator]
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ReplayWebhookResponse(replayed=True, event_id=event_id)

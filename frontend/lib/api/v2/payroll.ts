@@ -10,6 +10,7 @@ export interface AdminMonthlyPayrollRow {
   currency: string;
   status: MonthlyPayrollStatus;
   period_id: string | null;
+  unresolved_unpaid_count: number;
   warning_count: number;
   warning_status: "clear" | "unresolved";
 }

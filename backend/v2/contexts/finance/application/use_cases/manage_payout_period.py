@@ -138,6 +138,7 @@ class RecomputePayoutPeriod(_Audited):
                 "total_minor": total,
                 "lines": lines,
                 "unpaid_occurrence_ids": list(calc.unpaid_occurrence_ids),
+                "unpaid_occurrences": list(calc.unpaid_occurrences),
                 "payout_warnings": [
                     PayoutWarning.model_validate(
                         warning.model_dump() if hasattr(warning, "model_dump") else warning

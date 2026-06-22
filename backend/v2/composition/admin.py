@@ -110,6 +110,7 @@ from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_
 )
 from backend.v2.contexts.coaching.application.use_cases.manage_coach_rates import (
     ListCoachPayRates,
+    RepairCoachRateWindow,
     SetCoachPayRate,
 )
 from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance import (
@@ -124,6 +125,7 @@ from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
     MongoCoachAttendanceRepository,
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_coach_rate_repo import (
+    MongoCoachRateAuditLogRepository,
     MongoCoachRateRepository,
     coach_rate_from_mongo_doc,
 )
@@ -2248,6 +2250,15 @@ class _MongoCoachRateRepository:
             return None
         return coach_rate_from_mongo_doc(doc)
 
+    async def list_for_coach(self, coach_id: str) -> list[CoachRate]:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        cursor = self._db["coach_rates"].find(
+            {"academy_id": current_academy_id(), "coach_id": coach_id},
+            sort=[("effective_from", 1)],
+        )
+        return [coach_rate_from_mongo_doc(doc) async for doc in cursor]
+
 
 class _FinancePayoutCalculator:
     def __init__(self, compute: ComputeCoachPayout) -> None:
@@ -2601,8 +2612,13 @@ def compose_admin(
         }
 
     coach_rates_repo = MongoCoachRateRepository(db)
-    set_coach_pay_rate = SetCoachPayRate(rates=coach_rates_repo)
+    coach_rate_audit = MongoCoachRateAuditLogRepository(db)
+    set_coach_pay_rate = SetCoachPayRate(rates=coach_rates_repo, audit=coach_rate_audit)
     list_coach_pay_rates = ListCoachPayRates(rates=coach_rates_repo)
+    repair_coach_pay_rate_window = RepairCoachRateWindow(
+        rates=coach_rates_repo,
+        audit=coach_rate_audit,
+    )
     record_expense = RecordExpense(expenses=expenses_repo, academy_id=academy_id)
     edit_expense = EditExpense(expenses=expenses_repo)
     delete_expense = DeleteExpense(expenses=expenses_repo)
@@ -2694,6 +2710,55 @@ def compose_admin(
             stripe=stripe,  # type: ignore[arg-type]
         ).execute(invoice_id)
         return result.model_dump(mode="python")
+
+    # ---- Billing Health (#235): observability + recovery actions ----------- #
+    async def list_reconciliation_runs() -> list[dict[str, Any]]:
+        from backend.v2.contexts.billing.infrastructure.mongo_billing_reconciliation_run_repo import (
+            MongoBillingReconciliationRunRepository,
+        )
+        from backend.v2.shared.tenancy import current_academy_id
+
+        repo = MongoBillingReconciliationRunRepository(db)
+        return await repo.list_runs(current_academy_id(), limit=10)
+
+    async def run_reconciliation() -> dict[str, Any]:
+        from backend.v2.contexts.billing.application.use_cases.reconcile_stripe_payment_intents import (
+            ReconcileStripePaymentIntents,
+        )
+        from backend.v2.contexts.billing.infrastructure.mongo_billing_reconciliation_run_repo import (
+            MongoBillingReconciliationRunRepository,
+        )
+        from backend.v2.shared.tenancy import current_academy_id
+
+        if not hasattr(stripe, "search_app_owned_payment_intents"):
+            raise RuntimeError("Stripe reconciliation not configured")
+        return await ReconcileStripePaymentIntents(
+            stripe=stripe,  # type: ignore[arg-type]
+            ledger=billing_ledger_repo,
+            run_recorder=MongoBillingReconciliationRunRepository(db),
+            academy_id=current_academy_id(),
+        ).execute(limit=100)
+
+    async def list_failed_payment_attempts() -> list[dict[str, Any]]:
+        return await billing_ledger_repo.list_open_failed_attempts()
+
+    async def list_invoice_attempts(invoice_id: str) -> list[dict[str, Any]]:
+        invoice = await billing_ledger_repo.get_invoice(invoice_id)
+        if invoice is None:
+            raise ValueError("invoice not found")
+        return await billing_ledger_repo.list_payment_attempts(invoice_id)
+
+    async def replay_webhook_event(event_id: str) -> bool:
+        from backend.v2.contexts.billing.infrastructure.mongo_stripe_dedup import (
+            MongoStripeEventDedup,
+        )
+        from backend.v2.shared.tenancy import current_academy_id
+
+        dedup = MongoStripeEventDedup(db)
+        replayed = await dedup.replay(event_id, academy_id=current_academy_id())
+        if not replayed:
+            raise ValueError("quarantined event not found")
+        return True
 
     async def add_invoice_line(
         *,
@@ -4891,6 +4956,11 @@ def compose_admin(
         generate_billing_invoice_artifact=generate_billing_invoice_artifact,
         send_billing_invoice=send_billing_invoice,
         charge_invoice_via_autopay=charge_invoice_via_autopay,
+        list_reconciliation_runs=list_reconciliation_runs,
+        run_reconciliation=run_reconciliation,
+        list_failed_payment_attempts=list_failed_payment_attempts,
+        list_invoice_attempts=list_invoice_attempts,
+        replay_webhook_event=replay_webhook_event,
         add_invoice_line=add_invoice_line,
         remove_invoice_line=remove_invoice_line,
         void_billing_invoice=void_billing_invoice,
@@ -4939,6 +5009,7 @@ def compose_admin(
         describe_payout_occurrences=_describe_payout_occurrences,
         set_coach_pay_rate=set_coach_pay_rate,
         list_coach_pay_rates=list_coach_pay_rates,
+        repair_coach_pay_rate_window=repair_coach_pay_rate_window,
         list_admin_sessions=list_admin_sessions,
         get_admin_session=get_admin_session,
         maintain_session_occurrences=maintain_session_occurrences,

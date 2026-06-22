@@ -122,6 +122,9 @@ class FakeRateRepo:
         # with active rates, but be defensive).
         return max(candidates, key=lambda r: r.effective_from)
 
+    async def list_for_coach(self, coach_id: str) -> list[CoachRate]:
+        return [r for r in self._rates if r.coach_id == coach_id]
+
 
 # ---------------------------------------------------------------------------
 # Domain shape
@@ -704,6 +707,54 @@ async def test_missing_rate_marks_occurrence_unpaid_but_does_not_crash() -> None
     assert statement.total_minor == 0
     assert statement.unpaid_occurrence_ids == ["occ-1"]
     assert [warning.reason for warning in statement.payout_warnings] == ["missing_rate"]
+    assert statement.unpaid_occurrences[0].occurrence_id == "occ-1"
+    assert statement.unpaid_occurrences[0].reason == "no_rate_configured"
+
+
+@pytest.mark.asyncio
+async def test_rate_gap_marks_occurrence_with_rate_gap_reason() -> None:
+    rates = [
+        CoachRate(
+            rate_id="cr-old",
+            academy_id="acad-1",
+            coach_id="coach-A",
+            billing_unit="per_session",
+            amount_minor=4000,
+            currency="USD",
+            effective_from=_dt("2026-01-01T00:00:00"),
+            effective_until=_dt("2026-05-01T00:00:00"),
+            status="superseded",
+        ),
+        CoachRate(
+            rate_id="cr-new",
+            academy_id="acad-1",
+            coach_id="coach-A",
+            billing_unit="per_session",
+            amount_minor=5000,
+            currency="USD",
+            effective_from=_dt("2026-06-01T00:00:00"),
+            effective_until=None,
+            status="active",
+        ),
+    ]
+    occ = _occurrence(
+        "occ-gap",
+        start="2026-05-10T18:00:00",
+        end="2026-05-10T19:00:00",
+    )
+
+    statement = await ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery([occ]),
+        rates=FakeRateRepo(rates),
+    ).execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+
+    assert statement.unpaid_occurrence_ids == ["occ-gap"]
+    assert statement.unpaid_occurrences[0].reason == "rate_gap"
 
 
 # ---------------------------------------------------------------------------
@@ -848,6 +899,7 @@ async def test_percent_rate_without_expected_revenue_marks_unpaid() -> None:
         "missing_session_price_for_percent_revenue"
     ]
     assert statement.payout_warnings[0].repair_action == "set_session_fee_and_recompute"
+    assert statement.unpaid_occurrences[0].reason == "missing_session_price_for_percent_revenue"
 
 
 @pytest.mark.asyncio

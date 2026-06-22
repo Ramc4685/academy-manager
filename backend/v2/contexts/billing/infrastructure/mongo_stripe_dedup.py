@@ -247,6 +247,32 @@ class MongoStripeEventDedup:
             },
         )
 
+    async def replay(self, event_id: str, *, academy_id: str | None = None) -> bool:
+        """Reset a quarantined event back to ``received`` so the drain job
+        re-processes it. Only acts on quarantined events (idempotent / safe).
+
+        ``academy_id`` scopes the reset to one tenant — callers MUST pass it so
+        an admin cannot replay another academy's event.
+        """
+        now = datetime.now(UTC)
+        query: dict[str, Any] = {"event_id": event_id, "status": "quarantined"}
+        if academy_id is not None:
+            query["academy_id"] = academy_id
+        result = await self._coll.update_many(
+            query,
+            {
+                "$set": {
+                    "status": "received",
+                    "next_retry_at": now,
+                    "retry_count": 0,
+                    "processing_locked_until": None,
+                    "processor_id": None,
+                    "error_message": None,
+                },
+            },
+        )
+        return result.matched_count > 0
+
     @staticmethod
     def _retry_delay(retry_count: int) -> timedelta:
         attempt_index = max(retry_count - 1, 0)

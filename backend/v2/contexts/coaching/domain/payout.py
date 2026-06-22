@@ -34,6 +34,22 @@ PayoutWarningReason = Literal[
     "missing_percent",
 ]
 PayoutWarningSeverity = Literal["blocking", "warning"]
+CoachRateTimelineIssueType = Literal[
+    "gap",
+    "overlap",
+    "duplicate_effective_from",
+    "duplicate_active_rows",
+    "multiple_open_ended_rows",
+    "invalid_window",
+    "malformed_history",
+]
+UnpaidOccurrenceReason = Literal[
+    "no_rate_configured",
+    "rate_gap",
+    "missing_session_price_for_percent_revenue",
+    "attendance_override",
+    "unknown_unpaid_reason",
+]
 
 
 class CoachAttendanceForPayout(BaseModel):
@@ -110,6 +126,36 @@ class CoachRate(BaseModel):
         return self
 
 
+class CoachRateTimelineIssue(BaseModel):
+    model_config = {"frozen": True}
+
+    issue_type: CoachRateTimelineIssueType
+    message: str
+    rate_ids: list[str] = Field(default_factory=list)
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+
+
+class CoachRateTimelineDiagnostics(BaseModel):
+    model_config = {"frozen": True}
+
+    coach_id: str
+    issues: list[CoachRateTimelineIssue] = Field(default_factory=list)
+
+    @property
+    def has_blocking_issues(self) -> bool:
+        return bool(self.issues)
+
+
+class PayoutUnpaidOccurrence(BaseModel):
+    model_config = {"frozen": True}
+
+    occurrence_id: str
+    reason: UnpaidOccurrenceReason
+    detail: str | None = None
+    unresolved: bool = True
+
+
 class PayoutLine(BaseModel):
     """One paid occurrence on a coach's statement."""
 
@@ -160,6 +206,7 @@ class PayoutStatement(BaseModel):
     lines: list[PayoutLine] = Field(default_factory=list)
     total_minor: int = Field(ge=0)
     unpaid_occurrence_ids: list[str] = Field(default_factory=list)
+    unpaid_occurrences: list[PayoutUnpaidOccurrence] = Field(default_factory=list)
     payout_warnings: list[PayoutWarning] = Field(default_factory=list)
     absent_occurrence_ids: list[str] = Field(default_factory=list)
     """Occurrences attributed to this coach but unpaid because the coach

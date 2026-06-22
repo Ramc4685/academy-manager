@@ -21,6 +21,7 @@ def make_fake_period(
     total_minor: int = 0,
     currency: str = "MYR",
     payout_warnings: list[PayoutWarning] | None = None,
+    unpaid_occurrence_ids: list[str] | None = None,
 ) -> PayoutPeriod:
     # model_construct bypasses the total_minor == sum(lines) validator so tests
     # can supply arbitrary totals without building matching line objects.
@@ -34,7 +35,8 @@ def make_fake_period(
         currency=currency,
         total_minor=total_minor,
         lines=[],
-        unpaid_occurrence_ids=[],
+        unpaid_occurrence_ids=unpaid_occurrence_ids or [],
+        unpaid_occurrences=[],
         payout_warnings=payout_warnings or [],
         generated_at=datetime(2026, 6, 13, tzinfo=UTC_),
         approved_at=None,
@@ -174,10 +176,10 @@ class _FakeOccurrenceReader:
 class _FakeCalculator:
     def __init__(
         self,
-        totals: dict[str, tuple[int, str]],
+        totals: dict[str, tuple[int, str] | tuple[int, str, list[str] | None]],
         warnings: dict[str, list[PayoutWarning]] | None = None,
     ) -> None:
-        self._totals = totals  # coach_id -> (total_minor, currency)
+        self._totals = totals  # coach_id -> (total_minor, currency[, unpaid_ids])
         self._warnings = warnings or {}
 
     async def calculate(
@@ -192,16 +194,21 @@ class _FakeCalculator:
             lines: list = None
             unpaid_occurrence_ids: list = None
             payout_warnings: list = None
+            unpaid_occurrences: list = None
 
             def __post_init__(self):
                 object.__setattr__(self, "lines", self.lines or [])
                 object.__setattr__(self, "unpaid_occurrence_ids", self.unpaid_occurrence_ids or [])
                 object.__setattr__(self, "payout_warnings", self.payout_warnings or [])
+                object.__setattr__(self, "unpaid_occurrences", self.unpaid_occurrences or [])
 
-        total, currency = self._totals.get(coach_id, (0, "MYR"))
+        result = self._totals.get(coach_id, (0, "MYR", []))
+        total, currency = result[0], result[1]
+        unpaid_ids = result[2] if len(result) > 2 else []
         return _Calc(
             total_minor=total,
             currency=currency,
+            unpaid_occurrence_ids=unpaid_ids,
             payout_warnings=self._warnings.get(coach_id, []),
         )
 
@@ -237,7 +244,7 @@ async def test_lists_generated_and_ungenerated_coaches() -> None:
             total_minor=40000,
         )
     )
-    calc = _FakeCalculator({"c2": (18000, "MYR")})
+    calc = _FakeCalculator({"c2": (18000, "MYR", [])})
 
     uc = ListMonthlyPayroll(reader=reader, periods=repo, calculator=calc)
     rows = await uc.execute(academy_id="a1", period_start=JUNE_START, period_end=JUNE_END)
@@ -245,15 +252,17 @@ async def test_lists_generated_and_ungenerated_coaches() -> None:
 
     assert by_coach["c1"].status == "approved"
     assert by_coach["c1"].total_minor == 40000
+    assert by_coach["c1"].unresolved_unpaid_count == 0
     assert by_coach["c1"].period_id is not None
     assert by_coach["c2"].status == "not_generated"
     assert by_coach["c2"].total_minor == 18000
+    assert by_coach["c2"].unresolved_unpaid_count == 0
     assert by_coach["c2"].period_id is None
 
 
 @pytest.mark.asyncio
-async def test_rows_include_warning_count_and_status() -> None:
-    reader = _FakeOccurrenceReader([("c1", 4), ("c2", 2)])
+async def test_rows_include_unresolved_unpaid_count_even_when_total_is_nonzero() -> None:
+    reader = _FakeOccurrenceReader([("c1", 4), ("c2", 3)])
     repo = FakePayoutPeriodRepository()
     await repo.save(
         make_fake_period(
@@ -262,21 +271,27 @@ async def test_rows_include_warning_count_and_status() -> None:
             period_end=JUNE_END,
             academy_id="a1",
             status="draft",
-            total_minor=0,
+            total_minor=40000,
+            unpaid_occurrence_ids=["occ-gap"],
             payout_warnings=[_warning(coach_id="c1")],
         )
     )
     calc = _FakeCalculator(
-        {"c2": (0, "MYR")},
+        {"c2": (18000, "MYR", ["occ-missing-price"])},
         warnings={"c2": [_warning(coach_id="c2", occurrence_id="occ-c2")]},
     )
 
-    uc = ListMonthlyPayroll(reader=reader, periods=repo, calculator=calc)
-    rows = await uc.execute(academy_id="a1", period_start=JUNE_START, period_end=JUNE_END)
+    rows = await ListMonthlyPayroll(reader=reader, periods=repo, calculator=calc).execute(
+        academy_id="a1", period_start=JUNE_START, period_end=JUNE_END
+    )
     by_coach = {r.coach_id: r for r in rows}
 
+    assert by_coach["c1"].total_minor == 40000
+    assert by_coach["c1"].unresolved_unpaid_count == 1
     assert by_coach["c1"].warning_count == 1
     assert by_coach["c1"].warning_status == "unresolved"
+    assert by_coach["c2"].total_minor == 18000
+    assert by_coach["c2"].unresolved_unpaid_count == 1
     assert by_coach["c2"].warning_count == 1
     assert by_coach["c2"].warning_status == "unresolved"
 
@@ -285,7 +300,7 @@ async def test_rows_include_warning_count_and_status() -> None:
 async def test_reader_receives_correct_academy_id() -> None:
     reader = _FakeOccurrenceReader([("c1", 1)])
     repo = FakePayoutPeriodRepository()
-    calc = _FakeCalculator({"c1": (10000, "MYR")})
+    calc = _FakeCalculator({"c1": (10000, "MYR", [])})
 
     uc = ListMonthlyPayroll(reader=reader, periods=repo, calculator=calc)
     await uc.execute(academy_id="acad_blno_badminton", period_start=JUNE_START, period_end=JUNE_END)

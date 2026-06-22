@@ -43,6 +43,13 @@ PayoutWarningReason = Literal[
     "missing_percent",
 ]
 PayoutWarningSeverity = Literal["blocking", "warning"]
+PersistedUnpaidReason = Literal[
+    "no_rate_configured",
+    "rate_gap",
+    "missing_session_price_for_percent_revenue",
+    "attendance_override",
+    "unknown_unpaid_reason",
+]
 
 
 class PersistedPayoutLine(BaseModel):
@@ -87,6 +94,17 @@ class PayoutWarning(BaseModel):
     repair_action: str
 
 
+class PersistedUnpaidOccurrence(BaseModel):
+    """One occurrence in the period that did not produce a normal pay line."""
+
+    model_config = {"frozen": True}
+
+    occurrence_id: str
+    reason: PersistedUnpaidReason
+    detail: str | None = None
+    unresolved: bool = True
+
+
 class PayoutPeriod(BaseModel):
     """A coach's payout for one period, durable.
 
@@ -107,6 +125,7 @@ class PayoutPeriod(BaseModel):
     total_minor: int = Field(ge=0)
     lines: list[PersistedPayoutLine] = Field(default_factory=list)
     unpaid_occurrence_ids: list[str] = Field(default_factory=list)
+    unpaid_occurrences: list[PersistedUnpaidOccurrence] = Field(default_factory=list)
     payout_warnings: list[PayoutWarning] = Field(default_factory=list)
     generated_at: datetime
     approved_at: datetime | None = None
@@ -155,9 +174,13 @@ def approve(period: PayoutPeriod, *, at: datetime) -> PayoutPeriod:
         raise PayoutPeriodStateError(
             f"cannot approve payout period {period.period_id!r} in status 'paid'"
         )
-    if period.payout_warnings:
+    unresolved = [row for row in period.unpaid_occurrences if row.unresolved]
+    if unresolved or period.unpaid_occurrence_ids or period.payout_warnings:
+        count = len(period.payout_warnings) or len(unresolved) or len(period.unpaid_occurrence_ids)
         raise PayoutPeriodStateError(
-            f"cannot approve payout period {period.period_id!r} with unresolved payout warnings"
+            f"cannot approve payout period {period.period_id!r} with "
+            f"{count} unresolved payout warnings or unresolved unpaid occurrences; "
+            "repair rates and recompute first"
         )
     return period.model_copy(update={"status": "approved", "approved_at": at})
 
@@ -206,9 +229,11 @@ def mark_paid(
         raise PayoutPeriodStateError(
             f"cannot mark payout period {period.period_id!r} paid from status 'draft'"
         )
-    if period.payout_warnings:
+    unresolved = [row for row in period.unpaid_occurrences if row.unresolved]
+    if unresolved or period.unpaid_occurrence_ids or period.payout_warnings:
         raise PayoutPeriodStateError(
-            f"cannot mark payout period {period.period_id!r} paid with unresolved payout warnings"
+            f"cannot mark payout period {period.period_id!r} paid with unresolved payout warnings "
+            "or unresolved unpaid occurrences"
         )
     return period.model_copy(
         update={

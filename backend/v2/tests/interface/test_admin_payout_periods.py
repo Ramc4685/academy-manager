@@ -13,6 +13,7 @@ from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriodStateError,
     PayoutWarning,
     PersistedPayoutLine,
+    PersistedUnpaidOccurrence,
 )
 
 
@@ -83,6 +84,8 @@ class _ApprovePayoutPeriod:
 
     async def execute(self, *, period_id: str) -> PayoutPeriod:
         self.calls.append(period_id)
+        if self.period.unpaid_occurrence_ids:
+            raise PayoutPeriodStateError("unresolved unpaid occurrences remain")
         self.period = self.period.model_copy(
             update={"status": "approved", "approved_at": _dt("2026-06-02T10:00:00")}
         )
@@ -170,6 +173,14 @@ def test_review_payout_period_detail(admin_client):
 def test_review_payout_period_detail_includes_warning_reason(admin_client):
     period = _period(
         unpaid_occurrence_ids=["occ-unpaid-1"],
+        unpaid_occurrences=[
+            PersistedUnpaidOccurrence(
+                occurrence_id="occ-gap",
+                reason="rate_gap",
+                detail="Coach pay-rate history has a gap.",
+                unresolved=True,
+            )
+        ],
         payout_warnings=[_warning()],
     )
     _wire(admin_client, period)
@@ -190,8 +201,12 @@ def test_review_payout_period_detail_includes_warning_reason(admin_client):
     assert body["unpaid_occurrence_ids"] == ["occ-unpaid-1"]
     assert body["payout_warnings"][0]["reason"] == "missing_session_price_for_percent_revenue"
     assert body["payout_warnings"][0]["session_title"] == "Junior Squad"
-    assert body["unpaid_occurrences"][0]["reason"] == "missing_session_price_for_percent_revenue"
-    assert body["unpaid_occurrences"][0]["repair_action"] == "set_session_fee_and_recompute"
+    by_occurrence = {row["occurrence_id"]: row for row in body["unpaid_occurrences"]}
+    assert by_occurrence["occ-unpaid-1"]["reason"] == "missing_session_price_for_percent_revenue"
+    assert by_occurrence["occ-unpaid-1"]["repair_action"] == "set_session_fee_and_recompute"
+    assert by_occurrence["occ-gap"]["reason"] == "rate_gap"
+    assert by_occurrence["occ-gap"]["detail"] == "Coach pay-rate history has a gap."
+    assert by_occurrence["occ-gap"]["unresolved"] is True
 
 
 class AsyncDescribe:
@@ -239,8 +254,19 @@ def test_approve_and_mark_paid_with_metadata_are_idempotent(admin_client):
     assert again.json()["paid_reference"] == "ach-456"
 
 
-def test_approve_with_unresolved_warnings_maps_to_400(admin_client):
-    period = _period(unpaid_occurrence_ids=["occ-unpaid-1"], payout_warnings=[_warning()])
+def test_approve_payout_period_blocks_unresolved_unpaid_occurrences(admin_client):
+    period = _period(
+        unpaid_occurrence_ids=["occ-gap"],
+        unpaid_occurrences=[
+            PersistedUnpaidOccurrence(
+                occurrence_id="occ-gap",
+                reason="rate_gap",
+                detail="Coach pay-rate history has a gap.",
+                unresolved=True,
+            )
+        ],
+        payout_warnings=[_warning(occurrence_id="occ-warning")],
+    )
     _wire(admin_client, period)
     admin_client.use_cases.approve_payout_period = _ApprovePayoutPeriodRaises()
 

@@ -28,6 +28,7 @@ from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
     PayoutWarning,
     PersistedPayoutLine,
+    PersistedUnpaidOccurrence,
 )
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
@@ -65,6 +66,24 @@ def _line_from_doc(doc: dict[str, Any]) -> PersistedPayoutLine:
     )
 
 
+def _unpaid_to_doc(row: PersistedUnpaidOccurrence) -> dict[str, Any]:
+    return {
+        "occurrence_id": row.occurrence_id,
+        "reason": row.reason,
+        "detail": row.detail,
+        "unresolved": row.unresolved,
+    }
+
+
+def _unpaid_from_doc(doc: dict[str, Any]) -> PersistedUnpaidOccurrence:
+    return PersistedUnpaidOccurrence(
+        occurrence_id=str(doc["occurrence_id"]),
+        reason=doc.get("reason", "unknown_unpaid_reason"),
+        detail=doc.get("detail"),
+        unresolved=bool(doc.get("unresolved", True)),
+    )
+
+
 def _period_to_doc(period: PayoutPeriod) -> dict[str, Any]:
     return {
         "period_id": period.period_id,
@@ -78,6 +97,7 @@ def _period_to_doc(period: PayoutPeriod) -> dict[str, Any]:
         "payout_warnings": [
             warning.model_dump(mode="python") for warning in period.payout_warnings
         ],
+        "unpaid_occurrences": [_unpaid_to_doc(row) for row in period.unpaid_occurrences],
         "generated_at": period.generated_at,
         "approved_at": period.approved_at,
         "paid_at": period.paid_at,
@@ -97,6 +117,18 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
             {"academy_id": academy_id, "period_id": doc["period_id"]}
         )
         lines = [_line_from_doc(line_doc) async for line_doc in cursor]
+        unpaid_occurrence_ids = list(doc.get("unpaid_occurrence_ids", []))
+        unpaid_occurrences = [_unpaid_from_doc(row) for row in doc.get("unpaid_occurrences", [])]
+        if unpaid_occurrence_ids and not unpaid_occurrences:
+            unpaid_occurrences = [
+                PersistedUnpaidOccurrence(
+                    occurrence_id=str(occurrence_id),
+                    reason="unknown_unpaid_reason",
+                    detail="Legacy payout period has an unpaid occurrence without a structured reason.",
+                    unresolved=True,
+                )
+                for occurrence_id in unpaid_occurrence_ids
+            ]
         return PayoutPeriod(
             period_id=str(doc["period_id"]),
             academy_id=academy_id,
@@ -107,7 +139,8 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
             currency=str(doc["currency"]),
             total_minor=int(doc["total_minor"]),
             lines=lines,
-            unpaid_occurrence_ids=list(doc.get("unpaid_occurrence_ids", [])),
+            unpaid_occurrence_ids=unpaid_occurrence_ids,
+            unpaid_occurrences=unpaid_occurrences,
             payout_warnings=[
                 PayoutWarning.model_validate(warning) for warning in doc.get("payout_warnings", [])
             ],

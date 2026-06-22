@@ -77,6 +77,7 @@ class GeneratePayoutPeriod:
             total_minor=calc.total_minor,
             lines=list(calc.lines),
             unpaid_occurrence_ids=list(calc.unpaid_occurrence_ids),
+            unpaid_occurrences=list(calc.unpaid_occurrences),
             payout_warnings=[
                 PayoutWarning.model_validate(
                     warning.model_dump() if hasattr(warning, "model_dump") else warning

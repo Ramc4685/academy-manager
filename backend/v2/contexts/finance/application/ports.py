@@ -28,6 +28,7 @@ from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
     PayoutWarning,
     PersistedPayoutLine,
+    PersistedUnpaidOccurrence,
 )
 from backend.v2.contexts.finance.domain.reporting_snapshots import (
     AcademyRevenueSnapshot,
@@ -146,6 +147,8 @@ class PayoutCalculation(Protocol):
     def lines(self) -> list[PersistedPayoutLine]: ...
     @property
     def unpaid_occurrence_ids(self) -> list[str]: ...
+    @property
+    def unpaid_occurrences(self) -> list[PersistedUnpaidOccurrence]: ...
     @property
     def payout_warnings(self) -> list[PayoutWarning]: ...
 
