@@ -9,6 +9,7 @@ import {
   exportMonthlyPayrollXlsx,
 } from "@/lib/api/v2/payroll";
 import { generatePayoutPeriod } from "@/lib/api/v2/payouts";
+import { payrollRowNeedsWarning } from "@/lib/payroll-warnings";
 import { MonthPicker } from "./_components/MonthPicker";
 
 export default function PayoutsPage() {
@@ -50,7 +51,7 @@ export default function PayoutsPage() {
   });
 
   const rows = data?.rows ?? [];
-  const missingRates = rows.filter((r) => r.session_count > 0 && r.total_amount_cents === 0);
+  const warningRows = rows.filter(payrollRowNeedsWarning);
 
   return (
     <div className="space-y-4 p-6" data-testid="admin-payouts">
@@ -59,14 +60,14 @@ export default function PayoutsPage() {
         <MonthPicker value={month} onChange={setMonth} />
       </div>
 
-      {missingRates.length > 0 && (
+      {warningRows.length > 0 && (
         <div className="rounded-md border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
           <strong>
-            {missingRates.length} coach{missingRates.length > 1 ? "es" : ""}
+            {warningRows.length} coach{warningRows.length > 1 ? "es" : ""}
           </strong>{" "}
-          have sessions this month but no active pay rate — payout will show $0.{" "}
+          have unpaid payroll occurrences that need review before approval.{" "}
           <a href="/admin/coaches" className="underline font-medium">
-            Set rates →
+            Review rates →
           </a>
         </div>
       )}
@@ -103,6 +104,7 @@ export default function PayoutsPage() {
             <tr className="border-b text-left text-muted-foreground">
               <th className="py-2 pr-4 font-medium">Coach</th>
               <th className="py-2 pr-4 font-medium">Sessions</th>
+              <th className="py-2 pr-4 font-medium">Unpaid</th>
               <th className="py-2 pr-4 font-medium">Total</th>
               <th className="py-2 pr-4 font-medium">Status</th>
               <th className="py-2 font-medium" />
@@ -113,6 +115,15 @@ export default function PayoutsPage() {
               <tr key={row.coach_id} className="border-b hover:bg-muted/30">
                 <td className="py-2 pr-4">{row.coach_name ?? row.coach_id}</td>
                 <td className="py-2 pr-4">{row.session_count}</td>
+                <td className="py-2 pr-4">
+                  {row.unresolved_unpaid_count > 0 ? (
+                    <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                      {row.unresolved_unpaid_count} unresolved
+                    </span>
+                  ) : (
+                    "0"
+                  )}
+                </td>
                 <td className="py-2 pr-4">
                   {(row.total_amount_cents / 100).toFixed(2)} {row.currency}
                 </td>

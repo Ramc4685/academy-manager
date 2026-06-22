@@ -55,6 +55,7 @@ async def get_monthly_payroll(
             currency=r.currency,
             status=r.status,
             period_id=r.period_id,
+            unresolved_unpaid_count=r.unresolved_unpaid_count,
         )
         for r in rows
     ]

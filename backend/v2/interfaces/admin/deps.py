@@ -241,6 +241,7 @@ class AdminUseCases:
     describe_payout_occurrences: object | None = None  # async (ids) -> dict[str, dict]
     set_coach_pay_rate: object | None = None  # SetCoachPayRate
     list_coach_pay_rates: object | None = None  # ListCoachPayRates
+    repair_coach_pay_rate_window: object | None = None  # RepairCoachRateWindow
     create_session_type: CreateSessionType | None = None
     list_session_types: ListSessionTypes | None = None
     update_session_type: UpdateSessionType | None = None

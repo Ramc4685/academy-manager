@@ -37,6 +37,13 @@ from pydantic import BaseModel, Field, model_validator
 
 PayoutPeriodStatus = Literal["draft", "approved", "paid"]
 PayoutLineBasis = Literal["scheduled", "substitute", "actual"]
+PersistedUnpaidReason = Literal[
+    "no_rate_configured",
+    "rate_gap",
+    "missing_session_price_for_percent_revenue",
+    "attendance_override",
+    "unknown_unpaid_reason",
+]
 
 
 class PersistedPayoutLine(BaseModel):
@@ -65,6 +72,17 @@ class PersistedPayoutLine(BaseModel):
     adjustment_reason: str | None = None
 
 
+class PersistedUnpaidOccurrence(BaseModel):
+    """One occurrence in the period that did not produce a normal pay line."""
+
+    model_config = {"frozen": True}
+
+    occurrence_id: str
+    reason: PersistedUnpaidReason
+    detail: str | None = None
+    unresolved: bool = True
+
+
 class PayoutPeriod(BaseModel):
     """A coach's payout for one period, durable.
 
@@ -85,6 +103,7 @@ class PayoutPeriod(BaseModel):
     total_minor: int = Field(ge=0)
     lines: list[PersistedPayoutLine] = Field(default_factory=list)
     unpaid_occurrence_ids: list[str] = Field(default_factory=list)
+    unpaid_occurrences: list[PersistedUnpaidOccurrence] = Field(default_factory=list)
     generated_at: datetime
     approved_at: datetime | None = None
     paid_at: datetime | None = None
@@ -131,6 +150,13 @@ def approve(period: PayoutPeriod, *, at: datetime) -> PayoutPeriod:
     if period.status == "paid":
         raise PayoutPeriodStateError(
             f"cannot approve payout period {period.period_id!r} in status 'paid'"
+        )
+    unresolved = [row for row in period.unpaid_occurrences if row.unresolved]
+    if unresolved or period.unpaid_occurrence_ids:
+        count = len(unresolved) if unresolved else len(period.unpaid_occurrence_ids)
+        raise PayoutPeriodStateError(
+            f"cannot approve payout period {period.period_id!r} with "
+            f"{count} unresolved unpaid occurrence(s); repair rates and recompute first"
         )
     return period.model_copy(update={"status": "approved", "approved_at": at})
 

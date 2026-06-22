@@ -609,6 +609,14 @@ export interface AdminPayoutList {
 }
 
 export type CoachPayBillingUnit = "per_session" | "per_hour" | "percent_of_revenue";
+export type CoachRateTimelineIssueType =
+  | "gap"
+  | "overlap"
+  | "duplicate_effective_from"
+  | "duplicate_active_rows"
+  | "multiple_open_ended_rows"
+  | "invalid_window"
+  | "malformed_history";
 
 export interface AdminCoachPayRateView {
   rate_id: string;
@@ -622,8 +630,23 @@ export interface AdminCoachPayRateView {
   status: "active" | "superseded";
 }
 
+export interface AdminCoachPayRateTimelineIssue {
+  issue_type: CoachRateTimelineIssueType;
+  message: string;
+  rate_ids: string[];
+  starts_at: string | null;
+  ends_at: string | null;
+}
+
+export interface AdminCoachPayRateTimelineDiagnostics {
+  coach_id: string;
+  has_blocking_issues: boolean;
+  issues: AdminCoachPayRateTimelineIssue[];
+}
+
 export interface AdminCoachPayRateList {
   rates: AdminCoachPayRateView[];
+  diagnostics?: AdminCoachPayRateTimelineDiagnostics;
 }
 
 export interface SetCoachPayRateRequest {
@@ -632,6 +655,16 @@ export interface SetCoachPayRateRequest {
   percent?: number | null;
   currency?: string;
   effective_from?: string | null;
+}
+
+export interface RepairCoachPayRateWindowRequest {
+  billing_unit: CoachPayBillingUnit;
+  amount_cents?: number;
+  percent?: number | null;
+  currency?: string;
+  effective_from: string;
+  effective_until: string;
+  reason: string;
 }
 
 export interface AdminExpenseView {
@@ -1814,6 +1847,19 @@ export function setCoachPayRate(
 ): Promise<AdminCoachPayRateView> {
   return apiFetch<AdminCoachPayRateView>(
     `/admin/coaches/${encodeURIComponent(coachId)}/pay-rates`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export function repairCoachPayRateWindow(
+  coachId: string,
+  payload: RepairCoachPayRateWindowRequest
+): Promise<AdminCoachPayRateView> {
+  return apiFetch<AdminCoachPayRateView>(
+    `/admin/coaches/${encodeURIComponent(coachId)}/pay-rates/repair`,
     {
       method: "POST",
       body: JSON.stringify(payload),

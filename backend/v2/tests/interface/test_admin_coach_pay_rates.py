@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from backend.v2.contexts.coaching.application.use_cases.manage_coach_rates import (
+    RepairCoachRateWindowCommand,
     SetCoachPayRateCommand,
 )
 from backend.v2.contexts.coaching.domain.payout import CoachRate
@@ -49,6 +50,16 @@ class _ListCoachPayRates:
 
     async def execute(self, *, coach_id: str) -> list[CoachRate]:
         return [r for r in self.rates if r.coach_id == coach_id]
+
+
+class _RepairCoachRateWindow:
+    def __init__(self, rate: CoachRate) -> None:
+        self.rate = rate
+        self.commands: list[RepairCoachRateWindowCommand] = []
+
+    async def execute(self, command: RepairCoachRateWindowCommand) -> CoachRate:
+        self.commands.append(command)
+        return self.rate
 
 
 def test_set_coach_pay_rate_converts_percent_to_bps(admin_client):
@@ -104,6 +115,61 @@ def test_list_coach_pay_rates_returns_history(admin_client):
     assert body["rates"][0]["percent"] == 60.0
     assert body["rates"][1]["amount_cents"] == 5000
     assert body["rates"][1]["percent"] is None
+    assert body["diagnostics"]["has_blocking_issues"] is False
+
+
+def test_list_coach_pay_rates_returns_timeline_diagnostics(admin_client):
+    rates = [
+        _rate(
+            rate_id="cr-old",
+            effective_from=_dt("2026-01-01T00:00:00"),
+            effective_until=_dt("2026-05-01T00:00:00"),
+            status="superseded",
+        ),
+        _rate(rate_id="cr-new", effective_from=_dt("2026-06-01T00:00:00")),
+    ]
+    admin_client.use_cases.list_coach_pay_rates = _ListCoachPayRates(rates)
+
+    response = admin_client.get("/api/v2/admin/coaches/coach-1/pay-rates")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["diagnostics"]["has_blocking_issues"] is True
+    assert body["diagnostics"]["issues"][0]["issue_type"] == "gap"
+
+
+def test_repair_coach_pay_rate_window_uses_dedicated_endpoint(admin_client):
+    repaired = _rate(
+        rate_id="cr-repair",
+        billing_unit="per_session",
+        amount_minor=5000,
+        percent_bps=None,
+        effective_from=_dt("2026-05-01T00:00:00"),
+        effective_until=_dt("2026-06-01T00:00:00"),
+        status="superseded",
+    )
+    fake = _RepairCoachRateWindow(repaired)
+    admin_client.use_cases.repair_coach_pay_rate_window = fake
+
+    response = admin_client.post(
+        "/api/v2/admin/coaches/coach-1/pay-rates/repair",
+        json={
+            "billing_unit": "per_session",
+            "amount_cents": 50_00,
+            "effective_from": "2026-05-01",
+            "effective_until": "2026-06-01",
+            "reason": "Backfill imported rate gap.",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["rate_id"] == "cr-repair"
+    command = fake.commands[0]
+    assert command.coach_id == "coach-1"
+    assert command.actor_id == "u-admin"
+    assert command.effective_from.tzinfo == UTC
+    assert command.effective_until.tzinfo == UTC
+    assert command.reason == "Backfill imported rate gap."
 
 
 def test_coach_pay_rates_unconfigured_returns_503(admin_client):

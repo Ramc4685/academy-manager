@@ -32,6 +32,7 @@ from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
     PayoutPeriodStateError,
     PersistedPayoutLine,
+    PersistedUnpaidOccurrence,
     approve,
     mark_paid,
 )
@@ -110,6 +111,7 @@ class _Calc:
         currency: str = "USD",
         lines: list[PersistedPayoutLine] | None = None,
         unpaid: list[str] | None = None,
+        unpaid_occurrences: list[PersistedUnpaidOccurrence] | None = None,
     ) -> None:
         self.coach_id = "coach-A"
         self.academy_id = "acad-1"
@@ -119,6 +121,7 @@ class _Calc:
         self.lines = lines or []
         self.total_minor = sum(line.amount_minor for line in self.lines)
         self.unpaid_occurrence_ids = unpaid or []
+        self.unpaid_occurrences = unpaid_occurrences or []
 
 
 class FakeCalculator:
@@ -157,6 +160,15 @@ def _line(occurrence_id: str, amount: int, **overrides) -> PersistedPayoutLine:
     return PersistedPayoutLine(**base)
 
 
+def _unpaid(occurrence_id: str, reason: str) -> PersistedUnpaidOccurrence:
+    return PersistedUnpaidOccurrence(
+        occurrence_id=occurrence_id,
+        reason=reason,
+        detail="Payroll could not compute this occurrence.",
+        unresolved=True,
+    )
+
+
 def _period(lines: list[PersistedPayoutLine], **overrides) -> PayoutPeriod:
     base = dict(
         period_id="pp-1",
@@ -167,6 +179,8 @@ def _period(lines: list[PersistedPayoutLine], **overrides) -> PayoutPeriod:
         currency="USD",
         total_minor=sum(line.amount_minor for line in lines),
         lines=lines,
+        unpaid_occurrence_ids=[],
+        unpaid_occurrences=[],
         generated_at=_dt("2026-06-01T00:00:00"),
     )
     base.update(overrides)
@@ -187,7 +201,11 @@ async def test_recompute_rewrites_lines_and_audits() -> None:
     repo = FakeRepo()
     audit = FakeAudit()
     await repo.save(_period([_line("occ-1", 5000)]))
-    fresh = _Calc(lines=[_line("occ-1", 6000), _line("occ-2", 4000)], unpaid=["occ-3"])
+    fresh = _Calc(
+        lines=[_line("occ-1", 6000), _line("occ-2", 4000)],
+        unpaid=["occ-3"],
+        unpaid_occurrences=[_unpaid("occ-3", "rate_gap")],
+    )
     uc = RecomputePayoutPeriod(
         calculator=FakeCalculator(fresh),
         repository=repo,
@@ -201,6 +219,7 @@ async def test_recompute_rewrites_lines_and_audits() -> None:
     assert stored.total_minor == 10000
     assert [line.occurrence_id for line in stored.lines] == ["occ-1", "occ-2"]
     assert stored.unpaid_occurrence_ids == ["occ-3"]
+    assert stored.unpaid_occurrences[0].reason == "rate_gap"
     assert repo.replace_with_lines_calls == 1
     assert len(audit.entries) == 1
     entry = audit.entries[0]

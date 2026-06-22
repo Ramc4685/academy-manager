@@ -77,6 +77,7 @@ class GeneratePayoutPeriod:
             total_minor=calc.total_minor,
             lines=list(calc.lines),
             unpaid_occurrence_ids=list(calc.unpaid_occurrence_ids),
+            unpaid_occurrences=list(calc.unpaid_occurrences),
             generated_at=self._clock(),
             approved_at=None,
             paid_at=None,

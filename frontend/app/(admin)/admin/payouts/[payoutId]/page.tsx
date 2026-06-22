@@ -48,6 +48,7 @@ import { Avatar } from "@/components/ds/avatar";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
+import { unpaidReasonGuidance, unpaidReasonLabel } from "@/lib/payroll-warnings";
 
 function money(cents: number, currency = "USD"): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
@@ -397,6 +398,7 @@ function Actions({
   };
 
   const busy = recompute.isPending || approve.isPending || reopen.isPending || markPaid.isPending;
+  const unresolvedUnpaid = period.unpaid_occurrences.filter((occ) => occ.unresolved).length;
 
   return (
     <div className="space-y-2">
@@ -421,8 +423,12 @@ function Actions({
           <ActionButton
             icon={<CheckCircle2 className="size-4" aria-hidden="true" />}
             label="Approve"
-            title="Lock the lines and move this payout to approved."
-            disabled={busy}
+            title={
+              unresolvedUnpaid > 0
+                ? "Repair unpaid occurrences and recompute before approval."
+                : "Lock the lines and move this payout to approved."
+            }
+            disabled={busy || unresolvedUnpaid > 0}
             onClick={() => approve.mutate()}
             primary
           />
@@ -452,6 +458,12 @@ function Actions({
           {error}
         </p>
       )}
+      {unresolvedUnpaid > 0 && period.status === "draft" ? (
+        <p className="text-sm text-amber-700">
+          {unresolvedUnpaid} unpaid occurrence{unresolvedUnpaid === 1 ? "" : "s"} must be repaired
+          and recomputed before approval.
+        </p>
+      ) : null}
       {showPaid && (
         <MarkPaidDialog
           defaultAmountCents={period.total_amount_cents}
@@ -558,8 +570,11 @@ function PayLog({
                   <td className="px-3 py-3 text-xs text-rally-muted">—</td>
                   <td className="px-3 py-3">
                     <span className="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-amber-800">
-                      Not paid
+                      {unpaidReasonLabel(occ.reason)}
                     </span>
+                    <p className="mt-1 max-w-[260px] text-xs text-rally-muted">
+                      {occ.detail || unpaidReasonGuidance(occ.reason)}
+                    </p>
                   </td>
                   <td className="px-3 py-3 text-right font-mono text-rally-muted">—</td>
                   <td className="px-3 py-3 text-right font-mono tabular-nums text-rally-muted line-through">

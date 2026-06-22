@@ -20,6 +20,7 @@ class MonthlyPayrollRow:
     currency: str
     status: str  # "not_generated" | "draft" | "approved" | "paid"
     period_id: str | None
+    unresolved_unpaid_count: int = 0
 
 
 class ListMonthlyPayroll:
@@ -58,6 +59,7 @@ class ListMonthlyPayroll:
                         currency=period.currency,
                         status=period.status,
                         period_id=period.period_id,
+                        unresolved_unpaid_count=len(period.unpaid_occurrence_ids),
                     )
                 )
             else:
@@ -75,6 +77,7 @@ class ListMonthlyPayroll:
                         currency=calc.currency,
                         status="not_generated",
                         period_id=None,
+                        unresolved_unpaid_count=len(calc.unpaid_occurrence_ids),
                     )
                 )
         return sorted(rows, key=lambda r: r.coach_id)

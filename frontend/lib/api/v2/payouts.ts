@@ -48,6 +48,14 @@ export interface AdminUnpaidOccurrenceView {
   occurrence_id: string;
   occurred_at: string | null;
   session_title: string | null;
+  reason:
+    | "no_rate_configured"
+    | "rate_gap"
+    | "missing_session_price_for_percent_revenue"
+    | "attendance_override"
+    | "unknown_unpaid_reason";
+  detail: string | null;
+  unresolved: boolean;
 }
 
 export interface AdminPayoutPeriodView {

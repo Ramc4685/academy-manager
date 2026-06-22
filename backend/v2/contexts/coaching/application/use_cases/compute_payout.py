@@ -49,6 +49,8 @@ from backend.v2.contexts.coaching.domain.payout import (
     PayoutBasis,
     PayoutLine,
     PayoutStatement,
+    PayoutUnpaidOccurrence,
+    UnpaidOccurrenceReason,
 )
 
 ATTENDANCE_OVERRIDE_RATE_ID = "attendance-override"
@@ -72,6 +74,8 @@ class PayableOccurrenceQuery(Protocol):
 
 class CoachRateRepository(Protocol):
     async def find_for_coach_at(self, coach_id: str, at_time: datetime) -> CoachRate | None: ...
+
+    async def list_for_coach(self, coach_id: str) -> list[CoachRate]: ...
 
 
 def _paying_coach(occ: PayableOccurrence) -> tuple[str, PayoutBasis]:
@@ -129,6 +133,16 @@ def _ensure_statement_currency(current: str | None, incoming: str, *, coach_id: 
     return current
 
 
+def _missing_rate_reason(rates: list[CoachRate], at_time: datetime) -> UnpaidOccurrenceReason:
+    if not rates:
+        return "no_rate_configured"
+    ordered = sorted(rates, key=lambda r: r.effective_from)
+    first = ordered[0]
+    if at_time < first.effective_from:
+        return "no_rate_configured"
+    return "rate_gap"
+
+
 class ComputeCoachPayout:
     """Returns the ``PayoutStatement`` for one coach over a period."""
 
@@ -155,8 +169,10 @@ class ComputeCoachPayout:
 
         lines: list[PayoutLine] = []
         unpaid: list[str] = []
+        unpaid_occurrences: list[PayoutUnpaidOccurrence] = []
         absent: list[str] = []
         currency: str | None = None
+        rate_timeline: list[CoachRate] | None = None
 
         for occ in occs:
             if not occ.is_payable:
@@ -172,12 +188,34 @@ class ComputeCoachPayout:
             attendance = _attendance_for(occ, coach_id)
             if attendance is not None and attendance.status == "absent":
                 absent.append(occ.occurrence_id)
+                unpaid_occurrences.append(
+                    PayoutUnpaidOccurrence(
+                        occurrence_id=occ.occurrence_id,
+                        reason="attendance_override",
+                        detail="Coach attendance marks this occurrence absent.",
+                        unresolved=False,
+                    )
+                )
                 continue
 
             rate = await self._rates.find_for_coach_at(coach_id, occ.start_at)
             override_minor = attendance.rate_override_minor if attendance else None
             if rate is None and override_minor is None:
+                if rate_timeline is None:
+                    rate_timeline = await self._rates.list_for_coach(coach_id)
+                reason = _missing_rate_reason(rate_timeline, occ.start_at)
                 unpaid.append(occ.occurrence_id)
+                unpaid_occurrences.append(
+                    PayoutUnpaidOccurrence(
+                        occurrence_id=occ.occurrence_id,
+                        reason=reason,
+                        detail=(
+                            "No coach pay rate has ever been configured for this occurrence."
+                            if reason == "no_rate_configured"
+                            else "Coach pay-rate history has a gap at this occurrence time."
+                        ),
+                    )
+                )
                 continue
 
             minutes = _occurrence_minutes(occ)
@@ -188,6 +226,13 @@ class ComputeCoachPayout:
                 computed = _compute_line_amount_minor(rate, minutes, occ.expected_revenue_minor)
                 if computed is None:
                     unpaid.append(occ.occurrence_id)
+                    unpaid_occurrences.append(
+                        PayoutUnpaidOccurrence(
+                            occurrence_id=occ.occurrence_id,
+                            reason="missing_session_price_for_percent_revenue",
+                            detail="Percent-of-revenue rate needs a session price basis.",
+                        )
+                    )
                     continue
                 amount_minor = computed
 
@@ -226,5 +271,6 @@ class ComputeCoachPayout:
             lines=lines,
             total_minor=sum(line.amount_minor for line in lines),
             unpaid_occurrence_ids=unpaid,
+            unpaid_occurrences=unpaid_occurrences,
             absent_occurrence_ids=absent,
         )
