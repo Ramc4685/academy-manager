@@ -40,7 +40,6 @@ from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopa
     ChargeInvoiceViaAutopay,
 )
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
-    AcademyRevenueQuery,
     DeleteExpense,
     EditExpense,
     MongoExpenseRepository,
@@ -607,6 +606,26 @@ def _invoice_provider_keys(invoice: dict[str, Any]) -> set[str]:
     }
 
 
+def _payment_provider_keys(payment: dict[str, Any]) -> set[str]:
+    return {
+        str(value)
+        for value in (
+            payment.get("payment_id"),
+            payment.get("invoice_id"),
+            payment.get("invoice_number"),
+            payment.get("stripe_invoice_id"),
+            payment.get("stripe_payment_intent_id"),
+            payment.get("stripe_checkout_session_id"),
+            payment.get("stripe_subscription_id"),
+        )
+        if value
+    }
+
+
+def _payment_revenue_net_cents(payment: dict[str, Any]) -> int:
+    return _payment_final_amount_cents(payment) - int(payment.get("refunded_cents") or 0)
+
+
 def _invoice_to_admin_payment_row(invoice: dict[str, Any]) -> dict[str, Any]:
     total = _invoice_final_amount_cents(invoice)
     paid = _invoice_paid_cents(invoice)
@@ -669,6 +688,134 @@ def _coerce_report_date(value: object) -> date | None:
     return None
 
 
+def _coerce_report_datetime(value: object) -> datetime | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.astimezone(UTC) if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    if isinstance(value, date):
+        return datetime.combine(value, time.min, tzinfo=UTC)
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                parsed_date = date.fromisoformat(raw[:10])
+            except ValueError:
+                return None
+            return datetime.combine(parsed_date, time.min, tzinfo=UTC)
+        return parsed.astimezone(UTC) if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    return None
+
+
+def _period_start_datetime(period: object) -> datetime | None:
+    if not isinstance(period, str) or not period:
+        return None
+    try:
+        start, _ = _month_bounds(period)
+    except (TypeError, ValueError):
+        return None
+    return start
+
+
+def _payment_effective_at(payment: dict[str, Any]) -> datetime | None:
+    for key in ("paid_at", "payment_date", "created_at"):
+        parsed = _coerce_report_datetime(payment.get(key))
+        if parsed is not None:
+            return parsed
+    return _period_start_datetime(payment.get("period"))
+
+
+def _payment_effective_month(payment: dict[str, Any]) -> str:
+    effective_at = _payment_effective_at(payment)
+    return effective_at.strftime("%Y-%m") if effective_at is not None else ""
+
+
+def _ledger_payment_effective_at(payment: dict[str, Any]) -> datetime | None:
+    for key in ("paid_at", "created_at"):
+        parsed = _coerce_report_datetime(payment.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _ledger_payment_effective_month(payment: dict[str, Any]) -> str:
+    effective_at = _ledger_payment_effective_at(payment)
+    return effective_at.strftime("%Y-%m") if effective_at is not None else ""
+
+
+def _missing_or_empty_field(field: str) -> dict[str, Any]:
+    return {"$or": [{field: None}, {field: ""}]}
+
+
+def _field_window_or(field: str, start: datetime, end: datetime) -> list[dict[str, Any]]:
+    return [
+        {field: {"$gte": start, "$lt": end}},
+        {
+            field: {
+                "$gte": start.date().isoformat(),
+                "$lt": end.date().isoformat(),
+            }
+        },
+    ]
+
+
+def _ledger_payment_effective_window_query(start: datetime, end: datetime) -> dict[str, Any]:
+    paid_at_missing = _missing_or_empty_field("paid_at")
+    return {
+        "$or": [
+            *_field_window_or("paid_at", start, end),
+            {
+                "$and": [
+                    paid_at_missing,
+                    {"$or": _field_window_or("created_at", start, end)},
+                ]
+            },
+        ]
+    }
+
+
+def _payment_effective_window_or(start: datetime, end: datetime) -> list[dict[str, Any]]:
+    paid_at_missing = _missing_or_empty_field("paid_at")
+    payment_date_missing = _missing_or_empty_field("payment_date")
+    return [
+        *_field_window_or("paid_at", start, end),
+        {
+            "$and": [
+                paid_at_missing,
+                {"$or": _field_window_or("payment_date", start, end)},
+            ]
+        },
+        {
+            "$and": [
+                paid_at_missing,
+                payment_date_missing,
+                {"$or": _field_window_or("created_at", start, end)},
+            ]
+        },
+    ]
+
+
+def _payment_effective_window_query(start: datetime, end: datetime) -> dict[str, Any]:
+    return {"$or": _payment_effective_window_or(start, end)}
+
+
+def _legacy_payment_cash_candidate_query(
+    academy_id: str, period: str, start: datetime, end: datetime
+) -> dict[str, Any]:
+    return {
+        "academy_id": academy_id,
+        "is_deleted": {"$ne": True},
+        "$or": [
+            *_payment_effective_window_or(start, end),
+            {"period": period},
+        ],
+    }
+
+
 def _payment_due_date(payment: dict[str, Any], fallback: date) -> date:
     for key in ("due_date", "due_at", "created_at"):
         parsed = _coerce_report_date(payment.get(key))
@@ -693,6 +840,361 @@ def _aging_label(days_late: int) -> str:
     if days_late <= 60:
         return "31-60"
     return "60+"
+
+
+class _AdminEffectiveRevenueQuery:
+    def __init__(self, db: AsyncIOMotorDatabase[Any]) -> None:
+        self._db = db
+
+    async def execute(self, parent_id_filter: str | None = None) -> dict[str, int]:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        academy_id = current_academy_id()
+        result: dict[str, int] = {}
+        ledger_keys: set[str] = set()
+        ledger_payment_ids: list[str] = []
+        successful_statuses = ["succeeded", "partially_refunded", "refunded"]
+        provider_key_fields = [
+            "payment_id",
+            "invoice_id",
+            "invoice_number",
+            "stripe_invoice_id",
+            "stripe_payment_intent_id",
+            "stripe_checkout_session_id",
+            "stripe_subscription_id",
+        ]
+
+        ledger_query: dict[str, Any] = {
+            "academy_id": academy_id,
+            "status": {"$in": successful_statuses},
+        }
+        if parent_id_filter:
+            ledger_query["parent_id"] = parent_id_filter
+
+        ledger_months = await self._aggregate_months(
+            "ledger_payments",
+            self._ledger_revenue_pipeline(ledger_query),
+        )
+        if ledger_months is None:
+            ledger_months = await self._ledger_revenue_fallback(ledger_query)
+        self._merge_months(result, ledger_months)
+
+        ledger_key_projection = dict.fromkeys(provider_key_fields, 1)
+        async for payment in self._db["ledger_payments"].find(
+            ledger_query,
+            ledger_key_projection,
+        ):
+            ledger_keys.update(_payment_provider_keys(payment))
+            payment_id = str(payment.get("payment_id") or "")
+            if payment_id:
+                ledger_payment_ids.append(payment_id)
+
+        if ledger_payment_ids:
+            await self._add_allocation_keys(
+                academy_id,
+                ledger_payment_ids,
+                ledger_keys,
+            )
+
+        legacy_query: dict[str, Any] = {
+            "academy_id": academy_id,
+            "status": {"$in": successful_statuses},
+            "is_deleted": {"$ne": True},
+        }
+        if parent_id_filter:
+            legacy_query["parent_id"] = parent_id_filter
+
+        legacy_months = await self._aggregate_months(
+            "payments",
+            self._legacy_revenue_pipeline(legacy_query),
+        )
+        if legacy_months is None:
+            legacy_months = await self._legacy_revenue_fallback(legacy_query)
+        self._merge_months(result, legacy_months)
+        if ledger_keys:
+            duplicate_months = await self._legacy_duplicate_revenue_months(
+                legacy_query,
+                ledger_keys,
+                provider_key_fields,
+            )
+            self._subtract_months(result, duplicate_months)
+
+        return dict(sorted(result.items()))
+
+    @staticmethod
+    def _merge_months(result: dict[str, int], months: dict[str, int]) -> None:
+        for month, cents in months.items():
+            result[month] = result.get(month, 0) + cents
+
+    @staticmethod
+    def _subtract_months(result: dict[str, int], months: dict[str, int]) -> None:
+        for month, cents in months.items():
+            result[month] = result.get(month, 0) - cents
+            if result[month] == 0:
+                del result[month]
+
+    @staticmethod
+    def _chunks(values: list[str], size: int = 500) -> list[list[str]]:
+        return [values[index : index + size] for index in range(0, len(values), size)]
+
+    @staticmethod
+    def _net_cents_expression() -> dict[str, Any]:
+        return {
+            "$subtract": [
+                {
+                    "$ifNull": [
+                        "$final_amount_cents",
+                        {
+                            "$ifNull": [
+                                "$amount_cents",
+                                {"$ifNull": ["$gross_amount_cents", 0]},
+                            ]
+                        },
+                    ]
+                },
+                {"$ifNull": ["$refunded_cents", 0]},
+            ]
+        }
+
+    @classmethod
+    def _ledger_revenue_pipeline(cls, match: dict[str, Any]) -> list[dict[str, Any]]:
+        return [
+            {"$match": match},
+            {
+                "$project": {
+                    "effective_at": {
+                        "$cond": [
+                            {
+                                "$or": [
+                                    {"$eq": ["$paid_at", None]},
+                                    {"$eq": ["$paid_at", ""]},
+                                ]
+                            },
+                            "$created_at",
+                            "$paid_at",
+                        ]
+                    },
+                    "net_cents": cls._net_cents_expression(),
+                }
+            },
+            {
+                "$match": {
+                    "$and": [
+                        {"effective_at": {"$ne": None}},
+                        {"effective_at": {"$ne": ""}},
+                    ]
+                }
+            },
+            {
+                "$group": {
+                    "_id": {
+                        "$dateToString": {
+                            "format": "%Y-%m",
+                            "date": "$effective_at",
+                        }
+                    },
+                    "revenue_cents": {"$sum": "$net_cents"},
+                    "row_count": {"$sum": 1},
+                }
+            },
+        ]
+
+    @classmethod
+    def _legacy_revenue_pipeline(cls, match: dict[str, Any]) -> list[dict[str, Any]]:
+        effective_value = {
+            "$cond": [
+                {
+                    "$and": [
+                        {"$ne": ["$paid_at", None]},
+                        {"$ne": ["$paid_at", ""]},
+                    ]
+                },
+                "$paid_at",
+                {
+                    "$cond": [
+                        {
+                            "$and": [
+                                {"$ne": ["$payment_date", None]},
+                                {"$ne": ["$payment_date", ""]},
+                            ]
+                        },
+                        "$payment_date",
+                        {
+                            "$cond": [
+                                {
+                                    "$and": [
+                                        {"$ne": ["$created_at", None]},
+                                        {"$ne": ["$created_at", ""]},
+                                    ]
+                                },
+                                "$created_at",
+                                "$period",
+                            ]
+                        },
+                    ]
+                },
+            ]
+        }
+        effective_month = {
+            "$let": {
+                "vars": {"effective": effective_value},
+                "in": {
+                    "$cond": [
+                        {"$eq": [{"$type": "$$effective"}, "date"]},
+                        {
+                            "$dateToString": {
+                                "format": "%Y-%m",
+                                "date": "$$effective",
+                            }
+                        },
+                        {"$substrBytes": [{"$toString": "$$effective"}, 0, 7]},
+                    ]
+                },
+            }
+        }
+        return [
+            {"$match": match},
+            {
+                "$project": {
+                    "effective_month": effective_month,
+                    "net_cents": cls._net_cents_expression(),
+                }
+            },
+            {
+                "$match": {
+                    "$and": [
+                        {"effective_month": {"$ne": None}},
+                        {"effective_month": {"$ne": ""}},
+                    ]
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$effective_month",
+                    "revenue_cents": {"$sum": "$net_cents"},
+                    "row_count": {"$sum": 1},
+                }
+            },
+        ]
+
+    async def _aggregate_months(
+        self, collection_name: str, pipeline: list[dict[str, Any]]
+    ) -> dict[str, int] | None:
+        try:
+            rows = await self._db[collection_name].aggregate(pipeline).to_list(length=None)
+        except Exception:
+            # mongomock does not implement all production aggregation expressions
+            # used above for mixed date/string legacy fields. Fall back to the same
+            # projected read so tests and local tooling preserve behavior.
+            return None
+        if not rows and pipeline and "$match" in pipeline[0]:
+            matched_count = await self._db[collection_name].count_documents(pipeline[0]["$match"])
+            if matched_count:
+                return None
+        months: dict[str, int] = {}
+        grouped_count = 0
+        for row in rows:
+            grouped_count += int(row.get("row_count") or 0)
+            month = str(row.get("_id") or "")
+            if month:
+                months[month] = months.get(month, 0) + int(row.get("revenue_cents") or 0)
+            else:
+                return None
+        if pipeline and "$match" in pipeline[0]:
+            matched_count = await self._db[collection_name].count_documents(pipeline[0]["$match"])
+            if grouped_count and grouped_count < matched_count:
+                return None
+        return months
+
+    async def _ledger_revenue_fallback(self, match: dict[str, Any]) -> dict[str, int]:
+        projection = {
+            "amount_cents": 1,
+            "final_amount_cents": 1,
+            "gross_amount_cents": 1,
+            "refunded_cents": 1,
+            "paid_at": 1,
+            "created_at": 1,
+        }
+        months: dict[str, int] = {}
+        async for payment in self._db["ledger_payments"].find(match, projection):
+            month = _ledger_payment_effective_month(payment)
+            if month:
+                months[month] = months.get(month, 0) + _payment_revenue_net_cents(payment)
+        return months
+
+    async def _legacy_revenue_fallback(self, match: dict[str, Any]) -> dict[str, int]:
+        projection = {
+            "amount_cents": 1,
+            "final_amount_cents": 1,
+            "gross_amount_cents": 1,
+            "refunded_cents": 1,
+            "paid_at": 1,
+            "payment_date": 1,
+            "created_at": 1,
+            "period": 1,
+        }
+        months: dict[str, int] = {}
+        async for payment in self._db["payments"].find(match, projection):
+            month = _payment_effective_month(payment)
+            if month:
+                months[month] = months.get(month, 0) + _payment_revenue_net_cents(payment)
+        return months
+
+    async def _add_allocation_keys(
+        self,
+        academy_id: str,
+        ledger_payment_ids: list[str],
+        ledger_keys: set[str],
+    ) -> None:
+        for payment_id_batch in self._chunks(ledger_payment_ids):
+            allocation_cursor = self._db["payment_allocations"].find(
+                {
+                    "academy_id": academy_id,
+                    "payment_id": {"$in": payment_id_batch},
+                },
+                {"invoice_id": 1},
+            )
+            async for allocation in allocation_cursor:
+                invoice_id = str(allocation.get("invoice_id") or "")
+                if invoice_id:
+                    ledger_keys.add(invoice_id)
+
+    async def _legacy_duplicate_revenue_months(
+        self,
+        base_query: dict[str, Any],
+        ledger_keys: set[str],
+        provider_key_fields: list[str],
+    ) -> dict[str, int]:
+        projection = {
+            "payment_id": 1,
+            "amount_cents": 1,
+            "final_amount_cents": 1,
+            "gross_amount_cents": 1,
+            "refunded_cents": 1,
+            "paid_at": 1,
+            "payment_date": 1,
+            "created_at": 1,
+            "period": 1,
+        }
+        months: dict[str, int] = {}
+        seen: set[str] = set()
+        # The report still needs all-history de-dupe keys because it returns all
+        # months. Keep each Mongo command bounded and subtract only duplicate
+        # legacy projections, instead of sending one unbounded $nin set.
+        for key_batch in self._chunks(sorted(ledger_keys)):
+            duplicate_query = {
+                **base_query,
+                "$or": [{field: {"$in": key_batch}} for field in provider_key_fields],
+            }
+            async for payment in self._db["payments"].find(duplicate_query, projection):
+                row_id = str(payment.get("payment_id") or payment.get("_id") or "")
+                if not row_id or row_id in seen:
+                    continue
+                seen.add(row_id)
+                month = _payment_effective_month(payment)
+                if month:
+                    months[month] = months.get(month, 0) + _payment_revenue_net_cents(payment)
+        return months
 
 
 def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
@@ -749,11 +1251,14 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         ledger_payments_cursor = db["ledger_payments"].find(
             {
                 "academy_id": academy_id,
-                "created_at": {"$gte": start, "$lt": end},
+                **_ledger_payment_effective_window_query(start, end),
                 "status": {"$in": ["succeeded", "partially_refunded", "refunded"]},
-            }
+            },
+            {"amount_cents": 1, "refunded_cents": 1, "paid_at": 1, "created_at": 1},
         )
         async for ledger_payment in ledger_payments_cursor:
+            if _ledger_payment_effective_month(ledger_payment) != period:
+                continue
             cash_collected_cents += max(
                 int(ledger_payment.get("amount_cents") or 0)
                 - int(ledger_payment.get("refunded_cents") or 0),
@@ -770,25 +1275,69 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         async for _attempt in failed_attempts_cursor:
             failed_payment_count += 1
 
-        payments_cursor = db["payments"].find(
+        cash_payments_cursor = db["payments"].find(
+            _legacy_payment_cash_candidate_query(academy_id, period, start, end),
+            {
+                "payment_id": 1,
+                "invoice_id": 1,
+                "invoice_number": 1,
+                "stripe_invoice_id": 1,
+                "stripe_payment_intent_id": 1,
+                "stripe_checkout_session_id": 1,
+                "stripe_subscription_id": 1,
+                "status": 1,
+                "amount_cents": 1,
+                "final_amount_cents": 1,
+                "gross_amount_cents": 1,
+                "paid_amount_cents": 1,
+                "amount_received_cents": 1,
+                "refunded_cents": 1,
+                "paid_at": 1,
+                "payment_date": 1,
+                "created_at": 1,
+                "period": 1,
+            },
+        )
+        async for payment in cash_payments_cursor:
+            if _payment_effective_month(payment) != period:
+                continue
+            payment_keys = _payment_provider_keys(payment)
+            if payment_keys & invoice_keys:
+                continue
+            cash_collected_cents += _payment_collected_cents(payment)
+
+        risk_payments_cursor = db["payments"].find(
             {
                 "academy_id": academy_id,
                 "period": period,
                 "is_deleted": {"$ne": True},
-            }
+            },
+            {
+                "payment_id": 1,
+                "invoice_id": 1,
+                "invoice_number": 1,
+                "stripe_invoice_id": 1,
+                "stripe_payment_intent_id": 1,
+                "stripe_checkout_session_id": 1,
+                "stripe_subscription_id": 1,
+                "status": 1,
+                "parent_id": 1,
+                "family_id": 1,
+                "student_id": 1,
+                "due_date": 1,
+                "due_at": 1,
+                "created_at": 1,
+                "amount_cents": 1,
+                "final_amount_cents": 1,
+                "gross_amount_cents": 1,
+                "paid_amount_cents": 1,
+                "amount_received_cents": 1,
+                "balance_due_cents": 1,
+                "refunded_cents": 1,
+            },
         )
-        async for payment in payments_cursor:
-            payment_keys = {
-                str(value)
-                for value in (
-                    payment.get("invoice_id"),
-                    payment.get("invoice_number"),
-                    payment.get("payment_id"),
-                    payment.get("stripe_invoice_id"),
-                    payment.get("stripe_payment_intent_id"),
-                )
-                if value
-            }
+        async for payment in risk_payments_cursor:
+            payment_keys = _payment_provider_keys(payment)
             if payment_keys & invoice_keys:
                 continue
             status = str(payment.get("status") or "")
@@ -796,7 +1345,6 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 failed_payment_count += 1
             elif status == "partially_paid":
                 partial_payment_count += 1
-            cash_collected_cents += _payment_collected_cents(payment)
             outstanding = _payment_outstanding_cents(payment)
             outstanding_dues_cents += outstanding
             if outstanding:
@@ -1879,7 +2427,7 @@ def compose_admin(
     record_expense = RecordExpense(expenses=expenses_repo, academy_id=academy_id)
     edit_expense = EditExpense(expenses=expenses_repo)
     delete_expense = DeleteExpense(expenses=expenses_repo)
-    revenue_query = AcademyRevenueQuery(payments=payments_repo)
+    revenue_query = _AdminEffectiveRevenueQuery(db)
 
     # Comms
     messages_repo = MongoMessageRepository(db)
@@ -3153,6 +3701,39 @@ def compose_admin(
                     row["student_name"] = student_names[student_id]
 
         legacy = await payments_repo.list_recent_admin(limit=200)
+        legacy_payment_ids = {
+            str(row.get("payment_id") or "") for row in legacy if row.get("payment_id")
+        }
+        if legacy_payment_ids:
+            object_ids = [
+                BsonObjectId(payment_id)
+                for payment_id in legacy_payment_ids
+                if BsonObjectId.is_valid(payment_id)
+            ]
+            legacy_raw_or: list[dict[str, Any]] = [
+                {"payment_id": {"$in": list(legacy_payment_ids)}}
+            ]
+            if object_ids:
+                legacy_raw_or.append({"_id": {"$in": object_ids}})
+            legacy_raw_by_id: dict[str, dict[str, Any]] = {}
+            async for doc in db["payments"].find(
+                {
+                    "academy_id": request_academy_id,
+                    "is_deleted": {"$ne": True},
+                    "$or": legacy_raw_or,
+                },
+                {"payment_id": 1, "paid_at": 1, "payment_date": 1, "invoice_id": 1},
+            ):
+                row_id = str(doc.get("payment_id") or doc.get("_id") or "")
+                if row_id:
+                    legacy_raw_by_id[row_id] = doc
+            for row in legacy:
+                raw = legacy_raw_by_id.get(str(row.get("payment_id") or ""))
+                if raw is None:
+                    continue
+                for key in ("paid_at", "payment_date", "invoice_id"):
+                    if raw.get(key) is not None:
+                        row[key] = raw.get(key)
         ledger_rows: list[dict[str, Any]] = []
         ledger_keys: set[str] = set()
         async for doc in db["ledger_payments"].find(
@@ -3178,17 +3759,19 @@ def compose_admin(
                 },
                 {"invoice_id": 1},
             )
+            allocation_invoice_id = None
             if allocation is not None:
-                payment_keys.add(str(allocation.get("invoice_id") or ""))
+                allocation_invoice_id = str(allocation.get("invoice_id") or "")
+                if allocation_invoice_id:
+                    payment_keys.add(allocation_invoice_id)
             if payment_keys & invoice_keys:
                 ledger_keys.update(payment_keys)
                 continue
-            ledger_keys.update(
-                str(key) for key in (stripe_payment_intent_id, stripe_invoice_id) if key
-            )
+            ledger_keys.update(payment_keys)
             ledger_rows.append(
                 {
                     "payment_id": str(doc.get("payment_id") or ""),
+                    "invoice_id": allocation_invoice_id,
                     "parent_id": str(doc.get("parent_id") or ""),
                     "session_id": None,
                     "amount_cents": int(doc.get("amount_cents") or 0),
@@ -3200,6 +3783,7 @@ def compose_admin(
                     "stripe_invoice_id": stripe_invoice_id,
                     "payment_method": doc.get("payment_method"),
                     "created_at": doc["created_at"],
+                    "paid_at": doc.get("paid_at"),
                 }
             )
         attempt_rows: list[dict[str, Any]] = []
@@ -3239,7 +3823,9 @@ def compose_admin(
             for row in legacy
             if str(row.get("stripe_payment_intent_id") or "") not in ledger_keys
             and str(row.get("stripe_invoice_id") or "") not in ledger_keys
+            and str(row.get("invoice_id") or "") not in ledger_keys
             and str(row.get("payment_id") or "") not in invoice_keys
+            and str(row.get("invoice_id") or "") not in invoice_keys
             and str(row.get("invoice_number") or "") not in invoice_keys
         ]
         combined = attempt_rows + invoice_rows + ledger_rows + deduped_legacy
@@ -4070,18 +4656,8 @@ def compose_admin(
                     )
         elif report_name == "revenue":
             writer.writerow(["month", "revenue_cents"])
-            by_month: dict[str, int] = {}
-            for row in await list_payments_recent():
-                if row["status"] not in {"succeeded", "partially_refunded", "refunded"}:
-                    continue
-                created_at = row["created_at"]
-                month = created_at.strftime("%Y-%m") if hasattr(created_at, "strftime") else ""
-                by_month[month] = (
-                    by_month.get(month, 0)
-                    + int(row["final_amount_cents"])
-                    - int(row["refunded_cents"])
-                )
-            for month, cents in sorted(by_month.items()):
+            by_month = await revenue_query.execute(parent_id_filter=None)
+            for month, cents in by_month.items():
                 writer.writerow([month, cents])
         elif report_name == "attendance":
             writer.writerow(["attendance_id", "session_id", "student_id", "status", "marked_at"])
