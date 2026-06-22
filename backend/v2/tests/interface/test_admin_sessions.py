@@ -1893,7 +1893,11 @@ def test_pause_and_resume_enrollment(admin_client):
 
     p = admin_client.post(
         f"/api/v2/admin/enrollments/{enrollment_id}/pause",
-        json={"effective_date": "2026-05-20", "reason": "temporary pause"},
+        json={
+            "effective_date": "2026-05-20",
+            "reason": "temporary pause",
+            "review_on": "2026-06-01",
+        },
     )
     assert p.status_code == 204
     assert admin_client.seed["enrollments"].rows[enrollment_id].status == "paused"
@@ -1919,7 +1923,11 @@ def test_pause_and_resume_enrollment(admin_client):
 
     p2 = admin_client.post(
         f"/api/v2/admin/enrollments/{enrollment_id}/pause",
-        json={"effective_date": "2026-05-21", "reason": "second temporary pause"},
+        json={
+            "effective_date": "2026-05-21",
+            "reason": "second temporary pause",
+            "review_on": "2026-06-02",
+        },
     )
     assert p2.status_code == 204
     waiting_after_second_pause = [

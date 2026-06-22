@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-def test_pause_route_requires_effective_date_and_records_default_policy(admin_client):
+def test_pause_route_rejects_missing_resume_or_review_date(admin_client):
     created = admin_client.post(
         "/api/v2/admin/enrollments",
         json={
@@ -17,6 +17,30 @@ def test_pause_route_requires_effective_date_and_records_default_policy(admin_cl
         f"/api/v2/admin/enrollments/{enrollment_id}/pause",
         json={
             "effective_date": "2026-05-25",
+            "reason": "Medical pause",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_pause_route_requires_review_date_and_records_default_policy(admin_client):
+    created = admin_client.post(
+        "/api/v2/admin/enrollments",
+        json={
+            "session_id": "sess-1",
+            "student_id": "st-1",
+            "parent_id": "p-1",
+            "full_name": "Alice",
+        },
+    )
+    enrollment_id = created.json()["enrollment_id"]
+
+    response = admin_client.post(
+        f"/api/v2/admin/enrollments/{enrollment_id}/pause",
+        json={
+            "effective_date": "2026-05-25",
+            "review_on": "2026-06-15",
             "reason": "Medical pause",
         },
     )

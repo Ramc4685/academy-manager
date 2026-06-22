@@ -117,6 +117,7 @@ def _minimal_admin_use_cases(
         list_waitlist_for_session=mock,
         list_audit_logs=mock,
         list_dues_followup=mock,
+        list_billing_deferral_warnings=mock,
         send_dues_reminders=mock,  # type: ignore[arg-type]
         export_report_csv=mock,
         get_reports_kpis=mock,

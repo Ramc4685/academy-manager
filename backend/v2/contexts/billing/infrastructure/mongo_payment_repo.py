@@ -13,6 +13,7 @@ from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     GenerateMonthlyPaymentsResult,
+    MonthlyGenerationSkippedDetail,
 )
 from backend.v2.contexts.billing.domain.errors import (
     PaymentNotFound,
@@ -68,6 +69,108 @@ class MongoPaymentRepository(TenantScopedRepository):
     @staticmethod
     def _payment_id(doc: dict[str, object]) -> str:
         return str(doc.get("payment_id") or doc.get("_id"))
+
+    @staticmethod
+    def _date_str(value: object) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        if isinstance(value, str) and value:
+            return value[:10]
+        return None
+
+    async def _active_billing_deferral_detail(
+        self,
+        *,
+        academy_id: str,
+        enrollment: dict[str, object],
+        student_doc: dict[str, object] | None,
+        period: str,
+        today: date,
+    ) -> MonthlyGenerationSkippedDetail | None:
+        enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
+        cursor = self._db["enrollment_billing_deferrals"].find(
+            {
+                "academy_id": academy_id,
+                "enrollment_id": enrollment_id,
+                "status": "active",
+                "billing_period": period,
+            },
+            sort=[("created_at", -1)],
+            limit=10,
+        )
+        today_text = today.isoformat()
+        async for doc in cursor:
+            resume_on = self._date_str(doc.get("resume_on"))
+            if resume_on is not None and resume_on <= today_text:
+                continue
+            review_on = self._date_str(doc.get("review_on"))
+            if review_on is not None and review_on <= today_text:
+                continue
+            expires_on = self._date_str(doc.get("expires_on"))
+            if expires_on is not None and expires_on < today_text:
+                continue
+            return self._skipped_detail_from_deferral(
+                enrollment=enrollment,
+                student_doc=student_doc,
+                period=period,
+                deferral=doc,
+            )
+        return None
+
+    def _skipped_detail_from_deferral(
+        self,
+        *,
+        enrollment: dict[str, object],
+        student_doc: dict[str, object] | None,
+        period: str,
+        deferral: dict[str, object],
+    ) -> MonthlyGenerationSkippedDetail:
+        review_on = self._date_str(deferral.get("review_on"))
+        today = self._clock().date()
+        return MonthlyGenerationSkippedDetail(
+            enrollment_id=str(enrollment.get("enrollment_id") or enrollment.get("_id")),
+            student_id=str(enrollment.get("student_id") or deferral.get("student_id") or ""),
+            student_name=str((student_doc or {}).get("full_name") or "") or None,
+            reason_code=str(deferral.get("deferral_type") or "manual_skip"),
+            source=str(deferral.get("source") or "enrollment_billing_deferrals"),
+            billing_period=period,
+            resume_on=self._date_str(deferral.get("resume_on")),
+            review_on=review_on,
+            expires_on=self._date_str(deferral.get("expires_on")),
+            needs_review=bool(review_on is not None and review_on <= today.isoformat()),
+            metadata={
+                str(k): str(v)
+                for k, v in (deferral.get("metadata") or {}).items()
+                if k is not None and v is not None
+            }
+            | (
+                {"deferral_id": str(deferral.get("deferral_id"))}
+                if deferral.get("deferral_id") is not None
+                else {}
+            ),
+        )
+
+    def _legacy_skip_period_detail(
+        self,
+        *,
+        enrollment: dict[str, object],
+        student_doc: dict[str, object] | None,
+        period: str,
+    ) -> MonthlyGenerationSkippedDetail:
+        return MonthlyGenerationSkippedDetail(
+            enrollment_id=str(enrollment.get("enrollment_id") or enrollment.get("_id")),
+            student_id=str(enrollment.get("student_id") or ""),
+            student_name=str((student_doc or {}).get("full_name") or "") or None,
+            reason_code="legacy_skip_period",
+            source="enrollment.skip_periods",
+            billing_period=period,
+            needs_review=True,
+            metadata={"compatibility": "missing deferral metadata"},
+        )
 
     @staticmethod
     def _money_to_cents(value: object | None) -> int:
@@ -721,19 +824,42 @@ class MongoPaymentRepository(TenantScopedRepository):
         skipped_no_charge = 0
         skipped_autopay = 0
         skipped_paused = 0
+        skipped_details: list[MonthlyGenerationSkippedDetail] = []
         repaired_orphan_keys = 0
         repaired_partial_invoices = 0
         failed_repair = 0
         async for enrollment in cursor:
-            status = str(enrollment.get("status") or "active")
-            if status == "paused" or period in set(enrollment.get("skip_periods") or []):
+            enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
+            session_id = str(enrollment.get("session_id") or "")
+            student_id = str(enrollment.get("student_id") or "")
+            student_doc = await self._db["students"].find_one(
+                {"academy_id": academy_id, "student_id": student_id}
+            )
+            deferral_detail = await self._active_billing_deferral_detail(
+                academy_id=academy_id,
+                enrollment=enrollment,
+                student_doc=student_doc,
+                period=period,
+                today=now.date(),
+            )
+            if deferral_detail is not None:
                 skipped_paused += 1
+                skipped_details.append(deferral_detail)
+                continue
+            if period in set(enrollment.get("skip_periods") or []):
+                skipped_paused += 1
+                skipped_details.append(
+                    self._legacy_skip_period_detail(
+                        enrollment=enrollment,
+                        student_doc=student_doc,
+                        period=period,
+                    )
+                )
                 continue
             billing_type = str(enrollment.get("billing_type") or "standard").lower()
             if billing_type not in {"", "standard", "monthly", "manual"}:
                 skipped_no_charge += 1
                 continue
-            enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
             existing = await self._find_one(
                 {
                     "enrollment_id": enrollment_id,
@@ -744,13 +870,8 @@ class MongoPaymentRepository(TenantScopedRepository):
             if existing is not None:
                 skipped_existing += 1
                 continue
-            session_id = str(enrollment.get("session_id") or "")
-            student_id = str(enrollment.get("student_id") or "")
             session_doc = await self._db["sessions"].find_one(
                 {"academy_id": academy_id, "session_id": session_id}
-            )
-            student_doc = await self._db["students"].find_one(
-                {"academy_id": academy_id, "student_id": student_id}
             )
             gross_amount_cents, snapshot_id = await _resolve_charge_for_enrollment(
                 repo=self,
@@ -876,6 +997,7 @@ class MongoPaymentRepository(TenantScopedRepository):
             repaired_orphan_keys=repaired_orphan_keys,
             repaired_partial_invoices=repaired_partial_invoices,
             failed_repair=failed_repair,
+            skipped_details=skipped_details,
         )
 
     # ------------------------------------------------------------------

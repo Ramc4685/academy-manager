@@ -199,6 +199,7 @@ class AdminUseCases:
     export_report_csv: object  # callable
     get_reports_kpis: object  # async () -> dict[str, int | float]
     list_enrollment_events: object  # async (enrollment_id: str) -> list[dict]
+    list_billing_deferral_warnings: object  # async (*, today: date, limit: int)
     # comms
     comms: CommsService
     # waivers

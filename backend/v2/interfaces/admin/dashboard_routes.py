@@ -32,17 +32,32 @@ async def dashboard_attention(
 
     # Fan out all independent data fetches concurrently.
     if callable(blocked_resume_reader):
-        dues_rows, pause_requests, blocked_resumes, waiver_report, sessions = await asyncio.gather(
+        (
+            dues_rows,
+            pause_requests,
+            blocked_resumes,
+            billing_deferral_warnings,
+            waiver_report,
+            sessions,
+        ) = await asyncio.gather(
             use_cases.list_dues_followup(),  # type: ignore[operator]
             use_cases.list_admin_pause_requests.execute(),
             blocked_resume_reader(),
+            use_cases.list_billing_deferral_warnings(today=date.today(), limit=100),
             use_cases.list_admin_waivers.execute(),
             use_cases.list_admin_sessions(date.today()),  # type: ignore[operator]
         )
     else:
-        dues_rows, pause_requests, waiver_report, sessions = await asyncio.gather(
+        (
+            dues_rows,
+            pause_requests,
+            billing_deferral_warnings,
+            waiver_report,
+            sessions,
+        ) = await asyncio.gather(
             use_cases.list_dues_followup(),  # type: ignore[operator]
             use_cases.list_admin_pause_requests.execute(),
+            use_cases.list_billing_deferral_warnings(today=date.today(), limit=100),
             use_cases.list_admin_waivers.execute(),
             use_cases.list_admin_sessions(date.today()),  # type: ignore[operator]
         )
@@ -89,6 +104,30 @@ async def dashboard_attention(
                 ),
                 severity="medium",
                 href="/admin/pause-requests",
+                count=count,
+            )
+        )
+
+    if billing_deferral_warnings:
+        count = len(billing_deferral_warnings)
+        high_count = len(
+            [
+                row
+                for row in billing_deferral_warnings
+                if str(_field(row, "severity", "medium")) == "high"
+            ]
+        )
+        items.append(
+            AdminAttentionItemView(
+                attention_id="billing-deferral-risks",
+                kind="billing_deferrals",
+                title="Paused billing needs review",
+                detail=(
+                    f"{count} enrollment{'s' if count != 1 else ''} have paused billing "
+                    "risk or legacy skip metadata."
+                ),
+                severity="high" if high_count else "medium",
+                href="/admin/payments",
                 count=count,
             )
         )

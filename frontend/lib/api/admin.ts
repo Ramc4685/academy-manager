@@ -163,6 +163,8 @@ export interface TransferEnrollmentRequest {
 
 export interface PauseEnrollmentRequest {
   effective_date: string;
+  resume_on?: string | null;
+  review_on?: string | null;
   reason?: string;
 }
 
@@ -305,6 +307,21 @@ export interface GenerateMonthlyPaymentsResponse {
   repaired_orphan_keys: number;
   repaired_partial_invoices: number;
   failed_repair: number;
+  skipped_details: MonthlyGenerationSkippedDetail[];
+}
+
+export interface MonthlyGenerationSkippedDetail {
+  enrollment_id: string;
+  student_id: string;
+  student_name: string | null;
+  reason_code: string;
+  source: string;
+  billing_period: string;
+  resume_on: string | null;
+  review_on: string | null;
+  expires_on: string | null;
+  needs_review: boolean;
+  metadata: Record<string, string>;
 }
 
 export interface MarkPaymentPaidRequest {
@@ -978,6 +995,7 @@ export type AdminAttentionKind =
   | "overdue_dues"
   | "pause_requests"
   | "scheduled_resume_blocked"
+  | "billing_deferrals"
   | "waivers"
   | "session_pressure";
 
@@ -1093,6 +1111,7 @@ export interface AdminPauseRequestView {
   period: string;
   pause_kind: "fixed" | "indefinite";
   resume_on: string | null;
+  review_on: string | null;
   reason: string | null;
   status: "pending" | "approved" | "declined";
   created_at: string;

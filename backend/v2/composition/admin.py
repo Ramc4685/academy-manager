@@ -203,6 +203,9 @@ from backend.v2.contexts.enrollment.domain.events import (
     StudentSessionTypeChanged,
     StudentSessionTypeChangedPayload,
 )
+from backend.v2.contexts.enrollment.infrastructure.mongo_billing_deferral_repo import (
+    MongoBillingDeferralRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_event_repo import (
     MongoEnrollmentEventRepository,
 )
@@ -2393,6 +2396,7 @@ def compose_admin(
     students_r = MongoStudentRepository(db)
     waitlist = MongoWaitlistRepository(db)
     pause_requests = MongoPauseRequestRepository(db)
+    billing_deferrals = MongoBillingDeferralRepository(db)
     scheduled_actions = MongoScheduledEnrollmentActionRepository(db)
     subscriptions_repo = MongoSubscriptionRepository(db)
     parent_customers_repo = MongoParentBillingCustomerRepository(db)
@@ -2448,12 +2452,16 @@ def compose_admin(
         students=students_r,
         waitlist=waitlist,
         enrollment_events=enrollment_events,
+        billing_deferrals=billing_deferrals,
+        subscriptions=subscriptions_repo,
+        stripe=stripe,
     )
     resume_enrollment = ResumeEnrollment(
         enrollments=enrollments_w,
         sessions=sessions_w,
         waitlist=waitlist,
         enrollment_events=enrollment_events,
+        billing_deferrals=billing_deferrals,
     )
     withdraw_enrollment = WithdrawEnrollment(
         enrollments=enrollments_w,
@@ -2479,6 +2487,7 @@ def compose_admin(
         pause_requests=pause_requests,
         pause_enrollment=pause_enrollment,
         scheduled_actions=scheduled_actions,
+        billing_deferrals=billing_deferrals,
         subscriptions=subscriptions_repo,
         stripe=stripe,
         academy_id=academy_id,
@@ -2489,6 +2498,7 @@ def compose_admin(
         resume_enrollment=resume_enrollment,
         subscriptions=subscriptions_repo,
         stripe=stripe,
+        billing_deferrals=billing_deferrals,
     )
 
     # Billing
@@ -5025,6 +5035,7 @@ def compose_admin(
         list_waitlist_for_session=list_waitlist_for_session,
         list_audit_logs=list_audit_logs,
         list_dues_followup=list_dues_followup,
+        list_billing_deferral_warnings=billing_deferrals.list_admin_warnings,
         send_dues_reminders=send_dues_reminders,
         export_report_csv=export_report_csv,
         get_reports_kpis=_make_reports_kpis(db),

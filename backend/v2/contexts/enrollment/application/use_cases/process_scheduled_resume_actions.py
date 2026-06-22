@@ -8,6 +8,9 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel
 
+from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals import (
+    BillingDeferralRepository,
+)
 from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions import (
     ScheduledEnrollmentActionRepository,
 )
@@ -21,6 +24,7 @@ class ResumeEnrollmentRunner(Protocol):
         *,
         actor_id: str | None = None,
         reason: str | None = None,
+        close_billing_deferral: bool = True,
     ) -> None: ...
 
 
@@ -49,10 +53,12 @@ class ProcessScheduledResumeActions:
         resume_enrollment: ResumeEnrollmentRunner,
         subscriptions: EnrollmentSubscriptionLookup,
         stripe: SubscriptionCollectionGateway,
+        billing_deferrals: BillingDeferralRepository | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._scheduled_actions = scheduled_actions
         self._resume_enrollment = resume_enrollment
+        self._billing_deferrals = billing_deferrals
         self._subscriptions = subscriptions
         self._stripe = stripe
         self._now = clock
@@ -75,6 +81,7 @@ class ProcessScheduledResumeActions:
                     action.enrollment_id,
                     actor_id="system",
                     reason="scheduled resume from approved pause",
+                    close_billing_deferral=False,
                 )
             except CapacityExceeded:
                 await self._scheduled_actions.mark_blocked_capacity(
@@ -89,6 +96,13 @@ class ProcessScheduledResumeActions:
                 stripe_subscription_id = getattr(subscription, "stripe_subscription_id", None)
                 if stripe_subscription_id:
                     await self._stripe.resume_subscription_collection(str(stripe_subscription_id))
+                if self._billing_deferrals is not None:
+                    await self._billing_deferrals.close_active_for_enrollment(
+                        action.enrollment_id,
+                        closed_at=attempted_at,
+                        closed_by="system",
+                        reason="resume_succeeded",
+                    )
                 await self._scheduled_actions.mark_succeeded(
                     action.action_id,
                     attempted_at=attempted_at,

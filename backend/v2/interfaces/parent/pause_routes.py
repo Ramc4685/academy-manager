@@ -41,6 +41,7 @@ async def create_pause_request(
             period=body.period,
             pause_kind=body.pause_kind,  # type: ignore[arg-type]
             resume_on=body.resume_on,
+            review_on=body.review_on,
             reason=body.reason,
         )
     )

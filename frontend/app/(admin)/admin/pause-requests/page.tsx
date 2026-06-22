@@ -108,6 +108,7 @@ function PauseRow({
       </td>
       <td className="px-2 py-3">
         <div className="font-medium text-rally-base">{pauseLabel(request)}</div>
+        <div className="mt-1 text-xs text-rally-subtle">{billingImpactLabel(request)}</div>
         <div className="mt-1 text-xs text-rally-subtle">Requested {formatDateTime(request.created_at)}</div>
       </td>
       <td className="px-2 py-3 text-rally-subtle">{request.reason || "—"}</td>
@@ -141,9 +142,22 @@ function PauseRow({
 }
 
 function pauseLabel(request: AdminPauseRequestView): string {
-  if (request.pause_kind === "indefinite") return "Indefinite pause";
+  if (request.pause_kind === "indefinite") {
+    return request.review_on ? `Review ${formatDate(request.review_on)}` : "Review date missing";
+  }
   if (!request.resume_on) return request.period || "Resume date pending";
   return `Resume ${formatDate(request.resume_on)}`;
+}
+
+function billingImpactLabel(request: AdminPauseRequestView): string {
+  if (request.pause_kind === "indefinite") {
+    return request.review_on
+      ? "Billing defers until admin review"
+      : "Missing billing review metadata";
+  }
+  return request.resume_on
+    ? "Billing defers until scheduled resume"
+    : "Missing billing resume metadata";
 }
 
 function formatDate(value: string): string {

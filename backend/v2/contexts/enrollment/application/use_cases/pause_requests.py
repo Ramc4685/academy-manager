@@ -11,6 +11,10 @@ from pydantic import BaseModel, model_validator
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     PauseEnrollmentCommand,
 )
+from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals import (
+    BillingDeferral,
+    BillingDeferralRepository,
+)
 from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions import (
     ScheduledEnrollmentAction,
     ScheduledEnrollmentActionRepository,
@@ -48,6 +52,7 @@ class PauseRequest(BaseModel):
     period: str = ""
     pause_kind: PauseKind = "fixed"
     resume_on: date | None = None
+    review_on: date | None = None
     reason: str = ""
     status: PauseRequestStatus = "pending"
     created_at: datetime
@@ -62,14 +67,18 @@ class PauseRequest(BaseModel):
         values = dict(data)
         pause_kind = values.get("pause_kind") or "fixed"
         resume_on = values.get("resume_on")
+        review_on = values.get("review_on")
         period = str(values.get("period") or "")
         if pause_kind == "indefinite":
             if resume_on is not None:
                 raise ValueError("resume_on is only allowed for fixed pauses")
-            values["period"] = period
+            if review_on is None:
+                raise ValueError("review_on is required for indefinite pauses")
+            if not period:
+                values["period"] = _period_from_resume_on(review_on)
             values["pause_kind"] = pause_kind
             return values
-        if resume_on is None and not period:
+        if resume_on is None:
             raise ValueError("resume_on is required for fixed pauses")
         if not period:
             values["period"] = _period_from_resume_on(resume_on)
@@ -112,6 +121,7 @@ class RequestEnrollmentPauseCommand(BaseModel):
     period: str = ""
     pause_kind: PauseKind = "fixed"
     resume_on: date | None = None
+    review_on: date | None = None
     reason: str = ""
 
     @model_validator(mode="before")
@@ -122,14 +132,18 @@ class RequestEnrollmentPauseCommand(BaseModel):
         values = dict(data)
         pause_kind = values.get("pause_kind") or "fixed"
         resume_on = values.get("resume_on")
+        review_on = values.get("review_on")
         period = str(values.get("period") or "")
         if pause_kind == "indefinite":
             if resume_on is not None:
                 raise ValueError("resume_on is only allowed for fixed pauses")
-            values["period"] = period
+            if review_on is None:
+                raise ValueError("review_on is required for indefinite pauses")
+            if not period:
+                values["period"] = _period_from_resume_on(review_on)
             values["pause_kind"] = pause_kind
             return values
-        if resume_on is None and not period:
+        if resume_on is None:
             raise ValueError("resume_on is required for fixed pauses")
         if not period:
             values["period"] = _period_from_resume_on(resume_on)
@@ -161,6 +175,7 @@ class RequestEnrollmentPause:
             period=cmd.period,
             pause_kind=cmd.pause_kind,
             resume_on=cmd.resume_on,
+            review_on=cmd.review_on,
             reason=cmd.reason,
             created_at=datetime.now(UTC),
         )
@@ -191,6 +206,7 @@ class ApprovePauseRequest:
         pause_requests: PauseRequestRepository,
         pause_enrollment: PauseEnrollmentRunner | None = None,
         scheduled_actions: ScheduledEnrollmentActionRepository | None = None,
+        billing_deferrals: BillingDeferralRepository | None = None,
         subscriptions: EnrollmentSubscriptionLookup | None = None,
         stripe: SubscriptionCollectionGateway | None = None,
         academy_id: str | None = None,
@@ -199,6 +215,7 @@ class ApprovePauseRequest:
         self._pause_requests = pause_requests
         self._pause_enrollment = pause_enrollment
         self._scheduled_actions = scheduled_actions
+        self._billing_deferrals = billing_deferrals
         self._subscriptions = subscriptions
         self._stripe = stripe
         self._academy_id = academy_id
@@ -219,6 +236,31 @@ class ApprovePauseRequest:
                     enrollment_id=request.enrollment_id,
                     actor_id=cmd.admin_id,
                     reason=request.reason or "parent pause request",
+                    resume_on=request.resume_on,
+                    review_on=request.review_on,
+                    create_billing_deferral=False,
+                    pause_stripe_collection=False,
+                )
+            )
+        if self._billing_deferrals is not None:
+            now = self._now()
+            await self._billing_deferrals.add(
+                BillingDeferral(
+                    deferral_id=str(new_ulid()),
+                    enrollment_id=request.enrollment_id,
+                    student_id=request.student_id or "",
+                    deferral_type="fixed_pause" if request.pause_kind == "fixed" else "admin_pause",
+                    reason=request.reason or "parent pause request",
+                    source="pause_request",
+                    source_id=request.pause_request_id,
+                    actor_id=cmd.admin_id,
+                    actor_type="admin",
+                    billing_period=request.period,
+                    resume_on=request.resume_on,
+                    review_on=request.review_on,
+                    created_at=now,
+                    updated_at=now,
+                    metadata={"pause_kind": request.pause_kind},
                 )
             )
         if self._subscriptions is not None and self._stripe is not None:

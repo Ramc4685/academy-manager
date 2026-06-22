@@ -73,6 +73,7 @@ export default function ParentPaymentsPage() {
   const [pauseEnrollmentId, setPauseEnrollmentId] = useState("");
   const [pauseKind, setPauseKind] = useState<"fixed" | "indefinite">("fixed");
   const [resumeOn, setResumeOn] = useState(currentDate());
+  const [reviewOn, setReviewOn] = useState(dateFromOffset(14));
   const [pauseReason, setPauseReason] = useState("");
   const [portalError, setPortalError] = useState<string | null>(null);
   const [autopayError, setAutopayError] = useState<string | null>(null);
@@ -229,12 +230,14 @@ export default function ParentPaymentsPage() {
         period: pauseKind === "fixed" ? resumeOn.slice(0, 7) : undefined,
         pause_kind: pauseKind,
         resume_on: pauseKind === "fixed" ? resumeOn : null,
+        review_on: pauseKind === "indefinite" ? reviewOn : null,
         reason: pauseReason || undefined,
       }),
     onSuccess: () => {
       setPauseEnrollmentId("");
       setPauseKind("fixed");
       setResumeOn(currentDate());
+      setReviewOn(dateFromOffset(14));
       setPauseReason("");
       void pauseRequestsQuery.refetch();
     },
@@ -574,7 +577,7 @@ export default function ParentPaymentsPage() {
                 </label>
               </div>
             </fieldset>
-            {pauseKind === "fixed" && (
+            {pauseKind === "fixed" ? (
               <label className="block text-xs font-medium" style={{ color: "#5f5e5a" }}>
                 Resume date
                 <input
@@ -585,11 +588,22 @@ export default function ParentPaymentsPage() {
                   style={{ borderColor: "#d3d1c7" }}
                 />
               </label>
+            ) : (
+              <label className="block text-xs font-medium" style={{ color: "#5f5e5a" }}>
+                Review date
+                <input
+                  type="date"
+                  value={reviewOn}
+                  onChange={(e) => setReviewOn(e.target.value)}
+                  className="mt-1 h-11 w-full rounded-xl border px-3 text-sm"
+                  style={{ borderColor: "#d3d1c7" }}
+                />
+              </label>
             )}
             <p className="text-xs" style={{ color: "#888780" }}>
               {pauseKind === "fixed"
                 ? "We will attempt to resume this enrollment on the requested date if a seat is available."
-                : "This will stay paused until you or an admin choose a resume date or cancel the enrollment."}
+                : "The academy will review this pause on the selected date so billing cannot remain deferred without follow-up."}
             </p>
             <label className="block text-xs font-medium" style={{ color: "#5f5e5a" }}>
               Reason
@@ -605,7 +619,10 @@ export default function ParentPaymentsPage() {
               <button
                 type="button"
                 onClick={() => pauseMutation.mutate()}
-                disabled={pauseMutation.isPending || (pauseKind === "fixed" && !resumeOn)}
+                disabled={
+                  pauseMutation.isPending ||
+                  (pauseKind === "fixed" ? !resumeOn : !reviewOn)
+                }
                 className="min-h-touch flex-1 rounded-xl text-sm font-semibold text-white disabled:opacity-60"
                 style={{ background: "#0a0f1c" }}
               >
@@ -617,6 +634,7 @@ export default function ParentPaymentsPage() {
                   setPauseEnrollmentId("");
                   setPauseKind("fixed");
                   setResumeOn(currentDate());
+                  setReviewOn(dateFromOffset(14));
                   setPauseReason("");
                 }}
                 className="min-h-touch rounded-xl border px-4 text-sm"
@@ -649,7 +667,7 @@ export default function ParentPaymentsPage() {
                 <div className="flex items-center justify-between gap-3">
                   <span className="font-medium" style={{ color: "#0a0f1c" }}>
                     {request.pause_kind === "indefinite"
-                      ? "Indefinite pause"
+                      ? `Review ${formatDate(request.review_on)}`
                       : `Resume ${formatDate(request.resume_on)}`}
                   </span>
                   <StatusPill status={request.status} />
@@ -756,6 +774,12 @@ function CollapsibleSection({
 function currentDate(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
+function dateFromOffset(days: number): string {
+  const value = new Date();
+  value.setDate(value.getDate() + days);
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
 }
 
 function formatDate(value: string | null): string {

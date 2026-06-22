@@ -250,6 +250,7 @@ class PauseRequestView(BaseModel):
     period: str
     pause_kind: str = "fixed"
     resume_on: date | None = None
+    review_on: date | None = None
     reason: str
     status: str
     created_at: datetime
@@ -266,6 +267,7 @@ class CreatePauseRequest(BaseModel):
     period: str = ""
     pause_kind: str = "fixed"
     resume_on: date | None = None
+    review_on: date | None = None
     reason: str = ""
 
 
