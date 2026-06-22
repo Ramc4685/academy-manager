@@ -45,7 +45,6 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-06-20-complete-waiver-system](docs/test-results/active/2026-06-20-complete-waiver-system.md)
 - [2026-06-20-production-session-fee-override-hotfix](docs/test-results/active/2026-06-20-production-session-fee-override-hotfix.md)
 - [2026-06-21-app-owned-billing-stripe-processor-only](docs/test-results/active/2026-06-21-app-owned-billing-stripe-processor-only.md)
-- [2026-06-22-issue-227-paid-at-revenue](docs/test-results/active/2026-06-22-issue-227-paid-at-revenue.md)
 
 ## Required Workflow
 
