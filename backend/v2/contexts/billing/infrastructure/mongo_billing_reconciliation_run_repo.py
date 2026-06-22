@@ -20,3 +20,12 @@ class MongoBillingReconciliationRunRepository(TenantScopedRepository):
             {"$set": kwargs},
             upsert=True,
         )
+
+    async def list_runs(self, academy_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Return this academy's most recent reconciliation runs, newest first."""
+        cursor = (
+            self.collection.find({"academy_id": academy_id})
+            .sort("started_at", -1)
+            .limit(limit)
+        )
+        return [{k: v for k, v in doc.items() if k != "_id"} async for doc in cursor]

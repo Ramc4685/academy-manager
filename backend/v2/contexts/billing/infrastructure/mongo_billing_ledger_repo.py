@@ -302,6 +302,58 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             raise
         return doc
 
+    async def list_payment_attempts(self, invoice_id: str) -> list[dict[str, Any]]:
+        """Return all payment attempts for one invoice, newest first (tenant-scoped)."""
+        academy_id = current_academy_id()
+        cursor = (
+            self._db["payment_attempts"]
+            .find({"academy_id": academy_id, "invoice_id": invoice_id})
+            .sort("created_at", -1)
+        )
+        return [{k: v for k, v in doc.items() if k != "_id"} async for doc in cursor]
+
+    async def list_open_failed_attempts(self) -> list[dict[str, Any]]:
+        """One row per unpaid invoice whose latest payment attempt failed.
+
+        Includes invoices with status ``open``/``partially_paid`` whose most
+        recent attempt is ``failed`` or ``requires_action``. Paid/void invoices
+        and invoices whose latest attempt succeeded are excluded. Newest failed
+        attempt first.
+        """
+        academy_id = current_academy_id()
+        rows: list[dict[str, Any]] = []
+        inv_cursor = self.collection.find(
+            {"academy_id": academy_id, "status": {"$in": ["open", "partially_paid"]}}
+        )
+        async for inv in inv_cursor:
+            invoice_id = str(inv.get("invoice_id") or "")
+            if not invoice_id:
+                continue
+            attempts = await self.list_payment_attempts(invoice_id)
+            if not attempts:
+                continue
+            latest = attempts[0]
+            if latest.get("status") not in ("failed", "requires_action"):
+                continue
+            rows.append(
+                {
+                    "invoice_id": invoice_id,
+                    "parent_id": str(inv.get("parent_id") or ""),
+                    "period": str(inv.get("period") or ""),
+                    "total_cents": int(inv.get("total_cents", 0)),
+                    "balance_due_cents": int(inv.get("balance_due_cents", 0)),
+                    "currency": str(inv.get("currency", "usd")),
+                    "latest_attempt_at": latest.get("created_at"),
+                    "latest_decline_code": latest.get("failure_code"),
+                    "attempt_count": len(attempts),
+                }
+            )
+        rows.sort(
+            key=lambda r: r["latest_attempt_at"] or datetime.min.replace(tzinfo=UTC),
+            reverse=True,
+        )
+        return rows
+
     async def allocate_payment(
         self,
         *,

@@ -2694,6 +2694,55 @@ def compose_admin(
         ).execute(invoice_id)
         return result.model_dump(mode="python")
 
+    # ---- Billing Health (#235): observability + recovery actions ----------- #
+    async def list_reconciliation_runs() -> list[dict[str, Any]]:
+        from backend.v2.contexts.billing.infrastructure.mongo_billing_reconciliation_run_repo import (
+            MongoBillingReconciliationRunRepository,
+        )
+        from backend.v2.shared.tenancy import current_academy_id
+
+        repo = MongoBillingReconciliationRunRepository(db)
+        return await repo.list_runs(current_academy_id(), limit=10)
+
+    async def run_reconciliation() -> dict[str, Any]:
+        from backend.v2.contexts.billing.application.use_cases.reconcile_stripe_payment_intents import (
+            ReconcileStripePaymentIntents,
+        )
+        from backend.v2.contexts.billing.infrastructure.mongo_billing_reconciliation_run_repo import (
+            MongoBillingReconciliationRunRepository,
+        )
+        from backend.v2.shared.tenancy import current_academy_id
+
+        if not hasattr(stripe, "search_app_owned_payment_intents"):
+            raise RuntimeError("Stripe reconciliation not configured")
+        return await ReconcileStripePaymentIntents(
+            stripe=stripe,  # type: ignore[arg-type]
+            ledger=billing_ledger_repo,
+            run_recorder=MongoBillingReconciliationRunRepository(db),
+            academy_id=current_academy_id(),
+        ).execute(limit=100)
+
+    async def list_failed_payment_attempts() -> list[dict[str, Any]]:
+        return await billing_ledger_repo.list_open_failed_attempts()
+
+    async def list_invoice_attempts(invoice_id: str) -> list[dict[str, Any]]:
+        invoice = await billing_ledger_repo.get_invoice(invoice_id)
+        if invoice is None:
+            raise ValueError("invoice not found")
+        return await billing_ledger_repo.list_payment_attempts(invoice_id)
+
+    async def replay_webhook_event(event_id: str) -> bool:
+        from backend.v2.contexts.billing.infrastructure.mongo_stripe_dedup import (
+            MongoStripeEventDedup,
+        )
+        from backend.v2.shared.tenancy import current_academy_id
+
+        dedup = MongoStripeEventDedup(db)
+        replayed = await dedup.replay(event_id, academy_id=current_academy_id())
+        if not replayed:
+            raise ValueError("quarantined event not found")
+        return True
+
     async def add_invoice_line(
         *,
         invoice_id: str,
@@ -4890,6 +4939,11 @@ def compose_admin(
         generate_billing_invoice_artifact=generate_billing_invoice_artifact,
         send_billing_invoice=send_billing_invoice,
         charge_invoice_via_autopay=charge_invoice_via_autopay,
+        list_reconciliation_runs=list_reconciliation_runs,
+        run_reconciliation=run_reconciliation,
+        list_failed_payment_attempts=list_failed_payment_attempts,
+        list_invoice_attempts=list_invoice_attempts,
+        replay_webhook_event=replay_webhook_event,
         add_invoice_line=add_invoice_line,
         remove_invoice_line=remove_invoice_line,
         void_billing_invoice=void_billing_invoice,

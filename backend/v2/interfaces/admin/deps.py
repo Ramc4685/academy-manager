@@ -274,6 +274,12 @@ class AdminUseCases:
     get_digest_delivery_log: object | None = None  # GetDigestDeliveryLog
     send_billing_invoice: object | None = None
     charge_invoice_via_autopay: object | None = None
+    # Billing Health (#235): observability + recovery actions.
+    list_reconciliation_runs: object | None = None  # async () -> list[dict]
+    run_reconciliation: object | None = None  # async () -> dict
+    list_failed_payment_attempts: object | None = None  # async () -> list[dict]
+    list_invoice_attempts: object | None = None  # async (invoice_id) -> list[dict]
+    replay_webhook_event: object | None = None  # async (event_id) -> bool
     add_invoice_line: object | None = None
     remove_invoice_line: object | None = None
     void_billing_invoice: object | None = None
