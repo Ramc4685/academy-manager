@@ -37,6 +37,12 @@ from pydantic import BaseModel, Field, model_validator
 
 PayoutPeriodStatus = Literal["draft", "approved", "paid"]
 PayoutLineBasis = Literal["scheduled", "substitute", "actual"]
+PayoutWarningReason = Literal[
+    "missing_session_price_for_percent_revenue",
+    "missing_rate",
+    "missing_percent",
+]
+PayoutWarningSeverity = Literal["blocking", "warning"]
 
 
 class PersistedPayoutLine(BaseModel):
@@ -65,6 +71,22 @@ class PersistedPayoutLine(BaseModel):
     adjustment_reason: str | None = None
 
 
+class PayoutWarning(BaseModel):
+    """Durable warning snapshot for a payout occurrence that produced no line."""
+
+    model_config = {"frozen": True}
+
+    occurrence_id: str
+    reason: PayoutWarningReason
+    severity: PayoutWarningSeverity = "blocking"
+    message: str
+    occurred_at: datetime | None = None
+    session_id: str | None = None
+    session_title: str | None = None
+    coach_id: str
+    repair_action: str
+
+
 class PayoutPeriod(BaseModel):
     """A coach's payout for one period, durable.
 
@@ -85,6 +107,7 @@ class PayoutPeriod(BaseModel):
     total_minor: int = Field(ge=0)
     lines: list[PersistedPayoutLine] = Field(default_factory=list)
     unpaid_occurrence_ids: list[str] = Field(default_factory=list)
+    payout_warnings: list[PayoutWarning] = Field(default_factory=list)
     generated_at: datetime
     approved_at: datetime | None = None
     paid_at: datetime | None = None
@@ -132,6 +155,10 @@ def approve(period: PayoutPeriod, *, at: datetime) -> PayoutPeriod:
         raise PayoutPeriodStateError(
             f"cannot approve payout period {period.period_id!r} in status 'paid'"
         )
+    if period.payout_warnings:
+        raise PayoutPeriodStateError(
+            f"cannot approve payout period {period.period_id!r} with unresolved payout warnings"
+        )
     return period.model_copy(update={"status": "approved", "approved_at": at})
 
 
@@ -178,6 +205,10 @@ def mark_paid(
     if period.status == "draft":
         raise PayoutPeriodStateError(
             f"cannot mark payout period {period.period_id!r} paid from status 'draft'"
+        )
+    if period.payout_warnings:
+        raise PayoutPeriodStateError(
+            f"cannot mark payout period {period.period_id!r} paid with unresolved payout warnings"
         )
     return period.model_copy(
         update={

@@ -55,6 +55,8 @@ async def get_monthly_payroll(
             currency=r.currency,
             status=r.status,
             period_id=r.period_id,
+            warning_count=r.warning_count,
+            warning_status=r.warning_status,
         )
         for r in rows
     ]
@@ -125,15 +127,49 @@ async def export_monthly_payroll_xlsx(
     ws.append(["Coach Payroll", month])
     ws.append([])
     grand_total = 0
+    describe = use_cases.describe_payout_occurrences
     for period in periods:
-        ws.append([f"Coach: {period.coach_id}", f"Status: {period.status}"])
-        ws.append(["Occurrence", "Role", "Pay"])
+        warning_descriptions = {}
+        if describe is not None and period.payout_warnings:
+            warning_descriptions = await describe(  # type: ignore[operator]
+                [warning.occurrence_id for warning in period.payout_warnings]
+            )
+        ws.append(
+            [
+                f"Coach: {period.coach_id}",
+                f"Status: {period.status}",
+                f"Warnings: {len(period.payout_warnings)}",
+            ]
+        )
+        ws.append(["Occurrence", "Role", "Pay", "Warning reason", "Date", "Session", "Repair"])
         for line in period.lines:
             ws.append(
                 [
                     line.occurrence_id,
                     "Replacement" if line.basis == "substitute" else "Scheduled",
                     line.amount_minor / 100,
+                    "",
+                    "",
+                    "",
+                    "",
+                ]
+            )
+        for warning in period.payout_warnings:
+            description = warning_descriptions.get(warning.occurrence_id, {})
+            occurred_at = warning.occurred_at or description.get("occurred_at")
+            ws.append(
+                [
+                    warning.occurrence_id,
+                    "",
+                    0,
+                    warning.reason,
+                    f"{occurred_at:%Y-%m-%d}" if occurred_at else "",
+                    warning.session_title
+                    or description.get("session_title")
+                    or warning.session_id
+                    or description.get("session_id")
+                    or "",
+                    warning.repair_action,
                 ]
             )
         ws.append(["", "Subtotal", period.total_minor / 100])

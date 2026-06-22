@@ -51,9 +51,25 @@ class _ListCoachPayRates:
         return [r for r in self.rates if r.coach_id == coach_id]
 
 
+async def _list_sessions_with_missing_price(_date, *, window=None, coach_id=None):
+    return [
+        {
+            "session_id": "sess-missing-price",
+            "coach_id": coach_id,
+            "title": "No Price Session",
+            "amount_cents": None,
+        }
+    ]
+
+
+async def _list_sessions_without_missing_price(_date, *, window=None, coach_id=None):
+    return []
+
+
 def test_set_coach_pay_rate_converts_percent_to_bps(admin_client):
     fake = _SetCoachPayRate(_rate())
     admin_client.use_cases.set_coach_pay_rate = fake
+    admin_client.use_cases.list_admin_sessions = _list_sessions_without_missing_price
 
     response = admin_client.post(
         "/api/v2/admin/coaches/coach-1/pay-rates",
@@ -79,6 +95,20 @@ def test_set_coach_pay_rate_validation_maps_to_400(admin_client):
 
     assert response.status_code == 400
     assert "percent is required" in response.json()["detail"]
+
+
+def test_set_percent_rate_blocks_active_sessions_with_missing_price(admin_client):
+    admin_client.use_cases.set_coach_pay_rate = _SetCoachPayRate(_rate())
+    admin_client.use_cases.list_admin_sessions = _list_sessions_with_missing_price
+
+    response = admin_client.post(
+        "/api/v2/admin/coaches/coach-1/pay-rates",
+        json={"billing_unit": "percent_of_revenue", "percent": 60},
+    )
+
+    assert response.status_code == 400
+    assert "Percent-of-revenue coach pay requires session prices" in response.json()["detail"]
+    assert "No Price Session" in response.json()["detail"]
 
 
 def test_list_coach_pay_rates_returns_history(admin_client):

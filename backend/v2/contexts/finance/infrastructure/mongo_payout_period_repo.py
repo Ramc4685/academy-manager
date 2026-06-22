@@ -26,6 +26,7 @@ from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
+    PayoutWarning,
     PersistedPayoutLine,
 )
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
@@ -74,6 +75,9 @@ def _period_to_doc(period: PayoutPeriod) -> dict[str, Any]:
         "currency": period.currency,
         "total_minor": int(period.total_minor),
         "unpaid_occurrence_ids": list(period.unpaid_occurrence_ids),
+        "payout_warnings": [
+            warning.model_dump(mode="python") for warning in period.payout_warnings
+        ],
         "generated_at": period.generated_at,
         "approved_at": period.approved_at,
         "paid_at": period.paid_at,
@@ -104,6 +108,9 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
             total_minor=int(doc["total_minor"]),
             lines=lines,
             unpaid_occurrence_ids=list(doc.get("unpaid_occurrence_ids", [])),
+            payout_warnings=[
+                PayoutWarning.model_validate(warning) for warning in doc.get("payout_warnings", [])
+            ],
             generated_at=doc["generated_at"],
             approved_at=doc.get("approved_at"),
             paid_at=doc.get("paid_at"),

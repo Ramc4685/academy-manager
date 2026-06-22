@@ -1868,6 +1868,7 @@ def compose_admin(
         return {
             str(doc["occurrence_id"]): {
                 "occurred_at": doc.get("start_at"),
+                "session_id": _occurrence_session_id(doc) or None,
                 "session_title": titles.get(_occurrence_session_id(doc)) or None,
             }
             for doc in occ_docs

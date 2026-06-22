@@ -10,6 +10,8 @@ export interface AdminMonthlyPayrollRow {
   currency: string;
   status: MonthlyPayrollStatus;
   period_id: string | null;
+  warning_count: number;
+  warning_status: "clear" | "unresolved";
 }
 
 export interface AdminMonthlyPayrollView {

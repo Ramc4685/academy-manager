@@ -44,6 +44,11 @@ import {
   type MarkPayoutPaidInput,
   type PayoutAuditEntryView,
 } from "@/lib/api/v2/payouts";
+import {
+  approvalWarningMessage,
+  payoutWarningLabel,
+  payoutWarningRepairAction,
+} from "@/lib/payroll-warnings";
 import { Avatar } from "@/components/ds/avatar";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
@@ -221,6 +226,7 @@ export default function AdminPayoutReviewPage() {
         periodEnd={period.period_end}
         onChanged={refresh}
       />
+      <WarningBanner period={period} />
       <SummaryCards period={period} />
       <PayLog
         period={period}
@@ -309,7 +315,7 @@ function SummaryCards({ period }: { period: AdminPayoutPeriodView }) {
   const metrics: { label: string; value: string }[] = [
     { label: "Sessions coached", value: String(period.lines.length) },
     { label: "As replacement", value: String(replacementCount) },
-    { label: "Not paid", value: String(period.unpaid_occurrence_ids.length) },
+    { label: "Warnings", value: String(period.payout_warnings.length) },
     { label: "Total pay", value: money(period.total_amount_cents, period.currency) },
   ];
   return (
@@ -322,6 +328,31 @@ function SummaryCards({ period }: { period: AdminPayoutPeriodView }) {
           </div>
         </Card>
       ))}
+    </div>
+  );
+}
+
+function WarningBanner({ period }: { period: AdminPayoutPeriodView }) {
+  if (period.payout_warnings.length === 0) return null;
+  return (
+    <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+      <div className="font-semibold">
+        Resolve {period.payout_warnings.length} payout warning
+        {period.payout_warnings.length === 1 ? "" : "s"} before approval or payment.
+      </div>
+      <ul className="mt-2 space-y-1">
+        {period.payout_warnings.map((warning) => (
+          <li key={warning.occurrence_id}>
+            {payoutWarningLabel(warning)}
+            {warning.session_title ? ` · ${warning.session_title}` : ""}:{" "}
+            {payoutWarningRepairAction(warning)}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2">
+        For approved or paid payouts, reopen with a reason, repair the source data, recompute,
+        then approve or mark paid again.
+      </p>
     </div>
   );
 }
@@ -397,6 +428,7 @@ function Actions({
   };
 
   const busy = recompute.isPending || approve.isPending || reopen.isPending || markPaid.isPending;
+  const unresolvedMessage = approvalWarningMessage(period.payout_warnings.length);
 
   return (
     <div className="space-y-2">
@@ -422,7 +454,7 @@ function Actions({
             icon={<CheckCircle2 className="size-4" aria-hidden="true" />}
             label="Approve"
             title="Lock the lines and move this payout to approved."
-            disabled={busy}
+            disabled={busy || period.payout_warnings.length > 0}
             onClick={() => approve.mutate()}
             primary
           />
@@ -432,7 +464,7 @@ function Actions({
             icon={<CheckCircle2 className="size-4" aria-hidden="true" />}
             label="Mark paid"
             title="Record that this approved payout has been paid out."
-            disabled={markPaid.isPending}
+            disabled={markPaid.isPending || period.payout_warnings.length > 0}
             onClick={() => setShowPaid(true)}
             primary
           />
@@ -450,6 +482,11 @@ function Actions({
       {error && (
         <p role="alert" className="text-sm text-red-700">
           {error}
+        </p>
+      )}
+      {unresolvedMessage && (
+        <p role="alert" className="text-sm text-amber-800">
+          {unresolvedMessage}
         </p>
       )}
       {showPaid && (
@@ -558,8 +595,21 @@ function PayLog({
                   <td className="px-3 py-3 text-xs text-rally-muted">—</td>
                   <td className="px-3 py-3">
                     <span className="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-amber-800">
-                      Not paid
+                      {occ.reason ? "Warning" : "Not paid"}
                     </span>
+                    <div className="mt-1 text-xs text-rally-muted">
+                      {occ.reason
+                        ? payoutWarningLabel({
+                            reason: occ.reason,
+                            message: occ.message ?? "",
+                          })
+                        : "No pay line was created."}
+                    </div>
+                    {occ.repair_action && (
+                      <div className="mt-0.5 text-xs text-amber-800">
+                        {payoutWarningRepairAction({ repair_action: occ.repair_action })}
+                      </div>
+                    )}
                   </td>
                   <td className="px-3 py-3 text-right font-mono text-rally-muted">—</td>
                   <td className="px-3 py-3 text-right font-mono tabular-nums text-rally-muted line-through">

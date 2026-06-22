@@ -851,7 +851,36 @@ class AdminUnpaidOccurrenceView(BaseModel):
 
     occurrence_id: str
     occurred_at: datetime | None = None
+    session_id: str | None = None
     session_title: str | None = None
+    reason: (
+        Literal[
+            "missing_session_price_for_percent_revenue",
+            "missing_rate",
+            "missing_percent",
+        ]
+        | None
+    ) = None
+    severity: Literal["blocking", "warning"] | None = None
+    message: str | None = None
+    coach_id: str | None = None
+    repair_action: str | None = None
+
+
+class AdminPayoutWarningView(BaseModel):
+    occurrence_id: str
+    reason: Literal[
+        "missing_session_price_for_percent_revenue",
+        "missing_rate",
+        "missing_percent",
+    ]
+    severity: Literal["blocking", "warning"]
+    message: str
+    occurred_at: datetime | None = None
+    session_id: str | None = None
+    session_title: str | None = None
+    coach_id: str
+    repair_action: str
 
 
 class AdminPayoutPeriodView(BaseModel):
@@ -865,6 +894,7 @@ class AdminPayoutPeriodView(BaseModel):
     lines: list[AdminPayoutPeriodLineView]
     unpaid_occurrence_ids: list[str]
     unpaid_occurrences: list[AdminUnpaidOccurrenceView] = Field(default_factory=list)
+    payout_warnings: list[AdminPayoutWarningView] = Field(default_factory=list)
     generated_at: datetime
     approved_at: datetime | None = None
     paid_at: datetime | None = None
@@ -887,6 +917,8 @@ class AdminMonthlyPayrollRow(BaseModel):
     currency: str
     status: str  # not_generated|draft|approved|paid
     period_id: str | None = None
+    warning_count: int = 0
+    warning_status: Literal["clear", "unresolved"] = "clear"
 
 
 class AdminMonthlyPayrollView(BaseModel):

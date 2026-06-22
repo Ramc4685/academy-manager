@@ -61,6 +61,36 @@ def _event_field(event: object, field_name: str, default: object = None) -> obje
     return getattr(event, field_name, default)
 
 
+async def _coach_has_percent_rate(use_cases: AdminUseCases, coach_id: str) -> bool:
+    if use_cases.list_coach_pay_rates is None:
+        return False
+    rates = await use_cases.list_coach_pay_rates.execute(coach_id=coach_id)  # type: ignore[union-attr]
+    return any(
+        getattr(rate, "billing_unit", None) == "percent_of_revenue"
+        and getattr(rate, "status", "active") == "active"
+        for rate in rates
+    )
+
+
+async def _reject_percent_pay_missing_price(
+    *,
+    use_cases: AdminUseCases,
+    coach_id: str,
+    amount_cents: int | None,
+) -> None:
+    if amount_cents is not None:
+        return
+    if await _coach_has_percent_rate(use_cases, coach_id):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Percent-of-revenue coach pay requires a session price. "
+                "Set a session fee, use amount_cents: 0 for an explicit free session, "
+                "or change the coach pay rate before saving."
+            ),
+        )
+
+
 @router.get("/sessions", response_model=AdminSessionList, summary="List sessions for a date range")
 async def list_sessions(
     on_date: str = Query(default=None, alias="date"),
@@ -84,6 +114,11 @@ async def create_session(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionView:
+    await _reject_percent_pay_missing_price(
+        use_cases=use_cases,
+        coach_id=body.coach_id,
+        amount_cents=body.amount_cents,
+    )
     try:
         session = await use_cases.create_session.execute(CreateSessionCommand(**body.model_dump()))
     except DuplicateSessionSeries as exc:
@@ -100,6 +135,24 @@ async def edit_session(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionView:
+    field_set = body.model_fields_set
+    amount_is_being_cleared = "amount_cents" in field_set and body.amount_cents is None
+    if amount_is_being_cleared:
+        coach_id = body.coach_id
+        if coach_id is None and use_cases.get_admin_session is not None:
+            current = await use_cases.get_admin_session(session_id)  # type: ignore[operator]
+            if current is not None:
+                coach_id = (
+                    current.get("coach_id")
+                    if isinstance(current, dict)
+                    else getattr(current, "coach_id", None)
+                )
+        if coach_id is not None:
+            await _reject_percent_pay_missing_price(
+                use_cases=use_cases,
+                coach_id=coach_id,
+                amount_cents=body.amount_cents,
+            )
     try:
         session = await use_cases.edit_session.execute(
             EditSessionCommand(

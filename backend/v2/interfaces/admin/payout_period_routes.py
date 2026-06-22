@@ -27,6 +27,7 @@ from backend.v2.interfaces.admin.views import (
     AdminPayoutPayslipView,
     AdminPayoutPeriodLineView,
     AdminPayoutPeriodView,
+    AdminPayoutWarningView,
     AdminUnpaidOccurrenceView,
     GeneratePayoutPeriodRequest,
     MarkPayoutPeriodPaidRequest,
@@ -67,6 +68,20 @@ def _line_view(line: Any) -> AdminPayoutPeriodLineView:
     )
 
 
+def _warning_view(warning: Any) -> AdminPayoutWarningView:
+    return AdminPayoutWarningView(
+        occurrence_id=warning.occurrence_id,
+        reason=warning.reason,
+        severity=warning.severity,
+        message=warning.message,
+        occurred_at=warning.occurred_at,
+        session_id=warning.session_id,
+        session_title=warning.session_title,
+        coach_id=warning.coach_id,
+        repair_action=warning.repair_action,
+    )
+
+
 def _period_view(period: Any) -> AdminPayoutPeriodView:
     return AdminPayoutPeriodView(
         period_id=period.period_id,
@@ -78,6 +93,7 @@ def _period_view(period: Any) -> AdminPayoutPeriodView:
         total_amount_cents=period.total_minor,
         lines=[_line_view(line) for line in period.lines],
         unpaid_occurrence_ids=list(period.unpaid_occurrence_ids),
+        payout_warnings=[_warning_view(warning) for warning in period.payout_warnings],
         generated_at=period.generated_at,
         approved_at=period.approved_at,
         paid_at=period.paid_at,
@@ -108,15 +124,58 @@ async def _enriched_period_view(use_cases: AdminUseCases, period: Any) -> AdminP
         )
         for line in view.lines
     ]
+    warnings_by_occurrence = {warning.occurrence_id: warning for warning in view.payout_warnings}
+    warnings = [
+        warning.model_copy(
+            update={
+                "occurred_at": warning.occurred_at
+                or descriptions.get(warning.occurrence_id, {}).get("occurred_at"),
+                "session_id": warning.session_id
+                or descriptions.get(warning.occurrence_id, {}).get("session_id"),
+                "session_title": warning.session_title
+                or descriptions.get(warning.occurrence_id, {}).get("session_title"),
+            }
+        )
+        for warning in view.payout_warnings
+    ]
+    warnings_by_occurrence = {warning.occurrence_id: warning for warning in warnings}
     unpaid = [
         AdminUnpaidOccurrenceView(
             occurrence_id=occurrence_id,
             occurred_at=descriptions.get(occurrence_id, {}).get("occurred_at"),
+            session_id=descriptions.get(occurrence_id, {}).get("session_id"),
             session_title=descriptions.get(occurrence_id, {}).get("session_title"),
+            reason=(
+                warnings_by_occurrence[occurrence_id].reason
+                if occurrence_id in warnings_by_occurrence
+                else None
+            ),
+            severity=(
+                warnings_by_occurrence[occurrence_id].severity
+                if occurrence_id in warnings_by_occurrence
+                else None
+            ),
+            message=(
+                warnings_by_occurrence[occurrence_id].message
+                if occurrence_id in warnings_by_occurrence
+                else None
+            ),
+            coach_id=(
+                warnings_by_occurrence[occurrence_id].coach_id
+                if occurrence_id in warnings_by_occurrence
+                else None
+            ),
+            repair_action=(
+                warnings_by_occurrence[occurrence_id].repair_action
+                if occurrence_id in warnings_by_occurrence
+                else None
+            ),
         )
         for occurrence_id in view.unpaid_occurrence_ids
     ]
-    return view.model_copy(update={"lines": lines, "unpaid_occurrences": unpaid})
+    return view.model_copy(
+        update={"lines": lines, "unpaid_occurrences": unpaid, "payout_warnings": warnings}
+    )
 
 
 def _payout_periods(use_cases: AdminUseCases) -> PayoutPeriodRepository:
@@ -216,6 +275,8 @@ async def approve_payout_period(
         period = await _approve_payout_period(use_cases).execute(period_id=period_id)
     except LookupError as exc:
         raise PayoutPeriodNotFound(f"Payout period {period_id!r} not found") from exc
+    except PayoutPeriodStateError as exc:
+        raise PayoutPeriodInvalidTransition(str(exc)) from exc
     return await _enriched_period_view(use_cases, period)
 
 
@@ -370,6 +431,8 @@ async def export_payout_period_xlsx(
             "Expected revenue",
             "Pay",
             "Adjustment",
+            "Warning reason",
+            "Repair action",
         ]
     )
     for line in view.lines:
@@ -389,6 +452,8 @@ async def export_payout_period_xlsx(
                     if line.original_amount_cents is not None
                     else ""
                 ),
+                "",
+                "",
             ]
         )
     for unpaid in view.unpaid_occurrences:
@@ -402,6 +467,8 @@ async def export_payout_period_xlsx(
                 None,
                 0,
                 "",
+                unpaid.reason or "",
+                unpaid.repair_action or "",
             ]
         )
 

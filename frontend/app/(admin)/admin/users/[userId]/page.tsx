@@ -181,6 +181,10 @@ function CoachPayRatePanel({ coachId }: { coachId: string }) {
                 className="w-24 rounded-md border border-neutral-200 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900"
                 data-testid="coach-pay-rate-percent"
               />
+              <span className="max-w-xs text-[11px] font-normal text-amber-700">
+                Percent pay requires every assigned active session to have a session price.
+                Use $0 only for an explicitly free session.
+              </span>
             </label>
           ) : (
             <label className="flex flex-col gap-1 text-xs font-medium text-neutral-500">

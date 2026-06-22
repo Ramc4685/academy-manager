@@ -31,6 +31,7 @@ from backend.v2.contexts.finance.domain.payout_audit import PayoutAuditEntry
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
     PayoutPeriodStateError,
+    PayoutWarning,
     PersistedPayoutLine,
     approve,
     mark_paid,
@@ -110,6 +111,7 @@ class _Calc:
         currency: str = "USD",
         lines: list[PersistedPayoutLine] | None = None,
         unpaid: list[str] | None = None,
+        warnings: list[PayoutWarning] | None = None,
     ) -> None:
         self.coach_id = "coach-A"
         self.academy_id = "acad-1"
@@ -119,6 +121,7 @@ class _Calc:
         self.lines = lines or []
         self.total_minor = sum(line.amount_minor for line in self.lines)
         self.unpaid_occurrence_ids = unpaid or []
+        self.payout_warnings = warnings or []
 
 
 class FakeCalculator:
@@ -167,10 +170,28 @@ def _period(lines: list[PersistedPayoutLine], **overrides) -> PayoutPeriod:
         currency="USD",
         total_minor=sum(line.amount_minor for line in lines),
         lines=lines,
+        unpaid_occurrence_ids=[],
+        payout_warnings=[],
         generated_at=_dt("2026-06-01T00:00:00"),
     )
     base.update(overrides)
     return PayoutPeriod(**base)
+
+
+def _warning(**overrides) -> PayoutWarning:
+    base = dict(
+        occurrence_id="occ-warning",
+        reason="missing_session_price_for_percent_revenue",
+        severity="blocking",
+        message="Missing session price for percent-of-revenue pay.",
+        occurred_at=_dt("2026-05-10T18:00:00"),
+        session_id=None,
+        session_title=None,
+        coach_id="coach-A",
+        repair_action="set_session_fee_and_recompute",
+    )
+    base.update(overrides)
+    return PayoutWarning(**base)
 
 
 def _clock() -> datetime:
@@ -208,6 +229,36 @@ async def test_recompute_rewrites_lines_and_audits() -> None:
     assert entry.actor_id == "admin-1"
     assert entry.before == {"total_minor": 5000, "line_count": 1}
     assert entry.after == {"total_minor": 10000, "line_count": 2}
+
+
+@pytest.mark.asyncio
+async def test_recompute_refreshes_payout_warnings() -> None:
+    repo = FakeRepo()
+    audit = FakeAudit()
+    await repo.save(
+        _period(
+            [_line("occ-old", 5000)],
+            unpaid_occurrence_ids=["occ-old-warning"],
+            payout_warnings=[_warning(occurrence_id="occ-old-warning")],
+        )
+    )
+    fresh = _Calc(
+        lines=[_line("occ-1", 6000)],
+        unpaid=["occ-new-warning"],
+        warnings=[_warning(occurrence_id="occ-new-warning", reason="missing_rate")],
+    )
+    uc = RecomputePayoutPeriod(
+        calculator=FakeCalculator(fresh),
+        repository=repo,
+        audit=audit,
+        clock=_clock,
+    )
+
+    stored = await uc.execute(period_id="pp-1", actor_id="admin-1")
+
+    assert stored.unpaid_occurrence_ids == ["occ-new-warning"]
+    assert [warning.occurrence_id for warning in stored.payout_warnings] == ["occ-new-warning"]
+    assert [warning.reason for warning in stored.payout_warnings] == ["missing_rate"]
 
 
 @pytest.mark.asyncio

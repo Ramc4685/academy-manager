@@ -28,6 +28,12 @@ CoachRateBillingUnit = Literal["per_session", "per_hour", "percent_of_revenue"]
 CoachRateStatus = Literal["active", "superseded"]
 PayoutBasis = Literal["scheduled", "substitute", "actual", "lead", "assistant"]
 PayableOccurrenceStatus = Literal["scheduled", "cancelled", "completed"]
+PayoutWarningReason = Literal[
+    "missing_session_price_for_percent_revenue",
+    "missing_rate",
+    "missing_percent",
+]
+PayoutWarningSeverity = Literal["blocking", "warning"]
 
 
 class CoachAttendanceForPayout(BaseModel):
@@ -120,6 +126,22 @@ class PayoutLine(BaseModel):
     expected_revenue_minor: int | None = Field(default=None, ge=0)
 
 
+class PayoutWarning(BaseModel):
+    """Typed warning for an otherwise payable occurrence that cannot produce a line."""
+
+    model_config = {"frozen": True}
+
+    occurrence_id: str
+    reason: PayoutWarningReason
+    severity: PayoutWarningSeverity = "blocking"
+    message: str
+    occurred_at: datetime
+    session_id: str | None = None
+    session_title: str | None = None
+    coach_id: str
+    repair_action: str
+
+
 class PayoutStatement(BaseModel):
     """A coach's computed payout for a period.
 
@@ -138,6 +160,7 @@ class PayoutStatement(BaseModel):
     lines: list[PayoutLine] = Field(default_factory=list)
     total_minor: int = Field(ge=0)
     unpaid_occurrence_ids: list[str] = Field(default_factory=list)
+    payout_warnings: list[PayoutWarning] = Field(default_factory=list)
     absent_occurrence_ids: list[str] = Field(default_factory=list)
     """Occurrences attributed to this coach but unpaid because the coach
     was marked absent. Reported separately so payslips can show why."""

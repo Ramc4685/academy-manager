@@ -22,7 +22,7 @@ from backend.v2.contexts.finance.application.ports import (
     PayoutCalculator,
     PayoutPeriodRepository,
 )
-from backend.v2.contexts.finance.domain.payout_period import PayoutPeriod
+from backend.v2.contexts.finance.domain.payout_period import PayoutPeriod, PayoutWarning
 from backend.v2.shared.ids import new_ulid
 
 
@@ -77,6 +77,12 @@ class GeneratePayoutPeriod:
             total_minor=calc.total_minor,
             lines=list(calc.lines),
             unpaid_occurrence_ids=list(calc.unpaid_occurrence_ids),
+            payout_warnings=[
+                PayoutWarning.model_validate(
+                    warning.model_dump() if hasattr(warning, "model_dump") else warning
+                )
+                for warning in getattr(calc, "payout_warnings", [])
+            ],
             generated_at=self._clock(),
             approved_at=None,
             paid_at=None,

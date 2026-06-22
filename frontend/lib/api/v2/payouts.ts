@@ -27,6 +27,23 @@ export async function listAdminPayouts() {
 }
 
 export type PayoutPeriodStatus = "draft" | "approved" | "paid";
+export type PayoutWarningReason =
+  | "missing_session_price_for_percent_revenue"
+  | "missing_rate"
+  | "missing_percent";
+export type PayoutWarningSeverity = "blocking" | "warning";
+
+export interface PayoutWarning {
+  occurrence_id: string;
+  reason: PayoutWarningReason;
+  severity: PayoutWarningSeverity;
+  message: string;
+  occurred_at: string | null;
+  session_id: string | null;
+  session_title: string | null;
+  coach_id: string;
+  repair_action: string;
+}
 
 export interface AdminPayoutPeriodLineView {
   occurrence_id: string;
@@ -47,7 +64,13 @@ export interface AdminPayoutPeriodLineView {
 export interface AdminUnpaidOccurrenceView {
   occurrence_id: string;
   occurred_at: string | null;
+  session_id: string | null;
   session_title: string | null;
+  reason: PayoutWarningReason | null;
+  severity: PayoutWarningSeverity | null;
+  message: string | null;
+  coach_id: string | null;
+  repair_action: string | null;
 }
 
 export interface AdminPayoutPeriodView {
@@ -61,6 +84,7 @@ export interface AdminPayoutPeriodView {
   lines: AdminPayoutPeriodLineView[];
   unpaid_occurrence_ids: string[];
   unpaid_occurrences: AdminUnpaidOccurrenceView[];
+  payout_warnings: PayoutWarning[];
   generated_at: string;
   approved_at: string | null;
   paid_at: string | null;
