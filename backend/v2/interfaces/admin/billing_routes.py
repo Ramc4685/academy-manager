@@ -973,6 +973,7 @@ class ReconciliationRunDto(BaseModel):
     quarantined: int = 0
     failed: int = 0
     errors: list[Any] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
 
 
 class ReconciliationRunsResponse(BaseModel):

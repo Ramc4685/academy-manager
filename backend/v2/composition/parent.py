@@ -853,6 +853,7 @@ def compose_parent(
                 "academy_id": academy_id,
                 "parent_id": parent_id,
                 "invoice_ids": invoice_ids,
+                "source": "invoice_balance",
                 "type": "balance_payment",
             },
             idempotency_key=f"balance-payment:{fingerprint}",

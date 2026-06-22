@@ -633,6 +633,19 @@ def test_billing_reconciliation_report_is_read_only(admin_client):
                     "local_value": 6000,
                 }
             ],
+            "manual_review_candidates": [
+                {
+                    "invoice_id": "inv-candidate",
+                    "parent_id": "parent-1",
+                    "student_id": "student-1",
+                    "enrollment_id": "enr-1",
+                    "period": "2026-06",
+                    "amount_cents": 6000,
+                    "currency": "usd",
+                    "status": "open",
+                    "reason": "same Stripe customer, open balance, and amount",
+                }
+            ],
             "checked_at": NOW,
         }
 
@@ -651,6 +664,7 @@ def test_billing_reconciliation_report_is_read_only(admin_client):
     assert body["mismatches"][0]["code"] == "AMOUNT_MISMATCH"
     assert body["mismatches"][0]["stripe_value"] == 7000
     assert body["mismatches"][0]["local_value"] == 6000
+    assert body["manual_review_candidates"][0]["invoice_id"] == "inv-candidate"
 
 
 def test_billing_webhook_queue_returns_failed_and_quarantined_events(admin_client):

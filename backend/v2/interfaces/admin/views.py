@@ -646,6 +646,18 @@ class BillingReconciliationMismatchView(BaseModel):
     local_value: Any | None = None
 
 
+class BillingManualReviewCandidateView(BaseModel):
+    invoice_id: str
+    parent_id: str
+    student_id: str | None = None
+    enrollment_id: str | None = None
+    period: str | None = None
+    amount_cents: int
+    currency: str
+    status: str
+    reason: str
+
+
 class BillingReconciliationReportResponse(BaseModel):
     result: str
     stripe_invoice_id: str | None = None
@@ -655,6 +667,7 @@ class BillingReconciliationReportResponse(BaseModel):
     ledger_payment_id: str | None = None
     payment_allocation_id: str | None = None
     mismatches: list[BillingReconciliationMismatchView] = Field(default_factory=list)
+    manual_review_candidates: list[BillingManualReviewCandidateView] = Field(default_factory=list)
     checked_at: datetime
 
 

@@ -225,6 +225,14 @@ async def test_invoice_checkout_session_uses_invoice_metadata_and_reference() ->
         "parent_id": "parent_1",
         "source": "invoice_pay_link",
     }
+    assert request["payment_intent_data"] == {
+        "metadata": {
+            "invoice_id": "inv_123",
+            "academy_id": "academy_1",
+            "parent_id": "parent_1",
+            "source": "invoice_pay_link",
+        }
+    }
     assert request["line_items"] == [
         {
             "price_data": {

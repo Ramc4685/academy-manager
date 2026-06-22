@@ -576,6 +576,9 @@ function ReconciliationReportPanel() {
 
 function ReconciliationReportSummary({ report }: { report: BillingReconciliationReport }) {
   const checkedAt = new Date(report.checked_at).toLocaleString();
+  const manualReviewCandidates = Array.isArray(report.manual_review_candidates)
+    ? report.manual_review_candidates
+    : [];
   return (
     <div className="mt-4 space-y-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
@@ -608,6 +611,30 @@ function ReconciliationReportSummary({ report }: { report: BillingReconciliation
                   Stripe: {String(mismatch.stripe_value ?? "—")} · Local:{" "}
                   {String(mismatch.local_value ?? "—")}
                 </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {manualReviewCandidates.length > 0 && (
+        <div className="divide-y divide-rally-line rounded-md border border-amber-200 bg-amber-50/50">
+          <div className="p-3">
+            <div className="font-mono text-xs font-bold uppercase tracking-[0.18em] text-amber-800">
+              Manual review candidates
+            </div>
+          </div>
+          {manualReviewCandidates.map((candidate) => (
+            <div key={candidate.invoice_id} className="grid gap-1 p-3 sm:grid-cols-[180px_1fr]">
+              <div className="font-mono text-xs font-bold uppercase text-rally-ink">
+                {candidate.invoice_id}
+              </div>
+              <div>
+                <p className="text-rally-ink">
+                  {formatCents(candidate.amount_cents)} open balance for parent{" "}
+                  {candidate.parent_id}
+                  {candidate.period ? ` (${candidate.period})` : ""}
+                </p>
+                <p className="mt-1 text-xs text-rally-subtle">{candidate.reason}</p>
               </div>
             </div>
           ))}

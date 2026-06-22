@@ -365,6 +365,18 @@ export interface BillingReconciliationMismatch {
   local_value?: unknown;
 }
 
+export interface BillingManualReviewCandidate {
+  invoice_id: string;
+  parent_id: string;
+  student_id: string | null;
+  enrollment_id: string | null;
+  period: string | null;
+  amount_cents: number;
+  currency: string;
+  status: string;
+  reason: string;
+}
+
 export interface BillingReconciliationReport {
   result: string;
   stripe_invoice_id: string | null;
@@ -374,6 +386,7 @@ export interface BillingReconciliationReport {
   ledger_payment_id: string | null;
   payment_allocation_id: string | null;
   mismatches: BillingReconciliationMismatch[];
+  manual_review_candidates: BillingManualReviewCandidate[];
   checked_at: string;
 }
 
@@ -1632,6 +1645,7 @@ export interface ReconciliationRun {
   quarantined: number;
   failed: number;
   errors: unknown[];
+  notes: string[];
 }
 
 export interface ReconciliationRunsResponse {

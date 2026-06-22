@@ -359,6 +359,14 @@ class FakeBillingLedger:
         self.payment_keys[idempotency_key] = payment.payment_id
         return payment
 
+    async def get_payment_allocation_by_idempotency_key(
+        self, idempotency_key: str
+    ) -> dict[str, Any] | None:
+        for allocation in self.allocations:
+            if allocation["idempotency_key"] == idempotency_key:
+                return allocation
+        return None
+
     async def record_payment_attempt(
         self,
         *,
@@ -1059,6 +1067,111 @@ async def test_invoice_checkout_payment_intent_failed_records_attempt_without_cl
             ),
             "created_by_event_id": "evt_invoice_checkout_failed",
         }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_invoice_checkout_payment_intent_succeeded_does_not_allocate_before_session() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-checkout-pi",
+            parent_id="parent-checkout",
+            balance_due_cents=6_000,
+        )
+    )
+    uc = _build(repo, billing_ledger=ledger)
+    body = json.dumps(
+        {
+            "id": "evt_invoice_checkout_pi_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_invoice_checkout",
+                    "amount": 6_000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-checkout-pi",
+                        "parent_id": "parent-checkout",
+                        "source": "invoice_pay_link",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    assert ledger.invoices["inv-checkout-pi"].status == "open"
+    assert ledger.invoices["inv-checkout-pi"].balance_due_cents == 6_000
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+
+
+@pytest.mark.asyncio
+async def test_balance_checkout_completed_allocates_across_all_invoice_ids() -> None:
+    repo = FakePaymentRepo()
+    first = _ledger_invoice(
+        invoice_id="inv-balance-1",
+        parent_id="parent-balance",
+        balance_due_cents=4_000,
+    )
+    second = _ledger_invoice(
+        invoice_id="inv-balance-2",
+        parent_id="parent-balance",
+        balance_due_cents=6_000,
+    )
+    ledger = FakeBillingLedger(first)
+    ledger.invoices[second.invoice_id] = second
+    uc = _build(repo, billing_ledger=ledger)
+    body = json.dumps(
+        {
+            "id": "evt_balance_checkout_completed",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_balance",
+                    "payment_intent": "pi_balance",
+                    "amount_total": 10_000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "parent_id": "parent-balance",
+                        "invoice_ids": "inv-balance-1,inv-balance-2",
+                        "type": "balance_payment",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="worker-1")
+
+    assert res["processed"] is True
+    assert ledger.invoices["inv-balance-1"].status == "paid"
+    assert ledger.invoices["inv-balance-1"].balance_due_cents == 0
+    assert ledger.invoices["inv-balance-2"].status == "paid"
+    assert ledger.invoices["inv-balance-2"].balance_due_cents == 0
+    assert list(ledger.payments) == ["ledger-pay-cs:cs_balance"]
+    assert ledger.payments["ledger-pay-cs:cs_balance"].stripe_payment_intent_id == "pi_balance"
+    assert ledger.payments["ledger-pay-cs:cs_balance"].unapplied_amount_cents == 0
+    assert ledger.allocations == [
+        {
+            "payment_id": "ledger-pay-cs:cs_balance",
+            "invoice_id": "inv-balance-1",
+            "amount_cents": 4_000,
+            "idempotency_key": "invoice-checkout-alloc:cs_balance:inv-balance-1",
+        },
+        {
+            "payment_id": "ledger-pay-cs:cs_balance",
+            "invoice_id": "inv-balance-2",
+            "amount_cents": 6_000,
+            "idempotency_key": "invoice-checkout-alloc:cs_balance:inv-balance-2",
+        },
     ]
 
 

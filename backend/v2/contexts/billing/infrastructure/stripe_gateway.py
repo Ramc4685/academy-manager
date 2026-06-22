@@ -159,6 +159,7 @@ class RealStripeGateway(StripeGateway):
                 "cancel_url": cancel_url,
                 "client_reference_id": metadata.get("parent_id"),
                 "metadata": metadata,
+                "payment_intent_data": {"metadata": metadata},
             }
             if idempotency_key:
                 request["idempotency_key"] = idempotency_key
