@@ -58,6 +58,14 @@ class MongoPaymentRepository(TenantScopedRepository):
         self._ledger_repo = ledger_repo  # MongoBillingLedgerRepository | None — Phase 2A dual-write
 
     @staticmethod
+    def _monthly_invoice_id(enrollment_id: str, period: str) -> str:
+        return f"inv-monthly-{enrollment_id}-{period}"
+
+    @staticmethod
+    def _monthly_invoice_line_id(enrollment_id: str, period: str) -> str:
+        return f"line-monthly-{enrollment_id}-{period}"
+
+    @staticmethod
     def _payment_id(doc: dict[str, object]) -> str:
         return str(doc.get("payment_id") or doc.get("_id"))
 
@@ -399,7 +407,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         Uses a deterministic invoice_id for idempotency so re-runs are safe.
         """
         _log = logging.getLogger(__name__)
-        invoice_id = f"inv-monthly-{enrollment_id}-{period}"
+        invoice_id = self._monthly_invoice_id(enrollment_id, period)
         idempotency_key = f"monthly-ledger-{enrollment_id}-{period}"
         academy_id = current_academy_id()
 
@@ -428,7 +436,7 @@ class MongoPaymentRepository(TenantScopedRepository):
             updated_at=now,
         )
         line = InvoiceLine(
-            line_id=f"line-monthly-{enrollment_id}-{period}",
+            line_id=self._monthly_invoice_line_id(enrollment_id, period),
             academy_id=academy_id,
             invoice_id=invoice_id,
             line_type="tuition",
@@ -442,6 +450,122 @@ class MongoPaymentRepository(TenantScopedRepository):
         )
         await ledger_repo.create_invoice(invoice, lines=[line], idempotency_key=idempotency_key)
 
+    async def _mark_monthly_invoice_key(
+        self,
+        *,
+        enrollment_id: str,
+        period: str,
+        status: str,
+        now: datetime,
+        repair_error: str | None = None,
+    ) -> None:
+        update: dict[str, object] = {
+            "status": status,
+            "updated_at": now,
+        }
+        if repair_error is not None:
+            update["repair_error"] = repair_error
+        elif status == "complete":
+            update["repair_error"] = None
+        await self._db["billing_invoice_keys"].update_one(
+            {
+                "academy_id": current_academy_id(),
+                "enrollment_id": enrollment_id,
+                "period": period,
+            },
+            {"$set": update},
+        )
+
+    async def _monthly_invoice_is_complete(
+        self,
+        *,
+        enrollment_id: str,
+        period: str,
+        amount_cents: int,
+    ) -> bool:
+        academy_id = current_academy_id()
+        invoice_id = self._monthly_invoice_id(enrollment_id, period)
+        line_id = self._monthly_invoice_line_id(enrollment_id, period)
+        invoice_doc = await self._db["invoices"].find_one(
+            {"academy_id": academy_id, "invoice_id": invoice_id}
+        )
+        if invoice_doc is None:
+            return False
+        line_doc = await self._db["invoice_lines"].find_one(
+            {"academy_id": academy_id, "invoice_id": invoice_id, "line_id": line_id}
+        )
+        if line_doc is None or int(line_doc.get("amount_cents", -1)) != amount_cents:
+            return False
+        total_cents = int(invoice_doc.get("total_cents", -1))
+        balance_due_cents = int(invoice_doc.get("balance_due_cents", -1))
+        return (
+            int(invoice_doc.get("subtotal_cents", -1)) == amount_cents
+            and total_cents == amount_cents
+            and 0 <= balance_due_cents <= total_cents
+        )
+
+    async def _invoice_has_consistent_lines(
+        self,
+        *,
+        invoice_id: str,
+        amount_cents: int,
+    ) -> bool:
+        academy_id = current_academy_id()
+        invoice_doc = await self._db["invoices"].find_one(
+            {
+                "academy_id": academy_id,
+                "invoice_id": invoice_id,
+                "is_deleted": {"$ne": True},
+                "status": {"$ne": "void"},
+            }
+        )
+        if invoice_doc is None:
+            return False
+
+        line_total_cents = 0
+        line_count = 0
+        async for line_doc in self._db["invoice_lines"].find(
+            {
+                "academy_id": academy_id,
+                "invoice_id": invoice_id,
+            }
+        ):
+            line_count += 1
+            line_total_cents += int(line_doc.get("amount_cents", 0))
+        if line_count == 0:
+            return False
+
+        subtotal_cents = int(invoice_doc.get("subtotal_cents", -1))
+        discount_cents = int(invoice_doc.get("discount_cents", 0))
+        total_cents = int(invoice_doc.get("total_cents", -1))
+        balance_due_cents = int(invoice_doc.get("balance_due_cents", -1))
+        return (
+            line_total_cents == amount_cents
+            and subtotal_cents == line_total_cents
+            and total_cents == max(subtotal_cents - discount_cents, 0)
+            and 0 <= balance_due_cents <= total_cents
+        )
+
+    async def _find_existing_invoice_for_enrollment_period(
+        self,
+        *,
+        enrollment_id: str,
+        period: str,
+    ) -> str | None:
+        invoice_doc = await self._db["invoices"].find_one(
+            {
+                "academy_id": current_academy_id(),
+                "enrollment_id": enrollment_id,
+                "period": period,
+                "is_deleted": {"$ne": True},
+                "status": {"$ne": "void"},
+            },
+            sort=[("created_at", -1), ("invoice_id", -1)],
+        )
+        if invoice_doc is None:
+            return None
+        return str(invoice_doc.get("invoice_id") or "")
+
     async def _recover_orphan_monthly_invoice(
         self,
         *,
@@ -452,26 +576,52 @@ class MongoPaymentRepository(TenantScopedRepository):
         gross_amount_cents: int,
         invoice_key: dict[str, object] | None,
         now: datetime,
-    ) -> bool:
+    ) -> str:
         if self._ledger_repo is None or invoice_key is None:
-            return False
-        invoice_id = f"inv-monthly-{enrollment_id}-{period}"
+            return "failed"
+        invoice_id = self._monthly_invoice_id(enrollment_id, period)
         existing_invoice = await self._ledger_repo.get_invoice(invoice_id)
-        if existing_invoice is not None:
-            return False
+        existing_invoice_id = invoice_id if existing_invoice is not None else None
 
         payment_id = str(invoice_key.get("payment_id") or "")
-        if not payment_id:
-            return False
+        applied_credit_cents = await self._applied_credit_cents(payment_id) if payment_id else 0
+        amount_cents = max(gross_amount_cents - applied_credit_cents, 0)
+        if existing_invoice_id is None:
+            existing_invoice_id = await self._find_existing_invoice_for_enrollment_period(
+                enrollment_id=enrollment_id,
+                period=period,
+            )
+        if existing_invoice_id and await self._invoice_has_consistent_lines(
+            invoice_id=existing_invoice_id,
+            amount_cents=amount_cents,
+        ):
+            await self._mark_monthly_invoice_key(
+                enrollment_id=enrollment_id,
+                period=period,
+                status="complete",
+                now=now,
+            )
+            return "already_complete"
 
-        applied_credit_cents = await self._applied_credit_cents(payment_id)
+        if not payment_id:
+            return "failed"
         if applied_credit_cents == 0 and self._credit_ledger is not None:
             applied_credit_cents = await self._credit_ledger.apply_available_credits(
                 parent_id=parent_id,
                 invoice_id=payment_id,
                 amount_due_cents=gross_amount_cents,
             )
-        amount_cents = max(gross_amount_cents - applied_credit_cents, 0)
+            amount_cents = max(gross_amount_cents - applied_credit_cents, 0)
+        if existing_invoice_id and existing_invoice_id != invoice_id:
+            await self._mark_monthly_invoice_key(
+                enrollment_id=enrollment_id,
+                period=period,
+                status="repair_failed",
+                now=now,
+                repair_error="existing period invoice is not complete and cannot be repaired by monthly generator",
+            )
+            return "failed"
+
         await self._dual_write_ledger_invoice(
             ledger_repo=self._ledger_repo,
             payment_id=payment_id,
@@ -482,7 +632,26 @@ class MongoPaymentRepository(TenantScopedRepository):
             amount_cents=amount_cents,
             now=now,
         )
-        return True
+        if await self._monthly_invoice_is_complete(
+            enrollment_id=enrollment_id,
+            period=period,
+            amount_cents=amount_cents,
+        ):
+            await self._mark_monthly_invoice_key(
+                enrollment_id=enrollment_id,
+                period=period,
+                status="complete",
+                now=now,
+            )
+            return "repaired_partial" if existing_invoice is not None else "repaired_orphan"
+        await self._mark_monthly_invoice_key(
+            enrollment_id=enrollment_id,
+            period=period,
+            status="repair_failed",
+            now=now,
+            repair_error="monthly invoice did not contain expected header and line after repair",
+        )
+        return "failed"
 
     async def _applied_credit_cents(self, invoice_id: str) -> int:
         total = 0
@@ -490,7 +659,17 @@ class MongoPaymentRepository(TenantScopedRepository):
             {"academy_id": current_academy_id(), "invoice_id": invoice_id}
         ):
             total += int(doc.get("amount_cents", 0))
-        return total
+        source_total = 0
+        async for doc in self._db["account_credit_ledger"].find(
+            {
+                "academy_id": current_academy_id(),
+                "invoice_id": invoice_id,
+                "type": "CREDIT_APPLIED",
+                "status": "APPLIED",
+            }
+        ):
+            source_total += int(doc.get("amount_cents", 0))
+        return max(total, source_total)
 
     async def generate_monthly_payments(self, period: str) -> GenerateMonthlyPaymentsResult:
         academy_id = current_academy_id()
@@ -507,6 +686,9 @@ class MongoPaymentRepository(TenantScopedRepository):
         skipped_no_charge = 0
         skipped_autopay = 0
         skipped_paused = 0
+        repaired_orphan_keys = 0
+        repaired_partial_invoices = 0
+        failed_repair = 0
         async for enrollment in cursor:
             status = str(enrollment.get("status") or "active")
             if status == "paused" or period in set(enrollment.get("skip_periods") or []):
@@ -565,7 +747,9 @@ class MongoPaymentRepository(TenantScopedRepository):
                         "payment_id": payment_id,
                         "enrollment_id": enrollment_id,
                         "period": period,
+                        "status": "claimed",
                         "created_at": now,
+                        "updated_at": now,
                     }
                 )
             except DuplicateKeyError:
@@ -585,10 +769,15 @@ class MongoPaymentRepository(TenantScopedRepository):
                     invoice_key=invoice_key,
                     now=now,
                 )
-                if recovered:
+                if recovered == "repaired_orphan":
                     created += 1
-                else:
+                    repaired_orphan_keys += 1
+                elif recovered == "repaired_partial":
+                    repaired_partial_invoices += 1
+                elif recovered == "already_complete":
                     skipped_existing += 1
+                else:
+                    failed_repair += 1
                 continue
             applied_credit_cents = 0
             if self._credit_ledger is not None:
@@ -611,6 +800,12 @@ class MongoPaymentRepository(TenantScopedRepository):
                     amount_cents=amount_cents,
                     now=now,
                 )
+                await self._mark_monthly_invoice_key(
+                    enrollment_id=enrollment_id,
+                    period=period,
+                    status="complete",
+                    now=now,
+                )
             created += 1
         return GenerateMonthlyPaymentsResult(
             created=created,
@@ -618,6 +813,9 @@ class MongoPaymentRepository(TenantScopedRepository):
             skipped_no_charge=skipped_no_charge,
             skipped_autopay=skipped_autopay,
             skipped_paused=skipped_paused,
+            repaired_orphan_keys=repaired_orphan_keys,
+            repaired_partial_invoices=repaired_partial_invoices,
+            failed_repair=failed_repair,
         )
 
     # ------------------------------------------------------------------

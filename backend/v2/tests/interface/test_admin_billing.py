@@ -432,6 +432,9 @@ def test_generate_monthly_payments(admin_client):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["created"] == 1
+    assert body["repaired_orphan_keys"] == 0
+    assert body["repaired_partial_invoices"] == 0
+    assert body["failed_repair"] == 0
     assert admin_client.seed["payments"].generated_periods == ["2026-05"]
 
 
