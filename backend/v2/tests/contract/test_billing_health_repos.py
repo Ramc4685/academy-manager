@@ -34,12 +34,8 @@ async def test_list_runs_returns_newest_first_scoped_to_academy(db, acad) -> Non
     await repo.record_run(
         academy_id=acad, run_id="r-old", started_at=NOW - timedelta(minutes=10), scanned=8
     )
-    await repo.record_run(
-        academy_id=acad, run_id="r-new", started_at=NOW, scanned=9
-    )
-    await repo.record_run(
-        academy_id="other", run_id="r-other", started_at=NOW, scanned=1
-    )
+    await repo.record_run(academy_id=acad, run_id="r-new", started_at=NOW, scanned=9)
+    await repo.record_run(academy_id="other", run_id="r-other", started_at=NOW, scanned=1)
 
     runs = await repo.list_runs(acad, limit=10)
 
@@ -101,7 +97,13 @@ async def _open_invoice(db, acad, invoice_id, status="open"):
 @pytest.mark.asyncio
 async def test_list_payment_attempts_newest_first(db, acad) -> None:
     repo = MongoBillingLedgerRepository(db)
-    await _attempt(repo, invoice_id="inv-1", status="failed", when=NOW - timedelta(days=1), code="card_declined")
+    await _attempt(
+        repo,
+        invoice_id="inv-1",
+        status="failed",
+        when=NOW - timedelta(days=1),
+        code="card_declined",
+    )
     await _attempt(repo, invoice_id="inv-1", status="failed", when=NOW, code="insufficient_funds")
     await _attempt(repo, invoice_id="inv-2", status="succeeded", when=NOW)
 
@@ -134,7 +136,13 @@ async def test_list_open_failed_attempts_includes_only_failed_latest(db, acad) -
     await _attempt(repo, invoice_id="inv-failed", status="failed", when=NOW, code="card_declined")
     # inv-recovered: latest attempt succeeded -> excluded
     await _open_invoice(db, acad, "inv-recovered", status="partially_paid")
-    await _attempt(repo, invoice_id="inv-recovered", status="failed", when=NOW - timedelta(days=1), code="card_declined")
+    await _attempt(
+        repo,
+        invoice_id="inv-recovered",
+        status="failed",
+        when=NOW - timedelta(days=1),
+        code="card_declined",
+    )
     await _attempt(repo, invoice_id="inv-recovered", status="succeeded", when=NOW)
     # inv-paid: paid invoice -> excluded even if a failed attempt exists
     await _open_invoice(db, acad, "inv-paid", status="paid")

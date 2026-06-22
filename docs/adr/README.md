@@ -14,6 +14,7 @@ ADRs are short, dated, owned. Status moves: **Proposed → Accepted → (Superse
 | [0006](0006-tenant-ready-single-tenant-shipped.md) | Tenant-ready, single-tenant shipped | Accepted | 2026-05-16 |
 | [0011](0011-billing-ledger-payment-storage.md) | LedgerPayment uses its own ledger_payments collection | Accepted | 2026-06-14 |
 | [0012](0012-ledger-invoice-as-source-of-truth.md) | Ledger invoice is the source of truth for billing | Accepted | 2026-06-14 |
+| [0013](0013-card-processing-fee-as-method-conditional-invoice-line.md) | Card processing fee as a method-conditional invoice line | Proposed | 2026-06-22 |
 
 ## When to write an ADR
 
