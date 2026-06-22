@@ -76,15 +76,26 @@ class _FakeCustomer:
         )
 
 
+class _FakePaymentIntent:
+    calls: ClassVar[list[dict[str, object]]] = []
+
+    @classmethod
+    def search(cls, **kwargs: object) -> object:
+        cls.calls.append(kwargs)
+        return SimpleNamespace(data=[{"id": "pi_search_1", "status": "succeeded"}])
+
+
 @pytest.fixture(autouse=True)
 def fake_stripe_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeCheckoutSession.calls.clear()
     _FakeCustomer.calls.clear()
+    _FakePaymentIntent.calls.clear()
     fake_stripe = SimpleNamespace(
         api_key=None,
         checkout=SimpleNamespace(Session=_FakeCheckoutSession),
         billing_portal=SimpleNamespace(Session=SimpleNamespace()),
         Customer=_FakeCustomer,
+        PaymentIntent=_FakePaymentIntent,
         Webhook=SimpleNamespace(),
         Refund=SimpleNamespace(),
         Subscription=SimpleNamespace(),
@@ -116,6 +127,52 @@ async def test_subscription_checkout_omits_invalid_initial_proration_behavior() 
             "academy_id": "academy_1",
             "enrollment_id": "enrollment_1",
         }
+    }
+
+
+@pytest.mark.asyncio
+async def test_autopay_setup_checkout_uses_setup_mode_without_subscription_data() -> None:
+    gateway = RealStripeGateway(api_key="sk_test_fake", webhook_secret="whsec_fake")
+
+    await gateway.create_autopay_setup_checkout_session(
+        parent_id="parent_1",
+        enrollment_id="enrollment_1",
+        session_id="session_1",
+        success_url="https://example.test/success",
+        cancel_url="https://example.test/cancel",
+        metadata={
+            "academy_id": "academy_1",
+            "parent_id": "parent_1",
+            "source": "autopay_setup",
+        },
+    )
+
+    request = _FakeCheckoutSession.calls[-1]
+    assert request["mode"] == "setup"
+    assert request["currency"] == "usd"
+    assert request["customer_creation"] == "always"
+    assert request["client_reference_id"] == "parent_1"
+    assert "subscription_data" not in request
+    assert "line_items" not in request
+    assert request["metadata"] == {
+        "academy_id": "academy_1",
+        "parent_id": "parent_1",
+        "source": "autopay_setup",
+        "enrollment_id": "enrollment_1",
+        "session_id": "session_1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_payment_intent_reconciliation_search_is_scoped_to_academy() -> None:
+    gateway = RealStripeGateway(api_key="sk_test_fake", webhook_secret="whsec_fake")
+
+    result = await gateway.search_app_owned_payment_intents(academy_id="academy_1", limit=25)
+
+    assert result == [{"id": "pi_search_1", "status": "succeeded"}]
+    assert _FakePaymentIntent.calls[-1] == {
+        "query": 'metadata["academy_id"]:"academy_1" AND status:"succeeded"',
+        "limit": 25,
     }
 
 

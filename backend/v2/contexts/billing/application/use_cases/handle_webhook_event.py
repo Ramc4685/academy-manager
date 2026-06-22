@@ -586,6 +586,11 @@ class HandleWebhookEvent:
             raise _QuarantineStripeEvent(
                 f"academy mismatch: invoice={invoice.academy_id} expected={self._academy_id}"
             )
+        metadata_parent_id = str(metadata.get("parent_id") or "")
+        if metadata_parent_id and metadata_parent_id != invoice.parent_id:
+            raise _QuarantineStripeEvent(
+                f"parent mismatch: invoice={invoice.parent_id} payment_intent={metadata_parent_id}"
+            )
 
         amount_cents = int(pi.get("amount") or 0)
         if amount_cents <= 0:
@@ -633,16 +638,56 @@ class HandleWebhookEvent:
     async def _handle_autopay_pi_failed(self, event: dict[str, Any]) -> None:
         """Handle payment_intent.payment_failed from an autopay charge.
 
-        Per spec: log the decline, do NOT change invoice status.
+        Per spec: record the failed attempt, but do NOT change invoice status.
         """
+        if self._billing_ledger is None:
+            log.warning("autopay_pi_failed: billing_ledger not configured — skipping")
+            return
+
         pi = event["data"]["object"]
+        event_id = str(event.get("id") or "")
         pi_id: str = str(pi.get("id") or "")
         metadata = pi.get("metadata") or {}
         invoice_id = str(metadata.get("invoice_id") or "")
+        if not invoice_id:
+            log.warning("autopay_pi_failed: no invoice_id in metadata pi=%s", pi_id)
+            return
+
+        invoice = await self._billing_ledger.get_invoice(invoice_id)
+        if invoice is None:
+            raise ValueError("autopay invoice not found")
+        if invoice.academy_id != self._academy_id:
+            raise _QuarantineStripeEvent(
+                f"academy mismatch: invoice={invoice.academy_id} expected={self._academy_id}"
+            )
+        metadata_parent_id = str(metadata.get("parent_id") or "")
+        if metadata_parent_id and metadata_parent_id != invoice.parent_id:
+            raise _QuarantineStripeEvent(
+                f"parent mismatch: invoice={invoice.parent_id} payment_intent={metadata_parent_id}"
+            )
+
         last_error = pi.get("last_payment_error") or {}
+        if not isinstance(last_error, dict):
+            last_error = {}
         decline_code = str(last_error.get("decline_code") or last_error.get("code") or "unknown")
+        failure_message = str(last_error.get("message") or "Payment failed")
+        amount_cents = int(pi.get("amount") or invoice.balance_due_cents or invoice.total_cents)
+        currency = str(pi.get("currency") or invoice.currency).lower()
+        await self._billing_ledger.record_payment_attempt(
+            invoice_id=invoice_id,
+            parent_id=invoice.parent_id,
+            amount_cents=amount_cents,
+            currency=currency,
+            status="failed",
+            stripe_payment_intent_id=pi_id or None,
+            stripe_checkout_session_id=None,
+            failure_code=decline_code,
+            failure_message=failure_message,
+            idempotency_key=f"autopay-failed:{invoice_id}:{pi_id or event_id}",
+            created_by_event_id=event_id or None,
+        )
         log.warning(
-            "autopay_pi_failed: pi=%s invoice=%s decline_code=%s — invoice status unchanged",
+            "autopay_pi_failed: recorded attempt pi=%s invoice=%s decline_code=%s — invoice status unchanged",
             pi_id,
             invoice_id,
             decline_code,
@@ -1192,46 +1237,9 @@ class HandleWebhookEvent:
             )
 
         if ledger_invoice is None:
-            if amount_cents <= 0:
-                return None
-            invoice_id = self._ledger_invoice_id(invoice)
-            ledger_invoice = await self._billing_ledger.create_invoice(
-                LedgerInvoice(
-                    invoice_id=invoice_id,
-                    academy_id=subscription.academy_id,
-                    parent_id=parent_id,
-                    student_id=student_id,
-                    enrollment_id=enrollment_id,
-                    period=period_label,
-                    status="open",
-                    subtotal_cents=amount_cents,
-                    discount_cents=0,
-                    total_cents=amount_cents,
-                    balance_due_cents=amount_cents,
-                    currency=currency,
-                    due_date=self._invoice_due_date(invoice, now),
-                    stripe_invoice_id=stripe_invoice_id,
-                    source_type="stripe_subscription",
-                    source_id=stripe_invoice_id,
-                    created_at=now,
-                    updated_at=now,
-                ),
-                lines=[
-                    InvoiceLine(
-                        line_id=f"line-{invoice_id}",
-                        academy_id=subscription.academy_id,
-                        invoice_id=invoice_id,
-                        line_type="tuition",
-                        description=f"Subscription tuition {period_label}",
-                        quantity=1,
-                        unit_amount_cents=amount_cents,
-                        amount_cents=amount_cents,
-                        source_type="stripe_subscription",
-                        source_id=stripe_invoice_id or subscription.stripe_subscription_id,
-                        created_at=now,
-                    )
-                ],
-                idempotency_key=f"stripe-subscription-invoice:{stripe_invoice_id}",
+            raise _QuarantineStripeEvent(
+                f"subscription invoice {stripe_invoice_id} has no app-owned LedgerInvoice "
+                f"for enrollment={enrollment_id or 'unknown'} period={period_label}"
             )
         await self._record_subscription_invoice_recovery_point(
             invoice,

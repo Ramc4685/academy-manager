@@ -33,6 +33,10 @@ def _clear_production_env(monkeypatch) -> None:
         "ENABLE_PLATFORM_ROUTES",
         "ENABLE_OWNER_ROLE",
         "ENABLE_STUDENT_LOGIN",
+        "EMAIL_DELIVERY_ENABLED",
+        "V2_EMAIL_DELIVERY_ENABLED",
+        "SENDER_EMAIL",
+        "V2_SENDER_EMAIL",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -224,3 +228,39 @@ def test_cors_origins_reuse_existing_env_and_dedupe(monkeypatch) -> None:
     settings = Settings(_env_file=None)
 
     assert settings.cors_allowed_origins() == ["https://a.example", "https://b.example"]
+
+
+def test_email_delivery_enabled_reuses_existing_env_name(monkeypatch) -> None:
+    monkeypatch.delenv("V2_EMAIL_DELIVERY_ENABLED", raising=False)
+    monkeypatch.setenv("EMAIL_DELIVERY_ENABLED", "true")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.email_delivery_enabled is True
+
+
+def test_v2_email_delivery_enabled_wins_over_existing_env_name(monkeypatch) -> None:
+    monkeypatch.setenv("EMAIL_DELIVERY_ENABLED", "true")
+    monkeypatch.setenv("V2_EMAIL_DELIVERY_ENABLED", "false")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.email_delivery_enabled is False
+
+
+def test_sender_email_reuses_existing_env_name(monkeypatch) -> None:
+    monkeypatch.delenv("V2_SENDER_EMAIL", raising=False)
+    monkeypatch.setenv("SENDER_EMAIL", "noreply@courtmastr.com")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.sender_email == "noreply@courtmastr.com"
+
+
+def test_v2_sender_email_wins_over_existing_env_name(monkeypatch) -> None:
+    monkeypatch.setenv("SENDER_EMAIL", "noreply@academy.courtmastr.com")
+    monkeypatch.setenv("V2_SENDER_EMAIL", "noreply@courtmastr.com")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.sender_email == "noreply@courtmastr.com"

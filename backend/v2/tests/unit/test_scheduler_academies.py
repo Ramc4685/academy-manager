@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
-from backend.v2.main import _scheduler_academy_ids
+from backend.v2.main import _lifespan, _scheduler_academy_ids
 
 
 class _FakeAcademyRepo:
@@ -44,3 +46,10 @@ async def test_scheduler_academy_ids_uses_configured_runtime_fallback() -> None:
         "academy-a",
         "primary-academy",
     ]
+
+
+def test_scheduler_registers_stripe_payment_intent_reconciliation_job() -> None:
+    source = inspect.getsource(_lifespan)
+
+    assert "_reconcile_stripe_payment_intents" in source
+    assert 'id="reconcile_stripe_payment_intents"' in source

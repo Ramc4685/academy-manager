@@ -1886,7 +1886,7 @@ def compose_admin(
     comms = CommsService(messages=messages_repo, academy_id=academy_id)
 
     _s = settings
-    _from_addr = (
+    _from_addr = _s.sender_email or (
         f"noreply@{_s.frontend_url.replace('https://', '').replace('http://', '').split('/')[0]}"
         if _s.frontend_url
         else "noreply@academy.app"

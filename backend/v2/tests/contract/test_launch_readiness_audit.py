@@ -149,6 +149,38 @@ async def test_launch_readiness_audit_fails_until_legacy_payments_are_archived(d
     }
 
 
+@pytest.mark.asyncio
+async def test_launch_readiness_audit_passes_after_legacy_payment_archive(db) -> None:
+    await identity_membership_indexes.up(db)
+    await _create_launch_specific_indexes(db)
+    await db["invoices"].insert_one(
+        {
+            "academy_id": "acad_blno_badminton",
+            "invoice_id": "inv-from-legacy-pay-1",
+            "backfill_payment_id": "legacy-pay-1",
+        }
+    )
+    await db["legacy_payments_archive"].insert_one(
+        {
+            "academy_id": "acad_blno_badminton",
+            "payment_id": "legacy-pay-1",
+            "archive_reason": "legacy_payment_collection_retired",
+            "original_collection": "payments",
+        }
+    )
+
+    result = await launch_readiness_audit.audit_database(
+        db, primary_academy_id="acad_blno_badminton"
+    )
+
+    retirement = result["legacy_payment_retirement"]
+    assert result["status"] == "pass"
+    assert result["failures"] == []
+    assert retirement["status"] == "pass"
+    assert retirement["active_legacy_payment_rows"] == 0
+    assert retirement["legacy_rows_missing_backfill"] == 0
+
+
 def test_launch_readiness_environment_audit_requires_single_academy_flags() -> None:
     result = launch_readiness_audit.audit_environment(
         {

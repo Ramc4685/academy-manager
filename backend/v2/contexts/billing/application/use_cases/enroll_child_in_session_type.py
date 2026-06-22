@@ -1,7 +1,7 @@
 """Parent self-enroll in a session type use cases.
 
 EnrollChildInSessionType — parent enrolls their child in a session type,
-creates a Stripe subscription checkout session, persists the billing enrollment.
+creates a Stripe setup checkout session, persists the billing enrollment.
 
 CancelBillingEnrollment — parent cancels their child's billing enrollment,
 cancels the Stripe subscription at period end, and marks the enrollment cancelled.
@@ -84,20 +84,18 @@ class EnrollChildInSessionType:
                 session_type_id=cmd.session_type_id,
             )
 
-        # 3. Create enrollment record (will hold stripe_subscription_id after Stripe call)
+        # 3. Create enrollment record
         enrollment_id = str(new_ulid())
         now = self._now()
 
-        # 4. Start Stripe subscription checkout
+        # 4. Start Stripe setup checkout so the app owns future invoices.
         (
-            _,
+            _checkout_id,
             redirect_url,
-            stripe_subscription_id,
-        ) = await self._stripe.create_subscription_checkout_session(
+        ) = await self._stripe.create_autopay_setup_checkout_session(
             parent_id=cmd.parent_id,
             enrollment_id=enrollment_id,
             session_id=cmd.session_type_id,  # session_id field used as reference
-            amount_cents=session_type.price_cents,
             success_url=cmd.success_url,
             cancel_url=cmd.cancel_url,
             metadata={
@@ -106,6 +104,7 @@ class EnrollChildInSessionType:
                 "parent_id": cmd.parent_id,
                 "student_id": cmd.student_id,
                 "session_type_id": cmd.session_type_id,
+                "source": "autopay_setup",
             },
         )
 
@@ -116,10 +115,8 @@ class EnrollChildInSessionType:
             student_id=cmd.student_id,
             parent_id=cmd.parent_id,
             session_type_id=cmd.session_type_id,
-            stripe_subscription_id=stripe_subscription_id,
+            stripe_subscription_id=None,
             billing_start_date=now,
-            # NOTE: status set active optimistically; a webhook handler should reconcile
-            # if checkout is abandoned (Stripe subscription stays incomplete).
             status="active",
             enrolled_at=now,
             updated_at=now,

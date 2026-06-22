@@ -16,6 +16,57 @@ from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import 
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import MongoPaymentRepository
 
 
+async def _seed_monthly_enrollment(
+    db,
+    acad: str,
+    *,
+    enrollment_id: str,
+    session_id: str,
+    student_id: str,
+    parent_id: str,
+    extra_enrollment: dict | None = None,
+) -> None:
+    await db["sessions"].insert_one(
+        {
+            "academy_id": acad,
+            "session_id": session_id,
+            "name": "Junior Badminton",
+            "title": "Junior Badminton",
+            "coach_id": "coach-1",
+            "location": "Court 1",
+            "start_date": "2026-06-01",
+            "end_date": "2026-06-30",
+            "days_of_week": ["Mon", "Wed"],
+            "start_time": "18:00",
+            "end_time": "19:00",
+            "monthly_price_cents": 10_000,
+            "capacity": 8,
+            "status": "active",
+        }
+    )
+    await db["students"].insert_one(
+        {
+            "academy_id": acad,
+            "student_id": student_id,
+            "parent_id": parent_id,
+            "full_name": "A Student",
+        }
+    )
+    enrollment = {
+        "academy_id": acad,
+        "enrollment_id": enrollment_id,
+        "session_id": session_id,
+        "student_id": student_id,
+        "parent_id": parent_id,
+        "status": "active",
+        "billing_type": "standard",
+        "billing_start_at": datetime(2026, 5, 1, tzinfo=UTC),
+        "created_at": datetime(2026, 5, 1, tzinfo=UTC),
+    }
+    enrollment.update(extra_enrollment or {})
+    await db["enrollments"].insert_one(enrollment)
+
+
 @pytest.mark.asyncio
 async def test_list_for_parent_maps_domain_payments(db, acad) -> None:
     repo = MongoPaymentRepository(db)
@@ -163,6 +214,90 @@ async def test_generate_monthly_prorates_first_period_and_stores_snapshot(db, ac
     assert snapshot["total_eligible_classes"] == 9
     assert snapshot["billable_remaining_classes"] == 3
     assert snapshot["excluded_occurrences"]["sess-prorate:2026-05-18:18:00"] == "SAME_DAY_CUTOFF"
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_creates_ledger_invoice_for_active_autopay_enrollment_before_webhook(
+    db, acad
+) -> None:
+    ledger_repo = MongoBillingLedgerRepository(db)
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
+        ledger_repo=ledger_repo,
+    )
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id="enroll-autopay",
+        session_id="sess-autopay",
+        student_id="student-autopay",
+        parent_id="parent-autopay",
+        extra_enrollment={
+            "payment_mode": "autopay",
+            "subscription_status": "active",
+            "stripe_subscription_id": "sub_active_autopay",
+        },
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.created == 1
+    assert result.skipped_autopay == 0
+    assert await db["payments"].count_documents({"academy_id": acad}) == 0
+    invoice = await db["invoices"].find_one({"academy_id": acad, "enrollment_id": "enroll-autopay"})
+    assert invoice is not None
+    assert invoice["invoice_id"] == "inv-monthly-enroll-autopay-2026-06"
+    assert invoice["status"] == "open"
+    assert invoice["total_cents"] == 10_000
+    assert invoice["balance_due_cents"] == 10_000
+    assert invoice.get("stripe_invoice_id") is None
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_autopay_invoice_is_idempotent_per_enrollment_period(
+    db, acad
+) -> None:
+    await db["billing_invoice_keys"].create_index(
+        [("academy_id", 1), ("enrollment_id", 1), ("period", 1)],
+        unique=True,
+        name="uniq_monthly_invoice_key",
+    )
+    ledger_repo = MongoBillingLedgerRepository(db)
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
+        ledger_repo=ledger_repo,
+    )
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id="enroll-autopay-idempotent",
+        session_id="sess-autopay-idempotent",
+        student_id="student-autopay-idempotent",
+        parent_id="parent-autopay-idempotent",
+        extra_enrollment={
+            "payment_mode": "autopay",
+            "subscription_status": "active",
+            "stripe_subscription_id": "sub_active_autopay_idempotent",
+        },
+    )
+
+    first = await repo.generate_monthly_payments("2026-06")
+    second = await repo.generate_monthly_payments("2026-06")
+
+    assert first.created == 1
+    assert second.created == 0
+    assert second.skipped_existing == 1
+    assert (
+        await db["invoices"].count_documents(
+            {
+                "academy_id": acad,
+                "invoice_id": "inv-monthly-enroll-autopay-idempotent-2026-06",
+            }
+        )
+        == 1
+    )
 
 
 @pytest.mark.asyncio

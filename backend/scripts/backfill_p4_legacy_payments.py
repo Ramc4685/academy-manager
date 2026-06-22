@@ -22,13 +22,17 @@ import logging
 import sys
 from collections import defaultdict
 from datetime import UTC, date, datetime, time
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[2]
+if __file__.startswith("<"):
+    ROOT = Path.cwd()
+else:
+    ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from dotenv import load_dotenv  # noqa: E402
+from dotenv import load_dotenv
 
 load_dotenv(ROOT / "backend" / ".env")
 
@@ -42,7 +46,11 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-LEGACY_STATUSES = {"succeeded", "pending", "failed", "waived"}
+PAID_STATUSES = {"succeeded", "paid"}
+OPEN_STATUSES = {"pending", "failed", "unpaid", "expired"}
+PARTIAL_STATUSES = {"partially_paid", "partial"}
+VOID_STATUSES = {"waived"}
+LEGACY_STATUSES = PAID_STATUSES | OPEN_STATUSES | PARTIAL_STATUSES | VOID_STATUSES
 INVOICES_COLLECTION = "invoices"
 INVOICE_LINES_COLLECTION = "invoice_lines"
 LEDGER_PAYMENTS_COLLECTION = "ledger_payments"
@@ -78,6 +86,68 @@ def _parent_id_from(doc: dict[str, Any]) -> str | None:
     return doc.get("parent_id") or doc.get("parent_user_id")
 
 
+def _int_cents(value: Any) -> int:
+    if value is None or value == "":
+        return 0
+    if isinstance(value, bool):
+        raise ValueError(f"Invalid cents value: {value!r}")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        raise ValueError(f"Invalid cents value: {value!r}")
+    if isinstance(value, Decimal):
+        raise ValueError(f"Invalid cents value: {value!r}")
+    if isinstance(value, str):
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError(f"Invalid cents value: {value!r}")
+        if trimmed.startswith(("+", "-")):
+            if not trimmed[1:].isdigit():
+                raise ValueError(f"Invalid cents value: {value!r}")
+            return int(trimmed)
+        if not trimmed.isdigit():
+            raise ValueError(f"Invalid cents value: {value!r}")
+        return int(trimmed)
+    raise ValueError(f"Invalid cents value: {value!r}")
+
+
+def _legacy_total_cents(doc: dict[str, Any]) -> int:
+    if doc.get("final_amount_cents") is not None:
+        return max(_int_cents(doc.get("final_amount_cents")), 0)
+    amount_cents = _int_cents(doc.get("amount_cents"))
+    discount_cents = _int_cents(doc.get("discount_cents"))
+    return max(amount_cents - discount_cents, 0)
+
+
+def _legacy_paid_cents(doc: dict[str, Any], *, total_cents: int, status: str) -> int:
+    explicit_paid = doc.get("amount_received_cents")
+    if explicit_paid is None:
+        explicit_paid = doc.get("paid_amount_cents")
+    if status in PAID_STATUSES:
+        if explicit_paid is None:
+            return total_cents
+        if isinstance(explicit_paid, str):
+            if explicit_paid.strip() in {"", "0"}:
+                return total_cents
+        elif (
+            isinstance(explicit_paid, int)
+            and not isinstance(explicit_paid, bool)
+            and explicit_paid == 0
+        ):
+            return total_cents
+    return max(_int_cents(explicit_paid), 0)
+
+
+def _invoice_status_from_legacy(status: str, *, total_cents: int, paid_cents: int) -> str:
+    if status in VOID_STATUSES:
+        return "void"
+    if total_cents == 0 or paid_cents >= total_cents:
+        return "paid"
+    if paid_cents > 0 or status in PARTIAL_STATUSES:
+        return "partially_paid"
+    return "open"
+
+
 def map_legacy_payment(doc: dict[str, Any]) -> dict[str, Any] | None:
     """Convert a legacy Payment doc to ledger records.
 
@@ -92,9 +162,17 @@ def map_legacy_payment(doc: dict[str, Any]) -> dict[str, Any] | None:
 
     parent_id = _parent_id_from(doc)
     period = _period_from(doc)
-    amount_cents: int = int(doc.get("amount_cents") or 0)
-    discount_cents: int = int(doc.get("discount_cents") or 0)
-    total_cents: int = max(0, amount_cents - discount_cents)
+    amount_cents: int = _int_cents(doc.get("amount_cents"))
+    discount_cents: int = _int_cents(doc.get("discount_cents"))
+    has_final_amount: bool = doc.get("final_amount_cents") is not None
+    total_cents: int = _legacy_total_cents(doc)
+    paid_cents = _legacy_paid_cents(doc, total_cents=total_cents, status=status)
+    balance_due_cents = 0 if status in VOID_STATUSES else max(total_cents - paid_cents, 0)
+    invoice_status = _invoice_status_from_legacy(
+        status,
+        total_cents=total_cents,
+        paid_cents=paid_cents,
+    )
     currency: str = str(doc.get("currency") or "usd")
     created_at: datetime = doc["created_at"]
     updated_at: datetime = doc.get("updated_at") or created_at
@@ -108,27 +186,17 @@ def map_legacy_payment(doc: dict[str, Any]) -> dict[str, Any] | None:
     invoice_id = f"inv-from-{payment_id}"
     line_id = f"line-from-{payment_id}"
 
-    # Status mapping
-    if status in {"pending", "failed"}:
-        invoice_status = "open"
-        balance_due_cents = amount_cents
-    elif status == "succeeded":
-        invoice_status = "paid"
-        balance_due_cents = 0
-    else:  # waived
-        invoice_status = "void"
-        balance_due_cents = 0
-
     invoice: dict[str, Any] = {
         "invoice_id": invoice_id,
+        "invoice_number": doc.get("invoice_number") or invoice_id,
         "academy_id": doc["academy_id"],
         "parent_id": parent_id,
         "student_id": doc.get("student_id"),
         "enrollment_id": doc.get("enrollment_id"),
         "period": period,
         "status": invoice_status,
-        "subtotal_cents": amount_cents,
-        "discount_cents": discount_cents,
+        "subtotal_cents": total_cents if has_final_amount else amount_cents,
+        "discount_cents": 0 if has_final_amount else discount_cents,
         "total_cents": total_cents,
         "balance_due_cents": balance_due_cents,
         "currency": currency,
@@ -152,8 +220,8 @@ def map_legacy_payment(doc: dict[str, Any]) -> dict[str, Any] | None:
         "line_type": "tuition",
         "description": f"Monthly tuition {period}",
         "quantity": 1,
-        "unit_amount_cents": amount_cents,
-        "amount_cents": amount_cents,
+        "unit_amount_cents": total_cents if has_final_amount else amount_cents,
+        "amount_cents": total_cents if has_final_amount else amount_cents,
         "source_type": "legacy_payment",
         "source_id": payment_id,
         "created_at": created_at,
@@ -162,9 +230,11 @@ def map_legacy_payment(doc: dict[str, Any]) -> dict[str, Any] | None:
     ledger_payment: dict[str, Any] | None = None
     allocation: dict[str, Any] | None = None
 
-    if status == "succeeded":
+    if paid_cents > 0 and status not in VOID_STATUSES:
         lp_payment_id = f"lp-from-{payment_id}"
-        lp_amount_cents = int(doc.get("paid_amount_cents") or amount_cents)
+        lp_amount_cents = paid_cents
+        allocation_amount_cents = min(paid_cents, total_cents)
+        unapplied_amount_cents = max(paid_cents - allocation_amount_cents, 0)
         paid_at: datetime = doc.get("paid_at") or created_at
         if paid_at.tzinfo is None:
             paid_at = paid_at.replace(tzinfo=UTC)
@@ -174,7 +244,7 @@ def map_legacy_payment(doc: dict[str, Any]) -> dict[str, Any] | None:
             "academy_id": doc["academy_id"],
             "parent_id": parent_id,
             "amount_cents": lp_amount_cents,
-            "unapplied_amount_cents": 0,
+            "unapplied_amount_cents": unapplied_amount_cents,
             "currency": currency,
             "status": "succeeded",
             "payment_method": doc.get("payment_method") or "unknown",
@@ -191,7 +261,7 @@ def map_legacy_payment(doc: dict[str, Any]) -> dict[str, Any] | None:
             "academy_id": doc["academy_id"],
             "payment_id": lp_payment_id,
             "invoice_id": invoice_id,
-            "amount_cents": lp_amount_cents,
+            "amount_cents": allocation_amount_cents,
             "created_at": created_at,
         }
 
@@ -214,17 +284,30 @@ def is_legacy_payment(doc: dict[str, Any]) -> bool:
 
 
 def _legacy_balance_for_parent(docs: list[dict[str, Any]]) -> int:
-    """Sum of balance_due_cents from legacy docs (pending → amount, else 0)."""
+    """Sum of legacy unpaid balances across open/partial legacy payment docs."""
     total = 0
     for doc in docs:
         status = (doc.get("status") or "").lower()
-        if status in {"pending", "failed"}:
-            total += int(doc.get("amount_cents") or 0)
+        if status in PAID_STATUSES | VOID_STATUSES:
+            continue
+        if status not in OPEN_STATUSES | PARTIAL_STATUSES:
+            continue
+        total_cents = _legacy_total_cents(doc)
+        paid_cents = _legacy_paid_cents(doc, total_cents=total_cents, status=status)
+        total += max(total_cents - paid_cents, 0)
     return total
 
 
 def _ledger_balance_for_parent(invoices: list[dict[str, Any]]) -> int:
     return sum(int(inv.get("balance_due_cents") or 0) for inv in invoices)
+
+
+def _status_keys_from_counts(counts: dict[str, int]) -> list[str]:
+    status_keys = []
+    for key in counts:
+        if key.startswith("status_"):
+            status_keys.append(key.removeprefix("status_"))
+    return sorted(status_keys)
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +327,27 @@ async def run_backfill(
     s = get_settings()
     client = motor.motor_asyncio.AsyncIOMotorClient(s.mongo_url)
     db = client[s.mongo_db]
+    try:
+        result = await backfill_legacy_payments(
+            db,
+            academy_id=academy_id,
+            dry_run=dry_run,
+        )
+    finally:
+        client.close()
+    return result["fatal_count"]
 
+
+async def backfill_legacy_payments(
+    db: Any,
+    *,
+    academy_id: str,
+    dry_run: bool,
+) -> dict[str, Any]:
+    """Run a single backfill pass against an injected database.
+
+    Returns a result payload including fatal_count and already_backfilled.
+    """
     # Fetch all legacy payments for this academy
     raw_cursor = db[PAYMENTS_COLLECTION].find({"academy_id": academy_id})
     all_docs: list[dict[str, Any]] = await raw_cursor.to_list(length=None)
@@ -281,20 +384,10 @@ async def run_backfill(
         counts[f"status_{status}"] += 1
 
         parent_id = _parent_id_from(doc) or "unknown"
-        parent_legacy_docs[parent_id].append(doc)
 
         if status not in LEGACY_STATUSES:
             skipped_unknown += 1
             logger.warning("Unknown status %r on payment_id=%s — skipping", status, payment_id)
-            continue
-
-        # Idempotency check
-        invoice_id = f"inv-from-{payment_id}"
-        existing = await db[INVOICES_COLLECTION].find_one({"invoice_id": invoice_id})
-        if existing is not None:
-            already_backfilled += 1
-            # Still track for reconciliation
-            parent_new_invoices[parent_id].append(existing)
             continue
 
         try:
@@ -309,14 +402,55 @@ async def run_backfill(
             logger.warning("No mapping for payment_id=%s (status=%r)", payment_id, status)
             continue
 
-        invoices_to_write.append(mapped["invoice"])
-        lines_to_write.append(mapped["line"])
-        parent_new_invoices[parent_id].append(mapped["invoice"])
+        parent_legacy_docs[parent_id].append(doc)
+        invoice = mapped["invoice"]
+        line = mapped["line"]
 
-        if mapped["ledger_payment"] is not None:
-            lp_to_write.append(mapped["ledger_payment"])
-        if mapped["allocation"] is not None:
-            alloc_to_write.append(mapped["allocation"])
+        existing_invoice = await db[INVOICES_COLLECTION].find_one(
+            {"academy_id": academy_id, "invoice_id": invoice["invoice_id"]}
+        )
+        if existing_invoice is not None:
+            parent_new_invoices[parent_id].append(existing_invoice)
+        else:
+            invoices_to_write.append(invoice)
+            parent_new_invoices[parent_id].append(invoice)
+
+        existing_line = await db[INVOICE_LINES_COLLECTION].find_one(
+            {"academy_id": academy_id, "line_id": line["line_id"]}
+        )
+        if existing_line is None:
+            lines_to_write.append(line)
+
+        ledger_payment = mapped["ledger_payment"]
+        has_existing_ledger_payment = False
+        if ledger_payment is not None:
+            existing_lp = await db[LEDGER_PAYMENTS_COLLECTION].find_one(
+                {"academy_id": academy_id, "payment_id": ledger_payment["payment_id"]}
+            )
+            if existing_lp is not None:
+                has_existing_ledger_payment = True
+            else:
+                lp_to_write.append(ledger_payment)
+
+        allocation = mapped["allocation"]
+        has_existing_allocation = False
+        if allocation is not None:
+            existing_allocation = await db[ALLOCATIONS_COLLECTION].find_one(
+                {"academy_id": academy_id, "allocation_id": allocation["allocation_id"]}
+            )
+            if existing_allocation is not None:
+                has_existing_allocation = True
+            else:
+                alloc_to_write.append(allocation)
+
+        has_existing_line = existing_line is not None
+        if (
+            existing_invoice is not None
+            and has_existing_line
+            and (ledger_payment is None or has_existing_ledger_payment)
+            and (allocation is None or has_existing_allocation)
+        ):
+            already_backfilled += 1
 
     # Write phase
     if not dry_run:
@@ -336,9 +470,8 @@ async def run_backfill(
 
     print("\n=== BACKFILL REPORT ===")
     print(f"Total legacy payments found: {counts['total']}")
-    print(f"  succeeded:              {counts.get('status_succeeded', 0)}")
-    print(f"  pending:                {counts.get('status_pending', 0)}")
-    print(f"  waived:                 {counts.get('status_waived', 0)}")
+    for status in _status_keys_from_counts(counts):
+        print(f"  {status:<16} {counts.get(f'status_{status}', 0):>4}")
     print(f"  skipped (deleted):      {skipped_deleted}")
     print(f"  skipped (unknown status): {skipped_unknown}")
     print(f"Already backfilled (idempotent skip): {already_backfilled}")
@@ -374,8 +507,21 @@ async def run_backfill(
         for err in errors:
             print(f"  ERROR: {err}")
 
-    client.close()
-    return len(errors) + total_mismatches
+    fatal_count = len(errors) + total_mismatches
+    return {
+        "fatal_count": fatal_count,
+        "already_backfilled": already_backfilled,
+        "counts": counts,
+        "skipped_deleted": skipped_deleted,
+        "skipped_unknown_status": skipped_unknown,
+        "to_write": {
+            "invoices": len(invoices_to_write),
+            "invoice_lines": len(lines_to_write),
+            "ledger_payments": len(lp_to_write),
+            "allocations": len(alloc_to_write),
+        },
+        "total_mismatches": total_mismatches,
+    }
 
 
 # ---------------------------------------------------------------------------

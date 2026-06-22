@@ -31,7 +31,7 @@ STRIPE_WEBHOOK_SECRET=whsec_...
 SCHEDULER_TZ=America/Chicago
 RESEND_API_KEY=re_...
 SENDER_EMAIL=hello@academy.example.com
-EMAIL_DELIVERY_ENABLED=false
+V2_EMAIL_DELIVERY_ENABLED=true
 ```
 
 Frontend build:
@@ -214,7 +214,9 @@ flyctl status -a courtmastr-academy-api
 flyctl logs -a courtmastr-academy-api
 ```
 
-Keep `EMAIL_DELIVERY_ENABLED=false` until final production email verification is complete.
+Keep `V2_EMAIL_DELIVERY_ENABLED=false` until final production email verification is complete.
+Set it to `true` only after the Resend sender/domain is verified and parent
+email delivery is intentionally approved.
 
 ## Next Frontend
 
@@ -260,7 +262,7 @@ Refunds are tracked in local payment records. Stripe payments are refunded throu
 1. Verify the academy sending domain in Resend.
 2. Set `SENDER_EMAIL` to an address on that verified domain.
 3. Set `RESEND_API_KEY`.
-4. Set `EMAIL_DELIVERY_ENABLED=true` only after the domain, sender, and test mailbox checks are complete.
+4. Set `V2_EMAIL_DELIVERY_ENABLED=true` only after the domain, sender, and test mailbox checks are complete.
 5. Test password reset delivery from `/forgot-password`.
 
 Email delivery is always blocked outside production, even when a real Resend key or `EMAIL_DELIVERY_MODE=live` is present. Email endpoints return skipped/blocked/failed status when Resend is not configured, delivery is safety-blocked, or provider delivery fails.

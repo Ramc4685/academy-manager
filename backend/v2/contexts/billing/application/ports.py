@@ -12,6 +12,7 @@ from backend.v2.contexts.billing.domain.ledger import (
     LedgerAllocationResult,
     LedgerInvoice,
     LedgerPayment,
+    PaymentAllocation,
 )
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment, Subscription
 from backend.v2.contexts.billing.domain.proration import (
@@ -161,6 +162,18 @@ class StripeGateway(Protocol):
     ) -> tuple[str, str, str]:
         """Returns (checkout_session_id, redirect_url, stripe_subscription_id)."""
 
+    async def create_autopay_setup_checkout_session(
+        self,
+        *,
+        parent_id: str,
+        enrollment_id: str,
+        session_id: str,
+        success_url: str,
+        cancel_url: str,
+        metadata: dict[str, str],
+    ) -> tuple[str, str]:
+        """Returns (checkout_session_id, redirect_url) for saved-card setup."""
+
     async def create_customer_portal_session(
         self,
         *,
@@ -183,6 +196,11 @@ class StripeGateway(Protocol):
 
     async def retrieve_payment_intent(self, stripe_payment_intent_id: str) -> dict[str, Any]:
         """Fetch current Stripe PaymentIntent state for reconciliation."""
+
+    async def search_app_owned_payment_intents(
+        self, *, academy_id: str, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """Find recently paid PaymentIntents carrying app-owned invoice metadata."""
 
     async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
         """Returns Stripe refund id."""
@@ -211,11 +229,7 @@ class StripeGateway(Protocol):
         billing_period_start: datetime,
         billing_period_end: datetime,
     ) -> str:
-        """Update a subscription item's price with Stripe proration.
-
-        Uses ``proration_behavior="create_prorations"`` so Stripe generates the
-        proration invoice. Returns the resulting Stripe invoice id.
-        """
+        """Legacy subscription price sync without letting Stripe create invoices."""
 
     def create_connect_link(self, *, redirect_uri: str, state: str) -> str:
         """Return Stripe OAuth authorize URL for Express onboarding."""
@@ -341,6 +355,12 @@ class LedgerRepository(Protocol):
         *,
         statuses: set[str] | None = None,
     ) -> LedgerInvoice | None: ...
+    async def get_payment_by_stripe_payment_intent_id(
+        self, stripe_payment_intent_id: str
+    ) -> LedgerPayment | None: ...
+    async def get_payment_allocation_by_idempotency_key(
+        self, idempotency_key: str
+    ) -> PaymentAllocation | None: ...
     async def get_lines_for_invoice(self, invoice_id: str) -> list[InvoiceLine]: ...
     async def save_invoice(self, invoice: LedgerInvoice) -> LedgerInvoice: ...
     async def save_line(self, line: InvoiceLine) -> InvoiceLine: ...

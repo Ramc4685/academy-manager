@@ -866,6 +866,41 @@ async def test_autopay_payment_intent_uses_invoice_parent_when_metadata_parent_m
 
 
 @pytest.mark.asyncio
+async def test_autopay_payment_intent_parent_metadata_mismatch_is_quarantined() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(parent_id="parent-from-invoice"))
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger)
+    body = json.dumps(
+        {
+            "id": "evt_autopay_pi_parent_mismatch",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_autopay_parent_mismatch",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-autopay",
+                        "parent_id": "parent-from-metadata",
+                        "source": "autopay",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["status"] == "quarantined"
+    assert dedup.events["evt_autopay_pi_parent_mismatch"]["status"] == "quarantined"
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+
+
+@pytest.mark.asyncio
 async def test_autopay_payment_intent_allocation_failure_is_retryable() -> None:
     repo = FakePaymentRepo()
     ledger = FakeBillingLedger(_ledger_invoice())
@@ -897,6 +932,63 @@ async def test_autopay_payment_intent_allocation_failure_is_retryable() -> None:
     assert failed["status"] == "failed"
     assert dedup.events["evt_autopay_pi_retry"]["status"] == "failed"
     assert "evt_autopay_pi_retry" not in dedup.processed
+
+
+@pytest.mark.asyncio
+async def test_autopay_payment_intent_failed_records_attempt_without_closing_invoice() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-autopay-failed", status="open"))
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger)
+    body = json.dumps(
+        {
+            "id": "evt_autopay_pi_failed",
+            "type": "payment_intent.payment_failed",
+            "data": {
+                "object": {
+                    "id": "pi_autopay_failed",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-autopay-failed",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                    },
+                    "last_payment_error": {
+                        "code": "card_declined",
+                        "decline_code": "insufficient_funds",
+                        "message": "Your card has insufficient funds.",
+                    },
+                    "status": "requires_payment_method",
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    assert ledger.invoices["inv-autopay-failed"].status == "open"
+    assert ledger.invoices["inv-autopay-failed"].balance_due_cents == 10000
+    assert ledger.allocations == []
+    assert ledger.payments == {}
+    assert list(ledger.payment_attempts.values()) == [
+        {
+            "invoice_id": "inv-autopay-failed",
+            "parent_id": "parent-from-invoice",
+            "amount_cents": 10000,
+            "currency": "usd",
+            "status": "failed",
+            "stripe_payment_intent_id": "pi_autopay_failed",
+            "stripe_checkout_session_id": None,
+            "failure_code": "insufficient_funds",
+            "failure_message": "Your card has insufficient funds.",
+            "idempotency_key": "autopay-failed:inv-autopay-failed:pi_autopay_failed",
+            "created_by_event_id": "evt_autopay_pi_failed",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -1427,7 +1519,7 @@ async def test_payment_intent_succeeded_before_subscription_invoice_paid_waits_f
 
 
 @pytest.mark.asyncio
-async def test_subscription_invoice_paid_creates_ledger_invoice_when_none_exists() -> None:
+async def test_subscription_invoice_paid_without_app_invoice_is_quarantined() -> None:
     repo = FakePaymentRepo()
     subs = FakeSubscriptionRepo()
     identity = FakeEnrollmentBillingIdentity()
@@ -1459,7 +1551,7 @@ async def test_subscription_invoice_paid_creates_ledger_invoice_when_none_exists
         billing_ledger=ledger,
     )
 
-    await uc.execute(
+    result = await uc.execute(
         json.dumps(
             {
                 "id": "evt_invoice_paid_create_ledger",
@@ -1480,14 +1572,12 @@ async def test_subscription_invoice_paid_creates_ledger_invoice_when_none_exists
         "test_signature",
     )
 
-    invoice = ledger.invoices["ledger-in_create_ledger"]
-    assert invoice.student_id == "student-1"
-    assert invoice.enrollment_id == "enr-1"
-    assert invoice.parent_id == "p1"
-    assert invoice.status == "paid"
-    assert invoice.balance_due_cents == 0
-    assert ledger.lines["ledger-in_create_ledger"][0].source_type == "stripe_subscription"
-    assert ledger.lines["ledger-in_create_ledger"][0].source_id == "in_create_ledger"
+    assert result["status"] == "quarantined"
+    assert "app-owned LedgerInvoice" in result["error"]
+    assert ledger.invoices == {}
+    assert ledger.lines == {}
+    assert ledger.payments == {}
+    assert ledger.allocations == []
 
 
 @pytest.mark.asyncio
@@ -1706,7 +1796,7 @@ async def test_invoice_payment_failed_creates_failed_subscription_payment() -> N
 
 
 @pytest.mark.asyncio
-async def test_subscription_invoice_payment_failed_creates_open_ledger_invoice() -> None:
+async def test_subscription_invoice_payment_failed_without_app_invoice_is_quarantined() -> None:
     repo = FakePaymentRepo()
     subs = FakeSubscriptionRepo()
     now = datetime.now(UTC)
@@ -1726,7 +1816,7 @@ async def test_subscription_invoice_payment_failed_creates_open_ledger_invoice()
     ledger = FakeBillingLedger()
     uc = _build(repo, subscriptions=subs, billing_ledger=ledger)
 
-    await uc.execute(
+    result = await uc.execute(
         json.dumps(
             {
                 "id": "evt_invoice_failed_ledger",
@@ -1746,10 +1836,9 @@ async def test_subscription_invoice_payment_failed_creates_open_ledger_invoice()
         "test_signature",
     )
 
-    invoice = ledger.invoices["ledger-in_failed_ledger"]
-    assert invoice.status == "open"
-    assert invoice.balance_due_cents == 7_000
-    assert invoice.stripe_invoice_id == "in_failed_ledger"
+    assert result["status"] == "quarantined"
+    assert "app-owned LedgerInvoice" in result["error"]
+    assert ledger.invoices == {}
     assert ledger.payments == {}
     assert ledger.allocations == []
 

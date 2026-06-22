@@ -7,9 +7,13 @@ is_legacy_payment directly.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
+
+import pytest
 
 from backend.scripts.backfill_p4_legacy_payments import (
     _legacy_balance_for_parent,
+    _status_keys_from_counts,
     is_legacy_payment,
     map_legacy_payment,
 )
@@ -121,6 +125,67 @@ def test_succeeded_falls_back_to_amount_cents_when_paid_amount_missing() -> None
     assert result["ledger_payment"]["amount_cents"] == 6000
 
 
+def test_succeeded_with_zero_paid_amount_treats_status_as_paid() -> None:
+    doc = _base_doc(status="succeeded", amount_cents=6000, paid_amount_cents=0)
+    result = map_legacy_payment(doc)
+
+    assert result is not None
+    inv = result["invoice"]
+    lp = result["ledger_payment"]
+    assert inv["status"] == "paid"
+    assert inv["balance_due_cents"] == 0
+    assert lp is not None
+    assert lp["amount_cents"] == 6000
+    assert lp["unapplied_amount_cents"] == 0
+
+
+@pytest.mark.parametrize("status", ["succeeded", "paid"])
+def test_paid_status_with_string_zero_amount_falls_back_to_total(status: str) -> None:
+    doc = _base_doc(status=status, amount_cents=6000, paid_amount_cents="0")
+    result = map_legacy_payment(doc)
+
+    assert result is not None
+    assert result["invoice"]["status"] == "paid"
+    assert result["invoice"]["balance_due_cents"] == 0
+    assert result["ledger_payment"] is not None
+    assert result["ledger_payment"]["amount_cents"] == 6000
+
+
+@pytest.mark.parametrize("status", ["succeeded", "paid"])
+def test_paid_status_with_empty_string_paid_amount_falls_back_to_total(status: str) -> None:
+    doc = _base_doc(status=status, amount_cents=6000, paid_amount_cents="")
+    result = map_legacy_payment(doc)
+
+    assert result is not None
+    assert result["invoice"]["status"] == "paid"
+    assert result["invoice"]["balance_due_cents"] == 0
+    assert result["ledger_payment"] is not None
+    assert result["ledger_payment"]["amount_cents"] == 6000
+
+
+def test_overpayment_creates_unapplied_amount_and_capped_allocation() -> None:
+    doc = _base_doc(
+        status="succeeded",
+        amount_cents=10000,
+        amount_received_cents=12500,
+        paid_amount_cents=None,
+    )
+    result = map_legacy_payment(doc)
+
+    assert result is not None
+    inv = result["invoice"]
+    lp = result["ledger_payment"]
+    alloc = result["allocation"]
+
+    assert inv["status"] == "paid"
+    assert inv["balance_due_cents"] == 0
+    assert lp is not None
+    assert alloc is not None
+    assert lp["amount_cents"] == 12500
+    assert lp["unapplied_amount_cents"] == 2500
+    assert alloc["amount_cents"] == 10000
+
+
 def test_succeeded_payment_method_falls_back_to_unknown() -> None:
     doc = _base_doc(status="succeeded", payment_method=None)
     result = map_legacy_payment(doc)
@@ -155,6 +220,24 @@ def test_pending_does_not_create_ledger_payment_or_allocation() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Mapping-specific regression tests
+# ---------------------------------------------------------------------------
+
+
+def test_mapping_preserves_legacy_invoice_number() -> None:
+    doc = _base_doc(
+        status="pending",
+        payment_id="pay_28505f6db2b4a5b11917",
+        invoice_number="BLNO-202605-b11917",
+    )
+    result = map_legacy_payment(doc)
+
+    assert result is not None
+    assert result["invoice"]["invoice_id"] == "inv-from-pay_28505f6db2b4a5b11917"
+    assert result["invoice"]["invoice_number"] == "BLNO-202605-b11917"
+
+
+# ---------------------------------------------------------------------------
 # Status: failed
 # ---------------------------------------------------------------------------
 
@@ -181,6 +264,35 @@ def test_failed_counts_as_open_legacy_balance() -> None:
         )
         == 6000
     )
+
+
+# ---------------------------------------------------------------------------
+# Input validation
+# ---------------------------------------------------------------------------
+
+
+def test_invalid_amount_cents_raises_value_error() -> None:
+    doc = _base_doc(status="succeeded", amount_cents="not-a-number")
+
+    with pytest.raises(ValueError, match="Invalid cents value"):
+        map_legacy_payment(doc)
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    [
+        True,
+        False,
+        12.5,
+        "12.34",
+        Decimal("12.5"),
+    ],
+)
+def test_bool_or_fractional_numeric_amount_cents_raises_value_error(bad_value: object) -> None:
+    doc = _base_doc(status="succeeded", amount_cents=bad_value)
+
+    with pytest.raises(ValueError, match="Invalid cents value"):
+        map_legacy_payment(doc)
 
 
 # ---------------------------------------------------------------------------
@@ -289,16 +401,101 @@ def test_period_falls_back_to_created_at_month() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_discount_reduces_total_not_balance_for_pending() -> None:
-    doc = _base_doc(status="pending", amount_cents=7000, discount_cents=500)
+def test_pending_discount_uses_final_amount_as_balance() -> None:
+    doc = _base_doc(status="pending", amount_cents=7000, discount_cents=1000)
     result = map_legacy_payment(doc)
 
     assert result is not None
     inv = result["invoice"]
     assert inv["subtotal_cents"] == 7000
-    assert inv["discount_cents"] == 500
-    assert inv["total_cents"] == 6500
-    assert inv["balance_due_cents"] == 7000  # balance_due comes from amount_cents for pending
+    assert inv["discount_cents"] == 1000
+    assert inv["total_cents"] == 6000
+    assert inv["balance_due_cents"] == 6000
+
+
+def test_partially_paid_creates_partial_invoice_payment_and_allocation() -> None:
+    doc = _base_doc(
+        status="partially_paid",
+        amount_cents=10000,
+        paid_amount_cents=None,
+        amount_received_cents=4000,
+        payment_method="cash",
+    )
+    result = map_legacy_payment(doc)
+
+    assert result is not None
+    inv = result["invoice"]
+    assert inv["status"] == "partially_paid"
+    assert inv["total_cents"] == 10000
+    assert inv["balance_due_cents"] == 6000
+    assert result["ledger_payment"] is not None
+    assert result["ledger_payment"]["payment_id"] == "lp-from-pay-001"
+    assert result["ledger_payment"]["amount_cents"] == 4000
+    assert result["ledger_payment"]["payment_method"] == "cash"
+    assert result["allocation"] is not None
+    assert result["allocation"]["amount_cents"] == 4000
+
+
+def test_partial_status_alias_maps_to_partially_paid() -> None:
+    doc = _base_doc(status="partial", amount_cents=10000, amount_received_cents=2500)
+    result = map_legacy_payment(doc)
+
+    assert result is not None
+    assert result["invoice"]["status"] == "partially_paid"
+    assert result["invoice"]["balance_due_cents"] == 7500
+
+
+def test_legacy_balance_uses_final_amount_minus_received_money() -> None:
+    docs = [
+        _base_doc(status="pending", amount_cents=7000, discount_cents=1000),
+        _base_doc(status="partially_paid", amount_cents=10000, amount_received_cents=4000),
+        _base_doc(status="succeeded", amount_cents=8000),
+        _base_doc(status="waived", amount_cents=5000),
+    ]
+
+    assert _legacy_balance_for_parent(docs) == 12000
+
+
+def test_legacy_balance_ignores_invalid_paid_and_void_amounts() -> None:
+    docs = [
+        _base_doc(status="succeeded", amount_cents="not-a-number"),
+        _base_doc(status="paid", amount_cents=True),
+        _base_doc(status="waived", amount_cents="12.5"),
+        _base_doc(status="pending", amount_cents=7000, discount_cents=1000),
+    ]
+
+    assert _legacy_balance_for_parent(docs) == 6000
+
+
+def test_final_amount_cents_controls_subtotal_total_and_line_amounts() -> None:
+    doc = _base_doc(
+        status="succeeded",
+        amount_cents=20000,
+        discount_cents=2500,
+        final_amount_cents=8000,
+    )
+    result = map_legacy_payment(doc)
+
+    assert result is not None
+    inv = result["invoice"]
+    line = result["line"]
+
+    assert inv["subtotal_cents"] == 8000
+    assert inv["discount_cents"] == 0
+    assert inv["total_cents"] == 8000
+    assert line["unit_amount_cents"] == 8000
+    assert line["amount_cents"] == 8000
+
+
+def test_status_counts_are_sorted() -> None:
+    counts: dict[str, int] = {
+        "status_pending": 2,
+        "status_succeeded": 1,
+        "status_waived": 3,
+        "status_failed": 4,
+        "total": 10,
+    }
+    assert _status_keys_from_counts(counts) == ["failed", "pending", "succeeded", "waived"]
 
 
 # ---------------------------------------------------------------------------

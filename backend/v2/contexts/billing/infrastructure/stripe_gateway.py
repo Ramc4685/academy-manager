@@ -102,6 +102,35 @@ class RealStripeGateway(StripeGateway):
         stripe_subscription_id = str(getattr(result, "subscription", "") or "")
         return str(result.id), str(result.url), stripe_subscription_id
 
+    async def create_autopay_setup_checkout_session(
+        self,
+        *,
+        parent_id: str,
+        enrollment_id: str,
+        session_id: str,
+        success_url: str,
+        cancel_url: str,
+        metadata: dict[str, str],
+    ) -> tuple[str, str]:
+        def _create() -> Any:
+            return self._stripe.checkout.Session.create(
+                mode="setup",
+                currency="usd",
+                success_url=success_url,
+                cancel_url=cancel_url,
+                client_reference_id=parent_id,
+                customer_creation="always",
+                metadata=metadata
+                | {
+                    "enrollment_id": enrollment_id,
+                    "session_id": session_id,
+                    "source": metadata.get("source") or "autopay_setup",
+                },
+            )
+
+        result = await asyncio.to_thread(_create)
+        return str(result.id), str(result.url)
+
     async def create_invoice_checkout_session(
         self,
         *,
@@ -201,6 +230,25 @@ class RealStripeGateway(StripeGateway):
         result = await self._run_stripe_retrieve(_retrieve, label="Stripe PaymentIntent")
         return _stripe_object_to_dict(result)
 
+    async def search_app_owned_payment_intents(
+        self, *, academy_id: str, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        safe_academy_id = academy_id.replace('"', '\\"')
+        safe_limit = max(1, min(int(limit), 100))
+
+        def _search() -> list[dict[str, Any]]:
+            payment_intents = self._stripe.PaymentIntent.search(
+                query=f'metadata["academy_id"]:"{safe_academy_id}" AND status:"succeeded"',
+                limit=safe_limit,
+            )
+            data = getattr(payment_intents, "data", None) or []
+            return [_stripe_object_to_dict(item) for item in data]
+
+        try:
+            return await asyncio.to_thread(_search)
+        except self._stripe.StripeError as exc:
+            raise ValueError(f"Stripe PaymentIntent search failed: {exc}") from exc
+
     async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
         def _create() -> Any:
             kwargs: dict[str, Any] = {"payment_intent": payment_intent_id}
@@ -272,18 +320,13 @@ class RealStripeGateway(StripeGateway):
                         },
                     }
                 ],
-                proration_behavior="create_prorations",
-                proration_date=int(billing_period_start.timestamp()),
-            )
-            invoice = self._stripe.Invoice.create(
-                subscription=stripe_subscription_id,
+                proration_behavior="none",
                 metadata={
-                    "billing_period_start": billing_period_start.isoformat(),
-                    "billing_period_end": billing_period_end.isoformat(),
+                    "app_proration_period_start": billing_period_start.isoformat(),
+                    "app_proration_period_end": billing_period_end.isoformat(),
                 },
             )
-            finalized = self._stripe.Invoice.finalize_invoice(invoice["id"])
-            return str(finalized["id"])
+            return ""
 
         return await asyncio.to_thread(_update)
 

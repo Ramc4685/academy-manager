@@ -201,7 +201,7 @@ def _build_digest_parts(db: AsyncIOMotorDatabase[Any]) -> _DigestParts:
     )
     plan_provider = _CoachDigestPlanProvider(generate=generate, curriculum=curriculum)
 
-    from_address = (
+    from_address = settings.sender_email or (
         f"noreply@{settings.frontend_url.replace('https://', '').replace('http://', '').split('/')[0]}"
         if settings.frontend_url
         else "noreply@academy.app"

@@ -13,6 +13,12 @@ guidance, with `AGENTS.md` remaining the canonical cross-agent source of truth.
 
 ---
 
+## MCP Servers
+
+Always use **Headroom MCP** when it is available. Use it proactively for any task where memory, context retrieval, or cross-session knowledge would help — do not wait to be asked. If Headroom is not connected, proceed without it but note the gap.
+
+---
+
 ## Read First
 
 Before coding, read:
@@ -22,6 +28,7 @@ Before coding, read:
 3. `test_result.md`
 4. The relevant active ledger under `docs/test-results/active/`, if one exists.
 5. The focused rule file for the task.
+6. For architecture questions, see `docs/architecture/` — generated diagrams and written analysis live there (see `docs/architecture/generated/README.md` for the index).
 
 If the branch contains `docs/tickets/`, also read:
 
