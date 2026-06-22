@@ -508,7 +508,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         self,
         *,
         invoice_id: str,
-        amount_cents: int,
+        amount_cents: int | None = None,
     ) -> bool:
         academy_id = current_academy_id()
         invoice_doc = await self._db["invoices"].find_one(
@@ -540,7 +540,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         total_cents = int(invoice_doc.get("total_cents", -1))
         balance_due_cents = int(invoice_doc.get("balance_due_cents", -1))
         return (
-            line_total_cents == amount_cents
+            (amount_cents is None or line_total_cents == amount_cents)
             and subtotal_cents == line_total_cents
             and total_cents == max(subtotal_cents - discount_cents, 0)
             and 0 <= balance_due_cents <= total_cents
@@ -565,6 +565,33 @@ class MongoPaymentRepository(TenantScopedRepository):
         if invoice_doc is None:
             return None
         return str(invoice_doc.get("invoice_id") or "")
+
+    async def _upsert_complete_monthly_invoice_key(
+        self,
+        *,
+        enrollment_id: str,
+        period: str,
+        now: datetime,
+    ) -> None:
+        await self._db["billing_invoice_keys"].update_one(
+            {
+                "academy_id": current_academy_id(),
+                "enrollment_id": enrollment_id,
+                "period": period,
+            },
+            {
+                "$set": {
+                    "status": "complete",
+                    "updated_at": now,
+                    "repair_error": None,
+                },
+                "$setOnInsert": {
+                    "invoice_key_id": str(new_ulid()),
+                    "created_at": now,
+                },
+            },
+            upsert=True,
+        )
 
     async def _recover_orphan_monthly_invoice(
         self,
@@ -591,9 +618,17 @@ class MongoPaymentRepository(TenantScopedRepository):
                 enrollment_id=enrollment_id,
                 period=period,
             )
-        if existing_invoice_id and await self._invoice_has_consistent_lines(
-            invoice_id=existing_invoice_id,
-            amount_cents=amount_cents,
+        if (
+            existing_invoice_id == invoice_id
+            and await self._monthly_invoice_is_complete(
+                enrollment_id=enrollment_id,
+                period=period,
+                amount_cents=amount_cents,
+            )
+        ) or (
+            existing_invoice_id is not None
+            and existing_invoice_id != invoice_id
+            and await self._invoice_has_consistent_lines(invoice_id=existing_invoice_id)
         ):
             await self._mark_monthly_invoice_key(
                 enrollment_id=enrollment_id,
@@ -736,6 +771,31 @@ class MongoPaymentRepository(TenantScopedRepository):
             )
             if not parent_id:
                 skipped_no_charge += 1
+                continue
+            existing_invoice_id = await self._find_existing_invoice_for_enrollment_period(
+                enrollment_id=enrollment_id,
+                period=period,
+            )
+            monthly_invoice_id = self._monthly_invoice_id(enrollment_id, period)
+            existing_invoice_complete = (
+                existing_invoice_id == monthly_invoice_id
+                and await self._monthly_invoice_is_complete(
+                    enrollment_id=enrollment_id,
+                    period=period,
+                    amount_cents=gross_amount_cents,
+                )
+            ) or (
+                existing_invoice_id is not None
+                and existing_invoice_id != monthly_invoice_id
+                and await self._invoice_has_consistent_lines(invoice_id=existing_invoice_id)
+            )
+            if existing_invoice_complete:
+                await self._upsert_complete_monthly_invoice_key(
+                    enrollment_id=enrollment_id,
+                    period=period,
+                    now=now,
+                )
+                skipped_existing += 1
                 continue
             payment_id = str(new_ulid())
             invoice_key_id = str(new_ulid())

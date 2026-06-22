@@ -431,6 +431,94 @@ async def test_generate_monthly_treats_existing_period_invoice_with_non_monthly_
 
 
 @pytest.mark.asyncio
+async def test_generate_monthly_treats_existing_period_invoice_without_key_as_complete(
+    db, acad
+) -> None:
+    await db["billing_invoice_keys"].create_index(
+        [("academy_id", 1), ("enrollment_id", 1), ("period", 1)],
+        unique=True,
+        name="uniq_monthly_invoice_key",
+    )
+    ledger_repo = MongoBillingLedgerRepository(db)
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
+        ledger_repo=ledger_repo,
+    )
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id="enroll-existing-no-key",
+        session_id="sess-existing-no-key",
+        student_id="student-existing-no-key",
+        parent_id="parent-existing-no-key",
+    )
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    await db["invoices"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_id": "inv-from-existing-no-key",
+            "parent_id": "parent-existing-no-key",
+            "student_id": "student-existing-no-key",
+            "enrollment_id": "enroll-existing-no-key",
+            "period": "2026-06",
+            "status": "paid",
+            "subtotal_cents": 10_000,
+            "discount_cents": 0,
+            "total_cents": 10_000,
+            "balance_due_cents": 0,
+            "currency": "usd",
+            "due_date": datetime(2026, 6, 30, tzinfo=UTC),
+            "delivery_status": "not_sent",
+            "sent_at": None,
+            "last_sent_at": None,
+            "finalized_at": None,
+            "created_at": now,
+            "updated_at": now,
+            "idempotency_key": "existing-no-key-invoice",
+        }
+    )
+    await db["invoice_lines"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_id": "inv-from-existing-no-key",
+            "line_id": "line-from-existing-no-key",
+            "line_type": "tuition",
+            "description": "Monthly tuition 2026-06",
+            "quantity": 1,
+            "unit_amount_cents": 10_000,
+            "amount_cents": 10_000,
+            "source_type": "payment",
+            "source_id": "manual-existing-no-key",
+            "created_at": now,
+            "idempotency_key": "existing-no-key-invoice",
+        }
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.created == 0
+    assert result.skipped_existing == 1
+    assert result.failed_repair == 0
+    assert (
+        await db["invoices"].count_documents(
+            {"academy_id": acad, "invoice_id": "inv-monthly-enroll-existing-no-key-2026-06"}
+        )
+        == 0
+    )
+    invoice_key = await db["billing_invoice_keys"].find_one(
+        {
+            "academy_id": acad,
+            "enrollment_id": "enroll-existing-no-key",
+            "period": "2026-06",
+        }
+    )
+    assert invoice_key is not None
+    assert invoice_key["status"] == "complete"
+    assert "payment_id" not in invoice_key
+
+
+@pytest.mark.asyncio
 async def test_generate_monthly_concurrent_runs_converge_to_one_invoice_and_line(db, acad) -> None:
     await db["billing_invoice_keys"].create_index(
         [("academy_id", 1), ("enrollment_id", 1), ("period", 1)],

@@ -18,6 +18,7 @@ Monthly invoice generation must repair orphan invoice keys and header-only invoi
 - 2026-06-21T20:33:14 main/working: Inspected issue #232, AGENTS docs, ADR-0012, active #224 ledger, monthly generation code, ledger repo, credit repo, API DTOs, and admin UI. Plan: make ledger create_invoice repair missing lines, make monthly duplicate recovery distinguish key-only/header-only/failed repair, read applied credit from account_credit_ledger source-of-truth, expose repair/failure counts, and update admin summary/warning copy.
 - 2026-06-21T20:44:08 main/working: Changed files: backend/v2/contexts/billing/application/use_cases/admin_payment_ops.py; backend/v2/contexts/billing/infrastructure/mongo_billing_ledger_repo.py; backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py; backend/v2/interfaces/admin/views.py; backend/v2/tests/contract/test_mongo_payment_repo.py; backend/v2/tests/interface/test_admin_billing.py; frontend/lib/api/admin.ts; frontend/app/(admin)/admin/payments/page.tsx; test_result.md; docs/test-results/active/2026-06-21-issue-232-monthly-invoice-generation-recovery.md.
 - 2026-06-22T07:08:13 main/working: Added regression coverage and recovery logic so duplicate monthly generation recognizes an existing non-deterministic invoice for the same enrollment and period as complete instead of creating inv-monthly duplicates.
+- 2026-06-22T07:29:03 main/working: Addressed PR review: monthly generation now checks for a complete existing invoice before inserting a new billing_invoice_keys row, preventing duplicate inv-monthly invoices when the key is missing.
 ## Verification
 
 - No verification recorded yet.
@@ -35,6 +36,11 @@ Monthly invoice generation must repair orphan invoice keys and header-only invoi
 - 2026-06-22T07:08:14: Backend lint/format: ruff format --check and ruff check on touched backend files => passed.
 - 2026-06-22T07:08:14: Full backend v2 suite: cd backend && pytest v2/tests -q => 1482 passed, 5 warnings.
 - 2026-06-22T07:08:14: Frontend checks: pnpm typecheck => passed; pnpm lint => passed with 5 existing warnings outside touched files.
+- 2026-06-22T07:29:03: RED review regression: pytest backend/v2/tests/contract/test_mongo_payment_repo.py::test_generate_monthly_treats_existing_period_invoice_without_key_as_complete -q failed with created=1 before fix.
+- 2026-06-22T07:29:03: GREEN review regression and adjacent prod-style ID test: pytest backend/v2/tests/contract/test_mongo_payment_repo.py::test_generate_monthly_treats_existing_period_invoice_without_key_as_complete backend/v2/tests/contract/test_mongo_payment_repo.py::test_generate_monthly_treats_existing_period_invoice_with_non_monthly_id_as_complete -q => 2 passed.
+- 2026-06-22T07:29:03: Payment repo contracts after review fix: pytest backend/v2/tests/contract/test_mongo_payment_repo.py -q => 18 passed.
+- 2026-06-22T07:29:03: Focused billing/admin tests after review fix: pytest backend/v2/tests/contract/test_billing_ledger_storage.py backend/v2/tests/contract/test_billing_idempotency.py backend/v2/tests/interface/test_admin_billing.py::test_generate_monthly_payments -q => 22 passed, 1 existing StarletteDeprecationWarning.
+- 2026-06-22T07:29:03: Backend lint/format after review fix: ruff format --check and ruff check on touched backend files => passed.
 ## Reusable Lessons
 
 - None recorded yet.
