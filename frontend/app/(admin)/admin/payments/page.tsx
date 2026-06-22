@@ -30,6 +30,7 @@ import {
   type AdminPaymentStatus,
   type AdminPaymentView,
   type BillingReconciliationReport,
+  type MonthlyGenerationSkippedDetail,
   type ReconcileStripeBillingRequest,
   type RefundRequest,
 } from "@/lib/api/admin";
@@ -42,6 +43,18 @@ import { BigNum, Overline } from "@/components/ds/typography";
 
 function formatCents(cents: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
+}
+
+function formatDate(value: string): string {
+  return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function skipReasonLabel(value: string): string {
+  return value.replaceAll("_", " ");
 }
 
 function finalCents(payment: AdminPaymentView): number {
@@ -684,7 +697,11 @@ function GenerateDialog({
   onGenerated: () => void;
 }) {
   const [period, setPeriod] = useState("");
-  const [result, setResult] = useState<{ message: string; tone: "green" | "red" } | null>(null);
+  const [result, setResult] = useState<{
+    message: string;
+    tone: "green" | "red";
+    skippedDetails: MonthlyGenerationSkippedDetail[];
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const mutation = useMutation({
     mutationFn: () => generateMonthlyPayments({ period }),
@@ -699,6 +716,7 @@ function GenerateDialog({
       setResult({
         message: parts.join(", "),
         tone: res.failed_repair > 0 ? "red" : "green",
+        skippedDetails: res.skipped_details ?? [],
       });
       setError(null);
       onGenerated();
@@ -733,6 +751,34 @@ function GenerateDialog({
       >
         {error && <Alert tone="red">{error}</Alert>}
         {result && <Alert tone={result.tone}>{result.message}</Alert>}
+        {result?.skippedDetails.length ? (
+          <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            <p className="font-semibold">Skipped billing deferrals</p>
+            <ul className="mt-2 space-y-2">
+              {result.skippedDetails.map((detail) => (
+                <li key={`${detail.enrollment_id}-${detail.reason_code}`}>
+                  <span className="font-medium">
+                    {detail.student_name || detail.student_id || detail.enrollment_id}
+                  </span>
+                  <span>
+                    {" "}
+                    skipped for {detail.billing_period} · {skipReasonLabel(detail.reason_code)}
+                  </span>
+                  <span className="block text-xs">
+                    {detail.resume_on
+                      ? `Resume ${formatDate(detail.resume_on)}`
+                      : detail.review_on
+                        ? `Review ${formatDate(detail.review_on)}`
+                        : detail.expires_on
+                          ? `Expires ${formatDate(detail.expires_on)}`
+                          : "Needs admin review"}
+                    {detail.needs_review ? " · review needed" : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         <Field label="Period" required>
           <input
             type="month"

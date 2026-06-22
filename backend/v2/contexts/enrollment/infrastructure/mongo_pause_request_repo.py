@@ -34,6 +34,7 @@ class MongoPauseRequestRepository(TenantScopedRepository):
             period=str(doc.get("period") or ""),
             pause_kind=doc.get("pause_kind", "fixed"),  # type: ignore[arg-type]
             resume_on=doc.get("resume_on"),  # type: ignore[arg-type]
+            review_on=doc.get("review_on"),  # type: ignore[arg-type]
             reason=str(doc.get("reason") or ""),
             status=doc.get("status", "pending"),  # type: ignore[arg-type]
             created_at=doc["created_at"],  # type: ignore[arg-type]
@@ -45,6 +46,8 @@ class MongoPauseRequestRepository(TenantScopedRepository):
         doc = request.model_dump(mode="python")
         if request.resume_on is not None:
             doc["resume_on"] = request.resume_on.isoformat()
+        if request.review_on is not None:
+            doc["review_on"] = request.review_on.isoformat()
         await self._insert_one(doc)
 
     async def get(self, pause_request_id: str) -> PauseRequest | None:

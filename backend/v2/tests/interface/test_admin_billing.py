@@ -435,7 +435,44 @@ def test_generate_monthly_payments(admin_client):
     assert body["repaired_orphan_keys"] == 0
     assert body["repaired_partial_invoices"] == 0
     assert body["failed_repair"] == 0
+    assert body["skipped_details"] == []
     assert admin_client.seed["payments"].generated_periods == ["2026-05"]
+
+
+def test_generate_monthly_payments_returns_skipped_details(admin_client):
+    admin_client.seed["payments"].monthly_result = {
+        "created": 0,
+        "skipped_existing": 0,
+        "skipped_no_charge": 0,
+        "skipped_autopay": 0,
+        "skipped_paused": 1,
+        "skipped_details": [
+            {
+                "enrollment_id": "enroll-1",
+                "student_id": "student-1",
+                "student_name": "A Student",
+                "reason_code": "fixed_pause",
+                "source": "pause_request",
+                "billing_period": "2026-06",
+                "resume_on": "2026-07-15",
+                "review_on": None,
+                "expires_on": None,
+                "needs_review": False,
+                "metadata": {"pause_request_id": "pause-1"},
+            }
+        ],
+    }
+
+    r = admin_client.post(
+        "/api/v2/admin/payments/generate-monthly",
+        json={"period": "2026-06"},
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["skipped_paused"] == 1
+    assert body["skipped_details"][0]["enrollment_id"] == "enroll-1"
+    assert body["skipped_details"][0]["reason_code"] == "fixed_pause"
 
 
 def test_mark_payment_paid(admin_client):

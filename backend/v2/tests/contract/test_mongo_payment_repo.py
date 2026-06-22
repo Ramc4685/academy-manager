@@ -256,6 +256,176 @@ async def test_generate_monthly_creates_ledger_invoice_for_active_autopay_enroll
 
 
 @pytest.mark.asyncio
+async def test_generate_monthly_returns_row_level_skip_for_active_billing_deferral(
+    db, acad
+) -> None:
+    ledger_repo = MongoBillingLedgerRepository(db)
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 22, 12, 0, tzinfo=UTC),
+        ledger_repo=ledger_repo,
+    )
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id="enroll-paused",
+        session_id="sess-paused",
+        student_id="student-paused",
+        parent_id="parent-paused",
+        extra_enrollment={"status": "paused"},
+    )
+    await db["enrollment_billing_deferrals"].insert_one(
+        {
+            "academy_id": acad,
+            "deferral_id": "def-paused",
+            "enrollment_id": "enroll-paused",
+            "student_id": "student-paused",
+            "deferral_type": "fixed_pause",
+            "reason": "summer travel",
+            "source": "pause_request",
+            "source_id": "pause-1",
+            "actor_id": "admin-1",
+            "billing_period": "2026-06",
+            "resume_on": "2026-07-15",
+            "status": "active",
+            "created_at": datetime(2026, 6, 1, tzinfo=UTC),
+            "updated_at": datetime(2026, 6, 1, tzinfo=UTC),
+        }
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.created == 0
+    assert result.skipped_paused == 1
+    assert len(result.skipped_details) == 1
+    detail = result.skipped_details[0]
+    assert detail.enrollment_id == "enroll-paused"
+    assert detail.student_id == "student-paused"
+    assert detail.reason_code == "fixed_pause"
+    assert detail.source == "pause_request"
+    assert detail.resume_on == "2026-07-15"
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_bills_paused_enrollment_when_deferral_expired(db, acad) -> None:
+    ledger_repo = MongoBillingLedgerRepository(db)
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 22, 12, 0, tzinfo=UTC),
+        ledger_repo=ledger_repo,
+    )
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id="enroll-stale",
+        session_id="sess-stale",
+        student_id="student-stale",
+        parent_id="parent-stale",
+        extra_enrollment={"status": "paused"},
+    )
+    await db["enrollment_billing_deferrals"].insert_one(
+        {
+            "academy_id": acad,
+            "deferral_id": "def-stale",
+            "enrollment_id": "enroll-stale",
+            "student_id": "student-stale",
+            "deferral_type": "admin_pause",
+            "reason": "old pause",
+            "source": "admin_direct_pause",
+            "actor_id": "admin-1",
+            "billing_period": "2026-05",
+            "review_on": "2026-05-15",
+            "status": "active",
+            "created_at": datetime(2026, 5, 1, tzinfo=UTC),
+            "updated_at": datetime(2026, 5, 1, tzinfo=UTC),
+        }
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.created == 1
+    assert result.skipped_paused == 0
+    assert result.skipped_details == []
+    invoice = await db["invoices"].find_one({"academy_id": acad, "enrollment_id": "enroll-stale"})
+    assert invoice is not None
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_bills_paused_enrollment_when_review_date_is_stale(db, acad) -> None:
+    ledger_repo = MongoBillingLedgerRepository(db)
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 22, 12, 0, tzinfo=UTC),
+        ledger_repo=ledger_repo,
+    )
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id="enroll-stale-review",
+        session_id="sess-stale-review",
+        student_id="student-stale-review",
+        parent_id="parent-stale-review",
+        extra_enrollment={"status": "paused"},
+    )
+    await db["enrollment_billing_deferrals"].insert_one(
+        {
+            "academy_id": acad,
+            "deferral_id": "def-stale-review",
+            "enrollment_id": "enroll-stale-review",
+            "student_id": "student-stale-review",
+            "deferral_type": "admin_pause",
+            "reason": "old pause",
+            "source": "admin_direct_pause",
+            "actor_id": "admin-1",
+            "billing_period": "2026-06",
+            "review_on": "2026-06-01",
+            "status": "active",
+            "created_at": datetime(2026, 6, 1, tzinfo=UTC),
+            "updated_at": datetime(2026, 6, 1, tzinfo=UTC),
+        }
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.created == 1
+    assert result.skipped_paused == 0
+    assert result.skipped_details == []
+    invoice = await db["invoices"].find_one(
+        {"academy_id": acad, "enrollment_id": "enroll-stale-review"}
+    )
+    assert invoice is not None
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_legacy_skip_period_returns_needs_review_detail(db, acad) -> None:
+    ledger_repo = MongoBillingLedgerRepository(db)
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 22, 12, 0, tzinfo=UTC),
+        ledger_repo=ledger_repo,
+    )
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id="enroll-legacy-skip",
+        session_id="sess-legacy-skip",
+        student_id="student-legacy-skip",
+        parent_id="parent-legacy-skip",
+        extra_enrollment={"skip_periods": ["2026-06"]},
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.created == 0
+    assert result.skipped_paused == 1
+    assert len(result.skipped_details) == 1
+    detail = result.skipped_details[0]
+    assert detail.reason_code == "legacy_skip_period"
+    assert detail.source == "enrollment.skip_periods"
+    assert detail.needs_review is True
+
+
+@pytest.mark.asyncio
 async def test_generate_monthly_autopay_invoice_is_idempotent_per_enrollment_period(
     db, acad
 ) -> None:

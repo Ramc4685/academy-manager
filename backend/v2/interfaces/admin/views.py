@@ -441,7 +441,15 @@ class OverrideEnrollmentFeeRequest(BaseModel):
 
 class PauseEnrollmentRequest(BaseModel):
     effective_date: date
+    resume_on: date | None = None
+    review_on: date | None = None
     reason: str | None = None
+
+    @model_validator(mode="after")
+    def _requires_resume_or_review(self) -> PauseEnrollmentRequest:
+        if self.resume_on is None and self.review_on is None:
+            raise ValueError("resume_on or review_on is required")
+        return self
 
 
 class WithdrawEnrollmentRequest(BaseModel):
@@ -507,6 +515,7 @@ class AdminPauseRequestView(BaseModel):
     period: str
     pause_kind: str = "fixed"
     resume_on: date | None = None
+    review_on: date | None = None
     reason: str
     status: str
     created_at: datetime
@@ -576,6 +585,20 @@ class GenerateMonthlyPaymentsRequest(BaseModel):
         return self
 
 
+class MonthlyGenerationSkippedDetailView(BaseModel):
+    enrollment_id: str
+    student_id: str
+    student_name: str | None = None
+    reason_code: str
+    source: str
+    billing_period: str
+    resume_on: str | None = None
+    review_on: str | None = None
+    expires_on: str | None = None
+    needs_review: bool = False
+    metadata: dict[str, str] = Field(default_factory=dict)
+
+
 class GenerateMonthlyPaymentsResponse(BaseModel):
     created: int
     skipped_existing: int = 0
@@ -585,6 +608,7 @@ class GenerateMonthlyPaymentsResponse(BaseModel):
     repaired_orphan_keys: int = 0
     repaired_partial_invoices: int = 0
     failed_repair: int = 0
+    skipped_details: list[MonthlyGenerationSkippedDetailView] = Field(default_factory=list)
 
 
 class MarkPaymentPaidRequest(BaseModel):
@@ -1294,6 +1318,7 @@ AdminAttentionKind = Literal[
     "overdue_dues",
     "pause_requests",
     "scheduled_resume_blocked",
+    "billing_deferrals",
     "waivers",
     "session_pressure",
 ]

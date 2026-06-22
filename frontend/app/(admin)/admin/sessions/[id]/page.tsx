@@ -1450,16 +1450,24 @@ function PauseEnrollmentDialog({
   onPaused: () => void;
 }) {
   const [effectiveDate, setEffectiveDate] = useState(todayDateInput());
+  const [billingAction, setBillingAction] = useState<"resume" | "review">("review");
+  const [resumeOn, setResumeOn] = useState(dateInputValueFromOffset(30));
+  const [reviewOn, setReviewOn] = useState(dateInputValueFromOffset(14));
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const mutation = useMutation({
     mutationFn: () =>
       pauseEnrollment(enrollment!.enrollment_id, {
         effective_date: effectiveDate,
+        resume_on: billingAction === "resume" ? resumeOn : null,
+        review_on: billingAction === "review" ? reviewOn : null,
         reason: reason || undefined,
       }),
     onSuccess: () => {
       setEffectiveDate(todayDateInput());
+      setBillingAction("review");
+      setResumeOn(dateInputValueFromOffset(30));
+      setReviewOn(dateInputValueFromOffset(14));
       setReason("");
       setError(null);
       onPaused();
@@ -1496,6 +1504,53 @@ function PauseEnrollmentDialog({
             className={inputClass}
           />
         </Field>
+        <Field label="Billing follow-up" required>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="flex items-center gap-2 rounded border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-800">
+              <input
+                type="radio"
+                name="pause-billing-action"
+                checked={billingAction === "review"}
+                onChange={() => setBillingAction("review")}
+              />
+              Review before billing resumes
+            </label>
+            <label className="flex items-center gap-2 rounded border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-800">
+              <input
+                type="radio"
+                name="pause-billing-action"
+                checked={billingAction === "resume"}
+                onChange={() => setBillingAction("resume")}
+              />
+              Resume automatically
+            </label>
+          </div>
+        </Field>
+        {billingAction === "review" ? (
+          <Field label="Review date" required>
+            <input
+              type="date"
+              required
+              value={reviewOn}
+              onChange={(event) => setReviewOn(event.target.value)}
+              className={inputClass}
+            />
+          </Field>
+        ) : (
+          <Field label="Resume date" required>
+            <input
+              type="date"
+              required
+              value={resumeOn}
+              onChange={(event) => setResumeOn(event.target.value)}
+              className={inputClass}
+            />
+          </Field>
+        )}
+        <p className="text-xs text-rally-subtle">
+          Pausing releases the seat and creates a billing deferral that stays visible until the
+          review or resume rule is handled.
+        </p>
         <Field label="Reason">
           <textarea
             value={reason}
@@ -1512,7 +1567,11 @@ function PauseEnrollmentDialog({
             variant="primary"
             size="sm"
             type="submit"
-            disabled={!effectiveDate || mutation.isPending}
+            disabled={
+              !effectiveDate ||
+              (billingAction === "review" ? !reviewOn : !resumeOn) ||
+              mutation.isPending
+            }
           >
             {mutation.isPending ? "Pausing..." : "Pause"}
           </Button>

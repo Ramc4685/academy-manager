@@ -197,6 +197,7 @@ export interface ParentPauseRequest {
   period: string;
   pause_kind: "fixed" | "indefinite";
   resume_on: string | null;
+  review_on: string | null;
   reason: string | null;
   status: "pending" | "approved" | "declined";
   created_at: string;
@@ -408,6 +409,7 @@ export function createParentPauseRequest(payload: {
   period?: string;
   pause_kind: "fixed" | "indefinite";
   resume_on?: string | null;
+  review_on?: string | null;
   reason?: string;
 }): Promise<ParentPauseRequest> {
   return apiFetch("/parent/pause-requests", {

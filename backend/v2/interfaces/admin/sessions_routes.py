@@ -472,6 +472,8 @@ async def pause_enrollment(
             effective_at=_start_of_day_utc(body.effective_date),
             actor_id=claims.user_id,
             reason=body.reason,
+            resume_on=body.resume_on,
+            review_on=body.review_on,
         )
     )
 

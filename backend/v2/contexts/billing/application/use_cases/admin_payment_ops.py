@@ -20,6 +20,22 @@ class GenerateMonthlyPaymentsCommand(BaseModel):
     period: str = Field(pattern=r"^\d{4}-\d{2}$")
 
 
+class MonthlyGenerationSkippedDetail(BaseModel):
+    model_config = {"frozen": True}
+
+    enrollment_id: str
+    student_id: str
+    student_name: str | None = None
+    reason_code: str
+    source: str
+    billing_period: str
+    resume_on: str | None = None
+    review_on: str | None = None
+    expires_on: str | None = None
+    needs_review: bool = False
+    metadata: dict[str, str] = Field(default_factory=dict)
+
+
 class GenerateMonthlyPaymentsResult(BaseModel):
     model_config = {"frozen": True}
     created: int
@@ -30,6 +46,7 @@ class GenerateMonthlyPaymentsResult(BaseModel):
     repaired_orphan_keys: int = 0
     repaired_partial_invoices: int = 0
     failed_repair: int = 0
+    skipped_details: list[MonthlyGenerationSkippedDetail] = Field(default_factory=list)
 
 
 class MarkPaymentPaidCommand(BaseModel):

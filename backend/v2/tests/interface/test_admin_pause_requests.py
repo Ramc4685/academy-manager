@@ -50,6 +50,7 @@ def test_admin_approve_pause_request_response_includes_new_fields(admin_client) 
         enrollment_id="enr-1",
         parent_id="parent-1",
         pause_kind="indefinite",
+        review_on=date(2026, 7, 1),
         reason="medical",
         created_at=_dt(),
     )
@@ -61,6 +62,7 @@ def test_admin_approve_pause_request_response_includes_new_fields(admin_client) 
     assert body["status"] == "approved"
     assert body["pause_kind"] == "indefinite"
     assert body["resume_on"] is None
+    assert body["review_on"] == "2026-07-01"
 
 
 def test_dashboard_attention_includes_blocked_scheduled_resume(admin_client) -> None:

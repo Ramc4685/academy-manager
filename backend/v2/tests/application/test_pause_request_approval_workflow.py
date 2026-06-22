@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime
 import pytest
 
 from backend.v2.contexts.billing.domain.models import Subscription
+from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals import BillingDeferral
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     ApprovePauseRequest,
     DecidePauseRequestCommand,
@@ -32,6 +33,7 @@ def _request(
         parent_id="parent-1",
         pause_kind=pause_kind,  # type: ignore[arg-type]
         resume_on=resume_on,
+        review_on=date(2026, 7, 1) if pause_kind == "indefinite" else None,
         reason="summer",
         status=status,  # type: ignore[arg-type]
         created_at=_now(),
@@ -58,11 +60,13 @@ async def test_approve_fixed_pause_pauses_roster_stripe_and_schedules_resume() -
     pause_requests = _FakePauseRequests(_request())
     pause_enrollment = _FakePauseEnrollment()
     scheduled = _FakeScheduledActions()
+    deferrals = _FakeBillingDeferrals()
     stripe = _FakeStripe()
     use_case = ApprovePauseRequest(
         pause_requests=pause_requests,
         pause_enrollment=pause_enrollment,
         scheduled_actions=scheduled,
+        billing_deferrals=deferrals,
         subscriptions=_FakeSubscriptions(_subscription()),
         stripe=stripe,
         academy_id="acad-1",
@@ -82,6 +86,10 @@ async def test_approve_fixed_pause_pauses_roster_stripe_and_schedules_resume() -
     assert action.enrollment_id == "enr-1"
     assert action.pause_request_id == "pause-1"
     assert action.run_at == datetime(2026, 7, 15, 0, 0, tzinfo=UTC)
+    assert len(deferrals.rows) == 1
+    assert deferrals.rows[0].deferral_type == "fixed_pause"
+    assert deferrals.rows[0].resume_on == date(2026, 7, 15)
+    assert deferrals.rows[0].billing_period == "2026-07"
 
 
 @pytest.mark.asyncio
@@ -91,6 +99,7 @@ async def test_approve_indefinite_pause_does_not_schedule_resume() -> None:
         pause_requests=_FakePauseRequests(_request("indefinite", resume_on=None)),
         pause_enrollment=_FakePauseEnrollment(),
         scheduled_actions=scheduled,
+        billing_deferrals=_FakeBillingDeferrals(),
         subscriptions=_FakeSubscriptions(_subscription()),
         stripe=_FakeStripe(),
         academy_id="acad-1",
@@ -181,6 +190,14 @@ class _FakeScheduledActions:
 
     async def add(self, action: ScheduledEnrollmentAction) -> None:
         self.actions.append(action)
+
+
+@dataclass
+class _FakeBillingDeferrals:
+    rows: list[BillingDeferral] = field(default_factory=list)
+
+    async def add(self, deferral: BillingDeferral) -> None:
+        self.rows.append(deferral)
 
 
 @dataclass

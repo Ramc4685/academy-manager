@@ -41,6 +41,18 @@ def test_indefinite_pause_rejects_resume_on() -> None:
         )
 
 
+def test_indefinite_pause_requires_review_on() -> None:
+    with pytest.raises(ValidationError, match="review_on is required"):
+        PauseRequest(
+            pause_request_id="pause-1",
+            enrollment_id="enr-1",
+            parent_id="parent-1",
+            pause_kind="indefinite",
+            reason="not sure",
+            created_at=datetime(2026, 6, 3, tzinfo=UTC),
+        )
+
+
 @pytest.mark.asyncio
 async def test_request_pause_derives_legacy_period_from_resume_on() -> None:
     repo = _FakePauseRequests()
@@ -59,6 +71,26 @@ async def test_request_pause_derives_legacy_period_from_resume_on() -> None:
     assert request.pause_kind == "fixed"
     assert request.resume_on == date(2026, 7, 15)
     assert request.period == "2026-07"
+
+
+@pytest.mark.asyncio
+async def test_request_indefinite_pause_keeps_review_date_for_billing_safety() -> None:
+    repo = _FakePauseRequests()
+    use_case = RequestEnrollmentPause(pause_requests=repo)
+
+    request = await use_case.execute(
+        RequestEnrollmentPauseCommand(
+            parent_id="parent-1",
+            enrollment_id="enr-1",
+            pause_kind="indefinite",
+            review_on=date(2026, 7, 1),
+            reason="medical review",
+        )
+    )
+
+    assert request.pause_kind == "indefinite"
+    assert request.resume_on is None
+    assert request.review_on == date(2026, 7, 1)
 
 
 @pytest.mark.asyncio
@@ -212,6 +244,7 @@ async def test_mongo_pending_pause_requests_falls_back_to_billing_enrollment() -
         enrollment_id="billing-enr-1",
         parent_id="parent-3",
         pause_kind="indefinite",
+        review_on=date(2026, 7, 1),
         reason="surgery",
         created_at=datetime(2026, 6, 3, tzinfo=UTC),
     )

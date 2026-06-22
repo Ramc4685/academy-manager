@@ -1158,6 +1158,27 @@ class FakePauseRequestRepo:
 
 
 @dataclass
+class FakeBillingDeferrals:
+    warnings: list[dict[str, object]] = field(default_factory=list)
+
+    async def list_admin_warnings(self, *, today, limit=100):
+        return self.warnings[:limit]
+
+    async def add(self, _deferral) -> None:
+        return None
+
+    async def close_active_for_enrollment(
+        self,
+        _enrollment_id,
+        *,
+        closed_at,
+        closed_by,
+        reason,
+    ) -> None:
+        return None
+
+
+@dataclass
 class FakePaymentRepo:
     rows: dict[str, Payment] = field(default_factory=dict)
     discounts: dict[str, int] = field(default_factory=dict)
@@ -1165,6 +1186,7 @@ class FakePaymentRepo:
     generated_periods: list[str] = field(default_factory=list)
     manual_records: dict[str, dict[str, object]] = field(default_factory=dict)
     credits: list[dict[str, object]] = field(default_factory=list)
+    monthly_result: dict[str, object] | None = None
 
     async def save(self, p):
         self.rows[p.payment_id] = p
@@ -1186,6 +1208,8 @@ class FakePaymentRepo:
 
     async def generate_monthly_payments(self, period):
         self.generated_periods.append(period)
+        if self.monthly_result is not None:
+            return GenerateMonthlyPaymentsResult(**self.monthly_result)
         return GenerateMonthlyPaymentsResult(created=1, skipped_existing=0)
 
     async def mark_payment_paid(
@@ -1443,6 +1467,7 @@ def admin_seed():
         "students": FakeStudentWriter(),
         "waitlist": FakeWaitlistRepo(),
         "pause_requests": FakePauseRequestRepo(),
+        "billing_deferrals": FakeBillingDeferrals(),
         "payments": FakePaymentRepo(),
         "expenses": FakeExpenseRepo(),
         "payouts": FakePayoutRepo(),
@@ -1466,6 +1491,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     students = seed["students"]
     waitlist = seed["waitlist"]
     pause_requests = seed["pause_requests"]
+    billing_deferrals = seed["billing_deferrals"]
     lifecycle_billing = FakeLifecycleBilling()
     payments = seed["payments"]
     outbox = seed["outbox"]
@@ -1833,6 +1859,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         list_waitlist_for_session=list_waitlist_for_session,
         list_audit_logs=list_audit_logs,
         list_dues_followup=list_dues_followup,
+        list_billing_deferral_warnings=billing_deferrals.list_admin_warnings,
         send_dues_reminders=send_dues_reminders,
         export_report_csv=export_report_csv,
         get_reports_kpis=AsyncMock(
