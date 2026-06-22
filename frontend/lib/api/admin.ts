@@ -302,6 +302,9 @@ export interface GenerateMonthlyPaymentsResponse {
   skipped_no_charge: number;
   skipped_autopay: number;
   skipped_paused: number;
+  repaired_orphan_keys: number;
+  repaired_partial_invoices: number;
+  failed_repair: number;
 }
 
 export interface MarkPaymentPaidRequest {

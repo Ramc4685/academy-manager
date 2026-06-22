@@ -684,12 +684,22 @@ function GenerateDialog({
   onGenerated: () => void;
 }) {
   const [period, setPeriod] = useState("");
-  const [result, setResult] = useState<string | null>(null);
+  const [result, setResult] = useState<{ message: string; tone: "green" | "red" } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const mutation = useMutation({
     mutationFn: () => generateMonthlyPayments({ period }),
     onSuccess: (res) => {
-      setResult(`${res.created} created, ${res.skipped_existing} already existed.`);
+      const repaired = res.repaired_orphan_keys + res.repaired_partial_invoices;
+      const parts = [
+        `${res.created} created`,
+        `${res.skipped_existing} already complete`,
+      ];
+      if (repaired > 0) parts.push(`${repaired} repaired`);
+      if (res.failed_repair > 0) parts.push(`${res.failed_repair} need review`);
+      setResult({
+        message: parts.join(", "),
+        tone: res.failed_repair > 0 ? "red" : "green",
+      });
       setError(null);
       onGenerated();
     },
@@ -712,7 +722,7 @@ function GenerateDialog({
       }}
       overline="Invoices"
       title="Generate monthly invoices"
-      description="Creates pending invoices for active manual enrollments."
+      description="Creates ledger invoices for active monthly enrollments."
     >
       <form
         className="space-y-3"
@@ -722,7 +732,7 @@ function GenerateDialog({
         }}
       >
         {error && <Alert tone="red">{error}</Alert>}
-        {result && <Alert tone="green">{result}</Alert>}
+        {result && <Alert tone={result.tone}>{result.message}</Alert>}
         <Field label="Period" required>
           <input
             type="month"

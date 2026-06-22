@@ -432,6 +432,9 @@ def test_generate_monthly_payments(admin_client):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["created"] == 1
+    assert body["repaired_orphan_keys"] == 0
+    assert body["repaired_partial_invoices"] == 0
+    assert body["failed_repair"] == 0
     assert admin_client.seed["payments"].generated_periods == ["2026-05"]
 
 
@@ -516,11 +519,13 @@ def test_record_expense_wrong_persona_404(parent_on_admin_client):
 
 
 def test_revenue_aggregates_by_month(admin_client):
-    # Revenue query in AcademyRevenueQuery only runs with a parent_id filter
-    # in the Wave 3 stub; admin route passes None which yields {}.
+    _seed_payment(admin_client.seed, "pay-1", 15000, status="succeeded")
+
     r = admin_client.get("/api/v2/admin/finance/revenue")
+
     assert r.status_code == 200
-    assert r.json() == {"by_month": {}}
+    [month_total] = r.json()["by_month"].values()
+    assert month_total == 15000
 
 
 def test_revenue_skips_waived_payments(admin_client):

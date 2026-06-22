@@ -504,6 +504,7 @@ async def test_admin_revenue_export_includes_ledger_payments(mongo_db) -> None:
                 "status": "succeeded",
                 "amount_cents": 12000,
                 "currency": "usd",
+                "paid_at": datetime(2026, 5, 31, 23, 59, tzinfo=UTC),
                 "created_at": now,
             },
             {
@@ -522,7 +523,147 @@ async def test_admin_revenue_export_includes_ledger_payments(mongo_db) -> None:
     with tenant_scope("request-acad"):
         csv_text = await admin.export_report_csv("revenue")
 
+    assert csv_text == "month,revenue_cents\r\n2026-05,12000\r\n"
+
+
+@pytest.mark.asyncio
+async def test_admin_revenue_export_uses_legacy_paid_at_from_raw_payment(mongo_db) -> None:
+    await mongo_db["payments"].insert_one(
+        {
+            "payment_id": "legacy-request",
+            "academy_id": "request-acad",
+            "parent_id": "parent-request",
+            "status": "succeeded",
+            "amount_cents": 12000,
+            "currency": "usd",
+            "paid_at": datetime(2026, 5, 31, 23, 59, tzinfo=UTC),
+            "created_at": datetime(2026, 6, 1, 0, 5, tzinfo=UTC),
+        }
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope("request-acad"):
+        csv_text = await admin.export_report_csv("revenue")
+
+    assert csv_text == "month,revenue_cents\r\n2026-05,12000\r\n"
+
+
+@pytest.mark.asyncio
+async def test_admin_payments_recent_includes_ledger_paid_at(mongo_db) -> None:
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    paid_at = datetime(2026, 5, 31, 23, 59, tzinfo=UTC)
+    await mongo_db["ledger_payments"].insert_one(
+        {
+            "payment_id": "ledger-request",
+            "academy_id": "request-acad",
+            "parent_id": "parent-request",
+            "status": "succeeded",
+            "amount_cents": 12000,
+            "currency": "usd",
+            "paid_at": paid_at,
+            "created_at": now,
+        }
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope("request-acad"):
+        rows = await admin.list_payments_recent()
+
+    assert rows[0]["payment_id"] == "ledger-request"
+    assert rows[0]["paid_at"].replace(tzinfo=UTC) == paid_at
+
+
+@pytest.mark.asyncio
+async def test_admin_revenue_export_dedupes_legacy_by_ledger_allocation_invoice_id(
+    mongo_db,
+) -> None:
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    await mongo_db["ledger_payments"].insert_one(
+        {
+            "payment_id": "ledger-request",
+            "academy_id": "request-acad",
+            "parent_id": "parent-request",
+            "status": "succeeded",
+            "amount_cents": 12000,
+            "currency": "usd",
+            "created_at": now,
+        }
+    )
+    await mongo_db["payment_allocations"].insert_one(
+        {
+            "academy_id": "request-acad",
+            "payment_id": "ledger-request",
+            "invoice_id": "inv-shared",
+        }
+    )
+    await mongo_db["payments"].insert_one(
+        {
+            "payment_id": "legacy-projection",
+            "academy_id": "request-acad",
+            "parent_id": "parent-request",
+            "status": "succeeded",
+            "amount_cents": 12000,
+            "currency": "usd",
+            "invoice_id": "inv-shared",
+            "created_at": now,
+        }
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope("request-acad"):
+        rows = await admin.list_payments_recent()
+        csv_text = await admin.export_report_csv("revenue")
+
+    assert [row["payment_id"] for row in rows] == ["ledger-request"]
     assert csv_text == "month,revenue_cents\r\n2026-06,12000\r\n"
+
+
+@pytest.mark.asyncio
+async def test_admin_revenue_export_counts_allocated_ledger_payment_hidden_by_invoice_row(
+    mongo_db,
+) -> None:
+    await mongo_db["invoices"].insert_one(
+        {
+            "invoice_id": "inv-paid",
+            "academy_id": "request-acad",
+            "parent_id": "parent-request",
+            "student_id": "student-request",
+            "period": "2026-06",
+            "status": "paid",
+            "total_cents": 12000,
+            "balance_due_cents": 0,
+            "currency": "usd",
+            "created_at": datetime(2026, 6, 1, 0, 5, tzinfo=UTC),
+        }
+    )
+    await mongo_db["ledger_payments"].insert_one(
+        {
+            "payment_id": "ledger-request",
+            "academy_id": "request-acad",
+            "parent_id": "parent-request",
+            "status": "succeeded",
+            "amount_cents": 12000,
+            "currency": "usd",
+            "paid_at": datetime(2026, 5, 31, 23, 59, tzinfo=UTC),
+            "created_at": datetime(2026, 6, 1, 0, 6, tzinfo=UTC),
+        }
+    )
+    await mongo_db["payment_allocations"].insert_one(
+        {
+            "academy_id": "request-acad",
+            "payment_id": "ledger-request",
+            "invoice_id": "inv-paid",
+        }
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope("request-acad"):
+        rows = await admin.list_payments_recent()
+        csv_text = await admin.export_report_csv("revenue")
+
+    assert [row["payment_id"] for row in rows] == ["inv-paid"]
+    assert rows[0]["status"] == "paid"
+    assert csv_text == "month,revenue_cents\r\n2026-05,12000\r\n"
 
 
 @pytest.mark.asyncio
@@ -895,6 +1036,122 @@ async def test_admin_revenue_export_dedupes_legacy_subscription_projection(mongo
         csv_text = await admin.export_report_csv("revenue")
 
     assert csv_text == "month,revenue_cents\r\n2026-06,12000\r\n"
+
+
+@pytest.mark.asyncio
+async def test_admin_revenue_query_uses_ledger_paid_at_and_dedupes_legacy_projection(
+    mongo_db,
+) -> None:
+    created_at = datetime(2026, 6, 16, tzinfo=UTC)
+    await mongo_db["ledger_payments"].insert_many(
+        [
+            {
+                "payment_id": "ledger-subscription",
+                "academy_id": "request-acad",
+                "parent_id": "parent-request",
+                "status": "partially_refunded",
+                "amount_cents": 12000,
+                "refunded_cents": 2000,
+                "currency": "usd",
+                "stripe_invoice_id": "in_subscription_paid",
+                "stripe_payment_intent_id": "pi_subscription_paid",
+                "paid_at": datetime(2026, 5, 31, 23, 59, tzinfo=UTC),
+                "created_at": created_at,
+            },
+            {
+                "payment_id": "ledger-default",
+                "academy_id": "default-academy",
+                "parent_id": "parent-default",
+                "status": "succeeded",
+                "amount_cents": 99000,
+                "currency": "usd",
+                "paid_at": datetime(2026, 5, 31, tzinfo=UTC),
+                "created_at": created_at,
+            },
+            {
+                "payment_id": "ledger-created-at-fallback",
+                "academy_id": "request-acad",
+                "parent_id": "parent-request",
+                "status": "succeeded",
+                "amount_cents": 7000,
+                "currency": "usd",
+                # Ledger revenue intentionally ignores legacy payment_date/period.
+                "payment_date": datetime(2026, 5, 31, tzinfo=UTC),
+                "period": "2026-05",
+                "created_at": created_at,
+            },
+        ]
+    )
+    await mongo_db["payment_allocations"].insert_one(
+        {
+            "academy_id": "request-acad",
+            "payment_id": "ledger-subscription",
+            "invoice_id": "inv-subscription",
+        }
+    )
+    await mongo_db["payments"].insert_many(
+        [
+            {
+                "payment_id": "legacy-subscription-projection",
+                "academy_id": "request-acad",
+                "parent_id": "parent-request",
+                "status": "succeeded",
+                "amount_cents": 12000,
+                "currency": "usd",
+                "stripe_payment_intent_id": "pi_subscription_paid",
+                "created_at": created_at,
+            },
+            {
+                "payment_id": "legacy-invoice-projection",
+                "academy_id": "request-acad",
+                "parent_id": "parent-request",
+                "status": "succeeded",
+                "amount_cents": 12000,
+                "currency": "usd",
+                "invoice_id": "inv-subscription",
+                "created_at": created_at,
+            },
+            {
+                "payment_id": "legacy-unique",
+                "academy_id": "request-acad",
+                "parent_id": "parent-request",
+                "status": "succeeded",
+                "amount_cents": 5000,
+                "refunded_cents": 1000,
+                "currency": "usd",
+                "payment_date": "2026-06-02",
+                "created_at": created_at,
+            },
+            {
+                "payment_id": "legacy-paid-status-discount",
+                "academy_id": "request-acad",
+                "parent_id": "parent-request",
+                "status": "paid",
+                "amount": 90.0,
+                "discount_cents": 1000,
+                "currency": "usd",
+                "payment_date": "2026-06-03",
+                "created_at": created_at,
+            },
+            {
+                "payment_id": "legacy-received-precedes-final",
+                "academy_id": "request-acad",
+                "parent_id": "parent-request",
+                "status": "succeeded",
+                "final_amount_cents": 10000,
+                "amount_received_cents": 6000,
+                "currency": "usd",
+                "payment_date": "2026-06-04",
+                "created_at": created_at,
+            },
+        ]
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope("request-acad"):
+        by_month = await admin.revenue_query.execute()
+
+    assert by_month == {"2026-05": 10000, "2026-06": 25000}
 
 
 @pytest.mark.asyncio
