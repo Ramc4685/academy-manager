@@ -166,6 +166,8 @@ def payroll_client() -> Iterator[TestClient]:
             currency="USD",
             status="not_generated",
             period_id=None,
+            warning_count=0,
+            warning_status="clear",
         ),
         MonthlyPayrollRow(
             coach_id="coach-2",
@@ -174,6 +176,8 @@ def payroll_client() -> Iterator[TestClient]:
             currency="USD",
             status="draft",
             period_id="pp-abc",
+            warning_count=1,
+            warning_status="unresolved",
         ),
     ]
     uc = _minimal_admin_use_cases(
@@ -267,6 +271,10 @@ def test_get_monthly_payroll_returns_200(payroll_client) -> None:
     assert len(body["rows"]) == 2
     assert body["rows"][0]["coach_name"] == "Coach One"
     assert body["rows"][1]["coach_name"] == "Coach Two"
+    assert body["rows"][0]["warning_count"] == 0
+    assert body["rows"][0]["warning_status"] == "clear"
+    assert body["rows"][1]["warning_count"] == 1
+    assert body["rows"][1]["warning_status"] == "unresolved"
     assert body["total_amount_cents"] == sum(r["total_amount_cents"] for r in body["rows"])
     assert body["total_amount_cents"] == 30000
 

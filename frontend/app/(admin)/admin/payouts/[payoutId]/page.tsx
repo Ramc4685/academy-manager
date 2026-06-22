@@ -44,11 +44,17 @@ import {
   type MarkPayoutPaidInput,
   type PayoutAuditEntryView,
 } from "@/lib/api/v2/payouts";
+import {
+  approvalWarningMessage,
+  payoutWarningLabel,
+  payoutWarningRepairAction,
+  unpaidReasonGuidance,
+  unpaidReasonLabel,
+} from "@/lib/payroll-warnings";
 import { Avatar } from "@/components/ds/avatar";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
-import { unpaidReasonGuidance, unpaidReasonLabel } from "@/lib/payroll-warnings";
 
 function money(cents: number, currency = "USD"): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
@@ -222,6 +228,7 @@ export default function AdminPayoutReviewPage() {
         periodEnd={period.period_end}
         onChanged={refresh}
       />
+      <WarningBanner period={period} />
       <SummaryCards period={period} />
       <PayLog
         period={period}
@@ -310,7 +317,7 @@ function SummaryCards({ period }: { period: AdminPayoutPeriodView }) {
   const metrics: { label: string; value: string }[] = [
     { label: "Sessions coached", value: String(period.lines.length) },
     { label: "As replacement", value: String(replacementCount) },
-    { label: "Not paid", value: String(period.unpaid_occurrence_ids.length) },
+    { label: "Warnings", value: String(period.payout_warnings.length) },
     { label: "Total pay", value: money(period.total_amount_cents, period.currency) },
   ];
   return (
@@ -323,6 +330,31 @@ function SummaryCards({ period }: { period: AdminPayoutPeriodView }) {
           </div>
         </Card>
       ))}
+    </div>
+  );
+}
+
+function WarningBanner({ period }: { period: AdminPayoutPeriodView }) {
+  if (period.payout_warnings.length === 0) return null;
+  return (
+    <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+      <div className="font-semibold">
+        Resolve {period.payout_warnings.length} payout warning
+        {period.payout_warnings.length === 1 ? "" : "s"} before approval or payment.
+      </div>
+      <ul className="mt-2 space-y-1">
+        {period.payout_warnings.map((warning) => (
+          <li key={warning.occurrence_id}>
+            {payoutWarningLabel(warning)}
+            {warning.session_title ? ` · ${warning.session_title}` : ""}:{" "}
+            {payoutWarningRepairAction(warning)}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2">
+        For approved or paid payouts, reopen with a reason, repair the source data, recompute,
+        then approve or mark paid again.
+      </p>
     </div>
   );
 }
@@ -398,7 +430,18 @@ function Actions({
   };
 
   const busy = recompute.isPending || approve.isPending || reopen.isPending || markPaid.isPending;
-  const unresolvedUnpaid = period.unpaid_occurrences.filter((occ) => occ.unresolved).length;
+  const unresolvedOccurrenceIds = new Set<string>();
+  for (const warning of period.payout_warnings) {
+    unresolvedOccurrenceIds.add(warning.occurrence_id);
+  }
+  for (const occ of period.unpaid_occurrences) {
+    if (occ.unresolved) unresolvedOccurrenceIds.add(occ.occurrence_id);
+  }
+  for (const occurrenceId of period.unpaid_occurrence_ids) {
+    unresolvedOccurrenceIds.add(occurrenceId);
+  }
+  const unresolvedCount = unresolvedOccurrenceIds.size;
+  const unresolvedMessage = approvalWarningMessage(unresolvedCount);
 
   return (
     <div className="space-y-2">
@@ -424,11 +467,11 @@ function Actions({
             icon={<CheckCircle2 className="size-4" aria-hidden="true" />}
             label="Approve"
             title={
-              unresolvedUnpaid > 0
+              unresolvedCount > 0
                 ? "Repair unpaid occurrences and recompute before approval."
                 : "Lock the lines and move this payout to approved."
             }
-            disabled={busy || unresolvedUnpaid > 0}
+            disabled={busy || unresolvedCount > 0}
             onClick={() => approve.mutate()}
             primary
           />
@@ -438,7 +481,7 @@ function Actions({
             icon={<CheckCircle2 className="size-4" aria-hidden="true" />}
             label="Mark paid"
             title="Record that this approved payout has been paid out."
-            disabled={markPaid.isPending}
+            disabled={markPaid.isPending || unresolvedCount > 0}
             onClick={() => setShowPaid(true)}
             primary
           />
@@ -458,12 +501,11 @@ function Actions({
           {error}
         </p>
       )}
-      {unresolvedUnpaid > 0 && period.status === "draft" ? (
-        <p className="text-sm text-amber-700">
-          {unresolvedUnpaid} unpaid occurrence{unresolvedUnpaid === 1 ? "" : "s"} must be repaired
-          and recomputed before approval.
+      {unresolvedMessage && (
+        <p role="alert" className="text-sm text-amber-800">
+          {unresolvedMessage}
         </p>
-      ) : null}
+      )}
       {showPaid && (
         <MarkPaidDialog
           defaultAmountCents={period.total_amount_cents}
@@ -570,11 +612,18 @@ function PayLog({
                   <td className="px-3 py-3 text-xs text-rally-muted">—</td>
                   <td className="px-3 py-3">
                     <span className="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-amber-800">
-                      {unpaidReasonLabel(occ.reason)}
+                      {occ.reason ? unpaidReasonLabel(occ.reason) : "Not paid"}
                     </span>
-                    <p className="mt-1 max-w-[260px] text-xs text-rally-muted">
-                      {occ.detail || unpaidReasonGuidance(occ.reason)}
-                    </p>
+                    <div className="mt-1 max-w-[260px] text-xs text-rally-muted">
+                      {occ.reason
+                        ? occ.message || occ.detail || unpaidReasonGuidance(occ.reason)
+                        : "No pay line was created."}
+                    </div>
+                    <div className="mt-0.5 text-xs text-amber-800">
+                      {occ.repair_action
+                        ? payoutWarningRepairAction({ repair_action: occ.repair_action })
+                        : occ.detail || unpaidReasonGuidance(occ.reason)}
+                    </div>
                   </td>
                   <td className="px-3 py-3 text-right font-mono text-rally-muted">—</td>
                   <td className="px-3 py-3 text-right font-mono tabular-nums text-rally-muted line-through">

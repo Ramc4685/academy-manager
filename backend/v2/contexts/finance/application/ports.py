@@ -26,6 +26,7 @@ from typing import Protocol
 from backend.v2.contexts.finance.domain.payout_audit import PayoutAuditEntry
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
+    PayoutWarning,
     PersistedPayoutLine,
     PersistedUnpaidOccurrence,
 )
@@ -148,6 +149,8 @@ class PayoutCalculation(Protocol):
     def unpaid_occurrence_ids(self) -> list[str]: ...
     @property
     def unpaid_occurrences(self) -> list[PersistedUnpaidOccurrence]: ...
+    @property
+    def payout_warnings(self) -> list[PayoutWarning]: ...
 
 
 class PayoutCalculator(Protocol):

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from backend.v2.contexts.finance.domain.payout_period import PayoutPeriod
+from backend.v2.contexts.finance.domain.payout_period import PayoutPeriod, PayoutWarning
 
 UTC_ = UTC
 
@@ -20,6 +20,7 @@ def make_fake_period(
     status: str = "draft",
     total_minor: int = 0,
     currency: str = "MYR",
+    payout_warnings: list[PayoutWarning] | None = None,
     unpaid_occurrence_ids: list[str] | None = None,
 ) -> PayoutPeriod:
     # model_construct bypasses the total_minor == sum(lines) validator so tests
@@ -36,6 +37,7 @@ def make_fake_period(
         lines=[],
         unpaid_occurrence_ids=unpaid_occurrence_ids or [],
         unpaid_occurrences=[],
+        payout_warnings=payout_warnings or [],
         generated_at=datetime(2026, 6, 13, tzinfo=UTC_),
         approved_at=None,
         paid_at=None,
@@ -172,8 +174,13 @@ class _FakeOccurrenceReader:
 
 
 class _FakeCalculator:
-    def __init__(self, totals: dict[str, tuple[int, str, list[str] | None]]) -> None:
-        self._totals = totals  # coach_id -> (total_minor, currency, unpaid_ids)
+    def __init__(
+        self,
+        totals: dict[str, tuple[int, str] | tuple[int, str, list[str] | None]],
+        warnings: dict[str, list[PayoutWarning]] | None = None,
+    ) -> None:
+        self._totals = totals  # coach_id -> (total_minor, currency[, unpaid_ids])
+        self._warnings = warnings or {}
 
     async def calculate(
         self, *, coach_id: str, academy_id: str, period_start: datetime, period_end: datetime
@@ -186,15 +193,40 @@ class _FakeCalculator:
             currency: str
             lines: list = None
             unpaid_occurrence_ids: list = None
+            payout_warnings: list = None
             unpaid_occurrences: list = None
 
             def __post_init__(self):
                 object.__setattr__(self, "lines", self.lines or [])
                 object.__setattr__(self, "unpaid_occurrence_ids", self.unpaid_occurrence_ids or [])
+                object.__setattr__(self, "payout_warnings", self.payout_warnings or [])
                 object.__setattr__(self, "unpaid_occurrences", self.unpaid_occurrences or [])
 
-        total, currency, unpaid_ids = self._totals.get(coach_id, (0, "MYR", []))
-        return _Calc(total_minor=total, currency=currency, unpaid_occurrence_ids=unpaid_ids)
+        result = self._totals.get(coach_id, (0, "MYR", []))
+        total, currency = result[0], result[1]
+        unpaid_ids = result[2] if len(result) > 2 else []
+        return _Calc(
+            total_minor=total,
+            currency=currency,
+            unpaid_occurrence_ids=unpaid_ids,
+            payout_warnings=self._warnings.get(coach_id, []),
+        )
+
+
+def _warning(**overrides) -> PayoutWarning:
+    base = dict(
+        occurrence_id="occ-warning",
+        reason="missing_session_price_for_percent_revenue",
+        severity="blocking",
+        message="Missing session price for percent-of-revenue pay.",
+        occurred_at=datetime(2026, 6, 10, 18, tzinfo=UTC_),
+        session_id=None,
+        session_title=None,
+        coach_id="c1",
+        repair_action="set_session_fee_and_recompute",
+    )
+    base.update(overrides)
+    return PayoutWarning(**base)
 
 
 @pytest.mark.asyncio
@@ -238,11 +270,16 @@ async def test_rows_include_unresolved_unpaid_count_even_when_total_is_nonzero()
             period_start=JUNE_START,
             period_end=JUNE_END,
             academy_id="a1",
+            status="draft",
             total_minor=40000,
             unpaid_occurrence_ids=["occ-gap"],
+            payout_warnings=[_warning(coach_id="c1")],
         )
     )
-    calc = _FakeCalculator({"c2": (18000, "MYR", ["occ-missing-price"])})
+    calc = _FakeCalculator(
+        {"c2": (18000, "MYR", ["occ-missing-price"])},
+        warnings={"c2": [_warning(coach_id="c2", occurrence_id="occ-c2")]},
+    )
 
     rows = await ListMonthlyPayroll(reader=reader, periods=repo, calculator=calc).execute(
         academy_id="a1", period_start=JUNE_START, period_end=JUNE_END
@@ -251,8 +288,12 @@ async def test_rows_include_unresolved_unpaid_count_even_when_total_is_nonzero()
 
     assert by_coach["c1"].total_minor == 40000
     assert by_coach["c1"].unresolved_unpaid_count == 1
+    assert by_coach["c1"].warning_count == 1
+    assert by_coach["c1"].warning_status == "unresolved"
     assert by_coach["c2"].total_minor == 18000
     assert by_coach["c2"].unresolved_unpaid_count == 1
+    assert by_coach["c2"].warning_count == 1
+    assert by_coach["c2"].warning_status == "unresolved"
 
 
 @pytest.mark.asyncio

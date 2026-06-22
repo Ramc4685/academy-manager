@@ -21,6 +21,8 @@ class MonthlyPayrollRow:
     status: str  # "not_generated" | "draft" | "approved" | "paid"
     period_id: str | None
     unresolved_unpaid_count: int = 0
+    warning_count: int = 0
+    warning_status: str = "clear"  # "clear" | "unresolved"
 
 
 class ListMonthlyPayroll:
@@ -59,7 +61,18 @@ class ListMonthlyPayroll:
                         currency=period.currency,
                         status=period.status,
                         period_id=period.period_id,
-                        unresolved_unpaid_count=len(period.unpaid_occurrence_ids),
+                        unresolved_unpaid_count=len(
+                            [row for row in period.unpaid_occurrences if row.unresolved]
+                        )
+                        or len(period.unpaid_occurrence_ids),
+                        warning_count=len(period.payout_warnings),
+                        warning_status=(
+                            "unresolved"
+                            if period.payout_warnings
+                            or period.unpaid_occurrence_ids
+                            or any(row.unresolved for row in period.unpaid_occurrences)
+                            else "clear"
+                        ),
                     )
                 )
             else:
@@ -78,6 +91,13 @@ class ListMonthlyPayroll:
                         status="not_generated",
                         period_id=None,
                         unresolved_unpaid_count=len(calc.unpaid_occurrence_ids),
+                        warning_count=len(getattr(calc, "payout_warnings", [])),
+                        warning_status=(
+                            "unresolved"
+                            if getattr(calc, "payout_warnings", [])
+                            or getattr(calc, "unpaid_occurrence_ids", [])
+                            else "clear"
+                        ),
                     )
                 )
         return sorted(rows, key=lambda r: r.coach_id)

@@ -1,9 +1,14 @@
+import type { AdminMonthlyPayrollRow } from "./api/v2/payroll";
+import type { PayoutWarning, PayoutWarningReason } from "./api/v2/payouts";
+
 export type UnpaidOccurrenceReason =
   | "no_rate_configured"
   | "rate_gap"
   | "missing_session_price_for_percent_revenue"
   | "attendance_override"
-  | "unknown_unpaid_reason";
+  | "unknown_unpaid_reason"
+  | "missing_rate"
+  | "missing_percent";
 
 export type RateTimelineIssueType =
   | "gap"
@@ -13,6 +18,38 @@ export type RateTimelineIssueType =
   | "multiple_open_ended_rows"
   | "invalid_window"
   | "malformed_history";
+
+const WARNING_LABELS: Record<PayoutWarningReason, string> = {
+  missing_session_price_for_percent_revenue:
+    "Missing session price for percent-of-revenue pay",
+  missing_rate: "Missing coach pay rate",
+  missing_percent: "Missing percent on coach pay rate",
+};
+
+const REPAIR_ACTIONS: Record<string, string> = {
+  set_session_fee_and_recompute: "Set session fee, then recompute payout.",
+  set_coach_rate_and_recompute: "Set coach rate, then recompute payout.",
+};
+
+export function rowHasUnresolvedWarnings(row: AdminMonthlyPayrollRow): boolean {
+  return row.warning_status === "unresolved" && row.warning_count > 0;
+}
+
+export function payoutWarningLabel(warning: Pick<PayoutWarning, "reason" | "message">): string {
+  return WARNING_LABELS[warning.reason] ?? warning.message;
+}
+
+export function payoutWarningRepairAction(
+  warning: Pick<PayoutWarning, "repair_action">,
+): string {
+  return REPAIR_ACTIONS[warning.repair_action] ?? warning.repair_action;
+}
+
+export function approvalWarningMessage(warningCount: number): string | null {
+  if (warningCount <= 0) return null;
+  const noun = warningCount === 1 ? "warning" : "warnings";
+  return `Resolve ${warningCount} payout ${noun} before approving or marking this payout paid.`;
+}
 
 export function payrollRowNeedsWarning(row: {
   session_count: number;
@@ -33,6 +70,10 @@ export function unpaidReasonLabel(reason: UnpaidOccurrenceReason | string): stri
       return "Rate gap";
     case "missing_session_price_for_percent_revenue":
       return "Missing session price";
+    case "missing_rate":
+      return "Missing coach pay rate";
+    case "missing_percent":
+      return "Missing percent";
     case "attendance_override":
       return "Attendance override";
     default:
@@ -48,6 +89,10 @@ export function unpaidReasonGuidance(reason: UnpaidOccurrenceReason | string): s
       return "Repair the coach pay-rate window, then recompute the draft payout period.";
     case "missing_session_price_for_percent_revenue":
       return "Add the missing session price basis, then recompute this draft payout period.";
+    case "missing_rate":
+      return "Set a coach pay rate, then recompute this draft payout period.";
+    case "missing_percent":
+      return "Set the percent on the coach pay rate, then recompute this draft payout period.";
     case "attendance_override":
       return "Review the attendance entry that explains why this occurrence was not paid.";
     default:

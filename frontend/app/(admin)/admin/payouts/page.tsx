@@ -9,7 +9,7 @@ import {
   exportMonthlyPayrollXlsx,
 } from "@/lib/api/v2/payroll";
 import { generatePayoutPeriod } from "@/lib/api/v2/payouts";
-import { payrollRowNeedsWarning } from "@/lib/payroll-warnings";
+import { rowHasUnresolvedWarnings } from "@/lib/payroll-warnings";
 import { MonthPicker } from "./_components/MonthPicker";
 
 export default function PayoutsPage() {
@@ -51,7 +51,9 @@ export default function PayoutsPage() {
   });
 
   const rows = data?.rows ?? [];
-  const warningRows = rows.filter(payrollRowNeedsWarning);
+  const warningRows = rows.filter(
+    (row) => rowHasUnresolvedWarnings(row) || (row.unresolved_unpaid_count ?? 0) > 0,
+  );
 
   return (
     <div className="space-y-4 p-6" data-testid="admin-payouts">
@@ -65,10 +67,8 @@ export default function PayoutsPage() {
           <strong>
             {warningRows.length} coach{warningRows.length > 1 ? "es" : ""}
           </strong>{" "}
-          have unpaid payroll occurrences that need review before approval.{" "}
-          <a href="/admin/coaches" className="underline font-medium">
-            Review rates →
-          </a>
+          have unresolved payroll warnings or unpaid occurrences. Open each payout, repair the
+          session fee or coach rate, then recompute before approval.
         </div>
       )}
 
@@ -106,6 +106,7 @@ export default function PayoutsPage() {
               <th className="py-2 pr-4 font-medium">Sessions</th>
               <th className="py-2 pr-4 font-medium">Unpaid</th>
               <th className="py-2 pr-4 font-medium">Total</th>
+              <th className="py-2 pr-4 font-medium">Warnings</th>
               <th className="py-2 pr-4 font-medium">Status</th>
               <th className="py-2 font-medium" />
             </tr>
@@ -126,6 +127,15 @@ export default function PayoutsPage() {
                 </td>
                 <td className="py-2 pr-4">
                   {(row.total_amount_cents / 100).toFixed(2)} {row.currency}
+                </td>
+                <td className="py-2 pr-4">
+                  {row.warning_count > 0 ? (
+                    <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                      {row.warning_count} unresolved
+                    </span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">Clear</span>
+                  )}
                 </td>
                 <td className="py-2 pr-4">
                   <StatusChip status={row.status} />

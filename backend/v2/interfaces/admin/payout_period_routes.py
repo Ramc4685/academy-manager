@@ -27,6 +27,7 @@ from backend.v2.interfaces.admin.views import (
     AdminPayoutPayslipView,
     AdminPayoutPeriodLineView,
     AdminPayoutPeriodView,
+    AdminPayoutWarningView,
     AdminUnpaidOccurrenceView,
     GeneratePayoutPeriodRequest,
     MarkPayoutPeriodPaidRequest,
@@ -67,7 +68,22 @@ def _line_view(line: Any) -> AdminPayoutPeriodLineView:
     )
 
 
+def _warning_view(warning: Any) -> AdminPayoutWarningView:
+    return AdminPayoutWarningView(
+        occurrence_id=warning.occurrence_id,
+        reason=warning.reason,
+        severity=warning.severity,
+        message=warning.message,
+        occurred_at=warning.occurred_at,
+        session_id=warning.session_id,
+        session_title=warning.session_title,
+        coach_id=warning.coach_id,
+        repair_action=warning.repair_action,
+    )
+
+
 def _period_view(period: Any) -> AdminPayoutPeriodView:
+    payout_warnings = [_warning_view(warning) for warning in period.payout_warnings]
     structured_unpaid = [
         AdminUnpaidOccurrenceView(
             occurrence_id=row.occurrence_id,
@@ -87,6 +103,25 @@ def _period_view(period: Any) -> AdminPayoutPeriodView:
             )
             for occurrence_id in period.unpaid_occurrence_ids
         ]
+    unpaid_occurrence_ids = {row.occurrence_id for row in structured_unpaid}
+    for warning in payout_warnings:
+        if warning.occurrence_id in unpaid_occurrence_ids:
+            continue
+        structured_unpaid.append(
+            AdminUnpaidOccurrenceView(
+                occurrence_id=warning.occurrence_id,
+                reason=warning.reason,
+                detail=warning.message,
+                unresolved=True,
+                occurred_at=warning.occurred_at,
+                session_id=warning.session_id,
+                session_title=warning.session_title,
+                severity=warning.severity,
+                message=warning.message,
+                coach_id=warning.coach_id,
+                repair_action=warning.repair_action,
+            )
+        )
     return AdminPayoutPeriodView(
         period_id=period.period_id,
         coach_id=period.coach_id,
@@ -98,6 +133,7 @@ def _period_view(period: Any) -> AdminPayoutPeriodView:
         lines=[_line_view(line) for line in period.lines],
         unpaid_occurrence_ids=list(period.unpaid_occurrence_ids),
         unpaid_occurrences=structured_unpaid,
+        payout_warnings=payout_warnings,
         generated_at=period.generated_at,
         approved_at=period.approved_at,
         paid_at=period.paid_at,
@@ -128,16 +164,59 @@ async def _enriched_period_view(use_cases: AdminUseCases, period: Any) -> AdminP
         )
         for line in view.lines
     ]
+    warnings_by_occurrence = {warning.occurrence_id: warning for warning in view.payout_warnings}
+    warnings = [
+        warning.model_copy(
+            update={
+                "occurred_at": warning.occurred_at
+                or descriptions.get(warning.occurrence_id, {}).get("occurred_at"),
+                "session_id": warning.session_id
+                or descriptions.get(warning.occurrence_id, {}).get("session_id"),
+                "session_title": warning.session_title
+                or descriptions.get(warning.occurrence_id, {}).get("session_title"),
+            }
+        )
+        for warning in view.payout_warnings
+    ]
+    warnings_by_occurrence = {warning.occurrence_id: warning for warning in warnings}
     unpaid = [
         occ.model_copy(
             update={
                 "occurred_at": descriptions.get(occ.occurrence_id, {}).get("occurred_at"),
+                "session_id": descriptions.get(occ.occurrence_id, {}).get("session_id"),
                 "session_title": descriptions.get(occ.occurrence_id, {}).get("session_title"),
+                "reason": (
+                    warnings_by_occurrence[occ.occurrence_id].reason
+                    if occ.occurrence_id in warnings_by_occurrence
+                    else occ.reason
+                ),
+                "severity": (
+                    warnings_by_occurrence[occ.occurrence_id].severity
+                    if occ.occurrence_id in warnings_by_occurrence
+                    else None
+                ),
+                "message": (
+                    warnings_by_occurrence[occ.occurrence_id].message
+                    if occ.occurrence_id in warnings_by_occurrence
+                    else occ.detail
+                ),
+                "coach_id": (
+                    warnings_by_occurrence[occ.occurrence_id].coach_id
+                    if occ.occurrence_id in warnings_by_occurrence
+                    else None
+                ),
+                "repair_action": (
+                    warnings_by_occurrence[occ.occurrence_id].repair_action
+                    if occ.occurrence_id in warnings_by_occurrence
+                    else None
+                ),
             }
         )
         for occ in view.unpaid_occurrences
     ]
-    return view.model_copy(update={"lines": lines, "unpaid_occurrences": unpaid})
+    return view.model_copy(
+        update={"lines": lines, "unpaid_occurrences": unpaid, "payout_warnings": warnings}
+    )
 
 
 def _payout_periods(use_cases: AdminUseCases) -> PayoutPeriodRepository:
@@ -393,6 +472,8 @@ async def export_payout_period_xlsx(
             "Expected revenue",
             "Pay",
             "Adjustment",
+            "Warning reason",
+            "Repair action",
         ]
     )
     for line in view.lines:
@@ -412,6 +493,8 @@ async def export_payout_period_xlsx(
                     if line.original_amount_cents is not None
                     else ""
                 ),
+                "",
+                "",
             ]
         )
     for unpaid in view.unpaid_occurrences:
@@ -425,6 +508,8 @@ async def export_payout_period_xlsx(
                 None,
                 0,
                 "",
+                unpaid.reason or "",
+                unpaid.repair_action or "",
             ]
         )
 

@@ -943,6 +943,10 @@ function SessionEditDialog({
             }
             className={inputClass}
           />
+          <p className="text-xs text-amber-700">
+            Percent-paid coaches require a session price for payroll. Leave blank only when
+            pricing is not configured; enter 0 for an explicitly free session.
+          </p>
         </Field>
         <Field label="Reason">
           <input

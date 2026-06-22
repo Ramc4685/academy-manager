@@ -275,7 +275,7 @@ class EditSession:
         if current is None:
             raise SessionNotFound("session missing", session_id=cmd.session_id)
 
-        update: dict[str, object] = {}
+        update: dict[str, object | None] = {}
         for field_name in (
             "coach_id",
             "title",
@@ -290,7 +290,9 @@ class EditSession:
             "timezone",
         ):
             value = getattr(cmd, field_name)
-            if value is not None:
+            if value is not None or (
+                field_name == "amount_cents" and field_name in cmd.model_fields_set
+            ):
                 update[field_name] = value
 
         recurring_values = {

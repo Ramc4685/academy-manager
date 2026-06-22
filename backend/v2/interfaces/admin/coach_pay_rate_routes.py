@@ -77,6 +77,29 @@ def _list_rates(use_cases: AdminUseCases) -> ListCoachPayRates:
     return use_case  # type: ignore[return-value]
 
 
+async def _sessions_with_missing_price_for_coach(
+    use_cases: AdminUseCases,
+    coach_id: str,
+) -> list[str]:
+    list_sessions = use_cases.list_admin_sessions
+    if list_sessions is None:
+        return []
+    rows = await list_sessions(None, window="upcoming", coach_id=coach_id)  # type: ignore[operator]
+    missing: list[str] = []
+    for row in rows:
+        amount = (
+            row.get("amount_cents") if isinstance(row, dict) else getattr(row, "amount_cents", None)
+        )
+        if amount is not None:
+            continue
+        title = row.get("title") if isinstance(row, dict) else getattr(row, "title", None)
+        session_id = (
+            row.get("session_id") if isinstance(row, dict) else getattr(row, "session_id", None)
+        )
+        missing.append(str(title or session_id or "session"))
+    return missing
+
+
 def _repair_rate(use_cases: AdminUseCases) -> RepairCoachRateWindow:
     use_case = use_cases.repair_coach_pay_rate_window
     if use_case is None:
@@ -104,6 +127,21 @@ async def set_coach_pay_rate(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminCoachPayRateView:
+    if body.billing_unit == "percent_of_revenue":
+        if body.percent is None:
+            raise HTTPException(
+                status_code=400, detail="percent is required for percent_of_revenue rates"
+            )
+        missing_sessions = await _sessions_with_missing_price_for_coach(use_cases, coach_id)
+        if missing_sessions:
+            preview = ", ".join(missing_sessions[:3])
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Percent-of-revenue coach pay requires session prices. "
+                    f"Set a session fee or explicit $0 price for: {preview}"
+                ),
+            )
     try:
         rate = await _set_rate(use_cases).execute(
             SetCoachPayRateCommand(

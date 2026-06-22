@@ -31,6 +31,7 @@ from backend.v2.contexts.finance.domain.payout_audit import PayoutAuditEntry
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
     PayoutPeriodStateError,
+    PayoutWarning,
     PersistedPayoutLine,
     reopen,
 )
@@ -138,6 +139,12 @@ class RecomputePayoutPeriod(_Audited):
                 "lines": lines,
                 "unpaid_occurrence_ids": list(calc.unpaid_occurrence_ids),
                 "unpaid_occurrences": list(calc.unpaid_occurrences),
+                "payout_warnings": [
+                    PayoutWarning.model_validate(
+                        warning.model_dump() if hasattr(warning, "model_dump") else warning
+                    )
+                    for warning in getattr(calc, "payout_warnings", [])
+                ],
                 "generated_at": self._clock(),
             }
         )

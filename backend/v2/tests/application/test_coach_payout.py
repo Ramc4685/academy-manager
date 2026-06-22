@@ -706,6 +706,7 @@ async def test_missing_rate_marks_occurrence_unpaid_but_does_not_crash() -> None
     assert statement.lines == []
     assert statement.total_minor == 0
     assert statement.unpaid_occurrence_ids == ["occ-1"]
+    assert [warning.reason for warning in statement.payout_warnings] == ["missing_rate"]
     assert statement.unpaid_occurrences[0].occurrence_id == "occ-1"
     assert statement.unpaid_occurrences[0].reason == "no_rate_configured"
 
@@ -827,6 +828,7 @@ async def test_percent_of_revenue_rate_pays_share_of_expected_revenue() -> None:
     assert statement.total_minor == 18000
     assert statement.lines[0].percent_bps == 6000
     assert statement.lines[0].expected_revenue_minor == 30000
+    assert statement.payout_warnings == []
 
 
 @pytest.mark.asyncio
@@ -893,7 +895,82 @@ async def test_percent_rate_without_expected_revenue_marks_unpaid() -> None:
     )
     assert statement.lines == []
     assert statement.unpaid_occurrence_ids == ["occ-1"]
-    assert statement.unpaid_occurrences[0].reason == ("missing_session_price_for_percent_revenue")
+    assert [warning.reason for warning in statement.payout_warnings] == [
+        "missing_session_price_for_percent_revenue"
+    ]
+    assert statement.payout_warnings[0].repair_action == "set_session_fee_and_recompute"
+    assert statement.unpaid_occurrences[0].reason == "missing_session_price_for_percent_revenue"
+
+
+@pytest.mark.asyncio
+async def test_percent_rate_with_explicit_zero_expected_revenue_creates_zero_line() -> None:
+    rate = CoachRate(
+        rate_id="cr-percent",
+        academy_id="acad-1",
+        coach_id="coach-A",
+        billing_unit="percent_of_revenue",
+        amount_minor=0,
+        percent_bps=6000,
+        currency="USD",
+        effective_from=_dt("2026-01-01T00:00:00"),
+        effective_until=None,
+        status="active",
+    )
+    occ = _occurrence(
+        "occ-free",
+        start="2026-05-10T18:00:00",
+        end="2026-05-10T19:00:00",
+        expected_revenue_minor=0,
+    )
+    statement = await ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery([occ]),
+        rates=FakeRateRepo([rate]),
+    ).execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+
+    assert statement.total_minor == 0
+    assert len(statement.lines) == 1
+    assert statement.lines[0].expected_revenue_minor == 0
+    assert statement.unpaid_occurrence_ids == []
+    assert statement.payout_warnings == []
+
+
+@pytest.mark.asyncio
+async def test_legacy_percent_rate_without_percent_marks_missing_percent_warning() -> None:
+    rate = CoachRate.model_construct(
+        rate_id="cr-legacy-percent",
+        academy_id="acad-1",
+        coach_id="coach-A",
+        billing_unit="percent_of_revenue",
+        amount_minor=0,
+        percent_bps=None,
+        currency="USD",
+        effective_from=_dt("2026-01-01T00:00:00"),
+        effective_until=None,
+        status="active",
+    )
+    occ = _occurrence(
+        "occ-legacy",
+        start="2026-05-10T18:00:00",
+        end="2026-05-10T19:00:00",
+        expected_revenue_minor=10000,
+    )
+    statement = await ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery([occ]),
+        rates=FakeRateRepo([rate]),
+    ).execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+
+    assert statement.unpaid_occurrence_ids == ["occ-legacy"]
+    assert [warning.reason for warning in statement.payout_warnings] == ["missing_percent"]
 
 
 def test_percent_rate_requires_percent_bps() -> None:

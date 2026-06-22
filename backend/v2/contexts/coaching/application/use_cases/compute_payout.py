@@ -50,6 +50,8 @@ from backend.v2.contexts.coaching.domain.payout import (
     PayoutLine,
     PayoutStatement,
     PayoutUnpaidOccurrence,
+    PayoutWarning,
+    PayoutWarningReason,
     UnpaidOccurrenceReason,
 )
 
@@ -122,6 +124,44 @@ def _compute_line_amount_minor(
     raise ValueError(f"Unknown billing_unit: {rate.billing_unit!r}")
 
 
+def _warning_for_unpaid(
+    occ: PayableOccurrence,
+    *,
+    coach_id: str,
+    reason: PayoutWarningReason,
+) -> PayoutWarning:
+    if reason == "missing_rate":
+        message = "No coach pay rate was active for this completed occurrence."
+        repair_action = "set_coach_rate_and_recompute"
+    elif reason == "missing_percent":
+        message = "Percent-of-revenue pay is missing its percent value."
+        repair_action = "set_coach_rate_and_recompute"
+    else:
+        message = "Missing session price for percent-of-revenue pay."
+        repair_action = "set_session_fee_and_recompute"
+    return PayoutWarning(
+        occurrence_id=occ.occurrence_id,
+        reason=reason,
+        severity="blocking",
+        message=message,
+        occurred_at=occ.start_at,
+        coach_id=coach_id,
+        repair_action=repair_action,
+    )
+
+
+def _uncomputed_warning_reason(
+    rate: CoachRate,
+    expected_revenue_minor: int | None,
+) -> PayoutWarningReason:
+    if rate.billing_unit == "percent_of_revenue":
+        if rate.percent_bps is None:
+            return "missing_percent"
+        if expected_revenue_minor is None:
+            return "missing_session_price_for_percent_revenue"
+    return "missing_rate"
+
+
 def _ensure_statement_currency(current: str | None, incoming: str, *, coach_id: str) -> str:
     if current is None:
         return incoming
@@ -169,6 +209,7 @@ class ComputeCoachPayout:
 
         lines: list[PayoutLine] = []
         unpaid: list[str] = []
+        warnings: list[PayoutWarning] = []
         unpaid_occurrences: list[PayoutUnpaidOccurrence] = []
         absent: list[str] = []
         currency: str | None = None
@@ -205,6 +246,7 @@ class ComputeCoachPayout:
                     rate_timeline = await self._rates.list_for_coach(coach_id)
                 reason = _missing_rate_reason(rate_timeline, occ.start_at)
                 unpaid.append(occ.occurrence_id)
+                warnings.append(_warning_for_unpaid(occ, coach_id=coach_id, reason="missing_rate"))
                 unpaid_occurrences.append(
                     PayoutUnpaidOccurrence(
                         occurrence_id=occ.occurrence_id,
@@ -226,11 +268,27 @@ class ComputeCoachPayout:
                 computed = _compute_line_amount_minor(rate, minutes, occ.expected_revenue_minor)
                 if computed is None:
                     unpaid.append(occ.occurrence_id)
+                    warning_reason = _uncomputed_warning_reason(rate, occ.expected_revenue_minor)
+                    warnings.append(
+                        _warning_for_unpaid(
+                            occ,
+                            coach_id=coach_id,
+                            reason=warning_reason,
+                        )
+                    )
                     unpaid_occurrences.append(
                         PayoutUnpaidOccurrence(
                             occurrence_id=occ.occurrence_id,
-                            reason="missing_session_price_for_percent_revenue",
-                            detail="Percent-of-revenue rate needs a session price basis.",
+                            reason=(
+                                "missing_session_price_for_percent_revenue"
+                                if warning_reason == "missing_session_price_for_percent_revenue"
+                                else "unknown_unpaid_reason"
+                            ),
+                            detail=(
+                                "Percent-of-revenue rate needs a session price basis."
+                                if warning_reason == "missing_session_price_for_percent_revenue"
+                                else "Percent-of-revenue rate is missing its percent value."
+                            ),
                         )
                     )
                     continue
@@ -272,5 +330,6 @@ class ComputeCoachPayout:
             total_minor=sum(line.amount_minor for line in lines),
             unpaid_occurrence_ids=unpaid,
             unpaid_occurrences=unpaid_occurrences,
+            payout_warnings=warnings,
             absent_occurrence_ids=absent,
         )
