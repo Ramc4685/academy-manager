@@ -5,7 +5,7 @@ Admin-shaped — academy-wide read fields included. Per docs/security-matrix.md.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, EmailStr, Field, model_validator
@@ -855,6 +855,15 @@ class AdminUnpaidOccurrenceView(BaseModel):
     occurrence_id: str
     occurred_at: datetime | None = None
     session_title: str | None = None
+    reason: Literal[
+        "no_rate_configured",
+        "rate_gap",
+        "missing_session_price_for_percent_revenue",
+        "attendance_override",
+        "unknown_unpaid_reason",
+    ] = "unknown_unpaid_reason"
+    detail: str | None = None
+    unresolved: bool = True
 
 
 class AdminPayoutPeriodView(BaseModel):
@@ -890,6 +899,7 @@ class AdminMonthlyPayrollRow(BaseModel):
     currency: str
     status: str  # not_generated|draft|approved|paid
     period_id: str | None = None
+    unresolved_unpaid_count: int = 0
 
 
 class AdminMonthlyPayrollView(BaseModel):
@@ -955,6 +965,7 @@ class AdminCoachPayRateView(BaseModel):
 
 class AdminCoachPayRateList(BaseModel):
     rates: list[AdminCoachPayRateView]
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
 class SetCoachPayRateRequest(BaseModel):
@@ -963,6 +974,46 @@ class SetCoachPayRateRequest(BaseModel):
     percent: float | None = Field(default=None, ge=0, le=100)
     currency: str = Field(default="USD", min_length=3, max_length=3)
     effective_from: datetime | None = None
+
+    @model_validator(mode="after")
+    def _normalize_effective_from(self) -> SetCoachPayRateRequest:
+        if self.effective_from is not None and self.effective_from.tzinfo is None:
+            self.effective_from = self.effective_from.replace(tzinfo=UTC)
+        elif self.effective_from is not None:
+            self.effective_from = self.effective_from.astimezone(UTC)
+        return self
+
+
+class RepairCoachPayRateWindowRequest(BaseModel):
+    billing_unit: Literal["per_session", "per_hour", "percent_of_revenue"]
+    amount_cents: int = Field(default=0, ge=0)
+    percent: float | None = Field(default=None, ge=0, le=100)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    effective_from: datetime
+    effective_until: datetime
+    reason: str = Field(min_length=1, max_length=1000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _date_only_to_datetime(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        for key in ("effective_from", "effective_until"):
+            value = normalized.get(key)
+            if isinstance(value, str) and len(value) == 10:
+                normalized[key] = f"{value}T00:00:00+00:00"
+        return normalized
+
+    @model_validator(mode="after")
+    def _normalize_effective_window(self) -> RepairCoachPayRateWindowRequest:
+        for key in ("effective_from", "effective_until"):
+            value = getattr(self, key)
+            if value.tzinfo is None:
+                setattr(self, key, value.replace(tzinfo=UTC))
+            else:
+                setattr(self, key, value.astimezone(UTC))
+        return self
 
 
 class AdminExpenseView(BaseModel):  # FINANCE

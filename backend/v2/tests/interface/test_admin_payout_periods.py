@@ -7,7 +7,9 @@ from decimal import Decimal
 
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
+    PayoutPeriodStateError,
     PersistedPayoutLine,
+    PersistedUnpaidOccurrence,
 )
 
 
@@ -61,6 +63,8 @@ class _ApprovePayoutPeriod:
 
     async def execute(self, *, period_id: str) -> PayoutPeriod:
         self.calls.append(period_id)
+        if self.period.unpaid_occurrence_ids:
+            raise PayoutPeriodStateError("unresolved unpaid occurrences remain")
         self.period = self.period.model_copy(
             update={"status": "approved", "approved_at": _dt("2026-06-02T10:00:00")}
         )
@@ -140,6 +144,30 @@ def test_review_payout_period_detail(admin_client):
     assert response.json()["lines"][0]["amount_cents"] == 7500
 
 
+def test_review_payout_period_detail_includes_unpaid_reasons(admin_client):
+    period = _period(
+        unpaid_occurrence_ids=["occ-gap"],
+        unpaid_occurrences=[
+            PersistedUnpaidOccurrence(
+                occurrence_id="occ-gap",
+                reason="rate_gap",
+                detail="Coach pay-rate history has a gap.",
+                unresolved=True,
+            )
+        ],
+    )
+    _wire(admin_client, period)
+
+    response = admin_client.get("/api/v2/admin/payout-periods/pp-1")
+
+    assert response.status_code == 200, response.text
+    unpaid = response.json()["unpaid_occurrences"][0]
+    assert unpaid["occurrence_id"] == "occ-gap"
+    assert unpaid["reason"] == "rate_gap"
+    assert unpaid["detail"] == "Coach pay-rate history has a gap."
+    assert unpaid["unresolved"] is True
+
+
 def test_approve_and_mark_paid_with_metadata_are_idempotent(admin_client):
     _wire(admin_client, _period())
 
@@ -175,6 +203,26 @@ def test_approve_and_mark_paid_with_metadata_are_idempotent(admin_client):
     assert again.status_code == 200, again.text
     assert again.json()["paid_method"] == "bank_transfer"
     assert again.json()["paid_reference"] == "ach-456"
+
+
+def test_approve_payout_period_blocks_unresolved_unpaid_occurrences(admin_client):
+    period = _period(
+        unpaid_occurrence_ids=["occ-gap"],
+        unpaid_occurrences=[
+            PersistedUnpaidOccurrence(
+                occurrence_id="occ-gap",
+                reason="rate_gap",
+                detail="Coach pay-rate history has a gap.",
+                unresolved=True,
+            )
+        ],
+    )
+    _wire(admin_client, period)
+
+    response = admin_client.post("/api/v2/admin/payout-periods/pp-1/approve")
+
+    assert response.status_code == 400
+    assert "unresolved unpaid" in response.json()["error"]["message"]
 
 
 def test_printable_payslip_contains_period_and_lines(admin_client):

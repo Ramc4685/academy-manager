@@ -110,6 +110,7 @@ from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_
 )
 from backend.v2.contexts.coaching.application.use_cases.manage_coach_rates import (
     ListCoachPayRates,
+    RepairCoachRateWindow,
     SetCoachPayRate,
 )
 from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance import (
@@ -124,6 +125,7 @@ from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
     MongoCoachAttendanceRepository,
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_coach_rate_repo import (
+    MongoCoachRateAuditLogRepository,
     MongoCoachRateRepository,
     coach_rate_from_mongo_doc,
 )
@@ -2248,6 +2250,15 @@ class _MongoCoachRateRepository:
             return None
         return coach_rate_from_mongo_doc(doc)
 
+    async def list_for_coach(self, coach_id: str) -> list[CoachRate]:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        cursor = self._db["coach_rates"].find(
+            {"academy_id": current_academy_id(), "coach_id": coach_id},
+            sort=[("effective_from", 1)],
+        )
+        return [coach_rate_from_mongo_doc(doc) async for doc in cursor]
+
 
 class _FinancePayoutCalculator:
     def __init__(self, compute: ComputeCoachPayout) -> None:
@@ -2600,8 +2611,13 @@ def compose_admin(
         }
 
     coach_rates_repo = MongoCoachRateRepository(db)
-    set_coach_pay_rate = SetCoachPayRate(rates=coach_rates_repo)
+    coach_rate_audit = MongoCoachRateAuditLogRepository(db)
+    set_coach_pay_rate = SetCoachPayRate(rates=coach_rates_repo, audit=coach_rate_audit)
     list_coach_pay_rates = ListCoachPayRates(rates=coach_rates_repo)
+    repair_coach_pay_rate_window = RepairCoachRateWindow(
+        rates=coach_rates_repo,
+        audit=coach_rate_audit,
+    )
     record_expense = RecordExpense(expenses=expenses_repo, academy_id=academy_id)
     edit_expense = EditExpense(expenses=expenses_repo)
     delete_expense = DeleteExpense(expenses=expenses_repo)
@@ -4938,6 +4954,7 @@ def compose_admin(
         describe_payout_occurrences=_describe_payout_occurrences,
         set_coach_pay_rate=set_coach_pay_rate,
         list_coach_pay_rates=list_coach_pay_rates,
+        repair_coach_pay_rate_window=repair_coach_pay_rate_window,
         list_admin_sessions=list_admin_sessions,
         get_admin_session=get_admin_session,
         maintain_session_occurrences=maintain_session_occurrences,

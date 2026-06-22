@@ -137,6 +137,7 @@ class RecomputePayoutPeriod(_Audited):
                 "total_minor": total,
                 "lines": lines,
                 "unpaid_occurrence_ids": list(calc.unpaid_occurrence_ids),
+                "unpaid_occurrences": list(calc.unpaid_occurrences),
                 "generated_at": self._clock(),
             }
         )

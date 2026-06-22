@@ -11,6 +11,9 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
+from backend.v2.contexts.coaching.application.use_cases.manage_coach_rates import (
+    CoachRateAuditEntry,
+)
 from backend.v2.contexts.coaching.domain.payout import CoachRate
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -94,4 +97,12 @@ class MongoCoachRateRepository(TenantScopedRepository):
 
     async def insert(self, rate: CoachRate) -> None:
         doc = {k: v for k, v in rate.model_dump(mode="python").items() if k != "academy_id"}
+        await self._insert_one(doc)
+
+
+class MongoCoachRateAuditLogRepository(TenantScopedRepository):
+    collection_name = "coach_rate_audit_log"
+
+    async def append(self, entry: CoachRateAuditEntry) -> None:
+        doc = {k: v for k, v in entry.model_dump(mode="python").items() if k != "academy_id"}
         await self._insert_one(doc)

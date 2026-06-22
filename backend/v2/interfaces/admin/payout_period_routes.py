@@ -68,6 +68,25 @@ def _line_view(line: Any) -> AdminPayoutPeriodLineView:
 
 
 def _period_view(period: Any) -> AdminPayoutPeriodView:
+    structured_unpaid = [
+        AdminUnpaidOccurrenceView(
+            occurrence_id=row.occurrence_id,
+            reason=row.reason,
+            detail=row.detail,
+            unresolved=row.unresolved,
+        )
+        for row in getattr(period, "unpaid_occurrences", [])
+    ]
+    if not structured_unpaid:
+        structured_unpaid = [
+            AdminUnpaidOccurrenceView(
+                occurrence_id=occurrence_id,
+                reason="unknown_unpaid_reason",
+                detail="This payout period was generated before structured unpaid reasons.",
+                unresolved=True,
+            )
+            for occurrence_id in period.unpaid_occurrence_ids
+        ]
     return AdminPayoutPeriodView(
         period_id=period.period_id,
         coach_id=period.coach_id,
@@ -78,6 +97,7 @@ def _period_view(period: Any) -> AdminPayoutPeriodView:
         total_amount_cents=period.total_minor,
         lines=[_line_view(line) for line in period.lines],
         unpaid_occurrence_ids=list(period.unpaid_occurrence_ids),
+        unpaid_occurrences=structured_unpaid,
         generated_at=period.generated_at,
         approved_at=period.approved_at,
         paid_at=period.paid_at,
@@ -109,12 +129,13 @@ async def _enriched_period_view(use_cases: AdminUseCases, period: Any) -> AdminP
         for line in view.lines
     ]
     unpaid = [
-        AdminUnpaidOccurrenceView(
-            occurrence_id=occurrence_id,
-            occurred_at=descriptions.get(occurrence_id, {}).get("occurred_at"),
-            session_title=descriptions.get(occurrence_id, {}).get("session_title"),
+        occ.model_copy(
+            update={
+                "occurred_at": descriptions.get(occ.occurrence_id, {}).get("occurred_at"),
+                "session_title": descriptions.get(occ.occurrence_id, {}).get("session_title"),
+            }
         )
-        for occurrence_id in view.unpaid_occurrence_ids
+        for occ in view.unpaid_occurrences
     ]
     return view.model_copy(update={"lines": lines, "unpaid_occurrences": unpaid})
 
@@ -216,6 +237,8 @@ async def approve_payout_period(
         period = await _approve_payout_period(use_cases).execute(period_id=period_id)
     except LookupError as exc:
         raise PayoutPeriodNotFound(f"Payout period {period_id!r} not found") from exc
+    except ValueError as exc:
+        raise PayoutPeriodInvalidTransition(str(exc)) from exc
     return await _enriched_period_view(use_cases, period)
 
 

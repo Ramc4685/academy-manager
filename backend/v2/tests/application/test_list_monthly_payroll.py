@@ -20,6 +20,7 @@ def make_fake_period(
     status: str = "draft",
     total_minor: int = 0,
     currency: str = "MYR",
+    unpaid_occurrence_ids: list[str] | None = None,
 ) -> PayoutPeriod:
     # model_construct bypasses the total_minor == sum(lines) validator so tests
     # can supply arbitrary totals without building matching line objects.
@@ -33,7 +34,8 @@ def make_fake_period(
         currency=currency,
         total_minor=total_minor,
         lines=[],
-        unpaid_occurrence_ids=[],
+        unpaid_occurrence_ids=unpaid_occurrence_ids or [],
+        unpaid_occurrences=[],
         generated_at=datetime(2026, 6, 13, tzinfo=UTC_),
         approved_at=None,
         paid_at=None,
@@ -170,8 +172,8 @@ class _FakeOccurrenceReader:
 
 
 class _FakeCalculator:
-    def __init__(self, totals: dict[str, tuple[int, str]]) -> None:
-        self._totals = totals  # coach_id -> (total_minor, currency)
+    def __init__(self, totals: dict[str, tuple[int, str, list[str] | None]]) -> None:
+        self._totals = totals  # coach_id -> (total_minor, currency, unpaid_ids)
 
     async def calculate(
         self, *, coach_id: str, academy_id: str, period_start: datetime, period_end: datetime
@@ -184,13 +186,15 @@ class _FakeCalculator:
             currency: str
             lines: list = None
             unpaid_occurrence_ids: list = None
+            unpaid_occurrences: list = None
 
             def __post_init__(self):
                 object.__setattr__(self, "lines", self.lines or [])
                 object.__setattr__(self, "unpaid_occurrence_ids", self.unpaid_occurrence_ids or [])
+                object.__setattr__(self, "unpaid_occurrences", self.unpaid_occurrences or [])
 
-        total, currency = self._totals.get(coach_id, (0, "MYR"))
-        return _Calc(total_minor=total, currency=currency)
+        total, currency, unpaid_ids = self._totals.get(coach_id, (0, "MYR", []))
+        return _Calc(total_minor=total, currency=currency, unpaid_occurrence_ids=unpaid_ids)
 
 
 @pytest.mark.asyncio
@@ -208,7 +212,7 @@ async def test_lists_generated_and_ungenerated_coaches() -> None:
             total_minor=40000,
         )
     )
-    calc = _FakeCalculator({"c2": (18000, "MYR")})
+    calc = _FakeCalculator({"c2": (18000, "MYR", [])})
 
     uc = ListMonthlyPayroll(reader=reader, periods=repo, calculator=calc)
     rows = await uc.execute(academy_id="a1", period_start=JUNE_START, period_end=JUNE_END)
@@ -216,17 +220,46 @@ async def test_lists_generated_and_ungenerated_coaches() -> None:
 
     assert by_coach["c1"].status == "approved"
     assert by_coach["c1"].total_minor == 40000
+    assert by_coach["c1"].unresolved_unpaid_count == 0
     assert by_coach["c1"].period_id is not None
     assert by_coach["c2"].status == "not_generated"
     assert by_coach["c2"].total_minor == 18000
+    assert by_coach["c2"].unresolved_unpaid_count == 0
     assert by_coach["c2"].period_id is None
+
+
+@pytest.mark.asyncio
+async def test_rows_include_unresolved_unpaid_count_even_when_total_is_nonzero() -> None:
+    reader = _FakeOccurrenceReader([("c1", 4), ("c2", 3)])
+    repo = FakePayoutPeriodRepository()
+    await repo.save(
+        make_fake_period(
+            coach_id="c1",
+            period_start=JUNE_START,
+            period_end=JUNE_END,
+            academy_id="a1",
+            total_minor=40000,
+            unpaid_occurrence_ids=["occ-gap"],
+        )
+    )
+    calc = _FakeCalculator({"c2": (18000, "MYR", ["occ-missing-price"])})
+
+    rows = await ListMonthlyPayroll(reader=reader, periods=repo, calculator=calc).execute(
+        academy_id="a1", period_start=JUNE_START, period_end=JUNE_END
+    )
+    by_coach = {r.coach_id: r for r in rows}
+
+    assert by_coach["c1"].total_minor == 40000
+    assert by_coach["c1"].unresolved_unpaid_count == 1
+    assert by_coach["c2"].total_minor == 18000
+    assert by_coach["c2"].unresolved_unpaid_count == 1
 
 
 @pytest.mark.asyncio
 async def test_reader_receives_correct_academy_id() -> None:
     reader = _FakeOccurrenceReader([("c1", 1)])
     repo = FakePayoutPeriodRepository()
-    calc = _FakeCalculator({"c1": (10000, "MYR")})
+    calc = _FakeCalculator({"c1": (10000, "MYR", [])})
 
     uc = ListMonthlyPayroll(reader=reader, periods=repo, calculator=calc)
     await uc.execute(academy_id="acad_blno_badminton", period_start=JUNE_START, period_end=JUNE_END)

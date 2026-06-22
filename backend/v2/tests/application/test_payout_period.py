@@ -33,6 +33,7 @@ from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
     PayoutPeriodStateError,
     PersistedPayoutLine,
+    PersistedUnpaidOccurrence,
     approve,
     mark_paid,
 )
@@ -40,6 +41,18 @@ from backend.v2.contexts.finance.domain.payout_period import (
 
 def _dt(value: str) -> datetime:
     return datetime.fromisoformat(value).replace(tzinfo=UTC)
+
+
+def _unpaid(
+    occurrence_id: str = "occ-unpaid",
+    reason: str = "rate_gap",
+) -> PersistedUnpaidOccurrence:
+    return PersistedUnpaidOccurrence(
+        occurrence_id=occurrence_id,
+        reason=reason,
+        detail="Rate history has no active window for this occurrence.",
+        unresolved=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +74,7 @@ class _Calculation:
         total_minor: int = 0,
         lines: list[PersistedPayoutLine] | None = None,
         unpaid: list[str] | None = None,
+        unpaid_occurrences: list[PersistedUnpaidOccurrence] | None = None,
     ) -> None:
         self.coach_id = coach_id
         self.academy_id = academy_id
@@ -70,6 +84,7 @@ class _Calculation:
         self.total_minor = total_minor
         self.lines = lines or []
         self.unpaid_occurrence_ids = unpaid or []
+        self.unpaid_occurrences = unpaid_occurrences or []
 
 
 class FakeCalculator:
@@ -286,6 +301,7 @@ async def test_generate_persists_a_draft_period() -> None:
         total_minor=5000,
         lines=[line],
         unpaid=["occ-2"],
+        unpaid_occurrences=[_unpaid("occ-2", "rate_gap")],
     )
     repo = FakeRepo()
     use_case = GeneratePayoutPeriod(
@@ -305,6 +321,7 @@ async def test_generate_persists_a_draft_period() -> None:
     assert period.total_minor == 5000
     assert len(period.lines) == 1
     assert period.unpaid_occurrence_ids == ["occ-2"]
+    assert period.unpaid_occurrences[0].reason == "rate_gap"
     assert repo.save_calls == 1
 
 
@@ -393,6 +410,24 @@ async def test_approve_use_case_is_idempotent() -> None:
     await uc.execute(period_id="pp-1")
     # Only the first call writes.
     assert repo.replace_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_approve_use_case_blocks_unresolved_unpaid_occurrences() -> None:
+    repo = FakeRepo()
+    period = _draft_period().model_copy(
+        update={
+            "unpaid_occurrence_ids": ["occ-gap"],
+            "unpaid_occurrences": [_unpaid("occ-gap", "rate_gap")],
+        }
+    )
+    await repo.save(period)
+    uc = ApprovePayoutPeriod(repository=repo, clock=lambda: _dt("2026-06-02T12:00:00"))
+
+    with pytest.raises(PayoutPeriodStateError, match="unresolved unpaid"):
+        await uc.execute(period_id="pp-1")
+
+    assert repo.replace_calls == 0
 
 
 @pytest.mark.asyncio
