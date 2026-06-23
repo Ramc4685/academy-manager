@@ -6,6 +6,32 @@
 import { apiFetch } from "../client";
 import { type AdminEnrollmentView, type AdminStudentView } from "../admin";
 
+export type TuitionDiscountCategory =
+  | "owner_child"
+  | "coach_child"
+  | "scholarship"
+  | "sibling"
+  | "other";
+
+export type TuitionDiscountKind =
+  | "waiver"
+  | "percent"
+  | "amount_off"
+  | "fixed_net";
+
+export interface AdminStudentSessionDiscount {
+  category: TuitionDiscountCategory;
+  category_label?: string | null;
+  kind: TuitionDiscountKind;
+  label: string;
+  gross_cents: number;
+  discount_cents: number;
+  net_cents: number;
+  status: string;
+  effective_start?: string | null;
+  effective_end?: string | null;
+}
+
 export interface AdminStudentSessionSummary {
   enrollment_id: string;
   session_id: string;
@@ -17,6 +43,7 @@ export interface AdminStudentSessionSummary {
   payment_mode?: string | null;
   subscription_status?: string | null;
   amount_cents?: number | null;
+  discount?: AdminStudentSessionDiscount | null;
 }
 
 export interface AdminStudentPaymentSummary {
@@ -122,6 +149,43 @@ export function transferEnrollment(
     {
       method: "POST",
       body: JSON.stringify(payload),
+    },
+  );
+}
+
+export interface SetTuitionDiscountRequest {
+  student_id: string;
+  category: TuitionDiscountCategory;
+  category_label?: string | null;
+  kind: TuitionDiscountKind;
+  percent_bps?: number | null;
+  amount_off_cents?: number | null;
+  fixed_net_cents?: number | null;
+  effective_start: string; // ISO date YYYY-MM-DD
+  effective_end?: string | null;
+  note?: string | null;
+}
+
+export function setTuitionDiscount(
+  enrollmentId: string,
+  payload: SetTuitionDiscountRequest,
+): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(
+    `/admin/enrollments/${encodeURIComponent(enrollmentId)}/tuition-discount`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function removeTuitionDiscount(
+  enrollmentId: string,
+): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(
+    `/admin/enrollments/${encodeURIComponent(enrollmentId)}/tuition-discount`,
+    {
+      method: "DELETE",
     },
   );
 }

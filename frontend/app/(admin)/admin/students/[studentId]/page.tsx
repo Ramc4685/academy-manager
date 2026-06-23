@@ -720,16 +720,36 @@ function SessionsPanel({
                       {formatDateTimeRange(session.start_at, session.end_at)}
                     </td>
                     <td className="py-3 pr-4 align-top">
-                      <div className="font-mono tabular-nums text-rally-ink">
-                        {session.amount_cents == null
-                          ? "—"
-                          : formatCurrencyCents(session.amount_cents)}
-                      </div>
-                      <div className="text-xs text-rally-muted">
-                        {session.payment_mode ??
-                          session.subscription_status ??
-                          "—"}
-                      </div>
+                      {session.discount ? (
+                        <>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono tabular-nums text-rally-ink">
+                              {formatCurrencyCents(session.discount.net_cents)}
+                            </span>
+                            {session.discount.discount_cents > 0 && (
+                              <span className="font-mono text-xs tabular-nums text-rally-muted line-through">
+                                {formatCurrencyCents(session.discount.gross_cents)}
+                              </span>
+                            )}
+                          </div>
+                          <span className="mt-1 inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                            {session.discount.label}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <div className="font-mono tabular-nums text-rally-ink">
+                            {session.amount_cents == null
+                              ? "—"
+                              : formatCurrencyCents(session.amount_cents)}
+                          </div>
+                          <div className="text-xs text-rally-muted">
+                            {session.payment_mode ??
+                              session.subscription_status ??
+                              "—"}
+                          </div>
+                        </>
+                      )}
                     </td>
                     <td className="py-3 pr-4 align-top">
                       <StatusChip
