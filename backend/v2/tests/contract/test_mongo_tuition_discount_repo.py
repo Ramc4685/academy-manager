@@ -9,7 +9,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo impo
     MongoTuitionDiscountRepository,
 )
 
-_CLOCK = lambda: datetime(2026, 6, 23, 12, 0, tzinfo=UTC)
+
+def _CLOCK() -> datetime:
+    return datetime(2026, 6, 23, 12, 0, tzinfo=UTC)
 
 
 def _policy(**kw) -> TuitionDiscount:
@@ -75,12 +77,15 @@ async def test_remove_marks_ended(db, acad) -> None:
 @pytest.mark.asyncio
 async def test_active_by_enrollments_batch(db, acad) -> None:
     repo = MongoTuitionDiscountRepository(db, clock=_CLOCK)
+    await repo.set_active(_policy(discount_id="d-a", enrollment_id="e-a"), set_by="admin-1")
     await repo.set_active(
-        _policy(discount_id="d-a", enrollment_id="e-a"), set_by="admin-1"
-    )
-    await repo.set_active(
-        _policy(discount_id="d-b", enrollment_id="e-b", category="sibling",
-                kind="amount_off", amount_off_cents=4000),
+        _policy(
+            discount_id="d-b",
+            enrollment_id="e-b",
+            category="sibling",
+            kind="amount_off",
+            amount_off_cents=4000,
+        ),
         set_by="admin-1",
     )
 

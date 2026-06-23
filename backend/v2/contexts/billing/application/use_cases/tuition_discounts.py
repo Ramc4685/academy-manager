@@ -15,9 +15,7 @@ from backend.v2.contexts.billing.domain.tuition_discount import (
 
 
 class TuitionDiscountPort(Protocol):
-    async def set_active(
-        self, policy: TuitionDiscount, *, set_by: str
-    ) -> TuitionDiscount: ...
+    async def set_active(self, policy: TuitionDiscount, *, set_by: str) -> TuitionDiscount: ...
 
     async def remove(self, enrollment_id: str, *, ended_by: str) -> None: ...
 

@@ -14,9 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel, model_validator
 
-DiscountCategory = Literal[
-    "owner_child", "coach_child", "scholarship", "sibling", "other"
-]
+DiscountCategory = Literal["owner_child", "coach_child", "scholarship", "sibling", "other"]
 DiscountKind = Literal["waiver", "percent", "amount_off", "fixed_net"]
 DiscountStatus = Literal["active", "superseded", "ended"]
 
@@ -57,7 +55,7 @@ class TuitionDiscount(BaseModel):
     ended_at: datetime | None = None
 
     @model_validator(mode="after")
-    def _check(self) -> "TuitionDiscount":
+    def _check(self) -> TuitionDiscount:
         if self.category == "other" and not (self.category_label or "").strip():
             raise ValueError("category_label is required when category is 'other'")
         if self.kind == "percent":
@@ -67,18 +65,14 @@ class TuitionDiscount(BaseModel):
             self.amount_off_cents is None or self.amount_off_cents < 0
         ):
             raise ValueError("amount_off_cents must be >= 0")
-        if self.kind == "fixed_net" and (
-            self.fixed_net_cents is None or self.fixed_net_cents < 0
-        ):
+        if self.kind == "fixed_net" and (self.fixed_net_cents is None or self.fixed_net_cents < 0):
             raise ValueError("fixed_net_cents must be >= 0")
         if self.effective_end is not None and self.effective_end < self.effective_start:
             raise ValueError("effective_end must be >= effective_start")
         return self
 
 
-def monthly_discount_cents(
-    policy: TuitionDiscount, *, monthly_price_cents: int
-) -> int:
+def monthly_discount_cents(policy: TuitionDiscount, *, monthly_price_cents: int) -> int:
     """Discount expressed at monthly scale, floored into ``[0, monthly_price_cents]``.
 
     This value is fed into ``FirstMonthProrationPolicy.quote(discount_cents=...)``,

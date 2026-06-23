@@ -190,6 +190,7 @@ def test_admin_can_get_and_update_student_detail(admin_client):
             "payment_mode": "monthly",
             "subscription_status": "active",
             "amount_cents": 15000,
+            "discount": None,
         }
     ]
     assert detail_body["payment_history"][0]["balance_due_cents"] == 11000

@@ -22,15 +22,14 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
 from backend.v2.contexts.billing.application.use_cases.issue_refund import (
     IssueRefundCommand,
 )
-from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
-    ApproveWithdrawalCreditCommand,
-    PreviewWithdrawalCreditCommand,
-)
 from backend.v2.contexts.billing.application.use_cases.tuition_discounts import (
     RemoveTuitionDiscountCommand,
     SetTuitionDiscountCommand,
 )
-from backend.v2.shared.ids import new_ulid
+from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
+    ApproveWithdrawalCreditCommand,
+    PreviewWithdrawalCreditCommand,
+)
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
     AdminEnrollmentQuoteRequest,
@@ -72,6 +71,7 @@ from backend.v2.interfaces.admin.views import (
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
+from backend.v2.shared.ids import new_ulid
 
 router = APIRouter(tags=["admin.billing"])
 
@@ -404,9 +404,7 @@ async def remove_tuition_discount(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, bool]:
     await use_cases.remove_tuition_discount.execute(
-        RemoveTuitionDiscountCommand(
-            enrollment_id=enrollment_id, ended_by=claims.user_id
-        )
+        RemoveTuitionDiscountCommand(enrollment_id=enrollment_id, ended_by=claims.user_id)
     )
     return {"ok": True}
 

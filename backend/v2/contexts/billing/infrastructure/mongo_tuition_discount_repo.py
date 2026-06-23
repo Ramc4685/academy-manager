@@ -29,9 +29,7 @@ class MongoTuitionDiscountRepository(TenantScopedRepository):
         super().__init__(db)
         self._clock = clock
 
-    async def set_active(
-        self, policy: TuitionDiscount, *, set_by: str
-    ) -> TuitionDiscount:
+    async def set_active(self, policy: TuitionDiscount, *, set_by: str) -> TuitionDiscount:
         now = self._clock()
         # Supersede any currently active policy for this enrollment.
         await self._update_one(
@@ -47,20 +45,14 @@ class MongoTuitionDiscountRepository(TenantScopedRepository):
         return _to_domain(saved)
 
     async def get_active(self, enrollment_id: str) -> TuitionDiscount | None:
-        doc = await self._find_one(
-            {"enrollment_id": enrollment_id, "status": "active"}
-        )
+        doc = await self._find_one({"enrollment_id": enrollment_id, "status": "active"})
         return _to_domain(doc) if doc else None
 
-    async def active_by_enrollments(
-        self, enrollment_ids: list[str]
-    ) -> dict[str, TuitionDiscount]:
+    async def active_by_enrollments(self, enrollment_ids: list[str]) -> dict[str, TuitionDiscount]:
         if not enrollment_ids:
             return {}
         out: dict[str, TuitionDiscount] = {}
-        cursor = self._find_many(
-            {"enrollment_id": {"$in": enrollment_ids}, "status": "active"}
-        )
+        cursor = self._find_many({"enrollment_id": {"$in": enrollment_ids}, "status": "active"})
         async for doc in cursor:
             out[str(doc["enrollment_id"])] = _to_domain(doc)
         return out
