@@ -55,8 +55,15 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
 )
+from backend.v2.contexts.billing.application.use_cases.tuition_discounts import (
+    RemoveTuitionDiscount,
+    SetTuitionDiscount,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
     MongoCreditLedgerRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo import (
+    MongoTuitionDiscountRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
@@ -928,7 +935,12 @@ def compose_admin(
     # Billing
     billing_ledger_repo = MongoBillingLedgerRepository(db)
     credits_repo = MongoCreditLedgerRepository(db)
-    payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
+    tuition_discounts_repo = MongoTuitionDiscountRepository(db)
+    payments_repo = MongoPaymentRepository(
+        db, credit_ledger=credits_repo, discounts=tuition_discounts_repo
+    )
+    set_tuition_discount = SetTuitionDiscount(discounts=tuition_discounts_repo)
+    remove_tuition_discount = RemoveTuitionDiscount(discounts=tuition_discounts_repo)
     session_type_repo = MongoSessionTypeRepository(db)
     student_billing_enrollment_repo = MongoStudentBillingEnrollmentRepository(db)
     create_session_type = CreateSessionType(
@@ -2298,6 +2310,9 @@ def compose_admin(
         mark_payment_paid=mark_payment_paid,
         apply_payment_discount=apply_payment_discount,
         undo_payment_paid=undo_payment_paid,
+        set_tuition_discount=set_tuition_discount,
+        remove_tuition_discount=remove_tuition_discount,
+        tuition_discounts=tuition_discounts_repo,
         record_expense=record_expense,
         edit_expense=edit_expense,
         delete_expense=delete_expense,

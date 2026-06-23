@@ -178,6 +178,10 @@ class AdminUseCases:
     update_academy_notifications_use_case: UpdateAcademyNotificationsUseCase
     get_academy_gateway_use_case: GetAcademyGatewayUseCase
     change_user_role: ChangeUserRole
+    # recurring tuition discounts (#244)
+    set_tuition_discount: object | None = None  # SetTuitionDiscount
+    remove_tuition_discount: object | None = None  # RemoveTuitionDiscount
+    tuition_discounts: object | None = None  # MongoTuitionDiscountRepository
     get_admin_user: GetAdminUser | None = None
     update_admin_user: UpdateAdminUser | None = None
     create_admin_user: CreateAdminUser | None = None

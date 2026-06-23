@@ -22,6 +22,11 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
     ApproveWithdrawalCreditCommand,
     PreviewWithdrawalCreditCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.tuition_discounts import (
+    RemoveTuitionDiscountCommand,
+    SetTuitionDiscountCommand,
+)
+from backend.v2.shared.ids import new_ulid
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
     AdminEnrollmentQuoteRequest,
@@ -49,6 +54,7 @@ from backend.v2.interfaces.admin.views import (
     IssueRefundRequest,
     MarkPaymentPaidRequest,
     RecordExpenseRequest,
+    SetTuitionDiscountRequest,
     WithdrawalCreditApproveRequest,
     WithdrawalCreditApproveResponse,
     WithdrawalCreditPreviewRequest,
@@ -317,6 +323,47 @@ async def apply_payment_discount(
             payment_id=payment_id,
             discount_cents=body.discount_cents,
             reason=body.reason,
+        )
+    )
+    return {"ok": True}
+
+
+@router.put("/enrollments/{enrollment_id}/tuition-discount")
+async def set_tuition_discount(
+    enrollment_id: str,
+    body: SetTuitionDiscountRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> dict[str, bool]:
+    await use_cases.set_tuition_discount.execute(
+        SetTuitionDiscountCommand(
+            discount_id=str(new_ulid()),
+            enrollment_id=enrollment_id,
+            student_id=body.student_id,
+            category=body.category,
+            category_label=body.category_label,
+            kind=body.kind,
+            percent_bps=body.percent_bps,
+            amount_off_cents=body.amount_off_cents,
+            fixed_net_cents=body.fixed_net_cents,
+            effective_start=body.effective_start,
+            effective_end=body.effective_end,
+            note=body.note,
+            set_by=claims.user_id,
+        )
+    )
+    return {"ok": True}
+
+
+@router.delete("/enrollments/{enrollment_id}/tuition-discount")
+async def remove_tuition_discount(
+    enrollment_id: str,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> dict[str, bool]:
+    await use_cases.remove_tuition_discount.execute(
+        RemoveTuitionDiscountCommand(
+            enrollment_id=enrollment_id, ended_by=claims.user_id
         )
     )
     return {"ok": True}
