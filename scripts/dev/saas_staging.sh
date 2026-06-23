@@ -7,17 +7,26 @@
 #   make up               # build, start, seed, show URLs + creds
 #
 # Or step by step:
-#   scripts/dev/saas_staging.sh up         # build + start the stack
+#   scripts/dev/saas_staging.sh up         # build + start the stack (production staging build)
+#   scripts/dev/saas_staging.sh up-dev     # hot-reload mode: UI + backend reload on save
 #   scripts/dev/saas_staging.sh seed       # seed tenant + Firebase test user
 #   scripts/dev/saas_staging.sh status     # show containers + URLs + creds
 #   scripts/dev/saas_staging.sh smoke      # run the SaaS readiness smoke
+#   scripts/dev/saas_staging.sh audit blno # run launch-readiness audit for a tenant
+#
+# Rebuild individual services without restarting the whole stack:
+#   scripts/dev/saas_staging.sh rebuild-ui  # rebuild + restart frontend only (staging build)
+#   scripts/dev/saas_staging.sh rebuild-api # rebuild + restart backend only
 #
 # Custom test data:
 #   scripts/dev/saas_staging.sh seed --slug blno --domain blno.localhost ...
+#   scripts/dev/saas_staging.sh blno-seed   # seed BLno academy with full realistic data
 #
 # Lifecycle:
 #   scripts/dev/saas_staging.sh logs <svc> # tail logs (backend|frontend|mongo|firebase-emulator)
 #   scripts/dev/saas_staging.sh urls       # just print access URLs
+#   scripts/dev/saas_staging.sh stripe-listen
+#                                            # configure sandbox Stripe webhooks + forward events
 #   scripts/dev/saas_staging.sh reset      # wipe test data, keep stack running
 #   scripts/dev/saas_staging.sh down       # stop containers, keep volumes
 #   scripts/dev/saas_staging.sh nuke       # stop + remove volumes (interactive confirm)
@@ -33,6 +42,8 @@ cd "${REPO_ROOT}"
 PROJECT_NAME="saas-staging"
 COMPOSE_FILES=(-f docker-compose.yml -f docker-compose.saas.yml)
 COMPOSE=(docker compose -p "${PROJECT_NAME}" "${COMPOSE_FILES[@]}")
+COMPOSE_DEV_FILES=(-f docker-compose.yml -f docker-compose.saas.yml -f docker-compose.saas-dev.yml)
+COMPOSE_DEV=(docker compose -p "${PROJECT_NAME}" "${COMPOSE_DEV_FILES[@]}")
 
 LOCAL_DIR="${REPO_ROOT}/.local"
 ENV_FILE="${LOCAL_DIR}/saas-staging.env"
@@ -40,6 +51,9 @@ CREDS_FILE="${LOCAL_DIR}/saas-staging-credentials.json"
 VENV_PYTHON="${VENV_PYTHON:-${REPO_ROOT}/backend/.venv/bin/python}"
 SMOKE_SCRIPT="${REPO_ROOT}/scripts/smoke/saas_readiness_smoke.sh"
 SEED_SCRIPT="${REPO_ROOT}/scripts/dev/seed_saas_staging.py"
+BLNO_SEED_SCRIPT="${REPO_ROOT}/scripts/dev/seed_blno_staging.py"
+STRIPE_WEBHOOK_URL="http://127.0.0.1:8001/api/v2/parent/webhooks/stripe"
+STRIPE_WEBHOOK_EVENTS="checkout.session.completed,checkout.session.expired,payment_intent.succeeded,payment_intent.payment_failed,invoice.paid,invoice.payment_failed,charge.refunded,customer.subscription.updated,customer.subscription.deleted"
 
 # Ports the stack binds. Used by pre-flight + status.
 declare -a REQUIRED_PORTS=(3000 4000 8001 9099 27017)
@@ -91,6 +105,21 @@ preflight() {
 random_hex() { LC_ALL=C openssl rand -hex "${1:-32}"; }
 random_password() { LC_ALL=C openssl rand -base64 36 | tr -d '\n=+/' | cut -c1-28; }
 
+upsert_env_value() {
+  local key="$1"
+  local value="$2"
+  mkdir -p "${LOCAL_DIR}"
+  touch "${ENV_FILE}"
+  chmod 600 "${ENV_FILE}"
+
+  local tmp
+  tmp="$(mktemp)"
+  awk -F= -v key="${key}" '$1 != key { print }' "${ENV_FILE}" > "${tmp}"
+  printf '%s=%s\n' "${key}" "${value}" >> "${tmp}"
+  mv "${tmp}" "${ENV_FILE}"
+  chmod 600 "${ENV_FILE}"
+}
+
 ensure_env_file() {
   if [[ -f "${ENV_FILE}" ]]; then
     return 0
@@ -126,6 +155,48 @@ read_local_env_value() {
   return 1
 }
 
+stripe_test_api_key() {
+  if [[ -n "${STRIPE_API_KEY:-}" ]]; then
+    case "${STRIPE_API_KEY}" in
+      sk_test_*|rk_test_*) printf '%s\n' "${STRIPE_API_KEY}"; return 0 ;;
+      *) die "STRIPE_API_KEY must be a Stripe test-mode secret or restricted key for local SaaS staging." ;;
+    esac
+  fi
+
+  if ! command -v stripe >/dev/null 2>&1; then
+    die "Stripe CLI is required. Install it with: brew install stripe/stripe-cli/stripe"
+  fi
+
+  local tmp key
+  tmp="$(mktemp)"
+  stripe config --list > "${tmp}"
+  key="$(
+    awk -F= '
+      $1 ~ /^[[:space:]]*test_mode_api_key[[:space:]]*$/ {
+        v=$2
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+        gsub(/^'\''|'\''$/, "", v)
+        gsub(/^"|"$/, "", v)
+        print v
+      }
+    ' "${tmp}" | tail -n 1
+  )"
+  rm -f "${tmp}"
+  [[ "${key}" == sk_test_* || "${key}" == rk_test_* ]] || die "Stripe CLI has no test-mode secret key. Run 'stripe login' or export STRIPE_API_KEY=sk_test_..."
+  printf '%s\n' "${key}"
+}
+
+stripe_cli_webhook_secret() {
+  local api_key="$1"
+  local tmp secret
+  tmp="$(mktemp)"
+  stripe listen --api-key "${api_key}" --events "${STRIPE_WEBHOOK_EVENTS}" --print-secret > "${tmp}"
+  secret="$(awk '/whsec_/ { print $NF }' "${tmp}" | tail -n 1)"
+  rm -f "${tmp}"
+  [[ "${secret}" == whsec_* ]] || die "Could not read Stripe CLI webhook signing secret."
+  printf '%s\n' "${secret}"
+}
+
 firebase_api_key() {
   if [[ -n "${NEXT_PUBLIC_FIREBASE_API_KEY:-}" ]]; then
     printf '%s\n' "${NEXT_PUBLIC_FIREBASE_API_KEY}"
@@ -155,6 +226,48 @@ wait_for_url() {
   return 1
 }
 
+replay_migrations() {
+  log "Replaying v2 migrations against SaaS staging Mongo..."
+  PYTHONPATH="${REPO_ROOT}" \
+  MONGO_URL="mongodb://127.0.0.1:27017" \
+  DB_NAME="academy_manager_saas_staging" \
+  "${VENV_PYTHON}" - <<'PY'
+import asyncio
+import os
+
+from motor.motor_asyncio import AsyncIOMotorClient
+
+from backend.v2.migrations.runner import run_all_migrations
+
+
+async def main() -> None:
+    client = AsyncIOMotorClient(os.environ["MONGO_URL"])
+    try:
+        replayed = await run_all_migrations(client[os.environ["DB_NAME"]])
+        print(f"Replayed {len(replayed)} migrations")
+    finally:
+        client.close()
+
+
+asyncio.run(main())
+PY
+}
+
+launch_audit() {
+  local academy_id="${1:-blno}"
+  log "Running launch-readiness audit for academy_id=${academy_id}..."
+  PYTHONPATH="${REPO_ROOT}" \
+  APP_TENANCY_MODE=single_academy \
+  ENABLE_PLATFORM_ROUTES=false \
+  ENABLE_OWNER_ROLE=false \
+  ENABLE_STUDENT_LOGIN=false \
+  PRIMARY_ACADEMY_ID="${academy_id}" \
+  "${VENV_PYTHON}" "${REPO_ROOT}/backend/scripts/launch_readiness_audit.py" \
+    --mongo-url mongodb://127.0.0.1:27017 \
+    --db-name academy_manager_saas_staging \
+    --primary-academy-id "${academy_id}"
+}
+
 # --- commands ---------------------------------------------------------------
 
 cmd_up() {
@@ -167,12 +280,44 @@ cmd_up() {
   log "Waiting for backend health (up to 90s)..."
   if wait_for_url "http://127.0.0.1:8001/api/v2/healthz" 90; then
     log "Backend is healthy."
-    log "Next:  scripts/dev/saas_staging.sh seed   (or: make saas-seed)"
+    log "Next:  scripts/dev/saas_staging.sh blno-seed   (seed BLno academy with realistic data)"
   else
     warn "Backend did not respond on http://127.0.0.1:8001/api/v2/healthz within 90s."
     warn "Inspect logs:  scripts/dev/saas_staging.sh logs backend"
     exit 1
   fi
+}
+
+cmd_stripe_listen() {
+  ensure_env_file
+  if ! command -v stripe >/dev/null 2>&1; then
+    die "Stripe CLI is required. Install it with: brew install stripe/stripe-cli/stripe"
+  fi
+
+  log "Configuring Docker SaaS staging for Stripe sandbox webhooks..."
+  local api_key webhook_secret
+  api_key="$(stripe_test_api_key)"
+  webhook_secret="$(stripe_cli_webhook_secret "${api_key}")"
+  upsert_env_value STRIPE_API_KEY "${api_key}"
+  upsert_env_value STRIPE_WEBHOOK_SECRET "${webhook_secret}"
+  upsert_env_value V2_STRIPE_API_KEY "${api_key}"
+  upsert_env_value V2_STRIPE_WEBHOOK_SECRET "${webhook_secret}"
+
+  if "${COMPOSE[@]}" ps --status running --quiet backend 2>/dev/null | grep -q .; then
+    log "Restarting backend so it picks up the matching Stripe webhook secret..."
+    "${COMPOSE[@]}" up -d --no-deps --build backend
+    wait_for_url "http://127.0.0.1:8001/api/v2/healthz" 60 || die "Backend did not become healthy after Stripe env update."
+  else
+    warn "Backend is not running yet. Start it with: scripts/dev/saas_staging.sh up"
+  fi
+
+  log "Forwarding Stripe sandbox events to ${STRIPE_WEBHOOK_URL}"
+  log "Keep this process running while testing Checkout, autopay, portal, and invoice history."
+  stripe listen \
+    --api-key "${api_key}" \
+    --forward-to "${STRIPE_WEBHOOK_URL}" \
+    --events "${STRIPE_WEBHOOK_EVENTS}" \
+    2>&1 | sed -E 's/whsec_[A-Za-z0-9_]+/[redacted-whsec]/g; s/(sk|rk)_(test|live)_[A-Za-z0-9_]+/[redacted-stripe-key]/g'
 }
 
 cmd_seed() {
@@ -181,6 +326,16 @@ cmd_seed() {
   fi
   log "Seeding tenant + Firebase emulator user..."
   "${VENV_PYTHON}" "${SEED_SCRIPT}" "$@"
+  replay_migrations
+}
+
+cmd_blno_seed() {
+  if [[ ! -x "${VENV_PYTHON}" ]]; then
+    die "backend/.venv not found. Run preflight check or create the venv first."
+  fi
+  log "Seeding BLno Badminton Academy (parents, students, sessions, invoice ledger, pathway)..."
+  "${VENV_PYTHON}" "${BLNO_SEED_SCRIPT}" "$@"
+  launch_audit blno
 }
 
 # Reset: wipe seeded test data + emulator users, but keep the stack running.
@@ -235,8 +390,19 @@ cmd_status() {
 import json
 try:
     d = json.load(open("${CREDS_FILE}"))
-    print(f"    Email:    {d.get('owner_email','(unknown)')}")
-    print(f"    Password: {d.get('owner_password','(unknown)')}")
+    owners = d.get("owners")
+    if isinstance(owners, dict) and owners:
+        first = next(iter(owners.values()))
+        print(f"    Admin:    {first.get('owner_email','(unknown)')} / {first.get('owner_password','(unknown)')}")
+    else:
+        print(f"    Admin:    {d.get('owner_email','(unknown)')} / {d.get('owner_password','(unknown)')}")
+    sample_parent = d.get("sample_parent")
+    if isinstance(sample_parent, dict):
+        print(f"    Parent:   {sample_parent.get('email','(unknown)')} / {sample_parent.get('password','(unknown)')}")
+    coaches = d.get("coaches")
+    if isinstance(coaches, dict) and coaches:
+        email, password = next(iter(coaches.items()))
+        print(f"    Coach:    {email} / {password}")
     print(f"    File:     ${CREDS_FILE}")
 except Exception as e:
     print(f"    (could not read creds: {e})")
@@ -290,6 +456,7 @@ cmd_smoke() {
   log "Generating fresh smoke env from seed..."
   local seed_json
   seed_json="$("${VENV_PYTHON}" "${SEED_SCRIPT}" --json "$@")"
+  replay_migrations
 
   local api_url frontend_url tenant_frontend_url tenant_host hdr_name hdr_val id_token
   api_url="$(printf '%s' "${seed_json}"      | "${VENV_PYTHON}" -c 'import json,sys;print(json.load(sys.stdin)["api_url"])')"
@@ -309,6 +476,14 @@ cmd_smoke() {
   INTERNAL_TENANT_HEADER_VALUE="${hdr_val}" \
   AUTH_TOKEN="${id_token}" \
     "${SMOKE_SCRIPT}"
+}
+
+cmd_audit() {
+  if [[ ! -x "${VENV_PYTHON}" ]]; then
+    die "backend/.venv not found."
+  fi
+  local academy_id="${1:-blno}"
+  launch_audit "${academy_id}"
 }
 
 cmd_token() { cmd_seed "$@"; }
@@ -338,21 +513,65 @@ cmd_nuke() {
   log "Nuked. Run 'up' to rebuild from a clean slate (or: make up)."
 }
 
+cmd_up_dev() {
+  ensure_env_file
+  local api_key
+  api_key="$(require_firebase_api_key)"
+  preflight
+  log "Starting stack in hot-reload dev mode (project=${PROJECT_NAME})..."
+  NEXT_PUBLIC_FIREBASE_API_KEY="${api_key}" "${COMPOSE_DEV[@]}" up -d --build
+  log "Waiting for backend health (up to 90s)..."
+  if wait_for_url "http://127.0.0.1:8001/api/v2/healthz" 90; then
+    log "Stack up in hot-reload mode."
+    log "  Frontend  → save a file, browser refreshes automatically (next dev + polling)."
+    log "  Backend   → save a .py file, uvicorn reloads automatically."
+    log "Next:  scripts/dev/saas_staging.sh blno-seed   (seed BLno academy with realistic data)"
+  else
+    warn "Backend did not respond on http://127.0.0.1:8001/api/v2/healthz within 90s."
+    warn "Inspect logs:  scripts/dev/saas_staging.sh logs backend"
+    exit 1
+  fi
+}
+
+cmd_rebuild_ui() {
+  local api_key
+  api_key="$(require_firebase_api_key)"
+  log "Rebuilding frontend (deps layer cached if pnpm-lock.yaml unchanged)..."
+  NEXT_PUBLIC_FIREBASE_API_KEY="${api_key}" "${COMPOSE[@]}" up -d --no-deps --build frontend
+  log "Frontend rebuilt and restarted at http://localhost:3000"
+}
+
+cmd_rebuild_api() {
+  log "Rebuilding backend (deps layer cached if requirements.txt unchanged)..."
+  "${COMPOSE[@]}" up -d --no-deps --build backend
+  if wait_for_url "http://127.0.0.1:8001/api/v2/healthz" 60; then
+    log "Backend rebuilt and healthy."
+  else
+    warn "Backend did not respond within 60s. Check: scripts/dev/saas_staging.sh logs backend"
+  fi
+}
+
 usage() {
-  sed -n '3,29p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 main() {
   local cmd="${1:-}"
   shift || true
   case "${cmd}" in
-    up)     cmd_up "$@" ;;
-    seed)   cmd_seed "$@" ;;
-    reset)  cmd_reset "$@" ;;
+    up)          cmd_up "$@" ;;
+    up-dev)      cmd_up_dev "$@" ;;
+    rebuild-ui)  cmd_rebuild_ui "$@" ;;
+    rebuild-api) cmd_rebuild_api "$@" ;;
+    seed)        cmd_seed "$@" ;;
+    blno-seed)   cmd_blno_seed "$@" ;;
+    reset)       cmd_reset "$@" ;;
     status) cmd_status "$@" ;;
     urls)   cmd_urls "$@" ;;
     token)  cmd_token "$@" ;;
     smoke)  cmd_smoke "$@" ;;
+    audit)  cmd_audit "$@" ;;
+    stripe-listen) cmd_stripe_listen "$@" ;;
     logs)   cmd_logs "$@" ;;
     ps)     cmd_ps "$@" ;;
     down)   cmd_down "$@" ;;

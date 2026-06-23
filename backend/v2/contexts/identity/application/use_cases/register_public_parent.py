@@ -8,8 +8,10 @@ SaaS mode (``saas_mode=True``)
 ------------------------------
 * ``academy_id`` is required at the call site (resolved by the route
   from the request host).
-* Creates the global ``User`` row plus an active ``AcademyMembership``
-  row ``(academy_id, user_id, roles=("parent",), status="active")``.
+* Creates the global ``User`` row plus an invited ``AcademyMembership``
+  row ``(academy_id, user_id, roles=("parent",), status="invited")``.
+  Public self-registration does not grant active tenant access; admin
+  approval must activate the membership.
 * ``User.academy_id`` is set to the resolved tenant on first insert
   (legacy field; SaaS reads come from the membership). Existing users
   keep their original ``User.academy_id``; multi-tenant access is
@@ -122,15 +124,19 @@ class RegisterPublicParent:
         )
 
         if self._memberships is not None:
-            await self._memberships.upsert_membership(
-                AcademyMembership(
-                    membership_id=new_ulid(),
-                    academy_id=target_academy_id,
-                    user_id=user.user_id,
-                    roles=("parent",),
-                    status="active",
-                )
+            existing_membership = await self._memberships.get_membership(
+                target_academy_id, user.user_id
             )
+            if existing_membership is None:
+                await self._memberships.upsert_membership(
+                    AcademyMembership(
+                        membership_id=new_ulid(),
+                        academy_id=target_academy_id,
+                        user_id=user.user_id,
+                        roles=("parent",),
+                        status="invited",
+                    )
+                )
 
         if existing is None and self._outbox is not None:
             try:

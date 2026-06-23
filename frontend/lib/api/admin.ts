@@ -163,6 +163,8 @@ export interface TransferEnrollmentRequest {
 
 export interface PauseEnrollmentRequest {
   effective_date: string;
+  resume_on?: string | null;
+  review_on?: string | null;
   reason?: string;
 }
 
@@ -245,6 +247,7 @@ export type AdminPaymentStatus = PaymentStatus | "partially_paid";
 
 export interface AdminPaymentView {
   payment_id: string;
+  invoice_id?: string | null;
   parent_id: string;
   parent_name?: string | null;
   student_id: string | null;
@@ -260,11 +263,17 @@ export interface AdminPaymentView {
   balance_due_cents: number | null;
   overpayment_credit_cents: number;
   currency: string;
-  status: PaymentStatus;
+  status: AdminPaymentStatus;
   refunded_cents: number;
   invoice_number: string | null;
   payment_method: string | null;
   stripe_linked: boolean;
+  stripe_customer_id?: string | null;
+  stripe_checkout_session_id?: string | null;
+  stripe_subscription_id?: string | null;
+  stripe_invoice_id?: string | null;
+  stripe_payment_intent_id?: string | null;
+  reconciliation_status?: string | null;
   created_at: string;
 }
 
@@ -295,6 +304,24 @@ export interface GenerateMonthlyPaymentsResponse {
   skipped_no_charge: number;
   skipped_autopay: number;
   skipped_paused: number;
+  repaired_orphan_keys: number;
+  repaired_partial_invoices: number;
+  failed_repair: number;
+  skipped_details: MonthlyGenerationSkippedDetail[];
+}
+
+export interface MonthlyGenerationSkippedDetail {
+  enrollment_id: string;
+  student_id: string;
+  student_name: string | null;
+  reason_code: string;
+  source: string;
+  billing_period: string;
+  resume_on: string | null;
+  review_on: string | null;
+  expires_on: string | null;
+  needs_review: boolean;
+  metadata: Record<string, string>;
 }
 
 export interface MarkPaymentPaidRequest {
@@ -302,6 +329,8 @@ export interface MarkPaymentPaidRequest {
   amount_received_cents?: number;
   reference_number?: string;
   notes?: string;
+  /** ISO date (YYYY-MM-DD) the money was actually received. */
+  payment_date?: string;
 }
 
 export interface ApplyPaymentDiscountRequest {
@@ -309,9 +338,122 @@ export interface ApplyPaymentDiscountRequest {
   reason: string;
 }
 
-export interface InvoiceLineView {
-  description: string;
+export interface ReconcileStripeBillingRequest {
+  parent_id: string;
+  enrollment_id: string;
+  stripe_customer_id?: string | null;
+  stripe_checkout_session_id: string;
+  reason: string;
+}
+
+export interface ReconcileStripeBillingResponse {
+  ok: boolean;
+  mismatch_state: string | null;
+  payment_id: string | null;
+  stripe_customer_id: string | null;
+  stripe_checkout_session_id: string | null;
+  stripe_subscription_id: string | null;
+  stripe_invoice_id: string | null;
+  stripe_payment_intent_id: string | null;
+  audit_id: string | null;
+}
+
+export interface BillingReconciliationMismatch {
+  code: string;
+  message: string;
+  stripe_value?: unknown;
+  local_value?: unknown;
+}
+
+export interface BillingManualReviewCandidate {
+  invoice_id: string;
+  parent_id: string;
+  student_id: string | null;
+  enrollment_id: string | null;
+  period: string | null;
   amount_cents: number;
+  currency: string;
+  status: string;
+  reason: string;
+}
+
+export interface BillingReconciliationReport {
+  result: string;
+  stripe_invoice_id: string | null;
+  payment_intent_id: string | null;
+  stripe_customer_id: string | null;
+  local_invoice_id: string | null;
+  ledger_payment_id: string | null;
+  payment_allocation_id: string | null;
+  mismatches: BillingReconciliationMismatch[];
+  manual_review_candidates: BillingManualReviewCandidate[];
+  checked_at: string;
+}
+
+export interface BillingWebhookEvent {
+  event_id: string;
+  event_type: string;
+  status: string;
+  object_id: string | null;
+  object_type: string | null;
+  received_at: string | null;
+  last_attempt_at: string | null;
+  retry_count: number;
+  error_message: string | null;
+}
+
+export interface BillingWebhookQueue {
+  events: BillingWebhookEvent[];
+}
+
+export interface AdminBillingProductView {
+  product_id: string;
+  name: string;
+  default_unit_amount_cents: number;
+  line_type: string;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminBillingProductList {
+  products: AdminBillingProductView[];
+}
+
+export interface CreateBillingProductRequest {
+  name: string;
+  default_unit_amount_cents: number;
+  line_type: string;
+}
+
+export interface UpdateBillingProductRequest {
+  name?: string;
+  default_unit_amount_cents?: number;
+  line_type?: string;
+  active?: boolean;
+}
+
+export interface InvoiceLineView {
+  line_id?: string | null;
+  invoice_id?: string | null;
+  line_type?: string | null;
+  description: string;
+  quantity?: number | null;
+  unit_amount_cents?: number | null;
+  amount_cents: number;
+  source_type?: string | null;
+  source_id?: string | null;
+}
+
+export interface InvoiceLineMutationResponse extends InvoiceLineView {
+  line_id: string;
+  invoice_id: string;
+  line_type: string;
+  quantity: number;
+  unit_amount_cents: number;
+  invoice_total_cents: number;
+  invoice_balance_due_cents: number;
+  invoice_status: string;
 }
 
 export interface InvoiceAllocationView {
@@ -325,16 +467,120 @@ export interface InvoiceCreditUsageView {
 }
 
 export interface AdminInvoiceDetail {
+  invoice_id?: string;
   invoice_number: string;
   period: string;
   lines: InvoiceLineView[];
+  total_cents?: number;
+  subtotal_cents?: number;
+  discount_cents?: number;
+  balance_due_cents?: number;
   due_amount_cents: number;
   paid_amount_cents: number;
   status: string;
+  delivery_status: "not_sent" | "sent" | "delivery_failed" | string;
+  sent_at: string | null;
+  last_sent_at: string | null;
   allocations: InvoiceAllocationView[];
   credit_usage: InvoiceCreditUsageView[];
   invoice_pdf_artifact_id: string | null;
   receipt_artifact_id: string | null;
+}
+
+export interface AdminLedgerInvoiceView {
+  invoice_id: string;
+  academy_id: string;
+  parent_id: string;
+  student_id: string | null;
+  enrollment_id: string | null;
+  period: string;
+  status: "draft" | "open" | "partially_paid" | "paid" | "void" | string;
+  subtotal_cents: number;
+  discount_cents: number;
+  total_cents: number;
+  balance_due_cents: number;
+  currency: string;
+  due_date: string;
+  pdf_artifact_id: string | null;
+  delivery_status: "not_sent" | "sent" | "delivery_failed" | string;
+  sent_at: string | null;
+  last_sent_at: string | null;
+  finalized_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateStudentInvoiceRequest {
+  parent_id: string;
+  period: string;
+  due_date: string;
+  enrollment_id?: string | null;
+}
+
+export interface AddInvoiceLineRequest {
+  product_id?: string | null;
+  description: string;
+  line_type: string;
+  quantity?: number;
+  unit_amount_cents: number;
+}
+
+export interface ApplyInvoiceAdjustmentRequest {
+  description: string;
+  amount_cents: number;
+  reason: string;
+}
+
+export interface SendInvoiceResponse {
+  invoice_id: string;
+  delivery_status: "not_sent" | "sent" | "delivery_failed" | string;
+  sent_at: string | null;
+  last_sent_at: string | null;
+  checkout_url: string | null;
+}
+
+export interface ChargeAutopayResponse {
+  invoice_id: string;
+  success: boolean;
+  status: string;
+  balance_due_cents: number;
+  requires_action: boolean;
+  decline_code: string | null;
+}
+
+export interface RecordManualPaymentRequest {
+  amount_cents: number;
+  payment_method?: string;
+  reference_number?: string | null;
+  notes?: string;
+}
+
+export interface RecordManualPaymentResponse {
+  invoice_id: string;
+  payment_id: string;
+  invoice_status: string;
+  balance_due_cents: number;
+}
+
+export interface InvoiceRefundRequest {
+  amount_cents?: number;
+  reason: string;
+}
+
+export interface InvoiceRefundResponse {
+  invoice_id: string;
+  payment_id: string;
+  stripe_refund_id: string;
+  refunded_cents: number;
+  total_refunded_cents: number;
+}
+
+export interface VoidInvoiceResponse {
+  ok: boolean;
+}
+
+export interface VoidInvoiceRequest {
+  reason: string;
 }
 
 export interface GenerateInvoiceArtifactResponse {
@@ -390,6 +636,65 @@ export interface AdminPayoutView {
 
 export interface AdminPayoutList {
   payouts: AdminPayoutView[];
+}
+
+export type CoachPayBillingUnit = "per_session" | "per_hour" | "percent_of_revenue";
+export type CoachRateTimelineIssueType =
+  | "gap"
+  | "overlap"
+  | "duplicate_effective_from"
+  | "duplicate_active_rows"
+  | "multiple_open_ended_rows"
+  | "invalid_window"
+  | "malformed_history";
+
+export interface AdminCoachPayRateView {
+  rate_id: string;
+  coach_id: string;
+  billing_unit: CoachPayBillingUnit;
+  amount_cents: number;
+  percent: number | null;
+  currency: string;
+  effective_from: string;
+  effective_until: string | null;
+  status: "active" | "superseded";
+}
+
+export interface AdminCoachPayRateTimelineIssue {
+  issue_type: CoachRateTimelineIssueType;
+  message: string;
+  rate_ids: string[];
+  starts_at: string | null;
+  ends_at: string | null;
+}
+
+export interface AdminCoachPayRateTimelineDiagnostics {
+  coach_id: string;
+  has_blocking_issues: boolean;
+  issues: AdminCoachPayRateTimelineIssue[];
+}
+
+export interface AdminCoachPayRateList {
+  rates: AdminCoachPayRateView[];
+  diagnostics?: AdminCoachPayRateTimelineDiagnostics;
+}
+
+export interface SetCoachPayRateRequest {
+  billing_unit: CoachPayBillingUnit;
+  amount_cents?: number;
+  percent?: number | null;
+  currency?: string;
+  effective_from?: string | null;
+}
+
+export interface RepairCoachPayRateWindowRequest {
+  billing_unit: CoachPayBillingUnit;
+  amount_cents?: number;
+  percent?: number | null;
+  currency?: string;
+  effective_from: string;
+  effective_until: string;
+  reason: string;
 }
 
 export interface AdminExpenseView {
@@ -503,6 +808,44 @@ export interface AdminReportsDashboardResponse {
   empty_states: string[];
 }
 
+export interface AdminSessionEconomicsSummary {
+  expected_revenue_cents: number;
+  paid_cents: number;
+  unpaid_cents: number;
+  coach_payroll_cents: number;
+  rent_cents: number;
+  other_expenses_cents: number;
+  expected_profit_cents: number;
+  profit_margin: number | null;
+}
+
+export interface AdminSessionEconomicsRow {
+  session_id: string;
+  title: string;
+  coach_name: string | null;
+  active_enrollment_count: number;
+  paid_student_count: number;
+  unpaid_student_count: number;
+  monthly_fee_cents: number;
+  payable_occurrence_count: number;
+  expected_revenue_per_occurrence_cents: number;
+  expected_revenue_cents: number;
+  paid_cents: number;
+  unpaid_cents: number;
+  coach_payroll_cents: number;
+  rent_cents: number;
+  other_expenses_cents: number;
+  expected_profit_cents: number;
+  profit_margin: number | null;
+}
+
+export interface AdminSessionEconomicsResponse {
+  period: string;
+  summary: AdminSessionEconomicsSummary;
+  sessions: AdminSessionEconomicsRow[];
+  empty_states: string[];
+}
+
 export interface AdminMessageView {
   message_id: string;
   kind: "dm" | "announcement" | string;
@@ -598,9 +941,12 @@ export interface AdminWaiverTemplateDetail {
   waiver_id: string;
   title: string;
   version: string;
+  status: AdminWaiverTemplateStatus;
   body: string | null;
   content_hash: string | null;
   effective_at: string | null;
+  assigned_to_registration: boolean;
+  assigned_at: string | null;
   artifact_status: string;
   share_status: string;
   gap_note: string;
@@ -618,6 +964,8 @@ export interface AdminWaiverSignatureDetail {
   waiver_version: string | null;
   template_reference: string | null;
   content_hash: string | null;
+  artifact_reference: string | null;
+  share_link_reference: string | null;
   artifact_status: string;
   share_status: string;
   gap_note: string;
@@ -660,6 +1008,7 @@ export type AdminAttentionKind =
   | "overdue_dues"
   | "pause_requests"
   | "scheduled_resume_blocked"
+  | "billing_deferrals"
   | "waivers"
   | "session_pressure";
 
@@ -775,6 +1124,7 @@ export interface AdminPauseRequestView {
   period: string;
   pause_kind: "fixed" | "indefinite";
   resume_on: string | null;
+  review_on: string | null;
   reason: string | null;
   status: "pending" | "approved" | "declined";
   created_at: string;
@@ -830,6 +1180,7 @@ export interface AdminAcademyView {
   address: string | null;
   logo_url: string | null;
   brand_color: string | null;
+  currency: string;
 }
 
 export type UpdateAdminAcademyRequest = Partial<{
@@ -841,6 +1192,7 @@ export type UpdateAdminAcademyRequest = Partial<{
   address: string | null;
   logo_url: string | null;
   brand_color: string | null;
+  currency: string | null;
 }>;
 
 export interface AdminFeesView {
@@ -855,9 +1207,39 @@ export interface AdminNotificationsView {
   dues_reminders: boolean;
   attendance_alerts: boolean;
   daily_digest_to_admin: boolean;
+  coach_digest_enabled: boolean;
+  coach_digest_hour: number;
 }
 
 export type UpdateAdminNotificationsRequest = Partial<AdminNotificationsView>;
+
+export interface CoachDigestTestSendRequest {
+  coach_id?: string | null;
+  on_date?: string | null;
+}
+
+export interface CoachDigestTestSendResponse {
+  status: "sent" | "skipped_empty" | "failed";
+  coach_id: string;
+  email: string | null;
+  detail: string | null;
+}
+
+export interface CoachDigestLogEntryView {
+  digest_id: string;
+  coach_id: string;
+  coach_email: string | null;
+  digest_date: string;
+  status: string;
+  kind: string;
+  sent_at: string | null;
+  failed_reason: string | null;
+  created_at: string | null;
+}
+
+export interface CoachDigestLogView {
+  entries: CoachDigestLogEntryView[];
+}
 
 export interface AdminGatewayView {
   stripe_connected: boolean;
@@ -1220,10 +1602,243 @@ export function undoPaymentPaid(paymentId: string): Promise<void> {
   return apiFetch<void>(`/admin/payments/${paymentId}/undo-paid`, { method: "POST" });
 }
 
+export function reconcileStripeBilling(
+  payload: ReconcileStripeBillingRequest,
+): Promise<ReconcileStripeBillingResponse> {
+  return apiFetch<ReconcileStripeBillingResponse>("/admin/billing/reconcile", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getBillingReconciliationReport(params: {
+  stripe_invoice_id?: string | null;
+  payment_intent_id?: string | null;
+}): Promise<BillingReconciliationReport> {
+  const query = new URLSearchParams();
+  if (params.stripe_invoice_id) query.set("stripe_invoice_id", params.stripe_invoice_id);
+  if (params.payment_intent_id) query.set("payment_intent_id", params.payment_intent_id);
+  return apiFetch<BillingReconciliationReport>(`/admin/billing/reconciliation?${query.toString()}`, {
+    method: "GET",
+  });
+}
+
+export function listBillingWebhookEvents(params: {
+  status?: "failed" | "quarantined" | string | null;
+  limit?: number;
+} = {}): Promise<BillingWebhookQueue> {
+  const query = new URLSearchParams();
+  if (params.status) query.set("status", params.status);
+  if (params.limit) query.set("limit", String(params.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return apiFetch<BillingWebhookQueue>(`/admin/billing/webhooks${suffix}`, { method: "GET" });
+}
+
+// --- Billing Health (#235) ------------------------------------------------- //
+export interface ReconciliationRun {
+  run_id: string;
+  started_at: string | null;
+  finished_at: string | null;
+  scanned: number;
+  repaired: number;
+  skipped: number;
+  quarantined: number;
+  failed: number;
+  errors: unknown[];
+  notes: string[];
+}
+
+export interface ReconciliationRunsResponse {
+  runs: ReconciliationRun[];
+}
+
+export interface FailedPaymentRow {
+  invoice_id: string;
+  parent_id: string;
+  parent_name: string | null;
+  period: string;
+  total_cents: number;
+  balance_due_cents: number;
+  currency: string;
+  latest_attempt_at: string | null;
+  latest_decline_code: string | null;
+  attempt_count: number;
+}
+
+export interface FailedPaymentsResponse {
+  rows: FailedPaymentRow[];
+}
+
+export interface BillingPaymentAttempt {
+  attempt_id: string;
+  status: string;
+  amount_cents: number;
+  currency: string;
+  stripe_payment_intent_id: string | null;
+  failure_code: string | null;
+  failure_message: string | null;
+  created_at: string | null;
+}
+
+export interface InvoiceAttemptsResponse {
+  attempts: BillingPaymentAttempt[];
+}
+
+export function fetchReconciliationRuns(): Promise<ReconciliationRunsResponse> {
+  return apiFetch<ReconciliationRunsResponse>("/admin/billing/reconciliation-runs", {
+    method: "GET",
+  });
+}
+
+export function triggerReconciliation(): Promise<ReconciliationRun> {
+  return apiFetch<ReconciliationRun>("/admin/billing/reconcile-now", { method: "POST" });
+}
+
+export function fetchFailedPaymentAttempts(): Promise<FailedPaymentsResponse> {
+  return apiFetch<FailedPaymentsResponse>("/admin/billing/failed-payment-attempts", {
+    method: "GET",
+  });
+}
+
+export function fetchInvoiceAttempts(invoiceId: string): Promise<InvoiceAttemptsResponse> {
+  return apiFetch<InvoiceAttemptsResponse>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/attempts`,
+    { method: "GET" },
+  );
+}
+
+export function replayWebhookEvent(
+  eventId: string,
+): Promise<{ replayed: boolean; event_id: string }> {
+  return apiFetch<{ replayed: boolean; event_id: string }>(
+    `/admin/billing/webhook-events/${encodeURIComponent(eventId)}/replay`,
+    { method: "POST" },
+  );
+}
+
+export function listBillingProducts(): Promise<AdminBillingProductList> {
+  return apiFetch<AdminBillingProductList>("/admin/billing/products", {
+    method: "GET",
+  });
+}
+
+export function createBillingProduct(
+  payload: CreateBillingProductRequest,
+): Promise<AdminBillingProductView> {
+  return apiFetch<AdminBillingProductView>("/admin/billing/products", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateBillingProduct(
+  productId: string,
+  payload: UpdateBillingProductRequest,
+): Promise<AdminBillingProductView> {
+  return apiFetch<AdminBillingProductView>(
+    `/admin/billing/products/${encodeURIComponent(productId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function deleteBillingProduct(productId: string): Promise<void> {
+  return apiFetch<void>(`/admin/billing/products/${encodeURIComponent(productId)}`, {
+    method: "DELETE",
+  });
+}
+
 export function getAdminInvoiceDetail(invoiceId: string): Promise<AdminInvoiceDetail> {
   return apiFetch<AdminInvoiceDetail>(
     `/admin/billing/invoices/${encodeURIComponent(invoiceId)}`,
     { method: "GET" },
+  );
+}
+
+export function addAdminInvoiceLine(
+  invoiceId: string,
+  payload: AddInvoiceLineRequest,
+): Promise<InvoiceLineMutationResponse> {
+  return apiFetch<InvoiceLineMutationResponse>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/lines`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function applyAdminInvoiceAdjustment(
+  invoiceId: string,
+  payload: ApplyInvoiceAdjustmentRequest,
+): Promise<InvoiceLineMutationResponse> {
+  return apiFetch<InvoiceLineMutationResponse>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/adjustments`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function deleteAdminInvoiceLine(invoiceId: string, lineId: string): Promise<void> {
+  return apiFetch<void>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export function sendAdminInvoice(invoiceId: string): Promise<SendInvoiceResponse> {
+  return apiFetch<SendInvoiceResponse>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/send`,
+    { method: "POST" },
+  );
+}
+
+export function chargeAdminInvoiceAutopay(
+  invoiceId: string,
+): Promise<ChargeAutopayResponse> {
+  return apiFetch<ChargeAutopayResponse>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/charge-autopay`,
+    { method: "POST" },
+  );
+}
+
+export function recordAdminInvoicePayment(
+  invoiceId: string,
+  payload: RecordManualPaymentRequest,
+): Promise<RecordManualPaymentResponse> {
+  return apiFetch<RecordManualPaymentResponse>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/record-payment`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function refundAdminInvoice(
+  invoiceId: string,
+  payload: InvoiceRefundRequest,
+): Promise<InvoiceRefundResponse> {
+  return apiFetch<InvoiceRefundResponse>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/refund`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function voidAdminInvoice(
+  invoiceId: string,
+  payload: VoidInvoiceRequest,
+): Promise<VoidInvoiceResponse> {
+  return apiFetch<VoidInvoiceResponse>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/void`,
+    { method: "POST", body: JSON.stringify(payload) },
   );
 }
 
@@ -1250,6 +1865,39 @@ export function listPayouts(): Promise<AdminPayoutList> {
 
 export function listExpenses(): Promise<AdminExpenseList> {
   return apiFetch<AdminExpenseList>("/admin/finance/expenses", { method: "GET" });
+}
+
+export function listCoachPayRates(coachId: string): Promise<AdminCoachPayRateList> {
+  return apiFetch<AdminCoachPayRateList>(
+    `/admin/coaches/${encodeURIComponent(coachId)}/pay-rates`,
+    { method: "GET" }
+  );
+}
+
+export function setCoachPayRate(
+  coachId: string,
+  payload: SetCoachPayRateRequest
+): Promise<AdminCoachPayRateView> {
+  return apiFetch<AdminCoachPayRateView>(
+    `/admin/coaches/${encodeURIComponent(coachId)}/pay-rates`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export function repairCoachPayRateWindow(
+  coachId: string,
+  payload: RepairCoachPayRateWindowRequest
+): Promise<AdminCoachPayRateView> {
+  return apiFetch<AdminCoachPayRateView>(
+    `/admin/coaches/${encodeURIComponent(coachId)}/pay-rates/repair`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
 }
 
 export function createExpense(payload: CreateExpenseRequest): Promise<AdminExpenseView> {
@@ -1291,6 +1939,13 @@ export function getAdminReportsDashboard(period: string): Promise<AdminReportsDa
   );
 }
 
+export function getAdminSessionEconomics(period: string): Promise<AdminSessionEconomicsResponse> {
+  return apiFetch<AdminSessionEconomicsResponse>(
+    `/admin/reports/session-economics?period=${encodeURIComponent(period)}`,
+    { method: "GET" },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Messages / Comms
 // ---------------------------------------------------------------------------
@@ -1308,6 +1963,34 @@ export function broadcastMessage(payload: BroadcastRequest): Promise<AdminMessag
 
 export function sendDm(payload: DmRequest): Promise<AdminMessageView> {
   return apiFetch<AdminMessageView>("/admin/messages/dm", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface CampaignAudiencePayload {
+  type: "academy" | "session";
+  role?: "parent" | "coach";
+  session_id?: string;
+}
+
+export interface SendEmailCampaignRequest {
+  subject: string;
+  body: string;
+  audience: CampaignAudiencePayload;
+}
+
+export interface SendEmailCampaignResponse {
+  campaign_id: string;
+  total_recipients: number;
+  sent_count: number;
+  failed_count: number;
+}
+
+export function sendEmailCampaign(
+  payload: SendEmailCampaignRequest,
+): Promise<SendEmailCampaignResponse> {
+  return apiFetch<SendEmailCampaignResponse>("/admin/campaigns", {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -1490,8 +2173,38 @@ export function updateAdminNotifications(
   });
 }
 
+export function sendCoachDigestTest(
+  payload: CoachDigestTestSendRequest
+): Promise<CoachDigestTestSendResponse> {
+  return apiFetch<CoachDigestTestSendResponse>("/admin/comms/digests/test-send", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getCoachDigestLog(limit = 20): Promise<CoachDigestLogView> {
+  return apiFetch<CoachDigestLogView>(`/admin/comms/digests/log?limit=${limit}`, {
+    method: "GET",
+  });
+}
+
 export function getAdminGateway(): Promise<AdminGatewayView> {
   return apiFetch<AdminGatewayView>("/admin/academy/gateway", { method: "GET" });
+}
+
+export interface AdminGatewayConnectLinkView {
+  url: string;
+}
+
+export function startStripeConnect(): Promise<AdminGatewayConnectLinkView> {
+  return apiFetch<AdminGatewayConnectLinkView>(
+    "/admin/academy/gateway/stripe/connect-link",
+    { method: "POST" },
+  );
+}
+
+export function disconnectStripe(): Promise<void> {
+  return apiFetch<void>("/admin/academy/gateway/stripe/connect", { method: "DELETE" });
 }
 
 export interface CreateAdminUserRequest {

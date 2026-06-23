@@ -26,6 +26,7 @@ import pytest
 from backend.v2.contexts.billing.application.use_cases.finance import MongoPayoutRepository
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
+    PayoutWarning,
     PersistedPayoutLine,
 )
 from backend.v2.contexts.finance.domain.reporting_snapshots import (
@@ -57,6 +58,7 @@ def _make_period(
     period_end: datetime | None = None,
     total: int = 5000,
     line_count: int = 1,
+    payout_warnings: list[PayoutWarning] | None = None,
 ) -> PayoutPeriod:
     period_start = period_start or _dt("2026-05-01T00:00:00")
     period_end = period_end or _dt("2026-06-01T00:00:00")
@@ -98,8 +100,25 @@ def _make_period(
         currency="USD",
         total_minor=total,
         lines=lines,
+        payout_warnings=payout_warnings or [],
         generated_at=_dt("2026-06-01T00:00:00"),
     )
+
+
+def _warning(**overrides) -> PayoutWarning:
+    base = dict(
+        occurrence_id="occ-warning",
+        reason="missing_session_price_for_percent_revenue",
+        severity="blocking",
+        message="Missing session price for percent-of-revenue pay.",
+        occurred_at=_dt("2026-05-10T18:00:00"),
+        session_id="sess-1",
+        session_title="Junior Squad",
+        coach_id="coach-A",
+        repair_action="set_session_fee_and_recompute",
+    )
+    base.update(overrides)
+    return PayoutWarning(**base)
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +264,43 @@ async def test_save_and_find_by_window_round_trips(db, acad) -> None:
     assert fetched.period_id == saved.period_id
     assert fetched.total_minor == 10_000
     assert len(fetched.lines) == 2
+
+
+@pytest.mark.asyncio
+async def test_payout_warnings_round_trip_and_legacy_docs_hydrate(db, acad) -> None:
+    repo = MongoPayoutPeriodRepository(db)
+    saved = await repo.save(
+        _make_period(
+            line_count=0,
+            total=0,
+            payout_warnings=[_warning(occurrence_id="occ-no-price")],
+        )
+    )
+
+    fetched = await repo.find_by_id(saved.period_id)
+    assert fetched is not None
+    assert fetched.unpaid_occurrence_ids == []
+    assert [warning.occurrence_id for warning in fetched.payout_warnings] == ["occ-no-price"]
+    assert fetched.payout_warnings[0].reason == "missing_session_price_for_percent_revenue"
+
+    await db["payout_periods"].insert_one(
+        {
+            "academy_id": "test-academy",
+            "period_id": "pp-legacy-unpaid",
+            "coach_id": "coach-A",
+            "period_start": _dt("2026-07-01T00:00:00"),
+            "period_end": _dt("2026-08-01T00:00:00"),
+            "status": "draft",
+            "currency": "USD",
+            "total_minor": 0,
+            "unpaid_occurrence_ids": ["occ-legacy"],
+            "generated_at": _dt("2026-08-01T00:00:00"),
+        }
+    )
+    legacy = await repo.find_by_id("pp-legacy-unpaid")
+    assert legacy is not None
+    assert legacy.unpaid_occurrence_ids == ["occ-legacy"]
+    assert legacy.payout_warnings == []
 
 
 @pytest.mark.asyncio

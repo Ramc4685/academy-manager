@@ -6,6 +6,7 @@ Start at the root `AGENTS.md`, then read the focused file for the task:
 
 - `architecture-rules.md`
 - `backend-api-rules.md`
+- `codex-prompting.md`
 - `frontend-rules.md`
 - `testing-verification.md`
 - `feedback-loop.md`

@@ -62,6 +62,7 @@ import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Icon } from "@/components/ds/icons";
 import { LaneHeader } from "@/components/ds/lane";
 import { Overline } from "@/components/ds/typography";
+import { AdminTeachingPlan } from "@/components/teaching/admin-teaching-plan";
 
 const ENROLL_CHIP: Record<EnrollmentStatus, { variant: ChipVariant; label: string }> = {
   active: { variant: "enrolled", label: "ACTIVE" },
@@ -89,6 +90,12 @@ const DAYS_OF_WEEK = [
   { value: "Sat", label: "Saturday" },
   { value: "Sun", label: "Sunday" },
 ] as const;
+const DETAIL_TABS = [
+  { id: "roster", label: "Roster" },
+  { id: "waitlist", label: "Waitlist" },
+  { id: "teaching-plan", label: "Teaching plan" },
+] as const;
+type DetailTab = (typeof DETAIL_TABS)[number]["id"];
 
 function formatClock(time: string | null | undefined): string {
   if (!time) return "";
@@ -208,6 +215,7 @@ export default function AdminSessionDetailPage() {
   const [withdrawalTarget, setWithdrawalTarget] = useState<AdminEnrollmentView | null>(null);
   const [occurrenceTarget, setOccurrenceTarget] = useState<AdminSessionOccurrenceView | null>(null);
   const [replacementOpen, setReplacementOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<DetailTab>("roster");
 
   const sessionsQuery = useQuery({
     queryKey: queryKeys.admin.sessionDetail(sessionId),
@@ -393,96 +401,122 @@ export default function AdminSessionDetailPage() {
         )}
       </Card>
 
-      {/* Roster */}
-      <Card p={20} className="min-w-0">
-        <LaneHeader
-          index="02"
-          title="Roster"
-          action={
-            session && (
-              <span className="font-mono text-sm font-semibold tabular-nums text-rally-muted">
-                {enrollments.length}/{session.capacity}
-              </span>
-            )
-          }
-        />
-        {session && (
-          <RosterMetrics enrollments={enrollments} capacity={session.capacity} />
-        )}
-        {enrollmentsQuery.isLoading ? (
-          <TableSkeleton />
-        ) : enrollments.length === 0 ? (
-          <p className="text-sm text-rally-subtle" data-testid="roster-empty">No enrolled students.</p>
-        ) : (
-          <RosterTable
-            enrollments={enrollments}
-            sessionId={sessionId}
-            pathwayLevels={pathwayLevels}
-            updatingPlacementStudentId={
-              placementMutation.isPending ? placementMutation.variables?.studentId : null
-            }
-            onPathwayLevelChange={(enrollment, levelId) =>
-              placementMutation.mutate({
-                studentId: enrollment.student_id,
-                programId: enrollment.pathway_program_id,
-                levelId,
-              })
-            }
-            onDelete={(enrollment) => setRemoveTarget(enrollment)}
-            onPause={(enrollment) => setPauseTarget(enrollment)}
-            onResume={(id) =>
-              resumeEnrollment(id).then(() => {
-                void queryClient.invalidateQueries({
-                  queryKey: queryKeys.admin.enrollments(sessionId),
-                });
-                void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
-                void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
-              })
-            }
-            onTransfer={(enrollment) => setTransferTarget(enrollment)}
-            onWithdraw={(enrollment) => setWithdrawalTarget(enrollment)}
-          />
-        )}
-      </Card>
+      <div className="flex flex-wrap gap-2 border-b border-rally-line">
+        {DETAIL_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setActiveTab(tab.id)}
+            className={`min-h-10 border-b-2 px-3 text-sm font-semibold ${
+              activeTab === tab.id
+                ? "border-rally-cobalt-600 text-rally-ink"
+                : "border-transparent text-rally-muted hover:text-rally-ink"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-      {/* Waitlist */}
-      <Card p={20} className="min-w-0">
-        <LaneHeader
-          index="03"
-          title="Waitlist"
-          action={
-            <Button
-              variant="volt"
-              size="sm"
-              onClick={() => promoteMutation.mutate()}
-              disabled={promoteMutation.isPending || waitingCount === 0}
-            >
-              Promote next
-            </Button>
-          }
-        />
-        {waitlistQuery.isLoading ? (
-          <TableSkeleton />
-        ) : waitlist.length === 0 ? (
-          <p className="text-sm text-rally-subtle" data-testid="waitlist-empty">Waitlist is empty.</p>
-        ) : (
-          <WaitlistTable
-            entries={waitlist}
-            onSkip={(id) =>
-              skipWaitlistEntry(id).then(() =>
-                queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) })
+      {activeTab === "roster" && (
+        <Card p={20} className="min-w-0">
+          <LaneHeader
+            index="02"
+            title="Roster"
+            action={
+              session && (
+                <span className="font-mono text-sm font-semibold tabular-nums text-rally-muted">
+                  {enrollments.length}/{session.capacity}
+                </span>
               )
             }
-            onRemove={(id) => {
-              if (confirm("Remove from waitlist?")) {
-                deleteWaitlistEntry(id).then(() =>
-                  queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) })
-                );
-              }
-            }}
           />
-        )}
-      </Card>
+          {session && (
+            <RosterMetrics enrollments={enrollments} capacity={session.capacity} />
+          )}
+          {enrollmentsQuery.isLoading ? (
+            <TableSkeleton />
+          ) : enrollments.length === 0 ? (
+            <p className="text-sm text-rally-subtle" data-testid="roster-empty">No enrolled students.</p>
+          ) : (
+            <RosterTable
+              enrollments={enrollments}
+              sessionId={sessionId}
+              pathwayLevels={pathwayLevels}
+              updatingPlacementStudentId={
+                placementMutation.isPending ? placementMutation.variables?.studentId : null
+              }
+              onPathwayLevelChange={(enrollment, levelId) =>
+                placementMutation.mutate({
+                  studentId: enrollment.student_id,
+                  programId: enrollment.pathway_program_id,
+                  levelId,
+                })
+              }
+              onDelete={(enrollment) => setRemoveTarget(enrollment)}
+              onPause={(enrollment) => setPauseTarget(enrollment)}
+              onResume={(id) =>
+                resumeEnrollment(id).then(() => {
+                  void queryClient.invalidateQueries({
+                    queryKey: queryKeys.admin.enrollments(sessionId),
+                  });
+                  void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
+                  void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
+                })
+              }
+              onTransfer={(enrollment) => setTransferTarget(enrollment)}
+              onWithdraw={(enrollment) => setWithdrawalTarget(enrollment)}
+            />
+          )}
+        </Card>
+      )}
+
+      {activeTab === "waitlist" && (
+        <Card p={20} className="min-w-0">
+          <LaneHeader
+            index="03"
+            title="Waitlist"
+            action={
+              <Button
+                variant="volt"
+                size="sm"
+                onClick={() => promoteMutation.mutate()}
+                disabled={promoteMutation.isPending || waitingCount === 0}
+              >
+                Promote next
+              </Button>
+            }
+          />
+          {waitlistQuery.isLoading ? (
+            <TableSkeleton />
+          ) : waitlist.length === 0 ? (
+            <p className="text-sm text-rally-subtle" data-testid="waitlist-empty">Waitlist is empty.</p>
+          ) : (
+            <WaitlistTable
+              entries={waitlist}
+              onSkip={(id) =>
+                skipWaitlistEntry(id).then(() =>
+                  queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) })
+                )
+              }
+              onRemove={(id) => {
+                if (confirm("Remove from waitlist?")) {
+                  deleteWaitlistEntry(id).then(() =>
+                    queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) })
+                  );
+                }
+              }}
+            />
+          )}
+        </Card>
+      )}
+
+      {activeTab === "teaching-plan" && (
+        <Card p={20} className="min-w-0">
+          <LaneHeader index="04" title="Teaching plan" />
+          <AdminTeachingPlan sessionId={sessionId} programId={rosterProgramId || null} />
+        </Card>
+      )}
 
       <AddToRosterDialog
         open={addOpen}
@@ -909,6 +943,10 @@ function SessionEditDialog({
             }
             className={inputClass}
           />
+          <p className="text-xs text-amber-700">
+            Percent-paid coaches require a session price for payroll. Leave blank only when
+            pricing is not configured; enter 0 for an explicitly free session.
+          </p>
         </Field>
         <Field label="Reason">
           <input
@@ -1077,9 +1115,22 @@ function RosterTable({
                     onChange={(levelId) => onPathwayLevelChange(e, levelId)}
                   />
                   <p className="mt-1 text-[11px] text-rally-muted">
-                    {e.pathway_level_name
-                      ? `${e.pathway_skills_completed ?? 0}/${e.pathway_skills_total ?? 0} skills`
-                      : "Placement needed"}
+                    {e.pathway_level_name ? (
+                      <Link
+                        href={
+                          `/admin/sessions/${sessionId}/skill-board${
+                            e.pathway_program_id
+                              ? `?program_id=${encodeURIComponent(e.pathway_program_id)}`
+                              : ""
+                          }` as Parameters<typeof Link>[0]["href"]
+                        }
+                        className="text-xs text-blue-600 underline-offset-2 hover:underline"
+                      >
+                        {e.pathway_skills_completed ?? 0}/{e.pathway_skills_total ?? 0} skills
+                      </Link>
+                    ) : (
+                      "Placement needed"
+                    )}
                   </p>
                 </td>
                 <td className="px-4 py-3">
@@ -1399,16 +1450,24 @@ function PauseEnrollmentDialog({
   onPaused: () => void;
 }) {
   const [effectiveDate, setEffectiveDate] = useState(todayDateInput());
+  const [billingAction, setBillingAction] = useState<"resume" | "review">("review");
+  const [resumeOn, setResumeOn] = useState(dateInputValueFromOffset(30));
+  const [reviewOn, setReviewOn] = useState(dateInputValueFromOffset(14));
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const mutation = useMutation({
     mutationFn: () =>
       pauseEnrollment(enrollment!.enrollment_id, {
         effective_date: effectiveDate,
+        resume_on: billingAction === "resume" ? resumeOn : null,
+        review_on: billingAction === "review" ? reviewOn : null,
         reason: reason || undefined,
       }),
     onSuccess: () => {
       setEffectiveDate(todayDateInput());
+      setBillingAction("review");
+      setResumeOn(dateInputValueFromOffset(30));
+      setReviewOn(dateInputValueFromOffset(14));
       setReason("");
       setError(null);
       onPaused();
@@ -1445,6 +1504,53 @@ function PauseEnrollmentDialog({
             className={inputClass}
           />
         </Field>
+        <Field label="Billing follow-up" required>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="flex items-center gap-2 rounded border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-800">
+              <input
+                type="radio"
+                name="pause-billing-action"
+                checked={billingAction === "review"}
+                onChange={() => setBillingAction("review")}
+              />
+              Review before billing resumes
+            </label>
+            <label className="flex items-center gap-2 rounded border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-800">
+              <input
+                type="radio"
+                name="pause-billing-action"
+                checked={billingAction === "resume"}
+                onChange={() => setBillingAction("resume")}
+              />
+              Resume automatically
+            </label>
+          </div>
+        </Field>
+        {billingAction === "review" ? (
+          <Field label="Review date" required>
+            <input
+              type="date"
+              required
+              value={reviewOn}
+              onChange={(event) => setReviewOn(event.target.value)}
+              className={inputClass}
+            />
+          </Field>
+        ) : (
+          <Field label="Resume date" required>
+            <input
+              type="date"
+              required
+              value={resumeOn}
+              onChange={(event) => setResumeOn(event.target.value)}
+              className={inputClass}
+            />
+          </Field>
+        )}
+        <p className="text-xs text-rally-subtle">
+          Pausing releases the seat and creates a billing deferral that stays visible until the
+          review or resume rule is handled.
+        </p>
         <Field label="Reason">
           <textarea
             value={reason}
@@ -1461,7 +1567,11 @@ function PauseEnrollmentDialog({
             variant="primary"
             size="sm"
             type="submit"
-            disabled={!effectiveDate || mutation.isPending}
+            disabled={
+              !effectiveDate ||
+              (billingAction === "review" ? !reviewOn : !resumeOn) ||
+              mutation.isPending
+            }
           >
             {mutation.isPending ? "Pausing..." : "Pause"}
           </Button>

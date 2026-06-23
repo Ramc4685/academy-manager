@@ -17,12 +17,16 @@ class FakeStripeGateway(StripeGateway):
     def __init__(self) -> None:
         self.checkouts: list[dict[str, Any]] = []
         self.subscription_checkouts: list[dict[str, Any]] = []
+        self.autopay_setup_checkouts: list[dict[str, Any]] = []
         self.portal_sessions: list[dict[str, Any]] = []
         self.refunds: list[dict[str, Any]] = []
         self.cancelled_subscriptions: list[dict[str, Any]] = []
         self.paused_subscriptions: list[dict[str, Any]] = []
         self.resumed_subscriptions: list[dict[str, Any]] = []
         self.subscription_prorations: list[dict[str, Any]] = []
+        self.connect_links: list[dict[str, str]] = []
+        self.connect_codes: list[str] = []
+        self.payment_intents: list[dict[str, Any]] = []
 
     async def create_checkout_session(
         self,
@@ -75,6 +79,30 @@ class FakeStripeGateway(StripeGateway):
         )
         return checkout_id, f"https://fake.stripe.com/c/{checkout_id}", stripe_subscription_id
 
+    async def create_autopay_setup_checkout_session(
+        self,
+        *,
+        parent_id: str,
+        enrollment_id: str,
+        session_id: str,
+        success_url: str,
+        cancel_url: str,
+        metadata: dict[str, str],
+    ) -> tuple[str, str]:
+        checkout_id = f"cs_setup_test_{new_ulid()}"
+        self.autopay_setup_checkouts.append(
+            {
+                "checkout_id": checkout_id,
+                "parent_id": parent_id,
+                "enrollment_id": enrollment_id,
+                "session_id": session_id,
+                "success_url": success_url,
+                "cancel_url": cancel_url,
+                "metadata": metadata,
+            }
+        )
+        return checkout_id, f"https://fake.stripe.com/c/{checkout_id}"
+
     async def create_customer_portal_session(
         self,
         *,
@@ -98,6 +126,61 @@ class FakeStripeGateway(StripeGateway):
         if signature != "test_signature":
             raise ValueError("invalid signature")
         return json.loads(payload.decode("utf-8"))
+
+    async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, Any]:
+        for record in self.subscription_checkouts + self.autopay_setup_checkouts + self.checkouts:
+            if record["checkout_id"] == checkout_session_id:
+                metadata = dict(record.get("metadata") or {})
+                return {
+                    "id": checkout_session_id,
+                    "object": "checkout.session",
+                    "status": "complete",
+                    "payment_status": "paid",
+                    "amount_total": record.get("amount_cents"),
+                    "currency": "usd",
+                    "customer": "cus_fake_parent",
+                    "subscription": record.get("stripe_subscription_id"),
+                    "setup_intent": record.get(
+                        "setup_intent_id", f"seti_fake_{checkout_session_id}"
+                    ),
+                    "invoice": f"in_fake_{checkout_session_id}",
+                    "client_reference_id": record.get("parent_id"),
+                    "metadata": metadata,
+                }
+        return {"id": checkout_session_id, "object": "checkout.session"}
+
+    async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
+        return {
+            "id": stripe_invoice_id,
+            "object": "invoice",
+            "status": "paid",
+            "amount_paid": 0,
+            "currency": "usd",
+            "payment_intent": f"pi_fake_{stripe_invoice_id}",
+        }
+
+    async def retrieve_subscription(self, stripe_subscription_id: str) -> dict[str, Any]:
+        return {
+            "id": stripe_subscription_id,
+            "object": "subscription",
+        }
+
+    async def retrieve_payment_intent(self, stripe_payment_intent_id: str) -> dict[str, Any]:
+        return {
+            "id": stripe_payment_intent_id,
+            "object": "payment_intent",
+        }
+
+    async def search_app_owned_payment_intents(
+        self, *, academy_id: str, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        matched = [
+            pi
+            for pi in self.payment_intents
+            if str((pi.get("metadata") or {}).get("academy_id") or "") == academy_id
+            and str(pi.get("status") or "").lower() == "succeeded"
+        ]
+        return matched[: max(1, min(int(limit), 100))]
 
     async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
         refund_id = f"re_test_{new_ulid()}"
@@ -152,4 +235,12 @@ class FakeStripeGateway(StripeGateway):
                 "billing_period_end": billing_period_end,
             }
         )
-        return f"in_proration_{new_ulid()}"
+        return ""
+
+    def create_connect_link(self, *, redirect_uri: str, state: str) -> str:
+        self.connect_links.append({"redirect_uri": redirect_uri, "state": state})
+        return f"https://fake-stripe-connect.example.com/oauth?state={state}&redirect_uri={redirect_uri}"
+
+    async def exchange_connect_code(self, code: str) -> str:
+        self.connect_codes.append(code)
+        return f"acct_fake_{code}"

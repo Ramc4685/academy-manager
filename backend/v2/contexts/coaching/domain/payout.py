@@ -24,10 +24,32 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-CoachRateBillingUnit = Literal["per_session", "per_hour"]
+CoachRateBillingUnit = Literal["per_session", "per_hour", "percent_of_revenue"]
 CoachRateStatus = Literal["active", "superseded"]
 PayoutBasis = Literal["scheduled", "substitute", "actual", "lead", "assistant"]
 PayableOccurrenceStatus = Literal["scheduled", "cancelled", "completed"]
+PayoutWarningReason = Literal[
+    "missing_session_price_for_percent_revenue",
+    "missing_rate",
+    "missing_percent",
+]
+PayoutWarningSeverity = Literal["blocking", "warning"]
+CoachRateTimelineIssueType = Literal[
+    "gap",
+    "overlap",
+    "duplicate_effective_from",
+    "duplicate_active_rows",
+    "multiple_open_ended_rows",
+    "invalid_window",
+    "malformed_history",
+]
+UnpaidOccurrenceReason = Literal[
+    "no_rate_configured",
+    "rate_gap",
+    "missing_session_price_for_percent_revenue",
+    "attendance_override",
+    "unknown_unpaid_reason",
+]
 
 
 class CoachAttendanceForPayout(BaseModel):
@@ -62,6 +84,10 @@ class PayableOccurrence(BaseModel):
     substitute_coach_id: str | None = None
     is_payable: bool = True
     coach_attendance: list[CoachAttendanceForPayout] = Field(default_factory=list)
+    expected_revenue_minor: int | None = Field(default=None, ge=0)
+    """Expected revenue for this occurrence (session price x enrolled
+    students), used as the basis for ``percent_of_revenue`` rates. ``None``
+    when the session has no price configured."""
 
     @model_validator(mode="after")
     def _end_after_start(self) -> PayableOccurrence:
@@ -84,6 +110,8 @@ class CoachRate(BaseModel):
     coach_id: str
     billing_unit: CoachRateBillingUnit
     amount_minor: int = Field(ge=0)
+    percent_bps: int | None = Field(default=None, ge=0, le=10000)
+    """Coach share in basis points (6000 = 60%) for ``percent_of_revenue``."""
     currency: str = Field(min_length=3, max_length=3)
     effective_from: datetime
     effective_until: datetime | None = None
@@ -93,7 +121,39 @@ class CoachRate(BaseModel):
     def _window_is_sane(self) -> CoachRate:
         if self.effective_until is not None and self.effective_until <= self.effective_from:
             raise ValueError("CoachRate.effective_until must be > effective_from")
+        if self.billing_unit == "percent_of_revenue" and self.percent_bps is None:
+            raise ValueError("CoachRate.percent_bps is required for percent_of_revenue rates")
         return self
+
+
+class CoachRateTimelineIssue(BaseModel):
+    model_config = {"frozen": True}
+
+    issue_type: CoachRateTimelineIssueType
+    message: str
+    rate_ids: list[str] = Field(default_factory=list)
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+
+
+class CoachRateTimelineDiagnostics(BaseModel):
+    model_config = {"frozen": True}
+
+    coach_id: str
+    issues: list[CoachRateTimelineIssue] = Field(default_factory=list)
+
+    @property
+    def has_blocking_issues(self) -> bool:
+        return bool(self.issues)
+
+
+class PayoutUnpaidOccurrence(BaseModel):
+    model_config = {"frozen": True}
+
+    occurrence_id: str
+    reason: UnpaidOccurrenceReason
+    detail: str | None = None
+    unresolved: bool = True
 
 
 class PayoutLine(BaseModel):
@@ -108,6 +168,24 @@ class PayoutLine(BaseModel):
     amount_minor: int = Field(ge=0)
     currency: str = Field(min_length=3, max_length=3)
     rate_id: str
+    percent_bps: int | None = Field(default=None, ge=0, le=10000)
+    expected_revenue_minor: int | None = Field(default=None, ge=0)
+
+
+class PayoutWarning(BaseModel):
+    """Typed warning for an otherwise payable occurrence that cannot produce a line."""
+
+    model_config = {"frozen": True}
+
+    occurrence_id: str
+    reason: PayoutWarningReason
+    severity: PayoutWarningSeverity = "blocking"
+    message: str
+    occurred_at: datetime
+    session_id: str | None = None
+    session_title: str | None = None
+    coach_id: str
+    repair_action: str
 
 
 class PayoutStatement(BaseModel):
@@ -128,6 +206,11 @@ class PayoutStatement(BaseModel):
     lines: list[PayoutLine] = Field(default_factory=list)
     total_minor: int = Field(ge=0)
     unpaid_occurrence_ids: list[str] = Field(default_factory=list)
+    unpaid_occurrences: list[PayoutUnpaidOccurrence] = Field(default_factory=list)
+    payout_warnings: list[PayoutWarning] = Field(default_factory=list)
+    absent_occurrence_ids: list[str] = Field(default_factory=list)
+    """Occurrences attributed to this coach but unpaid because the coach
+    was marked absent. Reported separately so payslips can show why."""
 
     @model_validator(mode="after")
     def _total_matches_lines(self) -> PayoutStatement:

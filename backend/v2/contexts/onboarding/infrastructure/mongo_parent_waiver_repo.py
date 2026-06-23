@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from secrets import token_urlsafe
 from typing import Any
+
+from bson import ObjectId as BsonObjectId
 
 from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers import (
     ParentWaiverSignature,
@@ -143,6 +146,20 @@ class MongoParentWaiverRepository(TenantScopedRepository):
         return out
 
     async def save_signature(self, signature: WaiverSignature) -> None:
+        artifact_id = signature.artifact_id or f"wa_{signature.waiver_signature_id}"
+        now = datetime.now(UTC)
+        template = await self._template_doc(signature.waiver_template_id)
+        await self._store_artifact(
+            signature=signature,
+            artifact_id=artifact_id,
+            template=template,
+            now=now,
+        )
+        await self._ensure_share_link(
+            signature=signature,
+            artifact_id=artifact_id,
+            now=now,
+        )
         await self._update_one(
             {"waiver_signature_id": signature.waiver_signature_id},
             {
@@ -157,11 +174,91 @@ class MongoParentWaiverRepository(TenantScopedRepository):
                     "content_hash": signature.content_hash,
                     "ip_address": signature.ip_address,
                     "user_agent": signature.user_agent,
-                    "artifact_id": signature.artifact_id,
+                    "artifact_id": artifact_id,
                     "expires_at": signature.expires_at,
                 }
             },
             upsert=True,
+        )
+
+    async def _template_doc(self, waiver_template_id: str) -> dict[str, Any] | None:
+        filters: list[dict[str, Any]] = [{"waiver_template_id": waiver_template_id}]
+        if BsonObjectId.is_valid(waiver_template_id):
+            filters.append({"_id": BsonObjectId(waiver_template_id)})
+        return await self._db["waiver_templates"].find_one(
+            {"academy_id": current_academy_id(), "$or": filters}
+        )
+
+    async def _store_artifact(
+        self,
+        *,
+        signature: WaiverSignature,
+        artifact_id: str,
+        template: dict[str, Any] | None,
+        now: datetime,
+    ) -> None:
+        await self._db["waiver_artifacts"].update_one(
+            {"academy_id": current_academy_id(), "artifact_id": artifact_id},
+            {
+                "$setOnInsert": {"created_at": now},
+                "$set": {
+                    "artifact_id": artifact_id,
+                    "artifact_type": "signed_waiver",
+                    "status": "stored",
+                    "signature_id": signature.waiver_signature_id,
+                    "waiver_template_id": signature.waiver_template_id,
+                    "student_id": signature.student_id,
+                    "parent_user_id": signature.parent_user_id,
+                    "signed_at": signature.signed_at,
+                    "signer_name": signature.signer_name,
+                    "signer_email": str(signature.signer_email),
+                    "template_title": (
+                        str(template.get("name") or template.get("title") or "")
+                        if template
+                        else None
+                    ),
+                    "template_version": (str(template.get("version") or "") if template else None),
+                    "content_hash": signature.content_hash,
+                    "body": (
+                        str(template.get("body") or template.get("text") or "")
+                        if template
+                        else None
+                    ),
+                    "updated_at": now,
+                },
+            },
+            upsert=True,
+        )
+
+    async def _ensure_share_link(
+        self,
+        *,
+        signature: WaiverSignature,
+        artifact_id: str,
+        now: datetime,
+    ) -> None:
+        existing = await self._db["waiver_share_links"].find_one(
+            {
+                "academy_id": current_academy_id(),
+                "artifact_id": artifact_id,
+                "status": "active",
+            },
+            {"_id": 1},
+        )
+        if existing is not None:
+            return
+        await self._db["waiver_share_links"].insert_one(
+            {
+                "academy_id": current_academy_id(),
+                "share_link_id": f"wsl_{token_urlsafe(24)}",
+                "artifact_id": artifact_id,
+                "signature_id": signature.waiver_signature_id,
+                "student_id": signature.student_id,
+                "parent_user_id": signature.parent_user_id,
+                "status": "active",
+                "created_at": now,
+                "updated_at": now,
+            }
         )
 
     @staticmethod

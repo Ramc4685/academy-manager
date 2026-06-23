@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol
 
 from fastapi import Request
 
@@ -18,7 +19,6 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     UndoPaymentPaid,
 )
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
-    AcademyRevenueQuery,
     DeleteExpense,
     EditExpense,
     MongoExpenseRepository,
@@ -39,6 +39,12 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
     ApproveWithdrawalCredit,
     PreviewWithdrawalCredit,
 )
+from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_plan import (
+    GenerateDailyTeachingPlan,
+)
+from backend.v2.contexts.communications.application.use_cases.send_campaign import (
+    SendCampaign,
+)
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     ChangeAdminStudentParent,
     GetAdminStudent,
@@ -52,6 +58,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     EditRosterAdd,
     EditSession,
     JoinWaitlist,
+    OverrideEnrollmentFee,
     PauseEnrollment,
     RemoveFromWaitlist,
     ResumeEnrollment,
@@ -70,12 +77,26 @@ from backend.v2.contexts.enrollment.application.use_cases.process_scheduled_resu
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.finance.application.ports import PayoutPeriodRepository
 from backend.v2.contexts.finance.application.use_cases.approve_payout_period import (
     ApprovePayoutPeriod,
     MarkPayoutPaid,
 )
+from backend.v2.contexts.finance.application.use_cases.bulk_payroll import (
+    BulkGeneratePayroll,
+    BulkRecomputePayroll,
+)
 from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
     GeneratePayoutPeriod,
+)
+from backend.v2.contexts.finance.application.use_cases.list_monthly_payroll import (
+    ListMonthlyPayroll,
+)
+from backend.v2.contexts.finance.application.use_cases.manage_payout_period import (
+    ListPayoutAuditEntries,
+    OverridePayoutLine,
+    RecomputePayoutPeriod,
+    ReopenPayoutPeriod,
 )
 from backend.v2.contexts.identity.application.change_user_role_use_case import ChangeUserRole
 from backend.v2.contexts.identity.application.get_academy_fees_use_case import GetAcademyFeesUseCase
@@ -99,13 +120,25 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     ListAdminUsers,
     UpdateAdminUser,
 )
+from backend.v2.contexts.identity.application.use_cases.stripe_connect import (
+    CompleteStripeConnectUseCase,
+    DisconnectStripeUseCase,
+    StartStripeConnectUseCase,
+)
 from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
     ManageAdminWaiverTemplates,
 )
 from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
     ListAdminWaivers,
 )
+from backend.v2.contexts.student_progress.application.use_cases.get_coach_engagement_stats import (
+    GetCoachEngagementStats,
+)
 from backend.v2.shared.comms import CommsService
+
+
+class AdminRevenueQuery(Protocol):
+    async def execute(self, parent_id_filter: str | None = None) -> dict[str, int]: ...
 
 
 @dataclass
@@ -120,6 +153,7 @@ class AdminUseCases:
     edit_roster_add: EditRosterAdd
     cancel_enrollment: CancelEnrollment
     transfer_enrollment: TransferEnrollment
+    override_enrollment_fee: OverrideEnrollmentFee
     pause_enrollment: PauseEnrollment
     resume_enrollment: ResumeEnrollment
     withdraw_enrollment: WithdrawEnrollment
@@ -151,7 +185,7 @@ class AdminUseCases:
     delete_expense: DeleteExpense
     expenses: MongoExpenseRepository
     payouts: MongoPayoutRepository
-    revenue_query: AcademyRevenueQuery
+    revenue_query: AdminRevenueQuery
     # reads
     list_admin_sessions: object  # callable
     list_session_occurrences: object  # async (session_id: str) -> list[dict]
@@ -165,6 +199,7 @@ class AdminUseCases:
     export_report_csv: object  # callable
     get_reports_kpis: object  # async () -> dict[str, int | float]
     list_enrollment_events: object  # async (enrollment_id: str) -> list[dict]
+    list_billing_deferral_warnings: object  # async (*, today: date, limit: int)
     # comms
     comms: CommsService
     # waivers
@@ -182,6 +217,9 @@ class AdminUseCases:
     set_tuition_discount: object | None = None  # SetTuitionDiscount
     remove_tuition_discount: object | None = None  # RemoveTuitionDiscount
     tuition_discounts: object | None = None  # MongoTuitionDiscountRepository
+    reconcile_stripe_billing: object | None = None  # callable
+    get_billing_reconciliation_report: object | None = None  # callable
+    list_billing_webhook_events: object | None = None  # callable
     get_admin_user: GetAdminUser | None = None
     update_admin_user: UpdateAdminUser | None = None
     create_admin_user: CreateAdminUser | None = None
@@ -194,10 +232,21 @@ class AdminUseCases:
     update_session_occurrence_replacement: object | None = None  # async (...) -> dict | None
     manage_admin_waiver_templates: ManageAdminWaiverTemplates | None = None
     admin_registration_review: AdminRegistrationReview | None = None
-    payout_periods: object | None = None
+    payout_periods: PayoutPeriodRepository | None = None
+    list_monthly_payroll: ListMonthlyPayroll | None = None
+    bulk_generate_payroll: BulkGeneratePayroll | None = None
+    bulk_recompute_payroll: BulkRecomputePayroll | None = None
     generate_payout_period: GeneratePayoutPeriod | None = None
     approve_payout_period: ApprovePayoutPeriod | None = None
     mark_payout_paid: MarkPayoutPaid | None = None
+    recompute_payout_period: RecomputePayoutPeriod | None = None
+    reopen_payout_period: ReopenPayoutPeriod | None = None
+    override_payout_line: OverridePayoutLine | None = None
+    list_payout_audit_entries: ListPayoutAuditEntries | None = None
+    describe_payout_occurrences: object | None = None  # async (ids) -> dict[str, dict]
+    set_coach_pay_rate: object | None = None  # SetCoachPayRate
+    list_coach_pay_rates: object | None = None  # ListCoachPayRates
+    repair_coach_pay_rate_window: object | None = None  # RepairCoachRateWindow
     create_session_type: CreateSessionType | None = None
     list_session_types: ListSessionTypes | None = None
     update_session_type: UpdateSessionType | None = None
@@ -216,8 +265,37 @@ class AdminUseCases:
     get_coach_utilization: object | None = (
         None  # async (periods: list[str]) -> CoachUtilizationResult
     )
+    get_session_economics: object | None = None  # async (period: str) -> dict[str, Any]
     curriculum: CurriculumComposition | None = None
     student_progress: StudentProgressComposition | None = None
+    generate_daily_teaching_plan: GenerateDailyTeachingPlan | None = None
+    get_session_occurrence: object | None = None  # async (occurrence_id: str) -> occurrence | None
+    get_coach_engagement_stats: GetCoachEngagementStats | None = None
+    send_campaign: SendCampaign | None = None
+    start_stripe_connect_use_case: StartStripeConnectUseCase | None = None
+    complete_stripe_connect_use_case: CompleteStripeConnectUseCase | None = None
+    disconnect_stripe_use_case: DisconnectStripeUseCase | None = None
+    # Coach teaching-plan digest: test-send + delivery log (Stream 2 C/D).
+    send_coach_digest_test: object | None = None  # SendCoachDigestTest
+    get_digest_delivery_log: object | None = None  # GetDigestDeliveryLog
+    send_billing_invoice: object | None = None
+    charge_invoice_via_autopay: object | None = None
+    # Billing Health (#235): observability + recovery actions.
+    list_reconciliation_runs: object | None = None  # async () -> list[dict]
+    run_reconciliation: object | None = None  # async () -> dict
+    list_failed_payment_attempts: object | None = None  # async () -> list[dict]
+    list_invoice_attempts: object | None = None  # async (invoice_id) -> list[dict]
+    replay_webhook_event: object | None = None  # async (event_id) -> bool
+    add_invoice_line: object | None = None
+    remove_invoice_line: object | None = None
+    void_billing_invoice: object | None = None
+    record_manual_payment: object | None = None
+    issue_invoice_refund: object | None = None
+    create_student_invoice: object | None = None
+    list_billing_products: object | None = None
+    create_billing_product: object | None = None
+    update_billing_product: object | None = None
+    deactivate_billing_product: object | None = None
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:

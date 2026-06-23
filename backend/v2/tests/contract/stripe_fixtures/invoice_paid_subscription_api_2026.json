@@ -1,0 +1,28 @@
+{
+  "id": "evt_invoice_paid_subscription_api_2026",
+  "type": "invoice.paid",
+  "data": {
+    "object": {
+      "id": "in_subscription_api_2026",
+      "object": "invoice",
+      "subscription": null,
+      "payment_intent": null,
+      "parent": {
+        "subscription_details": {
+          "subscription": "sub_subscription_api_2026"
+        }
+      },
+      "amount_paid": 7000,
+      "amount_due": 7000,
+      "currency": "usd",
+      "period_start": 1781712000,
+      "metadata": {
+        "academy_id": "test-academy",
+        "parent_id": "parent-1",
+        "enrollment_id": "enr-1",
+        "session_id": "session-1",
+        "app_subscription_id": "sub-local-1"
+      }
+    }
+  }
+}

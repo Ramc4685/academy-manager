@@ -32,7 +32,9 @@ from backend.v2.contexts.finance.application.use_cases.generate_payout_period im
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
     PayoutPeriodStateError,
+    PayoutWarning,
     PersistedPayoutLine,
+    PersistedUnpaidOccurrence,
     approve,
     mark_paid,
 )
@@ -40,6 +42,18 @@ from backend.v2.contexts.finance.domain.payout_period import (
 
 def _dt(value: str) -> datetime:
     return datetime.fromisoformat(value).replace(tzinfo=UTC)
+
+
+def _unpaid(
+    occurrence_id: str = "occ-unpaid",
+    reason: str = "rate_gap",
+) -> PersistedUnpaidOccurrence:
+    return PersistedUnpaidOccurrence(
+        occurrence_id=occurrence_id,
+        reason=reason,
+        detail="Rate history has no active window for this occurrence.",
+        unresolved=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +75,8 @@ class _Calculation:
         total_minor: int = 0,
         lines: list[PersistedPayoutLine] | None = None,
         unpaid: list[str] | None = None,
+        warnings: list[PayoutWarning] | None = None,
+        unpaid_occurrences: list[PersistedUnpaidOccurrence] | None = None,
     ) -> None:
         self.coach_id = coach_id
         self.academy_id = academy_id
@@ -70,6 +86,8 @@ class _Calculation:
         self.total_minor = total_minor
         self.lines = lines or []
         self.unpaid_occurrence_ids = unpaid or []
+        self.payout_warnings = warnings or []
+        self.unpaid_occurrences = unpaid_occurrences or []
 
 
 class FakeCalculator:
@@ -216,6 +234,7 @@ def _draft_period(**overrides) -> PayoutPeriod:
         total_minor=0,
         lines=[],
         unpaid_occurrence_ids=[],
+        payout_warnings=[],
         generated_at=_dt("2026-06-01T00:00:00"),
         paid_method=None,
         paid_amount_minor=None,
@@ -225,11 +244,33 @@ def _draft_period(**overrides) -> PayoutPeriod:
     return PayoutPeriod(**base)
 
 
+def _warning(**overrides) -> PayoutWarning:
+    base = dict(
+        occurrence_id="occ-warning",
+        reason="missing_session_price_for_percent_revenue",
+        severity="blocking",
+        message="Missing session price for percent-of-revenue pay.",
+        occurred_at=_dt("2026-05-10T18:00:00"),
+        session_id=None,
+        session_title=None,
+        coach_id="coach-A",
+        repair_action="set_session_fee_and_recompute",
+    )
+    base.update(overrides)
+    return PayoutWarning(**base)
+
+
 def test_approve_moves_draft_to_approved() -> None:
     period = _draft_period()
     approved = approve(period, at=_dt("2026-06-02T12:00:00"))
     assert approved.status == "approved"
     assert approved.approved_at == _dt("2026-06-02T12:00:00")
+
+
+def test_approve_rejects_unresolved_payout_warnings() -> None:
+    period = _draft_period(payout_warnings=[_warning()])
+    with pytest.raises(PayoutPeriodStateError, match="unresolved payout warnings"):
+        approve(period, at=_dt("2026-06-02T12:00:00"))
 
 
 def test_approve_is_idempotent_on_approved() -> None:
@@ -261,6 +302,18 @@ def test_mark_paid_rejects_draft() -> None:
         )
 
 
+def test_mark_paid_rejects_unresolved_payout_warnings() -> None:
+    period = approve(_draft_period(), at=_dt("2026-06-02T12:00:00"))
+    period = period.model_copy(update={"payout_warnings": [_warning()]})
+    with pytest.raises(PayoutPeriodStateError, match="unresolved payout warnings"):
+        mark_paid(
+            period,
+            at=_dt("2026-06-03T12:00:00"),
+            method="cash",
+            amount_minor=0,
+        )
+
+
 # ---------------------------------------------------------------------------
 # GeneratePayoutPeriod
 # ---------------------------------------------------------------------------
@@ -286,6 +339,8 @@ async def test_generate_persists_a_draft_period() -> None:
         total_minor=5000,
         lines=[line],
         unpaid=["occ-2"],
+        warnings=[_warning(occurrence_id="occ-2")],
+        unpaid_occurrences=[_unpaid("occ-2", "rate_gap")],
     )
     repo = FakeRepo()
     use_case = GeneratePayoutPeriod(
@@ -305,6 +360,10 @@ async def test_generate_persists_a_draft_period() -> None:
     assert period.total_minor == 5000
     assert len(period.lines) == 1
     assert period.unpaid_occurrence_ids == ["occ-2"]
+    assert [warning.reason for warning in period.payout_warnings] == [
+        "missing_session_price_for_percent_revenue"
+    ]
+    assert period.unpaid_occurrences[0].reason == "rate_gap"
     assert repo.save_calls == 1
 
 
@@ -384,6 +443,15 @@ async def test_approve_use_case_persists_transition() -> None:
 
 
 @pytest.mark.asyncio
+async def test_approve_use_case_blocks_unresolved_payout_warnings() -> None:
+    repo = FakeRepo()
+    await repo.save(_draft_period(payout_warnings=[_warning()]))
+    uc = ApprovePayoutPeriod(repository=repo, clock=lambda: _dt("2026-06-02T12:00:00"))
+    with pytest.raises(PayoutPeriodStateError, match="unresolved payout warnings"):
+        await uc.execute(period_id="pp-1")
+
+
+@pytest.mark.asyncio
 async def test_approve_use_case_is_idempotent() -> None:
     repo = FakeRepo()
     period = _draft_period()
@@ -393,6 +461,24 @@ async def test_approve_use_case_is_idempotent() -> None:
     await uc.execute(period_id="pp-1")
     # Only the first call writes.
     assert repo.replace_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_approve_use_case_blocks_unresolved_unpaid_occurrences() -> None:
+    repo = FakeRepo()
+    period = _draft_period().model_copy(
+        update={
+            "unpaid_occurrence_ids": ["occ-gap"],
+            "unpaid_occurrences": [_unpaid("occ-gap", "rate_gap")],
+        }
+    )
+    await repo.save(period)
+    uc = ApprovePayoutPeriod(repository=repo, clock=lambda: _dt("2026-06-02T12:00:00"))
+
+    with pytest.raises(PayoutPeriodStateError, match="unresolved unpaid"):
+        await uc.execute(period_id="pp-1")
+
+    assert repo.replace_calls == 0
 
 
 @pytest.mark.asyncio
@@ -426,6 +512,27 @@ async def test_mark_paid_use_case_full_flow() -> None:
     assert paid.paid_method == "bank_transfer"
     assert paid.paid_amount_minor == 0
     assert paid.paid_reference == "ach-123"
+
+
+@pytest.mark.asyncio
+async def test_mark_paid_use_case_blocks_unresolved_payout_warnings() -> None:
+    repo = FakeRepo()
+    await repo.save(_draft_period())
+    approver = ApprovePayoutPeriod(repository=repo, clock=lambda: _dt("2026-06-02T12:00:00"))
+    payer = MarkPayoutPaid(repository=repo, clock=lambda: _dt("2026-06-03T12:00:00"))
+    approved = await approver.execute(period_id="pp-1")
+    await repo.replace(approved.model_copy(update={"payout_warnings": [_warning()]}))
+
+    with pytest.raises(PayoutPeriodStateError, match="unresolved payout warnings"):
+        await payer.execute(
+            MarkPayoutPaidCommand(
+                period_id="pp-1",
+                method="bank_transfer",
+                paid_at=_dt("2026-06-03T12:00:00"),
+                amount_minor=0,
+                reference="ach-123",
+            )
+        )
 
 
 @pytest.mark.asyncio

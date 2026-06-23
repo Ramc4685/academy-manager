@@ -1,155 +1,187 @@
 "use client";
-
-import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
-
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import {
-  listAdminSessions,
-  listAdminUsers,
-  listPayouts,
-  type AdminPayoutView,
-  type AdminSessionView,
-  type AdminUserView,
-} from "@/lib/api/admin";
-import { queryKeys } from "@/lib/query/keys";
-import { Avatar } from "@/components/ds/avatar";
-import { Card } from "@/components/ds/card";
-import { Chip } from "@/components/ds/chip";
+  listMonthlyPayroll,
+  generateMonthlyPayroll,
+  recomputeMonthlyPayroll,
+  exportMonthlyPayrollXlsx,
+} from "@/lib/api/v2/payroll";
+import { generatePayoutPeriod } from "@/lib/api/v2/payouts";
+import { rowHasUnresolvedWarnings } from "@/lib/payroll-warnings";
+import { MonthPicker } from "./_components/MonthPicker";
 
-function money(cents: number): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
-}
+export default function PayoutsPage() {
+  const router = useRouter();
+  const qc = useQueryClient();
+  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
 
-function dateLabel(value: string): string {
-  return new Intl.DateTimeFormat("en-US", { timeZone: "UTC" }).format(new Date(value));
-}
-
-export default function AdminPayoutsPage() {
-  const query = useQuery({ queryKey: queryKeys.admin.payouts(), queryFn: listPayouts });
-  const coachesQuery = useQuery({
-    queryKey: ["admin", "users", "coach"],
-    queryFn: () => listAdminUsers("coach"),
+  const { data, isLoading } = useQuery({
+    queryKey: ["admin", "payroll", month],
+    queryFn: () => listMonthlyPayroll(month),
   });
-  const sessionsQuery = useQuery({
-    queryKey: ["admin", "sessions", "payout-display"],
-    queryFn: () => listAdminSessions(),
-  });
-  const payouts = query.data?.payouts ?? [];
-  const coaches = coachesQuery.data?.users ?? [];
-  const sessions = sessionsQuery.data?.sessions ?? [];
 
-  return (
-    <section data-testid="admin-payouts" className="space-y-5">
-      {query.isError ? (
-        <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-          Could not load payouts.
-        </p>
-      ) : query.isLoading ? (
-        <Skeleton />
-      ) : payouts.length === 0 ? (
-        <p data-testid="admin-payouts-empty" className="text-sm text-rally-subtle">
-          No payouts yet.
-        </p>
-      ) : (
-        <Card p={20}>
-          <PayoutsTable payouts={payouts} coaches={coaches} sessions={sessions} />
-        </Card>
-      )}
-    </section>
+  const generateOne = useMutation({
+    mutationFn: (args: { coach_id: string; period_start: string; period_end: string }) =>
+      generatePayoutPeriod(args),
+    onSuccess: (period) => {
+      qc.invalidateQueries({ queryKey: ["admin", "payroll", month] });
+      router.push(`/admin/payouts/${period.period_id}`);
+    },
+  });
+  const bulkGenerate = useMutation({
+    mutationFn: () => generateMonthlyPayroll(month),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "payroll", month] }),
+  });
+  const bulkRecompute = useMutation({
+    mutationFn: () => recomputeMonthlyPayroll(month),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "payroll", month] }),
+  });
+  const bulkExport = useMutation({
+    mutationFn: () => exportMonthlyPayrollXlsx(month),
+    onSuccess: (blob) => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `payroll-${month}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+  });
+
+  const rows = data?.rows ?? [];
+  const warningRows = rows.filter(
+    (row) => rowHasUnresolvedWarnings(row) || (row.unresolved_unpaid_count ?? 0) > 0,
   );
-}
 
-function PayoutsTable({
-  payouts,
-  coaches,
-  sessions,
-}: {
-  payouts: AdminPayoutView[];
-  coaches: AdminUserView[];
-  sessions: AdminSessionView[];
-}) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[720px] text-sm">
-        <thead>
-          <tr className="border-b border-rally-line text-left">
-            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
-              Coach
-            </th>
-            <th className="px-2 pb-3 text-right font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
-              Amount
-            </th>
-            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
-              Period
-            </th>
-            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
-              Status
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {payouts.map((payout) => {
-            const coach = coaches.find((user) => user.user_id === payout.coach_id) ?? null;
-            const assignedSessions = sessions.filter((session) => session.coach_id === payout.coach_id).length;
-            const coachName = coach?.display_name || coach?.email || "Coach";
-            return (
-              <tr
-                key={payout.payout_id}
-                data-testid={`admin-payouts-row-${payout.payout_id}`}
-                className="border-b border-rally-line last:border-0"
-              >
-                <td className="px-2 py-3">
-                  <Link
-                    href={`/admin/payouts/${payout.payout_id}`}
-                    className="flex items-center gap-3 group focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
-                    data-testid={`admin-payouts-link-${payout.payout_id}`}
-                  >
-                    <Avatar name={coachName} size={32} />
-                    <div>
-                      <div className="font-medium text-rally-ink group-hover:underline">{coachName}</div>
-                      <div className="text-xs text-rally-muted">
-                        {coach?.email ? `${coach.email} · ` : ""}
-                        {payout.sessions_count ?? assignedSessions} session
-                        {(payout.sessions_count ?? assignedSessions) === 1 ? "" : "s"} ·{" "}
-                        {payout.students_count ?? 0} student
-                        {(payout.students_count ?? 0) === 1 ? "" : "s"}
-                      </div>
-                    </div>
-                  </Link>
+    <div className="space-y-4 p-6" data-testid="admin-payouts">
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold">Coach Payroll</h1>
+        <MonthPicker value={month} onChange={setMonth} />
+      </div>
+
+      {warningRows.length > 0 && (
+        <div className="rounded-md border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+          <strong>
+            {warningRows.length} coach{warningRows.length > 1 ? "es" : ""}
+          </strong>{" "}
+          have unresolved payroll warnings or unpaid occurrences. Open each payout, repair the
+          session fee or coach rate, then recompute before approval.
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <button
+          className="rounded border px-3 py-1.5 text-sm disabled:opacity-50"
+          disabled={bulkGenerate.isPending}
+          onClick={() => bulkGenerate.mutate()}
+        >
+          Generate all
+        </button>
+        <button
+          className="rounded border px-3 py-1.5 text-sm disabled:opacity-50"
+          disabled={bulkRecompute.isPending}
+          onClick={() => bulkRecompute.mutate()}
+        >
+          Recompute all
+        </button>
+        <button
+          className="rounded border px-3 py-1.5 text-sm disabled:opacity-50"
+          disabled={bulkExport.isPending}
+          onClick={() => bulkExport.mutate()}
+        >
+          Export month
+        </button>
+      </div>
+
+      {isLoading ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : (
+        <table className="w-full text-sm border-collapse">
+          <thead>
+            <tr className="border-b text-left text-muted-foreground">
+              <th className="py-2 pr-4 font-medium">Coach</th>
+              <th className="py-2 pr-4 font-medium">Sessions</th>
+              <th className="py-2 pr-4 font-medium">Unpaid</th>
+              <th className="py-2 pr-4 font-medium">Total</th>
+              <th className="py-2 pr-4 font-medium">Warnings</th>
+              <th className="py-2 pr-4 font-medium">Status</th>
+              <th className="py-2 font-medium" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.coach_id} className="border-b hover:bg-muted/30">
+                <td className="py-2 pr-4">{row.coach_name ?? row.coach_id}</td>
+                <td className="py-2 pr-4">{row.session_count}</td>
+                <td className="py-2 pr-4">
+                  {row.unresolved_unpaid_count > 0 ? (
+                    <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                      {row.unresolved_unpaid_count} unresolved
+                    </span>
+                  ) : (
+                    "0"
+                  )}
                 </td>
-                <td className="px-2 py-3 text-right font-mono font-medium tabular-nums">
-                  <div>{money(payout.amount_cents)}</div>
-                  {payout.expected_revenue_cents != null ? (
-                    <div className="text-xs font-normal text-rally-muted">
-                      {money(payout.expected_revenue_cents)} expected
-                    </div>
-                  ) : null}
+                <td className="py-2 pr-4">
+                  {(row.total_amount_cents / 100).toFixed(2)} {row.currency}
                 </td>
-                <td className="px-2 py-3 font-mono text-xs text-rally-muted">
-                  {dateLabel(payout.period_start)} - {dateLabel(payout.period_end)}
-                  {payout.rule_label ? <div>{payout.rule_label}</div> : null}
+                <td className="py-2 pr-4">
+                  {row.warning_count > 0 ? (
+                    <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                      {row.warning_count} unresolved
+                    </span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">Clear</span>
+                  )}
                 </td>
-                <td className="px-2 py-3">
-                  <Chip
-                    variant={payout.paid_at ? "paid" : "pending"}
-                    label={payout.paid_at ? "PAID" : "PENDING"}
-                  />
+                <td className="py-2 pr-4">
+                  <StatusChip status={row.status} />
+                </td>
+                <td className="py-2">
+                  {row.period_id ? (
+                    <a
+                      href={`/admin/payouts/${row.period_id}`}
+                      className="text-primary underline"
+                    >
+                      Open
+                    </a>
+                  ) : (
+                    <button
+                      className="text-primary underline disabled:opacity-50"
+                      disabled={generateOne.isPending}
+                      onClick={() =>
+                        generateOne.mutate({
+                          coach_id: row.coach_id,
+                          period_start: data!.period_start,
+                          period_end: data!.period_end,
+                        })
+                      }
+                    >
+                      Generate
+                    </button>
+                  )}
                 </td>
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
 
-function Skeleton() {
+function StatusChip({ status }: { status: string }) {
+  const map: Record<string, { label: string; cls: string }> = {
+    not_generated: { label: "Not generated", cls: "bg-gray-100 text-gray-600" },
+    draft: { label: "Draft", cls: "bg-blue-100 text-blue-700" },
+    approved: { label: "Approved", cls: "bg-yellow-100 text-yellow-700" },
+    paid: { label: "Paid", cls: "bg-green-100 text-green-700" },
+  };
+  const { label, cls } = map[status] ?? { label: status, cls: "" };
   return (
-    <div className="space-y-2">
-      {[0, 1, 2].map((i) => (
-        <div key={i} className="h-14 animate-pulse rounded-lg bg-rally-paper" />
-      ))}
-    </div>
+    <span className={`rounded px-2 py-0.5 text-xs font-medium ${cls}`}>{label}</span>
   );
 }

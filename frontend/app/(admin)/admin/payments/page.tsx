@@ -8,21 +8,30 @@
  * payment isn't eligible.
  */
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 
 import {
   applyPaymentDiscount,
+  applyAdminInvoiceAdjustment,
   generateAdminInvoiceArtifact,
   generateMonthlyPayments,
   getAdminInvoiceDetail,
+  getBillingReconciliationReport,
+  listBillingWebhookEvents,
   listAdminPayments,
   markPaymentPaid,
+  reconcileStripeBilling,
+  recordAdminInvoicePayment,
+  refundAdminInvoice,
   refundPayment,
   undoPaymentPaid,
   type AdminPaymentStatus,
   type AdminPaymentView,
+  type BillingReconciliationReport,
+  type MonthlyGenerationSkippedDetail,
+  type ReconcileStripeBillingRequest,
   type RefundRequest,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
@@ -34,6 +43,18 @@ import { BigNum, Overline } from "@/components/ds/typography";
 
 function formatCents(cents: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
+}
+
+function formatDate(value: string): string {
+  return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function skipReasonLabel(value: string): string {
+  return value.replaceAll("_", " ");
 }
 
 function finalCents(payment: AdminPaymentView): number {
@@ -87,17 +108,65 @@ function methodChip(payment: AdminPaymentView): { variant: ChipVariant; label: s
   return null;
 }
 
+function stripeIdSummary(payment: AdminPaymentView): string | null {
+  const ids = [
+    payment.stripe_checkout_session_id,
+    payment.stripe_invoice_id,
+    payment.stripe_payment_intent_id,
+    payment.stripe_subscription_id,
+  ].filter(Boolean);
+  if (ids.length === 0) return null;
+  return ids.join(" · ");
+}
+
+function reconciliationLabel(payment: AdminPaymentView): string | null {
+  if (payment.reconciliation_status) {
+    return payment.reconciliation_status.replaceAll("_", " ");
+  }
+  if (
+    (payment.status === "pending" || payment.status === "partially_paid") &&
+    payment.stripe_linked
+  ) {
+    return "Stripe linked, app ledger pending";
+  }
+  return null;
+}
+
+function isLedgerInvoiceRow(payment: AdminPaymentView): boolean {
+  return payment.payment_method === "invoice" || payment.payment_method === "stripe";
+}
+
+function invoiceActionId(payment: AdminPaymentView | null): string {
+  return payment?.invoice_id || payment?.payment_id || "";
+}
+
+function sessionFilterKey(payment: AdminPaymentView): string {
+  return payment.session_id || "__none__";
+}
+
+function sessionFilterLabel(value: string): string {
+  return value === "__none__" ? "No session" : value;
+}
+
 export default function AdminPaymentsPage() {
   const [refundTarget, setRefundTarget] = useState<AdminPaymentView | null>(null);
   const [paidTarget, setPaidTarget] = useState<AdminPaymentView | null>(null);
   const [discountTarget, setDiscountTarget] = useState<AdminPaymentView | null>(null);
   const [invoiceTarget, setInvoiceTarget] = useState<AdminPaymentView | null>(null);
+  const [syncTarget, setSyncTarget] = useState<AdminPaymentView | null>(null);
+  const [syncOpen, setSyncOpen] = useState(false);
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [periodFilter, setPeriodFilter] = useState("all");
+  const [sessionFilter, setSessionFilter] = useState("all");
   const queryClient = useQueryClient();
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: queryKeys.admin.payments(),
     queryFn: () => listAdminPayments(),
+  });
+  const webhookQueueQuery = useQuery({
+    queryKey: ["admin", "billing-webhooks", "failed-quarantined"],
+    queryFn: () => listBillingWebhookEvents({ limit: 5 }),
   });
 
   const undoMutation = useMutation({
@@ -105,17 +174,51 @@ export default function AdminPaymentsPage() {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.admin.payments() }),
   });
 
-  const payments = data?.payments ?? [];
+  const payments = useMemo(() => data?.payments ?? [], [data?.payments]);
+  const periodOptions = useMemo(
+    () =>
+      Array.from(new Set(payments.map((payment) => payment.period).filter(Boolean)))
+        .sort()
+        .reverse() as string[],
+    [payments],
+  );
+  const sessionOptions = useMemo(
+    () =>
+      Array.from(new Set(payments.map((payment) => sessionFilterKey(payment)))).sort((a, b) =>
+        sessionFilterLabel(a).localeCompare(sessionFilterLabel(b)),
+      ),
+    [payments],
+  );
+  const filteredPayments = useMemo(
+    () =>
+      payments.filter((payment) => {
+        if (periodFilter !== "all" && payment.period !== periodFilter) return false;
+        if (sessionFilter !== "all" && sessionFilterKey(payment) !== sessionFilter) return false;
+        return true;
+      }),
+    [payments, periodFilter, sessionFilter],
+  );
+  const webhookEvents = webhookQueueQuery.data?.events ?? [];
   const pendingCount = payments.filter((p) => {
     const status = adminPaymentStatus(p);
     return status === "pending" || status === "partially_paid";
   }).length;
-  const collectedCents = payments
-    .reduce((sum, p) => sum + (paidCents(p) ?? 0), 0);
+  const failedPaymentCount = payments.filter((p) => adminPaymentStatus(p) === "failed").length;
+  const collectedCents = payments.reduce((sum, p) => sum + (paidCents(p) ?? 0), 0);
 
   return (
     <section data-testid="admin-payments" className="space-y-5">
       <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => {
+            setSyncTarget(null);
+            setSyncOpen(true);
+          }}
+        >
+          Sync Stripe
+        </Button>
         <Button variant="primary" size="sm" onClick={() => setGenerateOpen(true)}>
           Generate monthly
         </Button>
@@ -124,9 +227,105 @@ export default function AdminPaymentsPage() {
       {/* KPI strip */}
       <div className="grid gap-3 sm:grid-cols-3">
         <Metric label="Open invoices" value={String(pendingCount)} />
+        <Metric label="Failed payments" value={String(failedPaymentCount)} />
         <Metric label="Collected (net)" value={formatCents(collectedCents)} />
-        <Metric label="Total payments" value={String(payments.length)} />
       </div>
+
+      <Card p={16}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <Overline>Recovery</Overline>
+            <h2 className="mt-1 font-display text-lg font-semibold text-rally-ink">
+              Failed webhook queue
+            </h2>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void webhookQueueQuery.refetch()}
+            disabled={webhookQueueQuery.isFetching}
+          >
+            Refresh
+          </Button>
+        </div>
+        {webhookQueueQuery.isError ? (
+          <p className="mt-3 text-sm text-red-700">Could not load webhook recovery queue.</p>
+        ) : webhookEvents.length === 0 ? (
+          <p className="mt-3 text-sm text-rally-subtle">No failed or quarantined webhooks.</p>
+        ) : (
+          <div className="mt-4 divide-y divide-rally-line">
+            {webhookEvents.map((event) => (
+              <div key={event.event_id} className="grid gap-2 py-3 text-sm sm:grid-cols-[1fr_auto]">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-rally-ink">{event.event_type}</span>
+                    <Chip
+                      variant={event.status === "quarantined" ? "failed" : "pending"}
+                      label={event.status.toUpperCase()}
+                    />
+                  </div>
+                  <p className="mt-1 max-w-2xl text-rally-subtle">
+                    {event.error_message || "No error detail recorded."}
+                  </p>
+                </div>
+                <div className="font-mono text-xs text-rally-subtle sm:text-right">
+                  <div>{event.event_id}</div>
+                  {event.object_id && <div>{event.object_id}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <ReconciliationReportPanel />
+
+      <Card p={16}>
+        <div className="grid gap-3 md:grid-cols-[minmax(180px,240px)_minmax(180px,280px)_1fr_auto] md:items-end">
+          <Field label="Month">
+            <select
+              value={periodFilter}
+              onChange={(event) => setPeriodFilter(event.target.value)}
+              className={inputClass}
+            >
+              <option value="all">All months</option>
+              {periodOptions.map((period) => (
+                <option key={period} value={period}>
+                  {period}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Session">
+            <select
+              value={sessionFilter}
+              onChange={(event) => setSessionFilter(event.target.value)}
+              className={inputClass}
+            >
+              <option value="all">All sessions</option>
+              {sessionOptions.map((session) => (
+                <option key={session} value={session}>
+                  {sessionFilterLabel(session)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <div className="text-sm text-rally-subtle md:pb-2">
+            Showing {filteredPayments.length} of {payments.length} records
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setPeriodFilter("all");
+              setSessionFilter("all");
+            }}
+            disabled={periodFilter === "all" && sessionFilter === "all"}
+          >
+            Reset
+          </Button>
+        </div>
+      </Card>
 
       {isError && (
         <Card p={16} style={{ borderColor: "#fecaca", background: "#fef2f2" }}>
@@ -146,6 +345,10 @@ export default function AdminPaymentsPage() {
           <p className="p-8 text-center text-sm text-rally-subtle" data-testid="payments-empty">
             No payments found.
           </p>
+        ) : filteredPayments.length === 0 ? (
+          <p className="p-8 text-center text-sm text-rally-subtle" data-testid="payments-filter-empty">
+            No payments match these filters.
+          </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[980px] text-sm" data-testid="admin-payments-table">
@@ -163,10 +366,12 @@ export default function AdminPaymentsPage() {
                 </tr>
               </thead>
               <tbody>
-                {payments.map((p) => {
+                {filteredPayments.map((p) => {
                   const chip = statusChip(p.status);
                   const method = methodChip(p);
                   const rowPaidCents = paidCents(p);
+                  const stripeSummary = stripeIdSummary(p);
+                  const reconciliation = reconciliationLabel(p);
                   return (
                     <tr
                       key={p.payment_id}
@@ -180,6 +385,20 @@ export default function AdminPaymentsPage() {
                         <div className="mt-0.5 text-xs text-rally-subtle">
                           Created {new Date(p.created_at).toLocaleDateString()}
                         </div>
+                        {(stripeSummary || reconciliation) && (
+                          <div className="mt-1 max-w-[280px] space-y-0.5 text-xs text-rally-subtle">
+                            {stripeSummary && (
+                              <div className="truncate font-mono" title={stripeSummary}>
+                                {stripeSummary}
+                              </div>
+                            )}
+                            {reconciliation && (
+                              <div className="font-medium text-amber-700">
+                                {reconciliation}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-display font-semibold text-rally-ink">
@@ -210,6 +429,10 @@ export default function AdminPaymentsPage() {
                           onInvoice={() => setInvoiceTarget(p)}
                           onPaid={() => setPaidTarget(p)}
                           onRefund={() => setRefundTarget(p)}
+                          onSync={() => {
+                            setSyncTarget(p);
+                            setSyncOpen(true);
+                          }}
                           onUndo={() => undoMutation.mutate(p.payment_id)}
                           undoPending={undoMutation.isPending}
                         />
@@ -253,6 +476,19 @@ export default function AdminPaymentsPage() {
         }}
       />
       <InvoiceDialog payment={invoiceTarget} onClose={() => setInvoiceTarget(null)} />
+      <SyncStripeDialog
+        open={syncOpen}
+        payment={syncTarget}
+        onClose={() => {
+          setSyncOpen(false);
+          setSyncTarget(null);
+        }}
+        onSynced={() => {
+          setSyncOpen(false);
+          setSyncTarget(null);
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.payments() });
+        }}
+      />
     </section>
   );
 }
@@ -270,12 +506,151 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function ReconciliationReportPanel() {
+  const [stripeInvoiceId, setStripeInvoiceId] = useState("");
+  const [paymentIntentId, setPaymentIntentId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const canRun = Boolean(stripeInvoiceId.trim() || paymentIntentId.trim());
+  const mutation = useMutation({
+    mutationFn: () =>
+      getBillingReconciliationReport({
+        stripe_invoice_id: stripeInvoiceId.trim() || null,
+        payment_intent_id: paymentIntentId.trim() || null,
+      }),
+    onSuccess: () => setError(null),
+    onError: (err: Error) => setError(err.message ?? "Reconciliation failed."),
+  });
+  const report = mutation.data;
+
+  return (
+    <Card p={16}>
+      <div>
+        <Overline>Reconciliation</Overline>
+        <h2 className="mt-1 font-display text-lg font-semibold text-rally-ink">
+          Read-only reconciliation
+        </h2>
+      </div>
+      <form
+        className="mt-4 grid gap-3 lg:grid-cols-[1fr_1fr_auto]"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!canRun) {
+            setError("Stripe invoice ID or PaymentIntent ID is required.");
+            return;
+          }
+          mutation.mutate();
+        }}
+      >
+        <Field label="Stripe invoice ID">
+          <input
+            value={stripeInvoiceId}
+            onChange={(event) => setStripeInvoiceId(event.target.value)}
+            className={inputClass}
+            placeholder="in_..."
+          />
+        </Field>
+        <Field label="PaymentIntent ID">
+          <input
+            value={paymentIntentId}
+            onChange={(event) => setPaymentIntentId(event.target.value)}
+            className={inputClass}
+            placeholder="pi_..."
+          />
+        </Field>
+        <div className="flex items-end">
+          <Button
+            variant="secondary"
+            size="sm"
+            type="submit"
+            disabled={!canRun || mutation.isPending}
+          >
+            {mutation.isPending ? "Checking..." : "Run report"}
+          </Button>
+        </div>
+      </form>
+      {error && <div className="mt-3"><Alert tone="red">{error}</Alert></div>}
+      {report && <ReconciliationReportSummary report={report} />}
+    </Card>
+  );
+}
+
+function ReconciliationReportSummary({ report }: { report: BillingReconciliationReport }) {
+  const checkedAt = new Date(report.checked_at).toLocaleString();
+  const manualReviewCandidates = Array.isArray(report.manual_review_candidates)
+    ? report.manual_review_candidates
+    : [];
+  return (
+    <div className="mt-4 space-y-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <Chip
+          variant={report.result === "MATCH" ? "paid" : "failed"}
+          label={report.result.replaceAll("_", " ")}
+        />
+        <span className="text-rally-subtle">Checked {checkedAt}</span>
+      </div>
+      <div className="grid gap-2 rounded-md border border-rally-line bg-rally-paper/50 p-3 md:grid-cols-2">
+        <SummaryRow label="Stripe invoice" value={report.stripe_invoice_id || "—"} />
+        <SummaryRow label="PaymentIntent" value={report.payment_intent_id || "—"} />
+        <SummaryRow label="Stripe customer" value={report.stripe_customer_id || "—"} />
+        <SummaryRow label="Ledger invoice" value={report.local_invoice_id || "—"} />
+        <SummaryRow label="Ledger payment" value={report.ledger_payment_id || "—"} />
+        <SummaryRow label="Payment allocation" value={report.payment_allocation_id || "—"} />
+      </div>
+      {report.mismatches.length === 0 ? (
+        <p className="text-sm text-rally-subtle">No mismatches found.</p>
+      ) : (
+        <div className="divide-y divide-rally-line rounded-md border border-rally-line">
+          {report.mismatches.map((mismatch, index) => (
+            <div key={`${mismatch.code}-${index}`} className="grid gap-1 p-3 sm:grid-cols-[180px_1fr]">
+              <div className="font-mono text-xs font-bold uppercase text-rally-ink">
+                {mismatch.code}
+              </div>
+              <div>
+                <p className="text-rally-ink">{mismatch.message}</p>
+                <p className="mt-1 font-mono text-xs text-rally-subtle">
+                  Stripe: {String(mismatch.stripe_value ?? "—")} · Local:{" "}
+                  {String(mismatch.local_value ?? "—")}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {manualReviewCandidates.length > 0 && (
+        <div className="divide-y divide-rally-line rounded-md border border-amber-200 bg-amber-50/50">
+          <div className="p-3">
+            <div className="font-mono text-xs font-bold uppercase tracking-[0.18em] text-amber-800">
+              Manual review candidates
+            </div>
+          </div>
+          {manualReviewCandidates.map((candidate) => (
+            <div key={candidate.invoice_id} className="grid gap-1 p-3 sm:grid-cols-[180px_1fr]">
+              <div className="font-mono text-xs font-bold uppercase text-rally-ink">
+                {candidate.invoice_id}
+              </div>
+              <div>
+                <p className="text-rally-ink">
+                  {formatCents(candidate.amount_cents)} open balance for parent{" "}
+                  {candidate.parent_id}
+                  {candidate.period ? ` (${candidate.period})` : ""}
+                </p>
+                <p className="mt-1 text-xs text-rally-subtle">{candidate.reason}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PaymentActions({
   payment,
   onDiscount,
   onInvoice,
   onPaid,
   onRefund,
+  onSync,
   onUndo,
   undoPending,
 }: {
@@ -284,10 +659,12 @@ function PaymentActions({
   onInvoice: () => void;
   onPaid: () => void;
   onRefund: () => void;
+  onSync: () => void;
   onUndo: () => void;
   undoPending: boolean;
 }) {
   const status = adminPaymentStatus(payment);
+  const invoiceRow = isLedgerInvoiceRow(payment);
   const isPending = status === "pending" || status === "partially_paid";
   const isPaid =
     payment.status === "succeeded" ||
@@ -300,13 +677,14 @@ function PaymentActions({
   return (
     <div className="flex justify-end gap-2">
       <Button variant="secondary" size="sm" onClick={onInvoice}>Invoice</Button>
-      {isPending && (
+      <Button variant="secondary" size="sm" onClick={onSync}>Sync</Button>
+      {isPending && !invoiceRow && (
         <>
           <Button variant="secondary" size="sm" onClick={onDiscount}>Discount</Button>
           <Button variant="primary" size="sm" onClick={onPaid}>Mark paid</Button>
         </>
       )}
-      {isPaid && (
+      {isPaid && !invoiceRow && (
         <>
           <Button
             variant="danger"
@@ -346,12 +724,27 @@ function GenerateDialog({
   onGenerated: () => void;
 }) {
   const [period, setPeriod] = useState("");
-  const [result, setResult] = useState<string | null>(null);
+  const [result, setResult] = useState<{
+    message: string;
+    tone: "green" | "red";
+    skippedDetails: MonthlyGenerationSkippedDetail[];
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const mutation = useMutation({
     mutationFn: () => generateMonthlyPayments({ period }),
     onSuccess: (res) => {
-      setResult(`${res.created} created, ${res.skipped_existing} already existed.`);
+      const repaired = res.repaired_orphan_keys + res.repaired_partial_invoices;
+      const parts = [
+        `${res.created} created`,
+        `${res.skipped_existing} already complete`,
+      ];
+      if (repaired > 0) parts.push(`${repaired} repaired`);
+      if (res.failed_repair > 0) parts.push(`${res.failed_repair} need review`);
+      setResult({
+        message: parts.join(", "),
+        tone: res.failed_repair > 0 ? "red" : "green",
+        skippedDetails: res.skipped_details ?? [],
+      });
       setError(null);
       onGenerated();
     },
@@ -374,7 +767,7 @@ function GenerateDialog({
       }}
       overline="Invoices"
       title="Generate monthly invoices"
-      description="Creates pending invoices for active manual enrollments."
+      description="Creates ledger invoices for active monthly enrollments."
     >
       <form
         className="space-y-3"
@@ -384,7 +777,35 @@ function GenerateDialog({
         }}
       >
         {error && <Alert tone="red">{error}</Alert>}
-        {result && <Alert tone="green">{result}</Alert>}
+        {result && <Alert tone={result.tone}>{result.message}</Alert>}
+        {result?.skippedDetails.length ? (
+          <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            <p className="font-semibold">Skipped billing deferrals</p>
+            <ul className="mt-2 space-y-2">
+              {result.skippedDetails.map((detail) => (
+                <li key={`${detail.enrollment_id}-${detail.reason_code}`}>
+                  <span className="font-medium">
+                    {detail.student_name || detail.student_id || detail.enrollment_id}
+                  </span>
+                  <span>
+                    {" "}
+                    skipped for {detail.billing_period} · {skipReasonLabel(detail.reason_code)}
+                  </span>
+                  <span className="block text-xs">
+                    {detail.resume_on
+                      ? `Resume ${formatDate(detail.resume_on)}`
+                      : detail.review_on
+                        ? `Review ${formatDate(detail.review_on)}`
+                        : detail.expires_on
+                          ? `Expires ${formatDate(detail.expires_on)}`
+                          : "Needs admin review"}
+                    {detail.needs_review ? " · review needed" : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         <Field label="Period" required>
           <input
             type="month"
@@ -480,6 +901,7 @@ function MarkPaidDialog({
 }) {
   const [method, setMethod] = useState("cash");
   const [amountInput, setAmountInput] = useState("");
+  const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [referenceNumber, setReferenceNumber] = useState("");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -490,9 +912,11 @@ function MarkPaidDialog({
         amount_received_cents: amountInput ? Math.round(Number(amountInput) * 100) : undefined,
         reference_number: referenceNumber || undefined,
         notes,
+        payment_date: paymentDate || undefined,
       }),
     onSuccess: () => {
       setAmountInput("");
+      setPaymentDate(new Date().toISOString().slice(0, 10));
       setReferenceNumber("");
       setNotes("");
       setError(null);
@@ -546,6 +970,15 @@ function MarkPaidDialog({
             <option value="other">Other</option>
           </select>
         </Field>
+        <Field label="Payment date" required>
+          <input
+            type="date"
+            required
+            value={paymentDate}
+            onChange={(event) => setPaymentDate(event.target.value)}
+            className={inputClass}
+          />
+        </Field>
         <Field label="Reference">
           <input
             value={referenceNumber}
@@ -569,16 +1002,78 @@ function InvoiceDialog({
   payment: AdminPaymentView | null;
   onClose: () => void;
 }) {
-  const invoiceId = payment?.invoice_number || payment?.payment_id || "";
+  const invoiceId = invoiceActionId(payment);
+  const queryClient = useQueryClient();
+  const [manualAmountInput, setManualAmountInput] = useState("");
+  const [manualMethod, setManualMethod] = useState("cash");
+  const [manualReference, setManualReference] = useState("");
+  const [manualNotes, setManualNotes] = useState("");
+  const [adjustmentAmountInput, setAdjustmentAmountInput] = useState("");
+  const [adjustmentDescription, setAdjustmentDescription] = useState("");
+  const [adjustmentReason, setAdjustmentReason] = useState("");
+  const [refundAmountInput, setRefundAmountInput] = useState("");
+  const [refundReason, setRefundReason] = useState("");
+  const [invoiceActionError, setInvoiceActionError] = useState<string | null>(null);
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["admin", "invoice-detail", invoiceId],
     queryFn: () => getAdminInvoiceDetail(invoiceId),
     enabled: Boolean(payment),
   });
+  const refreshBillingRows = () => {
+    void refetch();
+    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.payments() });
+  };
   const artifactMutation = useMutation({
     mutationFn: (artifactType: "invoice_pdf" | "receipt") =>
       generateAdminInvoiceArtifact(invoiceId, artifactType),
     onSuccess: () => void refetch(),
+  });
+  const manualPaymentMutation = useMutation({
+    mutationFn: () =>
+      recordAdminInvoicePayment(invoiceId, {
+        amount_cents: Math.round(Number(manualAmountInput) * 100),
+        payment_method: manualMethod,
+        reference_number: manualReference || null,
+        notes: manualNotes,
+      }),
+    onSuccess: () => {
+      setManualAmountInput("");
+      setManualReference("");
+      setManualNotes("");
+      setInvoiceActionError(null);
+      refreshBillingRows();
+    },
+    onError: (err: Error) => setInvoiceActionError(err.message ?? "Payment recording failed."),
+  });
+  const adjustmentMutation = useMutation({
+    mutationFn: () =>
+      applyAdminInvoiceAdjustment(invoiceId, {
+        description: adjustmentDescription,
+        amount_cents: Math.round(Number(adjustmentAmountInput) * 100),
+        reason: adjustmentReason,
+      }),
+    onSuccess: () => {
+      setAdjustmentAmountInput("");
+      setAdjustmentDescription("");
+      setAdjustmentReason("");
+      setInvoiceActionError(null);
+      refreshBillingRows();
+    },
+    onError: (err: Error) => setInvoiceActionError(err.message ?? "Adjustment failed."),
+  });
+  const invoiceRefundMutation = useMutation({
+    mutationFn: () =>
+      refundAdminInvoice(invoiceId, {
+        amount_cents: refundAmountInput ? Math.round(Number(refundAmountInput) * 100) : undefined,
+        reason: refundReason,
+      }),
+    onSuccess: () => {
+      setRefundAmountInput("");
+      setRefundReason("");
+      setInvoiceActionError(null);
+      refreshBillingRows();
+    },
+    onError: (err: Error) => setInvoiceActionError(err.message ?? "Refund failed."),
   });
 
   return (
@@ -595,6 +1090,7 @@ function InvoiceDialog({
         <Alert tone="red">Could not load invoice detail.</Alert>
       ) : (
         <div className="space-y-4 text-sm">
+          {invoiceActionError && <Alert tone="red">{invoiceActionError}</Alert>}
           <div className="grid gap-2 rounded-md border border-rally-line bg-rally-paper/50 p-3">
             <SummaryRow label="Paid" value={formatCents(data.paid_amount_cents)} />
             <SummaryRow label="Due" value={formatCents(data.due_amount_cents)} />
@@ -624,6 +1120,162 @@ function InvoiceDialog({
               ))}
             </div>
           )}
+          {data.due_amount_cents > 0 && (
+            <form
+              className="grid gap-3 rounded-md border border-rally-line p-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                manualPaymentMutation.mutate();
+              }}
+            >
+              <div className="font-medium text-rally-ink">Record manual payment</div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Field label="Amount" required>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    required
+                    value={manualAmountInput}
+                    onChange={(event) => setManualAmountInput(event.target.value)}
+                    placeholder={(data.due_amount_cents / 100).toFixed(2)}
+                    className={inputClass}
+                  />
+                </Field>
+                <Field label="Method" required>
+                  <select
+                    required
+                    value={manualMethod}
+                    onChange={(event) => setManualMethod(event.target.value)}
+                    className={inputClass}
+                  >
+                    <option value="cash">Cash</option>
+                    <option value="check">Check</option>
+                    <option value="zelle">Zelle</option>
+                    <option value="venmo">Venmo</option>
+                    <option value="bank_transfer">Bank transfer</option>
+                    <option value="other">Other</option>
+                  </select>
+                </Field>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Field label="Reference">
+                  <input
+                    value={manualReference}
+                    onChange={(event) => setManualReference(event.target.value)}
+                    className={inputClass}
+                  />
+                </Field>
+                <Field label="Notes">
+                  <input
+                    value={manualNotes}
+                    onChange={(event) => setManualNotes(event.target.value)}
+                    className={inputClass}
+                  />
+                </Field>
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  type="submit"
+                  disabled={manualPaymentMutation.isPending}
+                >
+                  {manualPaymentMutation.isPending ? "Recording..." : "Record payment"}
+                </Button>
+              </div>
+            </form>
+          )}
+          <form
+            className="grid gap-3 rounded-md border border-rally-line p-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              adjustmentMutation.mutate();
+            }}
+          >
+            <div className="font-medium text-rally-ink">Adjustment</div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Field label="Amount" required>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  value={adjustmentAmountInput}
+                  onChange={(event) => setAdjustmentAmountInput(event.target.value)}
+                  placeholder="-10.00"
+                  className={inputClass}
+                />
+              </Field>
+              <Field label="Description" required>
+                <input
+                  required
+                  value={adjustmentDescription}
+                  onChange={(event) => setAdjustmentDescription(event.target.value)}
+                  className={inputClass}
+                />
+              </Field>
+            </div>
+            <Field label="Reason" required>
+              <input
+                required
+                value={adjustmentReason}
+                onChange={(event) => setAdjustmentReason(event.target.value)}
+                className={inputClass}
+              />
+            </Field>
+            <div className="flex justify-end">
+              <Button
+                variant="secondary"
+                size="sm"
+                type="submit"
+                disabled={adjustmentMutation.isPending}
+              >
+                {adjustmentMutation.isPending ? "Saving..." : "Apply adjustment"}
+              </Button>
+            </div>
+          </form>
+          {data.allocations.length > 0 && (
+            <form
+              className="grid gap-3 rounded-md border border-rally-line p-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                invoiceRefundMutation.mutate();
+              }}
+            >
+              <div className="font-medium text-rally-ink">Refund allocated payment</div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Field label="Amount">
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={refundAmountInput}
+                    onChange={(event) => setRefundAmountInput(event.target.value)}
+                    placeholder={(data.paid_amount_cents / 100).toFixed(2)}
+                    className={inputClass}
+                  />
+                </Field>
+                <Field label="Reason" required>
+                  <input
+                    required
+                    value={refundReason}
+                    onChange={(event) => setRefundReason(event.target.value)}
+                    className={inputClass}
+                  />
+                </Field>
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  variant="danger"
+                  size="sm"
+                  type="submit"
+                  disabled={invoiceRefundMutation.isPending}
+                >
+                  {invoiceRefundMutation.isPending ? "Refunding..." : "Refund"}
+                </Button>
+              </div>
+            </form>
+          )}
           <div className="flex justify-end gap-2">
             <Button
               variant="secondary"
@@ -645,6 +1297,146 @@ function InvoiceDialog({
             </Button>
           </div>
         </div>
+      )}
+    </RallyDialog>
+  );
+}
+
+function SyncStripeDialog({
+  open,
+  payment,
+  onClose,
+  onSynced,
+}: {
+  open: boolean;
+  payment: AdminPaymentView | null;
+  onClose: () => void;
+  onSynced: () => void;
+}) {
+  const [parentId, setParentId] = useState("");
+  const [enrollmentId, setEnrollmentId] = useState("");
+  const [checkoutSessionId, setCheckoutSessionId] = useState("");
+  const [customerId, setCustomerId] = useState("");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+  const mutation = useMutation({
+    mutationFn: (payload: ReconcileStripeBillingRequest) => reconcileStripeBilling(payload),
+    onSuccess: (res) => {
+      const status = res.mismatch_state ? `Sync finished: ${res.mismatch_state}.` : "Stripe sync complete.";
+      setResult(status);
+      setError(null);
+    },
+    onError: (err: Error) => setError(err.message ?? "Stripe sync failed."),
+  });
+
+  const reset = () => {
+    setParentId("");
+    setEnrollmentId("");
+    setCheckoutSessionId("");
+    setCustomerId("");
+    setReason("");
+    setError(null);
+    setResult(null);
+  };
+  const close = () => {
+    reset();
+    onClose();
+  };
+
+  useEffect(() => {
+    if (!open || !payment) return;
+    setParentId(payment.parent_id);
+    setEnrollmentId(payment.enrollment_id ?? "");
+    setCheckoutSessionId(payment.stripe_checkout_session_id ?? "");
+    setCustomerId(payment.stripe_customer_id ?? "");
+  }, [open, payment]);
+
+  return (
+    <RallyDialog
+      open={open}
+      onOpenChange={(nextOpen) => !nextOpen && close()}
+      overline="Stripe"
+      title="Sync billing from Stripe"
+      description="Fetches the live Checkout Session and updates Mongo after tenant validation."
+    >
+      {result ? (
+        <div className="space-y-4">
+          <Alert tone="green">{result}</Alert>
+          <div className="flex justify-end">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                onSynced();
+                reset();
+              }}
+            >
+              Done
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <form
+          className="space-y-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            mutation.mutate({
+              parent_id: parentId.trim(),
+              enrollment_id: enrollmentId.trim(),
+              stripe_checkout_session_id: checkoutSessionId.trim(),
+              stripe_customer_id: customerId.trim() || null,
+              reason: reason.trim(),
+            });
+          }}
+        >
+          {error && <Alert tone="red">{error}</Alert>}
+          <Field label="Parent ID" required>
+            <input
+              required
+              value={parentId}
+              onChange={(event) => setParentId(event.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Enrollment ID" required>
+            <input
+              required
+              value={enrollmentId}
+              onChange={(event) => setEnrollmentId(event.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Stripe Checkout Session ID" required>
+            <input
+              required
+              value={checkoutSessionId}
+              onChange={(event) => setCheckoutSessionId(event.target.value)}
+              className={inputClass}
+              placeholder="cs_live_..."
+            />
+          </Field>
+          <Field label="Stripe Customer ID">
+            <input
+              value={customerId}
+              onChange={(event) => setCustomerId(event.target.value)}
+              className={inputClass}
+              placeholder="cus_..."
+            />
+          </Field>
+          <Field label="Audit reason" required>
+            <textarea
+              required
+              minLength={8}
+              rows={3}
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              className={`${inputClass} min-h-24 py-2`}
+              placeholder="Backfill confirmed Stripe payment for ..."
+            />
+          </Field>
+          <DialogActions onCancel={close} submitLabel={mutation.isPending ? "Syncing..." : "Sync"} />
+        </form>
       )}
     </RallyDialog>
   );
@@ -768,7 +1560,7 @@ function RallyDialog({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-rally-ink/40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-xl focus:outline-none">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-full max-w-md -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl bg-white p-6 shadow-xl focus:outline-none">
           <Overline>{overline}</Overline>
           <Dialog.Title className="mt-1 font-display text-xl font-semibold tracking-[-0.01em]">
             {title}

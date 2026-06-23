@@ -1,4 +1,5 @@
 import { apiFetch } from "./client";
+import type { SkillStatus } from "./curriculum";
 
 export interface ParentProfile {
   first_name: string;
@@ -40,6 +41,8 @@ export interface ParentPayment {
   refunded_cents: number;
   created_at: string;
   session_id: string | null;
+  stripe_invoice_id?: string | null;
+  stripe_payment_intent_id?: string | null;
 }
 
 export interface ParentCredit {
@@ -104,6 +107,29 @@ export interface ParentEnrollment {
   subscription_status: string | null;
 }
 
+export interface ParentInvoice {
+  invoice_id: string;
+  period: string;
+  status: string;
+  total_cents: number;
+  balance_due_cents: number;
+  currency: string;
+  due_date: string;
+  pdf_url: string | null;
+  created_at: string;
+}
+
+export interface ParentInvoiceLine {
+  description: string;
+  quantity: number;
+  unit_amount_cents: number;
+  amount_cents: number;
+}
+
+export interface ParentInvoiceDetail extends ParentInvoice {
+  lines: ParentInvoiceLine[];
+}
+
 export interface ParentAttendanceRecord {
   attendance_id: string;
   student_id: string;
@@ -125,6 +151,25 @@ export interface ParentProgressNote {
   coach_name: string | null;
   body: string;
   created_at: string;
+}
+
+export interface ParentSkillUpdate {
+  skill_id: string;
+  skill_name: string;
+  status: SkillStatus;
+  updated_at: string;
+}
+
+export interface ParentPracticeResourceLink {
+  kind: "YOUTUBE";
+  title: string;
+  url: string;
+}
+
+export interface ParentPracticeResource {
+  skill_id: string;
+  skill_name: string;
+  resource_links: ParentPracticeResourceLink[];
 }
 
 export interface ParentScheduleEntry {
@@ -152,11 +197,22 @@ export interface ParentPauseRequest {
   period: string;
   pause_kind: "fixed" | "indefinite";
   resume_on: string | null;
+  review_on: string | null;
   reason: string | null;
   status: "pending" | "approved" | "declined";
   created_at: string;
   decided_at: string | null;
   decided_by: string | null;
+}
+
+export interface RegistrationWaiver {
+  configured: boolean;
+  version: string | null;
+  body: string | null;
+}
+
+export function getRegistrationWaiver(): Promise<RegistrationWaiver> {
+  return apiFetch("/parent/onboarding/waiver", { method: "GET" });
 }
 
 export function startOnboarding(): Promise<OnboardingApplication> {
@@ -212,7 +268,7 @@ export function startAutopay(payload: {
   enrollment_id: string;
   success_url: string;
   cancel_url: string;
-}): Promise<{ subscription_id: string; redirect_url: string }> {
+}): Promise<{ subscription_id: string; checkout_session_id: string; redirect_url: string }> {
   return apiFetch("/parent/autopay/start", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -249,6 +305,37 @@ export function listParentPayments(): Promise<{ payments: ParentPayment[] }> {
   return apiFetch("/parent/payments", { method: "GET" });
 }
 
+export function listParentInvoices(): Promise<{ invoices: ParentInvoice[] }> {
+  return apiFetch("/parent/invoices", { method: "GET" });
+}
+
+export function getParentInvoice(invoiceId: string): Promise<ParentInvoiceDetail> {
+  return apiFetch(`/parent/invoices/${encodeURIComponent(invoiceId)}`, { method: "GET" });
+}
+
+export function startParentInvoicePayment(
+  invoiceId: string,
+  payload: {
+    success_url: string;
+    cancel_url: string;
+  },
+): Promise<{ invoice_id: string; redirect_url: string }> {
+  return apiFetch(`/parent/invoices/${encodeURIComponent(invoiceId)}/pay`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function startParentBalancePayment(payload: {
+  success_url: string;
+  cancel_url: string;
+}): Promise<{ redirect_url: string }> {
+  return apiFetch("/parent/invoices/pay-balance", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function listParentCredits(): Promise<ParentCreditBalance> {
   return apiFetch("/parent/credits", { method: "GET" });
 }
@@ -271,6 +358,22 @@ export function listParentAttendance(): Promise<{
 
 export function listParentProgress(): Promise<{ notes: ParentProgressNote[] }> {
   return apiFetch("/parent/progress", { method: "GET" });
+}
+
+export function listSkillUpdates(studentId: string): Promise<ParentSkillUpdate[]> {
+  return apiFetch<{ updates: ParentSkillUpdate[] }>(
+    `/parent/students/${encodeURIComponent(studentId)}/skill-updates`,
+    { method: "GET" },
+  ).then((d) => d.updates);
+}
+
+export function listPracticeResources(
+  studentId: string,
+): Promise<ParentPracticeResource[]> {
+  return apiFetch<{ resources: ParentPracticeResource[] }>(
+    `/parent/students/${encodeURIComponent(studentId)}/practice-resources`,
+    { method: "GET" },
+  ).then((d) => d.resources);
 }
 
 export function listParentPauseRequests(): Promise<{
@@ -306,6 +409,7 @@ export function createParentPauseRequest(payload: {
   period?: string;
   pause_kind: "fixed" | "indefinite";
   resume_on?: string | null;
+  review_on?: string | null;
   reason?: string;
 }): Promise<ParentPauseRequest> {
   return apiFetch("/parent/pause-requests", {

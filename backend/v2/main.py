@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
@@ -22,10 +23,23 @@ from starlette.middleware.cors import CORSMiddleware
 
 from backend.v2.composition.admin import compose_admin
 from backend.v2.composition.coach import compose_coach
-from backend.v2.composition.parent import compose_parent
+from backend.v2.composition.digests import (
+    compose_send_coach_daily_digest,
+    resolve_digest_schedule,
+)
+from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.contexts.billing.application.ports import StripeGateway
-from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
-    FakeStripeGateway,
+from backend.v2.contexts.billing.application.use_cases.reconcile_stripe_payment_intents import (
+    ReconcileStripePaymentIntents,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
+    MongoBillingLedgerRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_billing_reconciliation_run_repo import (
+    MongoBillingReconciliationRunRepository,
+)
+from backend.v2.contexts.communications.application.use_cases.send_coach_daily_digest import (
+    SendCoachDailyDigestCommand,
 )
 from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import (
     BootstrapAcademy,
@@ -124,9 +138,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     idempotency_store = MongoIdempotencyStore(db)
     app.state.idempotency_store = idempotency_store
 
+    runtime_academy_id = _runtime_academy_id(settings)
+
     # Identity wiring — needed by TenancyMiddleware for token verification
     # and membership validation (ADR-0007).
-    users_repo = MongoUserRepository(db, default_academy_id=settings.default_academy_id)
+    users_repo = MongoUserRepository(db, default_academy_id=runtime_academy_id)
     verifier = FirebaseTokenVerifier()
 
     # In SaaS mode, both academy_memberships and platform_roles come from the
@@ -143,7 +159,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         membership_repo = MongoMembershipRepository(db)
         platform_role_repo = _MongoPlatformRoleAdapter(membership_repo)
     else:
-        membership_repo = _LegacyUserMembershipAdapter(users_repo, settings.default_academy_id)
+        membership_repo = _LegacyUserMembershipAdapter(users_repo, runtime_academy_id)
         platform_role_repo = _MongoPlatformRoleAdapter(MongoMembershipRepository(db))
 
     load_claims = LoadAuthClaims(
@@ -158,7 +174,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         users=users_repo,
         memberships=membership_repo if settings.saas_mode else None,
         outbox=outbox,
-        default_academy_id=settings.default_academy_id,
+        default_academy_id=runtime_academy_id,
         saas_mode=settings.saas_mode,
     )
     app.state.bootstrap_academy = BootstrapAcademy(
@@ -177,6 +193,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         else None
     )
     app.state.saas_mode = settings.saas_mode
+    app.state.tenancy_mode = settings.tenancy_mode
+    app.state.primary_academy_id = settings.primary_academy_id
     app.state.default_academy_id = settings.default_academy_id
     # Platform audit + governance services (issues #78, #79).
     # Constructed before TenantLifecycleService so the lifecycle service can
@@ -212,7 +230,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Parent BFF wiring (Wave 2). Cross-context event handlers are registered
     # by compose_parent via install_handlers().
-    app.state.parent = compose_parent(db, outbox, idempotency_store, stripe_gw)
+    app.state.parent = compose_parent(
+        db,
+        outbox,
+        idempotency_store,
+        stripe_gw,
+        academy_id=runtime_academy_id,
+    )
+    stripe_webhook_processors = {runtime_academy_id: app.state.parent.handle_webhook_event}
 
     # Admin BFF wiring (Wave 3).
     app.state.admin = compose_admin(db, outbox, idempotency_store, stripe_gw)
@@ -229,7 +254,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         }
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            settings.default_academy_id,
+            runtime_academy_id,
         ):
             with tenant_scope(academy_id):
                 result = await app.state.admin.process_scheduled_resume_actions.execute(limit=100)
@@ -241,6 +266,116 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if totals["processed"]:
             log.info("scheduled_resume_actions_processed", extra=totals)
 
+    async def _process_stripe_webhook_events() -> None:
+        totals = {"processed": 0, "failed": 0}
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            runtime_academy_id,
+        ):
+            processor = stripe_webhook_processors.get(academy_id)
+            if processor is None:
+                processor = compose_parent_webhook_handler(
+                    db,
+                    outbox,
+                    stripe_gw,
+                    academy_id=academy_id,
+                )
+                stripe_webhook_processors[academy_id] = processor
+            for _ in range(25):
+                result = await processor.process_next(
+                    processor_id=f"scheduler-stripe-webhook-worker:{academy_id}"
+                )
+                if result.get("empty"):
+                    break
+                if result.get("processed"):
+                    totals["processed"] += 1
+                else:
+                    totals["failed"] += 1
+        if totals["processed"] or totals["failed"]:
+            log.info("stripe_webhook_events_processed", extra=totals)
+
+    async def _reconcile_stripe_payment_intents() -> None:
+        totals = {
+            "academy_count": 0,
+            "scanned": 0,
+            "repaired": 0,
+            "skipped": 0,
+            "quarantined": 0,
+            "failed": 0,
+        }
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            runtime_academy_id,
+        ):
+            with tenant_scope(academy_id):
+                result = await ReconcileStripePaymentIntents(
+                    stripe=stripe_gw,
+                    ledger=MongoBillingLedgerRepository(db),
+                    run_recorder=MongoBillingReconciliationRunRepository(db),
+                    academy_id=academy_id,
+                ).execute(limit=100)
+            totals["academy_count"] += 1
+            totals["scanned"] += int(result.get("scanned") or 0)
+            totals["repaired"] += int(result.get("repaired") or 0)
+            totals["skipped"] += int(result.get("skipped") or 0)
+            totals["quarantined"] += int(result.get("quarantined") or 0)
+            totals["failed"] += int(result.get("failed") or 0)
+        if totals["repaired"] or totals["quarantined"] or totals["failed"]:
+            log.info("stripe_payment_intent_reconciliation_processed", extra=totals)
+
+    async def _send_coach_daily_digests() -> None:
+        # Hourly tick. The job runs every hour and only sends for academies whose
+        # *effective* digest hour matches the current scheduler-TZ hour. The env
+        # vars (settings.coach_digest_enabled/hour) are now deprecated defaults:
+        # they only apply until an admin saves per-academy values, so existing
+        # deployments keep their original single daily send with no behaviour
+        # change. Idempotency is preserved by the existing per-(academy, coach,
+        # date) try_claim — re-running the same hour sends nothing.
+        #
+        # NOTE: ``coach_digest_hour`` is interpreted in the scheduler timezone
+        # (settings.scheduler_tz), NOT each academy's local timezone. Honouring
+        # the academy's own TZ is explicit future work.
+        now = datetime.now(scheduler.timezone)
+        current_hour = now.hour
+        on_date = now.date()
+        academy_repo = MongoAcademyRepository(db)
+        totals = {
+            "academy_count": 0,
+            "coaches": 0,
+            "sent": 0,
+            "skipped_empty": 0,
+            "failed": 0,
+            "already_claimed": 0,
+        }
+        for academy_id in await _scheduler_academy_ids(
+            academy_repo,
+            runtime_academy_id,
+        ):
+            # Read the raw notifications subdoc so an *unset* override falls back
+            # to the env default (key present but False is a deliberate opt-out).
+            doc = await academy_repo.find_by_id(academy_id)
+            notifs = (doc or {}).get("notifications") or {}
+            schedule = resolve_digest_schedule(
+                academy_enabled=notifs.get("coach_digest_enabled"),
+                academy_hour=notifs.get("coach_digest_hour"),
+                env_enabled=settings.coach_digest_enabled,
+                env_hour=settings.coach_digest_hour,
+            )
+            if not (schedule.enabled and schedule.hour == current_hour):
+                continue
+            with tenant_scope(academy_id):
+                result = await app.state.coach_digest.execute(
+                    SendCoachDailyDigestCommand(academy_id=academy_id, digest_date=on_date)
+                )
+            totals["academy_count"] += 1
+            totals["coaches"] += result.total_coaches
+            totals["sent"] += result.sent
+            totals["skipped_empty"] += result.skipped_empty
+            totals["failed"] += result.failed
+            totals["already_claimed"] += result.already_claimed
+        if totals["coaches"]:
+            log.info("coach_daily_digests_processed", extra=totals)
+
     scheduler = AsyncIOScheduler(timezone=settings.scheduler_tz)
     scheduler.add_job(
         _process_scheduled_resumes,
@@ -249,6 +384,39 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         minute=0,
         id="process_scheduled_resume_actions",
         replace_existing=True,
+    )
+    scheduler.add_job(
+        _process_stripe_webhook_events,
+        "interval",
+        seconds=60,
+        id="process_stripe_webhook_events",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _reconcile_stripe_payment_intents,
+        "interval",
+        minutes=10,
+        id="reconcile_stripe_payment_intents",
+        replace_existing=True,
+        max_instances=1,
+    )
+    # Coach teaching-plan digest. The sender is composed unconditionally so the
+    # per-academy override (and the test-send use case) work regardless of the
+    # env flag; the composed sender is still the stub unless email delivery is
+    # explicitly on. The cron is now ALWAYS hourly: each tick the job resolves
+    # the effective per-academy schedule and only sends for academies whose
+    # effective hour matches the current scheduler-TZ hour (env flag = deprecated
+    # default — ZERO behaviour change until an admin saves per-academy values).
+    app.state.coach_digest = compose_send_coach_daily_digest(db)
+    scheduler.add_job(
+        _send_coach_daily_digests,
+        "cron",
+        hour="*",
+        minute=0,
+        id="send_coach_daily_digests",
+        replace_existing=True,
+        max_instances=1,
     )
     scheduler.start()
     app.state.scheduler = scheduler
@@ -282,7 +450,7 @@ async def _scheduler_academy_ids(
 
 
 def create_app() -> FastAPI:
-    get_settings()
+    settings = get_settings()
     app = FastAPI(
         title="Academy Manager API",
         version="2.0.0",
@@ -296,7 +464,7 @@ def create_app() -> FastAPI:
     # lazily on the first request.
     app.add_middleware(_LazyTenancyMiddleware)
     app.add_middleware(InMemoryRateLimitMiddleware)
-    _add_cors_middleware(app, get_settings())
+    _add_cors_middleware(app, settings)
 
     @app.get("/api/v2/healthz")
     async def healthz() -> dict[str, str]:
@@ -305,7 +473,8 @@ def create_app() -> FastAPI:
     # Persona route packages.
     app.include_router(me_router, prefix="/api/v2")
     app.include_router(registration_router, prefix="/api/v2")
-    app.include_router(platform_router, prefix="/api/v2")
+    if settings.enable_platform_routes:
+        app.include_router(platform_router, prefix="/api/v2")
     app.include_router(coach_router, prefix="/api/v2")
     app.include_router(parent_router, prefix="/api/v2")
     app.include_router(admin_router, prefix="/api/v2")
@@ -313,20 +482,33 @@ def create_app() -> FastAPI:
     return app
 
 
+def _runtime_academy_id(settings: Settings) -> str:
+    """Return the explicit single-tenant academy used for non-SaaS launch paths."""
+    if settings.tenancy_mode == "single_academy":
+        if not settings.primary_academy_id:
+            raise RuntimeError("PRIMARY_ACADEMY_ID is required in single_academy mode")
+        return settings.primary_academy_id
+    return settings.default_academy_id
+
+
 def _build_stripe(settings: Settings) -> StripeGateway:
-    if settings.env == "prod" and settings.stripe_use_fake_gateway:
-        raise RuntimeError("V2_STRIPE_USE_FAKE_GATEWAY must be false in production")
-    if (
-        settings.stripe_use_fake_gateway
-        or not settings.stripe_api_key
-        or not settings.stripe_webhook_secret
-    ):
-        return FakeStripeGateway()
+    if not settings.stripe_api_key or not settings.stripe_webhook_secret:
+        if settings.env != "prod":
+            from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
+                FakeStripeGateway,
+            )
+
+            return FakeStripeGateway()
+        raise RuntimeError(
+            "STRIPE_API_KEY and STRIPE_WEBHOOK_SECRET must be set. "
+            "Use Stripe test-mode keys (sk_test_...) for local/staging and live keys for prod."
+        )
     from backend.v2.contexts.billing.infrastructure.stripe_gateway import RealStripeGateway
 
     return RealStripeGateway(
         api_key=settings.stripe_api_key,
         webhook_secret=settings.stripe_webhook_secret,
+        connect_client_id=settings.stripe_connect_client_id,
     )
 
 
@@ -354,8 +536,8 @@ class _LazyTenancyMiddleware(TenancyMiddleware):
     Necessary because middleware is constructed during ``create_app`` (before
     the lifespan sets ``app.state.load_auth_claims`` and friends). On the
     first request we capture references off ``request.app.state`` and bind
-    the resolver callable in either SaaS mode (TenantResolver) or
-    single-tenant mode (default_academy_id).
+    the resolver callable in either SaaS mode (TenantResolver), launch
+    single-academy mode (PRIMARY_ACADEMY_ID), or legacy compatibility mode.
     """
 
     async def dispatch(self, request, call_next):  # type: ignore[override]
@@ -380,12 +562,14 @@ def _build_request_tenant_resolver(app: FastAPI):
     which inspects subdomain, custom domain, or internal header — and never
     falls back to a default tenant.
 
-    In non-SaaS mode we keep the legacy single-tenant deployment alive by
-    returning ``settings.default_academy_id`` so existing routes keep
-    working. ``default_academy_id`` is only ever consulted in this branch.
+    In non-SaaS single-academy launch mode, resolve to PRIMARY_ACADEMY_ID. In
+    legacy non-SaaS compatibility mode, resolve to the configured default
+    academy so existing local/single-tenant flows keep working.
     """
 
     saas_mode = getattr(app.state, "saas_mode", False)
+    tenancy_mode = getattr(app.state, "tenancy_mode", "multi_academy")
+    primary_academy_id = getattr(app.state, "primary_academy_id", None)
     default_academy_id = getattr(app.state, "default_academy_id", None)
     resolver = getattr(app.state, "tenant_resolver", None)
 
@@ -398,6 +582,8 @@ def _build_request_tenant_resolver(app: FastAPI):
                 return result.academy_id
             except TenantResolutionError:
                 return None
+        if tenancy_mode == "single_academy":
+            return primary_academy_id
         return default_academy_id
 
     return _resolve

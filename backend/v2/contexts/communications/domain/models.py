@@ -273,3 +273,85 @@ class Delivery:
 class ResolvedRecipientLike:  # pragma: no cover - structural protocol marker
     user_id: str
     email: str | None
+
+
+# ---------------------------------------------------------------------------
+# DigestSend — coach daily teaching-plan digest (claim-based idempotency)
+# ---------------------------------------------------------------------------
+
+
+class DigestSendStatus(StrEnum):
+    QUEUED = "queued"
+    SENT = "sent"
+    FAILED = "failed"
+    SKIPPED_EMPTY = "skipped_empty"
+
+
+@dataclass(frozen=True, slots=True)
+class DigestSend:
+    """One coach's daily digest send for a given date.
+
+    The ``(academy_id, coach_id, digest_date)`` triple is unique — a successful
+    ``try_claim`` insert is the idempotency guard, so a coach is e-mailed at
+    most once per day even if the scheduler fires twice.
+    """
+
+    digest_id: str
+    academy_id: str
+    coach_id: str
+    coach_email: str | None
+    digest_date: str  # ISO date (YYYY-MM-DD)
+    status: DigestSendStatus
+    provider_message_id: str | None
+    sent_at: str | None
+    failed_reason: str | None
+    created_at: datetime
+    # "daily" for the scheduled run, "test" for an admin-triggered test send.
+    # Test sends bypass the unique (academy, coach, date) idempotency claim.
+    kind: str = "daily"
+
+    @classmethod
+    def queued(
+        cls,
+        *,
+        digest_id: str,
+        academy_id: str,
+        coach_id: str,
+        coach_email: str | None,
+        digest_date: str,
+        created_at: datetime,
+        kind: str = "daily",
+    ) -> DigestSend:
+        return cls(
+            digest_id=digest_id,
+            academy_id=academy_id,
+            coach_id=coach_id,
+            coach_email=coach_email,
+            digest_date=digest_date,
+            status=DigestSendStatus.QUEUED,
+            provider_message_id=None,
+            sent_at=None,
+            failed_reason=None,
+            created_at=created_at,
+            kind=kind,
+        )
+
+    def mark_sent(self, *, provider_message_id: str | None, sent_at: str) -> DigestSend:
+        return replace(
+            self,
+            status=DigestSendStatus.SENT,
+            provider_message_id=provider_message_id,
+            sent_at=sent_at,
+            failed_reason=None,
+        )
+
+    def mark_failed(self, *, reason: str) -> DigestSend:
+        return replace(
+            self,
+            status=DigestSendStatus.FAILED,
+            failed_reason=reason,
+            provider_message_id=None,
+        )
+
+    def mark_skipped_empty(self) -> DigestSend:
+        return replace(self, status=DigestSendStatus.SKIPPED_EMPTY)

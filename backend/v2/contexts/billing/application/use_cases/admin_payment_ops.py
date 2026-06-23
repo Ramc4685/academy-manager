@@ -7,6 +7,7 @@ non-Stripe payments.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field, field_validator
@@ -19,6 +20,22 @@ class GenerateMonthlyPaymentsCommand(BaseModel):
     period: str = Field(pattern=r"^\d{4}-\d{2}$")
 
 
+class MonthlyGenerationSkippedDetail(BaseModel):
+    model_config = {"frozen": True}
+
+    enrollment_id: str
+    student_id: str
+    student_name: str | None = None
+    reason_code: str
+    source: str
+    billing_period: str
+    resume_on: str | None = None
+    review_on: str | None = None
+    expires_on: str | None = None
+    needs_review: bool = False
+    metadata: dict[str, str] = Field(default_factory=dict)
+
+
 class GenerateMonthlyPaymentsResult(BaseModel):
     model_config = {"frozen": True}
     created: int
@@ -26,6 +43,10 @@ class GenerateMonthlyPaymentsResult(BaseModel):
     skipped_no_charge: int = 0
     skipped_autopay: int = 0
     skipped_paused: int = 0
+    repaired_orphan_keys: int = 0
+    repaired_partial_invoices: int = 0
+    failed_repair: int = 0
+    skipped_details: list[MonthlyGenerationSkippedDetail] = Field(default_factory=list)
 
 
 class MarkPaymentPaidCommand(BaseModel):
@@ -35,6 +56,8 @@ class MarkPaymentPaidCommand(BaseModel):
     amount_received_cents: int | None = Field(default=None, gt=0)
     reference_number: str | None = None
     notes: str = ""
+    recorded_by: str | None = None
+    payment_date: date | None = None
 
 
 class ApplyPaymentDiscountCommand(BaseModel):
@@ -67,6 +90,8 @@ class AdminPaymentOperationsPort(Protocol):
         notes: str,
         amount_received_cents: int | None,
         reference_number: str | None,
+        recorded_by: str | None = None,
+        payment_date: date | None = None,
     ) -> None: ...
     async def apply_payment_discount(
         self, payment_id: str, discount_cents: int, *, reason: str
@@ -102,6 +127,8 @@ class MarkPaymentPaid:
             notes=cmd.notes,
             amount_received_cents=cmd.amount_received_cents,
             reference_number=cmd.reference_number,
+            recorded_by=cmd.recorded_by,
+            payment_date=cmd.payment_date,
         )
 
 

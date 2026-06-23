@@ -37,6 +37,19 @@ from pydantic import BaseModel, Field, model_validator
 
 PayoutPeriodStatus = Literal["draft", "approved", "paid"]
 PayoutLineBasis = Literal["scheduled", "substitute", "actual"]
+PayoutWarningReason = Literal[
+    "missing_session_price_for_percent_revenue",
+    "missing_rate",
+    "missing_percent",
+]
+PayoutWarningSeverity = Literal["blocking", "warning"]
+PersistedUnpaidReason = Literal[
+    "no_rate_configured",
+    "rate_gap",
+    "missing_session_price_for_percent_revenue",
+    "attendance_override",
+    "unknown_unpaid_reason",
+]
 
 
 class PersistedPayoutLine(BaseModel):
@@ -57,6 +70,39 @@ class PersistedPayoutLine(BaseModel):
     amount_minor: int = Field(ge=0)
     currency: str = Field(min_length=3, max_length=3)
     rate_id: str
+    percent_bps: int | None = Field(default=None, ge=0, le=10000)
+    expected_revenue_minor: int | None = Field(default=None, ge=0)
+    original_amount_minor: int | None = Field(default=None, ge=0)
+    """Set when an admin overrode this line's amount; holds the computed
+    amount the override replaced. ``None`` means the line is unadjusted."""
+    adjustment_reason: str | None = None
+
+
+class PayoutWarning(BaseModel):
+    """Durable warning snapshot for a payout occurrence that produced no line."""
+
+    model_config = {"frozen": True}
+
+    occurrence_id: str
+    reason: PayoutWarningReason
+    severity: PayoutWarningSeverity = "blocking"
+    message: str
+    occurred_at: datetime | None = None
+    session_id: str | None = None
+    session_title: str | None = None
+    coach_id: str
+    repair_action: str
+
+
+class PersistedUnpaidOccurrence(BaseModel):
+    """One occurrence in the period that did not produce a normal pay line."""
+
+    model_config = {"frozen": True}
+
+    occurrence_id: str
+    reason: PersistedUnpaidReason
+    detail: str | None = None
+    unresolved: bool = True
 
 
 class PayoutPeriod(BaseModel):
@@ -79,6 +125,8 @@ class PayoutPeriod(BaseModel):
     total_minor: int = Field(ge=0)
     lines: list[PersistedPayoutLine] = Field(default_factory=list)
     unpaid_occurrence_ids: list[str] = Field(default_factory=list)
+    unpaid_occurrences: list[PersistedUnpaidOccurrence] = Field(default_factory=list)
+    payout_warnings: list[PayoutWarning] = Field(default_factory=list)
     generated_at: datetime
     approved_at: datetime | None = None
     paid_at: datetime | None = None
@@ -126,7 +174,39 @@ def approve(period: PayoutPeriod, *, at: datetime) -> PayoutPeriod:
         raise PayoutPeriodStateError(
             f"cannot approve payout period {period.period_id!r} in status 'paid'"
         )
+    unresolved = [row for row in period.unpaid_occurrences if row.unresolved]
+    if unresolved or period.unpaid_occurrence_ids or period.payout_warnings:
+        count = len(period.payout_warnings) or len(unresolved) or len(period.unpaid_occurrence_ids)
+        raise PayoutPeriodStateError(
+            f"cannot approve payout period {period.period_id!r} with "
+            f"{count} unresolved payout warnings or unresolved unpaid occurrences; "
+            "repair rates and recompute first"
+        )
     return period.model_copy(update={"status": "approved", "approved_at": at})
+
+
+def reopen(period: PayoutPeriod) -> PayoutPeriod:
+    """Return a new ``PayoutPeriod`` back in status=draft.
+
+    Used by admins to correct an approved or paid period: reopen, fix
+    attendance/lines, recompute, re-approve. The audit log (not this
+    function) records who reopened and why. Reopening a draft raises
+    ``PayoutPeriodStateError``.
+    """
+    if period.status == "draft":
+        raise PayoutPeriodStateError(
+            f"payout period {period.period_id!r} is already in status 'draft'"
+        )
+    return period.model_copy(
+        update={
+            "status": "draft",
+            "approved_at": None,
+            "paid_at": None,
+            "paid_method": None,
+            "paid_amount_minor": None,
+            "paid_reference": None,
+        }
+    )
 
 
 def mark_paid(
@@ -148,6 +228,12 @@ def mark_paid(
     if period.status == "draft":
         raise PayoutPeriodStateError(
             f"cannot mark payout period {period.period_id!r} paid from status 'draft'"
+        )
+    unresolved = [row for row in period.unpaid_occurrences if row.unresolved]
+    if unresolved or period.unpaid_occurrence_ids or period.payout_warnings:
+        raise PayoutPeriodStateError(
+            f"cannot mark payout period {period.period_id!r} paid with unresolved payout warnings "
+            "or unresolved unpaid occurrences"
         )
     return period.model_copy(
         update={

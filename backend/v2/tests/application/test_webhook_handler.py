@@ -8,7 +8,7 @@ which use real Stripe fixture JSON).
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -16,6 +16,7 @@ import pytest
 from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
     HandleWebhookEvent,
 )
+from backend.v2.contexts.billing.domain.ledger import LedgerInvoice, LedgerPayment
 from backend.v2.contexts.billing.domain.models import Payment, Subscription
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
@@ -27,6 +28,7 @@ class FakePaymentRepo:
         self.by_id: dict[str, Payment] = {}
         self.by_checkout: dict[str, Payment] = {}
         self.by_pi: dict[str, Payment] = {}
+        self.fail_next_save = False
 
     def seed(self, p: Payment) -> None:
         self.by_id[p.payment_id] = p
@@ -36,6 +38,9 @@ class FakePaymentRepo:
             self.by_pi[p.stripe_payment_intent_id] = p
 
     async def save(self, p: Payment) -> None:
+        if self.fail_next_save:
+            self.fail_next_save = False
+            raise RuntimeError("transient payment write failed")
         self.seed(p)
 
     async def get(self, pid):
@@ -53,22 +58,40 @@ class FakePaymentRepo:
 
 class FakeSubscriptionRepo:
     def __init__(self) -> None:
+        self.by_id: dict[str, Subscription] = {}
         self.by_stripe_sub: dict[str, Subscription] = {}
+        self.by_checkout: dict[str, Subscription] = {}
+        self.by_enrollment: dict[str, Subscription] = {}
 
     def seed(self, subscription: Subscription) -> None:
+        self.by_id[subscription.subscription_id] = subscription
         self.by_stripe_sub[subscription.stripe_subscription_id] = subscription
+        if subscription.stripe_checkout_session_id:
+            self.by_checkout[subscription.stripe_checkout_session_id] = subscription
+        if subscription.enrollment_id:
+            self.by_enrollment[subscription.enrollment_id] = subscription
 
     async def save(self, _):
         self.seed(_)
 
+    async def get(self, subscription_id):
+        return self.by_id.get(subscription_id)
+
     async def get_by_stripe_sub(self, stripe_sub):
         return self.by_stripe_sub.get(stripe_sub)
+
+    async def get_by_checkout_session(self, checkout_session_id):
+        return self.by_checkout.get(checkout_session_id)
+
+    async def latest_for_enrollment(self, enrollment_id):
+        return self.by_enrollment.get(enrollment_id)
 
 
 class FakeDedup:
     def __init__(self) -> None:
         self.claimed: set[str] = set()
         self.processed: set[str] = set()
+        self.events: dict[str, dict[str, Any]] = {}
 
     async def claim(self, event_id, _type):
         if event_id in self.claimed:
@@ -78,9 +101,97 @@ class FakeDedup:
 
     async def mark_processed(self, event_id):
         self.processed.add(event_id)
+        if event_id in self.events:
+            self.events[event_id]["status"] = "processed"
+            self.events[event_id]["processed_at"] = datetime.now(UTC)
 
     async def mark_failed(self, event_id, error):
-        pass
+        if event_id in self.events:
+            self.events[event_id]["status"] = "failed"
+            self.events[event_id]["error_message"] = error
+
+    async def mark_quarantined(self, event_id, error):
+        if event_id in self.events:
+            self.events[event_id]["status"] = "quarantined"
+            self.events[event_id]["error_message"] = error
+
+    async def store_received(self, event, *, raw_payload, academy_id):
+        event_id = str(event["id"])
+        if event_id in self.events:
+            return False
+        self.events[event_id] = {
+            "event_id": event_id,
+            "event_type": str(event["type"]),
+            "academy_id": academy_id,
+            "livemode": bool(event.get("livemode", False)),
+            "status": "received",
+            "retry_count": 0,
+            "raw_payload": raw_payload,
+            "received_at": datetime.now(UTC),
+        }
+        return True
+
+    async def claim_next(self, *, academy_id, processor_id, lock_seconds=300):
+        now = datetime.now(UTC)
+        for event in self.events.values():
+            if event.get("academy_id") != academy_id:
+                continue
+            retry_at = event.get("next_retry_at")
+            if isinstance(retry_at, datetime) and retry_at > now:
+                continue
+            if event["status"] in {"received", "failed"}:
+                event["status"] = "processing"
+                event["processor_id"] = processor_id
+                event["processing_started_at"] = now
+                event["processing_locked_until"] = now + timedelta(seconds=lock_seconds)
+                return dict(event)
+        return None
+
+
+class FakeInvoiceProcessing:
+    def __init__(self) -> None:
+        self.by_key: dict[str, dict[str, Any]] = {}
+
+    async def record_recovery_point(
+        self,
+        *,
+        academy_id: str,
+        stripe_invoice_id: str,
+        stripe_subscription_id: str | None,
+        event_id: str,
+        recovery_point: str,
+        ledger_invoice_id: str | None = None,
+        ledger_payment_id: str | None = None,
+        legacy_payment_id: str | None = None,
+        last_error: str | None = None,
+        updated_at: datetime,
+    ) -> None:
+        key = f"{academy_id}:stripe_invoice:{stripe_invoice_id}"
+        row = self.by_key.setdefault(
+            key,
+            {
+                "academy_id": academy_id,
+                "business_key": f"stripe_invoice:{stripe_invoice_id}",
+                "stripe_invoice_id": stripe_invoice_id,
+                "event_ids": [],
+            },
+        )
+        if event_id not in row["event_ids"]:
+            row["event_ids"].append(event_id)
+        row.update(
+            {
+                "stripe_subscription_id": stripe_subscription_id,
+                "recovery_point": recovery_point,
+                "last_error": last_error,
+                "updated_at": updated_at,
+            }
+        )
+        if ledger_invoice_id is not None:
+            row["ledger_invoice_id"] = ledger_invoice_id
+        if ledger_payment_id is not None:
+            row["ledger_payment_id"] = ledger_payment_id
+        if legacy_payment_id is not None:
+            row["legacy_payment_id"] = legacy_payment_id
 
 
 class FakeOutbox:
@@ -97,14 +208,295 @@ class FakeOutbox:
         pass
 
 
-def _build(repo, outbox=None, dedup=None, subscriptions=None):
+class FakeParentStripeCustomers:
+    def __init__(self) -> None:
+        self.saved: list[dict[str, str]] = []
+
+    async def set_stripe_customer_id(self, *, parent_id: str, stripe_customer_id: str) -> None:
+        self.saved.append({"parent_id": parent_id, "stripe_customer_id": stripe_customer_id})
+
+
+class FakeEnrollmentAutopayState:
+    def __init__(self) -> None:
+        self.synced: list[dict[str, str | None]] = []
+
+    async def set_autopay_state(
+        self,
+        *,
+        enrollment_id: str,
+        subscription_status: str,
+        stripe_subscription_id: str | None,
+    ) -> None:
+        self.synced.append(
+            {
+                "enrollment_id": enrollment_id,
+                "subscription_status": subscription_status,
+                "stripe_subscription_id": stripe_subscription_id,
+            }
+        )
+
+
+class FakeEnrollmentBillingIdentity:
+    def __init__(self) -> None:
+        self.rows: dict[str, dict[str, str | None]] = {}
+
+    def seed(
+        self,
+        *,
+        academy_id: str = "acad",
+        enrollment_id: str,
+        parent_id: str,
+        student_id: str | None,
+        session_id: str | None,
+    ) -> None:
+        self.rows[enrollment_id] = {
+            "academy_id": academy_id,
+            "parent_id": parent_id,
+            "student_id": student_id,
+            "enrollment_id": enrollment_id,
+            "session_id": session_id,
+        }
+
+    async def get_billing_identity(self, enrollment_id: str) -> dict[str, str | None] | None:
+        return self.rows.get(enrollment_id)
+
+
+class FakeBillingLedger:
+    def __init__(self, invoice: LedgerInvoice | None = None) -> None:
+        self.invoices = {invoice.invoice_id: invoice} if invoice else {}
+        self.invoice_keys: dict[str, str] = {}
+        self.lines: dict[str, list[Any]] = {}
+        self.payments: dict[str, LedgerPayment] = {}
+        self.payment_keys: dict[str, str] = {}
+        self.allocations: list[dict[str, Any]] = []
+        self.allocation_keys: set[str] = set()
+        self.payment_attempts: dict[str, dict[str, Any]] = {}
+        self.fail_allocate = False
+
+    async def create_invoice(
+        self,
+        invoice: LedgerInvoice,
+        *,
+        lines: list[Any],
+        idempotency_key: str,
+    ) -> LedgerInvoice:
+        existing_id = self.invoice_keys.get(idempotency_key)
+        if existing_id is not None:
+            return self.invoices[existing_id]
+        existing = self.invoices.get(invoice.invoice_id)
+        if existing is not None:
+            self.invoice_keys[idempotency_key] = existing.invoice_id
+            return existing
+        self.invoices[invoice.invoice_id] = invoice
+        self.lines[invoice.invoice_id] = lines
+        self.invoice_keys[idempotency_key] = invoice.invoice_id
+        return invoice
+
+    async def get_invoice(self, invoice_id: str) -> LedgerInvoice | None:
+        return self.invoices.get(invoice_id)
+
+    async def get_invoice_by_stripe_invoice_id(
+        self, stripe_invoice_id: str
+    ) -> LedgerInvoice | None:
+        for invoice in self.invoices.values():
+            if invoice.stripe_invoice_id == stripe_invoice_id:
+                return invoice
+        return None
+
+    async def save_invoice(self, invoice: LedgerInvoice) -> LedgerInvoice:
+        self.invoices[invoice.invoice_id] = invoice
+        return invoice
+
+    async def get_open_invoice_for_enrollment(
+        self, enrollment_id: str, period: str
+    ) -> LedgerInvoice | None:
+        for invoice in self.invoices.values():
+            if (
+                invoice.enrollment_id == enrollment_id
+                and invoice.period == period
+                and invoice.status in {"open", "draft", "partially_paid"}
+            ):
+                return invoice
+        return None
+
+    async def get_invoice_for_enrollment_period(
+        self,
+        enrollment_id: str,
+        period: str,
+        *,
+        statuses: set[str] | None = None,
+    ) -> LedgerInvoice | None:
+        for invoice in self.invoices.values():
+            if invoice.enrollment_id != enrollment_id or invoice.period != period:
+                continue
+            if statuses is not None and invoice.status not in statuses:
+                continue
+            return invoice
+        return None
+
+    async def get_open_invoice_for_student(
+        self, student_id: str, period: str
+    ) -> LedgerInvoice | None:
+        for invoice in self.invoices.values():
+            if (
+                invoice.student_id == student_id
+                and invoice.period == period
+                and invoice.status in {"open", "draft", "partially_paid"}
+            ):
+                return invoice
+        return None
+
+    async def record_payment(
+        self,
+        payment: LedgerPayment,
+        *,
+        idempotency_key: str,
+    ) -> LedgerPayment:
+        existing_id = self.payment_keys.get(idempotency_key)
+        if existing_id is not None:
+            return self.payments[existing_id]
+        self.payments[payment.payment_id] = payment
+        self.payment_keys[idempotency_key] = payment.payment_id
+        return payment
+
+    async def get_payment_allocation_by_idempotency_key(
+        self, idempotency_key: str
+    ) -> dict[str, Any] | None:
+        for allocation in self.allocations:
+            if allocation["idempotency_key"] == idempotency_key:
+                return allocation
+        return None
+
+    async def record_payment_attempt(
+        self,
+        *,
+        invoice_id: str,
+        parent_id: str,
+        amount_cents: int,
+        currency: str,
+        status: str,
+        stripe_payment_intent_id: str | None,
+        stripe_checkout_session_id: str | None,
+        failure_code: str | None,
+        failure_message: str | None,
+        idempotency_key: str,
+        created_by_event_id: str | None = None,
+    ) -> dict[str, Any]:
+        existing = self.payment_attempts.get(idempotency_key)
+        if existing is not None:
+            return existing
+        attempt = {
+            "invoice_id": invoice_id,
+            "parent_id": parent_id,
+            "amount_cents": amount_cents,
+            "currency": currency,
+            "status": status,
+            "stripe_payment_intent_id": stripe_payment_intent_id,
+            "stripe_checkout_session_id": stripe_checkout_session_id,
+            "failure_code": failure_code,
+            "failure_message": failure_message,
+            "idempotency_key": idempotency_key,
+            "created_by_event_id": created_by_event_id,
+        }
+        self.payment_attempts[idempotency_key] = attempt
+        return attempt
+
+    async def allocate_payment(
+        self,
+        *,
+        payment_id: str,
+        invoice_id: str,
+        amount_cents: int,
+        idempotency_key: str,
+    ) -> None:
+        if self.fail_allocate:
+            raise ValueError("allocation failed")
+        if idempotency_key in self.allocation_keys:
+            return None
+        invoice = self.invoices[invoice_id]
+        payment = self.payments[payment_id]
+        allocated = min(amount_cents, invoice.balance_due_cents)
+        self.invoices[invoice_id] = invoice.model_copy(
+            update={
+                "balance_due_cents": max(invoice.balance_due_cents - allocated, 0),
+                "status": "paid"
+                if invoice.balance_due_cents - allocated <= 0
+                else "partially_paid",
+            }
+        )
+        self.payments[payment_id] = payment.model_copy(
+            update={
+                "unapplied_amount_cents": max(payment.unapplied_amount_cents - allocated, 0),
+            }
+        )
+        self.allocation_keys.add(idempotency_key)
+        self.allocations.append(
+            {
+                "payment_id": payment_id,
+                "invoice_id": invoice_id,
+                "amount_cents": amount_cents,
+                "idempotency_key": idempotency_key,
+            }
+        )
+
+
+def _build(
+    repo,
+    outbox=None,
+    dedup=None,
+    subscriptions=None,
+    parent_customers=None,
+    enrollment_autopay=None,
+    enrollment_identity=None,
+    stripe=None,
+    expected_livemode=None,
+    billing_ledger=None,
+    invoice_processing=None,
+):
     return HandleWebhookEvent(
-        stripe=FakeStripeGateway(),
+        stripe=stripe or FakeStripeGateway(),
         dedup=dedup or FakeDedup(),
         payments=repo,
         subscriptions=subscriptions or FakeSubscriptionRepo(),
+        parent_customers=parent_customers,
+        enrollment_autopay=enrollment_autopay,
+        enrollment_identity=enrollment_identity,
         outbox=outbox or FakeOutbox(),
         academy_id="acad",
+        expected_livemode=expected_livemode,
+        billing_ledger=billing_ledger,
+        invoice_processing=invoice_processing,
+    )
+
+
+def _ledger_invoice(
+    *,
+    invoice_id: str = "inv-autopay",
+    academy_id: str = "acad",
+    parent_id: str = "parent-from-invoice",
+    student_id: str | None = None,
+    enrollment_id: str | None = None,
+    period: str = "2026-06",
+    balance_due_cents: int = 10_000,
+    status: str = "open",
+) -> LedgerInvoice:
+    now = datetime.now(UTC)
+    return LedgerInvoice(
+        invoice_id=invoice_id,
+        academy_id=academy_id,
+        parent_id=parent_id,
+        student_id=student_id,
+        enrollment_id=enrollment_id,
+        period=period,
+        status=status,  # type: ignore[arg-type]
+        subtotal_cents=10_000,
+        discount_cents=0,
+        total_cents=10_000,
+        balance_due_cents=balance_due_cents,
+        currency="usd",
+        due_date=now.date(),
+        created_at=now,
+        updated_at=now,
     )
 
 
@@ -126,6 +518,664 @@ def _seed_pending_payment(repo: FakePaymentRepo) -> Payment:
 
 
 @pytest.mark.asyncio
+async def test_accept_stores_webhook_event_without_business_side_effects() -> None:
+    repo = FakePaymentRepo()
+    _seed_pending_payment(repo)
+    outbox = FakeOutbox()
+    dedup = FakeDedup()
+    uc = _build(repo, outbox=outbox, dedup=dedup)
+    body = json.dumps(
+        {
+            "id": "evt_async_accept",
+            "type": "checkout.session.completed",
+            "livemode": True,
+            "data": {
+                "object": {
+                    "id": "cs_1",
+                    "payment_intent": "pi_1",
+                    "metadata": {"academy_id": "acad"},
+                }
+            },
+        }
+    ).encode()
+
+    res = await uc.accept(body, "test_signature")
+
+    assert res == {"received": True, "stored": True, "type": "checkout.session.completed"}
+    assert dedup.events["evt_async_accept"]["status"] == "received"
+    assert repo.by_id["pay-1"].status == "pending"
+    assert outbox.events == []
+
+
+@pytest.mark.asyncio
+async def test_process_next_projects_stored_event_and_marks_processed() -> None:
+    repo = FakePaymentRepo()
+    _seed_pending_payment(repo)
+    outbox = FakeOutbox()
+    dedup = FakeDedup()
+    uc = _build(repo, outbox=outbox, dedup=dedup)
+    body = json.dumps(
+        {
+            "id": "evt_async_process",
+            "type": "checkout.session.completed",
+            "data": {"object": {"id": "cs_1", "payment_intent": "pi_1"}},
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res == {
+        "processed": True,
+        "event_id": "evt_async_process",
+        "type": "checkout.session.completed",
+    }
+    assert repo.by_id["pay-1"].status == "succeeded"
+    assert repo.by_id["pay-1"].stripe_payment_intent_id == "pi_1"
+    assert dedup.events["evt_async_process"]["status"] == "processed"
+    assert [e.name for e in outbox.events] == ["Billing.PaymentSucceeded"]
+
+
+@pytest.mark.asyncio
+async def test_process_next_fetches_current_checkout_before_projection() -> None:
+    repo = FakePaymentRepo()
+    _seed_pending_payment(repo)
+    subscriptions = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subscriptions.seed(
+        Subscription(
+            subscription_id="app-sub-1",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="pending:cs_1",
+            status="incomplete",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    stripe = FakeStripeGateway()
+    stripe.subscription_checkouts.append(
+        {
+            "checkout_id": "cs_1",
+            "stripe_subscription_id": "sub_live_1",
+            "parent_id": "p1",
+            "enrollment_id": "enr-1",
+            "session_id": "s1",
+            "amount_cents": 15000,
+            "metadata": {
+                "academy_id": "acad",
+                "parent_id": "p1",
+                "enrollment_id": "enr-1",
+                "app_subscription_id": "app-sub-1",
+            },
+        }
+    )
+    parent_customers = FakeParentStripeCustomers()
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    dedup = FakeDedup()
+    uc = _build(
+        repo,
+        dedup=dedup,
+        subscriptions=subscriptions,
+        parent_customers=parent_customers,
+        enrollment_autopay=enrollment_autopay,
+        stripe=stripe,
+    )
+    body = json.dumps(
+        {
+            "id": "evt_hydrate_checkout",
+            "type": "checkout.session.completed",
+            "data": {"object": {"id": "cs_1"}},
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    assert repo.by_id["pay-1"].status == "succeeded"
+    assert parent_customers.saved == [{"parent_id": "p1", "stripe_customer_id": "cus_fake_parent"}]
+    assert subscriptions.by_id["app-sub-1"].stripe_subscription_id == "sub_live_1"
+    assert subscriptions.by_id["app-sub-1"].status == "active"
+    assert enrollment_autopay.synced == [
+        {
+            "enrollment_id": "enr-1",
+            "subscription_status": "active",
+            "stripe_subscription_id": "sub_live_1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_checkout_completed_without_tenant_owned_mapping_does_not_mutate_customer_or_autopay() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    parent_customers = FakeParentStripeCustomers()
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    outbox = FakeOutbox()
+    uc = _build(
+        repo,
+        outbox=outbox,
+        parent_customers=parent_customers,
+        enrollment_autopay=enrollment_autopay,
+    )
+    body = json.dumps(
+        {
+            "id": "evt_unknown_checkout",
+            "type": "checkout.session.completed",
+            "livemode": True,
+            "data": {
+                "object": {
+                    "id": "cs_unknown",
+                    "customer": "cus_wrong_tenant",
+                    "subscription": "sub_wrong_tenant",
+                    "payment_intent": "pi_wrong_tenant",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "parent_id": "parent-from-metadata",
+                        "enrollment_id": "enrollment-from-metadata",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    result = await uc.process_next(processor_id="worker-1")
+
+    assert result["processed"] is True
+    assert parent_customers.saved == []
+    assert enrollment_autopay.synced == []
+    assert repo.by_id == {}
+    assert outbox.events == []
+
+
+@pytest.mark.asyncio
+async def test_failed_stored_event_can_be_retried_later() -> None:
+    repo = FakePaymentRepo()
+    _seed_pending_payment(repo)
+    repo.fail_next_save = True
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup)
+    body = json.dumps(
+        {
+            "id": "evt_async_retry",
+            "type": "checkout.session.completed",
+            "data": {"object": {"id": "cs_1", "payment_intent": "pi_1"}},
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    failed = await uc.process_next(processor_id="test-worker")
+    retried = await uc.process_next(processor_id="test-worker")
+
+    assert failed["processed"] is False
+    assert failed["status"] == "failed"
+    assert dedup.events["evt_async_retry"]["status"] == "processed"
+    assert retried["processed"] is True
+    assert repo.by_id["pay-1"].status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_wrong_livemode_event_is_quarantined() -> None:
+    repo = FakePaymentRepo()
+    _seed_pending_payment(repo)
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup, expected_livemode=True)
+    body = json.dumps(
+        {
+            "id": "evt_wrong_mode",
+            "type": "checkout.session.completed",
+            "livemode": False,
+            "data": {"object": {"id": "cs_1"}},
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["status"] == "quarantined"
+    assert dedup.events["evt_wrong_mode"]["status"] == "quarantined"
+    assert repo.by_id["pay-1"].status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_tenant_mismatch_event_is_quarantined() -> None:
+    repo = FakePaymentRepo()
+    _seed_pending_payment(repo)
+    dedup = FakeDedup()
+
+    class MismatchedStripeGateway(FakeStripeGateway):
+        async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, Any]:
+            return {
+                "id": checkout_session_id,
+                "object": "checkout.session",
+                "status": "complete",
+                "payment_status": "paid",
+                "metadata": {"academy_id": "other-academy"},
+            }
+
+    uc = _build(repo, dedup=dedup, stripe=MismatchedStripeGateway())
+    body = json.dumps(
+        {
+            "id": "evt_wrong_tenant",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_1",
+                    "metadata": {"academy_id": "acad"},
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["status"] == "quarantined"
+    assert dedup.events["evt_wrong_tenant"]["status"] == "quarantined"
+    assert repo.by_id["pay-1"].status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_process_next_quarantines_mismatched_metadata_events() -> None:
+    repo = FakePaymentRepo()
+    _seed_pending_payment(repo)
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup)
+    body = json.dumps(
+        {
+            "id": "evt_other_academy_pending",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_1",
+                    "metadata": {"academy_id": "other-academy"},
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["status"] == "quarantined"
+    assert dedup.events["evt_other_academy_pending"]["status"] == "quarantined"
+    assert repo.by_id["pay-1"].status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_payment_intent_succeeded_marks_payment_succeeded() -> None:
+    repo = FakePaymentRepo()
+    payment = _seed_pending_payment(repo)
+    repo.seed(payment.model_copy(update={"stripe_payment_intent_id": "pi_1"}))
+    outbox = FakeOutbox()
+    dedup = FakeDedup()
+    uc = _build(repo, outbox=outbox, dedup=dedup)
+    body = json.dumps(
+        {
+            "id": "evt_pi_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {"object": {"id": "pi_1"}},
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    assert repo.by_id["pay-1"].status == "succeeded"
+    assert [e.name for e in outbox.events] == ["Billing.PaymentSucceeded"]
+
+
+@pytest.mark.asyncio
+async def test_autopay_payment_intent_uses_invoice_parent_when_metadata_parent_missing() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice())
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger)
+    body = json.dumps(
+        {
+            "id": "evt_autopay_pi_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_autopay_1",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-autopay",
+                        "source": "autopay",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    payment = ledger.payments["ledger-pay-autopay:pi_autopay_1"]
+    assert payment.parent_id == "parent-from-invoice"
+    assert payment.academy_id == "acad"
+    assert ledger.allocations == [
+        {
+            "payment_id": "ledger-pay-autopay:pi_autopay_1",
+            "invoice_id": "inv-autopay",
+            "amount_cents": 10000,
+            "idempotency_key": "autopay-alloc:pi_autopay_1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_autopay_payment_intent_parent_metadata_mismatch_is_quarantined() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(parent_id="parent-from-invoice"))
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger)
+    body = json.dumps(
+        {
+            "id": "evt_autopay_pi_parent_mismatch",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_autopay_parent_mismatch",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-autopay",
+                        "parent_id": "parent-from-metadata",
+                        "source": "autopay",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["status"] == "quarantined"
+    assert dedup.events["evt_autopay_pi_parent_mismatch"]["status"] == "quarantined"
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+
+
+@pytest.mark.asyncio
+async def test_autopay_payment_intent_allocation_failure_is_retryable() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice())
+    ledger.fail_allocate = True
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger)
+    body = json.dumps(
+        {
+            "id": "evt_autopay_pi_retry",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_autopay_retry",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-autopay",
+                        "source": "autopay",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    failed = await uc.process_next(processor_id="test-worker")
+
+    assert failed["status"] == "failed"
+    assert dedup.events["evt_autopay_pi_retry"]["status"] == "failed"
+    assert "evt_autopay_pi_retry" not in dedup.processed
+
+
+@pytest.mark.asyncio
+async def test_autopay_payment_intent_failed_records_attempt_without_closing_invoice() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-autopay-failed", status="open"))
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger)
+    body = json.dumps(
+        {
+            "id": "evt_autopay_pi_failed",
+            "type": "payment_intent.payment_failed",
+            "data": {
+                "object": {
+                    "id": "pi_autopay_failed",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-autopay-failed",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                    },
+                    "last_payment_error": {
+                        "code": "card_declined",
+                        "decline_code": "insufficient_funds",
+                        "message": "Your card has insufficient funds.",
+                    },
+                    "status": "requires_payment_method",
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    assert ledger.invoices["inv-autopay-failed"].status == "open"
+    assert ledger.invoices["inv-autopay-failed"].balance_due_cents == 10000
+    assert ledger.allocations == []
+    assert ledger.payments == {}
+    assert list(ledger.payment_attempts.values()) == [
+        {
+            "invoice_id": "inv-autopay-failed",
+            "parent_id": "parent-from-invoice",
+            "amount_cents": 10000,
+            "currency": "usd",
+            "status": "failed",
+            "stripe_payment_intent_id": "pi_autopay_failed",
+            "stripe_checkout_session_id": None,
+            "failure_code": "insufficient_funds",
+            "failure_message": "Your card has insufficient funds.",
+            "idempotency_key": "autopay-failed:inv-autopay-failed:pi_autopay_failed",
+            "created_by_event_id": "evt_autopay_pi_failed",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_invoice_checkout_payment_intent_failed_records_attempt_without_closing_invoice() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-checkout-failed", status="open"))
+    stripe = FakeStripeGateway()
+    stripe.checkouts.append(
+        {
+            "checkout_id": "cs_invoice_failed",
+            "parent_id": "parent-from-invoice",
+            "session_id": "invoice-pay-link",
+            "amount_cents": 1236,
+            "metadata": {
+                "source": "invoice_pay_link",
+                "invoice_id": "inv-checkout-failed",
+                "parent_id": "parent-from-invoice",
+            },
+        }
+    )
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger, stripe=stripe)
+    body = json.dumps(
+        {
+            "id": "evt_invoice_checkout_failed",
+            "type": "payment_intent.payment_failed",
+            "data": {
+                "object": {
+                    "id": "pi_invoice_checkout_failed",
+                    "amount": 1236,
+                    "currency": "usd",
+                    "metadata": {},
+                    "payment_details": {"order_reference": "cs_invoice_failed"},
+                    "last_payment_error": {
+                        "code": "card_declined",
+                        "decline_code": "insufficient_funds",
+                        "message": "Your card has insufficient funds.",
+                    },
+                    "status": "requires_payment_method",
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    assert ledger.invoices["inv-checkout-failed"].status == "open"
+    assert ledger.invoices["inv-checkout-failed"].balance_due_cents == 10000
+    assert ledger.allocations == []
+    assert ledger.payments == {}
+    assert list(ledger.payment_attempts.values()) == [
+        {
+            "invoice_id": "inv-checkout-failed",
+            "parent_id": "parent-from-invoice",
+            "amount_cents": 1236,
+            "currency": "usd",
+            "status": "failed",
+            "stripe_payment_intent_id": "pi_invoice_checkout_failed",
+            "stripe_checkout_session_id": "cs_invoice_failed",
+            "failure_code": "insufficient_funds",
+            "failure_message": "Your card has insufficient funds.",
+            "idempotency_key": (
+                "invoice-checkout-failed:inv-checkout-failed:pi_invoice_checkout_failed"
+            ),
+            "created_by_event_id": "evt_invoice_checkout_failed",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_invoice_checkout_payment_intent_succeeded_does_not_allocate_before_session() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-checkout-pi",
+            parent_id="parent-checkout",
+            balance_due_cents=6_000,
+        )
+    )
+    uc = _build(repo, billing_ledger=ledger)
+    body = json.dumps(
+        {
+            "id": "evt_invoice_checkout_pi_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_invoice_checkout",
+                    "amount": 6_000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-checkout-pi",
+                        "parent_id": "parent-checkout",
+                        "source": "invoice_pay_link",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    assert ledger.invoices["inv-checkout-pi"].status == "open"
+    assert ledger.invoices["inv-checkout-pi"].balance_due_cents == 6_000
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+
+
+@pytest.mark.asyncio
+async def test_balance_checkout_completed_allocates_across_all_invoice_ids() -> None:
+    repo = FakePaymentRepo()
+    first = _ledger_invoice(
+        invoice_id="inv-balance-1",
+        parent_id="parent-balance",
+        balance_due_cents=4_000,
+    )
+    second = _ledger_invoice(
+        invoice_id="inv-balance-2",
+        parent_id="parent-balance",
+        balance_due_cents=6_000,
+    )
+    ledger = FakeBillingLedger(first)
+    ledger.invoices[second.invoice_id] = second
+    uc = _build(repo, billing_ledger=ledger)
+    body = json.dumps(
+        {
+            "id": "evt_balance_checkout_completed",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_balance",
+                    "payment_intent": "pi_balance",
+                    "amount_total": 10_000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "parent_id": "parent-balance",
+                        "invoice_ids": "inv-balance-1,inv-balance-2",
+                        "type": "balance_payment",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="worker-1")
+
+    assert res["processed"] is True
+    assert ledger.invoices["inv-balance-1"].status == "paid"
+    assert ledger.invoices["inv-balance-1"].balance_due_cents == 0
+    assert ledger.invoices["inv-balance-2"].status == "paid"
+    assert ledger.invoices["inv-balance-2"].balance_due_cents == 0
+    assert list(ledger.payments) == ["ledger-pay-cs:cs_balance"]
+    assert ledger.payments["ledger-pay-cs:cs_balance"].stripe_payment_intent_id == "pi_balance"
+    assert ledger.payments["ledger-pay-cs:cs_balance"].unapplied_amount_cents == 0
+    assert ledger.allocations == [
+        {
+            "payment_id": "ledger-pay-cs:cs_balance",
+            "invoice_id": "inv-balance-1",
+            "amount_cents": 4_000,
+            "idempotency_key": "invoice-checkout-alloc:cs_balance:inv-balance-1",
+        },
+        {
+            "payment_id": "ledger-pay-cs:cs_balance",
+            "invoice_id": "inv-balance-2",
+            "amount_cents": 6_000,
+            "idempotency_key": "invoice-checkout-alloc:cs_balance:inv-balance-2",
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_checkout_completed_marks_payment_succeeded_and_emits_event() -> None:
     repo = FakePaymentRepo()
     _seed_pending_payment(repo)
@@ -143,6 +1193,33 @@ async def test_checkout_completed_marks_payment_succeeded_and_emits_event() -> N
     assert repo.by_id["pay-1"].status == "succeeded"
     assert repo.by_id["pay-1"].stripe_payment_intent_id == "pi_1"
     assert [e.name for e in outbox.events] == ["Billing.PaymentSucceeded"]
+
+
+@pytest.mark.asyncio
+async def test_subscription_checkout_without_mapping_does_not_save_parent_stripe_customer() -> None:
+    repo = FakePaymentRepo()
+    customers = FakeParentStripeCustomers()
+    uc = _build(repo, parent_customers=customers)
+    body = json.dumps(
+        {
+            "id": "evt_subscription_checkout",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_subscription",
+                    "customer": "cus_live_parent",
+                    "subscription": "sub_live_parent",
+                    "client_reference_id": "p1",
+                    "metadata": {"parent_id": "p1", "subscription_id": "sub-1"},
+                }
+            },
+        }
+    ).encode()
+
+    res = await uc.execute(body, "test_signature")
+
+    assert res["received"] is True
+    assert customers.saved == []
 
 
 @pytest.mark.asyncio
@@ -243,6 +1320,553 @@ async def test_invoice_paid_creates_subscription_payment_and_emits() -> None:
 
 
 @pytest.mark.asyncio
+async def test_invoice_paid_reads_subscription_from_parent_details() -> None:
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-parent-shape",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-parent",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    uc = _build(repo, subscriptions=subs)
+    body = json.dumps(
+        {
+            "id": "evt_invoice_parent_shape",
+            "type": "invoice.paid",
+            "data": {
+                "object": {
+                    "id": "in_parent_shape",
+                    "parent": {
+                        "subscription_details": {
+                            "subscription": "stripe-sub-parent",
+                        }
+                    },
+                    "payment_intent": "pi_parent_shape",
+                    "amount_paid": 7000,
+                    "currency": "usd",
+                }
+            },
+        }
+    ).encode()
+
+    await uc.execute(body, "test_signature")
+
+    payment = repo.by_pi["pi_parent_shape"]
+    assert payment.status == "succeeded"
+    assert payment.subscription_id == "sub-parent-shape"
+    assert payment.enrollment_id == "enr-1"
+    assert payment.session_id == "s1"
+
+
+@pytest.mark.asyncio
+async def test_subscription_invoice_paid_allocates_existing_ledger_invoice() -> None:
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-ledger",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-ledger",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-monthly-enr-1-2026-06",
+            parent_id="p1",
+            student_id="student-1",
+            enrollment_id="enr-1",
+            period="2026-06",
+            balance_due_cents=7_000,
+        )
+    )
+    uc = _build(repo, subscriptions=subs, billing_ledger=ledger)
+
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_paid_ledger",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_ledger",
+                        "parent": {
+                            "subscription_details": {
+                                "subscription": "stripe-sub-ledger",
+                            }
+                        },
+                        "payment_intent": "pi_ledger",
+                        "amount_paid": 7_000,
+                        "amount_due": 7_000,
+                        "currency": "usd",
+                        "period_start": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert ledger.invoices["inv-monthly-enr-1-2026-06"].status == "paid"
+    assert ledger.invoices["inv-monthly-enr-1-2026-06"].balance_due_cents == 0
+    assert ledger.payments["ledger-pay-in_ledger"].stripe_payment_intent_id == "pi_ledger"
+    assert ledger.allocations == [
+        {
+            "payment_id": "ledger-pay-in_ledger",
+            "invoice_id": "inv-monthly-enr-1-2026-06",
+            "amount_cents": 7000,
+            "idempotency_key": "stripe-invoice-allocation:in_ledger",
+        }
+    ]
+    assert repo.by_pi["pi_ledger"].enrollment_id == "enr-1"
+
+
+@pytest.mark.asyncio
+async def test_subscription_invoice_paid_with_null_payment_intent_uses_invoice_id_for_idempotency() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-api-2026",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-api-2026",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-monthly-enr-1-2026-06",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            period="2026-06",
+            balance_due_cents=7_000,
+        )
+    )
+    uc = _build(repo, subscriptions=subs, billing_ledger=ledger)
+
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_paid_api_2026",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_api_2026",
+                        "parent": {
+                            "subscription_details": {
+                                "subscription": "stripe-sub-api-2026",
+                            }
+                        },
+                        "payment_intent": None,
+                        "amount_paid": 7_000,
+                        "amount_due": 7_000,
+                        "currency": "usd",
+                        "period_start": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert repo.by_pi["in_api_2026"].status == "succeeded"
+    assert ledger.payments["ledger-pay-in_api_2026"].stripe_payment_intent_id == "in_api_2026"
+    assert ledger.payments["ledger-pay-in_api_2026"].stripe_invoice_id == "in_api_2026"
+    assert ledger.invoices["inv-monthly-enr-1-2026-06"].balance_due_cents == 0
+    assert ledger.invoices["inv-monthly-enr-1-2026-06"].stripe_invoice_id == "in_api_2026"
+
+
+@pytest.mark.asyncio
+async def test_subscription_invoice_paid_replay_does_not_duplicate_ledger_payment_or_allocation() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-replay",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-replay",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-monthly-enr-1-2026-06",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            period="2026-06",
+            balance_due_cents=7_000,
+        )
+    )
+    uc = _build(repo, subscriptions=subs, billing_ledger=ledger)
+
+    invoice_object = {
+        "id": "in_replay",
+        "subscription": "stripe-sub-replay",
+        "payment_intent": None,
+        "amount_paid": 7_000,
+        "amount_due": 7_000,
+        "currency": "usd",
+        "period_start": 1_781_712_000,
+    }
+    for event_id in ("evt_invoice_paid_replay_1", "evt_invoice_paid_replay_2"):
+        await uc.execute(
+            json.dumps(
+                {
+                    "id": event_id,
+                    "type": "invoice.paid",
+                    "data": {"object": invoice_object},
+                }
+            ).encode(),
+            "test_signature",
+        )
+
+    assert len(repo.by_id) == 1
+    assert len(ledger.payments) == 1
+    assert len(ledger.allocations) == 1
+    assert ledger.invoices["inv-monthly-enr-1-2026-06"].status == "paid"
+
+
+@pytest.mark.asyncio
+async def test_payment_intent_succeeded_before_subscription_invoice_paid_waits_for_invoice_event() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-out-of-order",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-out-of-order",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-monthly-enr-1-2026-06",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            period="2026-06",
+            balance_due_cents=7_000,
+        )
+    )
+    uc = _build(repo, subscriptions=subs, billing_ledger=ledger)
+
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_pi_before_invoice",
+                "type": "payment_intent.succeeded",
+                "data": {"object": {"id": "pi_out_of_order"}},
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert repo.by_id == {}
+    assert ledger.payments == {}
+
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_after_pi",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_out_of_order",
+                        "subscription": "stripe-sub-out-of-order",
+                        "payment_intent": "pi_out_of_order",
+                        "amount_paid": 7_000,
+                        "amount_due": 7_000,
+                        "currency": "usd",
+                        "period_start": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert len(repo.by_id) == 1
+    assert len(ledger.payments) == 1
+    assert (
+        ledger.payments["ledger-pay-in_out_of_order"].stripe_payment_intent_id == "pi_out_of_order"
+    )
+    assert len(ledger.allocations) == 1
+
+
+@pytest.mark.asyncio
+async def test_subscription_invoice_paid_without_app_invoice_is_quarantined() -> None:
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    identity = FakeEnrollmentBillingIdentity()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-create-ledger",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-create-ledger",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    identity.seed(
+        enrollment_id="enr-1",
+        parent_id="p1",
+        student_id="student-1",
+        session_id="s1",
+    )
+    ledger = FakeBillingLedger()
+    uc = _build(
+        repo,
+        subscriptions=subs,
+        enrollment_identity=identity,
+        billing_ledger=ledger,
+    )
+
+    result = await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_paid_create_ledger",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_create_ledger",
+                        "subscription": "stripe-sub-create-ledger",
+                        "payment_intent": None,
+                        "amount_paid": 7_000,
+                        "amount_due": 7_000,
+                        "currency": "usd",
+                        "period_start": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert result["status"] == "quarantined"
+    assert "app-owned LedgerInvoice" in result["error"]
+    assert ledger.invoices == {}
+    assert ledger.lines == {}
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+
+
+@pytest.mark.asyncio
+async def test_subscription_invoice_paid_different_invoice_for_paid_obligation_is_quarantined() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-paid-duplicate",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-paid-duplicate",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-monthly-enr-1-2026-06",
+            parent_id="p1",
+            student_id="student-1",
+            enrollment_id="enr-1",
+            period="2026-06",
+            balance_due_cents=0,
+            status="paid",
+        ).model_copy(update={"stripe_invoice_id": "in_original"})
+    )
+    dedup = FakeDedup()
+    uc = _build(repo, subscriptions=subs, billing_ledger=ledger, dedup=dedup)
+
+    result = await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_paid_duplicate_obligation",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_duplicate_obligation",
+                        "subscription": "stripe-sub-paid-duplicate",
+                        "payment_intent": None,
+                        "amount_paid": 7_000,
+                        "amount_due": 7_000,
+                        "currency": "usd",
+                        "period_start": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert result["status"] == "quarantined"
+    assert "already-paid invoice" in result["error"]
+    assert set(ledger.invoices) == {"inv-monthly-enr-1-2026-06"}
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+    assert repo.by_id == {}
+
+
+@pytest.mark.asyncio
+async def test_subscription_invoice_paid_zero_amount_does_not_create_ledger_payment_or_allocation() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-zero",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-zero",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger = FakeBillingLedger()
+    uc = _build(repo, subscriptions=subs, billing_ledger=ledger)
+
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_paid_zero",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_zero",
+                        "subscription": "stripe-sub-zero",
+                        "payment_intent": None,
+                        "amount_paid": 0,
+                        "amount_due": 0,
+                        "currency": "usd",
+                        "period_start": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+
+
+@pytest.mark.asyncio
+async def test_subscription_invoice_paid_quarantines_enrollment_parent_mismatch() -> None:
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    identity = FakeEnrollmentBillingIdentity()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-parent-mismatch",
+            academy_id="acad",
+            parent_id="subscription-parent",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-parent-mismatch",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    identity.seed(
+        enrollment_id="enr-1",
+        parent_id="different-parent",
+        student_id="student-1",
+        session_id="s1",
+    )
+    ledger = FakeBillingLedger()
+    dedup = FakeDedup()
+    uc = _build(
+        repo,
+        subscriptions=subs,
+        enrollment_identity=identity,
+        billing_ledger=ledger,
+        dedup=dedup,
+    )
+
+    result = await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_paid_parent_mismatch",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_parent_mismatch",
+                        "subscription": "stripe-sub-parent-mismatch",
+                        "payment_intent": None,
+                        "amount_paid": 7_000,
+                        "amount_due": 7_000,
+                        "currency": "usd",
+                        "period_start": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert result["status"] == "quarantined"
+    assert "parent mismatch" in result["error"]
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+
+
+@pytest.mark.asyncio
 async def test_invoice_payment_failed_creates_failed_subscription_payment() -> None:
     repo = FakePaymentRepo()
     subs = FakeSubscriptionRepo()
@@ -285,6 +1909,343 @@ async def test_invoice_payment_failed_creates_failed_subscription_payment() -> N
 
 
 @pytest.mark.asyncio
+async def test_subscription_invoice_payment_failed_without_app_invoice_is_quarantined() -> None:
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-failed-ledger",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-failed-ledger",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger = FakeBillingLedger()
+    uc = _build(repo, subscriptions=subs, billing_ledger=ledger)
+
+    result = await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_failed_ledger",
+                "type": "invoice.payment_failed",
+                "data": {
+                    "object": {
+                        "id": "in_failed_ledger",
+                        "subscription": "stripe-sub-failed-ledger",
+                        "payment_intent": "pi_failed_ledger",
+                        "amount_due": 7_000,
+                        "currency": "usd",
+                        "period_start": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert result["status"] == "quarantined"
+    assert "app-owned LedgerInvoice" in result["error"]
+    assert ledger.invoices == {}
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+
+
+@pytest.mark.asyncio
+async def test_subscription_invoice_paid_retry_after_ledger_payment_before_allocation_resumes_without_duplicate_payment() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-retry-payment",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-retry-payment",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-monthly-enr-1-2026-06",
+            parent_id="p1",
+            student_id="student-1",
+            enrollment_id="enr-1",
+            period="2026-06",
+            balance_due_cents=7_000,
+        )
+    )
+    ledger.fail_allocate = True
+    processing = FakeInvoiceProcessing()
+    uc = _build(
+        repo,
+        subscriptions=subs,
+        billing_ledger=ledger,
+        invoice_processing=processing,
+    )
+    event_object = {
+        "id": "in_retry_after_payment",
+        "subscription": "stripe-sub-retry-payment",
+        "payment_intent": None,
+        "amount_paid": 7_000,
+        "amount_due": 7_000,
+        "currency": "usd",
+        "period_start": 1_781_712_000,
+    }
+
+    with pytest.raises(ValueError, match="allocation failed"):
+        await uc.execute(
+            json.dumps(
+                {
+                    "id": "evt_retry_after_payment_1",
+                    "type": "invoice.paid",
+                    "data": {"object": event_object},
+                }
+            ).encode(),
+            "test_signature",
+        )
+
+    assert len(ledger.payments) == 1
+    assert ledger.allocations == []
+    row = processing.by_key["acad:stripe_invoice:in_retry_after_payment"]
+    assert row["recovery_point"] == "ledger_payment_recorded"
+
+    ledger.fail_allocate = False
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_retry_after_payment_2",
+                "type": "invoice.paid",
+                "data": {"object": event_object},
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert len(ledger.payments) == 1
+    assert len(ledger.allocations) == 1
+    assert len(repo.by_id) == 1
+    row = processing.by_key["acad:stripe_invoice:in_retry_after_payment"]
+    assert row["recovery_point"] == "processed"
+    assert row["event_ids"] == ["evt_retry_after_payment_1", "evt_retry_after_payment_2"]
+
+
+@pytest.mark.asyncio
+async def test_subscription_invoice_paid_retry_after_allocation_before_legacy_projection_resumes_without_duplicate_allocation() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    repo.fail_next_save = True
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-retry-allocation",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-retry-allocation",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-monthly-enr-1-2026-06",
+            parent_id="p1",
+            student_id="student-1",
+            enrollment_id="enr-1",
+            period="2026-06",
+            balance_due_cents=7_000,
+        )
+    )
+    processing = FakeInvoiceProcessing()
+    uc = _build(
+        repo,
+        subscriptions=subs,
+        billing_ledger=ledger,
+        invoice_processing=processing,
+    )
+    event_object = {
+        "id": "in_retry_after_allocation",
+        "subscription": "stripe-sub-retry-allocation",
+        "payment_intent": None,
+        "amount_paid": 7_000,
+        "amount_due": 7_000,
+        "currency": "usd",
+        "period_start": 1_781_712_000,
+    }
+
+    with pytest.raises(RuntimeError, match="transient payment write failed"):
+        await uc.execute(
+            json.dumps(
+                {
+                    "id": "evt_retry_after_allocation_1",
+                    "type": "invoice.paid",
+                    "data": {"object": event_object},
+                }
+            ).encode(),
+            "test_signature",
+        )
+
+    assert len(ledger.payments) == 1
+    assert len(ledger.allocations) == 1
+    assert repo.by_id == {}
+    row = processing.by_key["acad:stripe_invoice:in_retry_after_allocation"]
+    assert row["recovery_point"] == "ledger_allocated"
+
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_retry_after_allocation_2",
+                "type": "invoice.paid",
+                "data": {"object": event_object},
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert len(ledger.payments) == 1
+    assert len(ledger.allocations) == 1
+    assert len(repo.by_id) == 1
+    row = processing.by_key["acad:stripe_invoice:in_retry_after_allocation"]
+    assert row["recovery_point"] == "processed"
+    assert row["event_ids"] == [
+        "evt_retry_after_allocation_1",
+        "evt_retry_after_allocation_2",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_invoice_paid_does_not_downgrade_refunded_projection_to_succeeded() -> None:
+    repo = FakePaymentRepo()
+    now = datetime.now(UTC)
+    repo.seed(
+        Payment(
+            payment_id="pay-refunded",
+            academy_id="acad",
+            parent_id="p1",
+            subscription_id="sub-1",
+            stripe_payment_intent_id="in_refunded_projection",
+            amount_cents=7_000,
+            status="refunded",
+            refunded_cents=7_000,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    subs = FakeSubscriptionRepo()
+    subs.seed(
+        Subscription(
+            subscription_id="sub-1",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-refunded-projection",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    uc = _build(repo, subscriptions=subs)
+
+    result = await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_refunded_projection_paid",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_refunded_projection",
+                        "subscription": "stripe-sub-refunded-projection",
+                        "payment_intent": None,
+                        "amount_paid": 7_000,
+                        "amount_due": 7_000,
+                        "currency": "usd",
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert result["status"] == "quarantined"
+    assert "invalid payment projection transition refunded->succeeded" in result["error"]
+    assert repo.by_id["pay-refunded"].status == "refunded"
+
+
+@pytest.mark.asyncio
+async def test_invoice_payment_failed_does_not_downgrade_succeeded_projection_to_failed() -> None:
+    repo = FakePaymentRepo()
+    now = datetime.now(UTC)
+    repo.seed(
+        Payment(
+            payment_id="pay-succeeded",
+            academy_id="acad",
+            parent_id="p1",
+            subscription_id="sub-1",
+            stripe_payment_intent_id="pi_succeeded_projection",
+            amount_cents=7_000,
+            status="succeeded",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    subs = FakeSubscriptionRepo()
+    subs.seed(
+        Subscription(
+            subscription_id="sub-1",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-succeeded-projection",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    uc = _build(repo, subscriptions=subs)
+
+    result = await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_succeeded_projection_failed",
+                "type": "invoice.payment_failed",
+                "data": {
+                    "object": {
+                        "id": "in_succeeded_projection",
+                        "subscription": "stripe-sub-succeeded-projection",
+                        "payment_intent": "pi_succeeded_projection",
+                        "amount_due": 7_000,
+                        "currency": "usd",
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert result["status"] == "quarantined"
+    assert "invalid payment projection transition succeeded->failed" in result["error"]
+    assert repo.by_id["pay-succeeded"].status == "succeeded"
+
+
+@pytest.mark.asyncio
 async def test_charge_refunded_updates_cumulative_amount() -> None:
     repo = FakePaymentRepo()
     p = _seed_pending_payment(repo)
@@ -301,6 +2262,179 @@ async def test_charge_refunded_updates_cumulative_amount() -> None:
     await uc.execute(body, "test_signature")
     assert repo.by_id["pay-1"].refunded_cents == 5000
     assert repo.by_id["pay-1"].status == "partially_refunded"
+
+
+def _seed_incomplete_subscription(
+    subs: FakeSubscriptionRepo,
+    *,
+    stripe_subscription_id: str = "",
+    status: str = "incomplete",
+) -> Subscription:
+    now = datetime.now(UTC)
+    subscription = Subscription(
+        subscription_id="sub-1",
+        academy_id="acad",
+        parent_id="p1",
+        enrollment_id="enr-1",
+        session_id="s1",
+        stripe_subscription_id=stripe_subscription_id,
+        status=status,  # type: ignore[arg-type]
+        created_at=now,
+        updated_at=now,
+    )
+    subs.seed(subscription)
+    return subscription
+
+
+@pytest.mark.asyncio
+async def test_subscription_checkout_completed_activates_subscription_and_enrollment() -> None:
+    """Checkout completion must backfill the Stripe subscription id (null at
+    checkout-creation time) and flip both the subscription row and the
+    enrollment's autopay state to active — otherwise parents stay stuck at
+    'incomplete' forever."""
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    _seed_incomplete_subscription(subs)
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    uc = _build(repo, subscriptions=subs, enrollment_autopay=enrollment_autopay)
+    body = json.dumps(
+        {
+            "id": "evt_sub_checkout_done",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_sub_1",
+                    "customer": "cus_live_parent",
+                    "subscription": "sub_live_1",
+                    "metadata": {
+                        "parent_id": "p1",
+                        "subscription_id": "sub-1",
+                        "enrollment_id": "enr-1",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.execute(body, "test_signature")
+
+    updated = subs.by_stripe_sub["sub_live_1"]
+    assert updated.subscription_id == "sub-1"
+    assert updated.status == "active"
+    assert enrollment_autopay.synced == [
+        {
+            "enrollment_id": "enr-1",
+            "subscription_status": "active",
+            "stripe_subscription_id": "sub_live_1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_checkout_completed_binds_stripe_id_to_its_own_pending_subscription() -> None:
+    """Two pending rows for one enrollment: completion must attach the Stripe
+    id to the row named in the checkout's metadata.subscription_id, not to
+    whichever row is newest for the enrollment."""
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    first = Subscription(
+        subscription_id="sub-first",
+        academy_id="acad",
+        parent_id="p1",
+        enrollment_id="enr-1",
+        session_id="s1",
+        stripe_subscription_id="",
+        status="incomplete",
+        created_at=now,
+        updated_at=now,
+    )
+    newer = first.model_copy(update={"subscription_id": "sub-newer"})
+    subs.seed(first)
+    subs.seed(newer)  # latest_for_enrollment would return this one
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    uc = _build(repo, subscriptions=subs, enrollment_autopay=enrollment_autopay)
+    body = json.dumps(
+        {
+            "id": "evt_sub_checkout_first",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_first",
+                    "customer": "cus_live_parent",
+                    "subscription": "sub_live_first",
+                    "metadata": {
+                        "parent_id": "p1",
+                        "subscription_id": "sub-first",
+                        "enrollment_id": "enr-1",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.execute(body, "test_signature")
+
+    bound = subs.by_stripe_sub["sub_live_first"]
+    assert bound.subscription_id == "sub-first"
+    assert bound.status == "active"
+    # The unrelated newer pending row must remain untouched.
+    assert subs.by_id["sub-newer"].stripe_subscription_id == ""
+    assert subs.by_id["sub-newer"].status == "incomplete"
+
+
+@pytest.mark.asyncio
+async def test_subscription_updated_syncs_enrollment_autopay_state() -> None:
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    _seed_incomplete_subscription(subs, stripe_subscription_id="sub_live_9", status="active")
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    uc = _build(repo, subscriptions=subs, enrollment_autopay=enrollment_autopay)
+    body = json.dumps(
+        {
+            "id": "evt_sub_updated",
+            "type": "customer.subscription.updated",
+            "data": {"object": {"id": "sub_live_9", "status": "past_due"}},
+        }
+    ).encode()
+
+    await uc.execute(body, "test_signature")
+
+    assert subs.by_stripe_sub["sub_live_9"].status == "past_due"
+    assert enrollment_autopay.synced == [
+        {
+            "enrollment_id": "enr-1",
+            "subscription_status": "past_due",
+            "stripe_subscription_id": "sub_live_9",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_subscription_deleted_syncs_enrollment_cancelled() -> None:
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    _seed_incomplete_subscription(subs, stripe_subscription_id="sub_live_9", status="active")
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    uc = _build(repo, subscriptions=subs, enrollment_autopay=enrollment_autopay)
+    body = json.dumps(
+        {
+            "id": "evt_sub_deleted",
+            "type": "customer.subscription.deleted",
+            "data": {"object": {"id": "sub_live_9", "status": "canceled"}},
+        }
+    ).encode()
+
+    await uc.execute(body, "test_signature")
+
+    assert subs.by_stripe_sub["sub_live_9"].status == "cancelled"
+    assert enrollment_autopay.synced == [
+        {
+            "enrollment_id": "enr-1",
+            "subscription_status": "cancelled",
+            "stripe_subscription_id": "sub_live_9",
+        }
+    ]
 
 
 @pytest.mark.asyncio

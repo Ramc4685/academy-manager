@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from .get_academy_notifications_use_case import GetAcademyNotificationsOutput
+from .get_academy_notifications_use_case import (
+    GetAcademyNotificationsOutput,
+    _notifications_output,
+)
 
 
 class AcademyWriteRepo(Protocol):
@@ -15,12 +18,24 @@ class AcademyWriteRepo(Protocol):
 
 
 class UpdateAcademyNotificationsUseCase:
-    def __init__(self, academy_repo: AcademyWriteRepo) -> None:
+    def __init__(
+        self,
+        academy_repo: AcademyWriteRepo,
+        *,
+        default_coach_digest_enabled: bool = False,
+        default_coach_digest_hour: int = 6,
+    ) -> None:
         self._repo = academy_repo
+        self._default_coach_digest_enabled = default_coach_digest_enabled
+        self._default_coach_digest_hour = default_coach_digest_hour
 
     async def execute(
         self, academy_id: str, fields: dict[str, Any]
     ) -> GetAcademyNotificationsOutput:
+        if "coach_digest_hour" in fields and fields["coach_digest_hour"] is not None:
+            hour = fields["coach_digest_hour"]
+            if not isinstance(hour, int) or isinstance(hour, bool) or not (0 <= hour <= 23):
+                raise ValueError("coach_digest_hour must be an integer between 0 and 23")
         # Nest under "notifications" subdocument.
         patch = {f"notifications.{k}": v for k, v in fields.items() if v is not None}
         if not patch:
@@ -30,8 +45,8 @@ class UpdateAcademyNotificationsUseCase:
         if not doc:
             raise LookupError(f"academy {academy_id} not found")
         notifs = doc.get("notifications") or doc
-        return GetAcademyNotificationsOutput(
-            dues_reminders=bool(notifs.get("dues_reminders", False)),
-            attendance_alerts=bool(notifs.get("attendance_alerts", False)),
-            daily_digest_to_admin=bool(notifs.get("daily_digest_to_admin", False)),
+        return _notifications_output(
+            notifs,
+            default_coach_digest_enabled=self._default_coach_digest_enabled,
+            default_coach_digest_hour=self._default_coach_digest_hour,
         )

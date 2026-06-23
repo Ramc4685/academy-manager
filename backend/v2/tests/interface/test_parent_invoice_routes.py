@@ -79,6 +79,7 @@ class _FakeInvoiceRepo:
 class _ParentUseCases:
     def __init__(self, repo: _FakeInvoiceRepo) -> None:
         self._repo = repo
+        self.invoice_payment_calls: list[dict[str, str]] = []
 
     async def list_invoices_for_parent(self, parent_id: str):
         return await self._repo.list_invoices_for_parent(parent_id)
@@ -88,6 +89,30 @@ class _ParentUseCases:
         if invoice is None or invoice.parent_id != parent_id:
             return None
         return {"invoice": invoice, "lines": self._repo.lines_for(invoice_id)}
+
+    async def start_invoice_payment_for_parent(
+        self,
+        *,
+        parent_id: str,
+        invoice_id: str,
+        success_url: str,
+        cancel_url: str,
+    ):
+        self.invoice_payment_calls.append(
+            {
+                "parent_id": parent_id,
+                "invoice_id": invoice_id,
+                "success_url": success_url,
+                "cancel_url": cancel_url,
+            }
+        )
+        invoice = await self._repo.get_invoice(invoice_id)
+        if invoice is None or invoice.parent_id != parent_id:
+            return None
+        return {
+            "invoice_id": invoice_id,
+            "checkout_url": "https://checkout.stripe.test/inv-a1",
+        }
 
 
 def _seed() -> _FakeInvoiceRepo:
@@ -156,9 +181,40 @@ def test_parent_invoice_detail_includes_line_items() -> None:
     assert line["amount_cents"] == 12_000
 
 
+def test_parent_can_start_invoice_retry_checkout_for_own_invoice() -> None:
+    with _make_client() as client:
+        response = client.post(
+            "/api/v2/parent/invoices/inv-a1/pay",
+            json={
+                "success_url": "https://app.example.com/parent/payments?invoice=paid",
+                "cancel_url": "https://app.example.com/parent/payments?invoice=cancelled",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body == {
+        "invoice_id": "inv-a1",
+        "redirect_url": "https://checkout.stripe.test/inv-a1",
+    }
+
+
 def test_parent_cannot_read_other_parents_invoice_detail() -> None:
     with _make_client() as client:
         response = client.get("/api/v2/parent/invoices/inv-b1")
+
+    assert response.status_code == 404
+
+
+def test_parent_cannot_start_invoice_retry_checkout_for_other_parent_invoice() -> None:
+    with _make_client() as client:
+        response = client.post(
+            "/api/v2/parent/invoices/inv-b1/pay",
+            json={
+                "success_url": "https://app.example.com/parent/payments?invoice=paid",
+                "cancel_url": "https://app.example.com/parent/payments?invoice=cancelled",
+            },
+        )
 
     assert response.status_code == 404
 

@@ -27,7 +27,7 @@ export function usePersonaAuth(requiredRole: UserRole): PersonaAuthState {
   useEffect(() => {
     let cancelled = false;
 
-    return onAuthChange((firebaseUser) => {
+    const unsubscribe = onAuthChange((firebaseUser) => {
       if (!firebaseUser) {
         if (!cancelled) {
           setState({ checked: true, authorized: false, user: null });
@@ -58,6 +58,10 @@ export function usePersonaAuth(requiredRole: UserRole): PersonaAuthState {
           }
         });
     });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, [requiredRole, router]);
 
   return state;
@@ -73,5 +77,5 @@ function replaceLocation(
     if (current !== path) {
       window.location.replace(path);
     }
-  }, 100);
+  }, 1_000);
 }

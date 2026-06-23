@@ -31,6 +31,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from backend.v2.shared.auth.claims import AuthClaims
+from backend.v2.shared.config import get_settings
 from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.tenancy.context import _current as _tenant_var
 
@@ -84,6 +85,9 @@ class TenancyMiddleware(BaseHTTPMiddleware):
         self._load_claims = load_auth_claims
         self._resolve_tenant = resolve_tenant
         self._check_tenant_servable = check_tenant_servable
+        settings = get_settings()
+        self._tenancy_mode = settings.tenancy_mode
+        self._primary_academy_id = settings.primary_academy_id
 
     async def dispatch(self, request: Request, call_next: Any) -> Response:
         # --- 1. Resolve tenant from the request (never from the user) -----
@@ -94,6 +98,22 @@ class TenancyMiddleware(BaseHTTPMiddleware):
             except Exception as exc:  # defensive: never let resolver kill the app
                 log.info("tenant_resolve_failed: %s", exc)
                 resolved_academy_id = None
+
+        if (
+            resolved_academy_id
+            and self._tenancy_mode == "single_academy"
+            and resolved_academy_id != self._primary_academy_id
+        ):
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": {
+                        "code": "Platform.TenantForbidden",
+                        "message": "Tenant is not allowed in single-academy launch mode.",
+                        "details": {"academy_id": resolved_academy_id},
+                    }
+                },
+            )
 
         if (
             resolved_academy_id

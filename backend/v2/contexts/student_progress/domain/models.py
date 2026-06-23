@@ -220,3 +220,122 @@ class SkillPassportEntry(BaseModel):
     last_test_passed: bool | None
     last_tested_at: datetime | None
     test_attempt_count: int
+
+
+class SkillBoardStudentRef(BaseModel):
+    """Minimal student identity passed into / out of the skill board query."""
+
+    model_config = {"frozen": True}
+
+    student_id: str
+    student_name: str
+
+
+class SkillBoardCell(BaseModel):
+    """One student x skill cell."""
+
+    model_config = {"frozen": True}
+
+    status: SkillStatus = "NOT_STARTED"
+    last_updated_at: datetime | None = None
+
+
+class SkillBoardSkill(BaseModel):
+    """Skill column metadata for one level group."""
+
+    model_config = {"frozen": True}
+
+    skill_id: str
+    name: str
+    sequence: int
+    is_required: bool
+
+
+class SkillBoardStudentRow(BaseModel):
+    """One student row inside a level group."""
+
+    model_config = {"frozen": True}
+
+    student_id: str
+    student_name: str
+    statuses: dict[str, SkillBoardCell]
+    required_passed: int
+    required_total: int
+    total_passed: int
+    total_count: int
+    level_up_status: LevelUpStatus | None = None
+
+
+class SkillBoardLevelGroup(BaseModel):
+    """All students currently in one level, with that level's skills."""
+
+    model_config = {"frozen": True}
+
+    level_id: str
+    level_name: str
+    sequence: int
+    skills: list[SkillBoardSkill]
+    students: list[SkillBoardStudentRow]
+
+
+class SkillBoardResult(BaseModel):
+    """Full session skill board."""
+
+    model_config = {"frozen": True}
+
+    program_id: str
+    program_name: str
+    groups: list[SkillBoardLevelGroup]
+    unplaced: list[SkillBoardStudentRef]
+
+
+# ---------------------------------------------------------------------------
+# Teaching focus read models (next-skill selection per student)
+# ---------------------------------------------------------------------------
+
+TeachingFocusKind = Literal["practice", "review", "ready_for_level_up"]
+
+
+class TeachingFocusSkill(BaseModel):
+    """The single skill a coach should work on with a student next."""
+
+    model_config = {"frozen": True}
+
+    skill_id: str
+    name: str
+    sequence: int
+    level_id: str
+    status: SkillStatus
+    is_review: bool = False
+
+
+class StudentTeachingFocus(BaseModel):
+    """One student's next-skill focus inside a level group."""
+
+    model_config = {"frozen": True}
+
+    student_id: str
+    student_name: str
+    focus: TeachingFocusKind
+    next_skill: TeachingFocusSkill | None = None
+
+
+class TeachingFocusLevelGroup(BaseModel):
+    """All placed students currently on one level, with their focus."""
+
+    model_config = {"frozen": True}
+
+    level_id: str
+    level_name: str
+    level_sequence: int
+    students: list[StudentTeachingFocus]
+
+
+class TeachingFocusResult(BaseModel):
+    """Per-student next-skill selection for a roster, grouped by level."""
+
+    model_config = {"frozen": True}
+
+    program_id: str
+    groups: list[TeachingFocusLevelGroup]
+    unplaced: list[SkillBoardStudentRef]

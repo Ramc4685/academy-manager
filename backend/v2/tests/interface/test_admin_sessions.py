@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 import backend.v2.composition.admin as admin_composition
 from backend.v2.composition.admin import compose_admin
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
+from backend.v2.contexts.coaching.domain.payout import CoachRate
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import MongoSessionRepository
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_writer import MongoSessionWriter
 from backend.v2.interfaces.admin.router import router as admin_router
@@ -57,6 +58,29 @@ class _FrozenAdminDateTime(datetime):
         if tz is None:
             return cls._now.replace(tzinfo=None)
         return cls._now.astimezone(tz)
+
+
+def _percent_rate(coach_id: str = "coach-percent") -> CoachRate:
+    return CoachRate(
+        rate_id=f"rate-{coach_id}",
+        academy_id="acad",
+        coach_id=coach_id,
+        billing_unit="percent_of_revenue",
+        amount_minor=0,
+        percent_bps=6000,
+        currency="USD",
+        effective_from=datetime(2026, 1, 1, tzinfo=UTC),
+        effective_until=None,
+        status="active",
+    )
+
+
+class _ListCoachPayRates:
+    def __init__(self, rates: list[CoachRate]) -> None:
+        self.rates = rates
+
+    async def execute(self, *, coach_id: str) -> list[CoachRate]:
+        return [rate for rate in self.rates if rate.coach_id == coach_id]
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -659,6 +683,120 @@ async def test_admin_session_create_and_edit_persist_monthly_amount_cents(
     )
     assert updated is not None
     assert updated["amount_cents"] == 7500
+
+    with TestClient(_mongo_admin_app(db)) as client:
+        clear_response = client.patch(
+            f"/api/v2/admin/sessions/{created['session_id']}",
+            json={"amount_cents": None, "reason": "pricing not configured"},
+        )
+
+    assert clear_response.status_code == 200, clear_response.text
+    assert clear_response.json()["amount_cents"] is None
+    cleared = await db.sessions.find_one(
+        {"academy_id": "academy-b", "session_id": created["session_id"]}
+    )
+    assert cleared is not None
+    assert cleared["amount_cents"] is None
+
+
+def test_admin_session_create_blocks_missing_price_for_percent_paid_coach(admin_client) -> None:
+    admin_client.use_cases.list_coach_pay_rates = _ListCoachPayRates([_percent_rate()])
+
+    response = admin_client.post(
+        "/api/v2/admin/sessions",
+        json={
+            "coach_id": "coach-percent",
+            "title": "Percent Missing Price",
+            "location": "Court 1",
+            "days_of_week": ["Wed"],
+            "start_time": "18:00",
+            "end_time": "18:45",
+            "timezone": "America/Chicago",
+            "capacity": 15,
+        },
+    )
+
+    assert response.status_code == 400
+    assert "Percent-of-revenue coach pay requires a session price" in response.json()["detail"]
+
+
+def test_admin_session_create_allows_explicit_zero_price_for_percent_paid_coach(
+    admin_client,
+) -> None:
+    admin_client.use_cases.list_coach_pay_rates = _ListCoachPayRates([_percent_rate()])
+
+    response = admin_client.post(
+        "/api/v2/admin/sessions",
+        json={
+            "coach_id": "coach-percent",
+            "title": "Percent Free Session",
+            "location": "Court 1",
+            "days_of_week": ["Thu"],
+            "start_time": "19:00",
+            "end_time": "19:45",
+            "timezone": "America/Chicago",
+            "capacity": 15,
+            "amount_cents": 0,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["amount_cents"] == 0
+
+
+@pytest.mark.asyncio
+async def test_admin_session_edit_blocks_clearing_price_for_percent_paid_coach(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-session-percent-clear-blocked"]
+    await db.sessions.insert_one(
+        {
+            "academy_id": "academy-b",
+            "session_id": "session-percent-price",
+            "title": "Percent Price",
+            "location": "Court 1",
+            "coach_id": "coach-percent",
+            "capacity": 15,
+            "amount_cents": 7500,
+            "status": "scheduled",
+            "days_of_week": ["Wed"],
+            "start_time": "18:00",
+            "end_time": "18:45",
+            "timezone": "America/Chicago",
+            "start_at": datetime(2026, 6, 3, 23, 0, tzinfo=UTC),
+            "end_at": datetime(2026, 6, 3, 23, 45, tzinfo=UTC),
+        }
+    )
+    await db.coach_rates.insert_one(
+        {
+            "academy_id": "academy-b",
+            "rate_id": "rate-percent",
+            "coach_id": "coach-percent",
+            "billing_unit": "percent_of_revenue",
+            "amount_minor": 0,
+            "percent_bps": 6000,
+            "currency": "USD",
+            "effective_from": datetime(2026, 1, 1, tzinfo=UTC),
+            "effective_until": None,
+            "status": "active",
+        }
+    )
+
+    with TestClient(_mongo_admin_app(db)) as client:
+        response = client.patch(
+            "/api/v2/admin/sessions/session-percent-price",
+            json={"amount_cents": None, "reason": "pricing not configured"},
+        )
+
+    assert response.status_code == 400
+    assert "Percent-of-revenue coach pay requires a session price" in response.json()["detail"]
+    stored = await db.sessions.find_one(
+        {"academy_id": "academy-b", "session_id": "session-percent-price"}
+    )
+    assert stored is not None
+    assert stored["amount_cents"] == 7500
 
 
 @pytest.mark.asyncio
@@ -1755,7 +1893,11 @@ def test_pause_and_resume_enrollment(admin_client):
 
     p = admin_client.post(
         f"/api/v2/admin/enrollments/{enrollment_id}/pause",
-        json={"effective_date": "2026-05-20", "reason": "temporary pause"},
+        json={
+            "effective_date": "2026-05-20",
+            "reason": "temporary pause",
+            "review_on": "2026-06-01",
+        },
     )
     assert p.status_code == 204
     assert admin_client.seed["enrollments"].rows[enrollment_id].status == "paused"
@@ -1781,7 +1923,11 @@ def test_pause_and_resume_enrollment(admin_client):
 
     p2 = admin_client.post(
         f"/api/v2/admin/enrollments/{enrollment_id}/pause",
-        json={"effective_date": "2026-05-21", "reason": "second temporary pause"},
+        json={
+            "effective_date": "2026-05-21",
+            "reason": "second temporary pause",
+            "review_on": "2026-06-02",
+        },
     )
     assert p2.status_code == 204
     waiting_after_second_pause = [
@@ -1837,6 +1983,33 @@ def test_transfer_enrollment_reserves_target_and_releases_source(admin_client):
     ]
     assert admin_client.seed["sessions"].reserved[target_session_id] == 1
     assert admin_client.seed["sessions"].reserved["sess-1"] == 0
+
+
+def test_override_enrollment_fee_updates_regular_enrollment(admin_client):
+    add = admin_client.post(
+        "/api/v2/admin/enrollments",
+        json={
+            "session_id": "sess-1",
+            "student_id": "st-1",
+            "parent_id": "p-1",
+            "full_name": "Alice",
+        },
+    )
+    enrollment_id = add.json()["enrollment_id"]
+
+    waived = admin_client.post(
+        f"/api/v2/admin/enrollments/{enrollment_id}/fee",
+        json={"amount_cents": 0, "reason": "scholarship"},
+    )
+    assert waived.status_code == 204, waived.text
+    assert admin_client.seed["enrollments"].amounts[enrollment_id] == 0
+
+    cleared = admin_client.post(
+        f"/api/v2/admin/enrollments/{enrollment_id}/fee",
+        json={"amount_cents": None, "reason": "restore default"},
+    )
+    assert cleared.status_code == 204, cleared.text
+    assert admin_client.seed["enrollments"].amounts[enrollment_id] is None
 
 
 def test_cancel_enrollment_emits_event(admin_client):

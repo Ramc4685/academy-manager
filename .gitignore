@@ -88,12 +88,22 @@ chainlit.md
 .superpowers/
 .worktrees/
 .ipynb_checkpoints/
+.playwright-cli/
 .playwright-mcp/
 rally-*.png
 
 # ── Knowledge graph ────────────────────────────────────────────────────────────
 graphify-out/
 
+# ── Tool caches & agent state ──────────────────────────────────────────────────
+.pytest_cache/
+.ruff_cache/
+.serena/
+.import_linter_cache/
+.grimp_cache/
+.emergent/
+
 # ── Misc ───────────────────────────────────────────────────────────────────────
 memory/test_credentials.md
 agenthub/agents/youtube/db
+firebase-emulator/data/

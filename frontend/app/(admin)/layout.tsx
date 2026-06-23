@@ -27,6 +27,7 @@ import {
 } from "@/components/admin/admin-action-slot";
 import { TenantSwitcher } from "@/components/admin/tenant-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
+import { PersonaLogoutButton } from "@/components/persona/logout-button";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? "/admin";
@@ -407,6 +408,10 @@ function RallyTopbar({
               Refresh
             </button>
           )}
+          <PersonaLogoutButton
+            className="min-h-touch rounded-md border border-slate-200 px-3 text-sm font-medium text-slate-600 hover:bg-slate-50"
+            labelClassName="hidden sm:inline"
+          />
         </div>
       </div>
     </header>

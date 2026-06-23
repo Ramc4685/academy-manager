@@ -38,9 +38,11 @@ test.describe("local authenticated QA defect coverage", () => {
     await expect(page.getByRole("radio", { name: "Beginner" })).toBeChecked();
 
     await page.goto("/parent/payments");
-    const portalRequest = page.waitForRequest(/https:\/\/fake\.stripe\.com\/portal\//);
-    await page.getByRole("button", { name: "Billing portal" }).click({ noWaitAfter: true });
-    await expect((await portalRequest).url()).toContain("fake.stripe.com/portal/");
+    await page.getByRole("button", { name: "Billing portal" }).click();
+    await expect(page.getByTestId("billing-portal-error")).toContainText(
+      "Start autopay for an enrollment first",
+    );
+    await expect(page.getByTestId("billing-portal-error")).not.toContainText("Request failed");
 
     await page.goto("/admin");
     await expect(page).toHaveURL(/\/parent\/payments\?access_denied=admin/);

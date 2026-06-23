@@ -28,6 +28,21 @@ CreditEntryType = Literal[
 ]
 CreditStatus = Literal["PENDING", "APPROVED", "APPLIED", "EXPIRED", "VOIDED"]
 
+ALLOWED_PAYMENT_PROJECTION_TRANSITIONS: dict[str, set[str]] = {
+    "pending": {"succeeded", "failed", "cancelled"},
+    "failed": {"succeeded"},
+    "succeeded": {"partially_refunded", "refunded"},
+    "partially_refunded": {"refunded"},
+    "refunded": set(),
+    "cancelled": set(),
+}
+
+
+def can_transition_payment_projection(current: str, target: str) -> bool:
+    if current == target:
+        return True
+    return target in ALLOWED_PAYMENT_PROJECTION_TRANSITIONS.get(current, set())
+
 
 class Payment(BaseModel):
     model_config = {"frozen": True}
@@ -59,6 +74,7 @@ class Subscription(BaseModel):
     enrollment_id: str | None = None
     session_id: str | None = None
     stripe_subscription_id: str
+    stripe_checkout_session_id: str | None = None
     status: SubscriptionStatus = "incomplete"
     payment_mode: Literal["one_time_first_month", "monthly", "manual"] = "monthly"
     created_at: datetime

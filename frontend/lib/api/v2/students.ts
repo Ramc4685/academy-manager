@@ -4,7 +4,12 @@
  * Wraps the admin student detail/edit endpoints.
  */
 import { apiFetch } from "../client";
-import { type AdminEnrollmentView, type AdminStudentView } from "../admin";
+import {
+  type AdminEnrollmentView,
+  type AdminLedgerInvoiceView,
+  type AdminStudentView,
+  type CreateStudentInvoiceRequest,
+} from "../admin";
 
 export type TuitionDiscountCategory =
   | "owner_child"
@@ -55,12 +60,16 @@ export interface AdminStudentPaymentSummary {
   balance_due_cents: number;
   status: string;
   payment_method?: string | null;
+  invoice_number?: string | null;
+  paid_at?: string | null;
+  stripe_invoice_id?: string | null;
+  stripe_payment_intent_id?: string | null;
   created_at: string;
 }
 
 export interface AdminStudentCurrentPaymentSummary {
   amount_cents: number;
-  source: "invoice" | "session_price";
+  source: "invoice";
   status: string;
   period?: string | null;
   payment_id?: string | null;
@@ -93,6 +102,7 @@ export interface AdminStudentDetail extends AdminStudentView {
   enrolled_sessions: AdminStudentSessionSummary[];
   payment_history: AdminStudentPaymentSummary[];
   current_payment?: AdminStudentCurrentPaymentSummary | null;
+  outstanding_balance_cents: number;
 }
 
 export async function getAdminStudent(
@@ -110,7 +120,7 @@ export interface UpdateAdminStudentRequest {
   full_name?: string;
   date_of_birth?: string | null;
   level?: string | null;
-  status?: "active" | "paused" | "inactive";
+  status?: "active" | "paused" | "inactive" | "cancelled";
   parent_id?: string;
   notes?: string | null;
   previous_experience?: string | null;
@@ -130,6 +140,19 @@ export function updateAdminStudent(
     {
       method: "PATCH",
       body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function createAdminStudentInvoice(
+  studentId: string,
+  payload: CreateStudentInvoiceRequest,
+): Promise<AdminLedgerInvoiceView> {
+  return apiFetch<AdminLedgerInvoiceView>(
+    `/admin/students/${encodeURIComponent(studentId)}/invoices`,
+    {
+      method: "POST",
+      body: JSON.stringify({ student_id: studentId, ...payload }),
     },
   );
 }
@@ -186,6 +209,37 @@ export function removeTuitionDiscount(
     `/admin/enrollments/${encodeURIComponent(enrollmentId)}/tuition-discount`,
     {
       method: "DELETE",
+    },
+  );
+}
+
+export interface AdminStudentBillingEnrollmentView {
+  enrollment_id: string;
+  student_id: string;
+  parent_id: string;
+  session_type_id: string;
+  stripe_subscription_id?: string | null;
+  billing_start_date: string;
+  status: "active" | "paused" | "cancelled" | "transferred_out";
+  override_price_cents?: number | null;
+  enrolled_at: string;
+  updated_at: string;
+}
+
+export interface OverrideEnrollmentFeeRequest {
+  amount_cents: number | null;
+  reason?: string | null;
+}
+
+export function overrideEnrollmentFee(
+  enrollmentId: string,
+  payload: OverrideEnrollmentFeeRequest,
+): Promise<void> {
+  return apiFetch<void>(
+    `/admin/enrollments/${encodeURIComponent(enrollmentId)}/fee`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
     },
   );
 }

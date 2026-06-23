@@ -36,3 +36,12 @@ async def up(db: AsyncIOMotorDatabase) -> None:
         name="coach_rates_id",
         unique=True,
     )
+    await db.coach_rate_audit_log.create_index(
+        [("academy_id", 1), ("coach_id", 1), ("at", -1)],
+        name="coach_rate_audit_tenant_coach_at",
+    )
+    await db.coach_rate_audit_log.create_index(
+        [("academy_id", 1), ("audit_id", 1)],
+        name="coach_rate_audit_id",
+        unique=True,
+    )

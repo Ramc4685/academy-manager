@@ -84,10 +84,10 @@ class MongoGovernanceStore:
         )
 
     async def revoke_support_access_grant(
-        self, grant_id: str, updates: dict[str, Any]
+        self, grant_id: str, academy_id: str, updates: dict[str, Any]
     ) -> dict[str, Any] | None:
         doc = await self._support_access.find_one_and_update(
-            {"support_access_grant_id": grant_id},
+            {"support_access_grant_id": grant_id, "academy_id": academy_id},
             {"$set": updates},
             return_document=ReturnDocument.AFTER,
         )

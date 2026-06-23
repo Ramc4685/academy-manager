@@ -53,6 +53,7 @@ class WaiverAcceptance(BaseModel):
     waiver_version: str
     content_hash: str
     accepted_at: datetime
+    waiver_template_id: str | None = None  # ADR-0007: pins acceptance to immutable template version
 
 
 class Application(BaseModel):

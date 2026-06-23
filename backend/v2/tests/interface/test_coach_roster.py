@@ -6,8 +6,8 @@ DELETE /api/v2/coach/sessions/{session_id}/roster/{student_id}
 
 Scenarios:
 - assigned coach can view roster
-- assigned coach can add a student
-- assigned coach can remove an enrolled student
+- assigned coach cannot add a student for launch
+- assigned coach cannot remove an enrolled student for launch
 - unassigned coach gets 403
 - parent persona gets 404 (wrong persona, route invisible)
 - admin persona gets 404 (wrong persona, route invisible)
@@ -61,14 +61,10 @@ def test_get_roster_unauthenticated_returns_401(anon_client):
 # ---------- POST roster (add student) ----------
 
 
-def test_add_student_to_roster_happy_path(coach_client):
+def test_add_student_to_roster_returns_403_for_launch(coach_client):
     body = {"student_id": "st-new", "parent_id": "p3", "full_name": "Charlie"}
     r = coach_client.post(f"/api/v2/coach/sessions/{SESSION_ID}/roster", json=body)
-    assert r.status_code == 201, r.text
-    data = r.json()
-    assert data["session_id"] == SESSION_ID
-    assert data["student_id"] == "st-new"
-    assert data["status"] == "active"
+    assert r.status_code == 403, r.text
 
 
 def test_add_student_unassigned_coach_returns_403(coach_client):
@@ -98,9 +94,9 @@ def test_add_student_unauthenticated_returns_401(anon_client):
 # ---------- DELETE roster (remove student) ----------
 
 
-def test_remove_student_from_roster_happy_path(coach_client):
+def test_remove_student_from_roster_returns_403_for_launch(coach_client):
     r = coach_client.delete(f"/api/v2/coach/sessions/{SESSION_ID}/roster/st1")
-    assert r.status_code == 204, r.text
+    assert r.status_code == 403, r.text
 
 
 def test_remove_student_unassigned_coach_returns_403(coach_client):
@@ -108,9 +104,9 @@ def test_remove_student_unassigned_coach_returns_403(coach_client):
     assert r.status_code == 403, r.text
 
 
-def test_remove_student_not_enrolled_returns_404(coach_client):
+def test_remove_student_not_enrolled_returns_403_without_lookup(coach_client):
     r = coach_client.delete(f"/api/v2/coach/sessions/{SESSION_ID}/roster/st-ghost")
-    assert r.status_code == 404, r.text
+    assert r.status_code == 403, r.text
 
 
 def test_remove_student_parent_persona_returns_404(parent_client):

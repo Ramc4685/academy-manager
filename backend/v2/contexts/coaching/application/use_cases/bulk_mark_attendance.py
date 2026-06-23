@@ -33,6 +33,7 @@ from backend.v2.contexts.coaching.domain.events import (
 from backend.v2.contexts.coaching.domain.models import Attendance
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore, idempotent
+from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
 
 
 class BulkAttendanceEntry(BaseModel):
@@ -161,12 +162,13 @@ class BulkMarkAttendance:
 
         # 3. Persist attendance and emit events per entry.
         now = self._now()
+        academy_id = self._current_academy_id()
         entry_results: list[BulkAttendanceEntryResult] = []
         for i, entry in enumerate(cmd.entries):
             attendance_id = f"{cmd.mutation_id}:{i}"
             attendance = Attendance(
                 attendance_id=attendance_id,
-                academy_id=self._academy_id,
+                academy_id=academy_id,
                 occurrence_id=cmd.occurrence_id,
                 session_id=cmd.session_id,
                 student_id=entry.student_id,
@@ -180,7 +182,7 @@ class BulkMarkAttendance:
             await self._outbox.append(
                 AttendanceMarked(
                     aggregate_id=attendance.attendance_id,
-                    academy_id=self._academy_id,
+                    academy_id=academy_id,
                     payload=AttendanceMarkedPayload(
                         attendance_id=attendance.attendance_id,
                         occurrence_id=attendance.occurrence_id,
@@ -201,3 +203,9 @@ class BulkMarkAttendance:
             )
 
         return BulkMarkAttendanceResult(results=entry_results)
+
+    def _current_academy_id(self) -> str:
+        try:
+            return current_academy_id()
+        except TenantContextUnset:
+            return self._academy_id

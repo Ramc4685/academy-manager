@@ -10,6 +10,7 @@
  */
 
 import { apiFetch } from "./client";
+import { coachStudentPassportPath } from "./coach-paths";
 
 // ---------------------------------------------------------------------------
 // Curriculum types
@@ -243,6 +244,49 @@ export function createSkill(
 }
 
 // ---------------------------------------------------------------------------
+// Admin — lesson cards
+// ---------------------------------------------------------------------------
+
+export interface LessonCardSummary {
+  card_id: string;
+  slug: string;
+  lesson_number: number;
+  title: string;
+  module_name: string;
+  lesson_range: string;
+  skill_ids: string[];
+}
+
+export interface LessonCardsList {
+  count: number;
+  cards: LessonCardSummary[];
+}
+
+export interface SeedLessonCardsResult {
+  program_id: string;
+  cards_created: number;
+  cards_updated: number;
+  cards_unchanged: number;
+  video_refs_created: number;
+  video_refs_updated: number;
+  video_refs_unchanged: number;
+}
+
+export function listLessonCards(programId: string): Promise<LessonCardsList> {
+  return apiFetch<LessonCardsList>(
+    `/admin/programs/${encodeURIComponent(programId)}/lesson-cards`,
+    { method: "GET" },
+  );
+}
+
+export function seedLessonCards(programId: string): Promise<SeedLessonCardsResult> {
+  return apiFetch<SeedLessonCardsResult>(
+    `/admin/programs/${encodeURIComponent(programId)}/lesson-cards/seed`,
+    { method: "POST" },
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Admin — student progress
 // ---------------------------------------------------------------------------
 
@@ -297,6 +341,7 @@ export function recordAdminTestAttempt(
     attempts_count: number;
     success_count: number;
     notes?: string;
+    session_id?: string;
   },
 ): Promise<RecordTestAttemptResult> {
   return apiFetch<RecordTestAttemptResult>(
@@ -381,9 +426,8 @@ export function getStudentPassport(
   studentId: string,
   programId?: string,
 ): Promise<SkillPassportEntry[]> {
-  const q = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
   return apiFetch<{ passport: SkillPassportEntry[] }>(
-    `/coach/students/${encodeURIComponent(studentId)}/passport${q}`,
+    coachStudentPassportPath(studentId, programId),
     { method: "GET" },
   ).then((d) => d.passport);
 }
@@ -408,6 +452,7 @@ export function recordTestAttempt(
     attempts_count: number;
     success_count: number;
     notes?: string;
+    session_id?: string;
   },
 ): Promise<{ recorded: boolean }> {
   return apiFetch<{ recorded: boolean }>(
@@ -446,4 +491,68 @@ export function getParentStudentCertificates(studentId: string): Promise<SkillCe
     `/parent/students/${encodeURIComponent(studentId)}/certificates`,
     { method: "GET" },
   ).then((d) => d.certificates);
+}
+
+// ---------------------------------------------------------------------------
+// Session skill board
+// ---------------------------------------------------------------------------
+
+export interface SkillBoardCell {
+  status: SkillStatus;
+  last_updated_at: string | null;
+}
+
+export interface SkillBoardSkill {
+  skill_id: string;
+  name: string;
+  sequence: number;
+  is_required: boolean;
+}
+
+export interface SkillBoardStudentRow {
+  student_id: string;
+  student_name: string;
+  statuses: Record<string, SkillBoardCell>;
+  required_passed: number;
+  required_total: number;
+  total_passed: number;
+  total_count: number;
+  level_up_status: string | null;
+}
+
+export interface SkillBoardLevelGroup {
+  level_id: string;
+  level_name: string;
+  sequence: number;
+  skills: SkillBoardSkill[];
+  students: SkillBoardStudentRow[];
+}
+
+export interface SkillBoard {
+  program_id: string;
+  program_name: string;
+  groups: SkillBoardLevelGroup[];
+  unplaced: { student_id: string; student_name: string }[];
+}
+
+export function getAdminSessionSkillBoard(
+  sessionId: string,
+  programId?: string,
+): Promise<SkillBoard> {
+  const q = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
+  return apiFetch<SkillBoard>(
+    `/admin/sessions/${encodeURIComponent(sessionId)}/skill-board${q}`,
+    { method: "GET" },
+  );
+}
+
+export function getCoachSessionSkillBoard(
+  sessionId: string,
+  programId?: string,
+): Promise<SkillBoard> {
+  const q = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
+  return apiFetch<SkillBoard>(
+    `/coach/sessions/${encodeURIComponent(sessionId)}/skill-board${q}`,
+    { method: "GET" },
+  );
 }

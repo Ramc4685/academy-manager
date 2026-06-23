@@ -289,6 +289,23 @@ async function stubParentBff(page: Page) {
   );
 }
 
+async function expectShellLogout(
+  page: Page,
+  path: string,
+  readyTestId: string,
+  stubBff: (page: Page) => Promise<void>,
+) {
+  await stubBff(page);
+  await page.goto(path);
+  await expect(page.getByTestId(readyTestId)).toBeVisible();
+  const logout = page.getByTestId("persona-logout-button");
+  await expect(logout).toBeEnabled();
+  await Promise.all([
+    page.waitForURL(/\/login$/, { timeout: 10_000 }),
+    logout.click(),
+  ]);
+}
+
 async function openAdminDrawer(page: Page) {
   const button = page.getByTestId("admin-open-drawer");
   await expect(button).toBeVisible();
@@ -649,5 +666,11 @@ test.describe("Rally admin shell", () => {
       errors,
       `Console errors on parent route: ${errors.join("\n")}`,
     ).toEqual([]);
+  });
+
+  test("admin, coach, and parent shells expose logout", async ({ page }) => {
+    await expectShellLogout(page, "/admin", "admin-dashboard", stubAdminBff);
+    await expectShellLogout(page, "/coach/today", "coach-today", stubCoachBff);
+    await expectShellLogout(page, "/parent/dashboard", "parent-dashboard", stubParentBff);
   });
 });

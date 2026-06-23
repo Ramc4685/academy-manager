@@ -2,7 +2,14 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { listParentProgress, listParentChildren } from "@/lib/api/parent";
+import {
+  listParentProgress,
+  listParentChildren,
+  listSkillUpdates,
+  listPracticeResources,
+  type ParentPracticeResource,
+  type ParentSkillUpdate,
+} from "@/lib/api/parent";
 import {
   getParentStudentPassport,
   getParentStudentCertificates,
@@ -373,6 +380,18 @@ function ChildPassportView({
     enabled: Boolean(studentId),
   });
 
+  const { data: updates, isLoading: loadingUpdates } = useQuery({
+    queryKey: ["parent", "skill-updates", studentId],
+    queryFn: () => listSkillUpdates(studentId),
+    enabled: Boolean(studentId),
+  });
+
+  const { data: practiceResources, isLoading: loadingPracticeResources } = useQuery({
+    queryKey: ["parent", "practice-resources", studentId],
+    queryFn: () => listPracticeResources(studentId),
+    enabled: Boolean(studentId),
+  });
+
   const skills = passport ?? [];
   const certList = certs ?? [];
   const passedCount = skills.filter((s) => s.status === "PASSED").length;
@@ -408,6 +427,8 @@ function ChildPassportView({
         </div>
       )}
 
+      <RecentSkillUpdatesTimeline updates={updates ?? []} isLoading={loadingUpdates} />
+
       {/* Skill list */}
       {loadingPassport ? (
         <SkillListSkeleton />
@@ -422,6 +443,11 @@ function ChildPassportView({
           ))}
         </ul>
       )}
+
+      <PracticeResourcesCard
+        resources={practiceResources ?? []}
+        isLoading={loadingPracticeResources}
+      />
 
       {/* Certificates */}
       {!loadingCerts && certList.length > 0 && (
@@ -448,10 +474,55 @@ function ChildPassportView({
   );
 }
 
+function RecentSkillUpdatesTimeline({
+  updates,
+  isLoading,
+}: {
+  updates: ParentSkillUpdate[];
+  isLoading: boolean;
+}) {
+  if (isLoading) {
+    return <div className="h-28 animate-pulse rounded-2xl shimmer" />;
+  }
+
+  if (updates.length === 0) return null;
+
+  return (
+    <div
+      className="rounded-2xl overflow-hidden animate-fade-in-up"
+      style={{ background: "white", border: "1px solid var(--rally-line)" }}
+    >
+      <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--rally-line)" }}>
+        <p className="text-sm font-bold" style={{ color: "var(--rally-ink)" }}>
+          Recent skill updates
+        </p>
+      </div>
+      <ol className="divide-y" style={{ borderColor: "var(--rally-line)" }}>
+        {updates.map((update) => (
+          <li key={`${update.skill_id}-${update.updated_at}`} className="flex gap-3 px-4 py-3">
+            <time
+              className="w-14 shrink-0 text-xs font-semibold"
+              style={{ color: "var(--rally-subtle)" }}
+            >
+              {formatUpdateDate(update.updated_at)}
+            </time>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold" style={{ color: "var(--rally-ink)" }}>
+                {update.skill_name}
+              </p>
+            </div>
+            <SkillStatusChip status={update.status} />
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 function SkillItem({ entry }: { entry: SkillPassportEntry }) {
-  const style = skillStatusStyle(entry.status);
   const label = SKILL_STATUS_FRIENDLY[entry.status];
   const checkmark = entry.status === "PASSED";
+  const style = skillStatusStyle(entry.status);
 
   return (
     <li
@@ -469,13 +540,78 @@ function SkillItem({ entry }: { entry: SkillPassportEntry }) {
           {entry.skill_name}
         </p>
       </div>
-      <span
-        className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full"
-        style={style}
-      >
-        {label}
-      </span>
+      <SkillStatusChip status={entry.status} label={label} />
     </li>
+  );
+}
+
+function SkillStatusChip({
+  status,
+  label = SKILL_STATUS_FRIENDLY[status],
+}: {
+  status: SkillStatus;
+  label?: string;
+}) {
+  return (
+    <span
+      className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full"
+      style={skillStatusStyle(status)}
+    >
+      {label}
+    </span>
+  );
+}
+
+function PracticeResourcesCard({
+  resources,
+  isLoading,
+}: {
+  resources: ParentPracticeResource[];
+  isLoading: boolean;
+}) {
+  if (isLoading) {
+    return <div className="h-24 animate-pulse rounded-2xl shimmer" />;
+  }
+
+  if (resources.length === 0) return null;
+
+  return (
+    <div
+      className="rounded-2xl overflow-hidden animate-fade-in-up"
+      style={{ background: "white", border: "1px solid var(--rally-line)" }}
+    >
+      <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--rally-line)" }}>
+        <p className="text-sm font-bold" style={{ color: "var(--rally-ink)" }}>
+          Practice at home
+        </p>
+      </div>
+      <ul className="divide-y" style={{ borderColor: "var(--rally-line)" }}>
+        {resources.map((resource) => (
+          <li key={resource.skill_id} className="px-4 py-3">
+            <p className="text-sm font-semibold" style={{ color: "var(--rally-ink)" }}>
+              {resource.skill_name}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {resource.resource_links.map((link) => (
+                <a
+                  key={`${resource.skill_id}-${link.url}`}
+                  href={link.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex max-w-full items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold transition-all hover:-translate-y-0.5"
+                  style={{ background: "var(--rally-cobalt-soft)", color: "var(--rally-cobalt)" }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                  <span className="truncate">{link.title}</span>
+                </a>
+              ))}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -520,4 +656,11 @@ function SkillListSkeleton() {
       ))}
     </div>
   );
+}
+
+function formatUpdateDate(value: string) {
+  return new Date(value).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
 }

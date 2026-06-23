@@ -306,6 +306,9 @@ class _EnrollmentWriterAdapter:
     async def update_session(self, enrollment_id: str, session_id: str) -> None:
         pass
 
+    async def update_amount_cents(self, enrollment_id: str, amount_cents: int | None) -> None:
+        pass
+
     async def get(self, enrollment_id: str) -> Enrollment | None:
         return self._store._enrollments.get(enrollment_id)
 
@@ -753,6 +756,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     EditRosterAdd,
     EditSession,
     JoinWaitlist,
+    OverrideEnrollmentFee,
     PauseEnrollment,
     RemoveFromWaitlist,
     ResumeEnrollment,
@@ -940,6 +944,7 @@ class FakeAdminCoachAttendanceRepo:
 @dataclass
 class FakeEnrollmentWriter:
     rows: dict[str, Any] = field(default_factory=dict)
+    amounts: dict[str, int | None] = field(default_factory=dict)
     move_history: list[dict[str, str]] = field(default_factory=list)
 
     async def create(self, enrollment):
@@ -961,6 +966,10 @@ class FakeEnrollmentWriter:
                 }
             )
             self.rows[enrollment_id] = e.model_copy(update={"session_id": session_id})
+
+    async def update_amount_cents(self, enrollment_id, amount_cents):
+        if enrollment_id in self.rows:
+            self.amounts[enrollment_id] = amount_cents
 
     async def get(self, enrollment_id):
         return self.rows.get(enrollment_id)
@@ -1149,6 +1158,27 @@ class FakePauseRequestRepo:
 
 
 @dataclass
+class FakeBillingDeferrals:
+    warnings: list[dict[str, object]] = field(default_factory=list)
+
+    async def list_admin_warnings(self, *, today, limit=100):
+        return self.warnings[:limit]
+
+    async def add(self, _deferral) -> None:
+        return None
+
+    async def close_active_for_enrollment(
+        self,
+        _enrollment_id,
+        *,
+        closed_at,
+        closed_by,
+        reason,
+    ) -> None:
+        return None
+
+
+@dataclass
 class FakePaymentRepo:
     rows: dict[str, Payment] = field(default_factory=dict)
     discounts: dict[str, int] = field(default_factory=dict)
@@ -1156,6 +1186,7 @@ class FakePaymentRepo:
     generated_periods: list[str] = field(default_factory=list)
     manual_records: dict[str, dict[str, object]] = field(default_factory=dict)
     credits: list[dict[str, object]] = field(default_factory=list)
+    monthly_result: dict[str, object] | None = None
 
     async def save(self, p):
         self.rows[p.payment_id] = p
@@ -1177,6 +1208,8 @@ class FakePaymentRepo:
 
     async def generate_monthly_payments(self, period):
         self.generated_periods.append(period)
+        if self.monthly_result is not None:
+            return GenerateMonthlyPaymentsResult(**self.monthly_result)
         return GenerateMonthlyPaymentsResult(created=1, skipped_existing=0)
 
     async def mark_payment_paid(
@@ -1187,6 +1220,8 @@ class FakePaymentRepo:
         notes,
         amount_received_cents=None,
         reference_number=None,
+        recorded_by=None,
+        payment_date=None,
     ):
         p = self.rows.get(payment_id)
         if p is None:
@@ -1211,6 +1246,8 @@ class FakePaymentRepo:
             "paid_amount_cents": paid_amount,
             "balance_due_cents": balance_due,
             "overpayment_credit_cents": overpayment,
+            "recorded_by": recorded_by,
+            "payment_date": payment_date,
         }
         if overpayment and not any(c["payment_id"] == payment_id for c in self.credits):
             self.credits.append(
@@ -1430,6 +1467,7 @@ def admin_seed():
         "students": FakeStudentWriter(),
         "waitlist": FakeWaitlistRepo(),
         "pause_requests": FakePauseRequestRepo(),
+        "billing_deferrals": FakeBillingDeferrals(),
         "payments": FakePaymentRepo(),
         "expenses": FakeExpenseRepo(),
         "payouts": FakePayoutRepo(),
@@ -1453,6 +1491,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     students = seed["students"]
     waitlist = seed["waitlist"]
     pause_requests = seed["pause_requests"]
+    billing_deferrals = seed["billing_deferrals"]
     lifecycle_billing = FakeLifecycleBilling()
     payments = seed["payments"]
     outbox = seed["outbox"]
@@ -1493,6 +1532,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         enrollment_events=enrollment_events,
         billing=lifecycle_billing,
     )
+    override_enrollment_fee = OverrideEnrollmentFee(enrollments=enrollments_w)
     pause_enrollment = PauseEnrollment(
         enrollments=enrollments_w,
         sessions=sessions,
@@ -1782,6 +1822,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         edit_roster_add=edit_roster_add,
         cancel_enrollment=cancel_enrollment,
         transfer_enrollment=transfer_enrollment,
+        override_enrollment_fee=override_enrollment_fee,
         pause_enrollment=pause_enrollment,
         resume_enrollment=resume_enrollment,
         withdraw_enrollment=withdraw_enrollment,
@@ -1818,6 +1859,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         list_waitlist_for_session=list_waitlist_for_session,
         list_audit_logs=list_audit_logs,
         list_dues_followup=list_dues_followup,
+        list_billing_deferral_warnings=billing_deferrals.list_admin_warnings,
         send_dues_reminders=send_dues_reminders,
         export_report_csv=export_report_csv,
         get_reports_kpis=AsyncMock(
@@ -1840,6 +1882,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         update_academy_notifications_use_case=AsyncMock(),
         get_academy_gateway_use_case=AsyncMock(),
         change_user_role=AsyncMock(),
+        reconcile_stripe_billing=AsyncMock(return_value={}),
     )
 
 

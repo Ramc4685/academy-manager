@@ -36,6 +36,20 @@ async function stubAdminShell(page: Page) {
   });
 }
 
+function formatDateInput(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function nextWednesdayDateInput(): string {
+  const value = new Date();
+  const daysUntilWednesday = ((3 - value.getDay() + 7) % 7) || 7;
+  value.setDate(value.getDate() + daysUntilWednesday);
+  return formatDateInput(value);
+}
+
 test.describe("admin session creation and fee settings UI", () => {
   test.describe.configure({ mode: "serial" });
 
@@ -207,6 +221,7 @@ test.describe("admin session creation and fee settings UI", () => {
     await stubAdminShell(page);
     let replacementPayload: unknown = null;
     let replacementCoachId: string | null = null;
+    const replacementDate = nextWednesdayDateInput();
 
     await page.route("**/api/v2/admin/**", (route) => {
       const request = route.request();
@@ -237,10 +252,10 @@ test.describe("admin session creation and fee settings UI", () => {
         return fulfillJson(route, {
           occurrences: [
             {
-              occurrence_id: "series-wed:2026-06-10:18:00",
+              occurrence_id: `series-wed:${replacementDate}:18:00`,
               session_id: "series-wed",
-              start_at: "2026-06-10T23:00:00Z",
-              end_at: "2026-06-10T23:45:00Z",
+              start_at: `${replacementDate}T23:00:00Z`,
+              end_at: `${replacementDate}T23:45:00Z`,
               status: "scheduled",
               scheduled_coach_id: "coach-scheduled",
               actual_coach_id: replacementCoachId,
@@ -260,10 +275,10 @@ test.describe("admin session creation and fee settings UI", () => {
         replacementPayload = request.postDataJSON();
         replacementCoachId = "coach-replacement";
         return fulfillJson(route, {
-          occurrence_id: "series-wed:2026-06-10:18:00",
+          occurrence_id: `series-wed:${replacementDate}:18:00`,
           session_id: "series-wed",
-          start_at: "2026-06-10T23:00:00Z",
-          end_at: "2026-06-10T23:45:00Z",
+          start_at: `${replacementDate}T23:00:00Z`,
+          end_at: `${replacementDate}T23:45:00Z`,
           status: "scheduled",
           scheduled_coach_id: "coach-scheduled",
           actual_coach_id: "coach-replacement",
@@ -311,17 +326,17 @@ test.describe("admin session creation and fee settings UI", () => {
 
     await page.goto("/admin/sessions/series-wed");
 
-    await expect(page.getByText("Replacement coaches")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Replacement coaches" })).toBeVisible();
     await expect(page.getByText("Occurrences")).toHaveCount(0);
     await expect(page.getByText("No replacement coaches added.")).toBeVisible();
 
     await page.getByRole("button", { name: "Add replacement" }).click();
-    await page.getByLabel("Date").fill("2026-06-10");
+    await page.getByLabel("Date").fill(replacementDate);
     await page.getByLabel("Replacement coach").selectOption("coach-replacement");
     await page.getByRole("button", { name: "Save" }).click();
 
     await expect.poll(() => replacementPayload).toEqual({
-      date: "2026-06-10",
+      date: replacementDate,
       replacement_coach_id: "coach-replacement",
       reason: null,
     });

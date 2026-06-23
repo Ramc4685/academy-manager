@@ -13,7 +13,10 @@ Routes covered:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
@@ -21,9 +24,13 @@ from fastapi.testclient import TestClient
 from backend.v2.contexts.curriculum.application.use_cases.seed_curriculum import (
     seed_badminton_pathway,
 )
+from backend.v2.contexts.curriculum.application.use_cases.seed_lesson_cards import (
+    LessonCardSeedResult,
+)
 from backend.v2.contexts.curriculum.domain.models import (
     ExternalLessonReference,
     FullPathway,
+    LessonCard,
     Level,
     PathwayLevel,
     Program,
@@ -31,6 +38,8 @@ from backend.v2.contexts.curriculum.domain.models import (
     SkillCriterion,
     SkillWithCriteria,
 )
+from backend.v2.interfaces.admin.deps import get_admin_use_cases
+from backend.v2.interfaces.admin.pathway_routes import router as pathway_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.ids import new_ulid
 
@@ -313,3 +322,127 @@ def test_get_pathway_unknown_program_returns_404():
     client = TestClient(app)
     r = client.get("/api/v2/admin/programs/does-not-exist/pathway")
     assert r.status_code == 404, r.text
+
+
+# ---------------------------------------------------------------------------
+# GET /programs/{id}/lesson-cards — mounts the REAL router and overrides the
+# admin use-case dependency so the route's own logic (summary shaping + the
+# 503 guard) is exercised, not a re-implementation.
+# ---------------------------------------------------------------------------
+
+
+def _make_lesson_card(*, lesson_number: int = 1, title: str = "Card") -> LessonCard:
+    now = datetime.now(UTC)
+    return LessonCard(
+        card_id=str(new_ulid()),
+        academy_id="test-academy",
+        program_id="prog-1",
+        level_id="level-1",
+        skill_ids=["skill-a", "skill-b"],
+        slug=f"lesson-{lesson_number}",
+        lesson_number=lesson_number,
+        title=title,
+        module_name="Module A",
+        lesson_range="1-3",
+        display_order=lesson_number,
+        created_at=now,
+        updated_at=now,
+        created_by="admin-1",
+    )
+
+
+def _build_real_router_app(*, curriculum: Any) -> FastAPI:
+    """Mount the real pathway router with a stub AdminUseCases.
+
+    Only ``curriculum`` is wired; the lesson-card route is the only thing
+    under test. ``curriculum=None`` exercises the 503 guard.
+    """
+    app = FastAPI()
+    app.include_router(pathway_router, prefix="/api/v2/admin")
+    app.dependency_overrides[get_auth_claims] = lambda: AuthClaims(
+        user_id="admin-1",
+        email="admin@example.com",
+        academy_id="test-academy",
+        roles=("admin",),
+    )
+    app.dependency_overrides[get_admin_use_cases] = lambda: SimpleNamespace(curriculum=curriculum)
+    return app
+
+
+def test_list_lesson_cards_returns_summary_shape():
+    cards = [
+        _make_lesson_card(lesson_number=1, title="Grip"),
+        _make_lesson_card(lesson_number=2, title="Serve"),
+    ]
+    curriculum = SimpleNamespace(
+        list_lesson_cards=SimpleNamespace(execute=AsyncMock(return_value=cards))
+    )
+    app = _build_real_router_app(curriculum=curriculum)
+    client = TestClient(app)
+
+    r = client.get("/api/v2/admin/programs/prog-1/lesson-cards")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["count"] == 2
+    assert len(body["cards"]) == 2
+    first = body["cards"][0]
+    assert set(first.keys()) == {
+        "card_id",
+        "slug",
+        "lesson_number",
+        "title",
+        "module_name",
+        "lesson_range",
+        "skill_ids",
+    }
+    assert first["title"] == "Grip"
+    assert first["skill_ids"] == ["skill-a", "skill-b"]
+    # use case called with the path program_id
+    curriculum.list_lesson_cards.execute.assert_awaited_once_with("prog-1")
+
+
+def test_seed_lesson_cards_uses_path_program_id():
+    seed = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=LessonCardSeedResult(
+                program_id="prog-1",
+                cards_created=2,
+                cards_updated=0,
+                cards_unchanged=0,
+                video_refs_created=1,
+                video_refs_updated=0,
+                video_refs_unchanged=0,
+            )
+        )
+    )
+    curriculum = SimpleNamespace(seed_lesson_cards=seed)
+    app = _build_real_router_app(curriculum=curriculum)
+    client = TestClient(app)
+
+    r = client.post("/api/v2/admin/programs/prog-1/lesson-cards/seed")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["program_id"] == "prog-1"
+    seed.execute.assert_awaited_once_with(program_id="prog-1", created_by="admin-1")
+
+
+def test_list_lesson_cards_empty_reports_zero_count():
+    curriculum = SimpleNamespace(
+        list_lesson_cards=SimpleNamespace(execute=AsyncMock(return_value=[]))
+    )
+    app = _build_real_router_app(curriculum=curriculum)
+    client = TestClient(app)
+
+    r = client.get("/api/v2/admin/programs/prog-1/lesson-cards")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["count"] == 0
+    assert body["cards"] == []
+
+
+def test_list_lesson_cards_returns_503_when_curriculum_unconfigured():
+    app = _build_real_router_app(curriculum=None)
+    client = TestClient(app)
+
+    r = client.get("/api/v2/admin/programs/prog-1/lesson-cards")
+    assert r.status_code == 503, r.text

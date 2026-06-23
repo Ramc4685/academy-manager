@@ -390,7 +390,7 @@ def test_move_preview_missing_to_session_type_returns_404(coach_client):
     assert resp.status_code == 404, resp.text
 
 
-def test_move_applies_move(coach_client):
+def test_move_returns_403_and_does_not_mutate_billing_enrollment(coach_client):
     resp = coach_client.post(
         f"/api/v2/coach/billing-enrollments/{_ENROLLMENT_ID}/move",
         json={
@@ -399,38 +399,29 @@ def test_move_applies_move(coach_client):
             "reason": "student requested upgrade",
         },
     )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert "enrollment" in body
-    assert "proration" in body
-    assert body["enrollment"]["session_type_id"] == _ST_TO_ID
-    assert body["enrollment"]["session_type_name"] == "Advanced"
-    assert body["proration"]["to_session_type_id"] == _ST_TO_ID
+    assert resp.status_code == 403, resp.text
 
-    # Verify the enrollment was actually persisted with new session_type_id
+    # Coach billing-impacting moves are disabled for launch; admin owns them.
     updated = coach_client.setup["billing_enrollments"].rows[_ENROLLMENT_ID]
-    assert updated.session_type_id == _ST_TO_ID
+    assert updated.session_type_id == _ST_FROM_ID
 
 
-def test_move_fires_event(coach_client):
-    coach_client.post(
+def test_move_does_not_fire_event(coach_client):
+    resp = coach_client.post(
         f"/api/v2/coach/billing-enrollments/{_ENROLLMENT_ID}/move",
         json={"to_session_type_id": _ST_TO_ID},
     )
+    assert resp.status_code == 403, resp.text
     events = coach_client.setup["event_sink"].events
-    assert len(events) == 1
-    ev = events[0]
-    assert ev["from_session_type_id"] == _ST_FROM_ID
-    assert ev["to_session_type_id"] == _ST_TO_ID
-    assert ev["actor_id"] == "coach-1"
+    assert events == []
 
 
-def test_move_missing_enrollment_returns_404(coach_client):
+def test_move_missing_enrollment_returns_403_without_lookup(coach_client):
     resp = coach_client.post(
         "/api/v2/coach/billing-enrollments/nonexistent/move",
         json={"to_session_type_id": _ST_TO_ID},
     )
-    assert resp.status_code == 404, resp.text
+    assert resp.status_code == 403, resp.text
 
 
 def test_coach_cannot_access_without_auth(anon_client):

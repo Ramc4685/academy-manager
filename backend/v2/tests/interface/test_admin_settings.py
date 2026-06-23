@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 from backend.v2.contexts.identity.application.change_user_role_use_case import (
     ChangeUserRoleCommand,
 )
@@ -43,6 +46,7 @@ def test_get_academy_contract(admin_client):
         "address": None,
         "logo_url": "https://cdn.example.com/logo.png",
         "brand_color": "#2563eb",
+        "currency": "USD",
     }
     admin_client.use_cases.get_academy_use_case.execute.assert_awaited_once_with("acad")
 
@@ -118,11 +122,62 @@ def test_get_and_patch_notifications_contract(admin_client):
         "dues_reminders": True,
         "attendance_alerts": False,
         "daily_digest_to_admin": True,
+        # New per-academy coach-digest fields default off / hour 6.
+        "coach_digest_enabled": False,
+        "coach_digest_hour": 6,
     }
     assert patch_response.status_code == 200, patch_response.text
     admin_client.use_cases.update_academy_notifications_use_case.execute.assert_awaited_once_with(
         "acad", {"attendance_alerts": True}
     )
+
+
+def test_get_notifications_includes_coach_digest_override(admin_client):
+    admin_client.use_cases.get_academy_notifications_use_case.execute.return_value = (
+        GetAcademyNotificationsOutput(
+            dues_reminders=False,
+            attendance_alerts=False,
+            daily_digest_to_admin=False,
+            coach_digest_enabled=True,
+            coach_digest_hour=18,
+        )
+    )
+
+    response = admin_client.get("/api/v2/admin/academy/notifications")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["coach_digest_enabled"] is True
+    assert body["coach_digest_hour"] == 18
+
+
+def test_patch_notifications_passes_coach_digest_fields(admin_client):
+    admin_client.use_cases.update_academy_notifications_use_case.execute.return_value = (
+        GetAcademyNotificationsOutput(
+            coach_digest_enabled=True,
+            coach_digest_hour=7,
+        )
+    )
+
+    response = admin_client.patch(
+        "/api/v2/admin/academy/notifications",
+        json={"coach_digest_enabled": True, "coach_digest_hour": 7},
+    )
+
+    assert response.status_code == 200, response.text
+    admin_client.use_cases.update_academy_notifications_use_case.execute.assert_awaited_once_with(
+        "acad", {"coach_digest_enabled": True, "coach_digest_hour": 7}
+    )
+
+
+def test_patch_notifications_rejects_out_of_range_hour(admin_client):
+    response = admin_client.patch(
+        "/api/v2/admin/academy/notifications",
+        json={"coach_digest_hour": 24},
+    )
+
+    assert response.status_code == 422, response.text
+    admin_client.use_cases.update_academy_notifications_use_case.execute.assert_not_awaited()
 
 
 def test_get_gateway_contract(admin_client):
@@ -143,6 +198,17 @@ def test_get_gateway_contract(admin_client):
         "manual_methods": ["cash", "check"],
     }
     admin_client.use_cases.get_academy_gateway_use_case.execute.assert_awaited_once_with("acad")
+
+
+def test_start_stripe_connect_returns_clear_error_when_not_configured(admin_client):
+    admin_client.use_cases.start_stripe_connect_use_case = SimpleNamespace(
+        execute=AsyncMock(side_effect=ValueError("Stripe Connect client ID is not configured"))
+    )
+
+    response = admin_client.post("/api/v2/admin/academy/gateway/stripe/connect-link")
+
+    assert response.status_code == 503, response.text
+    assert response.json() == {"detail": "Stripe Connect client ID is not configured"}
 
 
 def test_patch_user_role_contract(admin_client):

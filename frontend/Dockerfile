@@ -2,10 +2,17 @@
 
 FROM node:22-slim AS deps
 WORKDIR /app
-RUN corepack enable
+ENV PNPM_STORE_DIR=/pnpm/store
+RUN corepack enable \
+  && pnpm config set store-dir "${PNPM_STORE_DIR}" \
+  && pnpm config set fetch-timeout 600000 \
+  && pnpm config set fetch-retries 5 \
+  && pnpm config set fetch-retry-mintimeout 10000 \
+  && pnpm config set fetch-retry-maxtimeout 120000
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=academy-manager-frontend-pnpm-store,target=/pnpm/store,sharing=locked \
+  pnpm install --frozen-lockfile --prefer-offline
 
 FROM node:22-slim AS builder
 WORKDIR /app

@@ -13,6 +13,12 @@ guidance, with `AGENTS.md` remaining the canonical cross-agent source of truth.
 
 ---
 
+## MCP Servers
+
+Always use **Headroom MCP** when it is available. Use it proactively for any task where memory, context retrieval, or cross-session knowledge would help — do not wait to be asked. If Headroom is not connected, proceed without it but note the gap.
+
+---
+
 ## Read First
 
 Before coding, read:
@@ -22,6 +28,7 @@ Before coding, read:
 3. `test_result.md`
 4. The relevant active ledger under `docs/test-results/active/`, if one exists.
 5. The focused rule file for the task.
+6. For architecture questions, see `docs/architecture/` — generated diagrams and written analysis live there (see `docs/architecture/generated/README.md` for the index).
 
 If the branch contains `docs/tickets/`, also read:
 
@@ -73,6 +80,7 @@ Do not manually restore the old global YAML ledger in `test_result.md`.
 | Frontend / React / UI / PWA | `docs/agent/frontend-rules.md` |
 | Testing / verification / bug fixing | `docs/agent/testing-verification.md` |
 | Status handoff / agent loop / ticket updates | `docs/agent/feedback-loop.md` |
+| Drafting Codex prompts / goals / agent handoffs | `docs/agent/codex-prompting.md` |
 
 ---
 
@@ -107,7 +115,19 @@ SaaS direction:
 - See `docs/requirements/2026-05-21-saas-data-model-architecture-assessment.md` and `docs/plans/2026-05-21-saas-v2-parallel-execution-plan.md`.
 
 ---
-
+## Billing safety rules:
+- App ledger owns invoices.
+- Stripe owns payment collection.
+- Redirects never prove payment success.
+- Webhooks update ledger state.
+- Failed payments do not close invoices.
+- Payment attempts record failure.
+- Ledger payments record received money.
+- Payment allocations must be idempotent.
+- Paid invoices cannot be double-paid.
+- Duplicate Stripe obligations quarantine.
+- Replay must converge state.
+- Admin must see unrecovered failures.
 ## Golden Rules
 
 - Read existing code before editing.

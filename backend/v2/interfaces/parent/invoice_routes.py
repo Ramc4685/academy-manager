@@ -15,6 +15,10 @@ from backend.v2.interfaces.parent.views import (
     ParentInvoiceLineView,
     ParentInvoicesResponse,
     ParentInvoiceView,
+    StartBalancePaymentRequest,
+    StartBalancePaymentResponse,
+    StartInvoicePaymentRequest,
+    StartInvoicePaymentResponse,
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
@@ -40,6 +44,12 @@ def _invoice_view(invoice) -> ParentInvoiceView:
         pdf_url=_pdf_url(invoice),
         created_at=invoice.created_at,
     )
+
+
+def _required_callable(use_case: object | None, name: str) -> object:
+    if use_case is None:
+        raise HTTPException(status_code=503, detail=f"{name} is not configured")
+    return use_case
 
 
 @router.get(
@@ -86,3 +96,60 @@ async def get_invoice(
             for line in lines
         ],
     )
+
+
+@router.post(
+    "/invoices/{invoice_id}/pay",
+    response_model=StartInvoicePaymentResponse,
+    summary="Create a Stripe Checkout Session to retry paying an open invoice",
+)
+async def start_invoice_payment(
+    invoice_id: str,
+    body: StartInvoicePaymentRequest,
+    claims: AuthClaims = Depends(require_persona("parent")),
+    use_cases: ParentUseCases = Depends(get_parent_use_cases),
+) -> StartInvoicePaymentResponse:
+    start_payment = _required_callable(
+        use_cases.start_invoice_payment_for_parent,
+        "Invoice payment retry",
+    )
+    try:
+        result = await start_payment(
+            parent_id=claims.user_id,
+            invoice_id=invoice_id,
+            success_url=body.success_url,
+            cancel_url=body.cancel_url,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return StartInvoicePaymentResponse(
+        invoice_id=str(result["invoice_id"]),
+        redirect_url=str(result["checkout_url"]),
+    )
+
+
+@router.post(
+    "/invoices/pay-balance",
+    response_model=StartBalancePaymentResponse,
+    summary="Create a Stripe Checkout Session to pay all open invoices in one go",
+)
+async def start_balance_payment(
+    body: StartBalancePaymentRequest,
+    claims: AuthClaims = Depends(require_persona("parent")),
+    use_cases: ParentUseCases = Depends(get_parent_use_cases),
+) -> StartBalancePaymentResponse:
+    start_payment = _required_callable(
+        use_cases.start_balance_payment_for_parent,
+        "Balance payment",
+    )
+    try:
+        result = await start_payment(
+            parent_id=claims.user_id,
+            success_url=body.success_url,
+            cancel_url=body.cancel_url,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return StartBalancePaymentResponse(redirect_url=str(result["redirect_url"]))

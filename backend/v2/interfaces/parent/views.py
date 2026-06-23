@@ -61,6 +61,14 @@ class PatchApplicationRequest(BaseModel):
     accept_waiver: bool = False
 
 
+class RegistrationWaiverView(BaseModel):
+    """Active registration waiver for the parent onboarding stepper."""
+
+    configured: bool
+    version: str | None = None
+    body: str | None = None
+
+
 # --- Checkout ---
 
 
@@ -85,6 +93,7 @@ class StartAutopayRequest(BaseModel):
 
 class StartAutopayResponse(BaseModel):
     subscription_id: str
+    checkout_session_id: str
     redirect_url: str
 
 
@@ -93,6 +102,25 @@ class BillingPortalRequest(BaseModel):
 
 
 class BillingPortalResponse(BaseModel):
+    redirect_url: str
+
+
+class StartInvoicePaymentRequest(BaseModel):
+    success_url: str
+    cancel_url: str
+
+
+class StartInvoicePaymentResponse(BaseModel):
+    invoice_id: str
+    redirect_url: str
+
+
+class StartBalancePaymentRequest(BaseModel):
+    success_url: str
+    cancel_url: str
+
+
+class StartBalancePaymentResponse(BaseModel):
     redirect_url: str
 
 
@@ -134,6 +162,8 @@ class ParentPaymentView(BaseModel):
     refunded_cents: int
     created_at: datetime
     session_id: str | None
+    stripe_invoice_id: str | None = None
+    stripe_payment_intent_id: str | None = None
 
 
 class ParentPaymentHistoryResponse(BaseModel):
@@ -220,6 +250,7 @@ class PauseRequestView(BaseModel):
     period: str
     pause_kind: str = "fixed"
     resume_on: date | None = None
+    review_on: date | None = None
     reason: str
     status: str
     created_at: datetime
@@ -236,6 +267,7 @@ class CreatePauseRequest(BaseModel):
     period: str = ""
     pause_kind: str = "fixed"
     resume_on: date | None = None
+    review_on: date | None = None
     reason: str = ""
 
 

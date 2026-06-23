@@ -1,105 +1,213 @@
 /**
- * v2 payouts client (review shell).
+ * v2 payouts client.
  *
- * Wave 5 Agent A still owns the backend work for occurrence-based
- * payout persistence and a per-payout breakdown endpoint. Until those
- * land, this module exposes:
- *
- *   - `listAdminPayouts()` — real, calls the existing v2 BFF
- *     `/admin/finance/payouts`.
- *   - `getAdminPayoutReview()` — MOCK. Returns a deterministic
- *     breakdown derived from the payout summary so the review UX
- *     can render today. Replace this with a real fetch once
- *     `/admin/finance/payouts/{payout_id}` ships.
+ * - `listAdminPayouts()` — calls the v2 BFF `/admin/finance/payouts`
+ *   (rolled-up rows for the payouts list page).
+ * - Payout periods — the persisted, line-level record behind a payout.
+ *   `generatePayoutPeriod` is idempotent on (coach, window): opening a
+ *   payout review materialises the draft period if it does not exist
+ *   yet and returns the existing one otherwise.
+ * - Admin corrections — recompute, reopen (with reason), per-line
+ *   override (with reason), and the audit trail behind all of them.
  *
  * No SaaS page should call `/api/*` legacy routes.
  */
-import { listPayouts, type AdminPayoutView } from "../admin";
+import { apiFetch, apiFetchBlob } from "../client";
+import { listPayouts } from "../admin";
 
 export type { AdminPayoutView } from "../admin";
 
+/**
+ * @deprecated Use `listMonthlyPayroll()` from `v2/payroll.ts` instead.
+ * Calls the legacy derived-list route which will be removed after
+ * feat/coach-payroll-month-first ships.
+ */
 export async function listAdminPayouts() {
   return listPayouts();
 }
 
-export interface PayoutOccurrenceLine {
-  occurrence_label: string; // human-readable, never a raw id
-  session_title: string;
-  occurred_at: string; // ISO 8601
-  students_attended: number;
-  rate_cents: number;
-  amount_cents: number;
+export type PayoutPeriodStatus = "draft" | "approved" | "paid";
+export type PayoutWarningReason =
+  | "missing_session_price_for_percent_revenue"
+  | "missing_rate"
+  | "missing_percent";
+export type PayoutWarningSeverity = "blocking" | "warning";
+
+export interface PayoutWarning {
+  occurrence_id: string;
+  reason: PayoutWarningReason;
+  severity: PayoutWarningSeverity;
+  message: string;
+  occurred_at: string | null;
+  session_id: string | null;
+  session_title: string | null;
+  coach_id: string;
+  repair_action: string;
 }
 
-export interface AdminPayoutReview {
-  payout_id: string;
+export interface AdminPayoutPeriodLineView {
+  occurrence_id: string;
   coach_id: string;
+  basis: "scheduled" | "substitute" | "actual";
+  minutes: string;
   amount_cents: number;
+  currency: string;
+  rate_id: string;
+  percent_bps: number | null;
+  expected_revenue_cents: number | null;
+  original_amount_cents: number | null;
+  adjustment_reason: string | null;
+  occurred_at: string | null;
+  session_title: string | null;
+}
+
+export interface AdminUnpaidOccurrenceView {
+  occurrence_id: string;
+  occurred_at: string | null;
+  session_id: string | null;
+  session_title: string | null;
+  reason:
+    | "no_rate_configured"
+    | "rate_gap"
+    | "missing_session_price_for_percent_revenue"
+    | "attendance_override"
+    | "unknown_unpaid_reason"
+    | PayoutWarningReason;
+  detail: string | null;
+  unresolved: boolean;
+  severity: PayoutWarningSeverity | null;
+  message: string | null;
+  coach_id: string | null;
+  repair_action: string | null;
+}
+
+export interface AdminPayoutPeriodView {
+  period_id: string;
+  coach_id: string;
   period_start: string;
   period_end: string;
+  status: PayoutPeriodStatus;
+  currency: string;
+  total_amount_cents: number;
+  lines: AdminPayoutPeriodLineView[];
+  unpaid_occurrence_ids: string[];
+  unpaid_occurrences: AdminUnpaidOccurrenceView[];
+  payout_warnings: PayoutWarning[];
+  generated_at: string;
+  approved_at: string | null;
   paid_at: string | null;
-  total_occurrences: number;
-  total_students_attended: number;
-  lines: PayoutOccurrenceLine[];
-  mock: true;
+  paid_method: string | null;
+  paid_amount_cents: number | null;
+  paid_reference: string | null;
 }
 
-/**
- * MOCK breakdown.
- *
- * TODO(wave5-A): replace with `apiFetch<AdminPayoutReview>(
- *   `/admin/finance/payouts/${payoutId}`)` once Agent A's
- * occurrence-based payout endpoints ship. Today the BFF only returns
- * the rolled-up amount — we synthesise a stable line set so the review
- * page can be navigated, screenshotted, and styled.
- */
-export async function getAdminPayoutReview(
-  payoutId: string,
-  summary: AdminPayoutView,
-): Promise<AdminPayoutReview> {
-  const occurrenceCount = synthesiseOccurrenceCount(summary);
-  const lines = synthesiseLines(summary, occurrenceCount);
-  const totalStudents = lines.reduce((acc, line) => acc + line.students_attended, 0);
-  return {
-    payout_id: payoutId,
-    coach_id: summary.coach_id,
-    amount_cents: summary.amount_cents,
-    period_start: summary.period_start,
-    period_end: summary.period_end,
-    paid_at: summary.paid_at,
-    total_occurrences: lines.length,
-    total_students_attended: totalStudents,
-    lines,
-    mock: true,
-  };
+export type PayoutAuditAction =
+  | "generated"
+  | "recomputed"
+  | "reopened"
+  | "approved"
+  | "marked_paid"
+  | "line_overridden"
+  | "line_override_cleared";
+
+export interface PayoutAuditEntryView {
+  audit_id: string;
+  period_id: string;
+  occurrence_id: string | null;
+  action: PayoutAuditAction;
+  actor_id: string;
+  at: string;
+  reason: string | null;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
 }
 
-function synthesiseOccurrenceCount(summary: AdminPayoutView): number {
-  // Aim for roughly $50/occurrence at common indie-academy rates, with
-  // a floor of 1 and a ceiling of 32. Deterministic given the amount.
-  const guess = Math.max(1, Math.round(summary.amount_cents / 5000));
-  return Math.min(guess, 32);
+export interface PayoutAuditTrailView {
+  entries: PayoutAuditEntryView[];
 }
 
-function synthesiseLines(
-  summary: AdminPayoutView,
-  count: number,
-): PayoutOccurrenceLine[] {
-  if (count === 0) return [];
-  const start = new Date(summary.period_start);
-  const end = new Date(summary.period_end);
-  const span = Math.max(end.getTime() - start.getTime(), 0);
-  const stepMs = span / Math.max(count - 1, 1);
-  const ratePerLine = Math.round(summary.amount_cents / count);
-  return Array.from({ length: count }, (_, i) => {
-    const t = new Date(start.getTime() + stepMs * i);
-    return {
-      occurrence_label: `Session #${i + 1}`,
-      session_title: `Coaching block ${String(i + 1).padStart(2, "0")}`,
-      occurred_at: t.toISOString(),
-      students_attended: 4 + ((i * 3) % 5), // 4..8, deterministic
-      rate_cents: ratePerLine,
-      amount_cents: ratePerLine,
-    };
+/** Idempotent: returns the existing period for the window if one exists. */
+export async function generatePayoutPeriod(input: {
+  coach_id: string;
+  period_start: string;
+  period_end: string;
+}): Promise<AdminPayoutPeriodView> {
+  return apiFetch<AdminPayoutPeriodView>("/admin/payout-periods/generate", {
+    method: "POST",
+    body: JSON.stringify(input),
   });
+}
+
+export async function getPayoutPeriod(periodId: string): Promise<AdminPayoutPeriodView> {
+  return apiFetch<AdminPayoutPeriodView>(
+    `/admin/payout-periods/${encodeURIComponent(periodId)}`,
+    { method: "GET" },
+  );
+}
+
+export async function recomputePayoutPeriod(periodId: string): Promise<AdminPayoutPeriodView> {
+  return apiFetch<AdminPayoutPeriodView>(
+    `/admin/payout-periods/${encodeURIComponent(periodId)}/recompute`,
+    { method: "POST" },
+  );
+}
+
+export async function reopenPayoutPeriod(
+  periodId: string,
+  reason: string,
+): Promise<AdminPayoutPeriodView> {
+  return apiFetch<AdminPayoutPeriodView>(
+    `/admin/payout-periods/${encodeURIComponent(periodId)}/reopen`,
+    { method: "POST", body: JSON.stringify({ reason }) },
+  );
+}
+
+export async function approvePayoutPeriod(periodId: string): Promise<AdminPayoutPeriodView> {
+  return apiFetch<AdminPayoutPeriodView>(
+    `/admin/payout-periods/${encodeURIComponent(periodId)}/approve`,
+    { method: "POST" },
+  );
+}
+
+/** Pass `amount_cents: null` to clear an existing override. */
+export async function overridePayoutLine(
+  periodId: string,
+  occurrenceId: string,
+  input: { amount_cents: number | null; reason: string },
+): Promise<AdminPayoutPeriodView> {
+  return apiFetch<AdminPayoutPeriodView>(
+    `/admin/payout-periods/${encodeURIComponent(periodId)}/lines/${encodeURIComponent(occurrenceId)}`,
+    { method: "PATCH", body: JSON.stringify(input) },
+  );
+}
+
+/** Download the period as an Excel workbook and hand back the Blob. */
+export async function exportPayoutPeriodXlsx(periodId: string): Promise<Blob> {
+  return apiFetchBlob(`/admin/payout-periods/${encodeURIComponent(periodId)}/export`, {
+    method: "GET",
+  });
+}
+
+export async function getPayoutAuditTrail(periodId: string): Promise<PayoutAuditTrailView> {
+  return apiFetch<PayoutAuditTrailView>(
+    `/admin/payout-periods/${encodeURIComponent(periodId)}/audit`,
+    { method: "GET" },
+  );
+}
+
+export interface MarkPayoutPaidInput {
+  method: "bank_transfer" | "cash" | "check" | "other";
+  paid_at: string;
+  amount_cents: number;
+  reference?: string | null;
+}
+
+export async function markPayoutPeriodPaid(
+  periodId: string,
+  input: MarkPayoutPaidInput,
+): Promise<AdminPayoutPeriodView> {
+  return apiFetch<AdminPayoutPeriodView>(
+    `/admin/payout-periods/${encodeURIComponent(periodId)}/mark-paid`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
 }

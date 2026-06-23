@@ -117,6 +117,7 @@ class MongoStudentRepository(TenantScopedRepository):
         enrolled_sessions: list[AdminStudentSessionSummary] | None = None,
         payment_history: list[AdminStudentPaymentSummary] | None = None,
         current_payment: AdminStudentCurrentPaymentSummary | None = None,
+        outstanding_balance_cents: int = 0,
         waiver_status: str = "unknown",
         waiver_signed_at: datetime | None = None,
         waiver_version: str | None = None,
@@ -159,6 +160,7 @@ class MongoStudentRepository(TenantScopedRepository):
             enrolled_sessions=enrolled_sessions or [],
             payment_history=payment_history or [],
             current_payment=current_payment,
+            outstanding_balance_cents=outstanding_balance_cents,
         )
 
     async def get_admin_student(self, student_id: str) -> AdminStudentDetail | None:
@@ -180,11 +182,15 @@ class MongoStudentRepository(TenantScopedRepository):
         payment_history = await self._admin_student_payment_history(
             academy_id=academy_id,
             student_id=resolved_id,
+            enrollment_ids=[
+                session.enrollment_id for session in enrolled_sessions if session.enrollment_id
+            ],
         )
         current_payment = self._admin_student_current_payment(
             payment_history=payment_history,
             enrolled_sessions=enrolled_sessions,
         )
+        outstanding_balance_cents = self._admin_student_outstanding_balance(payment_history)
         waiver_status, waiver_signed_at, waiver_version = await self._waiver_summary(
             academy_id=academy_id,
             student_id=resolved_id,
@@ -207,6 +213,7 @@ class MongoStudentRepository(TenantScopedRepository):
             enrolled_sessions=enrolled_sessions,
             payment_history=payment_history,
             current_payment=current_payment,
+            outstanding_balance_cents=outstanding_balance_cents,
             waiver_status=waiver_status,
             waiver_signed_at=waiver_signed_at,
             waiver_version=waiver_version,
@@ -554,13 +561,17 @@ class MongoStudentRepository(TenantScopedRepository):
         *,
         academy_id: str,
         student_id: str,
+        enrollment_ids: list[str] | None = None,
     ) -> list[AdminStudentPaymentSummary]:
+        payment_owner_filters: list[dict[str, object]] = [{"student_id": student_id}]
+        if enrollment_ids:
+            payment_owner_filters.append({"enrollment_id": {"$in": enrollment_ids}})
         cursor = self._db["payments"].aggregate(
             [
                 {
                     "$match": {
                         "academy_id": academy_id,
-                        "student_id": student_id,
+                        "$or": payment_owner_filters,
                         "is_deleted": {"$ne": True},
                     }
                 },
@@ -584,20 +595,37 @@ class MongoStudentRepository(TenantScopedRepository):
         docs = [doc async for doc in cursor]
 
         # Billing-ledger invoices (autopay / Stripe subscription) live in a
-        # separate collection. Include open/unpaid ones not already covered by
-        # a payment row so the panel shows the real balance.
-        covered_invoice_ids: set[str] = {
-            str(doc["invoice_id"]) for doc in docs if doc.get("invoice_id")
-        }
+        # separate collection. Include enrollment-owned invoices and prefer the
+        # ledger shim over a matching transition-only legacy Payment projection.
+        invoice_owner_filters: list[dict[str, object]] = [{"student_id": student_id}]
+        if enrollment_ids:
+            invoice_owner_filters.append({"enrollment_id": {"$in": enrollment_ids}})
         invoice_cursor = self._db["invoices"].find(
             {
                 "academy_id": academy_id,
-                "student_id": student_id,
+                "$or": invoice_owner_filters,
                 "status": {"$nin": ["void"]},
                 "is_deleted": {"$ne": True},
             }
         )
-        async for inv_doc in invoice_cursor:
+        invoice_docs = [inv_doc async for inv_doc in invoice_cursor]
+        invoice_provider_keys: set[str] = {
+            key
+            for inv_doc in invoice_docs
+            for key in (inv_doc.get("stripe_invoice_id"),)
+            if isinstance(key, str) and key
+        }
+        if invoice_provider_keys:
+            docs = [
+                doc
+                for doc in docs
+                if str(doc.get("stripe_payment_intent_id") or "") not in invoice_provider_keys
+                and str(doc.get("stripe_invoice_id") or "") not in invoice_provider_keys
+            ]
+        covered_invoice_ids: set[str] = {
+            str(doc["invoice_id"]) for doc in docs if doc.get("invoice_id")
+        }
+        for inv_doc in invoice_docs:
             inv_id = str(inv_doc.get("invoice_id") or inv_doc.get("_id") or "")
             if inv_id and inv_id not in covered_invoice_ids:
                 covered_invoice_ids.add(inv_id)
@@ -629,6 +657,7 @@ class MongoStudentRepository(TenantScopedRepository):
             "balance_due_cents": balance,
             "status": str(inv_doc.get("status") or "open"),
             "payment_method": "autopay",
+            "stripe_invoice_id": inv_doc.get("stripe_invoice_id"),
             "created_at": inv_doc.get("created_at"),
         }
 
@@ -650,6 +679,10 @@ class MongoStudentRepository(TenantScopedRepository):
             balance_due_cents=balance_due_cents,
             status=str(doc.get("status") or "pending"),
             payment_method=cls._optional_str(doc.get("payment_method")),
+            invoice_number=cls._optional_str(doc.get("invoice_number")),
+            paid_at=cls._coerce_datetime(doc.get("paid_at")),
+            stripe_invoice_id=cls._optional_str(doc.get("stripe_invoice_id")),
+            stripe_payment_intent_id=cls._optional_str(doc.get("stripe_payment_intent_id")),
             created_at=created_at or datetime.now(UTC),
         )
 
@@ -678,16 +711,26 @@ class MongoStudentRepository(TenantScopedRepository):
                     payment_id=payment.payment_id,
                     session_id=payment.session_id,
                 )
-        for enrollment in enrolled_sessions:
-            if enrollment.status == "active" and enrollment.amount_cents:
-                return AdminStudentCurrentPaymentSummary(
-                    amount_cents=enrollment.amount_cents,
-                    source="session_price",
-                    status=enrollment.status,
-                    session_id=enrollment.session_id,
-                    session_title=enrollment.session_title,
-                )
         return None
+
+    @staticmethod
+    def _admin_student_outstanding_balance(
+        payment_history: list[AdminStudentPaymentSummary],
+    ) -> int:
+        open_statuses = {
+            "open",
+            "unpaid",
+            "partially_paid",
+            "partial",
+            "pending",
+            "failed",
+            "expired",
+        }
+        return sum(
+            max(payment.balance_due_cents, 0)
+            for payment in payment_history
+            if payment.status in open_statuses and payment.balance_due_cents > 0
+        )
 
     async def _waiver_summary(
         self,
@@ -842,10 +885,12 @@ class MongoStudentRepository(TenantScopedRepository):
         enrollment: dict[str, object],
         session: dict[str, object],
     ) -> int | None:
-        for doc in (enrollment, session):
-            amount = cls._amount_cents(doc)
-            if amount > 0:
-                return amount
+        enrollment_amount = cls._explicit_amount_cents(enrollment)
+        if enrollment_amount is not None:
+            return max(enrollment_amount, 0)
+        session_amount = cls._explicit_amount_cents(session)
+        if session_amount is not None:
+            return max(session_amount, 0)
         return None
 
     @staticmethod
@@ -854,6 +899,20 @@ class MongoStudentRepository(TenantScopedRepository):
             return None
         text = str(value)
         return text or None
+
+    @classmethod
+    def _explicit_amount_cents(cls, doc: dict[str, object]) -> int | None:
+        return cls._cents_value(
+            doc,
+            (
+                "final_amount_cents",
+                "amount_cents",
+                "gross_amount_cents",
+                "monthly_price_cents",
+                "price_cents",
+            ),
+            ("final_amount", "amount"),
+        )
 
     @classmethod
     def _amount_cents(cls, doc: dict[str, object]) -> int:
@@ -1035,7 +1094,7 @@ class MongoStudentRepository(TenantScopedRepository):
             ],
         }
         return {
-            "payments": await self._db["payments"].count_documents(query),
+            "payments": await self._db["invoices"].count_documents(query),
             "waivers": await self._db["waiver_acceptances"].count_documents(query),
             "credits": await self._db["account_credit_ledger"].count_documents(query),
             "waitlist": await self._db["waitlist"].count_documents(query),
@@ -1189,6 +1248,33 @@ class MongoStudentRepository(TenantScopedRepository):
         now = datetime.now(UTC)
         cutoff = now - timedelta(days=30)
         statuses = {student_id: "current" for student_id in student_ids}
+        invoice_cursor = self._db["invoices"].find(
+            {
+                "academy_id": academy_id,
+                "student_id": {"$in": student_ids},
+                "status": {"$in": ["open", "partially_paid", "draft"]},
+                "balance_due_cents": {"$gt": 0},
+                "is_deleted": {"$ne": True},
+            }
+        )
+        invoice_keys: set[str] = set()
+        async for doc in invoice_cursor:
+            invoice_keys.update(
+                str(value)
+                for value in (
+                    doc.get("invoice_id"),
+                    doc.get("invoice_number"),
+                    doc.get("stripe_invoice_id"),
+                    doc.get("stripe_payment_intent_id"),
+                )
+                if value
+            )
+            student_id = str(doc.get("student_id") or "")
+            if self._invoice_is_overdue(doc, now, cutoff):
+                statuses[student_id] = "overdue"
+            elif statuses.get(student_id) != "overdue":
+                statuses[student_id] = "due"
+
         cursor = self._db["payments"].find(
             {
                 "academy_id": academy_id,
@@ -1198,12 +1284,39 @@ class MongoStudentRepository(TenantScopedRepository):
             }
         )
         async for doc in cursor:
+            payment_keys = {
+                str(value)
+                for value in (
+                    doc.get("invoice_id"),
+                    doc.get("invoice_number"),
+                    doc.get("payment_id"),
+                    doc.get("stripe_invoice_id"),
+                    doc.get("stripe_payment_intent_id"),
+                )
+                if value
+            }
+            if payment_keys & invoice_keys:
+                continue
             student_id = str(doc.get("student_id") or "")
             if self._payment_is_overdue(doc, now, cutoff):
                 statuses[student_id] = "overdue"
             elif statuses.get(student_id) != "overdue":
                 statuses[student_id] = "due"
         return statuses
+
+    @staticmethod
+    def _invoice_is_overdue(
+        doc: dict[str, object],
+        now: datetime,
+        cutoff: datetime,
+    ) -> bool:
+        due_at = doc.get("due_at") or doc.get("due_date")
+        if isinstance(due_at, datetime):
+            return MongoStudentRepository._as_utc(due_at) < now
+        created_at = doc.get("created_at")
+        return (
+            isinstance(created_at, datetime) and MongoStudentRepository._as_utc(created_at) < cutoff
+        )
 
     @staticmethod
     def _payment_is_overdue(

@@ -13,10 +13,12 @@ from .profile_routes import router as profile_router
 from .roster_routes import router as roster_router
 from .sessions_routes import router as sessions_router
 from .skill_routes import router as skill_router
+from .teaching_plan_routes import router as teaching_plan_router
 from .today_routes import router as today_router
 
 router = APIRouter(prefix="/coach")
 router.include_router(today_router)
+router.include_router(teaching_plan_router)
 router.include_router(sessions_router)
 router.include_router(profile_router)
 router.include_router(dashboard_router)

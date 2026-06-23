@@ -131,7 +131,7 @@ def _make_use_case(
 
 
 @pytest.mark.asyncio
-async def test_enroll_creates_enrollment_and_returns_redirect_url():
+async def test_enroll_creates_enrollment_and_starts_autopay_setup_checkout():
     enrollments = FakeEnrollmentRepo()
     stripe = FakeStripeGateway()
     uc = _make_use_case(enrollments=enrollments, session_type=_make_session_type(), stripe=stripe)
@@ -155,17 +155,27 @@ async def test_enroll_creates_enrollment_and_returns_redirect_url():
     assert enrollment.parent_id == "parent-1"
     assert enrollment.student_id == "student-1"
     assert enrollment.session_type_id == "st-1"
-    assert enrollment.stripe_subscription_id is not None
+    assert enrollment.stripe_subscription_id is None
 
     # Enrollment is in repo
     persisted = await enrollments.get(enrollment.enrollment_id)
     assert persisted is not None
     assert persisted.status == "active"
 
-    # Stripe was called with correct URLs
-    assert len(stripe.subscription_checkouts) == 1
-    assert stripe.subscription_checkouts[0]["success_url"] == "https://example.com/success"
-    assert stripe.subscription_checkouts[0]["cancel_url"] == "https://example.com/cancel"
+    # Stripe only saves a payment method; it does not own recurring invoices.
+    assert stripe.subscription_checkouts == []
+    assert len(stripe.autopay_setup_checkouts) == 1
+    checkout = stripe.autopay_setup_checkouts[0]
+    assert checkout["success_url"] == "https://example.com/success"
+    assert checkout["cancel_url"] == "https://example.com/cancel"
+    assert checkout["metadata"] == {
+        "academy_id": "acad",
+        "enrollment_id": enrollment.enrollment_id,
+        "parent_id": "parent-1",
+        "student_id": "student-1",
+        "session_type_id": "st-1",
+        "source": "autopay_setup",
+    }
 
 
 @pytest.mark.asyncio

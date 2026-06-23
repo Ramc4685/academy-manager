@@ -39,9 +39,11 @@ interface OptimisticEntry {
 }
 
 function formatApiError(err: unknown): string {
-  const apiError = err as { code?: string; message?: string };
-  const message = apiError.message ?? "Failed";
-  return apiError.code ? `${apiError.code}: ${message}` : message;
+  const apiError = err as { status?: number };
+  if (apiError.status === 404) {
+    return "This session or student is not available to your coach account.";
+  }
+  return "Could not save attendance. Check your connection and retry.";
 }
 
 export default function SessionDetailPage({ params, searchParams }: PageProps) {
@@ -162,6 +164,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   }
 
   const progressHref = `/coach/sessions/${encodeURIComponent(session.session_id)}/progress`;
+  const skillsHref = `/coach/sessions/${encodeURIComponent(session.occurrence_id)}/skills?date=${date}`;
 
   return (
     <section data-testid="session-detail">
@@ -178,12 +181,20 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
             {formatSessionTimeRange(session.start_at, session.end_at, session.timezone)}
           </p>
         </div>
-        <Link
-          href={progressHref as Parameters<typeof Link>[0]["href"]}
-          className="inline-flex min-h-9 items-center justify-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
-        >
-          Skill Progress
-        </Link>
+        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap">
+          <Link
+            href={skillsHref as Parameters<typeof Link>[0]["href"]}
+            className="inline-flex min-h-9 items-center justify-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+          >
+            Skill updates
+          </Link>
+          <Link
+            href={progressHref as Parameters<typeof Link>[0]["href"]}
+            className="inline-flex min-h-9 items-center justify-center rounded-md border border-neutral-300 px-3 py-2 text-sm font-semibold text-neutral-700 transition-colors hover:bg-neutral-50"
+          >
+            Skill Progress
+          </Link>
+        </div>
       </header>
 
       {!online && (
@@ -280,17 +291,17 @@ function RosterRow({
       className="rounded-lg border bg-white p-3"
       style={{ borderColor: "var(--rally-line)" }}
     >
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p
           className="min-w-0 flex-1 text-sm font-medium"
           style={{ color: "var(--rally-ink)" }}
         >
           {student.full_name}
         </p>
-        <div className="flex shrink-0 flex-wrap justify-end gap-1" role="group">
+        <div className="grid grid-cols-2 gap-1 min-[360px]:grid-cols-4 sm:flex sm:shrink-0 sm:flex-wrap sm:justify-end" role="group">
           <Link
             href={passportHref as Parameters<typeof Link>[0]["href"]}
-            className="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
+            className="inline-flex min-h-[36px] items-center justify-center rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
             style={{
               borderColor: "var(--rally-line)",
               color: "var(--rally-muted)",
@@ -303,7 +314,7 @@ function RosterRow({
             data-testid={`mark-${student.student_id}-present`}
             disabled={disabled || local?.pending}
             onClick={() => onMark("present")}
-            className="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50"
+            className="min-h-[36px] rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50"
             style={
               marked === "present"
                 ? {
@@ -324,7 +335,7 @@ function RosterRow({
             data-testid={`mark-${student.student_id}-absent`}
             disabled={disabled || local?.pending}
             onClick={() => onMark("absent")}
-            className="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50"
+            className="min-h-[36px] rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50"
             style={
               marked === "absent"
                 ? {
@@ -343,7 +354,7 @@ function RosterRow({
           {/* Note toggle */}
           <button
             onClick={onToggleNote}
-            className="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
+            className="min-h-[36px] rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
             style={
               noteOpen
                 ? {

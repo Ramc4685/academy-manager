@@ -11,6 +11,7 @@ from fastapi.responses import Response
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
     AdminReportsDashboardResponse,
+    AdminSessionEconomicsResponse,
     AttendanceTrendsResponse,
     CoachUtilizationResponse,
     EnrollmentFunnelResponse,
@@ -20,6 +21,7 @@ from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
 _PERIOD_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+_EXPORT_REPORTS = frozenset({"pending-payments", "revenue", "attendance"})
 
 router = APIRouter(tags=["admin.reports"])
 
@@ -35,6 +37,21 @@ async def get_reports_dashboard(
         raise HTTPException(status_code=422, detail="period must be YYYY-MM")
     result = await use_cases.get_reports_dashboard(period)  # type: ignore[attr-defined]
     return AdminReportsDashboardResponse(**result)
+
+
+@router.get("/reports/session-economics", response_model=AdminSessionEconomicsResponse)
+async def get_session_economics(
+    period: Annotated[str, Query(pattern=r"^\d{4}-\d{2}$")],
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminSessionEconomicsResponse:
+    month = int(period[5:7])
+    if month < 1 or month > 12:
+        raise HTTPException(status_code=422, detail="period must be YYYY-MM")
+    if use_cases.get_session_economics is None:
+        raise HTTPException(status_code=503, detail="session economics report is unavailable")
+    result = await use_cases.get_session_economics(period)  # type: ignore[operator]
+    return AdminSessionEconomicsResponse(**result)
 
 
 @router.get("/reports/kpis", response_model=ReportsKpiResponse)
@@ -88,6 +105,8 @@ async def export_report_csv(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> Response:
+    if report_name not in _EXPORT_REPORTS:
+        raise HTTPException(status_code=404, detail="Report export not found")
     csv_text = await use_cases.export_report_csv(report_name)  # type: ignore[operator]
     return Response(
         content=csv_text,

@@ -73,7 +73,7 @@ test.describe("Coach Today", () => {
     await page.goto("/coach/sessions/s-today-1");
     await page.getByTestId("mark-st1-absent").click();
     await expect(page.getByTestId("mark-error-st1")).toContainText(
-      "Coaching.ConflictAttendanceExists"
+      "Could not save attendance. Check your connection and retry."
     );
   });
 });

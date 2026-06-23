@@ -68,6 +68,37 @@ def test_v2_main_passes_saas_mode_into_register_public_parent() -> None:
     assert "memberships=membership_repo" in source
 
 
+def test_v2_main_uses_runtime_academy_for_single_academy_launch_composition() -> None:
+    source = (REPO_ROOT / "backend/v2/main.py").read_text(encoding="utf-8")
+
+    assert "runtime_academy_id = _runtime_academy_id(settings)" in source
+    assert "_LegacyUserMembershipAdapter(users_repo, runtime_academy_id)" in source
+    assert "default_academy_id=runtime_academy_id" in source
+    assert "app.state.primary_academy_id = settings.primary_academy_id" in source
+
+
+def test_v2_main_does_not_bypass_stripe_webhook_signatures_from_raw_env() -> None:
+    source = (REPO_ROOT / "backend/v2/main.py").read_text(encoding="utf-8")
+
+    assert "APP_ENV" not in source
+    assert "skip_signature_verify=" not in source
+
+
+def test_v2_main_uses_fake_stripe_gateway_for_non_prod_without_secrets(monkeypatch) -> None:
+    from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
+    from backend.v2.main import _build_stripe
+    from backend.v2.shared.config.settings import Settings
+
+    monkeypatch.delenv("STRIPE_API_KEY", raising=False)
+    monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
+    monkeypatch.delenv("V2_STRIPE_API_KEY", raising=False)
+    monkeypatch.delenv("V2_STRIPE_WEBHOOK_SECRET", raising=False)
+
+    settings = Settings(env="dev", _env_file=None)
+
+    assert isinstance(_build_stripe(settings), FakeStripeGateway)
+
+
 def test_fly_health_check_uses_v2_health_endpoint() -> None:
     fly_toml = (REPO_ROOT / "backend/fly.toml").read_text(encoding="utf-8")
 
@@ -93,6 +124,12 @@ def test_local_test_stack_uses_v2_app_and_health_endpoint() -> None:
     assert "V2_ENABLED" not in script
     assert "/api/v2/healthz" in script
     assert "/api/health" not in script
+
+
+def test_saas_staging_runs_v2_migrations_on_boot() -> None:
+    compose = (REPO_ROOT / "docker-compose.saas.yml").read_text(encoding="utf-8")
+
+    assert 'V2_RUN_MIGRATIONS_ON_BOOT: "true"' in compose
 
 
 def test_ci_installs_single_backend_requirements_file() -> None:

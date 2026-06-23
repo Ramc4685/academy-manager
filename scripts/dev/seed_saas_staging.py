@@ -247,7 +247,10 @@ def upsert_emulator_user(
     }
     resp = httpx.post(signup_url, json=signup_payload, timeout=5.0)
     if resp.status_code == 200:
-        return str(resp.json()["localId"])
+        body = resp.json()
+        uid = str(body["localId"])
+        _mark_emulator_user_verified(emulator_url=emulator_url, uid=uid)
+        return uid
 
     # Already exists → look it up via project-level lookup endpoint.
     if resp.status_code == 400 and "EMAIL_EXISTS" in resp.text:
@@ -278,7 +281,9 @@ def upsert_emulator_user(
         users = lookup.json().get("users") or []
         if not users:
             raise RuntimeError("Emulator reported EMAIL_EXISTS but lookup returned no users")
-        return str(users[0]["localId"])
+        uid = str(users[0]["localId"])
+        _mark_emulator_user_verified(emulator_url=emulator_url, uid=uid)
+        return uid
 
     raise RuntimeError(
         f"Failed to create emulator user (status={resp.status_code}): {resp.text}"
@@ -325,9 +330,42 @@ def reset_emulator_user_password(
             user.uid,
             password=password,
             display_name=display_name,
+            email_verified=True,
             app=app,
         )
         return str(user.uid)
+    finally:
+        if previous_host is None:
+            os.environ.pop("FIREBASE_AUTH_EMULATOR_HOST", None)
+        else:
+            os.environ["FIREBASE_AUTH_EMULATOR_HOST"] = previous_host
+
+
+def _mark_emulator_user_verified(*, emulator_url: str, uid: str) -> None:
+    """Mark a Firebase Auth emulator user verified via the Admin SDK."""
+
+    import urllib.parse as _urlparse
+
+    import firebase_admin
+    from firebase_admin import auth
+
+    parsed = _urlparse.urlparse(emulator_url)
+    emulator_host = parsed.netloc or parsed.path
+    if not emulator_host:
+        raise RuntimeError(f"Invalid Firebase emulator URL: {emulator_url}")
+
+    previous_host = os.environ.get("FIREBASE_AUTH_EMULATOR_HOST")
+    os.environ["FIREBASE_AUTH_EMULATOR_HOST"] = emulator_host
+    app_name = f"saas-staging-seed-{DEFAULT_PROJECT_ID}"
+    try:
+        try:
+            app = firebase_admin.get_app(app_name)
+        except ValueError:
+            app = firebase_admin.initialize_app(
+                options={"projectId": DEFAULT_PROJECT_ID},
+                name=app_name,
+            )
+        auth.update_user(uid, email_verified=True, app=app)
     finally:
         if previous_host is None:
             os.environ.pop("FIREBASE_AUTH_EMULATOR_HOST", None)

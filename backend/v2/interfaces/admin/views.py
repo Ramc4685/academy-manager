@@ -5,8 +5,8 @@ Admin-shaped — academy-wide read fields included. Per docs/security-matrix.md.
 
 from __future__ import annotations
 
-from datetime import date, datetime
-from typing import Literal
+from datetime import UTC, date, datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, EmailStr, Field, model_validator
 
@@ -83,12 +83,16 @@ class AdminStudentPaymentSummaryView(BaseModel):
     balance_due_cents: int
     status: str
     payment_method: str | None = None
+    invoice_number: str | None = None
+    paid_at: datetime | None = None
+    stripe_invoice_id: str | None = None
+    stripe_payment_intent_id: str | None = None
     created_at: datetime
 
 
 class AdminStudentCurrentPaymentSummaryView(BaseModel):
     amount_cents: int
-    source: Literal["invoice", "session_price"]
+    source: Literal["invoice"]
     status: str
     period: str | None = None
     payment_id: str | None = None
@@ -121,6 +125,7 @@ class AdminStudentDetailView(AdminStudentView):
     enrolled_sessions: list[AdminStudentSessionSummaryView] = Field(default_factory=list)
     payment_history: list[AdminStudentPaymentSummaryView] = Field(default_factory=list)
     current_payment: AdminStudentCurrentPaymentSummaryView | None = None
+    outstanding_balance_cents: int = 0
 
 
 class AdminStudentList(BaseModel):
@@ -181,6 +186,30 @@ class CreateAdminUserRequest(BaseModel):
     email: str = Field(min_length=1, max_length=254)
     phone: str | None = Field(default=None, max_length=40)
     reason: str = Field(default="manual user creation", min_length=1, max_length=500)
+
+
+class BulkInviteItem(BaseModel):
+    email: str = Field(min_length=1, max_length=254)
+    display_name: str = Field(min_length=1, max_length=120)
+
+
+class BulkInviteRequest(BaseModel):
+    users: list[BulkInviteItem] = Field(min_length=1, max_length=100)
+    reason: str = Field(default="bulk parent invite", min_length=1, max_length=500)
+
+
+class BulkInviteResultItem(BaseModel):
+    email: str
+    status: Literal["created", "skipped", "failed"]
+    user_id: str | None = None
+    detail: str | None = None
+
+
+class BulkInviteResponse(BaseModel):
+    created: int
+    skipped: int
+    failed: int
+    results: list[BulkInviteResultItem]
 
 
 # --- Session Type Billing ---
@@ -421,9 +450,22 @@ class TransferEnrollmentRequest(BaseModel):
     reason: str | None = None
 
 
+class OverrideEnrollmentFeeRequest(BaseModel):
+    amount_cents: int | None = Field(default=None, ge=0)
+    reason: str | None = Field(default=None, max_length=500)
+
+
 class PauseEnrollmentRequest(BaseModel):
     effective_date: date
+    resume_on: date | None = None
+    review_on: date | None = None
     reason: str | None = None
+
+    @model_validator(mode="after")
+    def _requires_resume_or_review(self) -> PauseEnrollmentRequest:
+        if self.resume_on is None and self.review_on is None:
+            raise ValueError("resume_on or review_on is required")
+        return self
 
 
 class WithdrawEnrollmentRequest(BaseModel):
@@ -489,6 +531,7 @@ class AdminPauseRequestView(BaseModel):
     period: str
     pause_kind: str = "fixed"
     resume_on: date | None = None
+    review_on: date | None = None
     reason: str
     status: str
     created_at: datetime
@@ -505,6 +548,7 @@ class AdminPauseRequestList(BaseModel):
 
 class AdminPaymentView(BaseModel):
     payment_id: str
+    invoice_id: str | None = None
     parent_id: str
     parent_name: str | None = None
     student_id: str | None = None
@@ -525,6 +569,12 @@ class AdminPaymentView(BaseModel):
     invoice_number: str | None = None
     payment_method: str | None = None
     stripe_linked: bool = False
+    stripe_customer_id: str | None = None
+    stripe_checkout_session_id: str | None = None
+    stripe_subscription_id: str | None = None
+    stripe_invoice_id: str | None = None
+    stripe_payment_intent_id: str | None = None
+    reconciliation_status: str | None = None
     created_at: datetime
 
 
@@ -551,12 +601,30 @@ class GenerateMonthlyPaymentsRequest(BaseModel):
         return self
 
 
+class MonthlyGenerationSkippedDetailView(BaseModel):
+    enrollment_id: str
+    student_id: str
+    student_name: str | None = None
+    reason_code: str
+    source: str
+    billing_period: str
+    resume_on: str | None = None
+    review_on: str | None = None
+    expires_on: str | None = None
+    needs_review: bool = False
+    metadata: dict[str, str] = Field(default_factory=dict)
+
+
 class GenerateMonthlyPaymentsResponse(BaseModel):
     created: int
     skipped_existing: int = 0
     skipped_no_charge: int = 0
     skipped_autopay: int = 0
     skipped_paused: int = 0
+    repaired_orphan_keys: int = 0
+    repaired_partial_invoices: int = 0
+    failed_repair: int = 0
+    skipped_details: list[MonthlyGenerationSkippedDetailView] = Field(default_factory=list)
 
 
 class MarkPaymentPaidRequest(BaseModel):
@@ -564,6 +632,75 @@ class MarkPaymentPaidRequest(BaseModel):
     amount_received_cents: int | None = Field(default=None, gt=0)
     reference_number: str | None = None
     notes: str = ""
+    payment_date: date | None = None
+
+
+class ReconcileStripeBillingRequest(BaseModel):
+    parent_id: str
+    enrollment_id: str
+    stripe_customer_id: str | None = None
+    stripe_checkout_session_id: str
+    reason: str = Field(min_length=8)
+
+
+class ReconcileStripeBillingResponse(BaseModel):
+    ok: bool
+    mismatch_state: str | None = None
+    payment_id: str | None = None
+    stripe_customer_id: str | None = None
+    stripe_checkout_session_id: str | None = None
+    stripe_subscription_id: str | None = None
+    stripe_invoice_id: str | None = None
+    stripe_payment_intent_id: str | None = None
+    audit_id: str
+
+
+class BillingReconciliationMismatchView(BaseModel):
+    code: str
+    message: str
+    stripe_value: Any | None = None
+    local_value: Any | None = None
+
+
+class BillingManualReviewCandidateView(BaseModel):
+    invoice_id: str
+    parent_id: str
+    student_id: str | None = None
+    enrollment_id: str | None = None
+    period: str | None = None
+    amount_cents: int
+    currency: str
+    status: str
+    reason: str
+
+
+class BillingReconciliationReportResponse(BaseModel):
+    result: str
+    stripe_invoice_id: str | None = None
+    payment_intent_id: str | None = None
+    stripe_customer_id: str | None = None
+    local_invoice_id: str | None = None
+    ledger_payment_id: str | None = None
+    payment_allocation_id: str | None = None
+    mismatches: list[BillingReconciliationMismatchView] = Field(default_factory=list)
+    manual_review_candidates: list[BillingManualReviewCandidateView] = Field(default_factory=list)
+    checked_at: datetime
+
+
+class BillingWebhookEventView(BaseModel):
+    event_id: str
+    event_type: str
+    status: Literal["received", "processing", "processed", "failed", "quarantined"] | str
+    object_id: str | None = None
+    object_type: str | None = None
+    received_at: datetime | None = None
+    last_attempt_at: datetime | None = None
+    retry_count: int = 0
+    error_message: str | None = None
+
+
+class BillingWebhookQueueResponse(BaseModel):
+    events: list[BillingWebhookEventView]
 
 
 class ApplyPaymentDiscountRequest(BaseModel):
@@ -638,8 +775,18 @@ class WithdrawalCreditApproveResponse(BaseModel):
 
 
 class InvoiceLineDto(BaseModel):
+    line_id: str | None = None
+    invoice_id: str | None = None
+    line_type: str | None = None
     description: str
+    quantity: int | None = None
+    unit_amount_cents: int | None = None
     amount_cents: int
+    line_type: str | None = None
+    quantity: int | None = None
+    unit_amount_cents: int | None = None
+    source_type: str | None = None
+    source_id: str | None = None
 
 
 class InvoiceDto(BaseModel):
@@ -667,9 +814,14 @@ class InvoiceCreditUsageDto(BaseModel):
 
 
 class InvoiceDetailResponse(BaseModel):
+    invoice_id: str | None = None
     invoice_number: str
     period: str
     lines: list[InvoiceLineDto]
+    subtotal_cents: int | None = None
+    discount_cents: int | None = None
+    total_cents: int | None = None
+    balance_due_cents: int | None = None
     due_amount_cents: int
     paid_amount_cents: int
     status: str
@@ -677,6 +829,27 @@ class InvoiceDetailResponse(BaseModel):
     credit_usage: list[InvoiceCreditUsageDto] = []
     invoice_pdf_artifact_id: str | None = None
     receipt_artifact_id: str | None = None
+    # delivery axis (separate from financial status)
+    delivery_status: str = "not_sent"
+    sent_at: datetime | None = None
+    last_sent_at: datetime | None = None
+
+
+class SendInvoiceResponse(BaseModel):
+    invoice_id: str
+    delivery_status: str
+    sent_at: datetime | None = None
+    last_sent_at: datetime | None = None
+    checkout_url: str | None = None
+
+
+class ChargeAutopayResponse(BaseModel):
+    invoice_id: str
+    success: bool
+    status: str
+    balance_due_cents: int
+    requires_action: bool = False
+    decline_code: str | None = None
 
 
 class GenerateInvoiceArtifactRequest(BaseModel):
@@ -730,6 +903,58 @@ class AdminPayoutPeriodLineView(BaseModel):
     amount_cents: int
     currency: str
     rate_id: str
+    percent_bps: int | None = None
+    expected_revenue_cents: int | None = None
+    original_amount_cents: int | None = None
+    adjustment_reason: str | None = None
+    occurred_at: datetime | None = None
+    session_title: str | None = None
+
+
+class AdminUnpaidOccurrenceView(BaseModel):
+    """An occurrence in the window that produced no pay line.
+
+    Covers coach-marked-absent occurrences and occurrences whose pay
+    could not be computed (e.g. session price missing for a percent
+    rate). Rendered alongside the paid lines so the period reads as a
+    complete session log.
+    """
+
+    occurrence_id: str
+    occurred_at: datetime | None = None
+    session_id: str | None = None
+    session_title: str | None = None
+    reason: Literal[
+        "no_rate_configured",
+        "rate_gap",
+        "missing_session_price_for_percent_revenue",
+        "attendance_override",
+        "unknown_unpaid_reason",
+        "missing_rate",
+        "missing_percent",
+    ] = "unknown_unpaid_reason"
+    detail: str | None = None
+    unresolved: bool = True
+    severity: Literal["blocking", "warning"] | None = None
+    message: str | None = None
+    coach_id: str | None = None
+    repair_action: str | None = None
+
+
+class AdminPayoutWarningView(BaseModel):
+    occurrence_id: str
+    reason: Literal[
+        "missing_session_price_for_percent_revenue",
+        "missing_rate",
+        "missing_percent",
+    ]
+    severity: Literal["blocking", "warning"]
+    message: str
+    occurred_at: datetime | None = None
+    session_id: str | None = None
+    session_title: str | None = None
+    coach_id: str
+    repair_action: str
 
 
 class AdminPayoutPeriodView(BaseModel):
@@ -742,6 +967,8 @@ class AdminPayoutPeriodView(BaseModel):
     total_amount_cents: int
     lines: list[AdminPayoutPeriodLineView]
     unpaid_occurrence_ids: list[str]
+    unpaid_occurrences: list[AdminUnpaidOccurrenceView] = Field(default_factory=list)
+    payout_warnings: list[AdminPayoutWarningView] = Field(default_factory=list)
     generated_at: datetime
     approved_at: datetime | None = None
     paid_at: datetime | None = None
@@ -754,6 +981,133 @@ class AdminPayoutPayslipView(BaseModel):
     printable: bool = True
     period: AdminPayoutPeriodView
     lines: list[AdminPayoutPeriodLineView]
+
+
+class AdminMonthlyPayrollRow(BaseModel):
+    coach_id: str
+    coach_name: str | None = None
+    session_count: int
+    total_amount_cents: int
+    currency: str
+    status: str  # not_generated|draft|approved|paid
+    period_id: str | None = None
+    unresolved_unpaid_count: int = 0
+    warning_count: int = 0
+    warning_status: Literal["clear", "unresolved"] = "clear"
+
+
+class AdminMonthlyPayrollView(BaseModel):
+    month: str
+    period_start: datetime
+    period_end: datetime
+    rows: list[AdminMonthlyPayrollRow]
+    total_amount_cents: int
+
+
+class BulkPayrollResultView(BaseModel):
+    month: str
+    generated: int = 0
+    skipped: int = 0
+    recomputed: int = 0
+
+
+class ReopenPayoutPeriodRequest(BaseModel):
+    reason: str = Field(min_length=1)
+
+
+class OverridePayoutLineRequest(BaseModel):
+    amount_cents: int | None = Field(default=None, ge=0)
+    """New amount for the line; ``None`` clears an existing override."""
+    reason: str = Field(min_length=1)
+
+
+class PayoutAuditEntryView(BaseModel):
+    audit_id: str
+    period_id: str
+    occurrence_id: str | None = None
+    action: Literal[
+        "generated",
+        "recomputed",
+        "reopened",
+        "approved",
+        "marked_paid",
+        "line_overridden",
+        "line_override_cleared",
+    ]
+    actor_id: str
+    at: datetime
+    reason: str | None = None
+    before: dict[str, Any] | None = None
+    after: dict[str, Any] | None = None
+
+
+class PayoutAuditTrailView(BaseModel):
+    entries: list[PayoutAuditEntryView]
+
+
+class AdminCoachPayRateView(BaseModel):
+    rate_id: str
+    coach_id: str
+    billing_unit: Literal["per_session", "per_hour", "percent_of_revenue"]
+    amount_cents: int
+    percent: float | None = None
+    currency: str
+    effective_from: datetime
+    effective_until: datetime | None = None
+    status: Literal["active", "superseded"]
+
+
+class AdminCoachPayRateList(BaseModel):
+    rates: list[AdminCoachPayRateView]
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+
+
+class SetCoachPayRateRequest(BaseModel):
+    billing_unit: Literal["per_session", "per_hour", "percent_of_revenue"]
+    amount_cents: int = Field(default=0, ge=0)
+    percent: float | None = Field(default=None, ge=0, le=100)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    effective_from: datetime | None = None
+
+    @model_validator(mode="after")
+    def _normalize_effective_from(self) -> SetCoachPayRateRequest:
+        if self.effective_from is not None and self.effective_from.tzinfo is None:
+            self.effective_from = self.effective_from.replace(tzinfo=UTC)
+        elif self.effective_from is not None:
+            self.effective_from = self.effective_from.astimezone(UTC)
+        return self
+
+
+class RepairCoachPayRateWindowRequest(BaseModel):
+    billing_unit: Literal["per_session", "per_hour", "percent_of_revenue"]
+    amount_cents: int = Field(default=0, ge=0)
+    percent: float | None = Field(default=None, ge=0, le=100)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    effective_from: datetime
+    effective_until: datetime
+    reason: str = Field(min_length=1, max_length=1000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _date_only_to_datetime(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        for key in ("effective_from", "effective_until"):
+            value = normalized.get(key)
+            if isinstance(value, str) and len(value) == 10:
+                normalized[key] = f"{value}T00:00:00+00:00"
+        return normalized
+
+    @model_validator(mode="after")
+    def _normalize_effective_window(self) -> RepairCoachPayRateWindowRequest:
+        for key in ("effective_from", "effective_until"):
+            value = getattr(self, key)
+            if value.tzinfo is None:
+                setattr(self, key, value.replace(tzinfo=UTC))
+            else:
+                setattr(self, key, value.astimezone(UTC))
+        return self
 
 
 class AdminExpenseView(BaseModel):  # FINANCE
@@ -927,9 +1281,12 @@ class AdminWaiverTemplateDetailView(BaseModel):
     waiver_id: str
     title: str
     version: str
+    status: AdminWaiverTemplateStatus = "active"
     body: str | None = None
     content_hash: str | None = None
     effective_at: datetime | None = None
+    assigned_to_registration: bool = False
+    assigned_at: datetime | None = None
     artifact_status: str
     share_status: str
     gap_note: str
@@ -993,6 +1350,8 @@ class AdminWaiverSignatureDetailView(BaseModel):
     waiver_version: str | None = None
     template_reference: str | None = None
     content_hash: str | None = None
+    artifact_reference: str | None = None
+    share_link_reference: str | None = None
     artifact_status: str
     share_status: str
     gap_note: str
@@ -1003,6 +1362,7 @@ AdminAttentionKind = Literal[
     "overdue_dues",
     "pause_requests",
     "scheduled_resume_blocked",
+    "billing_deferrals",
     "waivers",
     "session_pressure",
 ]
@@ -1046,6 +1406,7 @@ class AdminAcademyView(BaseModel):
     address: str | None = None
     logo_url: str | None = None
     brand_color: str | None = None
+    currency: str = "USD"
 
 
 class UpdateAdminAcademyRequest(BaseModel):
@@ -1057,6 +1418,7 @@ class UpdateAdminAcademyRequest(BaseModel):
     address: str | None = None
     logo_url: str | None = None
     brand_color: str | None = None
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
 
 
 class AdminFeesView(BaseModel):
@@ -1075,18 +1437,56 @@ class AdminNotificationsView(BaseModel):
     dues_reminders: bool = False
     attendance_alerts: bool = False
     daily_digest_to_admin: bool = False
+    coach_digest_enabled: bool = False
+    coach_digest_hour: int = 6
 
 
 class UpdateAdminNotificationsRequest(BaseModel):
     dues_reminders: bool | None = None
     attendance_alerts: bool | None = None
     daily_digest_to_admin: bool | None = None
+    coach_digest_enabled: bool | None = None
+    coach_digest_hour: int | None = Field(default=None, ge=0, le=23)
+
+
+class CoachDigestTestSendRequest(BaseModel):
+    # Target a specific coach by user_id, or omit/"self" to send to the admin.
+    coach_id: str | None = None
+    # Date to build the teaching-plan digest for. Omitted uses scheduler-local today.
+    on_date: date | None = None
+
+
+class CoachDigestTestSendResponse(BaseModel):
+    status: Literal["sent", "skipped_empty", "failed"]
+    coach_id: str
+    email: str | None = None
+    detail: str | None = None
+
+
+class CoachDigestLogEntryView(BaseModel):
+    digest_id: str
+    coach_id: str
+    coach_email: str | None = None
+    digest_date: str
+    status: str
+    kind: str
+    sent_at: str | None = None
+    failed_reason: str | None = None
+    created_at: datetime | None = None
+
+
+class CoachDigestLogView(BaseModel):
+    entries: list[CoachDigestLogEntryView]
 
 
 class AdminGatewayView(BaseModel):
     stripe_connected: bool
     stripe_account_id_masked: str | None = None
     manual_methods: list[str]
+
+
+class AdminGatewayConnectLinkView(BaseModel):
+    url: str
 
 
 class ReportsKpiResponse(BaseModel):
@@ -1171,6 +1571,44 @@ class AdminReportsDashboardResponse(BaseModel):
     empty_states: list[str] = []
 
 
+class AdminSessionEconomicsSummary(BaseModel):
+    expected_revenue_cents: int = 0
+    paid_cents: int = 0
+    unpaid_cents: int = 0
+    coach_payroll_cents: int = 0
+    rent_cents: int = 0
+    other_expenses_cents: int = 0
+    expected_profit_cents: int = 0
+    profit_margin: float | None = None
+
+
+class AdminSessionEconomicsRow(BaseModel):
+    session_id: str
+    title: str
+    coach_name: str | None = None
+    active_enrollment_count: int = 0
+    paid_student_count: int = 0
+    unpaid_student_count: int = 0
+    monthly_fee_cents: int = 0
+    payable_occurrence_count: int = 0
+    expected_revenue_per_occurrence_cents: int = 0
+    expected_revenue_cents: int = 0
+    paid_cents: int = 0
+    unpaid_cents: int = 0
+    coach_payroll_cents: int = 0
+    rent_cents: int = 0
+    other_expenses_cents: int = 0
+    expected_profit_cents: int = 0
+    profit_margin: float | None = None
+
+
+class AdminSessionEconomicsResponse(BaseModel):
+    period: str
+    summary: AdminSessionEconomicsSummary = Field(default_factory=AdminSessionEconomicsSummary)
+    sessions: list[AdminSessionEconomicsRow] = []
+    empty_states: list[str] = []
+
+
 # --- Analytics ---
 
 
@@ -1230,3 +1668,25 @@ class EnrollmentEventDto(BaseModel):
 class EnrollmentEventsResponse(BaseModel):
     enrollment_id: str
     events: list[EnrollmentEventDto]
+
+
+# --- Email Campaigns ---
+
+
+class SendCampaignAudience(BaseModel):
+    type: Literal["academy", "session"]
+    role: Literal["parent", "coach"] = "parent"
+    session_id: str | None = None
+
+
+class SendCampaignRequest(BaseModel):
+    subject: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=50000)
+    audience: SendCampaignAudience
+
+
+class SendCampaignResponse(BaseModel):
+    campaign_id: str
+    total_recipients: int
+    sent_count: int
+    failed_count: int

@@ -14,6 +14,7 @@ from backend.v2.interfaces.parent.views import (
     ChildProfileView,
     ParentProfileView,
     PatchApplicationRequest,
+    RegistrationWaiverView,
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
@@ -31,6 +32,23 @@ def _view(app) -> ApplicationView:
         waiver_accepted=app.waiver_acceptance is not None,
         expires_at=app.expires_at,
     )
+
+
+@router.get(
+    "/onboarding/waiver",
+    response_model=RegistrationWaiverView,
+    summary="Get the active registration waiver content for the current tenant",
+)
+async def get_registration_waiver(
+    claims: AuthClaims = Depends(require_persona("parent")),
+    use_cases: ParentUseCases = Depends(get_parent_use_cases),
+) -> RegistrationWaiverView:
+    if not use_cases.get_registration_waiver:
+        return RegistrationWaiverView(configured=False)
+    waiver = await use_cases.get_registration_waiver()
+    if waiver is None:
+        return RegistrationWaiverView(configured=False)
+    return RegistrationWaiverView(configured=True, version=waiver.version, body=waiver.text)
 
 
 @router.post(

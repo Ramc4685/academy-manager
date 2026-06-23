@@ -169,9 +169,17 @@ export async function signInWithGoogle(): Promise<User | null> {
   const provider = googleProvider();
   if (shouldUseGoogleRedirect()) {
     markGoogleRedirectPending();
+    if (E2E_BYPASS) {
+      const url = new URL("/__/auth/handler", window.location.origin);
+      url.searchParams.set("authType", "signInViaRedirect");
+      url.searchParams.set("providerId", "google.com");
+      window.location.assign(url.toString());
+      return null;
+    }
     await signInWithRedirect(auth(), provider);
     return null;
   }
+  if (E2E_BYPASS) return fakeE2EUser("google@example.com", true);
   const { user } = await signInWithPopup(auth(), provider);
   return user;
 }

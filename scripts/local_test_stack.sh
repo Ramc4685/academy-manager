@@ -302,6 +302,29 @@ seed() {
   (cd "${ROOT_DIR}" && env PYTHONPATH="${ROOT_DIR}" MONGO_URL="${MONGO_URL}" DB_NAME="${DB_NAME}" ACADEMY_ID=blno backend/.venv/bin/python scripts/dev/seed_badminton_pathway.py)
   log "Backfilling student pathway placements"
   (cd "${ROOT_DIR}" && env PYTHONPATH="${ROOT_DIR}" MONGO_URL="${MONGO_URL}" DB_NAME="${DB_NAME}" backend/.venv/bin/python scripts/dev/backfill_student_pathway_placements.py --academy-id blno --apply)
+  log "Reapplying v2 migrations after seed reset"
+  (cd "${ROOT_DIR}" && env PYTHONPATH="${ROOT_DIR}" MONGO_URL="${MONGO_URL}" DB_NAME="${DB_NAME}" backend/.venv/bin/python - <<'PY'
+import asyncio
+import os
+
+from motor.motor_asyncio import AsyncIOMotorClient
+
+from backend.v2.migrations.runner import run_all_migrations
+
+
+async def main() -> None:
+    client = AsyncIOMotorClient(os.environ["MONGO_URL"])
+    try:
+        db = client[os.environ["DB_NAME"]]
+        replayed = await run_all_migrations(db)
+        print(f"Replayed {len(replayed)} migrations")
+    finally:
+        client.close()
+
+
+asyncio.run(main())
+PY
+  )
 }
 
 run_tests() {

@@ -16,6 +16,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     DuplicateSessionSeries,
     EditRosterAddCommand,
     EditSessionCommand,
+    OverrideEnrollmentFeeCommand,
     PauseEnrollmentCommand,
     TransferEnrollmentCommand,
     WithdrawEnrollmentCommand,
@@ -35,6 +36,7 @@ from backend.v2.interfaces.admin.views import (
     EditSessionRequest,
     EnrollmentEventDto,
     EnrollmentEventsResponse,
+    OverrideEnrollmentFeeRequest,
     PauseEnrollmentRequest,
     RemoveEnrollmentRequest,
     TransferEnrollmentRequest,
@@ -57,6 +59,36 @@ def _event_field(event: object, field_name: str, default: object = None) -> obje
     if isinstance(event, dict):
         return event.get(field_name, default)
     return getattr(event, field_name, default)
+
+
+async def _coach_has_percent_rate(use_cases: AdminUseCases, coach_id: str) -> bool:
+    if use_cases.list_coach_pay_rates is None:
+        return False
+    rates = await use_cases.list_coach_pay_rates.execute(coach_id=coach_id)  # type: ignore[union-attr]
+    return any(
+        getattr(rate, "billing_unit", None) == "percent_of_revenue"
+        and getattr(rate, "status", "active") == "active"
+        for rate in rates
+    )
+
+
+async def _reject_percent_pay_missing_price(
+    *,
+    use_cases: AdminUseCases,
+    coach_id: str,
+    amount_cents: int | None,
+) -> None:
+    if amount_cents is not None:
+        return
+    if await _coach_has_percent_rate(use_cases, coach_id):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Percent-of-revenue coach pay requires a session price. "
+                "Set a session fee, use amount_cents: 0 for an explicit free session, "
+                "or change the coach pay rate before saving."
+            ),
+        )
 
 
 @router.get("/sessions", response_model=AdminSessionList, summary="List sessions for a date range")
@@ -82,6 +114,11 @@ async def create_session(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionView:
+    await _reject_percent_pay_missing_price(
+        use_cases=use_cases,
+        coach_id=body.coach_id,
+        amount_cents=body.amount_cents,
+    )
     try:
         session = await use_cases.create_session.execute(CreateSessionCommand(**body.model_dump()))
     except DuplicateSessionSeries as exc:
@@ -98,6 +135,24 @@ async def edit_session(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionView:
+    field_set = body.model_fields_set
+    amount_is_being_cleared = "amount_cents" in field_set and body.amount_cents is None
+    if amount_is_being_cleared:
+        coach_id = body.coach_id
+        if coach_id is None and use_cases.get_admin_session is not None:
+            current = await use_cases.get_admin_session(session_id)  # type: ignore[operator]
+            if current is not None:
+                coach_id = (
+                    current.get("coach_id")
+                    if isinstance(current, dict)
+                    else getattr(current, "coach_id", None)
+                )
+        if coach_id is not None:
+            await _reject_percent_pay_missing_price(
+                use_cases=use_cases,
+                coach_id=coach_id,
+                amount_cents=body.amount_cents,
+            )
     try:
         session = await use_cases.edit_session.execute(
             EditSessionCommand(
@@ -384,6 +439,26 @@ async def transfer_enrollment(
     )
 
 
+@router.post("/enrollments/{enrollment_id}/fee", status_code=204, response_model=None)
+async def override_enrollment_fee(
+    enrollment_id: str,
+    body: OverrideEnrollmentFeeRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> None:
+    try:
+        await use_cases.override_enrollment_fee.execute(
+            OverrideEnrollmentFeeCommand(
+                enrollment_id=enrollment_id,
+                amount_cents=body.amount_cents,
+                actor_id=claims.user_id,
+                reason=body.reason,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.post("/enrollments/{enrollment_id}/pause", status_code=204, response_model=None)
 async def pause_enrollment(
     enrollment_id: str,
@@ -397,6 +472,8 @@ async def pause_enrollment(
             effective_at=_start_of_day_utc(body.effective_date),
             actor_id=claims.user_id,
             reason=body.reason,
+            resume_on=body.resume_on,
+            review_on=body.review_on,
         )
     )
 

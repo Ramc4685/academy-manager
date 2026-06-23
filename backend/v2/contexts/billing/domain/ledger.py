@@ -6,6 +6,7 @@ allocated partially, and any overpayment becomes an account credit entry.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Literal
 
@@ -13,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 
-InvoiceStatus = Literal["open", "partially_paid", "paid", "void"]
+InvoiceStatus = Literal["draft", "open", "partially_paid", "paid", "void"]
 LedgerPaymentStatus = Literal["pending", "succeeded", "failed", "refunded"]
 
 
@@ -34,6 +35,15 @@ class LedgerInvoice(BaseModel):
     currency: str = Field(default="usd", min_length=3, max_length=3)
     due_date: date
     pdf_artifact_id: str | None = None
+    stripe_invoice_id: str | None = None
+    source_type: str | None = None
+    source_id: str | None = None
+    # delivery tracking (separate axis from financial status)
+    delivery_status: Literal["not_sent", "sent", "delivery_failed"] = "not_sent"
+    sent_at: datetime | None = None
+    last_sent_at: datetime | None = None
+    # audit
+    finalized_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -66,6 +76,7 @@ class LedgerPayment(BaseModel):
     status: LedgerPaymentStatus = "pending"
     payment_method: str | None = None
     stripe_payment_intent_id: str | None = None
+    stripe_invoice_id: str | None = None
     paid_at: datetime | None = None
     recorded_by: str | None = None
     notes: str | None = None
@@ -173,3 +184,127 @@ def allocate_payment_to_invoice(
         allocation=allocation,
         overpayment_credit=credit,
     )
+
+
+def recompute_totals(invoice: LedgerInvoice, lines: list[InvoiceLine]) -> LedgerInvoice:
+    """Derive subtotal/total/balance_due from lines. Callers never set totals directly."""
+    subtotal = sum(line.amount_cents for line in lines)
+    total = max(0, subtotal - invoice.discount_cents)
+    # NOTE: `allocated` is inferred from persisted totals (total_cents - balance_due_cents),
+    # not from summing payment_allocations. This is correct under a single-writer model.
+    # Under concurrent writes to the same invoice, the second writer's recompute will see
+    # a stale baseline. Phase 3 should either add optimistic locking (e.g. a `version` field)
+    # or derive allocated from the payment_allocations collection directly.
+    allocated = invoice.total_cents - invoice.balance_due_cents  # already-allocated amount
+    balance = max(0, total - allocated)
+    new_status = invoice.status
+    if invoice.status not in ("draft", "void"):
+        if balance == 0:
+            new_status = "paid"
+        elif balance < total:
+            new_status = "partially_paid"
+        else:
+            new_status = "open"
+    return invoice.model_copy(
+        update={
+            "subtotal_cents": subtotal,
+            "total_cents": total,
+            "balance_due_cents": balance,
+            "status": new_status,
+        }
+    )
+
+
+def add_line(
+    invoice: LedgerInvoice,
+    lines: list[InvoiceLine],
+    new_line: InvoiceLine,
+    *,
+    now: datetime,
+) -> tuple[LedgerInvoice, list[InvoiceLine]]:
+    """Append a line and recompute totals. Enforces edit rules."""
+    if invoice.status in ("paid", "void"):
+        raise ValueError(f"cannot add lines to a {invoice.status} invoice")
+    updated_lines = [*lines, new_line]
+    updated_invoice = recompute_totals(
+        invoice.model_copy(update={"updated_at": now}), updated_lines
+    )
+    return updated_invoice, updated_lines
+
+
+def finalize(invoice: LedgerInvoice, *, now: datetime) -> LedgerInvoice:
+    """Transition draft → open. Monthly invoices are created directly as open (no draft step)."""
+    if invoice.status != "draft":
+        raise ValueError(f"can only finalize a draft invoice, got {invoice.status}")
+    return invoice.model_copy(
+        update={
+            "status": "open",
+            "finalized_at": now,
+            "updated_at": now,
+        }
+    )
+
+
+def void_invoice(invoice: LedgerInvoice, *, reason: str, now: datetime) -> LedgerInvoice:
+    """Transition draft/open/partially_paid → void. Paid invoices cannot be voided."""
+    if invoice.status == "paid":
+        raise ValueError("paid invoices cannot be voided; use refund/credit instead")
+    if invoice.status == "void":
+        raise ValueError("invoice is already void")
+    return invoice.model_copy(
+        update={
+            "status": "void",
+            "updated_at": now,
+        }
+    )
+
+
+def record_delivery(
+    invoice: LedgerInvoice,
+    *,
+    outcome: Literal["sent", "delivery_failed"],
+    now: datetime,
+) -> LedgerInvoice:
+    """Update delivery tracking only. Financial status is never changed by this op."""
+    if invoice.status == "draft":
+        raise ValueError("cannot record delivery on a draft invoice")
+    updates: dict = {
+        "delivery_status": outcome,
+        "last_sent_at": now,
+        "updated_at": now,
+    }
+    if outcome == "sent" and invoice.sent_at is None:
+        updates["sent_at"] = now
+    return invoice.model_copy(update=updates)
+
+
+# --- Domain events ---
+
+
+@dataclass(frozen=True)
+class InvoiceLineAdded:
+    invoice_id: str
+    line_id: str
+    academy_id: str
+
+
+@dataclass(frozen=True)
+class InvoiceFinalized:
+    invoice_id: str
+    academy_id: str
+    finalized_at: datetime
+
+
+@dataclass(frozen=True)
+class InvoiceVoided:
+    invoice_id: str
+    academy_id: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class InvoiceDelivered:
+    invoice_id: str
+    academy_id: str
+    outcome: str
+    delivered_at: datetime

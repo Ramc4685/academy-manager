@@ -26,7 +26,9 @@ from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
+    PayoutWarning,
     PersistedPayoutLine,
+    PersistedUnpaidOccurrence,
 )
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
@@ -41,6 +43,10 @@ def _line_to_doc(line: PersistedPayoutLine, *, period_id: str) -> dict[str, Any]
         "amount_minor": int(line.amount_minor),
         "currency": line.currency,
         "rate_id": line.rate_id,
+        "percent_bps": line.percent_bps,
+        "expected_revenue_minor": line.expected_revenue_minor,
+        "original_amount_minor": line.original_amount_minor,
+        "adjustment_reason": line.adjustment_reason,
     }
 
 
@@ -53,6 +59,28 @@ def _line_from_doc(doc: dict[str, Any]) -> PersistedPayoutLine:
         amount_minor=int(doc["amount_minor"]),
         currency=str(doc["currency"]),
         rate_id=str(doc["rate_id"]),
+        percent_bps=doc.get("percent_bps"),
+        expected_revenue_minor=doc.get("expected_revenue_minor"),
+        original_amount_minor=doc.get("original_amount_minor"),
+        adjustment_reason=doc.get("adjustment_reason"),
+    )
+
+
+def _unpaid_to_doc(row: PersistedUnpaidOccurrence) -> dict[str, Any]:
+    return {
+        "occurrence_id": row.occurrence_id,
+        "reason": row.reason,
+        "detail": row.detail,
+        "unresolved": row.unresolved,
+    }
+
+
+def _unpaid_from_doc(doc: dict[str, Any]) -> PersistedUnpaidOccurrence:
+    return PersistedUnpaidOccurrence(
+        occurrence_id=str(doc["occurrence_id"]),
+        reason=doc.get("reason", "unknown_unpaid_reason"),
+        detail=doc.get("detail"),
+        unresolved=bool(doc.get("unresolved", True)),
     )
 
 
@@ -66,6 +94,10 @@ def _period_to_doc(period: PayoutPeriod) -> dict[str, Any]:
         "currency": period.currency,
         "total_minor": int(period.total_minor),
         "unpaid_occurrence_ids": list(period.unpaid_occurrence_ids),
+        "payout_warnings": [
+            warning.model_dump(mode="python") for warning in period.payout_warnings
+        ],
+        "unpaid_occurrences": [_unpaid_to_doc(row) for row in period.unpaid_occurrences],
         "generated_at": period.generated_at,
         "approved_at": period.approved_at,
         "paid_at": period.paid_at,
@@ -85,6 +117,18 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
             {"academy_id": academy_id, "period_id": doc["period_id"]}
         )
         lines = [_line_from_doc(line_doc) async for line_doc in cursor]
+        unpaid_occurrence_ids = list(doc.get("unpaid_occurrence_ids", []))
+        unpaid_occurrences = [_unpaid_from_doc(row) for row in doc.get("unpaid_occurrences", [])]
+        if unpaid_occurrence_ids and not unpaid_occurrences:
+            unpaid_occurrences = [
+                PersistedUnpaidOccurrence(
+                    occurrence_id=str(occurrence_id),
+                    reason="unknown_unpaid_reason",
+                    detail="Legacy payout period has an unpaid occurrence without a structured reason.",
+                    unresolved=True,
+                )
+                for occurrence_id in unpaid_occurrence_ids
+            ]
         return PayoutPeriod(
             period_id=str(doc["period_id"]),
             academy_id=academy_id,
@@ -95,7 +139,11 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
             currency=str(doc["currency"]),
             total_minor=int(doc["total_minor"]),
             lines=lines,
-            unpaid_occurrence_ids=list(doc.get("unpaid_occurrence_ids", [])),
+            unpaid_occurrence_ids=unpaid_occurrence_ids,
+            unpaid_occurrences=unpaid_occurrences,
+            payout_warnings=[
+                PayoutWarning.model_validate(warning) for warning in doc.get("payout_warnings", [])
+            ],
             generated_at=doc["generated_at"],
             approved_at=doc.get("approved_at"),
             paid_at=doc.get("paid_at"),
@@ -175,4 +223,48 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
         stored = await self.find_by_id(period.period_id)
         if stored is None:  # pragma: no cover - defensive
             raise RuntimeError("payout period replace lost the document")
+        return stored
+
+    async def list_for_window(
+        self,
+        *,
+        academy_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> list[PayoutPeriod]:
+        cursor = self._find_many(
+            {"period_start": period_start, "period_end": period_end},
+            sort=[("coach_id", 1)],
+        )
+        return [await self._hydrate(doc) async for doc in cursor]
+
+    async def replace_with_lines(self, period: PayoutPeriod) -> PayoutPeriod:
+        """Replace the period document AND rewrite its line set.
+
+        Used by recompute and line-override flows, which legitimately
+        change lines (unlike ``replace``, which only moves the state
+        machine). Drafts only — callers enforce that rule.
+        """
+        result = await self._update_one(
+            {"period_id": period.period_id},
+            {"$set": _period_to_doc(period)},
+        )
+        if result.matched_count == 0:
+            raise LookupError(f"PayoutPeriod {period.period_id!r} not found")
+
+        academy_id = current_academy_id()
+        await self._db[self.LINES_COLLECTION].delete_many(
+            {"academy_id": academy_id, "period_id": period.period_id}
+        )
+        if period.lines:
+            await self._db[self.LINES_COLLECTION].insert_many(
+                [
+                    {**_line_to_doc(line, period_id=period.period_id), "academy_id": academy_id}
+                    for line in period.lines
+                ]
+            )
+
+        stored = await self.find_by_id(period.period_id)
+        if stored is None:  # pragma: no cover - defensive
+            raise RuntimeError("payout period replace_with_lines lost the document")
         return stored

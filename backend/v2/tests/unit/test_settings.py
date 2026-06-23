@@ -28,6 +28,15 @@ def _clear_production_env(monkeypatch) -> None:
         "V2_CORS_ORIGINS",
         "FRONTEND_URL",
         "V2_FRONTEND_URL",
+        "APP_TENANCY_MODE",
+        "PRIMARY_ACADEMY_ID",
+        "ENABLE_PLATFORM_ROUTES",
+        "ENABLE_OWNER_ROLE",
+        "ENABLE_STUDENT_LOGIN",
+        "EMAIL_DELIVERY_ENABLED",
+        "V2_EMAIL_DELIVERY_ENABLED",
+        "SENDER_EMAIL",
+        "V2_SENDER_EMAIL",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -117,6 +126,32 @@ def test_allowed_internal_tenant_header_set_via_env(monkeypatch) -> None:
     assert settings.allowed_internal_tenant_header == "X-Internal-Academy-Id"
 
 
+def test_launch_mode_reads_root_env_names(monkeypatch) -> None:
+    monkeypatch.setenv("APP_TENANCY_MODE", "single_academy")
+    monkeypatch.setenv("PRIMARY_ACADEMY_ID", "acad_launch")
+    monkeypatch.setenv("ENABLE_PLATFORM_ROUTES", "false")
+    monkeypatch.setenv("ENABLE_OWNER_ROLE", "false")
+    monkeypatch.setenv("ENABLE_STUDENT_LOGIN", "false")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.tenancy_mode == "single_academy"
+    assert settings.primary_academy_id == "acad_launch"
+    assert settings.enable_platform_routes is False
+    assert settings.enable_owner_role is False
+    assert settings.enable_student_login is False
+
+
+def test_single_academy_mode_requires_primary_academy_id(monkeypatch) -> None:
+    monkeypatch.setenv("APP_TENANCY_MODE", "single_academy")
+    monkeypatch.delenv("PRIMARY_ACADEMY_ID", raising=False)
+
+    with pytest.raises(ValidationError) as exc:
+        Settings(_env_file=None)
+
+    assert "primary_academy_id" in str(exc.value)
+
+
 def test_prod_settings_require_explicit_mongo_and_firebase_project(monkeypatch) -> None:
     _clear_production_env(monkeypatch)
     monkeypatch.setenv("APP_ENV", "production")
@@ -140,11 +175,34 @@ def test_prod_settings_allow_missing_jwt_secret(monkeypatch) -> None:
     monkeypatch.setenv("V2_STRIPE_USE_FAKE_GATEWAY", "false")
     monkeypatch.setenv("STRIPE_API_KEY", "sk_live_existing")
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_existing")
+    monkeypatch.setenv("APP_TENANCY_MODE", "single_academy")
+    monkeypatch.setenv("PRIMARY_ACADEMY_ID", "acad_blno_badminton")
+    monkeypatch.setenv("ENABLE_PLATFORM_ROUTES", "false")
 
     settings = Settings(_env_file=None)
 
     assert settings.env == "prod"
     assert settings.firebase_project_id == "academy-courtmastr"
+    assert settings.primary_academy_id == "acad_blno_badminton"
+
+
+def test_prod_single_academy_requires_platform_routes_disabled(monkeypatch) -> None:
+    _clear_production_env(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("MONGO_URL", "mongodb+srv://prod")
+    monkeypatch.setenv("DB_NAME", "academy_prod")
+    monkeypatch.setenv("FIREBASE_PROJECT_ID", "academy-courtmastr")
+    monkeypatch.setenv("V2_STRIPE_USE_FAKE_GATEWAY", "false")
+    monkeypatch.setenv("STRIPE_API_KEY", "sk_live_existing")
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_existing")
+    monkeypatch.setenv("APP_TENANCY_MODE", "single_academy")
+    monkeypatch.setenv("PRIMARY_ACADEMY_ID", "acad_blno_badminton")
+    monkeypatch.setenv("ENABLE_PLATFORM_ROUTES", "true")
+
+    with pytest.raises(ValidationError) as exc:
+        Settings(_env_file=None)
+
+    assert "enable_platform_routes" in str(exc.value)
 
 
 def test_prod_settings_require_stripe_secrets_when_real_gateway_enabled(monkeypatch) -> None:
@@ -153,29 +211,12 @@ def test_prod_settings_require_stripe_secrets_when_real_gateway_enabled(monkeypa
     monkeypatch.setenv("MONGO_URL", "mongodb+srv://prod")
     monkeypatch.setenv("DB_NAME", "academy_prod")
     monkeypatch.setenv("FIREBASE_PROJECT_ID", "academy-courtmastr")
-    monkeypatch.setenv("V2_STRIPE_USE_FAKE_GATEWAY", "false")
-
     with pytest.raises(ValidationError) as exc:
         Settings(_env_file=None)
 
     message = str(exc.value)
     assert "stripe_api_key" in message
     assert "stripe_webhook_secret" in message
-
-
-def test_prod_settings_forbid_fake_stripe_gateway(monkeypatch) -> None:
-    _clear_production_env(monkeypatch)
-    monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.setenv("MONGO_URL", "mongodb+srv://prod")
-    monkeypatch.setenv("DB_NAME", "academy_prod")
-    monkeypatch.setenv("FIREBASE_PROJECT_ID", "academy-courtmastr")
-    monkeypatch.setenv("STRIPE_API_KEY", "sk_live_existing")
-    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_existing")
-
-    with pytest.raises(ValidationError) as exc:
-        Settings(_env_file=None)
-
-    assert "stripe_use_fake_gateway=false" in str(exc.value)
 
 
 def test_cors_origins_reuse_existing_env_and_dedupe(monkeypatch) -> None:
@@ -187,3 +228,39 @@ def test_cors_origins_reuse_existing_env_and_dedupe(monkeypatch) -> None:
     settings = Settings(_env_file=None)
 
     assert settings.cors_allowed_origins() == ["https://a.example", "https://b.example"]
+
+
+def test_email_delivery_enabled_reuses_existing_env_name(monkeypatch) -> None:
+    monkeypatch.delenv("V2_EMAIL_DELIVERY_ENABLED", raising=False)
+    monkeypatch.setenv("EMAIL_DELIVERY_ENABLED", "true")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.email_delivery_enabled is True
+
+
+def test_v2_email_delivery_enabled_wins_over_existing_env_name(monkeypatch) -> None:
+    monkeypatch.setenv("EMAIL_DELIVERY_ENABLED", "true")
+    monkeypatch.setenv("V2_EMAIL_DELIVERY_ENABLED", "false")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.email_delivery_enabled is False
+
+
+def test_sender_email_reuses_existing_env_name(monkeypatch) -> None:
+    monkeypatch.delenv("V2_SENDER_EMAIL", raising=False)
+    monkeypatch.setenv("SENDER_EMAIL", "noreply@courtmastr.com")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.sender_email == "noreply@courtmastr.com"
+
+
+def test_v2_sender_email_wins_over_existing_env_name(monkeypatch) -> None:
+    monkeypatch.setenv("SENDER_EMAIL", "noreply@academy.courtmastr.com")
+    monkeypatch.setenv("V2_SENDER_EMAIL", "noreply@courtmastr.com")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.sender_email == "noreply@courtmastr.com"

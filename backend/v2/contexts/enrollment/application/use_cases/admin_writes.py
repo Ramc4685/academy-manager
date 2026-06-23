@@ -11,8 +11,8 @@ promotion on cancellation, comms notifications, etc.) react.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime, time, timedelta
-from typing import Literal
+from datetime import UTC, date, datetime, time, timedelta
+from typing import Literal, Protocol
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
@@ -26,6 +26,10 @@ from backend.v2.contexts.enrollment.application.ports import (
     StudentQuery,
     StudentWriter,
     WaitlistRepository,
+)
+from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals import (
+    BillingDeferral,
+    BillingDeferralRepository,
 )
 from backend.v2.contexts.enrollment.domain.errors import (
     DuplicateSessionSeries,
@@ -275,7 +279,7 @@ class EditSession:
         if current is None:
             raise SessionNotFound("session missing", session_id=cmd.session_id)
 
-        update: dict[str, object] = {}
+        update: dict[str, object | None] = {}
         for field_name in (
             "coach_id",
             "title",
@@ -290,7 +294,9 @@ class EditSession:
             "timezone",
         ):
             value = getattr(cmd, field_name)
-            if value is not None:
+            if value is not None or (
+                field_name == "amount_cents" and field_name in cmd.model_fields_set
+            ):
                 update[field_name] = value
 
         recurring_values = {
@@ -610,12 +616,52 @@ class TransferEnrollment:
         return enrollment.model_copy(update={"session_id": cmd.target_session_id})
 
 
+class OverrideEnrollmentFeeCommand(BaseModel):
+    model_config = {"frozen": True}
+    enrollment_id: str
+    amount_cents: int | None = Field(default=None, ge=0)
+    actor_id: str | None = None
+    reason: str | None = None
+
+
+class OverrideEnrollmentFee:
+    def __init__(self, *, enrollments: EnrollmentWriter) -> None:
+        self._enrollments = enrollments
+
+    async def execute(self, cmd: OverrideEnrollmentFeeCommand) -> Enrollment:
+        enrollment = await self._enrollments.get(cmd.enrollment_id)
+        if enrollment is None:
+            raise EnrollmentNotFound("enrollment missing", enrollment_id=cmd.enrollment_id)
+        await self._enrollments.update_amount_cents(
+            enrollment.enrollment_id,
+            cmd.amount_cents,
+        )
+        return enrollment
+
+
 class PauseEnrollmentCommand(BaseModel):
     model_config = {"frozen": True}
     enrollment_id: str
     effective_at: datetime | None = None
     actor_id: str | None = None
     reason: str | None = None
+    resume_on: date | None = None
+    review_on: date | None = None
+    create_billing_deferral: bool = True
+    pause_stripe_collection: bool = True
+
+
+class EnrollmentSubscriptionLookup(Protocol):
+    async def latest_for_enrollment(self, enrollment_id: str) -> object | None: ...
+
+
+class SubscriptionCollectionGateway(Protocol):
+    async def pause_subscription_collection(
+        self,
+        stripe_subscription_id: str,
+        *,
+        behavior: str = "void",
+    ) -> None: ...
 
 
 class PauseEnrollment:
@@ -631,6 +677,9 @@ class PauseEnrollment:
         students: StudentQuery | None = None,
         waitlist: WaitlistRepository | None = None,
         enrollment_events: EnrollmentEventRepository | None = None,
+        billing_deferrals: BillingDeferralRepository | None = None,
+        subscriptions: EnrollmentSubscriptionLookup | None = None,
+        stripe: SubscriptionCollectionGateway | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
@@ -638,6 +687,9 @@ class PauseEnrollment:
         self._students = students
         self._waitlist = waitlist
         self._enrollment_events = enrollment_events
+        self._billing_deferrals = billing_deferrals
+        self._subscriptions = subscriptions
+        self._stripe = stripe
         self._now = clock
 
     async def execute(self, cmd: PauseEnrollmentCommand) -> None:
@@ -691,6 +743,36 @@ class PauseEnrollment:
             billing_result="future_billing_stopped",
             metadata={"seat_policy": "released_to_waitlist"},
         )
+        if self._billing_deferrals is not None and cmd.create_billing_deferral:
+            bounded_date = cmd.resume_on or cmd.review_on
+            if bounded_date is not None:
+                await self._billing_deferrals.add(
+                    BillingDeferral(
+                        deferral_id=str(new_ulid()),
+                        enrollment_id=e.enrollment_id,
+                        student_id=e.student_id,
+                        deferral_type="admin_pause",
+                        reason=cmd.reason or "admin pause",
+                        source="admin_direct_pause",
+                        actor_id=cmd.actor_id,
+                        actor_type="admin" if cmd.actor_id else "system",
+                        billing_period=bounded_date.strftime("%Y-%m"),
+                        resume_on=cmd.resume_on,
+                        review_on=cmd.review_on,
+                        created_at=now,
+                        updated_at=now,
+                        metadata={"seat_policy": "released_to_waitlist"},
+                    )
+                )
+        if (
+            cmd.pause_stripe_collection
+            and self._subscriptions is not None
+            and self._stripe is not None
+        ):
+            subscription = await self._subscriptions.latest_for_enrollment(e.enrollment_id)
+            stripe_subscription_id = getattr(subscription, "stripe_subscription_id", None)
+            if stripe_subscription_id:
+                await self._stripe.pause_subscription_collection(str(stripe_subscription_id))
 
 
 class WithdrawEnrollmentCommand(BaseModel):
@@ -763,12 +845,14 @@ class ResumeEnrollment:
         sessions: SessionWriter | None = None,
         waitlist: WaitlistRepository | None = None,
         enrollment_events: EnrollmentEventRepository | None = None,
+        billing_deferrals: BillingDeferralRepository | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
         self._sessions = sessions
         self._waitlist = waitlist
         self._enrollment_events = enrollment_events
+        self._billing_deferrals = billing_deferrals
         self._now = clock
 
     async def execute(
@@ -777,6 +861,7 @@ class ResumeEnrollment:
         *,
         actor_id: str | None = None,
         reason: str | None = None,
+        close_billing_deferral: bool = True,
     ) -> None:
         e = await self._enrollments.get(enrollment_id)
         if e is None:
@@ -805,6 +890,13 @@ class ResumeEnrollment:
             effective_at=now,
             occurred_at=now,
         )
+        if self._billing_deferrals is not None and close_billing_deferral:
+            await self._billing_deferrals.close_active_for_enrollment(
+                e.enrollment_id,
+                closed_at=now,
+                closed_by=actor_id or "system",
+                reason="resume_succeeded",
+            )
 
 
 # -- Waitlist writes ----------------------------------------------------

@@ -32,7 +32,7 @@ export default function CoachTodayPage() {
 
   return (
     <section data-testid="coach-today">
-      <header className="mb-4 flex items-center justify-between">
+      <header className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Today</h1>
           <p className="text-sm text-neutral-500">{date}</p>
@@ -65,22 +65,22 @@ export default function CoachTodayPage() {
 
       <ul className="space-y-3" data-testid="session-list">
         {sessions.map((s) => (
-          <li key={s.occurrence_id}>
+          <li key={s.occurrence_id} className="space-y-2">
             <Link
               href={
                 `/coach/sessions/${encodeURIComponent(s.occurrence_id)}?date=${date}` as Parameters<
                   typeof Link
                 >[0]["href"]
               }
-              className="block rounded-lg border border-neutral-200 bg-white p-4 hover:border-blue-400 dark:border-neutral-800 dark:bg-neutral-900"
+              className="block rounded-lg border border-neutral-200 bg-white p-3 hover:border-blue-400 dark:border-neutral-800 dark:bg-neutral-900"
               data-testid={`session-${s.session_id}`}
             >
-              <div className="flex items-center justify-between">
-                <div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
                   <p className="font-semibold">{s.title}</p>
                   <p className="text-sm text-neutral-500">{s.location}</p>
                 </div>
-                <p className="text-sm tabular-nums text-neutral-600 dark:text-neutral-300">
+                <p className="shrink-0 text-sm tabular-nums text-neutral-600 dark:text-neutral-300">
                   {formatSessionTimeRange(s.start_at, s.end_at, s.timezone)}
                 </p>
               </div>
@@ -88,6 +88,17 @@ export default function CoachTodayPage() {
                 {s.roster.length}{" "}
                 {s.roster.length === 1 ? "student" : "students"}
               </p>
+            </Link>
+            <Link
+              href={
+                `/coach/today/plan?date=${date}` as Parameters<
+                  typeof Link
+                >[0]["href"]
+              }
+              data-testid={`view-teaching-plan-${s.session_id}`}
+              className="block min-h-touch rounded-lg border border-rally-base/30 px-4 py-2 text-center text-sm font-semibold text-rally-base hover:bg-rally-base/5"
+            >
+              View teaching plan
             </Link>
           </li>
         ))}

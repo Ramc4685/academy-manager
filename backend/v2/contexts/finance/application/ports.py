@@ -23,9 +23,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol
 
+from backend.v2.contexts.finance.domain.payout_audit import PayoutAuditEntry
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
+    PayoutWarning,
     PersistedPayoutLine,
+    PersistedUnpaidOccurrence,
 )
 from backend.v2.contexts.finance.domain.reporting_snapshots import (
     AcademyRevenueSnapshot,
@@ -70,6 +73,32 @@ class PayoutPeriodRepository(Protocol):
         Raises ``LookupError`` if no period matches ``period.period_id``.
         """
         ...
+
+    async def replace_with_lines(self, period: PayoutPeriod) -> PayoutPeriod:
+        """Replace an existing period AND rewrite its lines.
+
+        Used by recompute and line-override flows where the line set
+        itself changes. Raises ``LookupError`` if the period is missing.
+        """
+        ...
+
+    async def list_for_window(
+        self,
+        *,
+        academy_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> list[PayoutPeriod]:
+        """All periods for this academy whose window exactly matches [period_start, period_end)."""
+        ...
+
+
+class PayoutAuditLog(Protocol):
+    """Append-only audit trail of payout-period mutations."""
+
+    async def append(self, entry: PayoutAuditEntry) -> None: ...
+
+    async def list_for_period(self, period_id: str) -> list[PayoutAuditEntry]: ...
 
 
 class AcademyRevenueSnapshotRepository(Protocol):
@@ -118,6 +147,10 @@ class PayoutCalculation(Protocol):
     def lines(self) -> list[PersistedPayoutLine]: ...
     @property
     def unpaid_occurrence_ids(self) -> list[str]: ...
+    @property
+    def unpaid_occurrences(self) -> list[PersistedUnpaidOccurrence]: ...
+    @property
+    def payout_warnings(self) -> list[PayoutWarning]: ...
 
 
 class PayoutCalculator(Protocol):
@@ -216,6 +249,29 @@ class AttendanceSnapshotReader(Protocol):
     ) -> list[SessionAttendanceSnapshot]: ...
 
 
+class CoachMonthOccurrences(Protocol):
+    """Shape of one row returned by MonthlyCoachOccurrenceReader."""
+
+    @property
+    def coach_id(self) -> str: ...
+
+    @property
+    def session_count(self) -> int: ...
+
+
+class MonthlyCoachOccurrenceReader(Protocol):
+    """Coaches with payable, non-cancelled occurrences in a month window.
+
+    Paying coach = actual_coach_id when set, else scheduled_coach_id.
+    Clock-derived completion: end_at < now OR status == 'completed'.
+    Never filters on stored status == 'completed' alone.
+    """
+
+    async def coaches_with_occurrences(
+        self, *, academy_id: str, period_start: datetime, period_end: datetime
+    ) -> list[CoachMonthOccurrences]: ...
+
+
 class CoachPayoutSnapshotReader(Protocol):
     """Read ``CoachPayoutSnapshot`` records for a set of periods.
 
@@ -239,8 +295,11 @@ __all__ = [
     "AttendanceSnapshotReader",
     "BillingLedgerReader",
     "BillingPeriodTotals",
+    "CoachMonthOccurrences",
     "CoachPayoutSnapshotReader",
     "CoachPayoutSnapshotRepository",
+    "MonthlyCoachOccurrenceReader",
+    "PayoutAuditLog",
     "PayoutCalculation",
     "PayoutCalculator",
     "PayoutPeriodRepository",

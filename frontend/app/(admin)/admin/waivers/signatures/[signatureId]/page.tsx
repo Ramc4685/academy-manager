@@ -54,6 +54,8 @@ export default function AdminSignedWaiverDetailPage() {
               <Meta label="Signer" value={signatureQuery.data.signer_name || "Not reported"} />
               <Meta label="Artifact" value={statusLabel(signatureQuery.data.artifact_status)} />
               <Meta label="Share link" value={statusLabel(signatureQuery.data.share_status)} />
+              <Meta label="Artifact ref" value={signatureQuery.data.artifact_reference || "Not stored"} />
+              <Meta label="Share ref" value={signatureQuery.data.share_link_reference || "Not stored"} />
             </dl>
           </Card>
 
@@ -76,6 +78,8 @@ function Meta({ label, value }: { label: string; value: string }) {
 }
 
 function statusLabel(status: string): string {
+  if (status === "stored") return "Stored";
+  if (status === "available") return "Available";
   if (status === "stored_reference") return "Stored reference";
   return "Unavailable";
 }

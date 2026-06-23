@@ -68,14 +68,20 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
             waiver_id=str(doc.get("waiver_template_id") or doc.get("waiver_id") or doc.get("_id")),
             title=title,
             version=str(doc.get("version") or ""),
+            status=self._template_status(doc),
             body=str(doc.get("body") or doc.get("text") or doc.get("waiver_text") or "") or None,
             content_hash=str(doc.get("content_hash") or doc.get("waiver_text_hash") or "") or None,
             effective_from=self._as_datetime(
                 doc.get("effective_from")
                 or doc.get("effective_at")
                 or doc.get("effective_date")
+                or doc.get("published_at")
+                or doc.get("assigned_at")
+                or doc.get("updated_at")
                 or doc.get("created_at")
             ),
+            assigned_to_registration=bool(doc.get("assigned_to_registration") or False),
+            assigned_at=self._as_datetime(doc.get("assigned_at")),
         )
 
     async def get_signature_detail(self, signature_id: str) -> AdminWaiverSignatureDetail | None:
@@ -227,6 +233,7 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
             doc
             async for doc in self._db["waiver_signatures"].find(
                 {
+                    "academy_id": academy_id,
                     "student_id": {"$in": student_ids},
                     "is_deleted": {"$ne": True},
                 }
@@ -238,10 +245,15 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
             ),
             reverse=True,
         )
+        share_links_by_artifact = await self._share_links_by_artifact(academy_id, signature_docs)
         for doc in signature_docs:
             student_id = str(doc.get("student_id") or "")
             if student_id and student_id not in out:
-                out[student_id] = self._to_signature_acceptance(doc, version_info)
+                out[student_id] = self._to_signature_acceptance(
+                    doc,
+                    version_info,
+                    share_links_by_artifact,
+                )
 
         docs = [
             doc
@@ -286,6 +298,31 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
                     doc.get("waiver_accepted_at") or doc.get("waiver_date")
                 ),
             )
+        return out
+
+    async def _share_links_by_artifact(
+        self,
+        academy_id: str,
+        signature_docs: list[dict[str, Any]],
+    ) -> dict[str, str]:
+        artifact_ids = sorted(
+            {str(doc.get("artifact_id") or "") for doc in signature_docs if doc.get("artifact_id")}
+        )
+        if not artifact_ids:
+            return {}
+        out: dict[str, str] = {}
+        cursor = self._db["waiver_share_links"].find(
+            {
+                "academy_id": academy_id,
+                "artifact_id": {"$in": artifact_ids},
+                "status": "active",
+            }
+        )
+        async for doc in cursor:
+            artifact_id = str(doc.get("artifact_id") or "")
+            share_link_id = str(doc.get("share_link_id") or "")
+            if artifact_id and share_link_id:
+                out[artifact_id] = share_link_id
         return out
 
     async def _template_doc(self, academy_id: str, waiver_id: str) -> dict[str, Any] | None:
@@ -435,6 +472,11 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
         student = await self._student_by_id(academy_id, student_id)
         parent_map = await self._parents_by_id(academy_id, [{"parent_id": parent_id}])
         parent = parent_map.get(parent_id, {})
+        artifact_status, share_status, share_link_id, gap_note = await self._artifact_state(
+            academy_id=academy_id,
+            artifact_id=artifact_id,
+            signature_id=signature_id,
+        )
         return AdminWaiverSignatureDetail(
             signature_id=signature_id,
             student_id=student_id,
@@ -449,9 +491,60 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
             waiver_title=waiver_title,
             waiver_version=waiver_version,
             content_hash=content_hash,
-            artifact_status="stored_reference" if artifact_id else "unavailable",
-            share_status="unavailable",
+            artifact_id=artifact_id,
+            share_link_id=share_link_id,
+            artifact_status=artifact_status,
+            share_status=share_status,
+            gap_note=gap_note,
         )
+
+    async def _artifact_state(
+        self,
+        *,
+        academy_id: str,
+        artifact_id: str | None,
+        signature_id: str,
+    ) -> tuple[str, str, str | None, str]:
+        if not artifact_id:
+            return (
+                "unavailable",
+                "unavailable",
+                None,
+                "Signed waiver artifact/share links are not implemented yet.",
+            )
+        artifact = await self._db["waiver_artifacts"].find_one(
+            {
+                "academy_id": academy_id,
+                "artifact_id": artifact_id,
+                "signature_id": signature_id,
+            }
+        )
+        artifact_status = (
+            str(artifact.get("status") or "stored") if artifact else "stored_reference"
+        )
+        share = await self._db["waiver_share_links"].find_one(
+            {
+                "academy_id": academy_id,
+                "artifact_id": artifact_id,
+                "signature_id": signature_id,
+                "status": "active",
+            }
+        )
+        share_status = "available" if share else "unavailable"
+        share_link_id = str(share.get("share_link_id") or "") if share else None
+        if artifact and share:
+            gap_note = (
+                "Signed waiver artifact metadata is stored and an authorized share link is active."
+            )
+        elif artifact:
+            gap_note = (
+                "Signed waiver artifact metadata is stored; no active share link is available."
+            )
+        else:
+            gap_note = (
+                "Signed waiver has an artifact reference, but stored artifact metadata is missing."
+            )
+        return artifact_status, share_status, share_link_id or None, gap_note
 
     async def _student_by_id(self, academy_id: str, student_id: str) -> dict[str, Any] | None:
         doc = await self._db["students"].find_one(
@@ -469,6 +562,13 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
         if BsonObjectId.is_valid(value):
             filters.append({"_id": BsonObjectId(value)})
         return filters
+
+    @staticmethod
+    def _template_status(doc: dict[str, Any]) -> str:
+        status = str(doc.get("status") or "active")
+        if status == "published":
+            return "active"
+        return status
 
     def _to_acceptance(
         self,
@@ -501,9 +601,11 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
         self,
         doc: dict[str, Any],
         version_info: dict[str, tuple[str | None, str | None]],
+        share_links_by_artifact: dict[str, str],
     ) -> AdminWaiverAcceptance:
         template_id = str(doc.get("waiver_template_id") or "")
         version, template_hash = version_info.get(template_id, (None, None))
+        artifact_id = str(doc.get("artifact_id") or "") or None
         return AdminWaiverAcceptance(
             signature_id=str(doc.get("waiver_signature_id") or doc.get("_id")),
             student_id=str(doc.get("student_id") or ""),
@@ -515,7 +617,8 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
             accepted_at=self._as_datetime(doc.get("signed_at")),
             signer_name=str(doc.get("signer_name") or "") or None,
             signer_email=str(doc.get("signer_email") or "") or None,
-            artifact_id=str(doc.get("artifact_id") or "") or None,
+            artifact_id=artifact_id,
+            share_link_id=share_links_by_artifact.get(artifact_id or ""),
         )
 
     @staticmethod

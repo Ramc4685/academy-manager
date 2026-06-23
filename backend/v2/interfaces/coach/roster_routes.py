@@ -1,8 +1,8 @@
 """Coach roster routes.
 
 GET    /coach/sessions/{session_id}/roster              — view roster (assigned only)
-POST   /coach/sessions/{session_id}/roster              — add student (assigned only)
-DELETE /coach/sessions/{session_id}/roster/{student_id} — remove student (assigned only)
+POST   /coach/sessions/{session_id}/roster              — disabled for launch
+DELETE /coach/sessions/{session_id}/roster/{student_id} — disabled for launch
 
 Unassigned coach → 403 (checked before delegating to use cases).
 Wrong persona    → 404 (require_persona guard).
@@ -13,10 +13,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes import (
-    CoachAddStudentToRosterCommand,
-    CoachRemoveStudentFromRosterCommand,
-)
 from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
 from backend.v2.interfaces.coach.views import (
     AddStudentToRosterRequest,
@@ -31,6 +27,10 @@ router = APIRouter(tags=["coach.roster"])
 
 _FORBIDDEN = HTTPException(
     status_code=status.HTTP_403_FORBIDDEN, detail="session not assigned to coach"
+)
+_ROSTER_MUTATION_FORBIDDEN = HTTPException(
+    status_code=status.HTTP_403_FORBIDDEN,
+    detail="coach roster changes are disabled; admin approval is required",
 )
 
 
@@ -76,21 +76,8 @@ async def add_student_to_roster(
     claims: AuthClaims = Depends(require_persona("coach")),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> AddStudentToRosterResponse:
-    await _require_assigned(use_cases, claims.user_id, session_id)
-    cmd = CoachAddStudentToRosterCommand(
-        coach_id=claims.user_id,
-        session_id=session_id,
-        student_id=body.student_id,
-        parent_id=body.parent_id,
-        full_name=body.full_name,
-    )
-    enrollment = await use_cases.add_student_to_roster.execute(cmd)
-    return AddStudentToRosterResponse(
-        enrollment_id=enrollment.enrollment_id,
-        session_id=enrollment.session_id,
-        student_id=enrollment.student_id,
-        status=enrollment.status,
-    )
+    _ = session_id, body, claims, use_cases
+    raise _ROSTER_MUTATION_FORBIDDEN
 
 
 @router.delete(
@@ -104,10 +91,5 @@ async def remove_student_from_roster(
     claims: AuthClaims = Depends(require_persona("coach")),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> None:
-    await _require_assigned(use_cases, claims.user_id, session_id)
-    cmd = CoachRemoveStudentFromRosterCommand(
-        coach_id=claims.user_id,
-        session_id=session_id,
-        student_id=student_id,
-    )
-    await use_cases.remove_student_from_roster.execute(cmd)
+    _ = session_id, student_id, claims, use_cases
+    raise _ROSTER_MUTATION_FORBIDDEN

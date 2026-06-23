@@ -7,6 +7,7 @@ import { usePersonaAuth } from "@/lib/auth/use-persona-auth";
 import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
+import { PersonaLogoutButton } from "@/components/persona/logout-button";
 
 export default function ParentLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -63,6 +64,10 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
               Refresh
             </button>
           )}
+          <PersonaLogoutButton
+            className="min-h-touch min-w-touch rounded-lg p-2 text-slate-400 hover:bg-white/10"
+            labelClassName="sr-only"
+          />
         </div>
       </header>
 

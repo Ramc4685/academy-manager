@@ -30,9 +30,6 @@ env:
   NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.REACT_APP_FIREBASE_MESSAGING_SENDER_ID }}
   NEXT_PUBLIC_FIREBASE_APP_ID: ${{ vars.REACT_APP_FIREBASE_APP_ID }}
   NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID: ${{ vars.REACT_APP_FIREBASE_MEASUREMENT_ID }}
-  # Set the repo variable to "1" only after the tenant domains' /__/auth/handler
-  # redirect URIs are registered on the Google OAuth client (DEPLOYMENT.md,
-  # "Mobile Google sign-in"). Empty/unset keeps the legacy firebaseapp.com flow.
   NEXT_PUBLIC_FIREBASE_AUTH_PROXY: ${{ vars.NEXT_PUBLIC_FIREBASE_AUTH_PROXY || '' }}
 
 jobs:
@@ -381,6 +378,7 @@ jobs:
     timeout-minutes: 20
     needs: [production-approval, changes]
     if: >
+      always() &&
       needs.production-approval.result == 'success' &&
       (needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch') &&
       github.ref == 'refs/heads/main' &&
@@ -404,6 +402,7 @@ jobs:
     timeout-minutes: 20
     needs: [production-approval, changes]
     if: >
+      always() &&
       needs.production-approval.result == 'success' &&
       (needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch') &&
       github.ref == 'refs/heads/main' &&

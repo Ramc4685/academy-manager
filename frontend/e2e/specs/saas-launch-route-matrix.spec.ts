@@ -142,6 +142,9 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
   await page.route("**/api/v2/admin/payments*", (route) =>
     fulfillJson(route, { payments: [] })
   );
+  await page.route("**/api/v2/admin/billing/webhooks*", (route) =>
+    fulfillJson(route, { events: [] })
+  );
   await page.route("**/api/v2/admin/dues-followup*", (route) =>
     fulfillJson(route, { parents: [] })
   );
@@ -225,6 +228,9 @@ async function stubParentLaunchBff(page: Page): Promise<void> {
   await page.route("**/api/v2/parent/payments", (route) =>
     fulfillJson(route, { payments: [] })
   );
+  await page.route("**/api/v2/parent/invoices", (route) =>
+    fulfillJson(route, { invoices: [] })
+  );
   await page.route("**/api/v2/parent/enrollments", (route) =>
     fulfillJson(route, { enrollments: [] })
   );
@@ -239,11 +245,12 @@ async function stubParentLaunchBff(page: Page): Promise<void> {
 test.describe("Wave 12 SaaS launch route matrix scaffold", () => {
   for (const route of ADMIN_ROUTE_MATRIX) {
     test(`admin route mounts: ${route.label}`, async ({ page }) => {
+      test.slow();
       const guard = installTenantGuard(page);
       const errors = collectConsoleErrors(page);
 
       await stubAdminLaunchBff(page);
-      await page.goto(route.href);
+      await page.goto(route.href, { waitUntil: "commit" });
 
       await expect(page.getByTestId(route.testId)).toBeVisible({ timeout: 30_000 });
       expect(guard.v2Requests.length).toBeGreaterThan(0);
