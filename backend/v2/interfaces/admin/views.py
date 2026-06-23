@@ -722,6 +722,23 @@ class SetTuitionDiscountRequest(BaseModel):
     effective_end: date | None = None
     note: str | None = None
 
+    @model_validator(mode="after")
+    def _validate_policy_shape(self) -> SetTuitionDiscountRequest:
+        if self.category == "other" and not (self.category_label or "").strip():
+            raise ValueError("category_label is required when category is 'other'")
+        if self.kind == "percent":
+            if self.percent_bps is None or not (0 < self.percent_bps <= 10000):
+                raise ValueError("percent_bps must be in (0, 10000]")
+        if self.kind == "amount_off" and (
+            self.amount_off_cents is None or self.amount_off_cents < 0
+        ):
+            raise ValueError("amount_off_cents must be >= 0")
+        if self.kind == "fixed_net" and (self.fixed_net_cents is None or self.fixed_net_cents < 0):
+            raise ValueError("fixed_net_cents must be >= 0")
+        if self.effective_end is not None and self.effective_end < self.effective_start:
+            raise ValueError("effective_end must be >= effective_start")
+        return self
+
 
 class AdminEnrollmentQuoteRequest(BaseModel):
     student_id: str | None = None

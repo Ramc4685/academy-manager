@@ -729,6 +729,10 @@ from backend.v2.contexts.billing.application.use_cases.finance import (
     RecordExpense,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
+from backend.v2.contexts.billing.application.use_cases.tuition_discounts import (
+    RemoveTuitionDiscount,
+    SetTuitionDiscount,
+)
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
     ApproveWithdrawalCreditResult,
     WithdrawalCreditPreviewResult,
@@ -739,6 +743,7 @@ from backend.v2.contexts.billing.domain.errors import (
 )
 from backend.v2.contexts.billing.domain.models import Payment
 from backend.v2.contexts.billing.domain.proration import BillingCalculationSnapshot
+from backend.v2.contexts.billing.domain.tuition_discount import TuitionDiscount
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
 )
@@ -1281,6 +1286,45 @@ class FakePaymentRepo:
         self.rows[payment_id] = p.model_copy(update={"status": "pending"})
 
 
+@dataclass
+class FakeTuitionDiscountRepo:
+    active: dict[str, TuitionDiscount] = field(default_factory=dict)
+    set_calls: list[dict[str, Any]] = field(default_factory=list)
+    remove_calls: list[dict[str, str]] = field(default_factory=list)
+
+    async def set_active(
+        self,
+        policy: TuitionDiscount,
+        *,
+        set_by: str,
+    ) -> TuitionDiscount:
+        saved = policy.model_copy(
+            update={
+                "academy_id": "acad",
+                "set_by": set_by,
+                "set_at": _now(),
+            }
+        )
+        self.active[saved.enrollment_id] = saved
+        self.set_calls.append({"policy": saved, "set_by": set_by})
+        return saved
+
+    async def remove(self, enrollment_id: str, *, ended_by: str) -> None:
+        self.active.pop(enrollment_id, None)
+        self.remove_calls.append({"enrollment_id": enrollment_id, "ended_by": ended_by})
+
+    async def active_by_enrollments(
+        self,
+        enrollment_ids: list[str],
+    ) -> dict[str, TuitionDiscount]:
+        requested = set(enrollment_ids)
+        return {
+            enrollment_id: policy
+            for enrollment_id, policy in self.active.items()
+            if enrollment_id in requested
+        }
+
+
 class _FakePreviewWithdrawalCredit:
     async def execute(self, cmd):
         _ = cmd
@@ -1469,6 +1513,7 @@ def admin_seed():
         "pause_requests": FakePauseRequestRepo(),
         "billing_deferrals": FakeBillingDeferrals(),
         "payments": FakePaymentRepo(),
+        "tuition_discounts": FakeTuitionDiscountRepo(),
         "expenses": FakeExpenseRepo(),
         "payouts": FakePayoutRepo(),
         "messages": FakeMessageRepo(),
@@ -1494,6 +1539,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     billing_deferrals = seed["billing_deferrals"]
     lifecycle_billing = FakeLifecycleBilling()
     payments = seed["payments"]
+    tuition_discounts = seed["tuition_discounts"]
     outbox = seed["outbox"]
     idem = seed["idempotency"]
     stripe = seed["stripe"]
@@ -1576,6 +1622,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     mark_payment_paid = MarkPaymentPaid(payments=payments)
     apply_payment_discount = ApplyPaymentDiscount(payments=payments)
     undo_payment_paid = UndoPaymentPaid(payments=payments)
+    set_tuition_discount = SetTuitionDiscount(discounts=tuition_discounts)
+    remove_tuition_discount = RemoveTuitionDiscount(discounts=tuition_discounts)
     record_expense = RecordExpense(expenses=expenses, academy_id="acad")  # type: ignore[arg-type]
     edit_expense = EditExpense(expenses=expenses)  # type: ignore[arg-type]
     delete_expense = DeleteExpense(expenses=expenses)  # type: ignore[arg-type]
@@ -1882,6 +1930,9 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         update_academy_notifications_use_case=AsyncMock(),
         get_academy_gateway_use_case=AsyncMock(),
         change_user_role=AsyncMock(),
+        set_tuition_discount=set_tuition_discount,
+        remove_tuition_discount=remove_tuition_discount,
+        tuition_discounts=tuition_discounts,
         reconcile_stripe_billing=AsyncMock(return_value={}),
     )
 
