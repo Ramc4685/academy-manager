@@ -286,6 +286,9 @@ class AdminUseCases:
     list_failed_payment_attempts: object | None = None  # async () -> list[dict]
     list_invoice_attempts: object | None = None  # async (invoice_id) -> list[dict]
     replay_webhook_event: object | None = None  # async (event_id) -> bool
+    # Legacy invoice ↔ Stripe charge review queue (#242 WI-3).
+    list_legacy_match_queue: object | None = None  # async () -> list[dict]
+    confirm_legacy_match: object | None = None  # async (**kwargs) -> dict
     add_invoice_line: object | None = None
     remove_invoice_line: object | None = None
     void_billing_invoice: object | None = None

@@ -27,6 +27,8 @@ class FakeStripeGateway(StripeGateway):
         self.connect_links: list[dict[str, str]] = []
         self.connect_codes: list[str] = []
         self.payment_intents: list[dict[str, Any]] = []
+        # customer_id -> list of charge dicts (legacy match candidates, #242 WI-3)
+        self.charges_by_customer: dict[str, list[dict[str, Any]]] = {}
 
     async def create_checkout_session(
         self,
@@ -181,6 +183,12 @@ class FakeStripeGateway(StripeGateway):
             and str(pi.get("status") or "").lower() == "succeeded"
         ]
         return matched[: max(1, min(int(limit), 100))]
+
+    async def list_charges_for_customer(
+        self, *, stripe_customer_id: str, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        charges = self.charges_by_customer.get(stripe_customer_id, [])
+        return charges[: max(1, min(int(limit), 100))]
 
     async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
         refund_id = f"re_test_{new_ulid()}"

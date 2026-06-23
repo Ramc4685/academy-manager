@@ -1135,3 +1135,89 @@ async def replay_webhook_event(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return ReplayWebhookResponse(replayed=True, event_id=event_id)
+
+
+# --------------------------------------------------------------------------- #
+# Legacy invoice ↔ Stripe charge review queue (#242 WI-3)
+# --------------------------------------------------------------------------- #
+class LegacyMatchCandidateDto(BaseModel):
+    model_config = {"extra": "ignore"}
+
+    stripe_charge_id: str
+    stripe_payment_intent_id: str | None = None
+    amount_cents: int
+    currency: str = "usd"
+    created_at: datetime | None = None
+    description: str | None = None
+    confidence: str
+
+
+class LegacyMatchRowDto(BaseModel):
+    model_config = {"extra": "ignore"}
+
+    invoice_id: str
+    parent_id: str
+    parent_name: str | None = None
+    period: str
+    status: str
+    total_cents: int
+    balance_due_cents: int
+    currency: str = "usd"
+    due_date: date | None = None
+    created_at: datetime | None = None
+    stripe_invoice_id: str | None = None
+    stripe_customer_id: str | None = None
+    candidates: list[LegacyMatchCandidateDto] = Field(default_factory=list)
+
+
+class LegacyMatchQueueResponse(BaseModel):
+    rows: list[LegacyMatchRowDto]
+
+
+class ConfirmLegacyMatchRequest(BaseModel):
+    invoice_id: str
+    stripe_charge_id: str
+    amount_cents: int = Field(gt=0)
+    stripe_payment_intent_id: str | None = None
+    paid_at: datetime | None = None
+
+
+class ConfirmLegacyMatchResponse(BaseModel):
+    invoice_id: str
+    payment_id: str
+    invoice_status: str
+    balance_due_cents: int
+
+
+@router.get("/billing/legacy-match-queue", response_model=LegacyMatchQueueResponse)
+async def list_legacy_match_queue(
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> LegacyMatchQueueResponse:
+    list_queue = _required_callable(use_cases.list_legacy_match_queue, "Legacy match queue")
+    try:
+        rows = await list_queue()  # type: ignore[operator]
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return LegacyMatchQueueResponse(rows=[LegacyMatchRowDto(**r) for r in rows])
+
+
+@router.post("/billing/legacy-match/confirm", response_model=ConfirmLegacyMatchResponse)
+async def confirm_legacy_match(
+    body: ConfirmLegacyMatchRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> ConfirmLegacyMatchResponse:
+    confirm = _required_callable(use_cases.confirm_legacy_match, "Legacy match confirm")
+    try:
+        result = await confirm(  # type: ignore[operator]
+            invoice_id=body.invoice_id,
+            stripe_charge_id=body.stripe_charge_id,
+            amount_cents=body.amount_cents,
+            stripe_payment_intent_id=body.stripe_payment_intent_id,
+            paid_at=body.paid_at,
+            recorded_by=claims.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ConfirmLegacyMatchResponse(**result)

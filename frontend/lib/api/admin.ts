@@ -1716,6 +1716,67 @@ export function replayWebhookEvent(
   );
 }
 
+// --- Legacy invoice ↔ Stripe charge review queue (#242 WI-3) --------------- //
+export interface LegacyMatchCandidate {
+  stripe_charge_id: string;
+  stripe_payment_intent_id: string | null;
+  amount_cents: number;
+  currency: string;
+  created_at: string | null;
+  description: string | null;
+  confidence: "high" | "medium" | string;
+}
+
+export interface LegacyMatchRow {
+  invoice_id: string;
+  parent_id: string;
+  parent_name: string | null;
+  period: string;
+  status: string;
+  total_cents: number;
+  balance_due_cents: number;
+  currency: string;
+  due_date: string | null;
+  created_at: string | null;
+  stripe_invoice_id: string | null;
+  stripe_customer_id: string | null;
+  candidates: LegacyMatchCandidate[];
+}
+
+export interface LegacyMatchQueueResponse {
+  rows: LegacyMatchRow[];
+}
+
+export interface ConfirmLegacyMatchRequest {
+  invoice_id: string;
+  stripe_charge_id: string;
+  amount_cents: number;
+  stripe_payment_intent_id?: string | null;
+  paid_at?: string | null;
+}
+
+export interface ConfirmLegacyMatchResult {
+  invoice_id: string;
+  payment_id: string;
+  invoice_status: string;
+  balance_due_cents: number;
+}
+
+export function fetchLegacyMatchQueue(): Promise<LegacyMatchQueueResponse> {
+  return apiFetch<LegacyMatchQueueResponse>("/admin/billing/legacy-match-queue", {
+    method: "GET",
+  });
+}
+
+export function confirmLegacyMatch(
+  payload: ConfirmLegacyMatchRequest,
+): Promise<ConfirmLegacyMatchResult> {
+  return apiFetch<ConfirmLegacyMatchResult>("/admin/billing/legacy-match/confirm", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function listBillingProducts(): Promise<AdminBillingProductList> {
   return apiFetch<AdminBillingProductList>("/admin/billing/products", {
     method: "GET",

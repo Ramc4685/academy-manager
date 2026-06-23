@@ -354,6 +354,46 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         return rows
 
+    async def list_unmatched_invoices(self) -> list[dict[str, Any]]:
+        """Open/partially_paid invoices with no payment allocation yet.
+
+        These are the legacy/migrated invoices whose historical Stripe payments
+        carry no app metadata, so the reconciler can never auto-match them. They
+        are the input to the human-reviewed match queue (issue #242 WI-3). An
+        invoice with any ``payment_allocations`` row is considered matched and
+        excluded. Newest invoice first.
+        """
+        academy_id = current_academy_id()
+        rows: list[dict[str, Any]] = []
+        inv_cursor = self.collection.find(
+            {"academy_id": academy_id, "status": {"$in": ["open", "partially_paid"]}},
+            sort=[("created_at", -1)],
+        )
+        async for inv in inv_cursor:
+            invoice_id = str(inv.get("invoice_id") or "")
+            if not invoice_id:
+                continue
+            allocation = await self._db["payment_allocations"].find_one(
+                {"academy_id": academy_id, "invoice_id": invoice_id}
+            )
+            if allocation is not None:
+                continue
+            rows.append(
+                {
+                    "invoice_id": invoice_id,
+                    "parent_id": str(inv.get("parent_id") or ""),
+                    "period": str(inv.get("period") or ""),
+                    "status": str(inv.get("status") or "open"),
+                    "total_cents": int(inv.get("total_cents", 0)),
+                    "balance_due_cents": int(inv.get("balance_due_cents", 0)),
+                    "currency": str(inv.get("currency", "usd")),
+                    "due_date": inv.get("due_date"),
+                    "created_at": inv.get("created_at"),
+                    "stripe_invoice_id": inv.get("stripe_invoice_id"),
+                }
+            )
+        return rows
+
     async def allocate_payment(
         self,
         *,

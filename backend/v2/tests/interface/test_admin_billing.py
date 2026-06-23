@@ -1267,3 +1267,100 @@ def test_replay_webhook_event_not_found_returns_404(admin_client):
     admin_client.use_cases.replay_webhook_event = replay_webhook_event
     r = admin_client.post("/api/v2/admin/billing/webhook-events/missing/replay")
     assert r.status_code == 404
+
+
+# --- Legacy invoice ↔ Stripe charge review queue (#242 WI-3) --------------- #
+def test_list_legacy_match_queue(admin_client):
+    rows = [
+        {
+            "invoice_id": "inv-1",
+            "parent_id": "p1",
+            "parent_name": "Sarah M.",
+            "period": "2026-06",
+            "status": "open",
+            "total_cents": 7000,
+            "balance_due_cents": 7000,
+            "currency": "usd",
+            "due_date": date(2026, 6, 30),
+            "created_at": datetime(2026, 6, 1, tzinfo=UTC),
+            "stripe_invoice_id": None,
+            "stripe_customer_id": "cus_1",
+            "candidates": [
+                {
+                    "stripe_charge_id": "ch_legacy_1",
+                    "stripe_payment_intent_id": "pi_legacy_1",
+                    "amount_cents": 7000,
+                    "currency": "usd",
+                    "created_at": datetime(2026, 6, 28, tzinfo=UTC),
+                    "description": "Legacy tuition",
+                    "confidence": "high",
+                }
+            ],
+        }
+    ]
+
+    async def list_legacy_match_queue():
+        return rows
+
+    admin_client.use_cases.list_legacy_match_queue = list_legacy_match_queue
+    r = admin_client.get("/api/v2/admin/billing/legacy-match-queue")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["rows"][0]["invoice_id"] == "inv-1"
+    assert body["rows"][0]["candidates"][0]["confidence"] == "high"
+    assert body["rows"][0]["candidates"][0]["stripe_charge_id"] == "ch_legacy_1"
+
+
+def test_list_legacy_match_queue_unconfigured_returns_503(admin_client):
+    async def list_legacy_match_queue():
+        raise RuntimeError("Stripe charge matching not configured")
+
+    admin_client.use_cases.list_legacy_match_queue = list_legacy_match_queue
+    r = admin_client.get("/api/v2/admin/billing/legacy-match-queue")
+    assert r.status_code == 503
+
+
+def test_confirm_legacy_match(admin_client):
+    captured = {}
+
+    async def confirm_legacy_match(**kwargs):
+        captured.update(kwargs)
+        return {
+            "invoice_id": "inv-1",
+            "payment_id": "legacy-match-ch_legacy_1",
+            "invoice_status": "paid",
+            "balance_due_cents": 0,
+        }
+
+    admin_client.use_cases.confirm_legacy_match = confirm_legacy_match
+    r = admin_client.post(
+        "/api/v2/admin/billing/legacy-match/confirm",
+        json={
+            "invoice_id": "inv-1",
+            "stripe_charge_id": "ch_legacy_1",
+            "amount_cents": 7000,
+            "stripe_payment_intent_id": "pi_legacy_1",
+            "paid_at": "2026-06-28T09:00:00Z",
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["invoice_status"] == "paid"
+    # The admin's identity is threaded through for the audit trail.
+    assert captured["recorded_by"] is not None
+    assert captured["stripe_charge_id"] == "ch_legacy_1"
+
+
+def test_confirm_legacy_match_invalid_returns_400(admin_client):
+    async def confirm_legacy_match(**kwargs):
+        raise ValueError("amount_cents 7000 exceeds balance_due_cents 5000")
+
+    admin_client.use_cases.confirm_legacy_match = confirm_legacy_match
+    r = admin_client.post(
+        "/api/v2/admin/billing/legacy-match/confirm",
+        json={
+            "invoice_id": "inv-1",
+            "stripe_charge_id": "ch_legacy_1",
+            "amount_cents": 7000,
+        },
+    )
+    assert r.status_code == 400
