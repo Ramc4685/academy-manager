@@ -16,14 +16,18 @@ import * as Dialog from "@radix-ui/react-dialog";
 
 import {
   chargeAdminInvoiceAutopay,
+  confirmLegacyMatch,
   fetchFailedPaymentAttempts,
   fetchInvoiceAttempts,
+  fetchLegacyMatchQueue,
   fetchReconciliationRuns,
   listBillingWebhookEvents,
   replayWebhookEvent,
   triggerReconciliation,
   type BillingPaymentAttempt,
   type FailedPaymentRow,
+  type LegacyMatchCandidate,
+  type LegacyMatchRow,
   type ReconciliationRun,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
@@ -84,6 +88,10 @@ export default function BillingHealthPage() {
   const [attemptsInvoice, setAttemptsInvoice] = useState<FailedPaymentRow | null>(null);
   const [retryResult, setRetryResult] = useState<Record<string, string>>({});
   const [replayState, setReplayState] = useState<Record<string, string>>({});
+  const [matchTarget, setMatchTarget] = useState<{
+    row: LegacyMatchRow;
+    candidate: LegacyMatchCandidate;
+  } | null>(null);
 
   const runsQuery = useQuery({
     queryKey: queryKeys.admin.reconciliationRuns(),
@@ -98,10 +106,15 @@ export default function BillingHealthPage() {
     queryKey: queryKeys.admin.quarantinedEvents(),
     queryFn: () => listBillingWebhookEvents({ status: "quarantined", limit: 50 }),
   });
+  const legacyQuery = useQuery({
+    queryKey: queryKeys.admin.legacyMatchQueue(),
+    queryFn: () => fetchLegacyMatchQueue(),
+  });
 
   const runs = runsQuery.data?.runs ?? [];
   const failedRows = failedQuery.data?.rows ?? [];
   const quarantined = quarantinedQuery.data?.events ?? [];
+  const legacyRows = legacyQuery.data?.rows ?? [];
   const latestRun = runs[0];
 
   const invalidateAll = () => {
@@ -139,6 +152,24 @@ export default function BillingHealthPage() {
     },
     onError: (err: Error, eventId) => {
       setReplayState((prev) => ({ ...prev, [eventId]: err.message ?? "Replay failed" }));
+    },
+  });
+
+  const confirmMatchMutation = useMutation({
+    mutationFn: () => {
+      const { row, candidate } = matchTarget!;
+      return confirmLegacyMatch({
+        invoice_id: row.invoice_id,
+        stripe_charge_id: candidate.stripe_charge_id,
+        amount_cents: row.balance_due_cents,
+        stripe_payment_intent_id: candidate.stripe_payment_intent_id,
+        paid_at: candidate.created_at,
+      });
+    },
+    onSuccess: () => {
+      setMatchTarget(null);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.legacyMatchQueue() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.failedAttempts() });
     },
   });
 
@@ -371,7 +402,48 @@ export default function BillingHealthPage() {
         </Card>
       </Section>
 
+      {/* Section 4: Legacy invoice ↔ Stripe charge review queue (#242 WI-3) */}
+      <Section
+        title="Legacy Invoice Matches"
+        hint="Migrated invoices with no app-linked payment · confirm a charge to settle"
+        badge={legacyRows.length > 0 ? `${legacyRows.length} to review` : undefined}
+      >
+        <Card p={0}>
+          {legacyQuery.isLoading ? (
+            <TableSkeleton />
+          ) : legacyQuery.isError ? (
+            <Alert tone="red">
+              {(legacyQuery.error as Error)?.message ?? "Could not load the match queue."}
+            </Alert>
+          ) : legacyRows.length === 0 ? (
+            <Alert tone="green">No unmatched legacy invoices.</Alert>
+          ) : (
+            <div className="divide-y divide-rally-line/60" data-testid="legacy-match-list">
+              {legacyRows.map((row) => (
+                <LegacyMatchRowView
+                  key={row.invoice_id}
+                  row={row}
+                  onConfirm={(candidate) => setMatchTarget({ row, candidate })}
+                />
+              ))}
+            </div>
+          )}
+        </Card>
+      </Section>
+
       <AttemptsDialog row={attemptsInvoice} onClose={() => setAttemptsInvoice(null)} />
+      <ConfirmMatchDialog
+        target={matchTarget}
+        pending={confirmMatchMutation.isPending}
+        error={confirmMatchMutation.isError ? (confirmMatchMutation.error as Error)?.message : null}
+        onConfirm={() => confirmMatchMutation.mutate()}
+        onClose={() => {
+          if (!confirmMatchMutation.isPending) {
+            confirmMatchMutation.reset();
+            setMatchTarget(null);
+          }
+        }}
+      />
     </div>
   );
 }
@@ -478,6 +550,150 @@ function AttemptsDialog({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+function confidenceChip(confidence: string): { variant: ChipVariant; label: string } {
+  if (confidence === "high") return { variant: "paid", label: "HIGH MATCH" };
+  return { variant: "pending", label: "REVIEW" };
+}
+
+function LegacyMatchRowView({
+  row,
+  onConfirm,
+}: {
+  row: LegacyMatchRow;
+  onConfirm: (candidate: LegacyMatchCandidate) => void;
+}) {
+  return (
+    <div className="p-4" data-testid={`legacy-row-${row.invoice_id}`}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div>
+          <div className="font-medium text-rally-ink">{row.parent_name ?? row.parent_id}</div>
+          <div className="text-xs text-rally-muted">
+            {row.invoice_id} · {row.period} · balance {formatCents(row.balance_due_cents)}
+          </div>
+        </div>
+        <Chip
+          variant={row.status === "partially_paid" ? "pending" : "failed"}
+          label={row.status.replace(/_/g, " ").toUpperCase()}
+        />
+      </div>
+
+      {row.candidates.length === 0 ? (
+        <p className="mt-3 text-sm text-rally-muted">
+          {row.stripe_customer_id
+            ? "No matching Stripe charges found for this customer."
+            : "No Stripe customer on file for this parent."}
+        </p>
+      ) : (
+        <ul className="mt-3 space-y-2" data-testid={`legacy-candidates-${row.invoice_id}`}>
+          {row.candidates.map((candidate) => {
+            const chip = confidenceChip(candidate.confidence);
+            const exact = candidate.amount_cents === row.balance_due_cents;
+            return (
+              <li
+                key={candidate.stripe_charge_id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rally-line/60 px-3 py-2"
+              >
+                <div className="text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium tabular-nums">
+                      {formatCents(candidate.amount_cents)}
+                    </span>
+                    <Chip variant={chip.variant} label={chip.label} />
+                    {!exact && (
+                      <span className="text-xs text-amber-600">≠ balance</span>
+                    )}
+                  </div>
+                  <div className="mt-0.5 font-mono text-xs text-rally-muted">
+                    {truncate(candidate.stripe_charge_id, 22)} · {formatTimestamp(candidate.created_at)}
+                  </div>
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={!exact}
+                  onClick={() => onConfirm(candidate)}
+                  data-testid={`confirm-${row.invoice_id}-${candidate.stripe_charge_id}`}
+                >
+                  Confirm match
+                </Button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function ConfirmMatchDialog({
+  target,
+  pending,
+  error,
+  onConfirm,
+  onClose,
+}: {
+  target: { row: LegacyMatchRow; candidate: LegacyMatchCandidate } | null;
+  pending: boolean;
+  error: string | null;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const open = target !== null;
+  return (
+    <Dialog.Root open={open} onOpenChange={(v) => !v && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-rally-ink/40" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-xl focus:outline-none">
+          <Overline>Confirm legacy match</Overline>
+          <Dialog.Title className="mt-1 font-display text-xl font-semibold tracking-[-0.01em]">
+            Apply this Stripe charge?
+          </Dialog.Title>
+          <Dialog.Description className="mt-1 mb-4 text-sm text-rally-muted">
+            This records a back-dated payment and marks the invoice as paid. It cannot be undone
+            from here — verify the charge belongs to this invoice.
+          </Dialog.Description>
+
+          {target && (
+            <dl className="space-y-2 rounded-lg bg-rally-line/20 p-3 text-sm">
+              <Row label="Invoice" value={`${target.row.invoice_id} · ${target.row.period}`} />
+              <Row label="Parent" value={target.row.parent_name ?? target.row.parent_id} />
+              <Row label="Charge" value={target.candidate.stripe_charge_id} mono />
+              <Row label="Amount" value={formatCents(target.candidate.amount_cents)} />
+              <Row label="Charged" value={formatTimestamp(target.candidate.created_at)} />
+            </dl>
+          )}
+
+          {error && <p className="mt-3 rounded-md bg-red-50 p-2 text-sm text-red-700">{error}</p>}
+
+          <div className="flex justify-end gap-2 pt-4">
+            <Button variant="secondary" size="sm" onClick={onClose} disabled={pending}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={onConfirm}
+              disabled={pending}
+              data-testid="confirm-match-submit"
+            >
+              {pending ? "Recording…" : "Confirm & record payment"}
+            </Button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className="text-rally-muted">{label}</dt>
+      <dd className={`text-right text-rally-ink ${mono ? "font-mono text-xs" : ""}`}>{value}</dd>
+    </div>
   );
 }
 

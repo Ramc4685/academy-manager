@@ -28,6 +28,13 @@ from backend.v2.contexts.billing.domain.proration import (
     FirstMonthProrationPolicy,
     schedule_signature,
 )
+from backend.v2.contexts.billing.domain.tuition_discount import (
+    TuitionDiscount,
+    monthly_discount_cents,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo import (
+    MongoTuitionDiscountRepository,
+)
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
@@ -51,11 +58,13 @@ class MongoPaymentRepository(TenantScopedRepository):
         *,
         clock=lambda: datetime.now(UTC),
         credit_ledger: Any | None = None,
+        discounts: Any | None = None,
         ledger_repo: Any | None = None,
     ) -> None:
         super().__init__(db)
         self._clock = clock
         self._credit_ledger = credit_ledger
+        self._discounts = discounts or MongoTuitionDiscountRepository(db, clock=clock)
         self._ledger_repo = ledger_repo  # MongoBillingLedgerRepository | None — Phase 2A dual-write
 
     @staticmethod
@@ -873,7 +882,12 @@ class MongoPaymentRepository(TenantScopedRepository):
             session_doc = await self._db["sessions"].find_one(
                 {"academy_id": academy_id, "session_id": session_id}
             )
-            gross_amount_cents, snapshot_id = await _resolve_charge_for_enrollment(
+            (
+                gross_amount_cents,
+                discount_cents,
+                net_amount_cents,
+                snapshot_id,
+            ) = await _resolve_charge_for_enrollment(
                 repo=self,
                 enrollment=enrollment,
                 session_doc=session_doc or {},
@@ -965,11 +979,13 @@ class MongoPaymentRepository(TenantScopedRepository):
                 applied_credit_cents = await self._credit_ledger.apply_available_credits(
                     parent_id=parent_id,
                     invoice_id=payment_id,
-                    amount_due_cents=gross_amount_cents,
+                    amount_due_cents=net_amount_cents,
                 )
-            amount_cents = max(gross_amount_cents - applied_credit_cents, 0)
+            # Recurring tuition discount (#244) is applied to the net charge before
+            # the ledger write, so the generated invoice reflects the discounted amount.
             # Phase 2A complete: write only to the ledger (legacy Payment write removed).
             # Phase 5 will delete MongoPaymentRepository once the prod backfill is confirmed.
+            amount_cents = max(net_amount_cents - applied_credit_cents, 0)
             if self._ledger_repo is not None:
                 await self._dual_write_ledger_invoice(
                     ledger_repo=self._ledger_repo,
@@ -1397,11 +1413,13 @@ async def _resolve_charge_for_enrollment(
     session_doc: dict[str, object],
     period: str,
     now: datetime,
-) -> tuple[int, str | None]:
-    """Return (gross_amount_cents, snapshot_id) for a monthly invoice row.
+) -> tuple[int, int, int, str | None]:
+    """Return (gross_cents, discount_cents, net_cents, snapshot_id) for a monthly row.
 
     This function owns all proration decisions; the repo class is a pure
-    storage delegate here.
+    storage delegate here. A recurring tuition discount (issue #244), if active and
+    effective for the period, is applied at monthly scale and threaded through the
+    existing proration policy so discounted invoices stay consistent with proration.
     """
     amount_cents = _session_amount_cents(session_doc)
     billing_start = _coerce_datetime(
@@ -1414,12 +1432,22 @@ async def _resolve_charge_for_enrollment(
     billing_period = BillingPeriod.from_label(period, timezone_name=timezone_name)
     occurrences = await repo._occurrences_for_session(session_doc, billing_period)
 
+    policy = await repo._discounts.get_active(enrollment_id)
+    mdc = (
+        monthly_discount_cents(policy, monthly_price_cents=amount_cents)
+        if policy is not None and _policy_applies(policy, billing_period)
+        else 0
+    )
+
     # Not a first-month enrollment → full monthly tuition
     if billing_start is None or billing_start.strftime("%Y-%m") != period:
+        net = max(amount_cents - mdc, 0)
+        discount = amount_cents - net
         snapshot = _build_monthly_tuition_snapshot(
             occurrences=occurrences,
             billing_period=billing_period,
             monthly_price_cents=amount_cents,
+            discount_cents=discount,
             now=now,
         )
         snapshot_id = await repo.persist_monthly_tuition(
@@ -1428,7 +1456,7 @@ async def _resolve_charge_for_enrollment(
             session_id=str(enrollment.get("session_id") or session_doc.get("session_id") or ""),
             student_id=str(enrollment.get("student_id") or ""),
         )
-        return amount_cents, snapshot_id
+        return amount_cents, discount, net, snapshot_id
 
     # Check if already prorated in a prior run
     academy_id = current_academy_id()
@@ -1442,17 +1470,29 @@ async def _resolve_charge_for_enrollment(
         }
     )
     if prior_consumed is not None:
-        return 0, str(prior_consumed.get("snapshot_id"))
+        return 0, 0, 0, str(prior_consumed.get("snapshot_id"))
 
-    # First-month proration
+    # First-month proration. Net is prorated AFTER the discount (the proration
+    # policy already subtracts discount_cents before prorating); gross is the same
+    # proration with no discount, so discount = gross_prorated - net_prorated exactly.
     snapshot = _build_proration_snapshot_for_first_month(
         occurrences=occurrences,
         billing_period=billing_period,
         billing_start=billing_start,
         amount_cents=amount_cents,
+        discount_cents=mdc,
         now=now,
         enrollment_id=enrollment_id,
     )
+    net_prorated = snapshot.final_amount_cents
+    gross_prorated = _prorated_gross(
+        occurrences=occurrences,
+        billing_period=billing_period,
+        billing_start=billing_start,
+        amount_cents=amount_cents,
+        now=now,
+    )
+    discount = max(gross_prorated - net_prorated, 0)
     snapshot_id = await repo.persist_consumed_first_month(
         snapshot=snapshot,
         enrollment_id=enrollment_id,
@@ -1460,7 +1500,37 @@ async def _resolve_charge_for_enrollment(
         student_id=str(enrollment.get("student_id") or ""),
         now=now,
     )
-    return snapshot.final_amount_cents, snapshot_id
+    return gross_prorated, discount, net_prorated, snapshot_id
+
+
+def _policy_applies(policy: TuitionDiscount, billing_period: BillingPeriod) -> bool:
+    """True when the policy's effective window overlaps the billing period."""
+    p_start = billing_period.start_at.date()
+    p_end = billing_period.end_at.date()
+    return policy.effective_start <= p_end and (
+        policy.effective_end is None or policy.effective_end >= p_start
+    )
+
+
+def _prorated_gross(
+    *,
+    occurrences: list[ClassOccurrence],
+    billing_period: BillingPeriod,
+    billing_start: datetime,
+    amount_cents: int,
+    now: datetime,
+) -> int:
+    """Prorated tuition with NO discount (the gross side of a discounted month)."""
+    raw = FirstMonthProrationPolicy().quote(
+        monthly_price_cents=amount_cents,
+        discount_cents=0,
+        period=billing_period,
+        occurrences=occurrences,
+        billing_start_at=billing_start,
+        calculated_at=now,
+        calculated_by="SYSTEM",
+    )
+    return raw.final_amount_cents
 
 
 def _build_proration_snapshot_for_first_month(
@@ -1469,6 +1539,7 @@ def _build_proration_snapshot_for_first_month(
     billing_period: BillingPeriod,
     billing_start: datetime,
     amount_cents: int,
+    discount_cents: int,
     now: datetime,
     enrollment_id: str,
 ) -> BillingCalculationSnapshot:
@@ -1476,7 +1547,7 @@ def _build_proration_snapshot_for_first_month(
     snapshot_id = str(new_ulid())
     raw = FirstMonthProrationPolicy().quote(
         monthly_price_cents=amount_cents,
-        discount_cents=0,
+        discount_cents=discount_cents,
         period=billing_period,
         occurrences=occurrences,
         billing_start_at=billing_start,
@@ -1491,6 +1562,7 @@ def _build_monthly_tuition_snapshot(
     occurrences: list[ClassOccurrence],
     billing_period: BillingPeriod,
     monthly_price_cents: int,
+    discount_cents: int,
     now: datetime,
 ) -> BillingCalculationSnapshot:
     """Build a CONSUMED monthly-tuition snapshot (no proration, full amount)."""
@@ -1506,7 +1578,7 @@ def _build_monthly_tuition_snapshot(
         status="CONSUMED",
         calculation_type="MONTHLY_TUITION",
         monthly_price_cents=monthly_price_cents,
-        discount_cents=0,
+        discount_cents=discount_cents,
         billing_period_start=billing_period.start_at,
         billing_period_end=billing_period.end_at,
         billing_period_label=billing_period.label,
@@ -1514,7 +1586,7 @@ def _build_monthly_tuition_snapshot(
         total_eligible_classes=len(eligible),
         billable_remaining_classes=len(eligible),
         proration_ratio=f"{len(eligible)}/{len(eligible)}" if eligible else "0/0",
-        final_amount_cents=monthly_price_cents,
+        final_amount_cents=max(monthly_price_cents - discount_cents, 0),
         included_occurrence_ids=included,
         excluded_occurrences={},
         schedule_signature=schedule_signature(eligible, timezone_name=billing_period.timezone),

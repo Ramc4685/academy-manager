@@ -45,6 +45,21 @@ class AdminStudentView(BaseModel):
     dues_status: Literal["current", "due", "overdue"] = "current"
 
 
+class AdminStudentSessionDiscountView(BaseModel):
+    """Recurring tuition discount badge data for a student's session (issue #244)."""
+
+    category: str
+    category_label: str | None = None
+    kind: str
+    label: str
+    gross_cents: int
+    discount_cents: int
+    net_cents: int
+    status: str
+    effective_start: date | None = None
+    effective_end: date | None = None
+
+
 class AdminStudentSessionSummaryView(BaseModel):
     enrollment_id: str
     session_id: str
@@ -56,6 +71,7 @@ class AdminStudentSessionSummaryView(BaseModel):
     payment_mode: str | None = None
     subscription_status: str | None = None
     amount_cents: int | None = None
+    discount: AdminStudentSessionDiscountView | None = None
 
 
 class AdminStudentPaymentSummaryView(BaseModel):
@@ -690,6 +706,21 @@ class BillingWebhookQueueResponse(BaseModel):
 class ApplyPaymentDiscountRequest(BaseModel):
     discount_cents: int
     reason: str = Field(min_length=1)
+
+
+class SetTuitionDiscountRequest(BaseModel):
+    """Create/replace the active recurring tuition discount for an enrollment (#244)."""
+
+    student_id: str
+    category: Literal["owner_child", "coach_child", "scholarship", "sibling", "other"]
+    category_label: str | None = None
+    kind: Literal["waiver", "percent", "amount_off", "fixed_net"]
+    percent_bps: int | None = None
+    amount_off_cents: int | None = None
+    fixed_net_cents: int | None = None
+    effective_start: date
+    effective_end: date | None = None
+    note: str | None = None
 
 
 class AdminEnrollmentQuoteRequest(BaseModel):

@@ -250,6 +250,24 @@ class RealStripeGateway(StripeGateway):
         except self._stripe.StripeError as exc:
             raise ValueError(f"Stripe PaymentIntent search failed: {exc}") from exc
 
+    async def list_charges_for_customer(
+        self, *, stripe_customer_id: str, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit), 100))
+
+        def _list() -> list[dict[str, Any]]:
+            charges = self._stripe.Charge.list(
+                customer=stripe_customer_id,
+                limit=safe_limit,
+            )
+            data = getattr(charges, "data", None) or []
+            return [_stripe_object_to_dict(item) for item in data]
+
+        try:
+            return await asyncio.to_thread(_list)
+        except self._stripe.StripeError as exc:
+            raise ValueError(f"Stripe Charge list failed: {exc}") from exc
+
     async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
         def _create() -> Any:
             kwargs: dict[str, Any] = {"payment_intent": payment_intent_id}

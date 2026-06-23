@@ -202,6 +202,16 @@ class StripeGateway(Protocol):
     ) -> list[dict[str, Any]]:
         """Find recently paid PaymentIntents carrying app-owned invoice metadata."""
 
+    async def list_charges_for_customer(
+        self, *, stripe_customer_id: str, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """List a customer's recent succeeded charges (legacy invoice match candidates).
+
+        Legacy/migrated payments carry no app metadata, so they cannot be matched
+        by metadata. This surfaces a customer's historical charges so an admin can
+        review and confirm a charge ↔ invoice match by hand (issue #242 WI-3).
+        """
+
     async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
         """Returns Stripe refund id."""
 

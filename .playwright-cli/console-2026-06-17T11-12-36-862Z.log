@@ -1,0 +1,11 @@
+[ 2834778ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://blno-academy.localhost:3000/api/v2/admin/programs?academy_id=blno:0
+[13045960ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:9099/securetoken.googleapis.com/v1/token?key=AIzaSyDVSdIRkKcA_y3p4JBMhCWUgS8ZfqaI0NQ:0
+[13045967ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:9099/securetoken.googleapis.com/v1/token?key=AIzaSyDVSdIRkKcA_y3p4JBMhCWUgS8ZfqaI0NQ:0
+[13045967ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:9099/securetoken.googleapis.com/v1/token?key=AIzaSyDVSdIRkKcA_y3p4JBMhCWUgS8ZfqaI0NQ:0
+[13046979ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:9099/securetoken.googleapis.com/v1/token?key=AIzaSyDVSdIRkKcA_y3p4JBMhCWUgS8ZfqaI0NQ:0
+[13046980ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:9099/securetoken.googleapis.com/v1/token?key=AIzaSyDVSdIRkKcA_y3p4JBMhCWUgS8ZfqaI0NQ:0
+[13048991ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:9099/securetoken.googleapis.com/v1/token?key=AIzaSyDVSdIRkKcA_y3p4JBMhCWUgS8ZfqaI0NQ:0
+[13048992ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:9099/securetoken.googleapis.com/v1/token?key=AIzaSyDVSdIRkKcA_y3p4JBMhCWUgS8ZfqaI0NQ:0
+[13053013ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:9099/securetoken.googleapis.com/v1/token?key=AIzaSyDVSdIRkKcA_y3p4JBMhCWUgS8ZfqaI0NQ:0
+[13053014ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:9099/securetoken.googleapis.com/v1/token?key=AIzaSyDVSdIRkKcA_y3p4JBMhCWUgS8ZfqaI0NQ:0
+[13893265ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9099/securetoken.googleapis.com/v1/token?key=AIzaSyDVSdIRkKcA_y3p4JBMhCWUgS8ZfqaI0NQ:0

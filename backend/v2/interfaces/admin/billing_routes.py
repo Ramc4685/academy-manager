@@ -22,6 +22,10 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
 from backend.v2.contexts.billing.application.use_cases.issue_refund import (
     IssueRefundCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.tuition_discounts import (
+    RemoveTuitionDiscountCommand,
+    SetTuitionDiscountCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
     ApproveWithdrawalCreditCommand,
     PreviewWithdrawalCreditCommand,
@@ -59,6 +63,7 @@ from backend.v2.interfaces.admin.views import (
     ReconcileStripeBillingResponse,
     RecordExpenseRequest,
     SendInvoiceResponse,
+    SetTuitionDiscountRequest,
     WithdrawalCreditApproveRequest,
     WithdrawalCreditApproveResponse,
     WithdrawalCreditPreviewRequest,
@@ -66,6 +71,7 @@ from backend.v2.interfaces.admin.views import (
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
+from backend.v2.shared.ids import new_ulid
 
 router = APIRouter(tags=["admin.billing"])
 
@@ -360,6 +366,45 @@ async def apply_payment_discount(
             discount_cents=body.discount_cents,
             reason=body.reason,
         )
+    )
+    return {"ok": True}
+
+
+@router.put("/enrollments/{enrollment_id}/tuition-discount")
+async def set_tuition_discount(
+    enrollment_id: str,
+    body: SetTuitionDiscountRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> dict[str, bool]:
+    await use_cases.set_tuition_discount.execute(
+        SetTuitionDiscountCommand(
+            discount_id=str(new_ulid()),
+            enrollment_id=enrollment_id,
+            student_id=body.student_id,
+            category=body.category,
+            category_label=body.category_label,
+            kind=body.kind,
+            percent_bps=body.percent_bps,
+            amount_off_cents=body.amount_off_cents,
+            fixed_net_cents=body.fixed_net_cents,
+            effective_start=body.effective_start,
+            effective_end=body.effective_end,
+            note=body.note,
+            set_by=claims.user_id,
+        )
+    )
+    return {"ok": True}
+
+
+@router.delete("/enrollments/{enrollment_id}/tuition-discount")
+async def remove_tuition_discount(
+    enrollment_id: str,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> dict[str, bool]:
+    await use_cases.remove_tuition_discount.execute(
+        RemoveTuitionDiscountCommand(enrollment_id=enrollment_id, ended_by=claims.user_id)
     )
     return {"ok": True}
 
@@ -1088,3 +1133,89 @@ async def replay_webhook_event(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return ReplayWebhookResponse(replayed=True, event_id=event_id)
+
+
+# --------------------------------------------------------------------------- #
+# Legacy invoice ↔ Stripe charge review queue (#242 WI-3)
+# --------------------------------------------------------------------------- #
+class LegacyMatchCandidateDto(BaseModel):
+    model_config = {"extra": "ignore"}
+
+    stripe_charge_id: str
+    stripe_payment_intent_id: str | None = None
+    amount_cents: int
+    currency: str = "usd"
+    created_at: datetime | None = None
+    description: str | None = None
+    confidence: str
+
+
+class LegacyMatchRowDto(BaseModel):
+    model_config = {"extra": "ignore"}
+
+    invoice_id: str
+    parent_id: str
+    parent_name: str | None = None
+    period: str
+    status: str
+    total_cents: int
+    balance_due_cents: int
+    currency: str = "usd"
+    due_date: date | None = None
+    created_at: datetime | None = None
+    stripe_invoice_id: str | None = None
+    stripe_customer_id: str | None = None
+    candidates: list[LegacyMatchCandidateDto] = Field(default_factory=list)
+
+
+class LegacyMatchQueueResponse(BaseModel):
+    rows: list[LegacyMatchRowDto]
+
+
+class ConfirmLegacyMatchRequest(BaseModel):
+    invoice_id: str
+    stripe_charge_id: str
+    amount_cents: int = Field(gt=0)
+    stripe_payment_intent_id: str | None = None
+    paid_at: datetime | None = None
+
+
+class ConfirmLegacyMatchResponse(BaseModel):
+    invoice_id: str
+    payment_id: str
+    invoice_status: str
+    balance_due_cents: int
+
+
+@router.get("/billing/legacy-match-queue", response_model=LegacyMatchQueueResponse)
+async def list_legacy_match_queue(
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> LegacyMatchQueueResponse:
+    list_queue = _required_callable(use_cases.list_legacy_match_queue, "Legacy match queue")
+    try:
+        rows = await list_queue()  # type: ignore[operator]
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return LegacyMatchQueueResponse(rows=[LegacyMatchRowDto(**r) for r in rows])
+
+
+@router.post("/billing/legacy-match/confirm", response_model=ConfirmLegacyMatchResponse)
+async def confirm_legacy_match(
+    body: ConfirmLegacyMatchRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> ConfirmLegacyMatchResponse:
+    confirm = _required_callable(use_cases.confirm_legacy_match, "Legacy match confirm")
+    try:
+        result = await confirm(  # type: ignore[operator]
+            invoice_id=body.invoice_id,
+            stripe_charge_id=body.stripe_charge_id,
+            amount_cents=body.amount_cents,
+            stripe_payment_intent_id=body.stripe_payment_intent_id,
+            paid_at=body.paid_at,
+            recorded_by=claims.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ConfirmLegacyMatchResponse(**result)

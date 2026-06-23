@@ -7,6 +7,10 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from backend.v2.contexts.billing.domain.tuition_discount import (
+    display_label,
+    monthly_discount_cents,
+)
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     ChangeAdminStudentParentCommand,
     UpdateAdminStudentCommand,
@@ -42,6 +46,37 @@ from backend.v2.shared.http import require_persona
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["admin.directory"])
+
+
+async def _attach_tuition_discounts(data: dict, use_cases: AdminUseCases) -> None:
+    """Enrich admin student detail with recurring tuition discount badges (#244).
+
+    Composed at the BFF edge so the enrollment context never imports billing.
+    """
+    discounts_repo = getattr(use_cases, "tuition_discounts", None)
+    sessions = data.get("enrolled_sessions") or []
+    if discounts_repo is None or not sessions:
+        return
+    enrollment_ids = [str(s.get("enrollment_id")) for s in sessions if s.get("enrollment_id")]
+    policies = await discounts_repo.active_by_enrollments(enrollment_ids)
+    for summary in sessions:
+        policy = policies.get(str(summary.get("enrollment_id")))
+        if policy is None:
+            continue
+        gross = int(summary.get("amount_cents") or 0)
+        discount_cents = monthly_discount_cents(policy, monthly_price_cents=gross)
+        summary["discount"] = {
+            "category": policy.category,
+            "category_label": policy.category_label,
+            "kind": policy.kind,
+            "label": display_label(policy),
+            "gross_cents": gross,
+            "discount_cents": discount_cents,
+            "net_cents": max(gross - discount_cents, 0),
+            "status": policy.status,
+            "effective_start": policy.effective_start,
+            "effective_end": policy.effective_end,
+        }
 
 
 @router.get("/users", response_model=AdminUserList)
@@ -228,7 +263,9 @@ async def get_student(
     if use_case is None:
         raise HTTPException(status_code=503, detail="Admin student detail is not configured")
     student = await use_case.execute(student_id)
-    return AdminStudentDetailView(**student.model_dump())
+    data = student.model_dump()
+    await _attach_tuition_discounts(data, use_cases)
+    return AdminStudentDetailView(**data)
 
 
 @router.patch("/students/{student_id}", response_model=AdminStudentDetailView)

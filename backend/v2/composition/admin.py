@@ -50,6 +50,11 @@ from backend.v2.contexts.billing.application.use_cases.issue_refund import (
     IssueRefund,
     IssueRefundCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.match_legacy_invoices import (
+    ConfirmLegacyMatch,
+    ConfirmLegacyMatchCommand,
+    ListLegacyMatchQueue,
+)
 from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
     QuoteEnrollmentCommand,
@@ -71,6 +76,10 @@ from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     OverrideStudentPrice,
     SoftDeleteSessionType,
     UpdateSessionType,
+)
+from backend.v2.contexts.billing.application.use_cases.tuition_discounts import (
+    RemoveTuitionDiscount,
+    SetTuitionDiscount,
 )
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
     ApproveWithdrawalCredit,
@@ -101,6 +110,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_student_billing_enrollment
 )
 from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
     MongoSubscriptionRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo import (
+    MongoTuitionDiscountRepository,
 )
 from backend.v2.contexts.coaching.application.use_cases.compute_payout import (
     ComputeCoachPayout,
@@ -2504,9 +2516,15 @@ def compose_admin(
     # Billing
     billing_ledger_repo = MongoBillingLedgerRepository(db)
     credits_repo = MongoCreditLedgerRepository(db)
+    tuition_discounts_repo = MongoTuitionDiscountRepository(db)
     payments_repo = MongoPaymentRepository(
-        db, credit_ledger=credits_repo, ledger_repo=billing_ledger_repo
+        db,
+        credit_ledger=credits_repo,
+        ledger_repo=billing_ledger_repo,
+        discounts=tuition_discounts_repo,
     )
+    set_tuition_discount = SetTuitionDiscount(discounts=tuition_discounts_repo)
+    remove_tuition_discount = RemoveTuitionDiscount(discounts=tuition_discounts_repo)
     session_type_repo = MongoSessionTypeRepository(db)
     student_billing_enrollment_repo = MongoStudentBillingEnrollmentRepository(db)
     create_session_type = CreateSessionType(
@@ -2769,6 +2787,73 @@ def compose_admin(
         if not replayed:
             raise ValueError("quarantined event not found")
         return True
+
+    # ---- Legacy invoice ↔ Stripe charge review queue (#242 WI-3) ----------- #
+    async def list_legacy_match_queue() -> list[dict[str, Any]]:
+        from bson import ObjectId as BsonObjectId
+
+        from backend.v2.shared.tenancy import current_academy_id
+
+        if not hasattr(stripe, "list_charges_for_customer"):
+            raise RuntimeError("Stripe charge matching not configured")
+        request_academy_id = current_academy_id()
+        rows = await ListLegacyMatchQueue(
+            ledger=billing_ledger_repo,
+            stripe=stripe,  # type: ignore[arg-type]
+            parent_customers=parent_customers_repo,
+        ).execute()
+        result = [row.model_dump(mode="python") for row in rows]
+        # Resolve parent display names for the review UI (same lookup the
+        # billing/finance paths use elsewhere in this module).
+        parent_ids = {str(r["parent_id"]) for r in result if r.get("parent_id")}
+        if parent_ids:
+            id_list = list(parent_ids)
+            oid_ids = [BsonObjectId(p) for p in id_list if BsonObjectId.is_valid(p)]
+            or_filter: list[dict[str, object]] = [
+                {"user_id": {"$in": id_list}},
+                {"firebase_uid": {"$in": id_list}},
+            ]
+            if oid_ids:
+                or_filter.append({"_id": {"$in": oid_ids}})
+            names: dict[str, str] = {}
+            users = db["users"].find({"academy_id": request_academy_id, "$or": or_filter})
+            async for user in users:
+                display = str(
+                    user.get("display_name")
+                    or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+                    or ""
+                )
+                for key in (
+                    str(user.get("user_id") or ""),
+                    str(user.get("firebase_uid") or ""),
+                    str(user["_id"]),
+                ):
+                    if key and key in parent_ids:
+                        names[key] = display
+            for r in result:
+                r["parent_name"] = names.get(str(r.get("parent_id") or "")) or None
+        return result
+
+    async def confirm_legacy_match(
+        *,
+        invoice_id: str,
+        stripe_charge_id: str,
+        amount_cents: int,
+        stripe_payment_intent_id: str | None,
+        paid_at: datetime | None,
+        recorded_by: str | None,
+    ) -> dict[str, Any]:
+        result = await ConfirmLegacyMatch(ledger=billing_ledger_repo).execute(
+            ConfirmLegacyMatchCommand(
+                invoice_id=invoice_id,
+                stripe_charge_id=stripe_charge_id,
+                amount_cents=amount_cents,
+                stripe_payment_intent_id=stripe_payment_intent_id,
+                paid_at=paid_at,
+                recorded_by=recorded_by,
+            )
+        )
+        return result.model_dump(mode="python")
 
     async def add_invoice_line(
         *,
@@ -5014,6 +5099,8 @@ def compose_admin(
         list_failed_payment_attempts=list_failed_payment_attempts,
         list_invoice_attempts=list_invoice_attempts,
         replay_webhook_event=replay_webhook_event,
+        list_legacy_match_queue=list_legacy_match_queue,
+        confirm_legacy_match=confirm_legacy_match,
         add_invoice_line=add_invoice_line,
         remove_invoice_line=remove_invoice_line,
         void_billing_invoice=void_billing_invoice,
@@ -5028,6 +5115,9 @@ def compose_admin(
         mark_payment_paid=mark_payment_paid,
         apply_payment_discount=apply_payment_discount,
         undo_payment_paid=undo_payment_paid,
+        set_tuition_discount=set_tuition_discount,
+        remove_tuition_discount=remove_tuition_discount,
+        tuition_discounts=tuition_discounts_repo,
         reconcile_stripe_billing=reconcile_stripe_billing,
         get_billing_reconciliation_report=get_billing_reconciliation_report,
         list_billing_webhook_events=list_billing_webhook_events,
