@@ -29,6 +29,9 @@ from backend.v2.contexts.billing.application.ports import (
     StudentBillingEnrollmentRepository,
     SubscriptionRepository,
 )
+from backend.v2.contexts.billing.application.use_cases.checkout_allocation import (
+    allocate_checkout_payment_across_invoices,
+)
 from backend.v2.contexts.billing.domain.errors import InvalidWebhookSignature
 from backend.v2.contexts.billing.domain.events import (
     CheckoutExpired,
@@ -306,19 +309,30 @@ class HandleWebhookEvent:
             metadata = self._event_metadata(event)
             if metadata.get("source") == "invoice_pay_link" or metadata.get("invoice_id"):
                 await self._handle_invoice_checkout_completed(event)
+            elif metadata.get("type") == "balance_payment" or metadata.get("invoice_ids"):
+                await self._handle_balance_checkout_completed(event)
             else:
                 await self._on_checkout_completed(event)
         elif event_type == "checkout.session.expired":
             await self._on_checkout_expired(event)
         elif event_type == "payment_intent.succeeded":
             metadata = self._event_metadata(event)
-            if metadata.get("source") == "autopay" or metadata.get("invoice_id"):
+            if metadata.get("source") == "autopay":
                 await self._handle_autopay_pi_succeeded(event)
+            elif (
+                metadata.get("source") == "invoice_pay_link"
+                or metadata.get("type") == "balance_payment"
+                or metadata.get("invoice_ids")
+            ):
+                log.info(
+                    "payment_intent.succeeded for checkout invoice payment ignored pi=%s",
+                    event.get("data", {}).get("object", {}).get("id"),
+                )
             else:
                 await self._on_payment_succeeded(event)
         elif event_type == "payment_intent.payment_failed":
             metadata = self._event_metadata(event)
-            if metadata.get("source") == "autopay" or metadata.get("invoice_id"):
+            if metadata.get("source") == "autopay":
                 await self._handle_autopay_pi_failed(event)
             elif await self._handle_invoice_checkout_payment_failed(event):
                 return
@@ -402,6 +416,86 @@ class HandleWebhookEvent:
                 invoice_id,
                 amount_total,
             )
+
+    async def _handle_balance_checkout_completed(self, event: dict[str, Any]) -> None:
+        """Handle checkout.session.completed for a parent balance payment."""
+        if self._billing_ledger is None:
+            log.warning("balance_checkout_completed: billing_ledger not configured - skipping")
+            return
+
+        obj = event["data"]["object"]
+        checkout_session_id = str(obj.get("id") or "")
+        metadata = obj.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        raw_invoice_ids = str(metadata.get("invoice_ids") or "")
+        invoice_ids = [item.strip() for item in raw_invoice_ids.split(",") if item.strip()]
+        if not invoice_ids:
+            log.warning(
+                "balance_checkout_completed: no invoice_ids in metadata session=%s",
+                checkout_session_id,
+            )
+            return
+
+        payment_intent_id = obj.get("payment_intent") or None
+        if payment_intent_id:
+            payment_intent_id = str(payment_intent_id)
+        amount_total = int(obj.get("amount_total") or 0)
+        currency = str(obj.get("currency") or "usd").lower()
+        parent_id = str(metadata.get("parent_id") or "unknown")
+        now = self._now()
+        ledger_payment_id = f"ledger-pay-cs:{checkout_session_id}"
+
+        payment = await self._billing_ledger.record_payment(
+            LedgerPayment(
+                payment_id=ledger_payment_id,
+                academy_id=self._academy_id,
+                parent_id=parent_id,
+                amount_cents=amount_total,
+                unapplied_amount_cents=amount_total,
+                currency=currency,
+                status="succeeded",
+                payment_method="stripe_checkout",
+                stripe_payment_intent_id=payment_intent_id,
+                paid_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            idempotency_key=f"invoice-checkout:{checkout_session_id}",
+        )
+
+        invoices: list[LedgerInvoice] = []
+        for invoice_id in sorted(invoice_ids):
+            invoice = await self._billing_ledger.get_invoice(invoice_id)
+            if invoice is None:
+                raise ValueError(f"balance invoice {invoice_id!r} not found")
+            if invoice.academy_id != self._academy_id:
+                raise _QuarantineStripeEvent(
+                    f"academy mismatch: invoice={invoice.academy_id} expected={self._academy_id}"
+                )
+            if invoice.parent_id != parent_id:
+                raise _QuarantineStripeEvent(
+                    f"parent mismatch: invoice={invoice.parent_id} checkout={parent_id}"
+                )
+            if currency != invoice.currency.lower():
+                raise _QuarantineStripeEvent(
+                    f"currency mismatch: invoice={invoice.currency} checkout={currency}"
+                )
+            invoices.append(invoice)
+
+        allocated = await allocate_checkout_payment_across_invoices(
+            ledger=self._billing_ledger,
+            payment=payment,
+            invoices=invoices,
+            amount_cents=amount_total,
+            allocation_key_prefix=f"invoice-checkout-alloc:{checkout_session_id}",
+            conflict_error=_QuarantineStripeEvent,
+        )
+        log.info(
+            "balance_checkout_completed: allocated payment=%s invoices=%d",
+            payment.payment_id,
+            allocated,
+        )
 
     async def _on_checkout_completed(self, event: dict[str, Any]) -> None:
         obj = event["data"]["object"]

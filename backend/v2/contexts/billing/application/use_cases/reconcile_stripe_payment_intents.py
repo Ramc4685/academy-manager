@@ -6,6 +6,9 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from backend.v2.contexts.billing.application.ports import LedgerRepository, StripeGateway
+from backend.v2.contexts.billing.application.use_cases.checkout_allocation import (
+    allocate_checkout_payment_across_invoices,
+)
 from backend.v2.contexts.billing.domain.ledger import LedgerInvoice, LedgerPayment
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import tenant_scope
@@ -45,6 +48,7 @@ class ReconcileStripePaymentIntents:
             "quarantined": 0,
             "failed": 0,
             "errors": [],
+            "notes": [],
             "started_at": started_at,
             "finished_at": None,
         }
@@ -64,6 +68,11 @@ class ReconcileStripePaymentIntents:
                 except Exception as exc:
                     counts["failed"] += 1
                     counts["errors"].append(str(exc))
+        if counts["scanned"] == 0:
+            counts["notes"].append(
+                "Stripe returned no app-owned PaymentIntents. Checkout payments created before "
+                "PaymentIntent metadata was deployed require manual review by Stripe id."
+            )
         counts["finished_at"] = self._now()
         if self._run_recorder is not None:
             await self._run_recorder.record_run(**counts)
@@ -84,6 +93,10 @@ class ReconcileStripePaymentIntents:
             raise _QuarantineReconciliation(
                 f"academy mismatch: payment_intent={metadata_academy_id} expected={self._academy_id}"
             )
+
+        invoice_ids = self._invoice_ids_from_metadata(metadata)
+        if invoice_ids:
+            return await self._reconcile_balance_payment_intent(payment_intent, invoice_ids)
 
         invoice = await self._resolve_invoice(metadata)
         if invoice is None:
@@ -120,10 +133,15 @@ class ReconcileStripePaymentIntents:
             return "skipped"
 
         existing_payment = await self._ledger.get_payment_by_stripe_payment_intent_id(pi_id)
-        if existing_payment is not None and existing_payment.parent_id != invoice.parent_id:
-            raise _QuarantineReconciliation(
-                "duplicate Stripe obligation: PaymentIntent belongs to another parent"
-            )
+        if existing_payment is not None:
+            if existing_payment.parent_id != invoice.parent_id:
+                raise _QuarantineReconciliation(
+                    "duplicate Stripe obligation: PaymentIntent belongs to another parent"
+                )
+            # A webhook (or a prior reconciliation run) already recorded this
+            # PaymentIntent as a ledger payment. Skip to avoid inserting a
+            # duplicate, unapplied ledger payment (phantom credit).
+            return "skipped"
 
         now = self._now()
         payment = await self._ledger.record_payment(
@@ -153,6 +171,81 @@ class ReconcileStripePaymentIntents:
         )
         return "repaired"
 
+    async def _reconcile_balance_payment_intent(
+        self, payment_intent: dict[str, Any], invoice_ids: list[str]
+    ) -> str:
+        pi_id = str(payment_intent.get("id") or "")
+        metadata = payment_intent.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata_parent_id = str(metadata.get("parent_id") or "")
+
+        amount_cents = int(payment_intent.get("amount") or 0)
+        if amount_cents <= 0:
+            raise _QuarantineReconciliation(f"PaymentIntent {pi_id} has no positive amount")
+        currency = str(payment_intent.get("currency") or "usd").lower()
+
+        invoices: list[LedgerInvoice] = []
+        for invoice_id in sorted(invoice_ids):
+            invoice = await self._ledger.get_invoice(invoice_id)
+            if invoice is None:
+                raise _QuarantineReconciliation(f"app invoice {invoice_id} not found")
+            if invoice.academy_id != self._academy_id:
+                raise _QuarantineReconciliation(
+                    f"academy mismatch: invoice={invoice.academy_id} expected={self._academy_id}"
+                )
+            if metadata_parent_id and metadata_parent_id != invoice.parent_id:
+                raise _QuarantineReconciliation(
+                    f"parent mismatch: invoice={invoice.parent_id} payment_intent={metadata_parent_id}"
+                )
+            if currency != invoice.currency.lower():
+                raise _QuarantineReconciliation(
+                    f"currency mismatch: invoice={invoice.currency} payment_intent={currency}"
+                )
+            invoices.append(invoice)
+
+        existing_payment = await self._ledger.get_payment_by_stripe_payment_intent_id(pi_id)
+        if existing_payment is not None:
+            if metadata_parent_id and existing_payment.parent_id != metadata_parent_id:
+                raise _QuarantineReconciliation(
+                    "duplicate Stripe obligation: PaymentIntent belongs to another parent"
+                )
+            # A webhook (or a prior reconciliation run) already recorded this
+            # PaymentIntent as a ledger payment. Skip to avoid inserting a
+            # duplicate, unapplied ledger payment (phantom credit).
+            return "skipped"
+
+        now = self._now()
+        payment = await self._ledger.record_payment(
+            LedgerPayment(
+                payment_id=f"ledger-pay-reconcile:{pi_id}",
+                academy_id=self._academy_id,
+                parent_id=metadata_parent_id or invoices[0].parent_id,
+                amount_cents=amount_cents,
+                unapplied_amount_cents=amount_cents,
+                currency=currency,
+                status="succeeded",
+                payment_method="stripe_checkout",
+                stripe_payment_intent_id=pi_id,
+                stripe_invoice_id=str(metadata.get("stripe_invoice_id") or "") or None,
+                paid_at=now,
+                recorded_by="stripe_reconciliation",
+                created_at=now,
+                updated_at=now,
+            ),
+            idempotency_key=f"stripe-reconcile-pi:{pi_id}",
+        )
+
+        repaired = await allocate_checkout_payment_across_invoices(
+            ledger=self._ledger,
+            payment=payment,
+            invoices=invoices,
+            amount_cents=amount_cents,
+            allocation_key_prefix=f"stripe-reconcile-alloc:{pi_id}",
+            conflict_error=_QuarantineReconciliation,
+        )
+        return "repaired" if repaired > 0 else "skipped"
+
     async def _resolve_invoice(self, metadata: dict[Any, Any]) -> LedgerInvoice | None:
         invoice_id = str(metadata.get("invoice_id") or "")
         if invoice_id:
@@ -167,6 +260,14 @@ class ReconcileStripePaymentIntents:
                 statuses={"open", "partially_paid", "paid"},
             )
         return None
+
+    @staticmethod
+    def _invoice_ids_from_metadata(metadata: dict[Any, Any]) -> list[str]:
+        raw_invoice_ids = str(metadata.get("invoice_ids") or "")
+        if not raw_invoice_ids:
+            return []
+        invoice_ids = [item.strip() for item in raw_invoice_ids.split(",") if item.strip()]
+        return sorted(dict.fromkeys(invoice_ids))
 
 
 class _QuarantineReconciliation(Exception):

@@ -924,12 +924,39 @@ async def test_admin_billing_webhook_queue_uses_request_tenant(mongo_db) -> None
 
 @pytest.mark.asyncio
 async def test_billing_reconciliation_detects_orphan_stripe_payment(mongo_db) -> None:
+    now = datetime(2026, 6, 17, tzinfo=UTC)
+    await mongo_db["parent_billing_customers"].insert_one(
+        {
+            "academy_id": "request-acad",
+            "parent_id": "parent-1",
+            "stripe_customer_id": "cus_parent",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    await mongo_db["invoices"].insert_one(
+        {
+            "invoice_id": "inv-open",
+            "academy_id": "request-acad",
+            "parent_id": "parent-1",
+            "student_id": "student-1",
+            "enrollment_id": "enroll-1",
+            "period": "2026-06",
+            "status": "open",
+            "total_cents": 7000,
+            "balance_due_cents": 7000,
+            "currency": "usd",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
     stripe = _FakeReconciliationStripe(
         payment_intent={
             "id": "pi_orphan",
             "status": "succeeded",
             "amount": 7000,
             "customer": "cus_parent",
+            "currency": "usd",
         }
     )
 
@@ -943,6 +970,22 @@ async def test_billing_reconciliation_detects_orphan_stripe_payment(mongo_db) ->
     assert report["local_invoice_id"] is None
     assert report["ledger_payment_id"] is None
     assert report["mismatches"][0]["code"] == "ORPHAN_STRIPE_PAYMENT"
+    assert report["manual_review_candidates"] == [
+        {
+            "invoice_id": "inv-open",
+            "parent_id": "parent-1",
+            "student_id": "student-1",
+            "enrollment_id": "enroll-1",
+            "period": "2026-06",
+            "amount_cents": 7000,
+            "currency": "usd",
+            "status": "open",
+            "reason": (
+                "same Stripe customer, open invoice balance, currency, "
+                "and amount; requires admin confirmation"
+            ),
+        }
+    ]
 
 
 @pytest.mark.asyncio

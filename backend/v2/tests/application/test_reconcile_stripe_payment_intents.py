@@ -234,6 +234,27 @@ async def test_reconciler_rerun_is_idempotent() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reconciler_records_note_when_stripe_search_scans_zero() -> None:
+    recorder = FakeRunRecorder()
+    uc = ReconcileStripePaymentIntents(
+        stripe=FakeStripeGateway(payment_intents=[]),
+        ledger=FakeLedger(),
+        run_recorder=recorder,
+        academy_id="acad",
+        clock=lambda: _NOW,
+    )
+
+    result = await uc.execute()
+
+    assert result["scanned"] == 0
+    assert result["notes"] == [
+        "Stripe returned no app-owned PaymentIntents. Checkout payments created before "
+        "PaymentIntent metadata was deployed require manual review by Stripe id."
+    ]
+    assert recorder.runs[-1]["notes"] == result["notes"]
+
+
+@pytest.mark.asyncio
 async def test_reconciler_quarantines_duplicate_payment_intent_obligation() -> None:
     other_invoice = _invoice(invoice_id="inv-other")
     allocation = PaymentAllocation(
@@ -337,3 +358,192 @@ async def test_reconciler_maps_legacy_subscription_invoice_to_app_created_invoic
     assert result["repaired"] == 1
     assert ledger.invoices["inv-1"].status == "paid"
     assert [p.stripe_invoice_id for p in ledger.payments.values()] == ["in_legacy_1"]
+
+
+@pytest.mark.asyncio
+async def test_reconciler_repairs_balance_payment_intent_across_invoice_ids() -> None:
+    ledger = FakeLedger(
+        invoices={
+            "inv-1": _invoice(invoice_id="inv-1", parent_id="parent-1", total_cents=4_000),
+            "inv-2": _invoice(invoice_id="inv-2", parent_id="parent-1", total_cents=6_000),
+        }
+    )
+    stripe = FakeStripeGateway(
+        payment_intents=[
+            _payment_intent(
+                pi_id="pi_balance_reconcile",
+                amount=10_000,
+                metadata={
+                    "academy_id": "acad",
+                    "parent_id": "parent-1",
+                    "invoice_ids": "inv-1,inv-2",
+                    "type": "balance_payment",
+                },
+            )
+        ]
+    )
+    uc = ReconcileStripePaymentIntents(
+        stripe=stripe,
+        ledger=ledger,
+        run_recorder=FakeRunRecorder(),
+        academy_id="acad",
+        clock=lambda: _NOW,
+    )
+
+    result = await uc.execute()
+
+    assert result["scanned"] == 1
+    assert result["repaired"] == 1
+    assert ledger.invoices["inv-1"].status == "paid"
+    assert ledger.invoices["inv-1"].balance_due_cents == 0
+    assert ledger.invoices["inv-2"].status == "paid"
+    assert ledger.invoices["inv-2"].balance_due_cents == 0
+    assert [p.stripe_payment_intent_id for p in ledger.payments.values()] == [
+        "pi_balance_reconcile"
+    ]
+    assert {a.invoice_id: a.amount_cents for a in ledger.allocations.values()} == {
+        "inv-1": 4_000,
+        "inv-2": 6_000,
+    }
+
+
+@pytest.mark.asyncio
+async def test_reconciler_balance_payment_intent_rerun_is_idempotent() -> None:
+    ledger = FakeLedger(
+        invoices={
+            "inv-1": _invoice(invoice_id="inv-1", parent_id="parent-1", total_cents=4_000),
+            "inv-2": _invoice(invoice_id="inv-2", parent_id="parent-1", total_cents=6_000),
+        }
+    )
+    stripe = FakeStripeGateway(
+        payment_intents=[
+            _payment_intent(
+                pi_id="pi_balance_reconcile",
+                amount=10_000,
+                metadata={
+                    "academy_id": "acad",
+                    "parent_id": "parent-1",
+                    "invoice_ids": "inv-1,inv-2",
+                    "type": "balance_payment",
+                },
+            )
+        ]
+    )
+    uc = ReconcileStripePaymentIntents(
+        stripe=stripe,
+        ledger=ledger,
+        run_recorder=FakeRunRecorder(),
+        academy_id="acad",
+        clock=lambda: _NOW,
+    )
+
+    first = await uc.execute()
+    second = await uc.execute()
+
+    assert first["repaired"] == 1
+    assert second["repaired"] == 0
+    assert second["skipped"] == 1
+    assert len(ledger.payments) == 1
+    assert len(ledger.allocations) == 2
+    assert ledger.invoices["inv-1"].status == "paid"
+    assert ledger.invoices["inv-2"].status == "paid"
+
+
+def _paid_invoice(
+    *, invoice_id: str = "inv-1", parent_id: str = "parent-1", total_cents: int = 5_000
+) -> LedgerInvoice:
+    return _invoice(invoice_id=invoice_id, parent_id=parent_id, total_cents=total_cents).model_copy(
+        update={"status": "paid", "balance_due_cents": 0}
+    )
+
+
+def _webhook_payment(
+    *, pi_id: str, payment_id: str, parent_id: str = "parent-1", amount: int = 5_000
+) -> LedgerPayment:
+    """A ledger payment as a Checkout webhook would have recorded it."""
+    return LedgerPayment(
+        payment_id=payment_id,
+        academy_id="acad",
+        parent_id=parent_id,
+        amount_cents=amount,
+        unapplied_amount_cents=0,
+        currency="usd",
+        status="succeeded",
+        payment_method="stripe_checkout",
+        stripe_payment_intent_id=pi_id,
+        paid_at=_NOW,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+
+
+@pytest.mark.asyncio
+async def test_reconciler_skips_single_invoice_already_recorded_by_webhook() -> None:
+    """Webhook already closed the invoice; reconciler must not duplicate the payment."""
+    ledger = FakeLedger(
+        invoices={"inv-1": _paid_invoice()},
+        payments={
+            "ledger-pay-cs:cs_1": _webhook_payment(
+                pi_id="pi_reconcile_1", payment_id="ledger-pay-cs:cs_1"
+            )
+        },
+    )
+    stripe = FakeStripeGateway(payment_intents=[_payment_intent()])
+    uc = ReconcileStripePaymentIntents(
+        stripe=stripe,
+        ledger=ledger,
+        run_recorder=FakeRunRecorder(),
+        academy_id="acad",
+        clock=lambda: _NOW,
+    )
+
+    result = await uc.execute()
+
+    assert result["scanned"] == 1
+    assert result["repaired"] == 0
+    assert result["skipped"] == 1
+    assert len(ledger.payments) == 1  # no duplicate phantom payment
+    assert ledger.invoices["inv-1"].balance_due_cents == 0
+
+
+@pytest.mark.asyncio
+async def test_reconciler_skips_balance_payment_already_recorded_by_webhook() -> None:
+    """Webhook already closed the balance batch; reconciler must not duplicate the payment."""
+    ledger = FakeLedger(
+        invoices={
+            "inv-1": _paid_invoice(invoice_id="inv-1", total_cents=4_000),
+            "inv-2": _paid_invoice(invoice_id="inv-2", total_cents=6_000),
+        },
+        payments={
+            "ledger-pay-cs:cs_2": _webhook_payment(
+                pi_id="pi_balance_1", payment_id="ledger-pay-cs:cs_2", amount=10_000
+            )
+        },
+    )
+    stripe = FakeStripeGateway(
+        payment_intents=[
+            _payment_intent(
+                pi_id="pi_balance_1",
+                amount=10_000,
+                metadata={
+                    "academy_id": "acad",
+                    "parent_id": "parent-1",
+                    "invoice_ids": "inv-1,inv-2",
+                    "type": "balance_payment",
+                },
+            )
+        ]
+    )
+    uc = ReconcileStripePaymentIntents(
+        stripe=stripe,
+        ledger=ledger,
+        run_recorder=FakeRunRecorder(),
+        academy_id="acad",
+        clock=lambda: _NOW,
+    )
+
+    result = await uc.execute()
+
+    assert result["repaired"] == 0
+    assert result["skipped"] == 1
+    assert len(ledger.payments) == 1  # no duplicate phantom payment

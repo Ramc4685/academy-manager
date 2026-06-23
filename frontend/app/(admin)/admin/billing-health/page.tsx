@@ -211,21 +211,7 @@ export default function BillingHealthPage() {
                 </thead>
                 <tbody>
                   {runs.map((run) => (
-                    <tr key={run.run_id} className="border-b border-rally-line/60">
-                      <Td>
-                        <span style={{ color: runStatusDot(run) }}>● </span>
-                        {formatTimestamp(run.started_at)}
-                      </Td>
-                      <Td align="right">{run.scanned}</Td>
-                      <Td align="right">{run.repaired}</Td>
-                      <Td align="right">{run.skipped}</Td>
-                      <Td align="right">{run.quarantined}</Td>
-                      <Td>
-                        <span className="text-rally-muted">
-                          {run.errors.length > 0 ? truncate(String(run.errors[0]), 80) : "—"}
-                        </span>
-                      </Td>
-                    </tr>
+                    <ReconciliationRunRow key={run.run_id} run={run} />
                   ))}
                 </tbody>
               </table>
@@ -387,6 +373,32 @@ export default function BillingHealthPage() {
 
       <AttemptsDialog row={attemptsInvoice} onClose={() => setAttemptsInvoice(null)} />
     </div>
+  );
+}
+
+function ReconciliationRunRow({ run }: { run: ReconciliationRun }) {
+  const errors = Array.isArray(run.errors) ? run.errors : [];
+  const notes = Array.isArray(run.notes) ? run.notes : [];
+  return (
+    <tr className="border-b border-rally-line/60">
+      <Td>
+        <span style={{ color: runStatusDot(run) }}>● </span>
+        {formatTimestamp(run.started_at)}
+      </Td>
+      <Td align="right">{run.scanned}</Td>
+      <Td align="right">{run.repaired}</Td>
+      <Td align="right">{run.skipped}</Td>
+      <Td align="right">{run.quarantined}</Td>
+      <Td>
+        <span className="text-rally-muted">
+          {errors.length > 0
+            ? truncate(String(errors[0]), 80)
+            : notes.length > 0
+              ? truncate(notes[0], 80)
+              : "—"}
+        </span>
+      </Td>
+    </tr>
   );
 }
 

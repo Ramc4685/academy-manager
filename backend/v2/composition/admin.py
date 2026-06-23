@@ -4259,6 +4259,16 @@ def compose_admin(
         stripe_payment_succeeded = (
             str(stripe_payment_intent.get("status") or "").lower() == "succeeded"
         )
+        stripe_amount = int(
+            stripe_invoice.get("amount_paid")
+            or stripe_invoice.get("amount_due")
+            or stripe_payment_intent.get("amount")
+            or 0
+        )
+        stripe_currency = str(
+            stripe_invoice.get("currency") or stripe_payment_intent.get("currency") or "usd"
+        ).lower()
+        manual_review_candidates: list[dict[str, Any]] = []
         if (
             payment_intent_id
             and stripe_payment_succeeded
@@ -4274,13 +4284,45 @@ def compose_admin(
                     "local_value": None,
                 }
             )
-
-        stripe_amount = int(
-            stripe_invoice.get("amount_paid")
-            or stripe_invoice.get("amount_due")
-            or stripe_payment_intent.get("amount")
-            or 0
-        )
+            customer_parent = None
+            if stripe_customer_id:
+                customer_parent = await db["parent_billing_customers"].find_one(
+                    {
+                        "academy_id": request_academy_id,
+                        "stripe_customer_id": stripe_customer_id,
+                    },
+                    {"parent_id": 1},
+                )
+            parent_id = str(customer_parent.get("parent_id") or "") if customer_parent else ""
+            if parent_id and stripe_amount > 0:
+                candidate_cursor = db["invoices"].find(
+                    {
+                        "academy_id": request_academy_id,
+                        "parent_id": parent_id,
+                        "status": {"$in": ["open", "partially_paid"]},
+                        "balance_due_cents": stripe_amount,
+                        "currency": stripe_currency,
+                    },
+                    sort=[("created_at", -1), ("invoice_id", 1)],
+                    limit=10,
+                )
+                async for candidate in candidate_cursor:
+                    manual_review_candidates.append(
+                        {
+                            "invoice_id": str(candidate.get("invoice_id") or ""),
+                            "parent_id": parent_id,
+                            "student_id": candidate.get("student_id"),
+                            "enrollment_id": candidate.get("enrollment_id"),
+                            "period": candidate.get("period"),
+                            "amount_cents": int(candidate.get("balance_due_cents") or 0),
+                            "currency": str(candidate.get("currency") or stripe_currency),
+                            "status": str(candidate.get("status") or ""),
+                            "reason": (
+                                "same Stripe customer, open invoice balance, currency, "
+                                "and amount; requires admin confirmation"
+                            ),
+                        }
+                    )
         if local_invoice is not None and stripe_amount:
             local_total = int(local_invoice.get("total_cents") or 0)
             if local_total and local_total != stripe_amount:
@@ -4324,6 +4366,7 @@ def compose_admin(
             if allocation is not None
             else None,
             "mismatches": mismatches,
+            "manual_review_candidates": manual_review_candidates,
             "checked_at": checked_at,
         }
 
