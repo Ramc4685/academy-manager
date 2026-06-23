@@ -33,11 +33,15 @@ import {
 } from "@/lib/api/admin";
 import {
   getAdminStudent,
+  removeTuitionDiscount,
+  setTuitionDiscount,
   transferEnrollment,
   updateAdminStudent,
   type AdminStudentDetail,
   type AdminStudentPaymentSummary,
   type AdminStudentSessionSummary,
+  type TuitionDiscountCategory,
+  type TuitionDiscountKind,
   type UpdateAdminStudentRequest,
 } from "@/lib/api/v2/students";
 import { getActiveAcademyId } from "@/lib/api/client";
@@ -620,6 +624,41 @@ function CurrentPaymentPanel({ student }: { student: AdminStudentDetail }) {
   );
 }
 
+const DISCOUNT_CATEGORIES: { value: TuitionDiscountCategory; label: string }[] = [
+  { value: "owner_child", label: "Owner child" },
+  { value: "coach_child", label: "Coach child" },
+  { value: "scholarship", label: "Scholarship" },
+  { value: "sibling", label: "Sibling" },
+  { value: "other", label: "Other" },
+];
+
+const DISCOUNT_KINDS: { value: TuitionDiscountKind; label: string }[] = [
+  { value: "waiver", label: "Waive fully" },
+  { value: "percent", label: "% off" },
+  { value: "amount_off", label: "$ off" },
+  { value: "fixed_net", label: "Set final price" },
+];
+
+function previewNetCents(
+  grossCents: number,
+  kind: TuitionDiscountKind,
+  value: string,
+): number {
+  const v = Number(value) || 0;
+  switch (kind) {
+    case "waiver":
+      return 0;
+    case "percent":
+      return Math.max(grossCents - Math.round((grossCents * v) / 100), 0);
+    case "amount_off":
+      return Math.max(grossCents - Math.round(v * 100), 0);
+    case "fixed_net":
+      return Math.max(Math.round(v * 100), 0);
+    default:
+      return grossCents;
+  }
+}
+
 function SessionsPanel({
   sessions,
   studentId,
@@ -635,6 +674,68 @@ function SessionsPanel({
     new Date().toISOString().slice(0, 10),
   );
   const [reason, setReason] = useState("");
+
+  // Recurring tuition discount editor (#244)
+  const [discounting, setDiscounting] =
+    useState<AdminStudentSessionSummary | null>(null);
+  const [discountCategory, setDiscountCategory] =
+    useState<TuitionDiscountCategory>("scholarship");
+  const [discountLabel, setDiscountLabel] = useState("");
+  const [discountKind, setDiscountKind] =
+    useState<TuitionDiscountKind>("waiver");
+  const [discountValue, setDiscountValue] = useState("");
+  const [discountStart, setDiscountStart] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
+  const [discountNote, setDiscountNote] = useState("");
+
+  const discountGross =
+    discounting?.discount?.gross_cents ?? discounting?.amount_cents ?? 0;
+  const discountPreviewNet = previewNetCents(
+    discountGross,
+    discountKind,
+    discountValue,
+  );
+
+  const setDiscountMutation = useMutation({
+    mutationFn: () =>
+      setTuitionDiscount(discounting!.enrollment_id, {
+        student_id: studentId,
+        category: discountCategory,
+        category_label: discountCategory === "other" ? discountLabel : null,
+        kind: discountKind,
+        percent_bps:
+          discountKind === "percent"
+            ? Math.round(Number(discountValue) * 100)
+            : null,
+        amount_off_cents:
+          discountKind === "amount_off"
+            ? Math.round(Number(discountValue) * 100)
+            : null,
+        fixed_net_cents:
+          discountKind === "fixed_net"
+            ? Math.round(Number(discountValue) * 100)
+            : null,
+        effective_start: discountStart,
+        note: discountNote || null,
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.admin.studentDetail(studentId),
+      });
+      setDiscounting(null);
+    },
+  });
+
+  const removeDiscountMutation = useMutation({
+    mutationFn: () => removeTuitionDiscount(discounting!.enrollment_id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.admin.studentDetail(studentId),
+      });
+      setDiscounting(null);
+    },
+  });
 
   const sessionsQuery = useQuery({
     queryKey: queryKeys.admin.sessions("upcoming"),
@@ -757,19 +858,39 @@ function SessionsPanel({
                       />
                     </td>
                     <td className="py-3 align-top">
-                      <button
-                        className="text-xs font-medium text-rally-blue hover:underline"
-                        onClick={() => {
-                          setMoving(session);
-                          setTargetSessionId("");
-                          setReason("");
-                          setEffectiveDate(
-                            new Date().toISOString().slice(0, 10),
-                          );
-                        }}
-                      >
-                        Move
-                      </button>
+                      <div className="flex flex-col items-start gap-1">
+                        <button
+                          className="text-xs font-medium text-rally-blue hover:underline"
+                          onClick={() => {
+                            setMoving(session);
+                            setTargetSessionId("");
+                            setReason("");
+                            setEffectiveDate(
+                              new Date().toISOString().slice(0, 10),
+                            );
+                          }}
+                        >
+                          Move
+                        </button>
+                        <button
+                          className="text-xs font-medium text-rally-blue hover:underline"
+                          onClick={() => {
+                            setDiscounting(session);
+                            const d = session.discount;
+                            setDiscountCategory(d?.category ?? "scholarship");
+                            setDiscountLabel(d?.category_label ?? "");
+                            setDiscountKind(d?.kind ?? "waiver");
+                            setDiscountValue("");
+                            setDiscountStart(
+                              d?.effective_start ??
+                                new Date().toISOString().slice(0, 10),
+                            );
+                            setDiscountNote("");
+                          }}
+                        >
+                          {session.discount ? "Edit discount" : "Discount"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -867,6 +988,179 @@ function SessionsPanel({
               >
                 {transferMutation.isPending ? "Moving…" : "Move student"}
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {discounting && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="discount-title"
+            className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl dark:bg-neutral-900"
+          >
+            <h2
+              id="discount-title"
+              className="mb-1 text-base font-semibold text-rally-ink"
+            >
+              Tuition discount
+            </h2>
+            <p className="mb-4 text-sm text-rally-muted">
+              {discounting.session_title}
+            </p>
+
+            {(setDiscountMutation.isError || removeDiscountMutation.isError) && (
+              <p className="mb-3 rounded bg-red-50 px-3 py-2 text-xs text-red-600">
+                {String(
+                  setDiscountMutation.error ?? removeDiscountMutation.error,
+                )}
+              </p>
+            )}
+
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium uppercase tracking-overline text-rally-muted">
+                  Category
+                </label>
+                <select
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  value={discountCategory}
+                  onChange={(e) =>
+                    setDiscountCategory(e.target.value as TuitionDiscountCategory)
+                  }
+                >
+                  {DISCOUNT_CATEGORIES.map((c) => (
+                    <option key={c.value} value={c.value}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {discountCategory === "other" && (
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase tracking-overline text-rally-muted">
+                    Custom label
+                  </label>
+                  <input
+                    className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                    placeholder="e.g. Founding family rate"
+                    value={discountLabel}
+                    onChange={(e) => setDiscountLabel(e.target.value)}
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="mb-1 block text-xs font-medium uppercase tracking-overline text-rally-muted">
+                  Type
+                </label>
+                <select
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  value={discountKind}
+                  onChange={(e) =>
+                    setDiscountKind(e.target.value as TuitionDiscountKind)
+                  }
+                >
+                  {DISCOUNT_KINDS.map((k) => (
+                    <option key={k.value} value={k.value}>
+                      {k.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {discountKind !== "waiver" && (
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase tracking-overline text-rally-muted">
+                    {discountKind === "percent"
+                      ? "Percent off"
+                      : discountKind === "amount_off"
+                        ? "Amount off ($)"
+                        : "Final monthly price ($)"}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                    value={discountValue}
+                    onChange={(e) => setDiscountValue(e.target.value)}
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="mb-1 block text-xs font-medium uppercase tracking-overline text-rally-muted">
+                  Effective start
+                </label>
+                <input
+                  type="date"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  value={discountStart}
+                  onChange={(e) => setDiscountStart(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium uppercase tracking-overline text-rally-muted">
+                  Private note (optional)
+                </label>
+                <textarea
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  rows={2}
+                  value={discountNote}
+                  onChange={(e) => setDiscountNote(e.target.value)}
+                />
+              </div>
+
+              <div className="rounded-lg bg-neutral-50 px-3 py-2 text-sm dark:bg-neutral-800">
+                <span className="text-rally-muted">Gross </span>
+                <span className="font-mono tabular-nums">
+                  {formatCurrencyCents(discountGross)}
+                </span>
+                <span className="text-rally-muted"> → Net </span>
+                <span className="font-mono font-semibold tabular-nums text-rally-ink">
+                  {formatCurrencyCents(discountPreviewNet)}
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-5 flex justify-between gap-2">
+              <div>
+                {discounting.discount && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => removeDiscountMutation.mutate()}
+                    disabled={removeDiscountMutation.isPending}
+                  >
+                    {removeDiscountMutation.isPending ? "Removing…" : "Remove"}
+                  </Button>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setDiscounting(null)}
+                  disabled={setDiscountMutation.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => setDiscountMutation.mutate()}
+                  disabled={
+                    setDiscountMutation.isPending ||
+                    (discountCategory === "other" && !discountLabel.trim()) ||
+                    (discountKind !== "waiver" && !discountValue.trim())
+                  }
+                >
+                  {setDiscountMutation.isPending ? "Saving…" : "Save discount"}
+                </Button>
+              </div>
             </div>
           </div>
         </div>
