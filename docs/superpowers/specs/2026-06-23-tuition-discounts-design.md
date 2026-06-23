@@ -213,34 +213,43 @@ generation, so the selection is frozen even if the policy later changes (see §9
 
 **Indexes:** `(academy_id, enrollment_id, status)`, `(academy_id, status, category)` for reporting.
 
-## 6. Net computation (pure domain logic)
+## 6. Net computation (reuses the existing proration policy)
 
-Given a proration-aware `gross_cents`:
+The discount is expressed at **monthly scale** as `monthly_discount_cents`, derived from the
+active policy against the session `monthly_price_cents`:
 
-| kind | net_cents |
-|------|-----------|
-| `waiver` | `0` |
-| `percent` | `gross − round(gross × percent_bps / 10000)` |
-| `amount_off` | `max(0, gross − amount_off_cents)` |
-| `fixed_net` | `fixed_net_cents`, prorated by the same first-month ratio as gross |
+| kind | monthly_discount_cents |
+|------|------------------------|
+| `waiver` | `monthly_price_cents` |
+| `percent` | `round(monthly_price_cents × percent_bps / 10000)` |
+| `amount_off` | `min(amount_off_cents, monthly_price_cents)` |
+| `fixed_net` | `max(monthly_price_cents − fixed_net_cents, 0)` |
 
-`discount_cents = gross − net_cents`.
+This value feeds the **existing** `FirstMonthProrationPolicy.quote(discount_cents=…)`, which
+already computes `final = (monthly_price − discount) × remaining / total` with HALF_UP rounding
+(verified in `domain/proration.py`). We do **not** introduce a parallel discount formula — this is
+the single biggest reuse win and keeps discounted invoices consistent with existing proration.
 
-Edge rules (all explicitly tested):
-- Floors: net never negative; `discount_cents` never exceeds `gross`.
-- First-month proration runs on **gross first**, then the kind is applied. `fixed_net` is treated
-  as a full-month target and prorated by the same first-month ratio.
+- **Full (non-first) month:** `gross = monthly_price_cents`, `net = gross − monthly_discount_cents`,
+  invoice `discount_cents = monthly_discount_cents`.
+- **First (prorated) month:** compute `gross_prorated = quote(discount_cents=0).final_amount_cents`
+  and `net_prorated = quote(discount_cents=monthly_discount_cents).final_amount_cents`; then invoice
+  `discount_cents = gross_prorated − net_prorated` (identical ratio/rounding ⇒ exact). The discount
+  line is prorated alongside tuition.
 
-Worked examples (full month `gross = $100.00`):
-- `percent`, `percent_bps=1000` → net `$90.00`, discount `$10.00`.
-- `amount_off`, `amount_off_cents=4000` → net `$60.00`, discount `$40.00`.
-- `fixed_net`, `fixed_net_cents=4000` → net `$40.00`, discount `$60.00`.
+Invariants: `0 ≤ monthly_discount_cents ≤ monthly_price_cents` (floors built into the table);
+`net ≥ 0`; `discount_cents ≤ gross`.
 
-First-month proration example (ratio `5/20` of the month, `gross_prorated = $25.00`):
-- `percent` 10% → net `$22.50`.
-- `fixed_net` `$40.00` → prorated target `$40.00 × 5/20 = $10.00` net.
-- `amount_off` `$40.00` → `max(0, $25.00 − $40.00) = $0.00` net (floor applies; document this so
-  admins know a large amount-off on a partial first month fully waives that month).
+Worked examples (full month `monthly_price = $100.00`):
+- `percent 10%` → discount `$10.00`, net `$90.00`.
+- `amount_off $40` → discount `$40.00`, net `$60.00`.
+- `fixed_net $40` → discount `$60.00`, net `$40.00`.
+- `waiver` → discount `$100.00`, net `$0.00`.
+
+First-month example (ratio `5/20`, `gross_prorated = $25.00`):
+- `percent 10%` → net `$22.50`, discount `$2.50`.
+- `fixed_net $40` → net `$10.00` (`$40 × 5/20`), discount `$15.00`.
+- `amount_off $40` → monthly net `$60.00` → prorated net `$15.00`, discount `$10.00`.
 
 ## 7. DDD boundaries
 
@@ -337,26 +346,24 @@ In `_dual_write_ledger_invoice`:
   `source_id=discount_id`, plus snapshot fields `{category, category_label, kind, gross_cents,
   net_cents}`.
 
-**Subtotal/discount/total accounting (explicit).** `subtotal_cents` is the sum of **positive
-tuition lines only** and equals `gross`; the discount line does **not** roll into the subtotal.
-The header `discount_cents` mirrors the discount line magnitude. `recompute_totals()` then yields
-`total_cents = subtotal_cents − discount_cents`:
+**Subtotal/discount/total accounting (explicit).** `LedgerInvoice` is a frozen Pydantic model
+with **stored** `subtotal_cents`, `discount_cents`, `total_cents`, `balance_due_cents` — there is
+**no** `recompute_totals()` helper; the projection computes them when constructing the invoice.
+The discount line does **not** roll into `subtotal_cents`:
 
 ```text
 tuition $100, 10% scholarship:
-  Line 1  tuition   +$100.00
-  Line 2  discount   −$10.00   source_type=tuition_discount
-  subtotal_cents = 10000     # tuition only
-  discount_cents =  1000     # header mirrors line 2 magnitude
-  total_cents    =  9000     # subtotal − discount
-  balance_due_cents recomputed from total
+  Line 1  tuition   +$100.00   line_type=tuition
+  Line 2  discount   −$10.00   line_type=discount, source_type=tuition_discount
+  subtotal_cents     = 10000   # gross / tuition only
+  discount_cents     =  1000   # = monthly_discount_cents (or prorated, per §6)
+  total_cents        =  9000   # subtotal − discount
+  balance_due_cents  =  9000   # = total at creation
 ```
 
-Implementers must verify against the existing `recompute_totals()` in the ledger domain whether it
-already excludes the discount line from `subtotal_cents`; if it sums all lines, the discount line
-must be excluded from the subtotal computation (or the header `discount_cents` derived from the
-discount line) so the identity `total = subtotal − discount` holds exactly. This is a required
-unit test (§13).
+The projection sets these four header fields directly from `gross`, `discount_cents`, and
+`net = gross − discount`. The identity `total_cents == subtotal_cents − discount_cents` is a
+required unit test (§13).
 
 **Idempotency / re-run.** Monthly invoices use the deterministic id
 `inv-monthly-{enrollment_id}-{period}` (verified in `mongo_payment_repo.py`), so re-running
