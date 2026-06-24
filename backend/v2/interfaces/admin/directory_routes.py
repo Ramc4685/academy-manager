@@ -7,9 +7,8 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from backend.v2.contexts.billing.domain.tuition_discount import (
-    display_label,
-    monthly_discount_cents,
+from backend.v2.contexts.billing.application.use_cases.tuition_discounts import (
+    attach_tuition_discount_badges,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     ChangeAdminStudentParentCommand,
@@ -51,32 +50,11 @@ router = APIRouter(tags=["admin.directory"])
 async def _attach_tuition_discounts(data: dict, use_cases: AdminUseCases) -> None:
     """Enrich admin student detail with recurring tuition discount badges (#244).
 
-    Composed at the BFF edge so the enrollment context never imports billing.
+    Delegates to the billing application layer so this BFF route never imports
+    the billing domain directly (DDD boundary; enforced by import-linter).
     """
     discounts_repo = getattr(use_cases, "tuition_discounts", None)
-    sessions = data.get("enrolled_sessions") or []
-    if discounts_repo is None or not sessions:
-        return
-    enrollment_ids = [str(s.get("enrollment_id")) for s in sessions if s.get("enrollment_id")]
-    policies = await discounts_repo.active_by_enrollments(enrollment_ids)
-    for summary in sessions:
-        policy = policies.get(str(summary.get("enrollment_id")))
-        if policy is None:
-            continue
-        gross = int(summary.get("amount_cents") or 0)
-        discount_cents = monthly_discount_cents(policy, monthly_price_cents=gross)
-        summary["discount"] = {
-            "category": policy.category,
-            "category_label": policy.category_label,
-            "kind": policy.kind,
-            "label": display_label(policy),
-            "gross_cents": gross,
-            "discount_cents": discount_cents,
-            "net_cents": max(gross - discount_cents, 0),
-            "status": policy.status,
-            "effective_start": policy.effective_start,
-            "effective_end": policy.effective_end,
-        }
+    await attach_tuition_discount_badges(data.get("enrolled_sessions") or [], discounts_repo)
 
 
 @router.get("/users", response_model=AdminUserList)
