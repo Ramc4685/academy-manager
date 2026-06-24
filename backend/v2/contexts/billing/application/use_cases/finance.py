@@ -59,6 +59,67 @@ class Payout(BaseModel):
     rule_label: str | None = None
 
 
+class TuitionDiscountCategorySummary(BaseModel):
+    model_config = {"frozen": True}
+
+    category: str
+    discount_cents: int = Field(ge=0)
+
+
+class TuitionDiscountSummary(BaseModel):
+    model_config = {"frozen": True}
+
+    period: str
+    gross_tuition_cents: int = Field(ge=0)
+    discount_cents: int = Field(ge=0)
+    net_tuition_cents: int = Field(ge=0)
+    by_category: list[TuitionDiscountCategorySummary]
+
+
+class MongoTuitionDiscountSummaryQuery(TenantScopedRepository):
+    collection_name = "invoice_lines"
+
+    async def execute(self, period: str) -> TuitionDiscountSummary:
+        invoice_ids: list[str] = []
+        async for invoice in self._find_many_in_collection(
+            "invoices",
+            {"period": period, "status": {"$ne": "void"}},
+            {"invoice_id": 1},
+        ):
+            invoice_id = invoice.get("invoice_id")
+            if invoice_id:
+                invoice_ids.append(str(invoice_id))
+
+        gross_tuition_cents = 0
+        discount_cents = 0
+        by_category: dict[str, int] = {}
+        if invoice_ids:
+            async for line in self._find_many({"invoice_id": {"$in": invoice_ids}}):
+                amount = int(line.get("amount_cents", 0))
+                if line.get("source_type") == "tuition_discount":
+                    value = abs(amount)
+                    discount_cents += value
+                    category = str(line.get("category") or "other")
+                    by_category[category] = by_category.get(category, 0) + value
+                elif line.get("line_type") == "tuition":
+                    gross_tuition_cents += amount
+
+        rows = [
+            TuitionDiscountCategorySummary(category=category, discount_cents=value)
+            for category, value in sorted(
+                by_category.items(),
+                key=lambda item: (-item[1], item[0]),
+            )
+        ]
+        return TuitionDiscountSummary(
+            period=period,
+            gross_tuition_cents=gross_tuition_cents,
+            discount_cents=discount_cents,
+            net_tuition_cents=max(gross_tuition_cents - discount_cents, 0),
+            by_category=rows,
+        )
+
+
 # FINANCE
 class MongoExpenseRepository(TenantScopedRepository):
     collection_name = "expenses"

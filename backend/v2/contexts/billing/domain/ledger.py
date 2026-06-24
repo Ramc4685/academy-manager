@@ -61,6 +61,11 @@ class InvoiceLine(BaseModel):
     amount_cents: int
     source_type: str | None = None
     source_id: str | None = None
+    category: str | None = None
+    category_label: str | None = None
+    discount_kind: str | None = None
+    gross_cents: int | None = None
+    net_cents: int | None = None
     created_at: datetime
 
 

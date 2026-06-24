@@ -123,6 +123,44 @@ async def test_full_month_percent_discount(db, acad) -> None:
 
 
 @pytest.mark.asyncio
+async def test_discounted_invoice_records_discount_line_and_gross_net_identity(db, acad) -> None:
+    clock = _fixed_clock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    await _seed_session_student_enrollment(
+        db, acad, billing_start=datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
+    )
+    await _set_discount(db, clock=clock, category="sibling", kind="percent", percent_bps=1000)
+
+    result = await _payment_repo(db, clock).generate_monthly_payments("2026-06")
+
+    assert result.created == 1
+    invoice = await _monthly_invoice(db, acad, "2026-06")
+    assert invoice is not None
+    assert invoice["subtotal_cents"] == 10_000
+    assert invoice["discount_cents"] == 1_000
+    assert invoice["total_cents"] == 9_000
+    assert invoice["total_cents"] == invoice["subtotal_cents"] - invoice["discount_cents"]
+
+    lines = [
+        doc
+        async for doc in db["invoice_lines"].find(
+            {"academy_id": acad, "invoice_id": invoice["invoice_id"]},
+            sort=[("line_type", -1)],
+        )
+    ]
+    assert [(line["line_type"], line["amount_cents"]) for line in lines] == [
+        ("tuition", 10_000),
+        ("discount", -1_000),
+    ]
+    discount_line = next(line for line in lines if line["line_type"] == "discount")
+    assert discount_line["description"] == "Sibling discount"
+    assert discount_line["source_type"] == "tuition_discount"
+    assert discount_line["source_id"] == "disc-1"
+    assert discount_line["category"] == "sibling"
+    assert discount_line["discount_kind"] == "percent"
+    assert "note" not in discount_line
+
+
+@pytest.mark.asyncio
 async def test_full_month_waiver_still_records_row(db, acad) -> None:
     clock = _fixed_clock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
     await _seed_session_student_enrollment(

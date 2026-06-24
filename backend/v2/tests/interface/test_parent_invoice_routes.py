@@ -58,6 +58,24 @@ def _line(*, line_id: str, invoice_id: str) -> InvoiceLine:
     )
 
 
+def _discount_line(*, line_id: str, invoice_id: str) -> InvoiceLine:
+    return InvoiceLine(
+        line_id=line_id,
+        academy_id="acad",
+        invoice_id=invoice_id,
+        line_type="discount",
+        description="Sibling discount",
+        quantity=1,
+        unit_amount_cents=-1_000,
+        amount_cents=-1_000,
+        source_type="tuition_discount",
+        source_id="disc-1",
+        category="sibling",
+        discount_kind="percent",
+        created_at=datetime(2026, 5, 1, tzinfo=UTC),
+    )
+
+
 class _FakeInvoiceRepo:
     def __init__(
         self, invoices: dict[str, LedgerInvoice], lines: dict[str, list[InvoiceLine]]
@@ -127,7 +145,12 @@ def _seed() -> _FakeInvoiceRepo:
             invoice_id="inv-b1", parent_id="parent-2", created_at=datetime(2026, 5, 5, tzinfo=UTC)
         ),
     }
-    lines = {"inv-a1": [_line(line_id="line-1", invoice_id="inv-a1")]}
+    lines = {
+        "inv-a1": [
+            _line(line_id="line-1", invoice_id="inv-a1"),
+            _discount_line(line_id="line-discount-1", invoice_id="inv-a1"),
+        ]
+    }
     return _FakeInvoiceRepo(invoices, lines)
 
 
@@ -166,19 +189,26 @@ def test_parent_lists_own_invoices_newest_first() -> None:
     assert first["pdf_url"] is None  # artifact_id is internal; no public URL yet
 
 
-def test_parent_invoice_detail_includes_line_items() -> None:
+def test_parent_invoice_detail_includes_public_line_items() -> None:
     with _make_client() as client:
         response = client.get("/api/v2/parent/invoices/inv-a1")
 
     assert response.status_code == 200
     body = response.json()
     assert body["invoice_id"] == "inv-a1"
-    assert len(body["lines"]) == 1
+    assert len(body["lines"]) == 2
     line = body["lines"][0]
     assert line["description"] == "May tuition"
     assert line["quantity"] == 1
     assert line["unit_amount_cents"] == 12_000
     assert line["amount_cents"] == 12_000
+    discount_line = body["lines"][1]
+    assert discount_line["label"] == "Sibling discount"
+    assert discount_line["amount_cents"] == -1_000
+    assert "note" not in discount_line
+    assert "category" not in discount_line
+    assert "source_type" not in discount_line
+    assert "source_id" not in discount_line
 
 
 def test_parent_can_start_invoice_retry_checkout_for_own_invoice() -> None:

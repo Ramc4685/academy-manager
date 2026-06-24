@@ -217,6 +217,7 @@ class AdminUseCases:
     set_tuition_discount: object | None = None  # SetTuitionDiscount
     remove_tuition_discount: object | None = None  # RemoveTuitionDiscount
     tuition_discounts: object | None = None  # MongoTuitionDiscountRepository
+    tuition_discount_summary: object | None = None  # MongoTuitionDiscountSummaryQuery
     reconcile_stripe_billing: object | None = None  # callable
     get_billing_reconciliation_report: object | None = None  # callable
     list_billing_webhook_events: object | None = None  # callable

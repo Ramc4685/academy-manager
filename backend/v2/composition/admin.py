@@ -44,6 +44,7 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
     EditExpense,
     MongoExpenseRepository,
     MongoPayoutRepository,
+    MongoTuitionDiscountSummaryQuery,
     RecordExpense,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import (
@@ -2651,6 +2652,7 @@ def compose_admin(
     edit_expense = EditExpense(expenses=expenses_repo)
     delete_expense = DeleteExpense(expenses=expenses_repo)
     revenue_query = _AdminEffectiveRevenueQuery(db)
+    tuition_discount_summary = MongoTuitionDiscountSummaryQuery(db)
 
     # Comms
     messages_repo = MongoMessageRepository(db)
@@ -5118,6 +5120,7 @@ def compose_admin(
         set_tuition_discount=set_tuition_discount,
         remove_tuition_discount=remove_tuition_discount,
         tuition_discounts=tuition_discounts_repo,
+        tuition_discount_summary=tuition_discount_summary,
         reconcile_stripe_billing=reconcile_stripe_billing,
         get_billing_reconciliation_report=get_billing_reconciliation_report,
         list_billing_webhook_events=list_billing_webhook_events,

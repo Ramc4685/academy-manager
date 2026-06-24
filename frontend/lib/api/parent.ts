@@ -121,6 +121,7 @@ export interface ParentInvoice {
 
 export interface ParentInvoiceLine {
   description: string;
+  label?: string | null;
   quantity: number;
   unit_amount_cents: number;
   amount_cents: number;
