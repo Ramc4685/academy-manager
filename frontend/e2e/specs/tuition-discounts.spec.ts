@@ -341,13 +341,21 @@ test.describe("tuition discounts", () => {
     await page.goto("/admin/students/student-discounts");
     await page.getByRole("tab", { name: "Sessions" }).click();
     const sessions = page.getByTestId("admin-student-enrolled-sessions");
+    const scholarshipRow = sessions
+      .locator("tbody tr")
+      .filter({ hasText: "Scholarship Singles" });
+    const coachChildRow = sessions
+      .locator("tbody tr")
+      .filter({ hasText: "Coach Kids Doubles" });
 
-    await sessions.getByRole("button", { name: "Discount" }).first().click();
+    await scholarshipRow.getByRole("button", { name: "Discount" }).click();
     await expect(page.getByRole("dialog", { name: "Tuition discount" })).toBeVisible();
     await page.getByRole("button", { name: "Save discount" }).click();
     await expect(page.getByRole("dialog", { name: "Tuition discount" })).toHaveCount(0);
+    await expect(scholarshipRow).toContainText("Scholarship");
+    await expect(scholarshipRow).toContainText("$0");
 
-    await sessions.getByRole("button", { name: "Discount", exact: true }).click();
+    await coachChildRow.getByRole("button", { name: "Discount", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Tuition discount" });
     await dialog.locator("select").nth(0).selectOption("coach_child");
     await dialog.locator("select").nth(1).selectOption("percent");
@@ -365,10 +373,8 @@ test.describe("tuition discounts", () => {
         body: { category: "coach_child", kind: "percent", percent_bps: 2000 },
       },
     ]);
-    await expect(sessions).toContainText("Scholarship");
-    await expect(sessions).toContainText("$0");
-    await expect(sessions).toContainText("Coach child");
-    await expect(sessions).toContainText("$96");
+    await expect(coachChildRow).toContainText("Coach child");
+    await expect(coachChildRow).toContainText("$96");
 
     await page.getByRole("tab", { name: "Billing" }).click();
     await expect(page.getByTestId("admin-student-selected-invoice")).toContainText("$96");
