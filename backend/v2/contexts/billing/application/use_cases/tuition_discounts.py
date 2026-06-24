@@ -11,6 +11,8 @@ from backend.v2.contexts.billing.domain.tuition_discount import (
     DiscountCategory,
     DiscountKind,
     TuitionDiscount,
+    display_label,
+    monthly_discount_cents,
 )
 
 
@@ -18,6 +20,48 @@ class TuitionDiscountPort(Protocol):
     async def set_active(self, policy: TuitionDiscount, *, set_by: str) -> TuitionDiscount: ...
 
     async def remove(self, enrollment_id: str, *, ended_by: str) -> None: ...
+
+
+class TuitionDiscountReadPort(Protocol):
+    async def active_by_enrollments(
+        self, enrollment_ids: list[str]
+    ) -> dict[str, TuitionDiscount]: ...
+
+
+async def attach_tuition_discount_badges(
+    sessions: list[dict],
+    discounts: TuitionDiscountReadPort | None,
+) -> None:
+    """Enrich enrolled-session summaries with recurring tuition discount badges (#244).
+
+    Lives in the application layer so the admin BFF can compose discount badges
+    without importing the billing domain directly (DDD boundary). Mutates the
+    ``sessions`` dicts in place, adding a ``discount`` key where a policy applies.
+    """
+    if discounts is None or not sessions:
+        return
+    enrollment_ids = [str(s.get("enrollment_id")) for s in sessions if s.get("enrollment_id")]
+    if not enrollment_ids:
+        return
+    policies = await discounts.active_by_enrollments(enrollment_ids)
+    for summary in sessions:
+        policy = policies.get(str(summary.get("enrollment_id")))
+        if policy is None:
+            continue
+        gross = int(summary.get("amount_cents") or 0)
+        discount_cents = monthly_discount_cents(policy, monthly_price_cents=gross)
+        summary["discount"] = {
+            "category": policy.category,
+            "category_label": policy.category_label,
+            "kind": policy.kind,
+            "label": display_label(policy),
+            "gross_cents": gross,
+            "discount_cents": discount_cents,
+            "net_cents": max(gross - discount_cents, 0),
+            "status": policy.status,
+            "effective_start": policy.effective_start,
+            "effective_end": policy.effective_end,
+        }
 
 
 class SetTuitionDiscountCommand(BaseModel):
