@@ -207,6 +207,7 @@ class ParentInvoicesResponse(BaseModel):
 
 class ParentInvoiceLineView(BaseModel):
     description: str
+    label: str | None = None
     quantity: int
     unit_amount_cents: int
     amount_cents: int

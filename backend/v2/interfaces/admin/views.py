@@ -1162,6 +1162,19 @@ class AdminRevenueResponse(BaseModel):  # FINANCE
     by_month: dict[str, int]
 
 
+class AdminTuitionDiscountCategorySummary(BaseModel):
+    category: str
+    discount_cents: int
+
+
+class AdminTuitionDiscountSummaryResponse(BaseModel):
+    period: str
+    gross_tuition_cents: int
+    discount_cents: int
+    net_tuition_cents: int
+    by_category: list[AdminTuitionDiscountCategorySummary]
+
+
 class AdminAuditLogView(BaseModel):
     audit_id: str
     actor_id: str | None = None

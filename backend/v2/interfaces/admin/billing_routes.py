@@ -41,6 +41,7 @@ from backend.v2.interfaces.admin.views import (
     AdminPayoutList,
     AdminPayoutView,
     AdminRevenueResponse,
+    AdminTuitionDiscountSummaryResponse,
     ApplyPaymentDiscountRequest,
     BillingReconciliationReportResponse,
     BillingWebhookQueueResponse,
@@ -592,6 +593,21 @@ async def revenue(
     # ADR-0006 trigger) when this query gets its own aggregates.
     by_month = await use_cases.revenue_query.execute(parent_id_filter=None)
     return AdminRevenueResponse(by_month=by_month)
+
+
+@router.get(
+    "/finance/tuition-discounts",
+    response_model=AdminTuitionDiscountSummaryResponse,
+)  # FINANCE
+async def tuition_discount_summary(
+    period: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminTuitionDiscountSummaryResponse:
+    query = _required_callable(use_cases.tuition_discount_summary, "Tuition discount summary")
+    summary = await query.execute(period)  # type: ignore[attr-defined]
+    data = summary.model_dump(mode="python") if hasattr(summary, "model_dump") else summary
+    return AdminTuitionDiscountSummaryResponse(**data)
 
 
 # --- Ledger invoice management routes (Phase 2A) ---

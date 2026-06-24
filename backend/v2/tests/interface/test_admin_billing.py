@@ -675,6 +675,38 @@ def test_revenue_wrong_persona_404(coach_on_admin_client):
     assert r.status_code == 404
 
 
+def test_tuition_discount_summary_route(admin_client):
+    class _Summary:
+        async def execute(self, period: str):
+            assert period == "2026-06"
+            return {
+                "period": "2026-06",
+                "gross_tuition_cents": 22_000,
+                "discount_cents": 13_000,
+                "net_tuition_cents": 9_000,
+                "by_category": [
+                    {"category": "scholarship", "discount_cents": 12_000},
+                    {"category": "sibling", "discount_cents": 1_000},
+                ],
+            }
+
+    admin_client.use_cases.tuition_discount_summary = _Summary()
+
+    r = admin_client.get("/api/v2/admin/finance/tuition-discounts?period=2026-06")
+
+    assert r.status_code == 200, r.text
+    assert r.json() == {
+        "period": "2026-06",
+        "gross_tuition_cents": 22_000,
+        "discount_cents": 13_000,
+        "net_tuition_cents": 9_000,
+        "by_category": [
+            {"category": "scholarship", "discount_cents": 12_000},
+            {"category": "sibling", "discount_cents": 1_000},
+        ],
+    }
+
+
 def test_send_invoice_returns_checkout_url_when_stripe_configured(admin_client):
     ledger = _FakeLedger(invoices=[_invoice(status="open", balance_due_cents=7_000)])
     stripe = _FakeInvoiceStripe()

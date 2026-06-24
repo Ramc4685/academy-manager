@@ -30,6 +30,7 @@ from backend.v2.contexts.billing.domain.proration import (
 )
 from backend.v2.contexts.billing.domain.tuition_discount import (
     TuitionDiscount,
+    display_label,
     monthly_discount_cents,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo import (
@@ -511,7 +512,10 @@ class MongoPaymentRepository(TenantScopedRepository):
         parent_id: str,
         student_id: str,
         period: str,
-        amount_cents: int,
+        gross_cents: int,
+        discount_cents: int = 0,
+        total_cents: int | None = None,
+        discount_policy: TuitionDiscount | None = None,
         now: datetime,
     ) -> None:
         """Write a LedgerInvoice for a monthly-generated enrollment charge.
@@ -538,10 +542,14 @@ class MongoPaymentRepository(TenantScopedRepository):
             enrollment_id=enrollment_id,
             period=period,
             status="open",
-            subtotal_cents=amount_cents,
-            discount_cents=0,
-            total_cents=amount_cents,
-            balance_due_cents=amount_cents,
+            subtotal_cents=gross_cents,
+            discount_cents=discount_cents,
+            total_cents=total_cents
+            if total_cents is not None
+            else max(gross_cents - discount_cents, 0),
+            balance_due_cents=total_cents
+            if total_cents is not None
+            else max(gross_cents - discount_cents, 0),
             currency="usd",
             due_date=due_date,
             created_at=now,
@@ -554,13 +562,37 @@ class MongoPaymentRepository(TenantScopedRepository):
             line_type="tuition",
             description=f"Monthly tuition {period}",
             quantity=1,
-            unit_amount_cents=amount_cents,
-            amount_cents=amount_cents,
+            unit_amount_cents=gross_cents,
+            amount_cents=gross_cents,
             source_type="payment",
             source_id=payment_id,
             created_at=now,
         )
-        await ledger_repo.create_invoice(invoice, lines=[line], idempotency_key=idempotency_key)
+        lines = [line]
+        if discount_policy is not None and discount_cents > 0:
+            label = display_label(discount_policy)
+            description = label if label.lower().endswith("discount") else f"{label} discount"
+            lines.append(
+                InvoiceLine(
+                    line_id=f"{self._monthly_invoice_line_id(enrollment_id, period)}-discount",
+                    academy_id=academy_id,
+                    invoice_id=invoice_id,
+                    line_type="discount",
+                    description=description,
+                    quantity=1,
+                    unit_amount_cents=-discount_cents,
+                    amount_cents=-discount_cents,
+                    source_type="tuition_discount",
+                    source_id=discount_policy.discount_id,
+                    category=discount_policy.category,
+                    category_label=discount_policy.category_label,
+                    discount_kind=discount_policy.kind,
+                    gross_cents=gross_cents,
+                    net_cents=max(gross_cents - discount_cents, 0),
+                    created_at=now,
+                )
+            )
+        await ledger_repo.create_invoice(invoice, lines=lines, idempotency_key=idempotency_key)
 
     async def _mark_monthly_invoice_key(
         self,
@@ -610,9 +642,10 @@ class MongoPaymentRepository(TenantScopedRepository):
             return False
         total_cents = int(invoice_doc.get("total_cents", -1))
         balance_due_cents = int(invoice_doc.get("balance_due_cents", -1))
+        discount_cents = int(invoice_doc.get("discount_cents", 0))
         return (
             int(invoice_doc.get("subtotal_cents", -1)) == amount_cents
-            and total_cents == amount_cents
+            and total_cents == max(amount_cents - discount_cents, 0)
             and 0 <= balance_due_cents <= total_cents
         )
 
@@ -634,7 +667,8 @@ class MongoPaymentRepository(TenantScopedRepository):
         if invoice_doc is None:
             return False
 
-        line_total_cents = 0
+        subtotal_line_cents = 0
+        discount_line_cents = 0
         line_count = 0
         async for line_doc in self._db["invoice_lines"].find(
             {
@@ -643,7 +677,11 @@ class MongoPaymentRepository(TenantScopedRepository):
             }
         ):
             line_count += 1
-            line_total_cents += int(line_doc.get("amount_cents", 0))
+            amount = int(line_doc.get("amount_cents", 0))
+            if line_doc.get("source_type") == "tuition_discount":
+                discount_line_cents += abs(amount)
+            else:
+                subtotal_line_cents += amount
         if line_count == 0:
             return False
 
@@ -652,8 +690,9 @@ class MongoPaymentRepository(TenantScopedRepository):
         total_cents = int(invoice_doc.get("total_cents", -1))
         balance_due_cents = int(invoice_doc.get("balance_due_cents", -1))
         return (
-            (amount_cents is None or line_total_cents == amount_cents)
-            and subtotal_cents == line_total_cents
+            (amount_cents is None or subtotal_line_cents == amount_cents)
+            and subtotal_cents == subtotal_line_cents
+            and discount_cents == discount_line_cents
             and total_cents == max(subtotal_cents - discount_cents, 0)
             and 0 <= balance_due_cents <= total_cents
         )
@@ -776,7 +815,8 @@ class MongoPaymentRepository(TenantScopedRepository):
             parent_id=parent_id,
             student_id=student_id,
             period=period,
-            amount_cents=amount_cents,
+            gross_cents=amount_cents,
+            total_cents=amount_cents,
             now=now,
         )
         if await self._monthly_invoice_is_complete(
@@ -887,6 +927,7 @@ class MongoPaymentRepository(TenantScopedRepository):
                 discount_cents,
                 net_amount_cents,
                 snapshot_id,
+                discount_policy,
             ) = await _resolve_charge_for_enrollment(
                 repo=self,
                 enrollment=enrollment,
@@ -994,7 +1035,10 @@ class MongoPaymentRepository(TenantScopedRepository):
                     parent_id=parent_id,
                     student_id=student_id,
                     period=period,
-                    amount_cents=amount_cents,
+                    gross_cents=gross_amount_cents,
+                    discount_cents=discount_cents,
+                    total_cents=amount_cents,
+                    discount_policy=discount_policy,
                     now=now,
                 )
                 await self._mark_monthly_invoice_key(
@@ -1413,8 +1457,8 @@ async def _resolve_charge_for_enrollment(
     session_doc: dict[str, object],
     period: str,
     now: datetime,
-) -> tuple[int, int, int, str | None]:
-    """Return (gross_cents, discount_cents, net_cents, snapshot_id) for a monthly row.
+) -> tuple[int, int, int, str | None, TuitionDiscount | None]:
+    """Return charge tuple for a monthly row, including the applied discount policy.
 
     This function owns all proration decisions; the repo class is a pure
     storage delegate here. A recurring tuition discount (issue #244), if active and
@@ -1456,7 +1500,7 @@ async def _resolve_charge_for_enrollment(
             session_id=str(enrollment.get("session_id") or session_doc.get("session_id") or ""),
             student_id=str(enrollment.get("student_id") or ""),
         )
-        return amount_cents, discount, net, snapshot_id
+        return amount_cents, discount, net, snapshot_id, policy if mdc > 0 else None
 
     # Check if already prorated in a prior run
     academy_id = current_academy_id()
@@ -1470,7 +1514,7 @@ async def _resolve_charge_for_enrollment(
         }
     )
     if prior_consumed is not None:
-        return 0, 0, 0, str(prior_consumed.get("snapshot_id"))
+        return 0, 0, 0, str(prior_consumed.get("snapshot_id")), None
 
     # First-month proration. Net is prorated AFTER the discount (the proration
     # policy already subtracts discount_cents before prorating); gross is the same
@@ -1500,7 +1544,7 @@ async def _resolve_charge_for_enrollment(
         student_id=str(enrollment.get("student_id") or ""),
         now=now,
     )
-    return gross_prorated, discount, net_prorated, snapshot_id
+    return gross_prorated, discount, net_prorated, snapshot_id, policy if mdc > 0 else None
 
 
 def _policy_applies(policy: TuitionDiscount, billing_period: BillingPeriod) -> bool:
