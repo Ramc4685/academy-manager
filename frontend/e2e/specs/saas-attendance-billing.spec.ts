@@ -23,6 +23,7 @@ import {
   ACADEMY_A,
   COACH_USER_B,
   fulfillJson,
+  stubAcademy,
   stubMe,
 } from "../fixtures/saas-stubs";
 
@@ -151,6 +152,7 @@ test.describe("SaaS v2 — admin billing ledger idempotency", () => {
       academy_id: ACADEMY_A,
       roles: ["admin"],
     });
+    await stubAcademy(page, ACADEMY_A);
 
     // The admin "generate monthly" surface lives on the v2 payments
     // page. Backend ledger idempotency means: if the client submits
