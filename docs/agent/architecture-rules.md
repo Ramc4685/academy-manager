@@ -2,7 +2,9 @@
 
 `academy-manager` is a strangler migration, not a rewrite.
 
-Legacy FastAPI + CRA stays working while v2 capabilities move one workflow at a time behind BFF, DDD boundaries, and edge routing.
+The production app now runs the v2 FastAPI runtime and the Next.js frontend.
+Historical migration docs still describe the strangler path, but current work
+should treat `backend/v2/` and `frontend/` as the active implementation.
 
 ---
 
@@ -25,10 +27,9 @@ Architecture docs and accepted ADRs override this file.
 
 ```txt
 backend/
-  server.py                 FastAPI legacy composition root
-  routers/                  Legacy /api/* routers
-  services/                 Legacy shared services
-  tests/                    Backend pytest suites
+  v2/                       Production FastAPI app
+  scripts/                  Backend import, audit, seed, and repair scripts
+  pyproject.toml            Backend lint, type, pytest, and import-linter config
 
 frontend/
   app/                      Next.js App Router route groups
@@ -43,9 +44,6 @@ test_result.md              Main/testing agent feedback index
 docs/test-results/          Task-scoped testing ledgers
 ```
 
-v2 layout, when present:
-
-```txt
 backend/v2/
   contexts/                 DDD bounded contexts
   interfaces/               Persona BFF routes
@@ -54,7 +52,7 @@ backend/v2/
   tests/                    v2 unit/application/contract/interface tests
 
 edge/
-  router.ts                 Edge route switching prototype
+  router.ts                 Retired edge-routing reference and tests
 ```
 
 ---
@@ -104,12 +102,18 @@ Wrong-persona access for v2 persona routes should not leak data existence. Follo
 
 ## DDD Context Rules
 
-Initial v2 contexts:
+Current v2 contexts:
 
-- `identity`: users, roles, auth claims
-- `enrollment`: sessions, students, enrollments, roster, capacity, waitlist
-- `coaching`: attendance, lesson plans, progress notes, coach workflow queries
-- `billing`: payments, subscriptions, Stripe, refunds, webhooks
+- `identity`: users, roles, memberships, auth claims, tenant bootstrap
+- `enrollment`: sessions, students, enrollments, roster, capacity, waitlist, pauses
+- `coaching`: attendance, lesson plans, progress notes, skill notes, coach workflows
+- `billing`: invoices, payments, subscriptions, Stripe, refunds, webhooks, tuition discounts
+- `finance`: payroll, payout periods, reporting snapshots
+- `communications`: campaigns, coach digests, delivery logs
+- `curriculum`: pathways, levels, skills, criteria, lesson cards
+- `student_progress`: placements, skill status, tests, level-up, certificates
+- `onboarding`: applications, waiver templates, signatures
+- `platform`: tenant lifecycle, platform billing, governance, audit
 
 Do not create empty contexts just to match a diagram. Add a context when a ticket or real workflow needs it.
 
@@ -117,9 +121,9 @@ Do not create empty contexts just to match a diagram. Add a context when a ticke
 
 ## Migration Rules
 
-- Legacy `/api/*` is production behavior.
-- v2 `/api/v2/*` is introduced workflow by workflow.
-- Keep legacy and v2 behavior separate.
-- A workflow should not call both legacy and v2 for the same user journey once cut over.
-- Use feature flags or edge routing for cutover and rollback.
-- Do not mark migration phases done until exit gates are verified.
+- Production HTTP APIs are under `/api/v2/*`.
+- Do not add new frontend calls to legacy `/api/*` routes.
+- Keep legacy compatibility adapters isolated when they are still needed for
+  single-academy launch behavior; do not use them for SaaS request paths.
+- SaaS work must use explicit tenant resolution and request-scoped tenant context.
+- Do not mark migration or launch phases done until exit gates are verified.

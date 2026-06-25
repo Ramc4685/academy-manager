@@ -81,7 +81,7 @@ guard, not a security boundary; the backend enforces authorization.)
 
 ## API type generation
 
-- `pnpm generate:api` runs `openapi-typescript` against the backend OpenAPI into `lib/api/generated/v2.d.ts`. Currently a placeholder; typed clients are hand-declared. CI checks for OpenAPI drift.
+- `pnpm generate:api` runs `openapi-typescript` against the backend OpenAPI into `lib/api/generated/v2.d.ts`. The generated file and OpenAPI snapshot are not currently committed; typed clients are hand-declared. CI only performs the OpenAPI drift diff when `frontend/lib/api/openapi.snapshot.json` exists.
 
 ## Sources inspected
 

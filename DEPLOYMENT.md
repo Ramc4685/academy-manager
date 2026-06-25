@@ -295,6 +295,10 @@ mongorestore --uri "$RESTORE_MONGO_URL/academy_manager_restore" --archive=academ
 
 Run a restore drill before launch and at least quarterly.
 
-## Startup Indexes
+## Startup Migrations
 
-The backend creates required Mongo indexes on startup through `backend/db.py`. There is not yet a versioned migration framework, so schema changes that need backfills should be shipped with explicit one-off scripts and a runbook entry.
+The backend can run versioned, idempotent v2 Mongo migrations on startup
+through `backend/v2/migrations/runner.py` when `V2_RUN_MIGRATIONS_ON_BOOT=true`.
+Index and validator changes live under `backend/v2/migrations/`. Backfills
+that need production operator judgment should still ship with explicit
+dry-run-first scripts and a runbook entry.

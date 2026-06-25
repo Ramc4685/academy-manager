@@ -37,11 +37,12 @@ uvicorn backend.v2.main:app --reload --port 8001
 
 ## Retired Legacy Source Rules
 
-- Legacy source remains in the tree during decommission but is not the runtime entry point.
-- Legacy routers live under `backend/routers/`.
-- Shared legacy services live under `backend/services/`.
-- Keep legacy fixes narrow and compatible with existing `/api/*` clients.
-- Do not move legacy code into v2 as part of an unrelated bug fix.
+- Legacy backend routers/services/models are no longer present on main and are
+  not the runtime entry point.
+- Do not recreate `backend/routers/`, `backend/services/`, or legacy `/api/*`
+  handlers for new work.
+- Keep any remaining compatibility adapters isolated inside v2 and compatible
+  with existing single-academy launch behavior.
 - Preserve httpOnly cookie behavior.
 - Preserve explicit CORS origins. Do not use wildcard origins with credentials.
 
@@ -49,7 +50,7 @@ uvicorn backend.v2.main:app --reload --port 8001
 
 ## v2 Backend Rules
 
-- Mount v2 only behind the configured gate when the branch supports it.
+- `backend.v2.main:app` is the production backend runtime.
 - Keep `/api/v2/*` paths persona-first: `/api/v2/coach/*`, `/api/v2/parent/*`, `/api/v2/admin/*`.
 - Interfaces must call application use cases.
 - Application use cases must use ports/protocols.

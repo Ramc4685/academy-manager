@@ -12,13 +12,15 @@ Production deployment is handled by one GitHub Actions workflow:
 
 ## Validation Jobs
 
-- **Backend** installs legacy + v2 Python dependencies, compiles backend code,
-  runs the broad non-live legacy pytest suite, runs v2 import-linter
-  boundaries, and runs `backend/v2/tests` with shared coverage.
+- **Backend** installs Python dependencies, runs `pip-audit`, compiles backend
+  code, checks v2 import-linter boundaries, and runs `backend/v2/tests` with
+  shared coverage.
+- **Backend Lint** runs `ruff check v2`, `ruff format --check v2`, and advisory
+  `mypy --config-file pyproject.toml v2`.
 - **Frontend** installs `frontend/` with pnpm, runs
   `pnpm audit --audit-level=high`, then runs typecheck, lint, build, OpenAPI
   drift check, size budget reporting, Lighthouse when configured, and
-  Playwright E2E.
+  Playwright E2E in Chromium and WebKit mobile projects.
 
 When a PR run fails, summarize the failing job and local reproduction command
 before patching:

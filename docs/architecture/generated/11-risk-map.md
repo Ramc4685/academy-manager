@@ -39,7 +39,7 @@ flowchart TB
 | R6 | **Identity bridge across proxy.** Firebase token carried as `Authorization`, `X-CourtMastr-Identity`, and `__cm_identity` cookie; proxy strips before forwarding. | `lib/api/client.ts`, `app/api/v2/[...path]/route.ts`, `proxy-headers.ts` | Token-handling surface area; cookie hygiene critical | Confirm Secure/HttpOnly + strip logic in all paths; minimize duplication |
 | R7 | **Domain under-modeling.** `Student` aggregate is thin; 52 `waiver_acceptances` and 0 `waiver_signatures`; `student_billing_enrollments` empty. | data-model review; `mongo_student_repo.py` | Compliance + billing-enrollment gaps | Canonicalize student profile + registered_at; converge waivers; link billing enrollment |
 | R8 | **Deprecated edge router.** `edge/` present with empty routes. | `edge/wrangler.toml` | Confusion / accidental deploy | Remove once confirmed unused |
-| R9 | **Placeholder generated API types.** `lib/api/generated/v2.d.ts` is a stub; clients hand-declared. | `frontend/lib/api/generated/` | Contract drift FE<->BE | Wire `generate:api` in CI as enforced gate |
+| R9 | **Generated API types are not committed.** `frontend/lib/api/generated/` only contains `.gitkeep`; clients are hand-declared, and CI skips OpenAPI drift unless `openapi.snapshot.json` exists. | `frontend/lib/api/generated/`, `.github/workflows/production.yml` | Contract drift FE<->BE | Commit an OpenAPI snapshot and generated types, then make drift checking enforced |
 | R10 | **Legacy compatibility fields.** `users.academy_id`, `students.dob` (string), `parent_user_id` still queried. | repos; data-model review | Subtle query/normalization bugs | Plan retirement after canonical backfill |
 
 ## Tightly coupled / fragile areas

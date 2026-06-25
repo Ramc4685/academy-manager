@@ -20,15 +20,15 @@ after production cutover.
 ```
 app/
 ├── (marketing)/         # public landing, login
-├── (coach)/             # Wave 1A target — mobile-first, bottom-tab nav
-├── (parent)/            # Wave 2
-└── (admin)/             # Wave 3
+├── (coach)/             # coach dashboard, today, sessions, teaching-plan flows
+├── (parent)/            # parent dashboard, onboarding, payments, progress, waivers
+└── (admin)/             # admin control plane, billing, users, sessions, reports
 lib/
 ├── api/                 # base client + per-persona typed clients
-│   └── generated/       # openapi-typescript output, committed
+│   └── generated/       # reserved for generated OpenAPI types; currently no snapshot is committed
 ├── auth/                # modular Firebase auth
 ├── pwa/                 # install prompt, update flow, offline indicator
-├── offline/             # IndexedDB mutation queue (Wave 1B only)
+├── offline/             # IndexedDB mutation queue and sync helpers
 └── query/               # TanStack Query setup + keys
 components/
 ├── ui/                  # touch-sized primitives
@@ -53,8 +53,9 @@ Each group has its own `layout.tsx` so the coach shell (bottom nav, no calendar 
 
 ## Bundle budgets
 
-Set in `package.json` under `size-limit`. Phase 0 budgets are placeholders;
-real values land per wave after baseline measurement (W1A-01).
+Set in `package.json` under `size-limit` for the coach Today, parent onboarding,
+and admin landing chunks. The CI workflow reports this gate with
+`continue-on-error: true`.
 
 ## Scripts
 
@@ -64,7 +65,7 @@ pnpm dev          # next dev on :3001
 pnpm build        # production build
 pnpm typecheck    # tsc --noEmit
 pnpm lint
-pnpm generate:api # regenerate lib/api/generated/v2.d.ts from the local v2 OpenAPI
+pnpm generate:api # generate lib/api/generated/v2.d.ts from a running local v2 OpenAPI
 pnpm size         # size-limit check
 pnpm lhci         # Lighthouse CI run
 ```
