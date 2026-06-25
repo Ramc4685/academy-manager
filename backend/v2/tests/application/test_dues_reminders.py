@@ -28,12 +28,14 @@ class CapturingReminderSender:
             "blocked": False,
             "reason": None,
             "selected_parent_ids": parent_ids or [],
-            "generated_invoice_artifacts": len(parent_ids or []),
+            "generated_invoice_artifacts": (
+                len(parent_ids or []) if generate_invoice_artifacts else 0
+            ),
         }
 
 
 @pytest.mark.asyncio
-async def test_selected_dues_reminders_pass_recipient_ids_and_request_invoice_artifacts() -> None:
+async def test_selected_dues_reminders_pass_recipient_ids_without_invoice_artifacts() -> None:
     assert hasattr(admin_payment_ops, "SendDuesReminders")
     assert hasattr(admin_payment_ops, "SendDuesRemindersCommand")
 
@@ -47,9 +49,9 @@ async def test_selected_dues_reminders_pass_recipient_ids_and_request_invoice_ar
     assert sender.calls == [
         {
             "parent_ids": ["parent-1", "parent-3"],
-            "generate_invoice_artifacts": True,
+            "generate_invoice_artifacts": False,
         }
     ]
     assert result["sent"] == 2
     assert result["selected_parent_ids"] == ["parent-1", "parent-3"]
-    assert result["generated_invoice_artifacts"] == 2
+    assert result["generated_invoice_artifacts"] == 0

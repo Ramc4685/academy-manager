@@ -155,7 +155,7 @@ class UndoPaymentPaid:
 class SendDuesRemindersCommand(BaseModel):
     model_config = {"frozen": True}
     parent_ids: list[str] | None = None
-    generate_invoice_artifacts: bool = True
+    generate_invoice_artifacts: bool = False
 
 
 class SendDuesReminders:

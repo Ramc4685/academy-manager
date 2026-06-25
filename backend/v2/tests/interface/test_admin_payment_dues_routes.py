@@ -181,4 +181,4 @@ def test_dues_reminders_support_selected_recipients(admin_client) -> None:
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["selected_parent_ids"] == ["parent-1", "parent-3"]
-    assert body["generated_invoice_artifacts"] == 2
+    assert body["generated_invoice_artifacts"] == 0
