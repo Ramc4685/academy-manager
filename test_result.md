@@ -47,8 +47,11 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-06-21-app-owned-billing-stripe-processor-only](docs/test-results/active/2026-06-21-app-owned-billing-stripe-processor-only.md)
 - [2026-06-21-issue-232-monthly-invoice-generation-recovery](docs/test-results/active/2026-06-21-issue-232-monthly-invoice-generation-recovery.md)
 - [2026-06-22-stripe-paid-invoice-shows-unpaid](docs/test-results/active/2026-06-22-stripe-paid-invoice-shows-unpaid.md)
+- [2026-06-23-tuition-discounts-phase-a](docs/test-results/active/2026-06-23-tuition-discounts-phase-a.md)
 - [2026-06-23-wi-3-legacy-invoice-match-queue](docs/test-results/active/2026-06-23-wi-3-legacy-invoice-match-queue.md)
-- [2026-06-24-production-registration-waiver-unavailable-hotfix](docs/test-results/active/2026-06-24-production-registration-waiver-unavailable-hotfix.md)
+- [2026-06-24-tuition-discounts-phase-b](docs/test-results/active/2026-06-24-tuition-discounts-phase-b.md)
+- [2026-06-24-tuition-discounts-phase-c](docs/test-results/active/2026-06-24-tuition-discounts-phase-c.md)
+- [2026-06-24-webkit-tuition-discount-e2e-ci](docs/test-results/active/2026-06-24-webkit-tuition-discount-e2e-ci.md)
 
 ## Required Workflow
 

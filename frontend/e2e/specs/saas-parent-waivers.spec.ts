@@ -15,7 +15,7 @@ import {
   collectConsoleErrors,
   installTenantGuard,
 } from "../fixtures/tenant-isolation";
-import { ACADEMY_A, fulfillJson, stubMe } from "../fixtures/saas-stubs";
+import { ACADEMY_A, fulfillJson, stubAcademy, stubMe } from "../fixtures/saas-stubs";
 
 test.describe("SaaS v2 — parent registration", () => {
   test("parent onboarding lands cleanly after register hits /register/parent", async ({
@@ -81,10 +81,11 @@ test.describe("SaaS v2 — waiver template versioning", () => {
       academy_id: ACADEMY_A,
       roles: ["admin"],
     });
+    await stubAcademy(page, ACADEMY_A);
 
     const TEMPLATE_VERSION = "v4.2";
 
-    await page.route("**/api/v2/admin/waivers*", (route) => {
+    await page.route(/\/api\/v2\/admin\/waivers(?:\?.*)?$/, (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, {
         summary: {
@@ -96,6 +97,7 @@ test.describe("SaaS v2 — waiver template versioning", () => {
           adoption_rate: 1.0,
         },
         current_waiver: {
+          waiver_id: "wt-current",
           title: "Liability and media release",
           version: TEMPLATE_VERSION,
           description: "Academy waiver text supplied by the admin BFF.",
@@ -122,9 +124,26 @@ test.describe("SaaS v2 — waiver template versioning", () => {
         ],
       });
     });
-    await page.route("**/api/v2/admin/waivers/templates*", (route) => {
+    await page.route(/\/api\/v2\/admin\/waivers\/templates(?:\?.*)?$/, (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, { templates: [] });
+    });
+    await page.route("**/api/v2/admin/waivers/wt-current", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        waiver_id: "wt-current",
+        title: "Liability and media release",
+        version: TEMPLATE_VERSION,
+        status: "active",
+        body: "Academy waiver text supplied by the admin BFF.",
+        content_hash: null,
+        effective_at: "2026-01-01T00:00:00Z",
+        assigned_to_registration: true,
+        assigned_at: "2026-01-01T00:00:00Z",
+        artifact_status: "unavailable",
+        share_status: "unavailable",
+        gap_note: "Template artifact metadata is not generated in this E2E fixture.",
+      });
     });
 
     await page.goto("/admin/waivers");
@@ -153,6 +172,7 @@ test.describe("SaaS v2 — no legacy /api/* traffic anywhere in admin smoke", ()
       academy_id: ACADEMY_A,
       roles: ["admin"],
     });
+    await stubAcademy(page, ACADEMY_A);
     await page.route("**/api/v2/admin/**", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, {});

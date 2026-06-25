@@ -499,6 +499,100 @@ def test_apply_payment_discount(admin_client):
     assert admin_client.seed["payments"].discounts["pay-pending"] == 2500
 
 
+def test_set_tuition_discount_happy_path(admin_client):
+    response = admin_client.put(
+        "/api/v2/admin/enrollments/enroll-1/tuition-discount",
+        json={
+            "student_id": "student-1",
+            "category": "scholarship",
+            "kind": "percent",
+            "percent_bps": 2500,
+            "effective_start": "2026-06-01",
+            "note": "Private aid note",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"ok": True}
+    repo = admin_client.seed["tuition_discounts"]
+    assert len(repo.set_calls) == 1
+    call = repo.set_calls[0]
+    policy = call["policy"]
+    assert policy.enrollment_id == "enroll-1"
+    assert policy.student_id == "student-1"
+    assert policy.category == "scholarship"
+    assert policy.kind == "percent"
+    assert policy.percent_bps == 2500
+    assert policy.note == "Private aid note"
+    assert call["set_by"] == "u-admin"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "student_id": "student-1",
+            "kind": "waiver",
+            "effective_start": "2026-06-01",
+        },
+        {
+            "student_id": "student-1",
+            "category": "other",
+            "kind": "waiver",
+            "effective_start": "2026-06-01",
+        },
+        {
+            "student_id": "student-1",
+            "category": "scholarship",
+            "kind": "percent",
+            "percent_bps": 10001,
+            "effective_start": "2026-06-01",
+        },
+    ],
+)
+def test_set_tuition_discount_validation_errors_return_422(admin_client, payload):
+    response = admin_client.put(
+        "/api/v2/admin/enrollments/enroll-1/tuition-discount",
+        json=payload,
+    )
+
+    assert response.status_code == 422, response.text
+    assert admin_client.seed["tuition_discounts"].set_calls == []
+
+
+@pytest.mark.parametrize("client_fixture", ["coach_on_admin_client", "parent_on_admin_client"])
+def test_set_tuition_discount_wrong_persona_hidden(request, client_fixture):
+    client = request.getfixturevalue(client_fixture)
+
+    response = client.put(
+        "/api/v2/admin/enrollments/enroll-1/tuition-discount",
+        json={
+            "student_id": "student-1",
+            "category": "coach_child",
+            "kind": "waiver",
+            "effective_start": "2026-06-01",
+        },
+    )
+
+    assert response.status_code == 404
+
+
+def test_remove_tuition_discount_happy_path(admin_client):
+    response = admin_client.delete("/api/v2/admin/enrollments/enroll-1/tuition-discount")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"ok": True}
+    assert admin_client.seed["tuition_discounts"].remove_calls == [
+        {"enrollment_id": "enroll-1", "ended_by": "u-admin"}
+    ]
+
+
+def test_remove_tuition_discount_wrong_persona_hidden(parent_on_admin_client):
+    response = parent_on_admin_client.delete("/api/v2/admin/enrollments/enroll-1/tuition-discount")
+
+    assert response.status_code == 404
+
+
 def test_undo_manual_paid_blocks_stripe_linked(admin_client):
     _seed_payment(admin_client.seed, "pay-stripe", status="succeeded", stripe=True)
     r = admin_client.post("/api/v2/admin/payments/pay-stripe/undo-paid")
@@ -579,6 +673,38 @@ def test_revenue_skips_waived_payments(admin_client):
 def test_revenue_wrong_persona_404(coach_on_admin_client):
     r = coach_on_admin_client.get("/api/v2/admin/finance/revenue")
     assert r.status_code == 404
+
+
+def test_tuition_discount_summary_route(admin_client):
+    class _Summary:
+        async def execute(self, period: str):
+            assert period == "2026-06"
+            return {
+                "period": "2026-06",
+                "gross_tuition_cents": 22_000,
+                "discount_cents": 13_000,
+                "net_tuition_cents": 9_000,
+                "by_category": [
+                    {"category": "scholarship", "discount_cents": 12_000},
+                    {"category": "sibling", "discount_cents": 1_000},
+                ],
+            }
+
+    admin_client.use_cases.tuition_discount_summary = _Summary()
+
+    r = admin_client.get("/api/v2/admin/finance/tuition-discounts?period=2026-06")
+
+    assert r.status_code == 200, r.text
+    assert r.json() == {
+        "period": "2026-06",
+        "gross_tuition_cents": 22_000,
+        "discount_cents": 13_000,
+        "net_tuition_cents": 9_000,
+        "by_category": [
+            {"category": "scholarship", "discount_cents": 12_000},
+            {"category": "sibling", "discount_cents": 1_000},
+        ],
+    }
 
 
 def test_send_invoice_returns_checkout_url_when_stripe_configured(admin_client):

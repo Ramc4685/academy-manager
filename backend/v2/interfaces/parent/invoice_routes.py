@@ -89,6 +89,7 @@ async def get_invoice(
         lines=[
             ParentInvoiceLineView(
                 description=line.description,
+                label=line.description if line.source_type == "tuition_discount" else None,
                 quantity=line.quantity,
                 unit_amount_cents=line.unit_amount_cents,
                 amount_cents=line.amount_cents,

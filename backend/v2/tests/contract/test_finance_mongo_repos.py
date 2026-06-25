@@ -23,7 +23,10 @@ from decimal import Decimal
 
 import pytest
 
-from backend.v2.contexts.billing.application.use_cases.finance import MongoPayoutRepository
+from backend.v2.contexts.billing.application.use_cases.finance import (
+    MongoPayoutRepository,
+    MongoTuitionDiscountSummaryQuery,
+)
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
     PayoutWarning,
@@ -119,6 +122,147 @@ def _warning(**overrides) -> PayoutWarning:
     )
     base.update(overrides)
     return PayoutWarning(**base)
+
+
+# ---------------------------------------------------------------------------
+# Tuition discount summary query
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tuition_discount_summary_groups_discount_lines_by_category(db, acad) -> None:
+    await db["invoices"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "invoice_id": "inv-1",
+                "parent_id": "parent-1",
+                "student_id": "student-1",
+                "enrollment_id": "enroll-1",
+                "period": "2026-06",
+                "status": "open",
+                "subtotal_cents": 10_000,
+                "discount_cents": 1_000,
+                "total_cents": 9_000,
+                "balance_due_cents": 9_000,
+                "currency": "usd",
+                "due_date": _dt("2026-06-30T00:00:00"),
+                "created_at": _dt("2026-06-01T00:00:00"),
+                "updated_at": _dt("2026-06-01T00:00:00"),
+            },
+            {
+                "academy_id": acad,
+                "invoice_id": "inv-2",
+                "parent_id": "parent-2",
+                "student_id": "student-2",
+                "enrollment_id": "enroll-2",
+                "period": "2026-06",
+                "status": "open",
+                "subtotal_cents": 12_000,
+                "discount_cents": 12_000,
+                "total_cents": 0,
+                "balance_due_cents": 0,
+                "currency": "usd",
+                "due_date": _dt("2026-06-30T00:00:00"),
+                "created_at": _dt("2026-06-01T00:00:00"),
+                "updated_at": _dt("2026-06-01T00:00:00"),
+            },
+            {
+                "academy_id": "other-academy",
+                "invoice_id": "inv-other",
+                "parent_id": "parent-other",
+                "period": "2026-06",
+                "status": "open",
+                "subtotal_cents": 99_000,
+                "discount_cents": 99_000,
+                "total_cents": 0,
+                "balance_due_cents": 0,
+                "currency": "usd",
+                "due_date": _dt("2026-06-30T00:00:00"),
+                "created_at": _dt("2026-06-01T00:00:00"),
+                "updated_at": _dt("2026-06-01T00:00:00"),
+            },
+        ]
+    )
+    await db["invoice_lines"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "invoice_id": "inv-1",
+                "line_id": "line-tuition-1",
+                "line_type": "tuition",
+                "description": "Monthly tuition",
+                "quantity": 1,
+                "unit_amount_cents": 10_000,
+                "amount_cents": 10_000,
+                "created_at": _dt("2026-06-01T00:00:00"),
+            },
+            {
+                "academy_id": acad,
+                "invoice_id": "inv-1",
+                "line_id": "line-discount-1",
+                "line_type": "discount",
+                "description": "Sibling discount",
+                "quantity": 1,
+                "unit_amount_cents": -1_000,
+                "amount_cents": -1_000,
+                "source_type": "tuition_discount",
+                "source_id": "disc-1",
+                "category": "sibling",
+                "created_at": _dt("2026-06-01T00:00:00"),
+            },
+            {
+                "academy_id": acad,
+                "invoice_id": "inv-2",
+                "line_id": "line-tuition-2",
+                "line_type": "tuition",
+                "description": "Monthly tuition",
+                "quantity": 1,
+                "unit_amount_cents": 12_000,
+                "amount_cents": 12_000,
+                "created_at": _dt("2026-06-01T00:00:00"),
+            },
+            {
+                "academy_id": acad,
+                "invoice_id": "inv-2",
+                "line_id": "line-discount-2",
+                "line_type": "discount",
+                "description": "Scholarship discount",
+                "quantity": 1,
+                "unit_amount_cents": -12_000,
+                "amount_cents": -12_000,
+                "source_type": "tuition_discount",
+                "source_id": "disc-2",
+                "category": "scholarship",
+                "created_at": _dt("2026-06-01T00:00:00"),
+            },
+            {
+                "academy_id": "other-academy",
+                "invoice_id": "inv-other",
+                "line_id": "line-other",
+                "line_type": "discount",
+                "description": "Scholarship discount",
+                "quantity": 1,
+                "unit_amount_cents": -99_000,
+                "amount_cents": -99_000,
+                "source_type": "tuition_discount",
+                "source_id": "disc-other",
+                "category": "scholarship",
+                "created_at": _dt("2026-06-01T00:00:00"),
+            },
+        ]
+    )
+
+    summary = await MongoTuitionDiscountSummaryQuery(db).execute("2026-06")
+
+    assert summary.period == "2026-06"
+    assert summary.gross_tuition_cents == 22_000
+    assert summary.discount_cents == 13_000
+    assert summary.net_tuition_cents == 9_000
+    assert [(row.category, row.discount_cents) for row in summary.by_category] == [
+        ("scholarship", 12_000),
+        ("sibling", 1_000),
+    ]
 
 
 # ---------------------------------------------------------------------------

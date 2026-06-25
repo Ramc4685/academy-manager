@@ -453,11 +453,11 @@ export default function ParentPaymentsPage() {
                         <ul className="space-y-1.5">
                           {invoiceDetailQuery.data.lines.map((line) => (
                             <li
-                              key={`${line.description}-${line.amount_cents}`}
+                              key={`${line.label ?? line.description}-${line.amount_cents}`}
                               className="flex items-center justify-between gap-3 text-xs"
                               style={{ color: "#5f5e5a" }}
                             >
-                              <span>{line.description} × {line.quantity}</span>
+                              <span>{line.label ?? `${line.description} × ${line.quantity}`}</span>
                               <span className="tabular-nums">
                                 {money(line.amount_cents, invoiceDetailQuery.data.currency.toUpperCase())}
                               </span>
