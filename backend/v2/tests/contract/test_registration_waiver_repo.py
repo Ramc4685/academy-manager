@@ -91,6 +91,34 @@ async def test_resolves_legacy_published_template_shape_from_production(db, acad
 
 
 @pytest.mark.asyncio
+async def test_resolves_assigned_legacy_published_template_shape_from_production(db, acad):
+    body = "BLNO Liability Waiver\nParent agrees to academy safety rules."
+    result = await db["waiver_templates"].insert_one(
+        {
+            "academy_id": acad,
+            "title": "BLNO Liability Waiver",
+            "version": "1.0",
+            "body": body,
+            "status": "published",
+            "assigned_to_registration": True,
+            "assigned_at": NOW,
+            "published_at": NOW,
+            "updated_at": NOW,
+        }
+    )
+    repo = MongoRegistrationWaiverRepository(db)
+
+    waiver = await repo.get_active()
+
+    assert waiver is not None
+    assert waiver.waiver_id == str(result.inserted_id)
+    assert waiver.version == "1.0"
+    assert waiver.text == body
+    assert waiver.content_hash == sha256(body.encode("utf-8")).hexdigest()
+    assert waiver.academy_id == acad
+
+
+@pytest.mark.asyncio
 async def test_returns_none_when_no_assigned_template(db, acad):
     await _seed_template(
         db, academy_id=acad, waiver_template_id="tmpl-unassigned", assigned_to_registration=False
