@@ -1,6 +1,6 @@
 """Mongo WaiverRepository for the parent registration stepper.
 
-Resolves the waiver template that is active AND assigned to registration
+Resolves the waiver template that is active/published AND assigned to registration
 by an admin (assigned_to_registration == True). Returns None when no such
 template exists — PatchApplication raises NoActiveWaiver in that case.
 
@@ -52,7 +52,7 @@ class MongoRegistrationWaiverRepository(TenantScopedRepository):
 
     async def get_active(self) -> Waiver | None:
         cursor = self._find_many(
-            {"status": "active", "assigned_to_registration": True},
+            {"status": {"$in": ["active", "published"]}, "assigned_to_registration": True},
             sort=[("assigned_at", -1), ("effective_from", -1)],
             limit=1,
         )
