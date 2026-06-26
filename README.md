@@ -155,7 +155,7 @@ It is **not** an open-source project.
 
 ```
 backend/        FastAPI service, deployed to Fly.io
-backend/v2/     Clean-architecture backend (in-process during Phase 0)
+backend/v2/     Production FastAPI app: DDD contexts, persona BFF routes, migrations, tests
 frontend/       Next.js 15 app (single frontend target, PWA)
 edge/           Retired Cloudflare Worker router kept for historical reference
 docs/           ADRs, tickets, security matrix, event rules

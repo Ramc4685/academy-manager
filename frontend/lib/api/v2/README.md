@@ -1,6 +1,6 @@
 # lib/api/v2
 
-v2-only typed clients for SaaS Wave 5 admin frontend.
+Focused v2-only typed clients for newer frontend contracts.
 
 All requests flow through `apiFetch` from `lib/api/client.ts`, which targets
 `NEXT_PUBLIC_API_BASE` (defaults to `/api/v2`). No legacy `/api/*` calls
@@ -17,17 +17,12 @@ this header is honored only when the request comes from an
 `allowed_internal_tenant_header` origin. For local development and admin
 multi-academy switching it is the simplest path.
 
-## Stable vs. mocked endpoints
+## Current clients
 
-Backend Waves 1-4 have shipped contracts for:
-
-- identity / memberships  (used by `memberships.ts`)
-- session occurrences      (used by `sessions.ts`)
-- billing ledger/invoices  (used by `billing.ts`)
-- waiver signatures        (used by `waivers.ts`)
-- message campaigns        (used by `campaigns.ts`)
-
-Wave 5 Agent A is still finishing reporting read models + payout
-persistence. Files under `mock.ts` and entries marked `// TODO(wave5-A)`
-inside other clients route to a clearly-labelled local fake until Agent
-A's endpoints merge.
+- `payroll.ts` calls admin monthly payroll endpoints under `/admin/payroll/*`.
+- `payouts.ts` calls admin payout-period endpoints under `/admin/payout-periods/*`.
+- `sessions.ts` calls admin session and occurrence endpoints.
+- `students.ts` calls admin student progress and placement endpoints.
+- `memberships.ts` is the one deliberate fallback: `/me/memberships` is not
+  exposed yet, so it derives a single active academy from `/me` until the real
+  BFF route lands.

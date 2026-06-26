@@ -77,7 +77,7 @@ via `Depends(get_*_use_cases)`. Other wiring: `digests.py` (coach daily digest),
 
 ## Legacy backend
 
-`backend/routers/` is effectively empty — legacy `/api/*` routes are **not mounted**
+`backend/routers/` is absent on main — legacy `/api/*` routes are **not mounted**
 (return 404, per `DEPLOYMENT.md`). The backend runs `backend.v2.main:app` directly.
 
 ## Sources inspected

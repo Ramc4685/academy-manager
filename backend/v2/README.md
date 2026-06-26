@@ -2,23 +2,24 @@
 
 The v2 codebase implements the architecture frozen in [docs/adr/](../../docs/adr/) and [the migration plan](../../../.claude/plans/write-a-detailed-plan-curried-trinket.md).
 
-Legacy code under `backend/` (routers, services, models.py) stays running until each workflow's v2 counterpart cuts over via Cloudflare edge routing.
+This is the production backend runtime. Fly deploys `backend.v2.main:app`, and
+all HTTP routes are mounted under `/api/v2/*`.
 
 ## Layout
 
 ```
 backend/v2/
-├── contexts/           # bounded contexts — empty for now; one is added per wave
-├── interfaces/         # BFF — persona first, context second; empty until Wave 1A
+├── contexts/           # bounded contexts: identity, enrollment, coaching, billing, etc.
+├── interfaces/         # persona BFF routes: admin, coach, parent, platform
 ├── shared/
-│   ├── auth/           # Firebase verify, role guards (Wave 1A wires this up)
+│   ├── auth/           # Firebase token verification, claims, tenancy middleware
 │   ├── config/         # pydantic-settings
-│   ├── events/         # outbox + dispatcher + dead-letter + audit (P0-13)
+│   ├── events/         # outbox + dispatcher
 │   ├── http/           # error handlers, middleware
-│   ├── idempotency/    # @idempotent decorator + Mongo store (P0-14)
-│   ├── observability/  # OpenTelemetry + structured logs (P0-15)
-│   └── tenancy/        # academy_id ContextVar + TenantScopedRepository (P0-12)
-├── migrations/         # idempotent boot migrations (P0-16)
+│   ├── idempotency/    # @idempotent decorator + Mongo store
+│   ├── observability/  # OpenTelemetry + structured logs
+│   └── tenancy/        # tenant resolution and tenant-scoped repository helpers
+├── migrations/         # idempotent boot migrations and Mongo indexes/validators
 ├── scripts/            # operator CLIs (e.g., replay_event.py)
 ├── tests/
 │   ├── unit/           # pure domain
@@ -87,15 +88,16 @@ PYTHONPATH=.. lint-imports --config pyproject.toml
 ```
 
 CI uses `PYTHONPATH=${{ github.workspace }}` on every step. See
-`.github/workflows/v2-backend.yml`.
+`.github/workflows/production.yml`.
 
-v2 mounts under `/api/v2/*`. Legacy stays on `/api/*`.
+The v2 app mounts under `/api/v2/*`. Historical `/api/*` legacy routes are not
+mounted by `backend.v2.main:app`.
 
 ## CI
 
-See `.github/workflows/v2-backend.yml`:
+See `.github/workflows/production.yml`:
 
 - `ruff` (lint)
-- `mypy --strict backend/v2`
+- `mypy --config-file backend/pyproject.toml v2` (advisory in the backend lint job)
 - `import-linter` (layer rules + tenancy)
-- `pytest backend/v2/tests/` with ≥80% coverage on `shared/`
+- `pytest v2/tests` with ≥70% coverage on `v2/shared`
