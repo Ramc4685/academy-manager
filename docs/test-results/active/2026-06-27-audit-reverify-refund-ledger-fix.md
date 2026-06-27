@@ -122,6 +122,51 @@ Re-scoped and **narrower than the audit implied**:
   seed data. Deferred: the worktree is contended by a concurrent coach-payroll
   session, so standing up servers/seeders here is unsafe.
 
+## Real-user QA campaign (live saas-staging stack, 2026-06-27)
+
+Stood up a production-like local stack (Docker: Mongo + Firebase Auth emulator +
+FastAPI backend built from this branch + Next.js) with sanitized seeded data
+(BLno academy: 46 students, 4 sessions, 122 payments, all personas). Required a
+destructive reset (authorized) after the prior stack was found bound to a
+deleted worktree; mongo remapped to host 27018 to avoid the host Homebrew mongod
+on 27017. Tested as real users (Firebase emulator tokens) via the BFF API with
+tenant header `x-internal-tenant-id: blno`.
+
+**Batch 1 — auth/tenancy + high-risk reads (27 checks): 26 pass, 0 real bugs.**
+- Unauth → 401; bad token → 401; persona mismatch (parent→admin, coach→admin,
+  parent→coach) → 404 (no route-existence leak); each persona `/me` correct.
+- Admin reads (users, students, payments, invoices, revenue, dashboard) → 200.
+- Coach: dashboard/today/sessions → 200; **roster add/remove → 403 (confirms
+  finding #3 roster mutations are live-disabled dead code)**; feedback on
+  unassigned session → 403.
+- Parent money reads (children, enrollments, invoices, payments, credits,
+  progress) → 200.
+- (1 "fail" was a bad test expectation: bare `/admin/billing/reconciliation`
+  correctly 422s — it requires a stripe_invoice_id/payment_intent_id param.)
+
+**Batch 2 — edge cases/mutations (real seeded IDs): 1 REAL BUG found.**
+- PASS: admin self-role-change blocked (400); parent invoice not-found (404);
+  parent own-invoice (200); no-tenant-header → 401.
+- (2 "fails" were malformed test bodies → endpoints correctly 422'd on missing
+  `mutation_id` / `display_name` — validates their input handling.)
+
+### BUG-1 (Medium, OPEN) — reconciliation 500 on nonexistent payment_intent_id
+- Repro: `GET /api/v2/admin/billing/reconciliation?payment_intent_id=pi_nonexistent`
+  (admin auth, tenant blno) → **500 Internal Server Error**.
+- Root cause: `stripe_gateway.py:383` `_run_stripe_retrieve` raises `ValueError`
+  on Stripe `InvalidRequestError: No such payment_intent`, uncaught through
+  `composition/admin.py:4234` → `interfaces/admin/billing_routes.py:461` → 500.
+  A non-existent PI is normal input to a reconciliation tool → should be 404/empty.
+- Fix: catch not-found in the reconciliation path → 404; distinguish not-found
+  from transport errors in the gateway. Add regression test (cover stripe_invoice_id
+  too). Logged as follow-up task `task_f157dffb`. NOT fixed this session (cost).
+
+### Refund fix (#1) live-validation note
+The live `charge.refunded`-of-ledger-payment path requires a real Stripe sandbox
+charge + webhook forwarding (stripe-cli), not exercised in this pass. The fix is
+covered by the 2 new unit/integration regression tests (green). Admin payments
+list (122 rows) and parent invoice/payment reads verified live.
+
 ## Final verification (whole backend)
 - `pytest v2/tests` → **1605 passed**, 0 failed
 - `lint-imports` → 4 kept, 0 broken

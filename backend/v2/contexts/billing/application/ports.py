@@ -136,6 +136,12 @@ class StripeInvoiceProcessingRepository(Protocol):
     ) -> None: ...
 
 
+class StripeResourceNotFound(Exception):
+    """Raised by the gateway when Stripe reports a resource does not exist
+    (e.g. an unknown payment_intent or invoice id). Distinct from transport /
+    auth failures so callers can map it to a 404 rather than a 500."""
+
+
 class StripeGateway(Protocol):
     async def create_checkout_session(
         self,

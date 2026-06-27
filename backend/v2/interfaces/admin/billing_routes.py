@@ -8,6 +8,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, StringConstraints
 
+from backend.v2.contexts.billing.application.ports import StripeResourceNotFound
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscountCommand,
     GenerateMonthlyPaymentsCommand,
@@ -458,10 +459,13 @@ async def get_billing_reconciliation_report(
         use_cases.get_billing_reconciliation_report,
         "Billing reconciliation report",
     )
-    result = await report(
-        stripe_invoice_id=stripe_invoice_id,
-        payment_intent_id=payment_intent_id,
-    )
+    try:
+        result = await report(
+            stripe_invoice_id=stripe_invoice_id,
+            payment_intent_id=payment_intent_id,
+        )
+    except StripeResourceNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return BillingReconciliationReportResponse(**result)
 
 

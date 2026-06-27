@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime
 import pytest
 
 from backend.v2.composition.admin import _InvoiceEmailAdapter
+from backend.v2.contexts.billing.application.ports import StripeResourceNotFound
 from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
     AddInvoiceLine,
     AddInvoiceLineCommand,
@@ -791,6 +792,21 @@ def test_billing_reconciliation_report_is_read_only(admin_client):
     assert body["mismatches"][0]["stripe_value"] == 7000
     assert body["mismatches"][0]["local_value"] == 6000
     assert body["manual_review_candidates"][0]["invoice_id"] == "inv-candidate"
+
+
+def test_billing_reconciliation_report_missing_stripe_resource_returns_404(admin_client):
+    """A reconciliation lookup for a payment_intent/invoice that does not exist
+    in Stripe must return 404, not a 500 (regression: BUG-1 found in 2026-06-27
+    real-user QA — StripeResourceNotFound was propagating uncaught)."""
+
+    async def report(**kwargs):
+        raise StripeResourceNotFound("No such payment_intent: 'pi_nope'")
+
+    admin_client.use_cases.get_billing_reconciliation_report = report
+
+    response = admin_client.get("/api/v2/admin/billing/reconciliation?payment_intent_id=pi_nope")
+
+    assert response.status_code == 404, response.text
 
 
 def test_billing_webhook_queue_returns_failed_and_quarantined_events(admin_client):
