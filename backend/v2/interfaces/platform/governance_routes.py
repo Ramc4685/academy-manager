@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from backend.v2.contexts.platform.governance.application.use_cases import (
+    GovernanceActor,
     GrantSupportAccessCommand,
     RequestStudentDataDeletionCommand,
     RequestSupportImpersonationCommand,
@@ -17,7 +18,6 @@ from backend.v2.contexts.platform.governance.application.use_cases import (
     RevokeSupportAccessCommand,
     TenantGovernanceService,
 )
-from backend.v2.contexts.platform.governance.domain.models import GovernanceActor
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 
 router = APIRouter(prefix="/platform/governance", tags=["platform-governance"])

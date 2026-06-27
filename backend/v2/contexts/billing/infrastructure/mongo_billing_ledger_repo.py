@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, time
 from typing import Any
 
+from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.billing.domain.ledger import (
@@ -53,6 +54,7 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             unapplied_amount_cents=int(doc.get("unapplied_amount_cents", 0)),
             currency=str(doc.get("currency", "usd")),
             status=doc.get("status", "pending"),  # type: ignore[arg-type]
+            refunded_cents=int(doc.get("refunded_cents", 0)),
             payment_method=doc.get("payment_method"),  # type: ignore[arg-type]
             stripe_payment_intent_id=doc.get("stripe_payment_intent_id"),  # type: ignore[arg-type]
             stripe_invoice_id=doc.get("stripe_invoice_id"),  # type: ignore[arg-type]
@@ -250,6 +252,30 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         if stored is None:
             raise ValueError("payment insert failed")
         return self._payment_from_doc(stored)
+
+    async def mark_payment_refunded(
+        self,
+        payment_id: str,
+        *,
+        refunded_cents: int,
+        status: str,
+        updated_at: datetime,
+    ) -> LedgerPayment:
+        academy_id = current_academy_id()
+        updated = await self.ledger_payments.find_one_and_update(
+            {"academy_id": academy_id, "payment_id": payment_id},
+            {
+                "$set": {
+                    "refunded_cents": refunded_cents,
+                    "status": status,
+                    "updated_at": updated_at,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if updated is None:
+            raise ValueError("ledger payment not found for refund")
+        return self._payment_from_doc(updated)
 
     async def record_payment_attempt(
         self,

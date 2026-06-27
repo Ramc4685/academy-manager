@@ -439,6 +439,33 @@ class FakeBillingLedger:
             }
         )
 
+    async def get_payment_by_stripe_payment_intent_id(
+        self, stripe_payment_intent_id: str
+    ) -> LedgerPayment | None:
+        for payment in self.payments.values():
+            if payment.stripe_payment_intent_id == stripe_payment_intent_id:
+                return payment
+        return None
+
+    async def mark_payment_refunded(
+        self,
+        payment_id: str,
+        *,
+        refunded_cents: int,
+        status: str,
+        updated_at: Any,
+    ) -> LedgerPayment:
+        payment = self.payments[payment_id]
+        updated = payment.model_copy(
+            update={
+                "refunded_cents": refunded_cents,
+                "status": status,
+                "updated_at": updated_at,
+            }
+        )
+        self.payments[payment_id] = updated
+        return updated
+
 
 def _build(
     repo,
@@ -2262,6 +2289,94 @@ async def test_charge_refunded_updates_cumulative_amount() -> None:
     await uc.execute(body, "test_signature")
     assert repo.by_id["pay-1"].refunded_cents == 5000
     assert repo.by_id["pay-1"].status == "partially_refunded"
+
+
+def _seed_ledger_payment(
+    ledger: FakeBillingLedger,
+    *,
+    pi: str,
+    payment_id: str = "ledger-pay-1",
+    amount_cents: int = 10_000,
+    status: str = "succeeded",
+) -> LedgerPayment:
+    now = datetime.now(UTC)
+    payment = LedgerPayment(
+        payment_id=payment_id,
+        academy_id="acad",
+        parent_id="parent-1",
+        amount_cents=amount_cents,
+        unapplied_amount_cents=amount_cents,
+        currency="usd",
+        status=status,  # type: ignore[arg-type]
+        payment_method="stripe_autopay",
+        stripe_payment_intent_id=pi,
+        paid_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    ledger.payments[payment.payment_id] = payment
+    return payment
+
+
+def _charge_refunded_body(event_id: str, pi: str, amount_refunded: int) -> bytes:
+    return json.dumps(
+        {
+            "id": event_id,
+            "type": "charge.refunded",
+            "data": {"object": {"payment_intent": pi, "amount_refunded": amount_refunded}},
+        }
+    ).encode()
+
+
+@pytest.mark.asyncio
+async def test_charge_refunded_records_full_refund_for_ledger_only_payment() -> None:
+    """Regression: a charge recorded only in the ledger (autopay / invoice
+    pay-link / balance checkout) must have its refund recorded, not silently
+    dropped because the legacy `payments` collection has no matching row."""
+    repo = FakePaymentRepo()  # legacy repo has NO row for this PI
+    ledger = FakeBillingLedger()
+    _seed_ledger_payment(ledger, pi="pi_ledger_full", amount_cents=10_000)
+    outbox = FakeOutbox()
+    uc = _build(repo, outbox=outbox, billing_ledger=ledger)
+
+    await uc.execute(
+        _charge_refunded_body("evt_ledger_full", "pi_ledger_full", 10_000),
+        "test_signature",
+    )
+
+    refunded = ledger.payments["ledger-pay-1"]
+    assert refunded.status == "refunded"
+    assert refunded.refunded_cents == 10_000
+    assert any(type(e).__name__ == "PaymentRefunded" for e in outbox.events)
+
+
+@pytest.mark.asyncio
+async def test_charge_refunded_ledger_partial_then_idempotent() -> None:
+    """Partial refund of a ledger-only payment is recorded as
+    partially_refunded; a resent webhook with the same cumulative total is a
+    no-op (no double event, no further mutation)."""
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger()
+    _seed_ledger_payment(ledger, pi="pi_ledger_partial", amount_cents=10_000)
+    outbox = FakeOutbox()
+    uc = _build(repo, outbox=outbox, billing_ledger=ledger)
+
+    await uc.execute(
+        _charge_refunded_body("evt_partial_1", "pi_ledger_partial", 4_000),
+        "test_signature",
+    )
+    after_first = ledger.payments["ledger-pay-1"]
+    assert after_first.status == "partially_refunded"
+    assert after_first.refunded_cents == 4_000
+    events_after_first = len(outbox.events)
+
+    # Stripe re-delivers the same refund total — must be idempotent.
+    await uc.execute(
+        _charge_refunded_body("evt_partial_1b", "pi_ledger_partial", 4_000),
+        "test_signature",
+    )
+    assert ledger.payments["ledger-pay-1"].refunded_cents == 4_000
+    assert len(outbox.events) == events_after_first
 
 
 def _seed_incomplete_subscription(

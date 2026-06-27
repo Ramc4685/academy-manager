@@ -15,7 +15,9 @@ from pydantic import BaseModel, Field
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 
 InvoiceStatus = Literal["draft", "open", "partially_paid", "paid", "void"]
-LedgerPaymentStatus = Literal["pending", "succeeded", "failed", "refunded"]
+LedgerPaymentStatus = Literal[
+    "pending", "succeeded", "failed", "refunded", "partially_refunded"
+]
 
 
 class LedgerInvoice(BaseModel):
@@ -79,6 +81,7 @@ class LedgerPayment(BaseModel):
     unapplied_amount_cents: int = Field(ge=0)
     currency: str = Field(default="usd", min_length=3, max_length=3)
     status: LedgerPaymentStatus = "pending"
+    refunded_cents: int = Field(default=0, ge=0)
     payment_method: str | None = None
     stripe_payment_intent_id: str | None = None
     stripe_invoice_id: str | None = None

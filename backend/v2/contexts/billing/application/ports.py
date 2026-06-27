@@ -390,6 +390,15 @@ class LedgerRepository(Protocol):
         idempotency_key: str,
     ) -> LedgerPayment: ...
 
+    async def mark_payment_refunded(
+        self,
+        payment_id: str,
+        *,
+        refunded_cents: int,
+        status: str,
+        updated_at: datetime,
+    ) -> LedgerPayment: ...
+
     async def record_payment_attempt(
         self,
         *,

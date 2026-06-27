@@ -61,6 +61,26 @@ def test_application_does_not_import_infrastructure() -> None:
             ), f"{file} (application) imports infrastructure: {imp}"
 
 
+def test_interfaces_do_not_import_context_domain_directly() -> None:
+    """Interfaces may reach domain only transitively through the application
+    layer (interface -> use case -> domain). A *direct* interfaces->domain
+    import is forbidden — including nested contexts such as
+    ``contexts.platform.governance.domain``, which the import-linter contract's
+    single-``*`` glob (``contexts.*.domain``) does not match.
+    """
+    interfaces_root = V2_ROOT / "interfaces"
+    if not interfaces_root.exists():
+        return
+    for file in _iter_python_files(interfaces_root):
+        for imp in _imports_for(file):
+            if not imp.startswith("backend.v2.contexts."):
+                continue
+            assert not (imp.endswith(".domain") or ".domain." in imp), (
+                f"{file} imports context domain directly: {imp} "
+                "(route through the application layer instead)"
+            )
+
+
 def test_no_cross_context_imports() -> None:
     contexts_root = V2_ROOT / "contexts"
     if not contexts_root.exists():
