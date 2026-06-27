@@ -126,6 +126,16 @@ class FakeRateRepo:
         return [r for r in self._rates if r.coach_id == coach_id]
 
 
+class MongoLikeMissingRateRepo(FakeRateRepo):
+    def __init__(self, rates: list[CoachRate]) -> None:
+        super().__init__(rates)
+        self.lookups: list[datetime] = []
+
+    async def find_for_coach_at(self, coach_id: str, at_time: datetime) -> CoachRate | None:
+        self.lookups.append(at_time)
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Domain shape
 # ---------------------------------------------------------------------------
@@ -708,6 +718,49 @@ async def test_missing_rate_marks_occurrence_unpaid_but_does_not_crash() -> None
     assert statement.unpaid_occurrence_ids == ["occ-1"]
     assert [warning.reason for warning in statement.payout_warnings] == ["missing_rate"]
     assert statement.unpaid_occurrences[0].occurrence_id == "occ-1"
+    assert statement.unpaid_occurrences[0].reason == "no_rate_configured"
+
+
+@pytest.mark.asyncio
+async def test_naive_occurrence_before_first_rate_marks_unpaid_without_crashing() -> None:
+    first_rate = CoachRate(
+        rate_id="cr-first",
+        academy_id="acad-1",
+        coach_id="coach-A",
+        billing_unit="per_session",
+        amount_minor=5000,
+        currency="USD",
+        effective_from=_dt("2026-06-01T00:00:00"),
+        effective_until=None,
+        status="active",
+    )
+    occ = _occurrence(
+        "occ-before-first-rate",
+        start="2026-05-10T18:00:00",
+        end="2026-05-10T19:00:00",
+    ).model_copy(
+        update={
+            "start_at": datetime(2026, 5, 10, 18, 0),
+            "end_at": datetime(2026, 5, 10, 19, 0),
+        }
+    )
+
+    rates = MongoLikeMissingRateRepo([first_rate])
+
+    statement = await ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery([occ]),
+        rates=rates,
+    ).execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=datetime(2026, 5, 1),
+        period_end=datetime(2026, 6, 1),
+    )
+
+    assert statement.lines == []
+    assert rates.lookups == [datetime(2026, 5, 10, 18, 0, tzinfo=UTC)]
+    assert statement.unpaid_occurrence_ids == ["occ-before-first-rate"]
+    assert [warning.reason for warning in statement.payout_warnings] == ["missing_rate"]
     assert statement.unpaid_occurrences[0].reason == "no_rate_configured"
 
 

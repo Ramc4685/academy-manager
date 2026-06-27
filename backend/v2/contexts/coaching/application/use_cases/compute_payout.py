@@ -38,7 +38,7 @@ Amount calculation (in precedence order):
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Protocol
 
@@ -102,6 +102,12 @@ def _occurrence_minutes(occ: PayableOccurrence) -> Decimal:
 
 def _round_half_even_minor(amount: Decimal) -> int:
     return int(amount.quantize(Decimal("1"), rounding=ROUND_HALF_EVEN))
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _compute_line_amount_minor(
@@ -176,9 +182,10 @@ def _ensure_statement_currency(current: str | None, incoming: str, *, coach_id: 
 def _missing_rate_reason(rates: list[CoachRate], at_time: datetime) -> UnpaidOccurrenceReason:
     if not rates:
         return "no_rate_configured"
-    ordered = sorted(rates, key=lambda r: r.effective_from)
+    normalized_at_time = _as_utc(at_time)
+    ordered = sorted(rates, key=lambda r: _as_utc(r.effective_from))
     first = ordered[0]
-    if at_time < first.effective_from:
+    if normalized_at_time < _as_utc(first.effective_from):
         return "no_rate_configured"
     return "rate_gap"
 
@@ -239,12 +246,13 @@ class ComputeCoachPayout:
                 )
                 continue
 
-            rate = await self._rates.find_for_coach_at(coach_id, occ.start_at)
+            occurrence_start = _as_utc(occ.start_at)
+            rate = await self._rates.find_for_coach_at(coach_id, occurrence_start)
             override_minor = attendance.rate_override_minor if attendance else None
             if rate is None and override_minor is None:
                 if rate_timeline is None:
                     rate_timeline = await self._rates.list_for_coach(coach_id)
-                reason = _missing_rate_reason(rate_timeline, occ.start_at)
+                reason = _missing_rate_reason(rate_timeline, occurrence_start)
                 unpaid.append(occ.occurrence_id)
                 warnings.append(_warning_for_unpaid(occ, coach_id=coach_id, reason="missing_rate"))
                 unpaid_occurrences.append(
