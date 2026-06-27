@@ -15,9 +15,7 @@ from pydantic import BaseModel, Field
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 
 InvoiceStatus = Literal["draft", "open", "partially_paid", "paid", "void"]
-LedgerPaymentStatus = Literal[
-    "pending", "succeeded", "failed", "refunded", "partially_refunded"
-]
+LedgerPaymentStatus = Literal["pending", "succeeded", "failed", "refunded", "partially_refunded"]
 
 
 class LedgerInvoice(BaseModel):
