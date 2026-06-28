@@ -1046,6 +1046,10 @@ class HandleWebhookEvent:
             return
         payment = await self._payments.get_by_stripe_pi(pi_id)
         if payment is None:
+            # Autopay / invoice pay-link / balance-checkout charges are recorded
+            # only in the ledger (no legacy `payments` row), so fall back to the
+            # ledger; otherwise the refund is silently dropped.
+            await self._on_charge_refunded_ledger(str(pi_id), ch)
             return
         total_refunded = int(ch.get("amount_refunded", 0))
         if total_refunded == 0 or total_refunded == payment.refunded_cents:
@@ -1060,6 +1064,45 @@ class HandleWebhookEvent:
             }
         )
         await self._payments.save(updated)
+        await self._outbox.append(
+            PaymentRefunded(
+                aggregate_id=updated.payment_id,
+                academy_id=updated.academy_id,
+                payload=PaymentRefundedPayload(
+                    payment_id=updated.payment_id,
+                    refunded_cents=delta,
+                    total_refunded_cents=total_refunded,
+                    reason="admin_initiated",
+                ),
+            )
+        )
+
+    async def _on_charge_refunded_ledger(self, pi_id: str, ch: dict[str, Any]) -> None:
+        """Record a refund for a charge that exists only in the ledger.
+
+        Autopay direct charges, invoice pay-link checkouts, and balance
+        checkouts write a ``LedgerPayment`` (no legacy ``payments`` row), so the
+        legacy lookup in ``_on_charge_refunded`` misses them. Mirrors the legacy
+        refund semantics: cumulative-amount idempotency, partial vs full status,
+        and a ``PaymentRefunded`` event. (Invoice allocations are intentionally
+        not reversed here — same as the legacy path.)
+        """
+        if self._billing_ledger is None:
+            return
+        payment = await self._billing_ledger.get_payment_by_stripe_payment_intent_id(pi_id)
+        if payment is None:
+            return
+        total_refunded = int(ch.get("amount_refunded", 0))
+        if total_refunded == 0 or total_refunded == payment.refunded_cents:
+            return
+        delta = max(0, total_refunded - payment.refunded_cents)
+        new_status = "refunded" if total_refunded >= payment.amount_cents else "partially_refunded"
+        updated = await self._billing_ledger.mark_payment_refunded(
+            payment.payment_id,
+            refunded_cents=total_refunded,
+            status=new_status,
+            updated_at=self._now(),
+        )
         await self._outbox.append(
             PaymentRefunded(
                 aggregate_id=updated.payment_id,

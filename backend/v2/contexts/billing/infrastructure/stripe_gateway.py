@@ -11,7 +11,10 @@ import urllib.parse
 from datetime import datetime
 from typing import Any, Literal
 
-from backend.v2.contexts.billing.application.ports import StripeGateway
+from backend.v2.contexts.billing.application.ports import (
+    StripeGateway,
+    StripeResourceNotFound,
+)
 
 
 class RealStripeGateway(StripeGateway):
@@ -380,6 +383,12 @@ class RealStripeGateway(StripeGateway):
         try:
             return await asyncio.to_thread(fn)
         except self._stripe.StripeError as exc:
+            # Stripe returns http_status 404 for unknown resource ids (e.g.
+            # "No such payment_intent"). Surface as a typed not-found so callers
+            # map it to 404 instead of a 500; everything else stays a 5xx-class
+            # lookup failure.
+            if getattr(exc, "http_status", None) == 404:
+                raise StripeResourceNotFound(f"{label} not found: {exc}") from exc
             raise ValueError(f"{label} lookup failed: {exc}") from exc
 
     async def get_default_payment_method(

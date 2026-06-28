@@ -71,10 +71,18 @@ include_external_packages = false
 [[tool.importlinter.contracts]]
 name = "domain-is-pure"
 type = "forbidden"
-source_modules = ["backend.v2.contexts.*.domain"]
+# Both flat (contexts.X.domain) and nested (contexts.X.Y.domain, e.g.
+# platform.governance) — a single `*` matches exactly one segment, so the
+# `*.*` variants are required to cover nested subcontexts.
+source_modules = [
+    "backend.v2.contexts.*.domain",
+    "backend.v2.contexts.*.*.domain",
+]
 forbidden_modules = [
     "backend.v2.contexts.*.infrastructure",
     "backend.v2.contexts.*.application",
+    "backend.v2.contexts.*.*.infrastructure",
+    "backend.v2.contexts.*.*.application",
     "backend.v2.interfaces",
     "backend.v2.shared.events.dispatcher",
     "backend.v2.shared.events.outbox",
@@ -85,14 +93,24 @@ forbidden_modules = [
 [[tool.importlinter.contracts]]
 name = "application-does-not-import-infrastructure"
 type = "forbidden"
-source_modules = ["backend.v2.contexts.*.application"]
-forbidden_modules = ["backend.v2.contexts.*.infrastructure", "backend.v2.interfaces"]
+source_modules = [
+    "backend.v2.contexts.*.application",
+    "backend.v2.contexts.*.*.application",
+]
+forbidden_modules = [
+    "backend.v2.contexts.*.infrastructure",
+    "backend.v2.contexts.*.*.infrastructure",
+    "backend.v2.interfaces",
+]
 
 # Rule 3: Infrastructure may not import interfaces.
 [[tool.importlinter.contracts]]
 name = "infrastructure-does-not-import-interfaces"
 type = "forbidden"
-source_modules = ["backend.v2.contexts.*.infrastructure"]
+source_modules = [
+    "backend.v2.contexts.*.infrastructure",
+    "backend.v2.contexts.*.*.infrastructure",
+]
 forbidden_modules = ["backend.v2.interfaces"]
 
 # Rule 4: Interfaces may not import infrastructure or domain DIRECTLY.
@@ -103,7 +121,12 @@ forbidden_modules = ["backend.v2.interfaces"]
 name = "interfaces-do-not-import-infrastructure-or-domain-directly"
 type = "forbidden"
 source_modules = ["backend.v2.interfaces"]
-forbidden_modules = ["backend.v2.contexts.*.infrastructure", "backend.v2.contexts.*.domain"]
+forbidden_modules = [
+    "backend.v2.contexts.*.infrastructure",
+    "backend.v2.contexts.*.domain",
+    "backend.v2.contexts.*.*.infrastructure",
+    "backend.v2.contexts.*.*.domain",
+]
 allow_indirect_imports = "true"
 
 # Rule 5: No cross-context imports. Each context is self-contained.

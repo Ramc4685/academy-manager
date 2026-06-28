@@ -384,6 +384,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         minute=0,
         id="process_scheduled_resume_actions",
         replace_existing=True,
+        # Parity with the other jobs: prevent a slow run from overlapping the
+        # next tick within this process. (Cross-machine exclusivity still
+        # depends on a single Fly machine — see deferred leader-election note.)
+        max_instances=1,
     )
     scheduler.add_job(
         _process_stripe_webhook_events,
