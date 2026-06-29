@@ -21,6 +21,27 @@
 # Custom test data:
 #   scripts/dev/saas_staging.sh seed --slug blno --domain blno.localhost ...
 #   scripts/dev/saas_staging.sh blno-seed   # seed BLno academy with full realistic data
+#   scripts/dev/saas_staging.sh scale       # dry-run deterministic synthetic BLNO scale plan
+#   scripts/dev/saas_staging.sh scale --apply
+#                                            # add deterministic synthetic BLNO scale data
+#   scripts/dev/saas_staging.sh scale --cleanup
+#                                            # dry-run cleanup count for synthetic scale data
+#   scripts/dev/saas_staging.sh scale-safety
+#                                            # validate synthetic scale plan without touching Mongo
+#   scripts/dev/saas_staging.sh local-auth-env
+#                                            # print LOCAL_AUTH_* dynamic route IDs
+#   scripts/dev/saas_staging.sh audit-readiness
+#                                            # read-only local-auth audit readiness report
+#   scripts/dev/saas_staging.sh audit-static-gaps
+#                                            # read-only static manifest/source gap report
+#   scripts/dev/saas_staging.sh audit-acceptance
+#                                            # read-only acceptance coverage report
+#   scripts/dev/saas_staging.sh audit-control-evidence
+#                                            # read-only source-derived control evidence
+#   scripts/dev/saas_staging.sh audit-gate
+#                                            # aggregate clean-pass/readiness gate
+#   scripts/dev/saas_staging.sh audit-artifacts
+#                                            # write local Markdown audit handoff bundle
 #
 # Lifecycle:
 #   scripts/dev/saas_staging.sh logs <svc> # tail logs (backend|frontend|mongo|firebase-emulator)
@@ -52,6 +73,15 @@ VENV_PYTHON="${VENV_PYTHON:-${REPO_ROOT}/backend/.venv/bin/python}"
 SMOKE_SCRIPT="${REPO_ROOT}/scripts/smoke/saas_readiness_smoke.sh"
 SEED_SCRIPT="${REPO_ROOT}/scripts/dev/seed_saas_staging.py"
 BLNO_SEED_SCRIPT="${REPO_ROOT}/scripts/dev/seed_blno_staging.py"
+SCALE_SCRIPT="${REPO_ROOT}/scripts/dev/scale_blno_staging.py"
+SCALE_SAFETY_SCRIPT="${REPO_ROOT}/scripts/dev/validate_scale_seed_safety.py"
+LOCAL_AUTH_ENV_SCRIPT="${REPO_ROOT}/scripts/dev/export_local_auth_inventory_env.py"
+LOCAL_AUTH_READINESS_SCRIPT="${REPO_ROOT}/scripts/dev/check_local_auth_audit_readiness.py"
+LOCAL_AUTH_STATIC_GAPS_SCRIPT="${REPO_ROOT}/scripts/dev/audit_inventory_static_gaps.py"
+LOCAL_AUTH_ACCEPTANCE_SCRIPT="${REPO_ROOT}/scripts/dev/audit_inventory_acceptance_coverage.py"
+LOCAL_AUTH_CONTROL_EVIDENCE_SCRIPT="${REPO_ROOT}/scripts/dev/audit_inventory_control_evidence.py"
+LOCAL_AUTH_GATE_SCRIPT="${REPO_ROOT}/scripts/dev/audit_inventory_gate.py"
+LOCAL_AUTH_ARTIFACTS_SCRIPT="${REPO_ROOT}/scripts/dev/prepare_local_auth_audit_artifacts.py"
 STRIPE_WEBHOOK_URL="http://127.0.0.1:8001/api/v2/parent/webhooks/stripe"
 STRIPE_WEBHOOK_EVENTS="checkout.session.completed,checkout.session.expired,payment_intent.succeeded,payment_intent.payment_failed,invoice.paid,invoice.payment_failed,charge.refunded,customer.subscription.updated,customer.subscription.deleted"
 
@@ -226,10 +256,19 @@ wait_for_url() {
   return 1
 }
 
+compose_mongo_url() {
+  local port
+  port="$("${COMPOSE[@]}" port mongo 27017 2>/dev/null | tail -n 1 | awk -F: '{print $NF}' || true)"
+  if [[ -z "${port}" ]]; then
+    port="27017"
+  fi
+  printf 'mongodb://127.0.0.1:%s\n' "${port}"
+}
+
 replay_migrations() {
   log "Replaying v2 migrations against SaaS staging Mongo..."
   PYTHONPATH="${REPO_ROOT}" \
-  MONGO_URL="mongodb://127.0.0.1:27017" \
+  MONGO_URL="$(compose_mongo_url)" \
   DB_NAME="academy_manager_saas_staging" \
   "${VENV_PYTHON}" - <<'PY'
 import asyncio
@@ -263,7 +302,7 @@ launch_audit() {
   ENABLE_STUDENT_LOGIN=false \
   PRIMARY_ACADEMY_ID="${academy_id}" \
   "${VENV_PYTHON}" "${REPO_ROOT}/backend/scripts/launch_readiness_audit.py" \
-    --mongo-url mongodb://127.0.0.1:27017 \
+    --mongo-url "$(compose_mongo_url)" \
     --db-name academy_manager_saas_staging \
     --primary-academy-id "${academy_id}"
 }
@@ -325,7 +364,7 @@ cmd_seed() {
     die "backend/.venv not found. Run preflight check or create the venv first."
   fi
   log "Seeding tenant + Firebase emulator user..."
-  "${VENV_PYTHON}" "${SEED_SCRIPT}" "$@"
+  SAAS_STAGING_MONGO_URL="$(compose_mongo_url)" "${VENV_PYTHON}" "${SEED_SCRIPT}" "$@"
   replay_migrations
 }
 
@@ -334,8 +373,73 @@ cmd_blno_seed() {
     die "backend/.venv not found. Run preflight check or create the venv first."
   fi
   log "Seeding BLno Badminton Academy (parents, students, sessions, invoice ledger, pathway)..."
-  "${VENV_PYTHON}" "${BLNO_SEED_SCRIPT}" "$@"
+  SAAS_STAGING_MONGO_URL="$(compose_mongo_url)" "${VENV_PYTHON}" "${BLNO_SEED_SCRIPT}" "$@"
   launch_audit blno
+}
+
+cmd_scale() {
+  if [[ ! -x "${VENV_PYTHON}" ]]; then
+    die "backend/.venv not found. Run preflight check or create the venv first."
+  fi
+  log "Planning deterministic synthetic BLNO scale data..."
+  MONGO_URL="$(compose_mongo_url)" "${VENV_PYTHON}" "${SCALE_SCRIPT}" "$@"
+}
+
+cmd_scale_safety() {
+  if [[ ! -x "${VENV_PYTHON}" ]]; then
+    die "backend/.venv not found. Run preflight check or create the venv first."
+  fi
+  log "Validating deterministic synthetic BLNO scale data without touching Mongo..."
+  "${VENV_PYTHON}" "${SCALE_SAFETY_SCRIPT}" "$@"
+}
+
+cmd_local_auth_env() {
+  if [[ ! -x "${VENV_PYTHON}" ]]; then
+    die "backend/.venv not found. Run preflight check or create the venv first."
+  fi
+  MONGO_URL="$(compose_mongo_url)" "${VENV_PYTHON}" "${LOCAL_AUTH_ENV_SCRIPT}" "$@"
+}
+
+cmd_audit_readiness() {
+  if [[ ! -x "${VENV_PYTHON}" ]]; then
+    die "backend/.venv not found. Run preflight check or create the venv first."
+  fi
+  MONGO_URL="$(compose_mongo_url)" "${VENV_PYTHON}" "${LOCAL_AUTH_READINESS_SCRIPT}" "$@"
+}
+
+cmd_audit_static_gaps() {
+  if [[ ! -x "${VENV_PYTHON}" ]]; then
+    die "backend/.venv not found. Run preflight check or create the venv first."
+  fi
+  "${VENV_PYTHON}" "${LOCAL_AUTH_STATIC_GAPS_SCRIPT}" "$@"
+}
+
+cmd_audit_acceptance() {
+  if [[ ! -x "${VENV_PYTHON}" ]]; then
+    die "backend/.venv not found. Run preflight check or create the venv first."
+  fi
+  "${VENV_PYTHON}" "${LOCAL_AUTH_ACCEPTANCE_SCRIPT}" "$@"
+}
+
+cmd_audit_control_evidence() {
+  if [[ ! -x "${VENV_PYTHON}" ]]; then
+    die "backend/.venv not found. Run preflight check or create the venv first."
+  fi
+  "${VENV_PYTHON}" "${LOCAL_AUTH_CONTROL_EVIDENCE_SCRIPT}" "$@"
+}
+
+cmd_audit_gate() {
+  if [[ ! -x "${VENV_PYTHON}" ]]; then
+    die "backend/.venv not found. Run preflight check or create the venv first."
+  fi
+  MONGO_URL="$(compose_mongo_url)" "${VENV_PYTHON}" "${LOCAL_AUTH_GATE_SCRIPT}" "$@"
+}
+
+cmd_audit_artifacts() {
+  if [[ ! -x "${VENV_PYTHON}" ]]; then
+    die "backend/.venv not found. Run preflight check or create the venv first."
+  fi
+  MONGO_URL="$(compose_mongo_url)" "${VENV_PYTHON}" "${LOCAL_AUTH_ARTIFACTS_SCRIPT}" "$@"
 }
 
 # Reset: wipe seeded test data + emulator users, but keep the stack running.
@@ -380,7 +484,7 @@ cmd_status() {
   printf '    Backend API:           http://127.0.0.1:8001\n'
   printf '    Backend health:        http://127.0.0.1:8001/api/v2/healthz\n'
   printf '    Firebase Emulator UI:  http://localhost:4000\n'
-  printf '    Mongo:                 mongodb://127.0.0.1:27017/academy_manager_saas_staging\n'
+  printf '    Mongo:                 %s/academy_manager_saas_staging\n' "$(compose_mongo_url)"
   printf '\n'
 
   # If creds file exists, surface them.
@@ -415,10 +519,11 @@ PYEOF
   # Tenant-host pointer (for browser-based subdomain testing).
   if command -v "${VENV_PYTHON}" >/dev/null 2>&1; then
     local tenants
-    tenants="$("${VENV_PYTHON}" - <<'PYEOF' 2>/dev/null || true
+    tenants="$(MONGO_URL="$(compose_mongo_url)" "${VENV_PYTHON}" - <<'PYEOF' 2>/dev/null || true
+import os
 from pymongo import MongoClient
 try:
-    db = MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=2000).academy_manager_saas_staging
+    db = MongoClient(os.environ["MONGO_URL"], serverSelectionTimeoutMS=2000).academy_manager_saas_staging
     for a in db.academies.find({}, {"_id":0,"slug":1,"primary_domain":1,"display_name":1}):
         print(f"    {a.get('slug','?'):16s} {a.get('primary_domain','?'):28s} {a.get('display_name','')}")
 except Exception:
@@ -443,7 +548,7 @@ http://acme.localhost:3000         # Frontend, scoped to acme tenant
 http://127.0.0.1:8001              # Backend API root
 http://127.0.0.1:8001/api/v2/healthz   # Backend health check
 http://localhost:4000              # Firebase Emulator UI
-mongodb://127.0.0.1:27017          # Mongo (db: academy_manager_saas_staging)
+$(compose_mongo_url)          # Mongo (db: academy_manager_saas_staging)
 EOF
 }
 
@@ -455,7 +560,7 @@ cmd_smoke() {
 
   log "Generating fresh smoke env from seed..."
   local seed_json
-  seed_json="$("${VENV_PYTHON}" "${SEED_SCRIPT}" --json "$@")"
+  seed_json="$(SAAS_STAGING_MONGO_URL="$(compose_mongo_url)" "${VENV_PYTHON}" "${SEED_SCRIPT}" --json "$@")"
   replay_migrations
 
   local api_url frontend_url tenant_frontend_url tenant_host hdr_name hdr_val id_token
@@ -565,6 +670,15 @@ main() {
     rebuild-api) cmd_rebuild_api "$@" ;;
     seed)        cmd_seed "$@" ;;
     blno-seed)   cmd_blno_seed "$@" ;;
+    scale)       cmd_scale "$@" ;;
+    scale-safety) cmd_scale_safety "$@" ;;
+    local-auth-env) cmd_local_auth_env "$@" ;;
+    audit-readiness) cmd_audit_readiness "$@" ;;
+    audit-static-gaps) cmd_audit_static_gaps "$@" ;;
+    audit-acceptance) cmd_audit_acceptance "$@" ;;
+    audit-control-evidence) cmd_audit_control_evidence "$@" ;;
+    audit-gate) cmd_audit_gate "$@" ;;
+    audit-artifacts) cmd_audit_artifacts "$@" ;;
     reset)       cmd_reset "$@" ;;
     status) cmd_status "$@" ;;
     urls)   cmd_urls "$@" ;;

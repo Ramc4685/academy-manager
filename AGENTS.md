@@ -79,6 +79,7 @@ Do not manually restore the old global YAML ledger in `test_result.md`.
 | Backend / API / Mongo / auth / payments | `docs/agent/backend-api-rules.md` |
 | Frontend / React / UI / PWA | `docs/agent/frontend-rules.md` |
 | Testing / verification / bug fixing | `docs/agent/testing-verification.md` |
+| Production-scale local real-user audit | `docs/agent/testing-verification.md` |
 | Status handoff / agent loop / ticket updates | `docs/agent/feedback-loop.md` |
 | Drafting Codex prompts / goals / agent handoffs | `docs/agent/codex-prompting.md` |
 
@@ -280,6 +281,27 @@ curl http://127.0.0.1:8001/api/v2/healthz
 
 Docker uses a hardcoded `dummy` Firebase API key so Firebase Auth will not work.
 Use it only to verify the app builds and the health endpoint responds.
+
+Production-scale local audit (use before broad release claims):
+
+```bash
+scripts/dev/saas_staging.sh blno-seed
+scripts/dev/saas_staging.sh scale --apply --parents 250 --students-per-parent 2
+scripts/dev/saas_staging.sh local-auth-env > /tmp/academy-local-auth-env.sh
+set -a; . /tmp/academy-local-auth-env.sh; set +a
+LOCAL_AUTH_E2E=1 scripts/dev/saas_staging.sh audit-readiness
+cd frontend && LOCAL_AUTH_E2E=1 pnpm exec playwright test -c playwright.local-auth.config.ts
+cd ..
+LOCAL_AUTH_E2E=1 scripts/dev/saas_staging.sh audit-gate
+LOCAL_AUTH_E2E=1 scripts/dev/saas_staging.sh audit-artifacts
+```
+
+This local-only audit uses sanitized BLNO staging data and Firebase Auth emulator
+accounts. It must end at `audit-readiness` = `READY`, `audit-gate` =
+`CLEAN_PASS`, and a Playwright report with no failed or skipped tests before an
+agent claims every user-facing route/control/workflow has passed. The scale
+data is intentionally local and deterministic; cleanup or reset still requires
+explicit approval because it deletes local Mongo/emulator state.
 
 ---
 

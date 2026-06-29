@@ -140,7 +140,11 @@ export default function ParentPaymentsPage() {
     },
     onError: (error) => {
       const detail = error instanceof Error ? error.message : "Request failed";
-      if (detail.includes("Stripe customer") || detail.includes("autopay setup")) {
+      if (
+        detail.includes("Stripe customer") ||
+        detail.includes("autopay setup") ||
+        detail.includes("No such customer")
+      ) {
         setPortalError(BILLING_PORTAL_PREREQUISITE);
         return;
       }
