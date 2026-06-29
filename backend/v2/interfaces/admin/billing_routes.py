@@ -952,7 +952,7 @@ async def record_manual_payment(
 async def refund_invoice(
     invoice_id: str,
     body: InvoiceRefundRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> InvoiceRefundResponse:
     issue_refund = _required_callable(use_cases.issue_invoice_refund, "Invoice refund")
@@ -961,6 +961,7 @@ async def refund_invoice(
             invoice_id=invoice_id,
             amount_cents=body.amount_cents,
             reason=body.reason,
+            actor_id=claims.user_id,
         )
     except ValueError as exc:
         msg = str(exc)
@@ -974,6 +975,20 @@ async def refund_invoice(
         refunded_cents=int(result["refunded_cents"]),
         total_refunded_cents=int(result["total_refunded_cents"]),
     )
+
+
+@router.get(
+    "/billing/invoices/{invoice_id}/audit",
+    summary="List the append-only billing audit trail for an invoice",
+)
+async def list_invoice_audit(
+    invoice_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> dict[str, list[dict[str, object]]]:
+    lister = _required_callable(use_cases.list_billing_audit, "Billing audit")
+    entries = await lister(invoice_id=invoice_id)  # type: ignore[operator]
+    return {"entries": entries}
 
 
 @router.post(

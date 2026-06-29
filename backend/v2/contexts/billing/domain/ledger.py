@@ -32,6 +32,9 @@ class LedgerInvoice(BaseModel):
     discount_cents: int = Field(default=0, ge=0)
     total_cents: int = Field(ge=0)
     balance_due_cents: int = Field(ge=0)
+    # cumulative amount refunded against this invoice; single source of truth, written only
+    # by MongoBillingLedgerRepository.apply_invoice_refund
+    refunded_cents: int = Field(default=0, ge=0)
     currency: str = Field(default="usd", min_length=3, max_length=3)
     due_date: date
     pdf_artifact_id: str | None = None
@@ -44,6 +47,8 @@ class LedgerInvoice(BaseModel):
     last_sent_at: datetime | None = None
     # audit
     finalized_at: datetime | None = None
+    # optimistic-concurrency token; bumped by the repository on each persisted write
+    version: int = Field(default=0, ge=0)
     created_at: datetime
     updated_at: datetime
 
@@ -192,16 +197,26 @@ def allocate_payment_to_invoice(
     )
 
 
-def recompute_totals(invoice: LedgerInvoice, lines: list[InvoiceLine]) -> LedgerInvoice:
-    """Derive subtotal/total/balance_due from lines. Callers never set totals directly."""
+def recompute_totals(
+    invoice: LedgerInvoice,
+    lines: list[InvoiceLine],
+    *,
+    allocated_cents: int | None = None,
+) -> LedgerInvoice:
+    """Derive subtotal/total/balance_due from lines. Callers never set totals directly.
+
+    When ``allocated_cents`` is supplied (the summed ``payment_allocations`` for this invoice),
+    the balance is derived from it directly — the correct, concurrency-safe source of truth.
+    When omitted, it falls back to inferring ``total_cents - balance_due_cents`` from the
+    passed invoice (only safe under a single writer; persistence guards concurrency via the
+    invoice ``version`` token).
+    """
     subtotal = sum(line.amount_cents for line in lines)
     total = max(0, subtotal - invoice.discount_cents)
-    # NOTE: `allocated` is inferred from persisted totals (total_cents - balance_due_cents),
-    # not from summing payment_allocations. This is correct under a single-writer model.
-    # Under concurrent writes to the same invoice, the second writer's recompute will see
-    # a stale baseline. Phase 3 should either add optimistic locking (e.g. a `version` field)
-    # or derive allocated from the payment_allocations collection directly.
-    allocated = invoice.total_cents - invoice.balance_due_cents  # already-allocated amount
+    if allocated_cents is None:
+        allocated = invoice.total_cents - invoice.balance_due_cents  # already-allocated amount
+    else:
+        allocated = max(0, allocated_cents)
     balance = max(0, total - allocated)
     new_status = invoice.status
     if invoice.status not in ("draft", "void"):
@@ -227,13 +242,21 @@ def add_line(
     new_line: InvoiceLine,
     *,
     now: datetime,
+    allocated_cents: int | None = None,
 ) -> tuple[LedgerInvoice, list[InvoiceLine]]:
-    """Append a line and recompute totals. Enforces edit rules."""
+    """Append a line and recompute totals. Enforces edit rules.
+
+    ``allocated_cents`` (the summed payment allocations for this invoice) should be passed
+    by callers that have it, so the recomputed balance is derived from real allocations
+    rather than the possibly-stale invoice projection.
+    """
     if invoice.status in ("paid", "void"):
         raise ValueError(f"cannot add lines to a {invoice.status} invoice")
     updated_lines = [*lines, new_line]
     updated_invoice = recompute_totals(
-        invoice.model_copy(update={"updated_at": now}), updated_lines
+        invoice.model_copy(update={"updated_at": now}),
+        updated_lines,
+        allocated_cents=allocated_cents,
     )
     return updated_invoice, updated_lines
 

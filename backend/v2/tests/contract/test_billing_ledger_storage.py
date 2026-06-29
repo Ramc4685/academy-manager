@@ -303,3 +303,124 @@ async def test_delete_invoice_line_is_tenant_scoped_and_reports_missing(db, acad
     )
     assert await db["invoice_lines"].count_documents({"academy_id": acad}) == 0
     assert await db["invoice_lines"].count_documents({"academy_id": "other-academy"}) == 1
+
+
+@pytest.mark.asyncio
+async def test_save_invoice_rejects_stale_concurrent_write(db, acad) -> None:
+    """P0-2: two writers read the same invoice version; the second (stale) save is rejected
+    so a concurrent add_line cannot silently clobber the first writer's update."""
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    await repo.create_invoice(
+        _make_invoice("inv-cc-1", acad, now), lines=[], idempotency_key="cc:1"
+    )
+
+    # Two concurrent readers both see version 0.
+    reader_a = await repo.get_invoice("inv-cc-1")
+    reader_b = await repo.get_invoice("inv-cc-1")
+    assert reader_a is not None and reader_b is not None
+    assert reader_a.version == 0
+
+    # Writer A commits first and wins (version -> 1).
+    saved_a = await repo.save_invoice(reader_a.model_copy(update={"balance_due_cents": 5_000}))
+    assert saved_a.version == 1
+
+    # Writer B is stale (still version 0) and must be rejected, not last-write-wins.
+    with pytest.raises(ValueError, match="invoice changed"):
+        await repo.save_invoice(reader_b.model_copy(update={"balance_due_cents": 3_000}))
+
+    final = await repo.get_invoice("inv-cc-1")
+    assert final is not None
+    assert final.balance_due_cents == 5_000  # writer A preserved, B did not clobber
+
+
+@pytest.mark.asyncio
+async def test_save_invoice_bumps_version_on_each_write(db, acad) -> None:
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    await repo.create_invoice(
+        _make_invoice("inv-cc-2", acad, now), lines=[], idempotency_key="cc:2"
+    )
+    v0 = await repo.get_invoice("inv-cc-2")
+    assert v0 is not None and v0.version == 0
+    v1 = await repo.save_invoice(v0.model_copy(update={"balance_due_cents": 9_000}))
+    assert v1.version == 1
+    v2 = await repo.save_invoice(v1.model_copy(update={"balance_due_cents": 8_000}))
+    assert v2.version == 2
+
+
+@pytest.mark.asyncio
+async def test_manual_payment_overpayment_creates_account_credit(db, acad) -> None:
+    """P0-3: a manual payment exceeding the balance must succeed and create an APPROVED
+    OVERPAYMENT credit for the remainder (same behavior as the Stripe allocation path),
+    instead of being hard-rejected."""
+    from backend.v2.contexts.billing.application.use_cases.record_manual_payment import (
+        RecordManualPayment,
+        RecordManualPaymentCommand,
+    )
+
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    await repo.create_invoice(
+        _make_invoice("inv-over-1", acad, now), lines=[], idempotency_key="over:1"
+    )
+
+    uc = RecordManualPayment(ledger=repo)
+    result = await uc.execute(
+        RecordManualPaymentCommand(
+            invoice_id="inv-over-1", amount_cents=13_000, payment_method="cash"
+        )
+    )
+
+    assert result.invoice_status == "paid"
+    assert result.balance_due_cents == 0
+    assert result.overpayment_credit_cents == 3_000
+    credits = await db["account_credit_ledger"].count_documents(
+        {"academy_id": acad, "source_type": "OVERPAYMENT", "status": "APPROVED"}
+    )
+    assert credits == 1
+
+
+@pytest.mark.asyncio
+async def test_apply_invoice_refund_is_single_writer(db, acad) -> None:
+    """P0-3: refunded_cents is written by exactly one repo method and is the single source
+    of truth (model value == persisted doc value), replacing the raw composition $inc."""
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    await repo.create_invoice(
+        _make_invoice("inv-ref-1", acad, now), lines=[], idempotency_key="ref:1"
+    )
+
+    upd = await repo.apply_invoice_refund(invoice_id="inv-ref-1", amount_cents=2_000)
+    assert upd.refunded_cents == 2_000
+    upd2 = await repo.apply_invoice_refund(invoice_id="inv-ref-1", amount_cents=1_500)
+    assert upd2.refunded_cents == 3_500
+
+    raw = await db["invoices"].find_one({"academy_id": acad, "invoice_id": "inv-ref-1"})
+    assert raw is not None
+    assert raw["refunded_cents"] == 3_500
+    reloaded = await repo.get_invoice("inv-ref-1")
+    assert reloaded is not None
+    assert reloaded.refunded_cents == 3_500
+
+
+@pytest.mark.asyncio
+async def test_sum_overpayment_credits_for_invoice(db, acad) -> None:
+    """P0-3: the admin view's overpayment_credit_cents must be derivable from the credit
+    ledger (no longer hardcoded 0)."""
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    await repo.create_invoice(
+        _make_invoice("inv-oc-1", acad, now), lines=[], idempotency_key="oc:1"
+    )
+    from backend.v2.contexts.billing.application.use_cases.record_manual_payment import (
+        RecordManualPayment,
+        RecordManualPaymentCommand,
+    )
+
+    await RecordManualPayment(ledger=repo).execute(
+        RecordManualPaymentCommand(
+            invoice_id="inv-oc-1", amount_cents=12_500, payment_method="cash"
+        )
+    )
+    assert await repo.sum_overpayment_credits_for_invoice("inv-oc-1") == 2_500

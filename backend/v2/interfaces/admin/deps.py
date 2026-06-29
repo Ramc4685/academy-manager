@@ -295,6 +295,7 @@ class AdminUseCases:
     void_billing_invoice: object | None = None
     record_manual_payment: object | None = None
     issue_invoice_refund: object | None = None
+    list_billing_audit: object | None = None
     create_student_invoice: object | None = None
     list_billing_products: object | None = None
     create_billing_product: object | None = None

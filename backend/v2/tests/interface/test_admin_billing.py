@@ -1062,11 +1062,11 @@ def test_record_invoice_manual_payment_route(admin_client):
 
 def test_refund_invoice_route_uses_invoice_native_use_case(admin_client):
     async def issue_invoice_refund(**kwargs):
-        assert kwargs == {
-            "invoice_id": "inv-1",
-            "amount_cents": 3_000,
-            "reason": "duplicate",
-        }
+        # P0-4: the route must thread the admin actor for the audit trail.
+        assert kwargs["invoice_id"] == "inv-1"
+        assert kwargs["amount_cents"] == 3_000
+        assert kwargs["reason"] == "duplicate"
+        assert kwargs["actor_id"]
         return {
             "invoice_id": "inv-1",
             "payment_id": "lp-1",

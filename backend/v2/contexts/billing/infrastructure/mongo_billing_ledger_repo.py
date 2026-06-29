@@ -548,14 +548,47 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         return [self._line_from_doc(doc) async for doc in cursor]
 
     async def save_invoice(self, invoice: LedgerInvoice) -> LedgerInvoice:
-        """Upsert invoice by invoice_id."""
+        """Upsert invoice by invoice_id with optimistic concurrency.
+
+        If the invoice already exists, the write is guarded on the in-memory ``version``
+        token: a stale write (another writer already bumped the version) is rejected with a
+        retryable error rather than silently clobbering the other writer's update. The
+        version is incremented on every successful update. New invoices insert at their
+        given version. Legacy docs missing a ``version`` field are treated as version 0.
+        """
         academy_id = current_academy_id()
+        expected_version = int(getattr(invoice, "version", 0) or 0)
         doc = _mongo_doc(invoice)
-        await self.collection.update_one(
+        set_fields = {k: v for k, v in doc.items() if k not in ("academy_id", "version")}
+
+        existing = await self.collection.find_one(
             {"academy_id": academy_id, "invoice_id": invoice.invoice_id},
-            {"$set": {k: v for k, v in doc.items() if k != "academy_id"}},
-            upsert=True,
+            {"_id": 1},
         )
+        if existing is None:
+            await self.collection.update_one(
+                {"academy_id": academy_id, "invoice_id": invoice.invoice_id},
+                {"$set": {**set_fields, "version": expected_version}},
+                upsert=True,
+            )
+        else:
+            version_match: dict[str, object] = (
+                {"$or": [{"version": 0}, {"version": {"$exists": False}}]}
+                if expected_version == 0
+                else {"version": expected_version}
+            )
+            result = await self.collection.update_one(
+                {
+                    "academy_id": academy_id,
+                    "invoice_id": invoice.invoice_id,
+                    **version_match,
+                },
+                {"$set": set_fields, "$inc": {"version": 1}},
+            )
+            if getattr(result, "matched_count", 0) != 1:
+                raise ValueError(
+                    f"invoice changed during save (stale version {expected_version}); retry"
+                )
         stored = await self.get_invoice(invoice.invoice_id)
         if stored is None:
             raise ValueError("invoice save failed")
@@ -741,6 +774,40 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
                 "academy_id": academy_id,
                 "source_type": "OVERPAYMENT",
                 "source_id": {"$in": allocation_ids},
+            }
+        ):
+            total += int(credit_doc.get("amount_cents", 0))
+        return total
+
+    async def apply_invoice_refund(self, *, invoice_id: str, amount_cents: int) -> LedgerInvoice:
+        """Record a refund against an invoice's ``refunded_cents`` — the single source of
+        truth for invoice-level refunds. Uses the optimistic-concurrency guarded write so
+        concurrent refunds cannot lose an increment. Replaces the raw ``$inc`` previously
+        issued from the admin composition layer.
+        """
+        if amount_cents <= 0:
+            raise ValueError("refund amount must be positive")
+        invoice = await self.get_invoice(invoice_id)
+        if invoice is None:
+            raise ValueError("invoice not found")
+        updated = invoice.model_copy(
+            update={
+                "refunded_cents": invoice.refunded_cents + amount_cents,
+                "updated_at": self._clock(),
+            }
+        )
+        return await self.save_invoice(updated)
+
+    async def sum_overpayment_credits_for_invoice(self, invoice_id: str) -> int:
+        """Total APPROVED overpayment credit attributed to an invoice (for admin views)."""
+        academy_id = current_academy_id()
+        total = 0
+        async for credit_doc in self._db["account_credit_ledger"].find(
+            {
+                "academy_id": academy_id,
+                "invoice_id": invoice_id,
+                "source_type": "OVERPAYMENT",
+                "status": "APPROVED",
             }
         ):
             total += int(credit_doc.get("amount_cents", 0))

@@ -15,6 +15,7 @@ import pytest
 
 from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
     HandleWebhookEvent,
+    _QuarantineStripeEvent,
 )
 from backend.v2.contexts.billing.domain.ledger import LedgerInvoice, LedgerPayment
 from backend.v2.contexts.billing.domain.models import Payment, Subscription
@@ -1200,6 +1201,43 @@ async def test_balance_checkout_completed_allocates_across_all_invoice_ids() -> 
             "idempotency_key": "invoice-checkout-alloc:cs_balance:inv-balance-2",
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_balance_checkout_validates_academy_before_recording_payment() -> None:
+    """P0-1: a balance checkout.session.completed whose target invoice belongs to another
+    academy must be quarantined BEFORE any ledger payment is recorded (validation-before-
+    mutation), matching the autopay handler's ordering."""
+    foreign_invoice = _ledger_invoice(
+        invoice_id="inv-foreign", academy_id="other-acad", parent_id="parent-1"
+    )
+    ledger = FakeBillingLedger(foreign_invoice)
+    uc = _build(FakePaymentRepo(), billing_ledger=ledger)  # handler academy_id="acad"
+
+    event = {
+        "id": "evt_balance_xtenant",
+        "type": "checkout.session.completed",
+        "data": {
+            "object": {
+                "id": "cs_balance_xtenant",
+                "metadata": {
+                    "invoice_ids": "inv-foreign",
+                    "parent_id": "parent-1",
+                    "type": "balance_payment",
+                },
+                "amount_total": 10_000,
+                "currency": "usd",
+                "payment_intent": "pi_xtenant",
+            }
+        },
+    }
+
+    with pytest.raises(_QuarantineStripeEvent):
+        await uc._handle_balance_checkout_completed(event)
+
+    # The cross-tenant event must be rejected WITHOUT recording any ledger payment.
+    assert ledger.payments == {}
+    assert ledger.allocations == []
 
 
 @pytest.mark.asyncio

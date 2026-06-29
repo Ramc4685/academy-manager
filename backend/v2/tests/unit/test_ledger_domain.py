@@ -128,6 +128,30 @@ def test_recompute_totals_paid_when_balance_zero() -> None:
     assert result.status == "paid"
 
 
+def test_recompute_totals_uses_explicit_allocated_cents() -> None:
+    # P0-2: when the caller passes the true summed allocations, balance must derive
+    # from it — NOT from the (possibly stale) total_cents - balance_due_cents inference.
+    # Stale fields claim 9000 allocated (total=10000, balance=1000); the real ledger
+    # has only 3000 allocated, so the recomputed balance must be 10000 - 3000 = 7000.
+    inv = _invoice(total_cents=10_000, balance_due_cents=1_000)
+    lines = [_line(10_000)]
+    result = recompute_totals(inv, lines, allocated_cents=3_000)
+    assert result.balance_due_cents == 7_000
+    assert result.status == "partially_paid"
+
+
+def test_add_line_threads_explicit_allocated_cents() -> None:
+    # add_line must forward allocated_cents so the post-add balance reflects real allocations.
+    inv = _invoice(subtotal_cents=5_000, total_cents=5_000, balance_due_cents=0, status="open")
+    existing = [_line(5_000, line_id="l1")]
+    new_line = _line(3_000, line_id="l2")
+    updated, lines = add_line(inv, existing, new_line, now=NOW, allocated_cents=5_000)
+    # total = 8000, allocated = 5000 -> balance 3000
+    assert updated.total_cents == 8_000
+    assert updated.balance_due_cents == 3_000
+    assert updated.status == "partially_paid"
+
+
 # ---------------------------------------------------------------------------
 # add_line
 # ---------------------------------------------------------------------------

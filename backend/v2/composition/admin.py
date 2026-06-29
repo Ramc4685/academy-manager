@@ -86,8 +86,12 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
     ApproveWithdrawalCredit,
     PreviewWithdrawalCredit,
 )
+from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
 from backend.v2.contexts.billing.domain.ledger import LedgerInvoice, void_invoice
 from backend.v2.contexts.billing.domain.product import Product
+from backend.v2.contexts.billing.infrastructure.mongo_billing_audit_log import (
+    MongoBillingAuditLogRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
 )
@@ -708,7 +712,9 @@ def _invoice_to_admin_payment_row(invoice: dict[str, Any]) -> dict[str, Any]:
         "amount_received_cents": paid,
         "paid_amount_cents": paid,
         "balance_due_cents": max(int(invoice.get("balance_due_cents") or 0), 0),
-        "overpayment_credit_cents": 0,
+        # surfaced from APPROVED OVERPAYMENT credits, batch-enriched onto the doc by the
+        # list builder (no longer hardcoded 0)
+        "overpayment_credit_cents": int(invoice.get("overpayment_credit_cents") or 0),
         "currency": str(invoice.get("currency") or "usd"),
         "status": _invoice_status_for_admin(invoice),
         "refunded_cents": int(invoice.get("refunded_cents") or 0),
@@ -2586,6 +2592,7 @@ def compose_admin(
     approve_payout_period = ApprovePayoutPeriod(repository=payout_periods_repo)
     mark_payout_paid = MarkPayoutPaid(repository=payout_periods_repo)
     payout_audit_log = MongoPayoutAuditLogRepository(db)
+    billing_audit_log = MongoBillingAuditLogRepository(db)
     recompute_payout_period = RecomputePayoutPeriod(
         calculator=coach_payout_calculator,
         repository=payout_periods_repo,
@@ -2924,10 +2931,12 @@ def compose_admin(
         invoice_id: str,
         amount_cents: int | None,
         reason: str,
+        actor_id: str | None = None,
     ) -> dict[str, Any]:
         invoice = await billing_ledger_repo.get_invoice(invoice_id)
         if invoice is None:
             raise ValueError("invoice not found")
+        before_refunded = invoice.refunded_cents
         allocation_cursor = db["payment_allocations"].find(
             {
                 "academy_id": academy_id,
@@ -2966,20 +2975,36 @@ def compose_admin(
                 reason=reason,
             )
         )
-        # Reflect the refund on the invoice projection. Admin payment rows for
-        # an allocated invoice are built from the invoice document (the matching
-        # ledger_payments row is intentionally skipped), so without this the
-        # invoice would keep showing refunded_cents=0 after a refund.
-        await db["invoices"].update_one(
-            {"academy_id": academy_id, "invoice_id": invoice_id},
-            {
-                "$inc": {"refunded_cents": int(selected_amount_cents or 0)},
-                "$set": {"updated_at": datetime.now(UTC)},
-            },
+        # Reflect the refund on the invoice projection via the single ledger writer
+        # (optimistic-concurrency guarded). Admin payment rows for an allocated invoice
+        # are built from the invoice document, so refunded_cents must live there — but it
+        # is now owned by one repo method instead of a raw $inc in this layer.
+        refunded_amount = int(selected_amount_cents or 0)
+        await billing_ledger_repo.apply_invoice_refund(
+            invoice_id=invoice_id, amount_cents=refunded_amount
+        )
+        # P0-4: append-only audit of who issued the refund.
+        await billing_audit_log.append(
+            BillingAuditEntry(
+                audit_id=f"baud-{new_ulid()}",
+                academy_id=academy_id,
+                action="refund_issued",
+                actor_id=actor_id or "system",
+                at=datetime.now(UTC),
+                invoice_id=invoice_id,
+                payment_id=selected_payment_id,
+                reason=reason,
+                before={"refunded_cents": before_refunded},
+                after={"refunded_cents": before_refunded + refunded_amount},
+            )
         )
         payload = result.model_dump(mode="python")
         payload["invoice_id"] = invoice_id
         return payload
+
+    async def list_billing_audit(*, invoice_id: str) -> list[dict[str, Any]]:
+        entries = await billing_audit_log.list_for_invoice(invoice_id)
+        return [entry.model_dump(mode="python") for entry in entries]
 
     async def create_student_invoice(
         *,
@@ -4007,6 +4032,7 @@ def compose_admin(
         request_academy_id = current_academy_id()
         invoice_rows: list[dict[str, Any]] = []
         invoice_keys: set[str] = set()
+        invoice_docs: list[dict[str, Any]] = []
         async for doc in db["invoices"].find(
             {
                 "academy_id": request_academy_id,
@@ -4016,7 +4042,30 @@ def compose_admin(
             sort=[("created_at", -1), ("invoice_id", 1)],
             limit=200,
         ):
+            invoice_docs.append(doc)
+        # Batch-sum APPROVED overpayment credits per invoice (one query, avoids N+1).
+        overpay_by_invoice: dict[str, int] = {}
+        invoice_id_list = [
+            str(d.get("invoice_id") or "") for d in invoice_docs if d.get("invoice_id")
+        ]
+        if invoice_id_list:
+            async for credit in db["account_credit_ledger"].find(
+                {
+                    "academy_id": request_academy_id,
+                    "invoice_id": {"$in": invoice_id_list},
+                    "source_type": "OVERPAYMENT",
+                    "status": "APPROVED",
+                }
+            ):
+                inv_id = str(credit.get("invoice_id") or "")
+                overpay_by_invoice[inv_id] = overpay_by_invoice.get(inv_id, 0) + int(
+                    credit.get("amount_cents") or 0
+                )
+        for doc in invoice_docs:
             invoice_keys.update(_invoice_provider_keys(doc))
+            doc["overpayment_credit_cents"] = overpay_by_invoice.get(
+                str(doc.get("invoice_id") or ""), 0
+            )
             invoice_rows.append(_invoice_to_admin_payment_row(doc))
         invoice_student_ids = [
             str(row["student_id"])
@@ -5108,6 +5157,7 @@ def compose_admin(
         void_billing_invoice=void_billing_invoice,
         record_manual_payment=record_manual_payment,
         issue_invoice_refund=issue_invoice_refund,
+        list_billing_audit=list_billing_audit,
         create_student_invoice=create_student_invoice,
         list_billing_products=list_billing_products,
         create_billing_product=create_billing_product,
