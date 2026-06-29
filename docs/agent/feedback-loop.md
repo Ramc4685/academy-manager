@@ -137,6 +137,30 @@ Examples worth capturing:
 
 ---
 
+## Production-Scale Audit Handoff
+
+When working on the production-scale local audit, keep the handoff tied to the
+generated audit artifacts instead of prose memory.
+
+Record these in the relevant `docs/test-results/active/` ledger before closing:
+
+- Local data state: BLNO seed applied, synthetic scale rows applied, or why not.
+- Auth state: `/tmp/academy-local-auth-env.sh` regenerated and `LOCAL_AUTH_E2E=1`
+  used, or why not.
+- Real-user result: exact Playwright command and pass/fail/skip counts.
+- Gate result: `audit-readiness` result and `audit-gate` result.
+- Artifact bundle: path under
+  `/tmp/academy-manager-local/evidence/20260628-production-scale-audit/`.
+- Bug status: each confirmed `BUG-*` either verified, deferred, or blocked with
+  reproduction evidence.
+
+Do not close the ledger as complete if the aggregate gate is only
+`READY_WITH_WARNINGS`. A complete audit needs `READY` and `CLEAN_PASS`; otherwise
+leave a blocked handoff naming the warning/blocker and the command that produced
+it.
+
+---
+
 ## PR Failure Loop
 
 When a PR check fails, do not guess from the GitHub UI summary.

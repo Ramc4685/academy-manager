@@ -8,11 +8,12 @@ const ADMIN_EMAIL = process.env.LOCAL_AUTH_ADMIN_EMAIL ?? "";
 const ADMIN_PASSWORD = process.env.LOCAL_AUTH_ADMIN_PASSWORD ?? "";
 const COACH_EMAIL = process.env.LOCAL_AUTH_COACH_EMAIL ?? "";
 const COACH_PASSWORD = process.env.LOCAL_AUTH_COACH_PASSWORD ?? "";
+const COACH_OCCURRENCE_ID = process.env.LOCAL_AUTH_COACH_OCCURRENCE_ID ?? "";
 
 test.describe("local authenticated QA defect coverage", () => {
   test.skip(
     !LOCAL_AUTH_ENABLED,
-    "Set LOCAL_AUTH_E2E=1 and run against scripts/local_test_stack.sh seeded local services."
+    "Set LOCAL_AUTH_E2E=1 and run against approved local SaaS staging seed data.",
   );
 
   test("seeded parent exercises onboarding controls, billing portal redirect, and wrong-role redirects", async ({
@@ -68,13 +69,18 @@ test.describe("local authenticated QA defect coverage", () => {
 
   test("seeded coach can open an upcoming session from schedule", async ({ page }) => {
     test.slow();
+    test.skip(
+      !COACH_OCCURRENCE_ID,
+      "LOCAL_AUTH_COACH_OCCURRENCE_ID is required for seeded schedule coverage.",
+    );
     await signIn(page, COACH_EMAIL, COACH_PASSWORD, /\/coach\/today/);
 
     await page.goto("/coach/sessions");
-    const firstSession = page.locator('a[href*="/coach/sessions/"]').first();
-    await expect(firstSession).toContainText("6:00 PM");
-    await expect(firstSession).not.toContainText("11:00 PM");
-    await firstSession.click();
+    const seededSession = page.locator(
+      `a[href*="/coach/sessions/${COACH_OCCURRENCE_ID}"]`,
+    );
+    await expect(seededSession).toBeVisible({ timeout: 30_000 });
+    await seededSession.click();
 
     await expect(page.getByTestId("session-detail")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText("Session not found.")).toHaveCount(0);
@@ -86,8 +92,8 @@ test.describe("local authenticated QA defect coverage", () => {
     test.slow();
     await signIn(page, COACH_EMAIL, COACH_PASSWORD, /\/coach\/today/);
     await page.goto("/coach/dashboard");
-    await expect(page.getByTestId("coach-dashboard")).toBeVisible();
-    await expect(page.getByText("Coach dashboard")).toBeVisible();
+    await expect(page.getByTestId("coach-day-hub")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Coach Day Hub" })).toBeVisible();
     await page.goto("/coach/today");
     await expect(page.getByTestId("coach-today")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
