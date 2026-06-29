@@ -102,7 +102,7 @@ export default function RegisterPage() {
     } catch {
       setPendingVerificationUser(user);
       setNotice(
-        "Your account is created, but we could not send the verification email. Try sending it again below."
+        "Account created, but we could not send the verification email. Try sending it again below."
       );
       return;
     }
