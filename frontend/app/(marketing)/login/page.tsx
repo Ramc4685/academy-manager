@@ -11,6 +11,7 @@ import {
   signInWithGoogle,
   signOutCurrent,
 } from "@/lib/auth/firebase";
+import { toAuthErrorMessage } from "@/lib/auth/auth-error";
 import { registerPublicParent } from "@/lib/api/registration";
 import {
   clearPendingParentRegistration,
@@ -46,9 +47,7 @@ export default function LoginPage() {
       })
       .catch((err) => {
         if (!cancelled) {
-          const msg =
-            err instanceof Error ? err.message : "Google sign-in failed. Please try again.";
-          setError(msg);
+          setError(toAuthErrorMessage(err, "Google sign-in failed. Please try again."));
         }
       });
 
@@ -78,8 +77,7 @@ export default function LoginPage() {
       }
       router.push("/post-login");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Sign-in failed. Please try again.";
-      setError(msg);
+      setError(toAuthErrorMessage(err, "Sign-in failed. Please try again."));
     } finally {
       setLoading(false);
     }
@@ -94,8 +92,7 @@ export default function LoginPage() {
       const user = await signInWithGoogle();
       if (user) router.push("/post-login");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Google sign-in failed. Please try again.";
-      setError(msg);
+      setError(toAuthErrorMessage(err, "Google sign-in failed. Please try again."));
     } finally {
       setGoogleLoading(false);
     }
@@ -114,11 +111,9 @@ export default function LoginPage() {
     setResetLoading(true);
     try {
       await sendPasswordReset(trimmedEmail);
-      setNotice("If that email exists, Firebase has sent a reset link.");
+      setNotice("If that email exists, we have sent a reset link.");
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : "Password reset failed. Please try again.";
-      setError(msg);
+      setError(toAuthErrorMessage(err, "Password reset failed. Please try again."));
     } finally {
       setResetLoading(false);
     }

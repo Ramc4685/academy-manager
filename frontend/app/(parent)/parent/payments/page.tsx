@@ -50,7 +50,7 @@ function autopayHelperText(enrollment: { payment_mode: string | null; subscripti
     return "Open the billing portal to update the payment method.";
   }
   if (status === "incomplete_expired") {
-    return "Start autopay again to create a fresh Stripe checkout.";
+    return "Start autopay again to create a fresh checkout.";
   }
   return null;
 }
@@ -133,7 +133,7 @@ export default function ParentPaymentsPage() {
     onMutate: () => { setPortalError(null); },
     onSuccess: (res) => {
       if (!res.redirect_url) {
-        setPortalError("Billing portal could not open because Stripe did not return a portal URL.");
+        setPortalError("Billing portal could not open right now. Please try again, or contact the academy.");
         return;
       }
       window.location.href = res.redirect_url;
@@ -170,7 +170,7 @@ export default function ParentPaymentsPage() {
     },
     onSuccess: (res) => {
       if (!res.redirect_url) {
-        setAutopayError("Autopay could not start because Stripe did not return a checkout link.");
+        setAutopayError("Autopay could not start right now. Please try again, or contact the academy.");
         return;
       }
       window.location.href = res.redirect_url;
@@ -195,7 +195,7 @@ export default function ParentPaymentsPage() {
     },
     onSuccess: (res) => {
       if (!res.redirect_url) {
-        setInvoicePaymentError("Payment could not start because Stripe did not return a checkout link.");
+        setInvoicePaymentError("Payment could not start right now. Please try again, or contact the academy.");
         return;
       }
       window.location.href = res.redirect_url;
@@ -216,7 +216,7 @@ export default function ParentPaymentsPage() {
     onMutate: () => { setBalancePaymentError(null); },
     onSuccess: (res) => {
       if (!res.redirect_url) {
-        setBalancePaymentError("Payment could not start because Stripe did not return a checkout link.");
+        setBalancePaymentError("Payment could not start right now. Please try again, or contact the academy.");
         return;
       }
       window.location.href = res.redirect_url;
@@ -311,12 +311,12 @@ export default function ParentPaymentsPage() {
       {/* Status banners */}
       {returnedFromAutopayCheckout && checkoutStatusQuery.isFetching && (
         <p role="status" data-testid="autopay-checkout-confirming" className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-          Confirming autopay with Stripe…
+          Confirming autopay…
         </p>
       )}
       {enrollments.some((e) => e.payment_mode === "monthly" && e.subscription_status === "incomplete") && (
         <p role="status" data-testid="payment-update-pending" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          Payment received in Stripe may take a moment to update this page. If it does not update, retry autopay or contact the academy.
+          Your payment may take a moment to update this page. If it does not update, retry autopay or contact the academy.
         </p>
       )}
       {portalError && (

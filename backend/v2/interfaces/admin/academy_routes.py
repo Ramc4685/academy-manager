@@ -76,7 +76,10 @@ async def start_stripe_connect(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminGatewayConnectLinkView:
     if use_cases.start_stripe_connect_use_case is None:
-        raise HTTPException(status_code=503, detail="Stripe Connect is not configured")
+        raise HTTPException(
+            status_code=503,
+            detail="Online payouts are not set up yet. Finish payment setup in academy settings.",
+        )
     try:
         out = await use_cases.start_stripe_connect_use_case.execute(claims.academy_id)
     except ValueError as exc:
@@ -116,7 +119,10 @@ async def disconnect_stripe(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
     if use_cases.disconnect_stripe_use_case is None:
-        raise HTTPException(status_code=503, detail="Stripe Connect is not configured")
+        raise HTTPException(
+            status_code=503,
+            detail="Online payouts are not set up yet. Finish payment setup in academy settings.",
+        )
     await use_cases.disconnect_stripe_use_case.execute(claims.academy_id)
 
 

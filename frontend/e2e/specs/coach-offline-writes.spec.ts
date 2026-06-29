@@ -64,7 +64,7 @@ test.describe.skip("Wave 1B — offline writes + sync", () => {
     await context.setOffline(false);
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await page.goto(NEEDS_REVIEW_URL);
-    await expect(page.getByTestId("tray-list")).toContainText("Coaching.SessionCancelled");
+    await expect(page.getByTestId("tray-list")).toContainText("This session was cancelled");
   });
 
   test("case #3: student removed from roster → tray entry", async ({
@@ -89,7 +89,7 @@ test.describe.skip("Wave 1B — offline writes + sync", () => {
     await context.setOffline(false);
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await page.goto(NEEDS_REVIEW_URL);
-    await expect(page.getByTestId("tray-list")).toContainText("Coaching.StudentNotEnrolled");
+    await expect(page.getByTestId("tray-list")).toContainText("no longer enrolled in the session");
   });
 
   test("case #4: two-device race → server first wins, second to tray", async ({
@@ -133,7 +133,7 @@ test.describe.skip("Wave 1B — offline writes + sync", () => {
     await context.setOffline(false);
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await page.goto(NEEDS_REVIEW_URL);
-    await expect(page.getByTestId("tray-list")).toContainText("Coaching.ConflictAttendanceExists");
+    await expect(page.getByTestId("tray-list")).toContainText("Attendance was already recorded for this student");
   });
 
   test("case #5: stale session_id → SessionNotAssigned tray", async ({
@@ -158,7 +158,7 @@ test.describe.skip("Wave 1B — offline writes + sync", () => {
     await context.setOffline(false);
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await page.goto(NEEDS_REVIEW_URL);
-    await expect(page.getByTestId("tray-list")).toContainText("Coaching.SessionNotAssigned");
+    await expect(page.getByTestId("tray-list")).toContainText("assigned to you for that date");
   });
 
   test("case #6: payment status changes → not surfaced (no coach UI dependency)", async ({

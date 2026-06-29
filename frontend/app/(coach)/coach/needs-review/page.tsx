@@ -86,7 +86,7 @@ export default function NeedsReviewPage() {
           >
             <p className="font-medium">{describe(m)}</p>
             <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
-              {m.error?.code}: {m.error?.message}
+              {reviewReason(m)}
             </p>
             <div className="mt-3 flex gap-2">
               <button
@@ -106,4 +106,22 @@ export default function NeedsReviewPage() {
 function describe(m: QueuedMutation): string {
   const p = m.payload as { student_id?: string; status?: string; session_id?: string };
   return `Mark ${p.status ?? "?"} for ${p.student_id ?? "?"} in ${p.session_id ?? "?"}`;
+}
+
+// Plain-language reasons keyed by the queue's internal error code. The raw code
+// and backend message are never shown to the coach — only the friendly reason.
+const REVIEW_REASONS: Record<string, string> = {
+  "Coaching.SessionCancelled": "This session was cancelled, so your mark wasn’t saved.",
+  "Coaching.StudentNotEnrolled":
+    "This student is no longer enrolled in the session, so your mark wasn’t saved.",
+  "Coaching.ConflictAttendanceExists":
+    "Attendance was already recorded for this student, so your mark wasn’t applied.",
+  "Coaching.SessionNotAssigned":
+    "This session isn’t assigned to you for that date, so your mark wasn’t saved.",
+};
+
+function reviewReason(m: QueuedMutation): string {
+  const code = m.error?.code;
+  if (code && REVIEW_REASONS[code]) return REVIEW_REASONS[code];
+  return "This change couldn’t be saved. Dismiss it, then try again from the session.";
 }
