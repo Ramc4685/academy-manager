@@ -446,24 +446,9 @@ class HandleWebhookEvent:
         now = self._now()
         ledger_payment_id = f"ledger-pay-cs:{checkout_session_id}"
 
-        payment = await self._billing_ledger.record_payment(
-            LedgerPayment(
-                payment_id=ledger_payment_id,
-                academy_id=self._academy_id,
-                parent_id=parent_id,
-                amount_cents=amount_total,
-                unapplied_amount_cents=amount_total,
-                currency=currency,
-                status="succeeded",
-                payment_method="stripe_checkout",
-                stripe_payment_intent_id=payment_intent_id,
-                paid_at=now,
-                created_at=now,
-                updated_at=now,
-            ),
-            idempotency_key=f"invoice-checkout:{checkout_session_id}",
-        )
-
+        # Validate every target invoice (existence, academy, parent, currency) BEFORE
+        # recording any payment, so a spoofed or cross-tenant event is quarantined without
+        # first writing a ledger payment. (Matches the autopay handler's ordering.)
         invoices: list[LedgerInvoice] = []
         for invoice_id in sorted(invoice_ids):
             invoice = await self._billing_ledger.get_invoice(invoice_id)
@@ -482,6 +467,24 @@ class HandleWebhookEvent:
                     f"currency mismatch: invoice={invoice.currency} checkout={currency}"
                 )
             invoices.append(invoice)
+
+        payment = await self._billing_ledger.record_payment(
+            LedgerPayment(
+                payment_id=ledger_payment_id,
+                academy_id=self._academy_id,
+                parent_id=parent_id,
+                amount_cents=amount_total,
+                unapplied_amount_cents=amount_total,
+                currency=currency,
+                status="succeeded",
+                payment_method="stripe_checkout",
+                stripe_payment_intent_id=payment_intent_id,
+                paid_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            idempotency_key=f"invoice-checkout:{checkout_session_id}",
+        )
 
         allocated = await allocate_checkout_payment_across_invoices(
             ledger=self._billing_ledger,

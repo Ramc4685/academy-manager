@@ -17,6 +17,7 @@ from backend.v2.contexts.billing.domain.ledger import (
     PaymentAllocation,
     allocate_payment_to_invoice,
 )
+from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 
 # ---------------------------------------------------------------------------
 # In-memory fake ledger for RecordManualPayment tests
@@ -72,12 +73,13 @@ class _FakeLedger:
         self, *, payment_id: str, invoice_id: str, amount_cents: int, idempotency_key: str
     ) -> LedgerAllocationResult:
         assert self._invoice is not None
-        new_balance = self._invoice.balance_due_cents - amount_cents
+        allocatable = min(amount_cents, self._invoice.balance_due_cents)
+        new_balance = self._invoice.balance_due_cents - allocatable
         new_status = "paid" if new_balance == 0 else "partially_paid"
         updated_invoice = self._invoice.model_copy(
             update={"balance_due_cents": new_balance, "status": new_status}
         )
-        self.allocated = {"payment_id": payment_id, "amount_cents": amount_cents}
+        self.allocated = {"payment_id": payment_id, "amount_cents": allocatable}
         dummy_payment = LedgerPayment(
             payment_id=payment_id,
             academy_id="acad-1",
@@ -94,13 +96,33 @@ class _FakeLedger:
             academy_id="acad-1",
             payment_id=payment_id,
             invoice_id=invoice_id,
-            amount_cents=amount_cents,
+            amount_cents=allocatable,
             created_at=_NOW,
         )
+        overpayment = amount_cents - allocatable
+        credit = None
+        if overpayment > 0:
+            credit = CreditLedgerEntry(
+                credit_id=f"credit-{payment_id}",
+                academy_id="acad-1",
+                parent_id="parent-1",
+                invoice_id=invoice_id,
+                type="MANUAL_CREDIT",
+                status="APPROVED",
+                amount_cents=overpayment,
+                remaining_amount_cents=overpayment,
+                currency="usd",
+                reason="overpayment",
+                source_type="OVERPAYMENT",
+                source_id="alloc-x",
+                created_at=_NOW,
+                updated_at=_NOW,
+            )
         return LedgerAllocationResult(
             invoice=updated_invoice,
             payment=dummy_payment,
             allocation=dummy_allocation,
+            overpayment_credit=credit,
         )
 
     async def get_open_invoice_for_student(
@@ -273,8 +295,12 @@ async def test_record_manual_payment_raises_if_invoice_already_paid() -> None:
 
 
 @pytest.mark.asyncio
-async def test_record_manual_payment_raises_if_amount_exceeds_balance() -> None:
+async def test_record_manual_payment_overpayment_creates_credit() -> None:
+    # P0-3: overpayment is no longer rejected; it pays the invoice in full and the
+    # remainder becomes an account credit (parity with the Stripe allocation path).
     ledger = _FakeLedger(_make_invoice(balance_due_cents=6_000))
     uc = RecordManualPayment(ledger=ledger)
-    with pytest.raises(ValueError, match="exceeds balance_due_cents"):
-        await uc.execute(RecordManualPaymentCommand(invoice_id="inv-1", amount_cents=9_999))
+    result = await uc.execute(RecordManualPaymentCommand(invoice_id="inv-1", amount_cents=9_999))
+    assert result.invoice_status == "paid"
+    assert result.balance_due_cents == 0
+    assert result.overpayment_credit_cents == 3_999

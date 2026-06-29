@@ -182,41 +182,51 @@ async def test_parent_payment_history_suppresses_matching_legacy_projection() ->
 
 
 @pytest.mark.asyncio
-async def test_billing_portal_does_not_fall_back_to_global_email_customer_lookup() -> None:
-    stripe = _PortalStripe()
-    db = _FakeDb(
-        {
-            "users": _FakeCollection(
-                [
-                    {
-                        "_id": "mongo-parent",
-                        "academy_id": "acad",
-                        "user_id": "parent-1",
-                        "email": "parent@example.com",
-                    }
-                ]
-            )
-        }
-    )
-    parent = compose_parent(
-        db,  # type: ignore[arg-type]
-        outbox=object(),  # type: ignore[arg-type]
-        idempotency_store=object(),  # type: ignore[arg-type]
-        stripe=stripe,  # type: ignore[arg-type]
-        academy_id="acad",
-    )
+async def test_billing_portal_does_not_fall_back_to_global_email_customer_lookup(
+    monkeypatch,
+) -> None:
+    # The portal return_url must be on the redirect allowlist (P0-1); configure it.
+    from backend.v2.shared.config.settings import get_settings
 
-    with pytest.raises(CheckoutCreationFailed, match="missing stored stripe customer"):
-        await parent.open_billing_portal(
-            parent_id="parent-1",
-            return_url="https://app.example.com/parent/payments",
+    monkeypatch.setenv("V2_CORS_ORIGINS", "https://app.example.com")
+    get_settings.cache_clear()
+    try:
+        stripe = _PortalStripe()
+        db = _FakeDb(
+            {
+                "users": _FakeCollection(
+                    [
+                        {
+                            "_id": "mongo-parent",
+                            "academy_id": "acad",
+                            "user_id": "parent-1",
+                            "email": "parent@example.com",
+                        }
+                    ]
+                )
+            }
+        )
+        parent = compose_parent(
+            db,  # type: ignore[arg-type]
+            outbox=object(),  # type: ignore[arg-type]
+            idempotency_store=object(),  # type: ignore[arg-type]
+            stripe=stripe,  # type: ignore[arg-type]
+            academy_id="acad",
         )
 
-    assert not hasattr(stripe, "find_customer_id_by_email")
-    assert stripe.portal_calls == [
-        {
-            "parent_id": "parent-1",
-            "return_url": "https://app.example.com/parent/payments",
-            "stripe_customer_id": None,
-        }
-    ]
+        with pytest.raises(CheckoutCreationFailed, match="missing stored stripe customer"):
+            await parent.open_billing_portal(
+                parent_id="parent-1",
+                return_url="https://app.example.com/parent/payments",
+            )
+
+        assert not hasattr(stripe, "find_customer_id_by_email")
+        assert stripe.portal_calls == [
+            {
+                "parent_id": "parent-1",
+                "return_url": "https://app.example.com/parent/payments",
+                "stripe_customer_id": None,
+            }
+        ]
+    finally:
+        get_settings.cache_clear()

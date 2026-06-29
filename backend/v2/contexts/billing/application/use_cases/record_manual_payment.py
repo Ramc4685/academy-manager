@@ -41,6 +41,7 @@ class RecordManualPaymentResult(BaseModel):
     payment_id: str
     invoice_status: str
     balance_due_cents: int
+    overpayment_credit_cents: int = 0
 
 
 class RecordManualPayment:
@@ -61,11 +62,9 @@ class RecordManualPayment:
             raise ValueError(
                 f"invoice {cmd.invoice_id!r} is not payable (status={invoice.status!r})"
             )
-        if cmd.amount_cents > invoice.balance_due_cents:
-            raise ValueError(
-                f"amount_cents {cmd.amount_cents} exceeds "
-                f"balance_due_cents {invoice.balance_due_cents}"
-            )
+        # Overpayment is allowed: the allocation caps to the invoice balance and the
+        # remainder becomes an APPROVED account credit (same as the Stripe path), so the
+        # manual and automated payment paths behave identically.
 
         now = self._now()
         payment_id = f"manual-{new_ulid()}"
@@ -91,9 +90,13 @@ class RecordManualPayment:
             amount_cents=cmd.amount_cents,
             idempotency_key=f"alloc-{payment_id}",
         )
+        overpayment_credit_cents = (
+            result.overpayment_credit.amount_cents if result.overpayment_credit else 0
+        )
         return RecordManualPaymentResult(
             invoice_id=cmd.invoice_id,
             payment_id=payment_id,
             invoice_status=result.invoice.status,
             balance_due_cents=result.invoice.balance_due_cents,
+            overpayment_credit_cents=overpayment_credit_cents,
         )

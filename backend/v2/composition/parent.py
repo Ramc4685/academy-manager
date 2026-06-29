@@ -139,6 +139,7 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_registration_waiver_rep
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
+from backend.v2.shared.security.redirect import validate_redirect_url
 from backend.v2.shared.tenancy import tenant_scope
 
 from .event_handlers import HandlerDeps, install_handlers
@@ -785,6 +786,9 @@ def compose_parent(
         success_url: str,
         cancel_url: str,
     ):
+        _allowed = settings.cors_allowed_origins()
+        validate_redirect_url(success_url, allowed_origins=_allowed)
+        validate_redirect_url(cancel_url, allowed_origins=_allowed)
         invoice = await billing_ledger_repo.get_invoice(invoice_id)
         if invoice is None or invoice.parent_id != parent_id:
             return None
@@ -811,6 +815,9 @@ def compose_parent(
         success_url: str,
         cancel_url: str,
     ):
+        _allowed = settings.cors_allowed_origins()
+        validate_redirect_url(success_url, allowed_origins=_allowed)
+        validate_redirect_url(cancel_url, allowed_origins=_allowed)
         all_invoices = await billing_ledger_repo.list_invoices_for_parent(parent_id)
         payable = [
             inv
@@ -890,6 +897,9 @@ def compose_parent(
         success_url: str,
         cancel_url: str,
     ):
+        _allowed = settings.cors_allowed_origins()
+        validate_redirect_url(success_url, allowed_origins=_allowed)
+        validate_redirect_url(cancel_url, allowed_origins=_allowed)
         app = await get_status.execute(application_id, caller_user_id=parent_id)
         if not app.selected_session_id:
             raise MissingSelectedSession(
@@ -941,6 +951,9 @@ def compose_parent(
         success_url: str,
         cancel_url: str,
     ):
+        _allowed = settings.cors_allowed_origins()
+        validate_redirect_url(success_url, allowed_origins=_allowed)
+        validate_redirect_url(cancel_url, allowed_origins=_allowed)
         enrollment = await db["enrollments"].find_one(
             {"academy_id": academy_id, "enrollment_id": enrollment_id}
         )
@@ -985,6 +998,7 @@ def compose_parent(
         return result
 
     async def open_billing_portal(*, parent_id: str, return_url: str):
+        validate_redirect_url(return_url, allowed_origins=settings.cors_allowed_origins())
         with tenant_scope(academy_id):
             stripe_customer_id = await parent_customers_repo.get_stripe_customer_id(
                 parent_id=parent_id
