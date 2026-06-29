@@ -428,7 +428,10 @@ async def reconcile_stripe_billing(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> ReconcileStripeBillingResponse:
     if use_cases.reconcile_stripe_billing is None:
-        raise HTTPException(status_code=503, detail="Stripe billing reconciliation unavailable")
+        raise HTTPException(
+            status_code=503,
+            detail="Billing reconciliation is temporarily unavailable. Try again shortly.",
+        )
     try:
         result = await use_cases.reconcile_stripe_billing(
             parent_id=body.parent_id,
@@ -465,7 +468,12 @@ async def get_billing_reconciliation_report(
             payment_intent_id=payment_intent_id,
         )
     except StripeResourceNotFound as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        # str(exc) carries the raw provider error and the internal id — surface
+        # a generic message instead.
+        raise HTTPException(
+            status_code=404,
+            detail="That billing record could not be found. Check the ID and try again.",
+        ) from exc
     return BillingReconciliationReportResponse(**result)
 
 

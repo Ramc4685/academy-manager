@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -20,6 +21,8 @@ from backend.v2.contexts.student_progress.application.use_cases.get_progress_sum
 from backend.v2.interfaces.parent.deps import ParentUseCases, get_parent_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["parent-progress"])
 
@@ -57,7 +60,16 @@ async def _resolve_program_id(use_cases: ParentUseCases, program_id: str | None)
     try:
         program = await curriculum.resolve_default_program.execute()
     except Exception as exc:
-        status_code = getattr(exc, "status_code", 409)
+        # Curated domain errors carry their own status_code and a user-safe
+        # message; surface those. Anything else is unexpected — log it and
+        # return a generic message so raw internal text never reaches the user.
+        status_code = getattr(exc, "status_code", None)
+        if status_code is None:
+            log.exception("Failed to resolve default curriculum program")
+            raise HTTPException(
+                status_code=503,
+                detail="Progress is temporarily unavailable. Please try again shortly.",
+            ) from exc
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     if hasattr(program, "model_dump"):
         return str(program.model_dump()["program_id"])

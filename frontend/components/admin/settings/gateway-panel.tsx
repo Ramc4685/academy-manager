@@ -36,7 +36,7 @@ export function GatewayPanel() {
       window.location.href = data.url;
     },
     onError: () => {
-      setConnectError("Could not start Stripe Connect. Please try again.");
+      setConnectError("Could not start the connection. Please try again.");
     },
   });
 
@@ -49,7 +49,7 @@ export function GatewayPanel() {
       router.replace(`?${params.toString()}`);
     },
     onError: () => {
-      setConnectError("Could not disconnect Stripe account. Please try again.");
+      setConnectError("Could not disconnect the account. Please try again.");
     },
   });
 

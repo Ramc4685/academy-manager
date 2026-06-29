@@ -14,6 +14,7 @@ import {
   signOutCurrent,
 } from "@/lib/auth/firebase";
 import type { User } from "@/lib/auth/firebase";
+import { toAuthErrorMessage } from "@/lib/auth/auth-error";
 import { brand } from "@/lib/brand";
 
 const HERO_IMAGE =
@@ -47,7 +48,7 @@ export default function RegisterPage() {
       })
       .catch((err) => {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Google registration failed.");
+          setError(toAuthErrorMessage(err, "Google registration failed."));
         }
       });
 
@@ -70,7 +71,7 @@ export default function RegisterPage() {
       const user = await signInWithGoogle();
       if (user) await finishParentRegistration();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Google registration failed.");
+      setError(toAuthErrorMessage(err, "Google registration failed."));
     } finally {
       setGoogleLoading(false);
     }
@@ -89,7 +90,7 @@ export default function RegisterPage() {
       setPassword("");
       await sendVerificationAndSignOut(user);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Registration failed. Please try again.");
+      setError(toAuthErrorMessage(err, "Registration failed. Please try again."));
     } finally {
       setLoading(false);
     }
@@ -101,7 +102,7 @@ export default function RegisterPage() {
     } catch {
       setPendingVerificationUser(user);
       setNotice(
-        "Account created, but Firebase could not send the verification email. Try sending it again below."
+        "Your account is created, but we could not send the verification email. Try sending it again below."
       );
       return;
     }
@@ -122,11 +123,7 @@ export default function RegisterPage() {
     try {
       await sendVerificationAndSignOut(pendingVerificationUser);
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Verification email could not be sent. Please try again."
-      );
+      setError(toAuthErrorMessage(err, "Verification email could not be sent. Please try again."));
     } finally {
       setVerificationLoading(false);
     }

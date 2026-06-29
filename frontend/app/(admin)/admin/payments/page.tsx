@@ -535,7 +535,7 @@ function ReconciliationReportPanel() {
         onSubmit={(event) => {
           event.preventDefault();
           if (!canRun) {
-            setError("Stripe invoice ID or PaymentIntent ID is required.");
+            setError("An invoice ID or PaymentIntent ID is required.");
             return;
           }
           mutation.mutate();
@@ -1323,11 +1323,11 @@ function SyncStripeDialog({
   const mutation = useMutation({
     mutationFn: (payload: ReconcileStripeBillingRequest) => reconcileStripeBilling(payload),
     onSuccess: (res) => {
-      const status = res.mismatch_state ? `Sync finished: ${res.mismatch_state}.` : "Stripe sync complete.";
+      const status = res.mismatch_state ? `Sync finished: ${res.mismatch_state}.` : "Billing sync complete.";
       setResult(status);
       setError(null);
     },
-    onError: (err: Error) => setError(err.message ?? "Stripe sync failed."),
+    onError: (err: Error) => setError(err.message ?? "Billing sync failed. Please try again."),
   });
 
   const reset = () => {
@@ -1358,7 +1358,7 @@ function SyncStripeDialog({
       onOpenChange={(nextOpen) => !nextOpen && close()}
       overline="Stripe"
       title="Sync billing from Stripe"
-      description="Fetches the live Checkout Session and updates Mongo after tenant validation."
+      description="Fetches the live checkout session and updates billing records after tenant validation."
     >
       {result ? (
         <div className="space-y-4">

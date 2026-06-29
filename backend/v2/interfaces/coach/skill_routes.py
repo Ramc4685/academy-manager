@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -33,6 +34,8 @@ from backend.v2.contexts.student_progress.application.use_cases.update_skill_sta
 from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["coach-skills"])
 
@@ -150,7 +153,16 @@ async def _resolve_program_id(use_cases: CoachUseCases, program_id: str | None) 
     try:
         program = await curriculum.resolve_default_program.execute()
     except Exception as exc:
-        status_code = getattr(exc, "status_code", 409)
+        # Curated domain errors carry their own status_code and a user-safe
+        # message; surface those. Anything else is unexpected — log it and
+        # return a generic message so raw internal text never reaches the user.
+        status_code = getattr(exc, "status_code", None)
+        if status_code is None:
+            log.exception("Failed to resolve default curriculum program")
+            raise HTTPException(
+                status_code=503,
+                detail="Curriculum is temporarily unavailable. Please try again shortly.",
+            ) from exc
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     if hasattr(program, "model_dump"):
         return str(program.model_dump()["program_id"])

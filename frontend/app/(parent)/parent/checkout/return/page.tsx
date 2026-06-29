@@ -187,7 +187,7 @@ const STATUS_SUMMARIES: Record<string, { title: string; body: (a: OnboardingAppl
   },
   CHECKOUT_EXPIRED: {
     title: "Checkout expired",
-    body: () => "The Stripe checkout session expired. Restart onboarding to try again.",
+    body: () => "Your checkout session expired. Restart onboarding to try again.",
   },
   REFUNDED: {
     title: "Refunded",
