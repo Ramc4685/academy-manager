@@ -73,7 +73,7 @@ function formatPayRuleLabel(rate: AdminCoachPayRateView): string {
     year: "numeric",
   });
   if (rate.billing_unit === "percent_of_revenue") {
-    return `Pay rule: ${rate.percent ?? 0}% of session fee · effective since ${since}`;
+    return `Pay rule: ${rate.percent ?? 0}% of expected session revenue · effective since ${since}`;
   }
   const unit = rate.billing_unit === "per_hour" ? "per hour" : "per session";
   return `Pay rule: ${money(rate.amount_cents, rate.currency)} ${unit} · effective since ${since}`;

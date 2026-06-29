@@ -224,7 +224,7 @@ function CoachPayRatePanel({ coachId }: { coachId: string }) {
               className="rounded-md border border-neutral-200 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900"
               data-testid="coach-pay-rate-unit"
             >
-              <option value="percent_of_revenue">% of session revenue</option>
+              <option value="percent_of_revenue">% of expected session revenue</option>
               <option value="per_session">Fixed per session</option>
               <option value="per_hour">Fixed per hour</option>
             </select>
@@ -243,6 +243,10 @@ function CoachPayRatePanel({ coachId }: { coachId: string }) {
                 className="w-24 rounded-md border border-neutral-200 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900"
                 data-testid="coach-pay-rate-percent"
               />
+              <span className="max-w-xs text-[11px] font-normal text-neutral-500">
+                Basis: <span className="font-medium">expected</span> session revenue
+                (session price × active enrollments) — billed revenue, not cash collected.
+              </span>
               <span className="max-w-xs text-[11px] font-normal text-amber-700">
                 Percent pay requires every assigned active session to have a session price.
                 Use $0 only for an explicitly free session.
@@ -356,7 +360,7 @@ function describeRate(rate: {
   currency: string;
 }): string {
   if (rate.billing_unit === "percent_of_revenue") {
-    return `${rate.percent ?? 0}% of session revenue`;
+    return `${rate.percent ?? 0}% of expected session revenue`;
   }
   const amount = (rate.amount_cents / 100).toLocaleString("en-US", {
     style: "currency",
