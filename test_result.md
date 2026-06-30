@@ -54,6 +54,7 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-06-24-tuition-discounts-phase-c](docs/test-results/active/2026-06-24-tuition-discounts-phase-c.md)
 - [2026-06-24-webkit-tuition-discount-e2e-ci](docs/test-results/active/2026-06-24-webkit-tuition-discount-e2e-ci.md)
 - [2026-06-27-audit-reverify-refund-ledger-fix](docs/test-results/active/2026-06-27-audit-reverify-refund-ledger-fix.md)
+- [2026-06-30-autopay-setup-rehome-default-payment-method](docs/test-results/active/2026-06-30-autopay-setup-rehome-default-payment-method.md)
 
 ## Required Workflow
 

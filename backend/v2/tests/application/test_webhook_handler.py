@@ -212,9 +212,35 @@ class FakeOutbox:
 class FakeParentStripeCustomers:
     def __init__(self) -> None:
         self.saved: list[dict[str, str]] = []
+        self.default_methods: list[dict[str, Any]] = []
 
     async def set_stripe_customer_id(self, *, parent_id: str, stripe_customer_id: str) -> None:
         self.saved.append({"parent_id": parent_id, "stripe_customer_id": stripe_customer_id})
+
+    async def set_default_payment_method(
+        self,
+        *,
+        parent_id: str,
+        stripe_customer_id: str,
+        stripe_payment_method_id: str,
+        payment_method_type: str,
+        stripe_mandate_id: str | None,
+        setup_intent_id: str,
+        checkout_session_id: str | None,
+        completed_at: datetime,
+    ) -> None:
+        self.default_methods.append(
+            {
+                "parent_id": parent_id,
+                "stripe_customer_id": stripe_customer_id,
+                "stripe_payment_method_id": stripe_payment_method_id,
+                "payment_method_type": payment_method_type,
+                "stripe_mandate_id": stripe_mandate_id,
+                "setup_intent_id": setup_intent_id,
+                "checkout_session_id": checkout_session_id,
+                "completed_at": completed_at,
+            }
+        )
 
 
 class FakeEnrollmentAutopayState:
@@ -672,6 +698,161 @@ async def test_process_next_fetches_current_checkout_before_projection() -> None
             "enrollment_id": "enr-1",
             "subscription_status": "active",
             "stripe_subscription_id": "sub_live_1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_autopay_setup_checkout_completed_sets_default_pm_without_subscription_row() -> None:
+    repo = FakePaymentRepo()
+    subscriptions = FakeSubscriptionRepo()
+    stripe = FakeStripeGateway()
+    stripe.autopay_setup_checkouts.append(
+        {
+            "checkout_id": "cs_setup_1",
+            "parent_id": "p1",
+            "enrollment_id": "enr-1",
+            "session_id": "s1",
+            "setup_intent_id": "seti_setup_1",
+            "metadata": {
+                "academy_id": "acad",
+                "parent_id": "p1",
+                "enrollment_id": "enr-1",
+                "source": "autopay_setup",
+            },
+        }
+    )
+    stripe.setup_intents["seti_setup_1"] = {
+        "id": "seti_setup_1",
+        "object": "setup_intent",
+        "customer": "cus_parent",
+        "payment_method": "pm_bank",
+        "mandate": "mandate_bank",
+        "metadata": {
+            "academy_id": "acad",
+            "parent_id": "p1",
+            "enrollment_id": "enr-1",
+            "source": "autopay_setup",
+        },
+    }
+    stripe.payment_methods["pm_bank"] = {
+        "id": "pm_bank",
+        "object": "payment_method",
+        "type": "us_bank_account",
+    }
+    parent_customers = FakeParentStripeCustomers()
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    dedup = FakeDedup()
+    uc = _build(
+        repo,
+        dedup=dedup,
+        subscriptions=subscriptions,
+        parent_customers=parent_customers,
+        enrollment_autopay=enrollment_autopay,
+        stripe=stripe,
+    )
+    body = json.dumps(
+        {
+            "id": "evt_autopay_setup_checkout",
+            "type": "checkout.session.completed",
+            "data": {"object": {"id": "cs_setup_1"}},
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    assert subscriptions.by_id == {}
+    assert stripe.customer_default_payment_methods == [
+        {
+            "stripe_customer_id": "cus_parent",
+            "stripe_payment_method_id": "pm_bank",
+            "metadata": {"academy_id": "acad", "parent_id": "p1"},
+        }
+    ]
+    assert parent_customers.default_methods[0] | {"completed_at": None} == {
+        "parent_id": "p1",
+        "stripe_customer_id": "cus_parent",
+        "stripe_payment_method_id": "pm_bank",
+        "payment_method_type": "us_bank_account",
+        "stripe_mandate_id": "mandate_bank",
+        "setup_intent_id": "seti_setup_1",
+        "checkout_session_id": "cs_setup_1",
+        "completed_at": None,
+    }
+    assert enrollment_autopay.synced == [
+        {
+            "enrollment_id": "enr-1",
+            "subscription_status": "active",
+            "stripe_subscription_id": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_setup_intent_succeeded_completes_autopay_from_setup_metadata() -> None:
+    repo = FakePaymentRepo()
+    subscriptions = FakeSubscriptionRepo()
+    stripe = FakeStripeGateway()
+    stripe.setup_intents["seti_replay"] = {
+        "id": "seti_replay",
+        "object": "setup_intent",
+        "customer": "cus_parent",
+        "payment_method": "pm_card",
+        "mandate": None,
+        "metadata": {
+            "academy_id": "acad",
+            "parent_id": "p1",
+            "enrollment_id": "enr-1",
+            "source": "autopay_setup",
+        },
+    }
+    stripe.payment_methods["pm_card"] = {
+        "id": "pm_card",
+        "object": "payment_method",
+        "type": "card",
+    }
+    parent_customers = FakeParentStripeCustomers()
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    dedup = FakeDedup()
+    uc = _build(
+        repo,
+        dedup=dedup,
+        subscriptions=subscriptions,
+        parent_customers=parent_customers,
+        enrollment_autopay=enrollment_autopay,
+        stripe=stripe,
+    )
+    body = json.dumps(
+        {
+            "id": "evt_setup_intent_succeeded",
+            "type": "setup_intent.succeeded",
+            "data": {"object": {"id": "seti_replay"}},
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    first = await uc.process_next(processor_id="test-worker")
+    second = await uc.process_next(processor_id="test-worker")
+
+    assert first["processed"] is True
+    assert second == {"processed": False, "empty": True}
+    assert subscriptions.by_id == {}
+    assert stripe.customer_default_payment_methods == [
+        {
+            "stripe_customer_id": "cus_parent",
+            "stripe_payment_method_id": "pm_card",
+            "metadata": {"academy_id": "acad", "parent_id": "p1"},
+        }
+    ]
+    assert parent_customers.default_methods[0]["checkout_session_id"] is None
+    assert parent_customers.default_methods[0]["payment_method_type"] == "card"
+    assert enrollment_autopay.synced == [
+        {
+            "enrollment_id": "enr-1",
+            "subscription_status": "active",
+            "stripe_subscription_id": None,
         }
     ]
 

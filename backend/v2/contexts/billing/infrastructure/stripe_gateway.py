@@ -115,6 +115,12 @@ class RealStripeGateway(StripeGateway):
         cancel_url: str,
         metadata: dict[str, str],
     ) -> tuple[str, str]:
+        setup_metadata = metadata | {
+            "enrollment_id": enrollment_id,
+            "session_id": session_id,
+            "source": metadata.get("source") or "autopay_setup",
+        }
+
         def _create() -> Any:
             return self._stripe.checkout.Session.create(
                 mode="setup",
@@ -123,12 +129,8 @@ class RealStripeGateway(StripeGateway):
                 cancel_url=cancel_url,
                 client_reference_id=parent_id,
                 customer_creation="always",
-                metadata=metadata
-                | {
-                    "enrollment_id": enrollment_id,
-                    "session_id": session_id,
-                    "source": metadata.get("source") or "autopay_setup",
-                },
+                metadata=setup_metadata,
+                setup_intent_data={"metadata": setup_metadata},
             )
 
         result = await asyncio.to_thread(_create)
@@ -233,6 +235,41 @@ class RealStripeGateway(StripeGateway):
 
         result = await self._run_stripe_retrieve(_retrieve, label="Stripe PaymentIntent")
         return _stripe_object_to_dict(result)
+
+    async def retrieve_setup_intent(self, stripe_setup_intent_id: str) -> dict[str, Any]:
+        def _retrieve() -> Any:
+            return self._stripe.SetupIntent.retrieve(stripe_setup_intent_id)
+
+        result = await self._run_stripe_retrieve(_retrieve, label="Stripe SetupIntent")
+        return _stripe_object_to_dict(result)
+
+    async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict[str, Any]:
+        def _retrieve() -> Any:
+            return self._stripe.PaymentMethod.retrieve(stripe_payment_method_id)
+
+        result = await self._run_stripe_retrieve(_retrieve, label="Stripe PaymentMethod")
+        return _stripe_object_to_dict(result)
+
+    async def set_customer_default_payment_method(
+        self,
+        *,
+        stripe_customer_id: str,
+        stripe_payment_method_id: str,
+        metadata: dict[str, str],
+    ) -> None:
+        def _modify() -> Any:
+            return self._stripe.Customer.modify(
+                stripe_customer_id,
+                invoice_settings={"default_payment_method": stripe_payment_method_id},
+                metadata=metadata,
+            )
+
+        try:
+            await asyncio.to_thread(_modify)
+        except self._stripe.StripeError as exc:
+            raise ValueError(
+                f"Stripe Customer default payment method update failed: {exc}"
+            ) from exc
 
     async def search_app_owned_payment_intents(
         self, *, academy_id: str, limit: int = 100

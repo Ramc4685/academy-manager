@@ -134,6 +134,9 @@ class _CheckoutGateway:
         self._error = error
         self.created: list[dict[str, object]] = []
         self.setup_created: list[dict[str, object]] = []
+        self.setup_intents: dict[str, dict[str, object]] = {}
+        self.payment_methods: dict[str, dict[str, object]] = {}
+        self.default_payment_methods: list[dict[str, object]] = []
         self.retrieved = retrieved
 
     async def create_subscription_checkout_session(self, **kwargs: object) -> tuple[str, str, str]:
@@ -147,6 +150,20 @@ class _CheckoutGateway:
         if self._error is not None:
             raise self._error
         self.setup_created.append(kwargs)
+        metadata = dict(kwargs.get("metadata") or {})
+        self.setup_intents["seti_saved_card"] = {
+            "id": "seti_saved_card",
+            "object": "setup_intent",
+            "customer": "cus_parent",
+            "payment_method": "pm_saved_card",
+            "mandate": "mandate_saved_card",
+            "metadata": metadata,
+        }
+        self.payment_methods["pm_saved_card"] = {
+            "id": "pm_saved_card",
+            "object": "payment_method",
+            "type": "card",
+        }
         return "cs_setup_1", "https://checkout.stripe.com/c/setup"
 
     async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, object]:
@@ -158,6 +175,27 @@ class _CheckoutGateway:
             "status": "open",
             "url": "https://checkout.stripe.com/c/existing",
         }
+
+    async def retrieve_setup_intent(self, setup_intent_id: str) -> dict[str, object]:
+        return dict(self.setup_intents[setup_intent_id])
+
+    async def retrieve_payment_method(self, payment_method_id: str) -> dict[str, object]:
+        return dict(self.payment_methods[payment_method_id])
+
+    async def set_customer_default_payment_method(
+        self,
+        *,
+        stripe_customer_id: str,
+        stripe_payment_method_id: str,
+        metadata: dict[str, str],
+    ) -> None:
+        self.default_payment_methods.append(
+            {
+                "stripe_customer_id": stripe_customer_id,
+                "stripe_payment_method_id": stripe_payment_method_id,
+                "metadata": metadata,
+            }
+        )
 
 
 def _checkout_command() -> StartSubscriptionCheckoutCommand:
@@ -183,7 +221,7 @@ async def test_start_autopay_stripe_rejection_maps_to_checkout_creation_failed()
 
 
 @pytest.mark.asyncio
-async def test_start_autopay_persists_incomplete_setup_until_checkout_completion() -> None:
+async def test_start_autopay_creates_setup_checkout_without_subscription_row() -> None:
     repo = _SubscriptionRepo()
     gateway = _CheckoutGateway()
     uc = StartSubscriptionCheckout(
@@ -194,12 +232,7 @@ async def test_start_autopay_persists_incomplete_setup_until_checkout_completion
     )
     result = await uc.execute(_checkout_command())
     assert result.redirect_url == "https://checkout.stripe.com/c/setup"
-    assert len(repo.saved) == 1
-    saved = repo.saved[0]
-    assert saved.status == "incomplete"
-    assert saved.enrollment_id == "enr-1"
-    assert saved.stripe_checkout_session_id == "cs_setup_1"
-    assert saved.stripe_subscription_id == ""
+    assert repo.saved == []
     assert gateway.created == []
     assert (
         gateway.setup_created[0]["success_url"]
@@ -233,7 +266,7 @@ async def test_start_autopay_setup_uses_setup_checkout_not_subscription_checkout
         "session_id": "s1",
         "source": "autopay_setup",
     }
-    assert repo.saved[0].stripe_subscription_id == ""
+    assert repo.saved == []
 
 
 @pytest.mark.asyncio
@@ -278,9 +311,35 @@ class _NoPaymentRepo:
 class _CustomerRepo:
     def __init__(self) -> None:
         self.saved: list[dict[str, str]] = []
+        self.default_methods: list[dict[str, object]] = []
 
     async def set_stripe_customer_id(self, *, parent_id: str, stripe_customer_id: str) -> None:
         self.saved.append({"parent_id": parent_id, "stripe_customer_id": stripe_customer_id})
+
+    async def set_default_payment_method(
+        self,
+        *,
+        parent_id: str,
+        stripe_customer_id: str,
+        stripe_payment_method_id: str,
+        payment_method_type: str,
+        stripe_mandate_id: str | None,
+        setup_intent_id: str,
+        checkout_session_id: str | None,
+        completed_at: datetime,
+    ) -> None:
+        self.default_methods.append(
+            {
+                "parent_id": parent_id,
+                "stripe_customer_id": stripe_customer_id,
+                "stripe_payment_method_id": stripe_payment_method_id,
+                "payment_method_type": payment_method_type,
+                "stripe_mandate_id": stripe_mandate_id,
+                "setup_intent_id": setup_intent_id,
+                "checkout_session_id": checkout_session_id,
+                "completed_at": completed_at,
+            }
+        )
 
 
 class _EnrollmentAutopay:
@@ -345,6 +404,7 @@ async def test_checkout_status_reconciles_completed_subscription_checkout() -> N
         stripe=gateway,
         parent_customers=customers,
         enrollment_autopay=enrollment_autopay,
+        academy_id="acad",
         clock=lambda: now,
     )
 
@@ -368,20 +428,6 @@ async def test_checkout_status_reconciles_completed_subscription_checkout() -> N
 async def test_checkout_status_reconciles_completed_setup_checkout_without_subscription() -> None:
     now = datetime(2026, 6, 11, tzinfo=UTC)
     repo = _SubscriptionRepo()
-    await repo.save(
-        Subscription(
-            subscription_id="setup-local",
-            academy_id="acad",
-            parent_id="p1",
-            enrollment_id="enr-1",
-            session_id="s1",
-            stripe_subscription_id="",
-            stripe_checkout_session_id="cs_setup_complete",
-            status="incomplete",
-            created_at=now,
-            updated_at=now,
-        )
-    )
     customers = _CustomerRepo()
     enrollment_autopay = _EnrollmentAutopay()
     gateway = _CheckoutGateway(
@@ -392,20 +438,41 @@ async def test_checkout_status_reconciles_completed_setup_checkout_without_subsc
             "status": "complete",
             "customer": "cus_parent",
             "setup_intent": "seti_saved_card",
+            "client_reference_id": "p1",
             "metadata": {
                 "parent_id": "p1",
+                "academy_id": "acad",
                 "app_subscription_id": "setup-local",
                 "enrollment_id": "enr-1",
                 "source": "autopay_setup",
             },
         }
     )
+    gateway.setup_intents["seti_saved_card"] = {
+        "id": "seti_saved_card",
+        "object": "setup_intent",
+        "customer": "cus_parent",
+        "payment_method": "pm_saved_card",
+        "mandate": "mandate_saved_card",
+        "metadata": {
+            "parent_id": "p1",
+            "academy_id": "acad",
+            "enrollment_id": "enr-1",
+            "source": "autopay_setup",
+        },
+    }
+    gateway.payment_methods["pm_saved_card"] = {
+        "id": "pm_saved_card",
+        "object": "payment_method",
+        "type": "card",
+    }
     uc = GetCheckoutStatus(
         payments=_NoPaymentRepo(),
         subscriptions=repo,
         stripe=gateway,
         parent_customers=customers,
         enrollment_autopay=enrollment_autopay,
+        academy_id="acad",
         clock=lambda: now,
     )
 
@@ -413,9 +480,27 @@ async def test_checkout_status_reconciles_completed_setup_checkout_without_subsc
 
     assert result.status == "active"
     assert result.payment_id is None
-    assert repo.by_id["setup-local"].stripe_subscription_id == ""
-    assert repo.by_id["setup-local"].status == "active"
-    assert customers.saved == [{"parent_id": "p1", "stripe_customer_id": "cus_parent"}]
+    assert repo.saved == []
+    assert customers.saved == []
+    assert gateway.default_payment_methods == [
+        {
+            "stripe_customer_id": "cus_parent",
+            "stripe_payment_method_id": "pm_saved_card",
+            "metadata": {"academy_id": "acad", "parent_id": "p1"},
+        }
+    ]
+    assert customers.default_methods == [
+        {
+            "parent_id": "p1",
+            "stripe_customer_id": "cus_parent",
+            "stripe_payment_method_id": "pm_saved_card",
+            "payment_method_type": "card",
+            "stripe_mandate_id": "mandate_saved_card",
+            "setup_intent_id": "seti_saved_card",
+            "checkout_session_id": "cs_setup_complete",
+            "completed_at": now,
+        }
+    ]
     assert enrollment_autopay.synced == [
         {
             "enrollment_id": "enr-1",
