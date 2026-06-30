@@ -32,7 +32,10 @@ from backend.v2.contexts.billing.application.ports import (
 from backend.v2.contexts.billing.application.use_cases.checkout_allocation import (
     allocate_checkout_payment_across_invoices,
 )
-from backend.v2.contexts.billing.domain.errors import InvalidWebhookSignature
+from backend.v2.contexts.billing.application.use_cases.parent_billing import (
+    CompleteAutopaySetup,
+)
+from backend.v2.contexts.billing.domain.errors import InvalidWebhookSignature, PaymentNotFound
 from backend.v2.contexts.billing.domain.events import (
     CheckoutExpired,
     CheckoutExpiredPayload,
@@ -112,6 +115,15 @@ class HandleWebhookEvent:
         self._outbox = outbox
         self._academy_id = academy_id
         self._now = clock
+        self._complete_autopay_setup: CompleteAutopaySetup | None = None
+        if parent_customers is not None and enrollment_autopay is not None:
+            self._complete_autopay_setup = CompleteAutopaySetup(
+                stripe=stripe,
+                parent_customers=parent_customers,
+                enrollment_autopay=enrollment_autopay,
+                academy_id=academy_id,
+                clock=clock,
+            )
 
     async def accept(self, payload: bytes, signature: str) -> dict[str, Any]:
         """Verify and persist a Stripe event, then return quickly.
@@ -292,6 +304,8 @@ class HandleWebhookEvent:
             current = await self._stripe.retrieve_subscription(object_id)
         elif event_type in ("payment_intent.succeeded", "payment_intent.payment_failed"):
             current = await self._stripe.retrieve_payment_intent(object_id)
+        elif event_type == "setup_intent.succeeded":
+            current = await self._stripe.retrieve_setup_intent(object_id)
         if not current:
             return event
         merged = dict(obj)
@@ -307,7 +321,9 @@ class HandleWebhookEvent:
     async def _dispatch(self, event_type: str, event: dict[str, Any]) -> None:
         if event_type == "checkout.session.completed":
             metadata = self._event_metadata(event)
-            if metadata.get("source") == "invoice_pay_link" or metadata.get("invoice_id"):
+            if metadata.get("source") == "autopay_setup":
+                await self._handle_autopay_setup_checkout_completed(event)
+            elif metadata.get("source") == "invoice_pay_link" or metadata.get("invoice_id"):
                 await self._handle_invoice_checkout_completed(event)
             elif metadata.get("type") == "balance_payment" or metadata.get("invoice_ids"):
                 await self._handle_balance_checkout_completed(event)
@@ -344,6 +360,15 @@ class HandleWebhookEvent:
             await self._on_invoice_payment_failed(event)
         elif event_type == "charge.refunded":
             await self._on_charge_refunded(event)
+        elif event_type == "setup_intent.succeeded":
+            metadata = self._event_metadata(event)
+            if metadata.get("source") == "autopay_setup":
+                await self._handle_autopay_setup_intent_succeeded(event)
+            else:
+                log.info(
+                    "setup_intent.succeeded ignored setup_intent=%s",
+                    event.get("data", {}).get("object", {}).get("id"),
+                )
         elif event_type in (
             "customer.subscription.created",
             "customer.subscription.updated",
@@ -352,6 +377,28 @@ class HandleWebhookEvent:
             await self._on_subscription_changed(event)
         else:
             log.info("stripe_webhook_ignored type=%s", event_type)
+
+    async def _handle_autopay_setup_checkout_completed(self, event: dict[str, Any]) -> None:
+        if self._complete_autopay_setup is None:
+            raise _QuarantineStripeEvent("autopay setup completion dependencies are missing")
+        checkout = event["data"]["object"]
+        try:
+            await self._complete_autopay_setup.execute_from_checkout(checkout)
+        except PaymentNotFound as exc:
+            raise _QuarantineStripeEvent(str(exc)) from exc
+        except ValueError as exc:
+            raise _QuarantineStripeEvent(str(exc)) from exc
+
+    async def _handle_autopay_setup_intent_succeeded(self, event: dict[str, Any]) -> None:
+        if self._complete_autopay_setup is None:
+            raise _QuarantineStripeEvent("autopay setup completion dependencies are missing")
+        setup_intent = event["data"]["object"]
+        try:
+            await self._complete_autopay_setup.execute_from_setup_intent(setup_intent)
+        except PaymentNotFound as exc:
+            raise _QuarantineStripeEvent(str(exc)) from exc
+        except ValueError as exc:
+            raise _QuarantineStripeEvent(str(exc)) from exc
 
     async def _handle_invoice_checkout_completed(self, event: dict[str, Any]) -> None:
         """Handle checkout.session.completed from an invoice pay-link.

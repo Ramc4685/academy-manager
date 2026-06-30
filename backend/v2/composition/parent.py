@@ -342,6 +342,7 @@ def compose_parent(
         stripe=stripe,
         parent_customers=parent_customers_repo,
         enrollment_autopay=enrollment_autopay_state,
+        academy_id=academy_id,
     )
 
     handle_webhook = HandleWebhookEvent(

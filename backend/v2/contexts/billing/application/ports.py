@@ -46,6 +46,18 @@ class SubscriptionRepository(Protocol):
 class ParentStripeCustomerRepository(Protocol):
     async def get_stripe_customer_id(self, *, parent_id: str) -> str | None: ...
     async def set_stripe_customer_id(self, *, parent_id: str, stripe_customer_id: str) -> None: ...
+    async def set_default_payment_method(
+        self,
+        *,
+        parent_id: str,
+        stripe_customer_id: str,
+        stripe_payment_method_id: str,
+        payment_method_type: str,
+        stripe_mandate_id: str | None,
+        setup_intent_id: str,
+        checkout_session_id: str | None,
+        completed_at: datetime,
+    ) -> None: ...
 
 
 class EnrollmentAutopayStateRepository(Protocol):
@@ -202,6 +214,21 @@ class StripeGateway(Protocol):
 
     async def retrieve_payment_intent(self, stripe_payment_intent_id: str) -> dict[str, Any]:
         """Fetch current Stripe PaymentIntent state for reconciliation."""
+
+    async def retrieve_setup_intent(self, stripe_setup_intent_id: str) -> dict[str, Any]:
+        """Fetch current Stripe SetupIntent state for saved-payment-method setup."""
+
+    async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict[str, Any]:
+        """Fetch current Stripe PaymentMethod state for saved-payment-method setup."""
+
+    async def set_customer_default_payment_method(
+        self,
+        *,
+        stripe_customer_id: str,
+        stripe_payment_method_id: str,
+        metadata: dict[str, str],
+    ) -> None:
+        """Set the Customer default PM used by off-session autopay charges."""
 
     async def search_app_owned_payment_intents(
         self, *, academy_id: str, limit: int = 100

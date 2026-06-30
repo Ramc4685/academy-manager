@@ -60,6 +60,7 @@ class _FakeStripeCustomerObject:
 
 class _FakeCustomer:
     calls: ClassVar[list[dict[str, object]]] = []
+    modify_calls: ClassVar[list[dict[str, object]]] = []
 
     @classmethod
     def search(cls, **kwargs: object) -> object:
@@ -75,6 +76,11 @@ class _FakeCustomer:
             ]
         )
 
+    @classmethod
+    def modify(cls, customer_id: str, **kwargs: object) -> object:
+        cls.modify_calls.append({"customer_id": customer_id, **kwargs})
+        return _FakeStripeCustomerObject(id=customer_id)
+
 
 class _FakePaymentIntent:
     calls: ClassVar[list[dict[str, object]]] = []
@@ -85,10 +91,31 @@ class _FakePaymentIntent:
         return SimpleNamespace(data=[{"id": "pi_search_1", "status": "succeeded"}])
 
 
+class _FakeSetupIntent:
+    @classmethod
+    def retrieve(cls, setup_intent_id: str) -> object:
+        return {
+            "id": setup_intent_id,
+            "object": "setup_intent",
+            "payment_method": "pm_request_shape",
+        }
+
+
+class _FakePaymentMethod:
+    @classmethod
+    def retrieve(cls, payment_method_id: str) -> object:
+        return {
+            "id": payment_method_id,
+            "object": "payment_method",
+            "type": "card",
+        }
+
+
 @pytest.fixture(autouse=True)
 def fake_stripe_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeCheckoutSession.calls.clear()
     _FakeCustomer.calls.clear()
+    _FakeCustomer.modify_calls.clear()
     _FakePaymentIntent.calls.clear()
     fake_stripe = SimpleNamespace(
         api_key=None,
@@ -96,6 +123,8 @@ def fake_stripe_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
         billing_portal=SimpleNamespace(Session=SimpleNamespace()),
         Customer=_FakeCustomer,
         PaymentIntent=_FakePaymentIntent,
+        SetupIntent=_FakeSetupIntent,
+        PaymentMethod=_FakePaymentMethod,
         Webhook=SimpleNamespace(),
         Refund=SimpleNamespace(),
         Subscription=SimpleNamespace(),
@@ -161,6 +190,15 @@ async def test_autopay_setup_checkout_uses_setup_mode_without_subscription_data(
         "enrollment_id": "enrollment_1",
         "session_id": "session_1",
     }
+    assert request["setup_intent_data"] == {
+        "metadata": {
+            "academy_id": "academy_1",
+            "parent_id": "parent_1",
+            "source": "autopay_setup",
+            "enrollment_id": "enrollment_1",
+            "session_id": "session_1",
+        }
+    }
 
 
 @pytest.mark.asyncio
@@ -192,6 +230,25 @@ async def test_payment_checkout_uses_dynamic_payment_methods() -> None:
     request = _FakeCheckoutSession.calls[-1]
     assert request["mode"] == "payment"
     assert "payment_method_types" not in request
+
+
+@pytest.mark.asyncio
+async def test_customer_default_payment_method_sets_invoice_settings_and_metadata() -> None:
+    gateway = RealStripeGateway(api_key="sk_test_fake", webhook_secret="whsec_fake")
+
+    await gateway.set_customer_default_payment_method(
+        stripe_customer_id="cus_123",
+        stripe_payment_method_id="pm_123",
+        metadata={"academy_id": "academy_1", "parent_id": "parent_1"},
+    )
+
+    assert _FakeCustomer.modify_calls == [
+        {
+            "customer_id": "cus_123",
+            "invoice_settings": {"default_payment_method": "pm_123"},
+            "metadata": {"academy_id": "academy_1", "parent_id": "parent_1"},
+        }
+    ]
 
 
 @pytest.mark.asyncio

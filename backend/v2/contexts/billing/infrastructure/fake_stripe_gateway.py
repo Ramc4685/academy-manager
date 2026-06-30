@@ -27,6 +27,9 @@ class FakeStripeGateway(StripeGateway):
         self.connect_links: list[dict[str, str]] = []
         self.connect_codes: list[str] = []
         self.payment_intents: list[dict[str, Any]] = []
+        self.setup_intents: dict[str, dict[str, Any]] = {}
+        self.payment_methods: dict[str, dict[str, Any]] = {}
+        self.customer_default_payment_methods: list[dict[str, Any]] = []
         # customer_id -> list of charge dicts (legacy match candidates, #242 WI-3)
         self.charges_by_customer: dict[str, list[dict[str, Any]]] = {}
 
@@ -92,6 +95,8 @@ class FakeStripeGateway(StripeGateway):
         metadata: dict[str, str],
     ) -> tuple[str, str]:
         checkout_id = f"cs_setup_test_{new_ulid()}"
+        setup_intent_id = f"seti_fake_{checkout_id}"
+        payment_method_id = f"pm_fake_{checkout_id}"
         self.autopay_setup_checkouts.append(
             {
                 "checkout_id": checkout_id,
@@ -101,8 +106,22 @@ class FakeStripeGateway(StripeGateway):
                 "success_url": success_url,
                 "cancel_url": cancel_url,
                 "metadata": metadata,
+                "setup_intent_id": setup_intent_id,
             }
         )
+        self.setup_intents[setup_intent_id] = {
+            "id": setup_intent_id,
+            "object": "setup_intent",
+            "customer": "cus_fake_parent",
+            "payment_method": payment_method_id,
+            "mandate": f"mandate_fake_{checkout_id}",
+            "metadata": dict(metadata),
+        }
+        self.payment_methods[payment_method_id] = {
+            "id": payment_method_id,
+            "object": "payment_method",
+            "type": "card",
+        }
         return checkout_id, f"https://fake.stripe.com/c/{checkout_id}"
 
     async def create_customer_portal_session(
@@ -172,6 +191,43 @@ class FakeStripeGateway(StripeGateway):
             "id": stripe_payment_intent_id,
             "object": "payment_intent",
         }
+
+    async def retrieve_setup_intent(self, stripe_setup_intent_id: str) -> dict[str, Any]:
+        return self.setup_intents.get(
+            stripe_setup_intent_id,
+            {
+                "id": stripe_setup_intent_id,
+                "object": "setup_intent",
+                "customer": "cus_fake_parent",
+                "payment_method": f"pm_fake_{stripe_setup_intent_id}",
+                "metadata": {},
+            },
+        )
+
+    async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict[str, Any]:
+        return self.payment_methods.get(
+            stripe_payment_method_id,
+            {
+                "id": stripe_payment_method_id,
+                "object": "payment_method",
+                "type": "card",
+            },
+        )
+
+    async def set_customer_default_payment_method(
+        self,
+        *,
+        stripe_customer_id: str,
+        stripe_payment_method_id: str,
+        metadata: dict[str, str],
+    ) -> None:
+        self.customer_default_payment_methods.append(
+            {
+                "stripe_customer_id": stripe_customer_id,
+                "stripe_payment_method_id": stripe_payment_method_id,
+                "metadata": metadata,
+            }
+        )
 
     async def search_app_owned_payment_intents(
         self, *, academy_id: str, limit: int = 100
