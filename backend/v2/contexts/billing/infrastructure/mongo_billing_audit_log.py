@@ -12,6 +12,10 @@ from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
 from backend.v2.shared.tenancy import TenantScopedRepository
 
 
+def _opt_str(value: Any) -> str | None:
+    return None if value is None else str(value)
+
+
 class MongoBillingAuditLogRepository(TenantScopedRepository):
     collection_name = "billing_audit_log"
 
@@ -23,8 +27,8 @@ class MongoBillingAuditLogRepository(TenantScopedRepository):
             action=doc["action"],
             actor_id=str(doc["actor_id"]),
             at=doc["at"],
-            invoice_id=(None if doc.get("invoice_id") is None else str(doc["invoice_id"])),
-            payment_id=(None if doc.get("payment_id") is None else str(doc["payment_id"])),
+            invoice_id=_opt_str(doc.get("invoice_id")),
+            payment_id=_opt_str(doc.get("payment_id")),
             reason=doc.get("reason"),
             before=doc.get("before"),
             after=doc.get("after"),

@@ -571,7 +571,15 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
                 {"$set": {**set_fields, "version": expected_version}},
                 upsert=True,
             )
+            stored = await self.get_invoice(invoice.invoice_id)
+            if stored is None:
+                raise ValueError("invoice save failed")
+            return stored
         else:
+            # The $exists: False arm covers legacy docs that pre-date migration 0135
+            # (which backfills version=0). It becomes a no-op once that migration runs
+            # but is kept as a safe fallback for environments where migration order
+            # cannot be strictly guaranteed.
             version_match: dict[str, object] = (
                 {"$or": [{"version": 0}, {"version": {"$exists": False}}]}
                 if expected_version == 0
@@ -589,10 +597,7 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
                 raise ValueError(
                     f"invoice changed during save (stale version {expected_version}); retry"
                 )
-        stored = await self.get_invoice(invoice.invoice_id)
-        if stored is None:
-            raise ValueError("invoice save failed")
-        return stored
+            return invoice.model_copy(update={"version": expected_version + 1})
 
     async def save_line(self, line: InvoiceLine) -> InvoiceLine:
         """Upsert line by line_id."""
@@ -784,12 +789,22 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         truth for invoice-level refunds. Uses the optimistic-concurrency guarded write so
         concurrent refunds cannot lose an increment. Replaces the raw ``$inc`` previously
         issued from the admin composition layer.
+
+        Callers use this as the serialization point for refunds: claiming the invoice-level
+        refund here (version-guarded) BEFORE issuing the irreversible Stripe refund means a
+        concurrent second refund is rejected at ``save_invoice`` before it can double-spend.
+        The cumulative refund can never exceed the invoice total.
         """
         if amount_cents <= 0:
             raise ValueError("refund amount must be positive")
         invoice = await self.get_invoice(invoice_id)
         if invoice is None:
             raise ValueError("invoice not found")
+        if invoice.refunded_cents + amount_cents > invoice.total_cents:
+            raise ValueError(
+                f"refund {amount_cents} would exceed invoice total "
+                f"{invoice.total_cents} (already refunded {invoice.refunded_cents})"
+            )
         updated = invoice.model_copy(
             update={
                 "refunded_cents": invoice.refunded_cents + amount_cents,
@@ -797,6 +812,23 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             }
         )
         return await self.save_invoice(updated)
+
+    async def reverse_invoice_refund(self, *, invoice_id: str, amount_cents: int) -> None:
+        """Compensating decrement of ``refunded_cents`` when a claimed refund fails downstream
+        (e.g. the Stripe call raised after ``apply_invoice_refund`` succeeded). Uses an atomic,
+        non-negative-guarded ``$inc`` so it composes safely with concurrent writers — it is a
+        commutative rollback of a claim we just made, so it does not need the version guard.
+        """
+        if amount_cents <= 0:
+            return
+        await self.collection.update_one(
+            {
+                "academy_id": current_academy_id(),
+                "invoice_id": invoice_id,
+                "refunded_cents": {"$gte": amount_cents},
+            },
+            {"$inc": {"refunded_cents": -amount_cents}, "$set": {"updated_at": self._clock()}},
+        )
 
     async def sum_overpayment_credits_for_invoice(self, invoice_id: str) -> int:
         """Total APPROVED overpayment credit attributed to an invoice (for admin views)."""
