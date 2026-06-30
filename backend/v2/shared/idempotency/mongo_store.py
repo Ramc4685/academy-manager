@@ -24,7 +24,13 @@ class MongoIdempotencyStore:
         self._collection = db[self.COLLECTION]
 
     async def get(self, key: str) -> dict[str, Any] | None:
-        return await self._collection.find_one({"key": key})
+        # Return exactly the value that ``put`` stored — NOT the wrapper document.
+        # The @idempotent decorator (and its in-memory test fake) treat get/put as
+        # symmetric: get(key) yields the value passed to put(key, value). Returning
+        # the full {"key", "value", "created_at"} doc here made the decorator
+        # deserialize the wrong shape and raise KeyError('_type') on every cache hit.
+        doc = await self._collection.find_one({"key": key})
+        return None if doc is None else doc.get("value")
 
     async def put(self, key: str, value: dict[str, Any]) -> None:
         await self._collection.insert_one(

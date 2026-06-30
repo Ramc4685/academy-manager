@@ -150,6 +150,48 @@ async def test_get_and_save_ledger_payment_without_recreating_legacy_payment(db,
 
 
 @pytest.mark.asyncio
+async def test_list_recent_admin_omits_zero_amount_checkout_projection_rows(db, acad) -> None:
+    now = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
+    await db["payments"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "payment_id": "zero-amount-checkout",
+                "parent_id": "parent-setup",
+                "stripe_checkout_session_id": "cs_live_setup_only",
+                "calculation_snapshot_id": "snapshot-1",
+                "session_id": "session-1",
+                "amount_cents": 0,
+                "paid_amount_cents": 0,
+                "amount_received_cents": 0,
+                "status": "succeeded",
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "academy_id": acad,
+                "payment_id": "real-stripe-payment",
+                "parent_id": "parent-paid",
+                "student_id": "student-paid",
+                "period": "2026-06",
+                "stripe_payment_intent_id": "pi_paid",
+                "amount_cents": 6_000,
+                "paid_amount_cents": 6_000,
+                "amount_received_cents": 6_000,
+                "status": "succeeded",
+                "created_at": now,
+                "updated_at": now,
+            },
+        ]
+    )
+    repo = MongoPaymentRepository(db)
+
+    rows = await repo.list_recent_admin()
+
+    assert [row["payment_id"] for row in rows] == ["real-stripe-payment"]
+
+
+@pytest.mark.asyncio
 async def test_generate_monthly_prorates_first_period_and_stores_snapshot(db, acad) -> None:
     ledger_repo = MongoBillingLedgerRepository(db)
     repo = MongoPaymentRepository(

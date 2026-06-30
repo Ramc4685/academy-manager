@@ -903,7 +903,7 @@ class InvoiceRefundResponse(BaseModel):
 async def record_manual_payment(
     invoice_id: str,
     body: RecordManualPaymentRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> RecordManualPaymentResponse:
     """Record a manual payment (cash, check, etc.) against a ledger invoice.
@@ -919,6 +919,7 @@ async def record_manual_payment(
             payment_method=body.payment_method,
             reference_number=body.reference_number,
             notes=body.notes,
+            actor_id=claims.user_id,
         )
     except ValueError as exc:
         msg = str(exc)
@@ -975,7 +976,13 @@ async def list_invoice_audit(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, list[dict[str, object]]]:
     lister = _required_callable(use_cases.list_billing_audit, "Billing audit")
-    entries = await lister(invoice_id=invoice_id)  # type: ignore[operator]
+    try:
+        entries = await lister(invoice_id=invoice_id)  # type: ignore[operator]
+    except ValueError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=409, detail=msg) from exc
     return {"entries": entries}
 
 

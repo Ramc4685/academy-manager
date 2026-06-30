@@ -379,7 +379,7 @@ class MongoPaymentRepository(TenantScopedRepository):
             sort=[("created_at", -1), ("invoice_created_at", -1)],
             limit=limit,
         )
-        docs = [doc async for doc in cursor]
+        docs = [doc async for doc in cursor if not self._is_zero_amount_checkout_projection(doc)]
         student_ids = sorted(
             {str(doc.get("student_id")) for doc in docs if doc.get("student_id") is not None}
         )
@@ -430,6 +430,32 @@ class MongoPaymentRepository(TenantScopedRepository):
             )
             for doc in docs
         ]
+
+    @classmethod
+    def _is_zero_amount_checkout_projection(cls, doc: dict[str, object]) -> bool:
+        has_checkout = bool(doc.get("stripe_checkout_session_id"))
+        has_charge_reference = bool(
+            doc.get("stripe_payment_intent_id")
+            or doc.get("stripe_payment_intent")
+            or doc.get("stripe_invoice_id")
+        )
+        has_app_invoice_context = bool(
+            doc.get("invoice_id")
+            or doc.get("invoice_number")
+            or doc.get("student_id")
+            or doc.get("period")
+        )
+        source = str(doc.get("source") or doc.get("checkout_source") or "").lower()
+        amount_cents = cls._amount_cents(doc)
+        paid_cents = int(doc.get("paid_amount_cents") or doc.get("amount_received_cents") or 0)
+        return (
+            has_checkout
+            and not has_charge_reference
+            and not has_app_invoice_context
+            and amount_cents == 0
+            and paid_cents == 0
+            and source in {"", "autopay_setup", "setup", "subscription_setup"}
+        )
 
     @classmethod
     def _to_admin_row(

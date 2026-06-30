@@ -779,6 +779,11 @@ def compose_parent(
         lines = [InvoiceLine(**doc) async for doc in lines_cursor]
         return {"invoice": invoice, "lines": lines}
 
+    def _validate_checkout_redirect_urls(*urls: str) -> None:
+        _allowed = settings.cors_allowed_origins()
+        for url in urls:
+            validate_redirect_url(url, allowed_origins=_allowed)
+
     async def start_invoice_payment_for_parent(
         *,
         parent_id: str,
@@ -786,9 +791,7 @@ def compose_parent(
         success_url: str,
         cancel_url: str,
     ):
-        _allowed = settings.cors_allowed_origins()
-        validate_redirect_url(success_url, allowed_origins=_allowed)
-        validate_redirect_url(cancel_url, allowed_origins=_allowed)
+        _validate_checkout_redirect_urls(success_url, cancel_url)
         invoice = await billing_ledger_repo.get_invoice(invoice_id)
         if invoice is None or invoice.parent_id != parent_id:
             return None
@@ -815,9 +818,7 @@ def compose_parent(
         success_url: str,
         cancel_url: str,
     ):
-        _allowed = settings.cors_allowed_origins()
-        validate_redirect_url(success_url, allowed_origins=_allowed)
-        validate_redirect_url(cancel_url, allowed_origins=_allowed)
+        _validate_checkout_redirect_urls(success_url, cancel_url)
         all_invoices = await billing_ledger_repo.list_invoices_for_parent(parent_id)
         payable = [
             inv
@@ -897,9 +898,7 @@ def compose_parent(
         success_url: str,
         cancel_url: str,
     ):
-        _allowed = settings.cors_allowed_origins()
-        validate_redirect_url(success_url, allowed_origins=_allowed)
-        validate_redirect_url(cancel_url, allowed_origins=_allowed)
+        _validate_checkout_redirect_urls(success_url, cancel_url)
         app = await get_status.execute(application_id, caller_user_id=parent_id)
         if not app.selected_session_id:
             raise MissingSelectedSession(
@@ -951,9 +950,7 @@ def compose_parent(
         success_url: str,
         cancel_url: str,
     ):
-        _allowed = settings.cors_allowed_origins()
-        validate_redirect_url(success_url, allowed_origins=_allowed)
-        validate_redirect_url(cancel_url, allowed_origins=_allowed)
+        _validate_checkout_redirect_urls(success_url, cancel_url)
         enrollment = await db["enrollments"].find_one(
             {"academy_id": academy_id, "enrollment_id": enrollment_id}
         )
@@ -998,7 +995,7 @@ def compose_parent(
         return result
 
     async def open_billing_portal(*, parent_id: str, return_url: str):
-        validate_redirect_url(return_url, allowed_origins=settings.cors_allowed_origins())
+        _validate_checkout_redirect_urls(return_url)
         with tenant_scope(academy_id):
             stripe_customer_id = await parent_customers_repo.get_stripe_customer_id(
                 parent_id=parent_id

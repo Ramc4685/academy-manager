@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 import csv
 import html
 import io
@@ -2914,7 +2915,20 @@ def compose_admin(
         payment_method: str,
         reference_number: str | None,
         notes: str,
+        actor_id: str | None = None,
     ) -> dict[str, Any]:
+        # Idempotency boundary. RecordManualPayment mints a fresh payment_id per call and
+        # is NOT internally idempotent, so a client retry (e.g. after the audit append
+        # below failed) would record a SECOND payment and over-credit the invoice. Key on
+        # the logical request; reference_number/notes disambiguate genuinely-distinct
+        # manual entries that share an amount + method.
+        manual_idem_key = (
+            f"manual_payment:{invoice_id}:{amount_cents}:{payment_method}:"
+            f"{reference_number}:{notes}"
+        )
+        cached = await idempotency_store.get(manual_idem_key)
+        if cached is not None:
+            return cached["payload"]
         result = await RecordManualPayment(ledger=billing_ledger_repo).execute(
             RecordManualPaymentCommand(
                 invoice_id=invoice_id,
@@ -2924,7 +2938,32 @@ def compose_admin(
                 notes=notes,
             )
         )
-        return result.model_dump(mode="python")
+        payload = result.model_dump(mode="python")
+        # Record the idempotency result right after the durable money movement and BEFORE
+        # the audit append, so an audit failure cannot drive a retry into a second payment.
+        await idempotency_store.put(manual_idem_key, {"payload": payload})
+        # P0-4: append-only audit of who recorded the manual payment (money movement),
+        # mirroring the refund audit. Overpayment that became an account credit is captured
+        # in `after` so the trail explains where the excess went.
+        await billing_audit_log.append(
+            BillingAuditEntry(
+                audit_id=f"baud-{new_ulid()}",
+                academy_id=academy_id,
+                action="manual_payment_recorded",
+                actor_id=actor_id or "system",
+                at=datetime.now(UTC),
+                invoice_id=invoice_id,
+                payment_id=result.payment_id,
+                reason=payment_method,
+                after={
+                    "amount_cents": amount_cents,
+                    "invoice_status": result.invoice_status,
+                    "balance_due_cents": result.balance_due_cents,
+                    "overpayment_credit_cents": result.overpayment_credit_cents,
+                },
+            )
+        )
+        return payload
 
     async def issue_invoice_refund(
         *,
@@ -2933,6 +2972,15 @@ def compose_admin(
         reason: str,
         actor_id: str | None = None,
     ) -> dict[str, Any]:
+        # Idempotency boundary for the WHOLE operation. `issue_refund.execute` is
+        # itself idempotent, but the invoice-level claim `apply_invoice_refund` below
+        # is an unconditional increment — without this boundary, a retry would replay
+        # the cached Stripe refund yet re-claim the invoice projection, double-counting
+        # `refunded_cents`. Keyed on the logical request (invoice + amount + reason).
+        refund_idem_key = f"invoice_refund:{invoice_id}:{amount_cents}:{reason}"
+        cached = await idempotency_store.get(refund_idem_key)
+        if cached is not None:
+            return cached["payload"]
         invoice = await billing_ledger_repo.get_invoice(invoice_id)
         if invoice is None:
             raise ValueError("invoice not found")
@@ -2968,21 +3016,38 @@ def compose_admin(
                 break
         if selected_payment_id is None:
             raise ValueError("invoice has no refundable allocated payment")
-        result = await issue_refund.execute(
-            IssueRefundCommand(
-                payment_id=selected_payment_id,
-                amount_cents=selected_amount_cents,
-                reason=reason,
-            )
-        )
-        # Reflect the refund on the invoice projection via the single ledger writer
-        # (optimistic-concurrency guarded). Admin payment rows for an allocated invoice
-        # are built from the invoice document, so refunded_cents must live there — but it
-        # is now owned by one repo method instead of a raw $inc in this layer.
-        refunded_amount = int(selected_amount_cents or 0)
-        await billing_ledger_repo.apply_invoice_refund(
+        refunded_amount = selected_amount_cents  # guaranteed int by line above
+        # Claim the invoice-level refund FIRST, under the optimistic-concurrency guard, so
+        # two concurrent refunds on the same invoice serialize here — the loser is rejected
+        # by apply_invoice_refund BEFORE it can reach the irreversible Stripe call below.
+        # The claim also caps cumulative refunds to the invoice total. Admin payment rows for
+        # an allocated invoice are built from the invoice document, so refunded_cents lives
+        # there, owned by one repo method instead of a raw $inc in this layer.
+        updated_invoice = await billing_ledger_repo.apply_invoice_refund(
             invoice_id=invoice_id, amount_cents=refunded_amount
         )
+        try:
+            result = await issue_refund.execute(
+                IssueRefundCommand(
+                    payment_id=selected_payment_id,
+                    amount_cents=selected_amount_cents,
+                    reason=reason,
+                )
+            )
+        except Exception:
+            # The Stripe refund did not happen — release the claim so the invoice projection
+            # does not show a refund that was never issued.
+            await billing_ledger_repo.reverse_invoice_refund(
+                invoice_id=invoice_id, amount_cents=refunded_amount
+            )
+            raise
+        payload = result.model_dump(mode="python")
+        payload["invoice_id"] = invoice_id
+        # Record the idempotency result immediately after the durable money movement
+        # (claim + Stripe refund) and BEFORE the audit append. If the audit append
+        # fails, a retry then short-circuits at the top and returns this cached
+        # payload rather than re-claiming `apply_invoice_refund` a second time.
+        await idempotency_store.put(refund_idem_key, {"payload": payload})
         # P0-4: append-only audit of who issued the refund.
         await billing_audit_log.append(
             BillingAuditEntry(
@@ -2995,14 +3060,19 @@ def compose_admin(
                 payment_id=selected_payment_id,
                 reason=reason,
                 before={"refunded_cents": before_refunded},
-                after={"refunded_cents": before_refunded + refunded_amount},
+                after={"refunded_cents": updated_invoice.refunded_cents},
             )
         )
-        payload = result.model_dump(mode="python")
-        payload["invoice_id"] = invoice_id
         return payload
 
     async def list_billing_audit(*, invoice_id: str) -> list[dict[str, Any]]:
+        # Confirm the invoice belongs to the calling tenant before returning its audit trail.
+        # Without this, a cross-tenant invoice_id silently returns [] (tenant guard filters
+        # it out), which is indistinguishable from "no audit entries". 404 instead, matching
+        # how every other invoice-scoped handler behaves.
+        invoice = await billing_ledger_repo.get_invoice(invoice_id)
+        if invoice is None:
+            raise ValueError("invoice not found")
         entries = await billing_audit_log.list_for_invoice(invoice_id)
         return [entry.model_dump(mode="python") for entry in entries]
 
@@ -4044,7 +4114,7 @@ def compose_admin(
         ):
             invoice_docs.append(doc)
         # Batch-sum APPROVED overpayment credits per invoice (one query, avoids N+1).
-        overpay_by_invoice: dict[str, int] = {}
+        overpay_by_invoice: dict[str, int] = collections.defaultdict(int)
         invoice_id_list = [
             str(d.get("invoice_id") or "") for d in invoice_docs if d.get("invoice_id")
         ]
@@ -4058,9 +4128,7 @@ def compose_admin(
                 }
             ):
                 inv_id = str(credit.get("invoice_id") or "")
-                overpay_by_invoice[inv_id] = overpay_by_invoice.get(inv_id, 0) + int(
-                    credit.get("amount_cents") or 0
-                )
+                overpay_by_invoice[inv_id] += int(credit.get("amount_cents") or 0)
         for doc in invoice_docs:
             invoice_keys.update(_invoice_provider_keys(doc))
             doc["overpayment_credit_cents"] = overpay_by_invoice.get(
