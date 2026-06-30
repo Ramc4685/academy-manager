@@ -1025,13 +1025,13 @@ def test_add_invoice_adjustment_allows_negative_discount_line(admin_client):
 
 def test_record_invoice_manual_payment_route(admin_client):
     async def record_manual_payment(**kwargs):
-        assert kwargs == {
-            "invoice_id": "inv-1",
-            "amount_cents": 2_500,
-            "payment_method": "check",
-            "reference_number": "1001",
-            "notes": "Front desk payment",
-        }
+        # P0-4: the route must thread the admin actor for the audit trail.
+        assert kwargs["invoice_id"] == "inv-1"
+        assert kwargs["amount_cents"] == 2_500
+        assert kwargs["payment_method"] == "check"
+        assert kwargs["reference_number"] == "1001"
+        assert kwargs["notes"] == "Front desk payment"
+        assert kwargs["actor_id"]
         return {
             "invoice_id": "inv-1",
             "payment_id": "manual-1",
@@ -1090,6 +1090,34 @@ def test_refund_invoice_route_uses_invoice_native_use_case(admin_client):
         "refunded_cents": 3_000,
         "total_refunded_cents": 3_000,
     }
+
+
+def test_list_invoice_audit_route_returns_entries(admin_client):
+    async def list_billing_audit(**kwargs):
+        assert kwargs["invoice_id"] == "inv-1"
+        return [{"audit_id": "baud-1", "action": "refund_issued", "actor_id": "admin-1"}]
+
+    admin_client.use_cases.list_billing_audit = list_billing_audit
+
+    response = admin_client.get("/api/v2/admin/billing/invoices/inv-1/audit")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "entries": [{"audit_id": "baud-1", "action": "refund_issued", "actor_id": "admin-1"}]
+    }
+
+
+def test_list_invoice_audit_missing_invoice_returns_404(admin_client):
+    async def list_billing_audit(**kwargs):
+        # Cross-tenant / unknown invoice: the composition raises rather than
+        # returning [] so the caller can tell "no such invoice" from "no entries".
+        raise ValueError("invoice not found")
+
+    admin_client.use_cases.list_billing_audit = list_billing_audit
+
+    response = admin_client.get("/api/v2/admin/billing/invoices/inv-missing/audit")
+
+    assert response.status_code == 404, response.text
 
 
 def test_remove_invoice_line_allows_draft_and_recomputes_totals(admin_client):

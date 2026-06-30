@@ -405,6 +405,40 @@ async def test_apply_invoice_refund_is_single_writer(db, acad) -> None:
 
 
 @pytest.mark.asyncio
+async def test_apply_invoice_refund_rejects_over_refund(db, acad) -> None:
+    """Defense-in-depth: cumulative refund can never exceed the invoice total, so a
+    concurrent/buggy caller cannot push refunded_cents past what was ever collected."""
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    await repo.create_invoice(
+        _make_invoice("inv-ceil-1", acad, now), lines=[], idempotency_key="ceil:1"
+    )
+    await repo.apply_invoice_refund(invoice_id="inv-ceil-1", amount_cents=7_000)
+    # invoice total is 10_000; a further 4_000 would exceed it.
+    with pytest.raises(ValueError, match="would exceed invoice total"):
+        await repo.apply_invoice_refund(invoice_id="inv-ceil-1", amount_cents=4_000)
+    reloaded = await repo.get_invoice("inv-ceil-1")
+    assert reloaded is not None
+    assert reloaded.refunded_cents == 7_000  # rejected write left state untouched
+
+
+@pytest.mark.asyncio
+async def test_reverse_invoice_refund_releases_claim(db, acad) -> None:
+    """A claimed refund that fails downstream (e.g. Stripe raised) is released so the invoice
+    projection does not show a refund that never happened."""
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    await repo.create_invoice(
+        _make_invoice("inv-rev-1", acad, now), lines=[], idempotency_key="rev:1"
+    )
+    await repo.apply_invoice_refund(invoice_id="inv-rev-1", amount_cents=2_000)
+    await repo.reverse_invoice_refund(invoice_id="inv-rev-1", amount_cents=2_000)
+    reloaded = await repo.get_invoice("inv-rev-1")
+    assert reloaded is not None
+    assert reloaded.refunded_cents == 0
+
+
+@pytest.mark.asyncio
 async def test_sum_overpayment_credits_for_invoice(db, acad) -> None:
     """P0-3: the admin view's overpayment_credit_cents must be derivable from the credit
     ledger (no longer hardcoded 0)."""
