@@ -133,9 +133,11 @@ class _CheckoutGateway:
         self,
         *,
         error: Exception | None = None,
+        default_error: Exception | None = None,
         retrieved: dict[str, object] | None = None,
     ) -> None:
         self._error = error
+        self._default_error = default_error
         self.created: list[dict[str, object]] = []
         self.setup_created: list[dict[str, object]] = []
         self.setup_intents: dict[str, dict[str, object]] = {}
@@ -193,6 +195,8 @@ class _CheckoutGateway:
         stripe_payment_method_id: str,
         metadata: dict[str, str],
     ) -> None:
+        if self._default_error is not None:
+            raise self._default_error
         self.default_payment_methods.append(
             {
                 "stripe_customer_id": stripe_customer_id,
@@ -798,6 +802,36 @@ async def test_autopay_setup_projection_failure_does_not_activate_enrollment() -
     assert [consent.setup_intent_id for consent in consents.consents] == ["seti_saved_card"]
     assert [event.name for event in outbox.events] == ["Billing.AutopayConsentCaptured"]
     assert customers.default_methods == []
+    assert gateway.default_payment_methods == []
+    assert enrollment_autopay.setup_completed == []
+
+
+@pytest.mark.asyncio
+async def test_autopay_setup_stripe_default_failure_does_not_activate_enrollment() -> None:
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    customers = _CustomerRepo()
+    consents = _ConsentRepo()
+    outbox = _Outbox()
+    enrollment_autopay = _EnrollmentAutopay()
+    gateway = _setup_checkout_gateway()
+    gateway._default_error = RuntimeError("stripe default failed")
+    uc = CompleteAutopaySetup(
+        stripe=gateway,
+        parent_customers=customers,
+        enrollment_autopay=enrollment_autopay,
+        consent_repo=consents,
+        outbox=outbox,
+        academy_id="acad",
+        clock=lambda: now,
+    )
+
+    with pytest.raises(RuntimeError, match="stripe default failed"):
+        await uc.execute_from_setup_intent(gateway.setup_intents["seti_saved_card"])
+
+    assert [consent.setup_intent_id for consent in consents.consents] == ["seti_saved_card"]
+    assert [event.name for event in outbox.events] == ["Billing.AutopayConsentCaptured"]
+    assert [row["setup_intent_id"] for row in customers.default_methods] == ["seti_saved_card"]
+    assert gateway.default_payment_methods == []
     assert enrollment_autopay.setup_completed == []
 
 

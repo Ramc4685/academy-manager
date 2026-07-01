@@ -24,6 +24,7 @@ ACH processing lifecycle, returns/reversal markers, microdeposit verification wi
 - 2026-07-01T12:15:59 main/done: Second scoped rework complete: partial ACH returns are explicitly unsupported without projection changes, ACH classification no longer trusts event metadata-only bank hints, charge-path ACH metadata has server-derived provenance, and duplicate full-return alternate event shapes no longer emit duplicate PaymentRefunded events.
 - 2026-07-01T12:16:20 main/done: Documented scope: partial amount-aware ACH reversal remains deferred beyond Slice G; this pass records unsupported partial returns without changing invoice/payment/allocation projections.
 - 2026-07-01T12:26:24 main/working: Post-rebase reviewer rework: pending primary ACH now updates primary projection only and does not overwrite chargeable default fields; added real Mongo repository contract coverage.
+- 2026-07-01T12:29:58 main/working: Post-review ordering rework: autopay setup now persists consent/projection before calling Stripe to set the customer default, then activates enrollment only after Stripe succeeds.
 ## Verification
 
 - No verification recorded yet.
@@ -48,6 +49,7 @@ ACH processing lifecycle, returns/reversal markers, microdeposit verification wi
 - 2026-07-01T12:15:54: DoD second rework static: ruff check backend/v2 && ruff format --check backend/v2 && lint-imports --config backend/pyproject.toml => passed; Import Linter 4 contracts kept.
 - 2026-07-01T12:26:24: Post-rebase focused G/F integration: PYTHONPATH=. python -m pytest backend/v2/tests/contract/test_parent_billing_customer_repo.py backend/v2/tests/application/test_parent_billing_portal.py backend/v2/tests/application/test_webhook_handler.py backend/v2/tests/contract/test_ach_lifecycle_migration.py backend/v2/tests/unit/test_charge_autopay_use_case.py -q => 123 passed.
 - 2026-07-01T12:27:31: Independent orchestrator DoD after rebase onto Slice F: PYTHONPATH=. python -m pytest backend/v2/tests -q => 1945 passed, 1 known allowed bootstrap cwd-path FileNotFoundError, 5 warnings. Static checks: ruff check backend/v2 => passed; ruff format --check backend/v2 => 748 files already formatted; lint-imports --config backend/pyproject.toml => 4 contracts kept.
+- 2026-07-01T12:29:58: Ordering rework focused setup tests: PYTHONPATH=. python -m pytest backend/v2/tests/application/test_parent_billing_portal.py backend/v2/tests/application/test_webhook_handler.py::test_autopay_setup_checkout_and_setup_intent_replay_do_not_duplicate_consent_event backend/v2/tests/application/test_webhook_handler.py::test_setup_intent_succeeded_completes_autopay_from_setup_metadata backend/v2/tests/application/test_webhook_handler.py::test_ach_setup_requiring_microdeposit_verification_does_not_mark_active backend/v2/tests/application/test_webhook_handler.py::test_active_fallback_card_setup_does_not_mark_enrollment_active_or_default -q => 24 passed.
 ## Reusable Lessons
 
 - None recorded yet.

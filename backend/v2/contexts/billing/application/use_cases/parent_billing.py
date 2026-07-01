@@ -192,15 +192,7 @@ class CompleteAutopaySetup:
             context=consent_context,
         )
 
-        if setup_status == "active" and payment_method_role == "primary":
-            await self._stripe.set_customer_default_payment_method(
-                stripe_customer_id=stripe_customer_id,
-                stripe_payment_method_id=stripe_payment_method_id,
-                metadata={
-                    "academy_id": self._academy_id,
-                    "parent_id": parent_id,
-                },
-            )
+        should_activate = setup_status == "active" and payment_method_role == "primary"
         await self._persist_completion(
             parent_id=parent_id,
             enrollment_id=enrollment_id,
@@ -214,7 +206,24 @@ class CompleteAutopaySetup:
             consent=consent,
             setup_status=setup_status,
             payment_method_role=payment_method_role,
+            activate_enrollment=False,
         )
+        if should_activate:
+            await self._stripe.set_customer_default_payment_method(
+                stripe_customer_id=stripe_customer_id,
+                stripe_payment_method_id=stripe_payment_method_id,
+                metadata={
+                    "academy_id": self._academy_id,
+                    "parent_id": parent_id,
+                },
+            )
+            activated = await self._enrollment_autopay.mark_autopay_active_from_setup(
+                enrollment_id=enrollment_id,
+            )
+            if not activated:
+                raise RuntimeError(
+                    f"autopay enrollment activation failed for enrollment {enrollment_id}"
+                )
         return AutopaySetupCompletionResult(
             checkout_session_id=checkout_session_id,
             setup_intent_id=setup_intent_id,
@@ -242,6 +251,7 @@ class CompleteAutopaySetup:
         consent: AutopayConsent | None,
         setup_status: str = "active",
         payment_method_role: str = "primary",
+        activate_enrollment: bool = True,
     ) -> None:
         async def work(session: Any | None) -> None:
             persisted_consent = consent
@@ -280,7 +290,7 @@ class CompleteAutopaySetup:
                 payment_method_role=payment_method_role,
                 session=session,
             )
-            if setup_status == "active" and payment_method_role == "primary":
+            if activate_enrollment and setup_status == "active" and payment_method_role == "primary":
                 activated = await self._enrollment_autopay.mark_autopay_active_from_setup(
                     enrollment_id=enrollment_id,
                     session=session,
