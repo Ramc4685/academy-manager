@@ -21,6 +21,8 @@ ACH processing lifecycle, returns/reversal markers, microdeposit verification wi
 - 2026-07-01T11:46:20 main/working: DoD: RED recorded for missing ACH helper and behavior gaps; GREEN focused tests, fixture replay, affected billing tests, required static checks, and full backend/v2 pytest run completed with only the allowed bootstrap cwd-path failure.
 - 2026-07-01T11:58:07 main/working: Rework implemented: reversal replay converges after preinserted reversal row, fallback-only active method no longer marks enrollment active/default, ACH return classification ignores metadata/free-text, webhook ledger port typed as LedgerRepository, and Stripe-shaped return-code traversal moved to application layer.
 - 2026-07-01T12:02:14 main/done: Slice G scoped rework DoD complete: replay convergence, fallback-only activation guard, ACH return classification tightening, LedgerRepository port typing, and provider-neutral Nacha domain normalization are implemented and verified.
+- 2026-07-01T12:15:59 main/done: Second scoped rework complete: partial ACH returns are explicitly unsupported without projection changes, ACH classification no longer trusts event metadata-only bank hints, charge-path ACH metadata has server-derived provenance, and duplicate full-return alternate event shapes no longer emit duplicate PaymentRefunded events.
+- 2026-07-01T12:16:20 main/done: Documented scope: partial amount-aware ACH reversal remains deferred beyond Slice G; this pass records unsupported partial returns without changing invoice/payment/allocation projections.
 ## Verification
 
 - No verification recorded yet.
@@ -36,6 +38,13 @@ ACH processing lifecycle, returns/reversal markers, microdeposit verification wi
 - 2026-07-01T12:02:10: GREEN rework focused final: PYTHONPATH=. python -m pytest backend/v2/tests/application/test_webhook_handler.py backend/v2/tests/application/test_parent_billing_portal.py backend/v2/tests/contract/test_stripe_webhook_fixture_replay.py backend/v2/tests/contract/test_ach_lifecycle_migration.py backend/v2/tests/unit/test_ach_return_codes.py backend/v2/tests/unit/test_charge_autopay_use_case.py -q => 125 passed.
 - 2026-07-01T12:02:10: DoD rework full pytest: PYTHONPATH=. python -m pytest backend/v2/tests -q => 1924 passed, 1 known allowed bootstrap cwd-path FileNotFoundError, 5 warnings.
 - 2026-07-01T12:02:10: DoD rework static: ruff check backend/v2 && ruff format --check backend/v2 && lint-imports --config backend/pyproject.toml => passed; Import Linter 4 contracts kept.
+- 2026-07-01T12:10:33: RED second rework: focused pytest failed as expected with 4 behavior failures: alternate ACH return replay emitted duplicate PaymentRefunded, partial ACH return below the original payment amount over-reversed the invoice/allocation, and metadata-only ACH classification reopened invoices for charge.refunded and payment_intent.payment_failed.
+- 2026-07-01T12:12:43: GREEN second rework focused: PYTHONPATH=. python -m pytest backend/v2/tests/application/test_webhook_handler.py backend/v2/tests/contract/test_stripe_webhook_fixture_replay.py backend/v2/tests/unit/test_ach_return_codes.py -q => 78 passed.
+- 2026-07-01T12:13:48: GREEN second rework focused plus affected charge path: PYTHONPATH=. python -m pytest backend/v2/tests/application/test_webhook_handler.py backend/v2/tests/contract/test_stripe_webhook_fixture_replay.py backend/v2/tests/unit/test_ach_return_codes.py backend/v2/tests/unit/test_charge_autopay_use_case.py -q => 115 passed.
+- 2026-07-01T12:14:39: DoD second rework full pytest: PYTHONPATH=. python -m pytest backend/v2/tests -q => 1927 passed, 1 known allowed bootstrap cwd-path FileNotFoundError, 5 warnings.
+- 2026-07-01T12:15:54: GREEN second rework post-format focused: PYTHONPATH=. python -m pytest backend/v2/tests/application/test_webhook_handler.py backend/v2/tests/contract/test_stripe_webhook_fixture_replay.py backend/v2/tests/unit/test_ach_return_codes.py backend/v2/tests/unit/test_charge_autopay_use_case.py -q => 115 passed.
+- 2026-07-01T12:15:54: DoD second rework post-format full pytest: PYTHONPATH=. python -m pytest backend/v2/tests -q => 1927 passed, 1 known allowed bootstrap cwd-path FileNotFoundError, 5 warnings.
+- 2026-07-01T12:15:54: DoD second rework static: ruff check backend/v2 && ruff format --check backend/v2 && lint-imports --config backend/pyproject.toml => passed; Import Linter 4 contracts kept.
 ## Reusable Lessons
 
 - None recorded yet.

@@ -1399,16 +1399,52 @@ class HandleWebhookEvent:
         return_code: str,
         emit_event: bool = True,
     ) -> None:
-        total_refunded = max(amount_cents, payment.refunded_cents)
-        new_status = "refunded" if total_refunded >= payment.amount_cents else "partially_refunded"
+        if amount_cents < payment.amount_cents:
+            await self._billing_ledger.record_payment_attempt(
+                invoice_id=invoice.invoice_id,
+                parent_id=invoice.parent_id,
+                amount_cents=amount_cents,
+                currency=invoice.currency,
+                status="failed",
+                stripe_payment_intent_id=pi_id or None,
+                stripe_checkout_session_id=None,
+                failure_code="unsupported_partial_ach_return",
+                failure_message=(
+                    f"Unsupported partial ACH return {return_code} for "
+                    f"{amount_cents} of {payment.amount_cents} cents"
+                ),
+                idempotency_key=(
+                    f"autopay-ach-return-unsupported-partial:"
+                    f"{invoice.invoice_id}:{pi_id}:{return_code}:{amount_cents}"
+                ),
+                created_by_event_id=event_id or None,
+            )
+            log.warning(
+                "autopay_ach_return: unsupported partial return pi=%s invoice=%s "
+                "amount=%d original=%d code=%s",
+                pi_id,
+                invoice.invoice_id,
+                amount_cents,
+                payment.amount_cents,
+                return_code,
+            )
+            return
+
+        total_refunded = amount_cents
+        allocation_idempotency_key = f"autopay-alloc:{pi_id}"
+        allocation_before_reversal = (
+            await self._billing_ledger.get_payment_allocation_by_idempotency_key(
+                allocation_idempotency_key
+            )
+        )
         updated = await self._billing_ledger.mark_payment_refunded(
             payment.payment_id,
             refunded_cents=total_refunded,
-            status=new_status,
+            status="refunded",
             updated_at=self._now(),
         )
         await self._billing_ledger.reverse_payment_allocation(
-            allocation_idempotency_key=f"autopay-alloc:{pi_id}",
+            allocation_idempotency_key=allocation_idempotency_key,
             reversal_idempotency_key=f"ach-return:{pi_id}:{total_refunded}:{return_code}",
             reason="ach_return",
             return_code=return_code,
@@ -1429,7 +1465,7 @@ class HandleWebhookEvent:
             ),
             created_by_event_id=event_id or None,
         )
-        if emit_event:
+        if emit_event and allocation_before_reversal is not None:
             await self._outbox.append(
                 PaymentRefunded(
                     aggregate_id=updated.payment_id,
@@ -2032,7 +2068,10 @@ def _ledger_payment_is_ach(payment: LedgerPayment) -> bool:
     metadata = payment.metadata or {}
     return (
         metadata.get("funding_type") == "us_bank_account"
-        or metadata.get("payment_method_type") == "us_bank_account"
+        and metadata.get("funding_type_source") == "server_payment_method"
+    ) or (
+        metadata.get("payment_method_type") == "us_bank_account"
+        and metadata.get("payment_method_type_source") == "server_payment_method"
     )
 
 
@@ -2065,9 +2104,6 @@ def _first_nacha_code(values: list[object]) -> str | None:
 
 
 def _payment_intent_is_ach(pi: dict[str, Any]) -> bool:
-    metadata = pi.get("metadata")
-    if isinstance(metadata, dict) and metadata.get("funding_type") == "us_bank_account":
-        return True
     method_types = pi.get("payment_method_types")
     if isinstance(method_types, list) and "us_bank_account" in method_types:
         return True

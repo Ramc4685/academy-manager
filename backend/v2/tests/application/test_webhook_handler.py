@@ -1754,6 +1754,270 @@ async def test_autopay_ach_return_after_paid_reopens_invoice_and_records_return_
     assert ledger.invoices["inv-ach-return"].status == "open"
     assert ledger.allocations == []
     assert len(outbox.events) == events_after_return
+    alternate_return = json.dumps(
+        {
+            "id": "evt_ach_return_payment_failed_duplicate",
+            "type": "payment_intent.payment_failed",
+            "data": {
+                "object": {
+                    "id": "pi_ach_return",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "payment_method_types": ["us_bank_account"],
+                    "last_payment_error": {"code": "insufficient_funds"},
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-ach-return",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                    },
+                }
+            },
+        }
+    ).encode()
+    await uc.accept(alternate_return, "test_signature")
+    alternate_res = await uc.process_next(processor_id="test-worker")
+    assert alternate_res["processed"] is True
+    assert ledger.invoices["inv-ach-return"].status == "open"
+    assert ledger.allocations == []
+    assert len(outbox.events) == events_after_return
+
+
+@pytest.mark.asyncio
+async def test_partial_ach_return_is_recorded_as_unsupported_without_reversing_allocation() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-ach-partial-return"))
+    dedup = FakeDedup()
+    outbox = FakeOutbox()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger, outbox=outbox)
+    succeeded = json.dumps(
+        {
+            "id": "evt_ach_partial_return_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_ach_partial_return",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-ach-partial-return",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                    },
+                    "payment_method_types": ["us_bank_account"],
+                }
+            },
+        }
+    ).encode()
+    partial_return = json.dumps(
+        {
+            "id": "evt_ach_partial_return_refund",
+            "type": "charge.refunded",
+            "data": {
+                "object": {
+                    "id": "ch_ach_partial_return",
+                    "payment_intent": "pi_ach_partial_return",
+                    "amount_refunded": 4000,
+                    "failure_code": "insufficient_funds",
+                    "payment_method_details": {"type": "us_bank_account"},
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(succeeded, "test_signature")
+    assert (await uc.process_next(processor_id="test-worker"))["processed"] is True
+    await uc.accept(partial_return, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    invoice = ledger.invoices["inv-ach-partial-return"]
+    payment = ledger.payments["ledger-pay-autopay:pi_ach_partial_return"]
+    assert invoice.status == "paid"
+    assert invoice.balance_due_cents == 0
+    assert payment.status == "succeeded"
+    assert payment.refunded_cents == 0
+    assert ledger.allocations == [
+        {
+            "payment_id": "ledger-pay-autopay:pi_ach_partial_return",
+            "invoice_id": "inv-ach-partial-return",
+            "amount_cents": 10000,
+            "idempotency_key": "autopay-alloc:pi_ach_partial_return",
+        }
+    ]
+    attempts = list(ledger.payment_attempts.values())
+    assert attempts == [
+        {
+            "invoice_id": "inv-ach-partial-return",
+            "parent_id": "parent-from-invoice",
+            "amount_cents": 4000,
+            "currency": "usd",
+            "status": "failed",
+            "stripe_payment_intent_id": "pi_ach_partial_return",
+            "stripe_checkout_session_id": None,
+            "failure_code": "unsupported_partial_ach_return",
+            "failure_message": "Unsupported partial ACH return R01 for 4000 of 10000 cents",
+            "idempotency_key": (
+                "autopay-ach-return-unsupported-partial:"
+                "inv-ach-partial-return:pi_ach_partial_return:R01:4000"
+            ),
+            "created_by_event_id": "evt_ach_partial_return_refund",
+        }
+    ]
+    assert not any(type(event).__name__ == "PaymentRefunded" for event in outbox.events)
+
+
+@pytest.mark.asyncio
+async def test_metadata_only_funding_type_with_return_code_on_refund_does_not_reopen_invoice() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-metadata-bank-false-positive"))
+    dedup = FakeDedup()
+    outbox = FakeOutbox()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger, outbox=outbox)
+    succeeded = json.dumps(
+        {
+            "id": "evt_metadata_bank_false_positive_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_metadata_bank_false_positive",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-metadata-bank-false-positive",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "funding_type": "us_bank_account",
+                    },
+                }
+            },
+        }
+    ).encode()
+    returned = json.dumps(
+        {
+            "id": "evt_metadata_bank_false_positive_refund",
+            "type": "charge.refunded",
+            "data": {
+                "object": {
+                    "id": "ch_metadata_bank_false_positive",
+                    "payment_intent": "pi_metadata_bank_false_positive",
+                    "amount_refunded": 10000,
+                    "failure_code": "insufficient_funds",
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(succeeded, "test_signature")
+    assert (await uc.process_next(processor_id="test-worker"))["processed"] is True
+    await uc.accept(returned, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    invoice = ledger.invoices["inv-metadata-bank-false-positive"]
+    payment = ledger.payments["ledger-pay-autopay:pi_metadata_bank_false_positive"]
+    assert invoice.status == "paid"
+    assert invoice.balance_due_cents == 0
+    assert payment.status == "refunded"
+    assert payment.refunded_cents == 10000
+    assert ledger.allocations == [
+        {
+            "payment_id": "ledger-pay-autopay:pi_metadata_bank_false_positive",
+            "invoice_id": "inv-metadata-bank-false-positive",
+            "amount_cents": 10000,
+            "idempotency_key": "autopay-alloc:pi_metadata_bank_false_positive",
+        }
+    ]
+    assert not any(attempt["status"] == "returned" for attempt in ledger.payment_attempts.values())
+    assert outbox.events[-1].payload.reason == "admin_initiated"
+
+
+@pytest.mark.asyncio
+async def test_metadata_only_funding_type_with_payment_failed_return_code_does_not_reopen_invoice() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-metadata-pi-false-positive"))
+    dedup = FakeDedup()
+    outbox = FakeOutbox()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger, outbox=outbox)
+    succeeded = json.dumps(
+        {
+            "id": "evt_metadata_pi_false_positive_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_metadata_pi_false_positive",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-metadata-pi-false-positive",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "funding_type": "us_bank_account",
+                    },
+                }
+            },
+        }
+    ).encode()
+    failed = json.dumps(
+        {
+            "id": "evt_metadata_pi_false_positive_failed",
+            "type": "payment_intent.payment_failed",
+            "data": {
+                "object": {
+                    "id": "pi_metadata_pi_false_positive",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "last_payment_error": {"code": "insufficient_funds"},
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-metadata-pi-false-positive",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "funding_type": "us_bank_account",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(succeeded, "test_signature")
+    assert (await uc.process_next(processor_id="test-worker"))["processed"] is True
+    await uc.accept(failed, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    invoice = ledger.invoices["inv-metadata-pi-false-positive"]
+    payment = ledger.payments["ledger-pay-autopay:pi_metadata_pi_false_positive"]
+    assert invoice.status == "paid"
+    assert invoice.balance_due_cents == 0
+    assert payment.status == "succeeded"
+    assert payment.refunded_cents == 0
+    assert len(ledger.allocations) == 1
+    attempts = list(ledger.payment_attempts.values())
+    assert attempts == [
+        {
+            "invoice_id": "inv-metadata-pi-false-positive",
+            "parent_id": "parent-from-invoice",
+            "amount_cents": 10000,
+            "currency": "usd",
+            "status": "failed",
+            "stripe_payment_intent_id": "pi_metadata_pi_false_positive",
+            "stripe_checkout_session_id": None,
+            "failure_code": "insufficient_funds",
+            "failure_message": "Payment failed",
+            "idempotency_key": (
+                "autopay-failed:" "inv-metadata-pi-false-positive:pi_metadata_pi_false_positive"
+            ),
+            "created_by_event_id": "evt_metadata_pi_false_positive_failed",
+        }
+    ]
 
 
 @pytest.mark.asyncio

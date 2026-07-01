@@ -523,6 +523,7 @@ async def test_ach_payment_method_adds_discount_line_before_charge_amount_and_ke
         "ach_discount_percent": "2.5",
         "disclosure_version": "cash-discount-v1",
         "funding_type": "us_bank_account",
+        "funding_type_source": "server_payment_method",
     }
     assert repo.allocation_calls[0][2] == 9_750
     discount_lines = [
@@ -736,6 +737,7 @@ async def test_existing_ach_discount_is_reconciled_when_current_settings_change(
         "ach_discount_percent": "3.0",
         "disclosure_version": "cash-discount-v2",
         "funding_type": "us_bank_account",
+        "funding_type_source": "server_payment_method",
     }
     assert repo.allocation_calls[0][2] == 9_700
 

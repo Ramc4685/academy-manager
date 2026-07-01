@@ -509,7 +509,9 @@ class ChargeInvoiceViaAutopay:
                     remaining_lines,
                     now=self._now(),
                 )
-                return await self._ledger.save_invoice(restored), {}
+                return await self._ledger.save_invoice(restored), _server_payment_method_metadata(
+                    funding_type
+                )
             now = self._now()
             current_line = InvoiceLine(
                 line_id=existing_discount.line_id,
@@ -552,7 +554,7 @@ class ChargeInvoiceViaAutopay:
             )
 
         if discount_cents <= 0:
-            return invoice, {}
+            return invoice, _server_payment_method_metadata(funding_type)
 
         now = self._now()
         line = InvoiceLine(
@@ -706,6 +708,17 @@ def _discount_metadata(
         "ach_discount_percent": str(discount_percent),
         "funding_type": str(funding_type or "unknown"),
     }
+    if funding_type == "us_bank_account":
+        metadata["funding_type_source"] = "server_payment_method"
     if disclosure_version:
         metadata["disclosure_version"] = disclosure_version
     return metadata
+
+
+def _server_payment_method_metadata(funding_type: str | None) -> dict[str, str]:
+    if funding_type != "us_bank_account":
+        return {}
+    return {
+        "funding_type": "us_bank_account",
+        "funding_type_source": "server_payment_method",
+    }
