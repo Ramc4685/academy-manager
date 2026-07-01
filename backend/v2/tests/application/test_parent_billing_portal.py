@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 import pytest
 
 from backend.v2.contexts.billing.application.use_cases.parent_billing import (
+    AutopayConsentCaptureContext,
+    CompleteAutopaySetup,
     CreateCustomerPortalSession,
     CreateCustomerPortalSessionCommand,
     GetCheckoutStatus,
@@ -265,6 +267,9 @@ async def test_start_autopay_setup_uses_setup_checkout_not_subscription_checkout
         "enrollment_id": "enr-1",
         "session_id": "s1",
         "source": "autopay_setup",
+        "consent_text_version": "autopay-consent-v1",
+        "ach_mandate_version": "ach-mandate-v1",
+        "card_disclosure_version": "card-disclosure-v1",
     }
     assert repo.saved == []
 
@@ -327,19 +332,47 @@ class _CustomerRepo:
         setup_intent_id: str,
         checkout_session_id: str | None,
         completed_at: datetime,
+        current_consent_id: str | None = None,
+        consent_text_version: str | None = None,
+        ach_mandate_version: str | None = None,
+        card_disclosure_version: str | None = None,
     ) -> None:
-        self.default_methods.append(
-            {
-                "parent_id": parent_id,
-                "stripe_customer_id": stripe_customer_id,
-                "stripe_payment_method_id": stripe_payment_method_id,
-                "payment_method_type": payment_method_type,
-                "stripe_mandate_id": stripe_mandate_id,
-                "setup_intent_id": setup_intent_id,
-                "checkout_session_id": checkout_session_id,
-                "completed_at": completed_at,
-            }
-        )
+        row = {
+            "parent_id": parent_id,
+            "stripe_customer_id": stripe_customer_id,
+            "stripe_payment_method_id": stripe_payment_method_id,
+            "payment_method_type": payment_method_type,
+            "stripe_mandate_id": stripe_mandate_id,
+            "setup_intent_id": setup_intent_id,
+            "checkout_session_id": checkout_session_id,
+            "completed_at": completed_at,
+        }
+        if current_consent_id:
+            row["current_consent_id"] = current_consent_id
+        if consent_text_version:
+            row["consent_text_version"] = consent_text_version
+        if ach_mandate_version:
+            row["ach_mandate_version"] = ach_mandate_version
+        if card_disclosure_version:
+            row["card_disclosure_version"] = card_disclosure_version
+        self.default_methods.append(row)
+
+
+class _ConsentRepo:
+    def __init__(self) -> None:
+        self.consents: list[object] = []
+
+    async def append(self, consent):
+        self.consents.append(consent)
+        return consent
+
+
+class _Outbox:
+    def __init__(self) -> None:
+        self.events: list[object] = []
+
+    async def append(self, event, *, session=None) -> None:
+        self.events.append(event)
 
 
 class _EnrollmentAutopay:
@@ -364,6 +397,130 @@ class _EnrollmentAutopay:
     async def mark_autopay_active_from_setup(self, *, enrollment_id: str) -> bool:
         self.setup_completed.append(enrollment_id)
         return True
+
+
+@pytest.mark.asyncio
+async def test_complete_autopay_setup_appends_new_consent_row_on_reconsent() -> None:
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    customers = _CustomerRepo()
+    consents = _ConsentRepo()
+    outbox = _Outbox()
+    enrollment_autopay = _EnrollmentAutopay()
+    gateway = _CheckoutGateway()
+    gateway.setup_intents["seti_first"] = {
+        "id": "seti_first",
+        "customer": "cus_parent",
+        "payment_method": "pm_card_1",
+        "metadata": {
+            "academy_id": "acad",
+            "parent_id": "p1",
+            "enrollment_id": "enr-1",
+            "source": "autopay_setup",
+            "consent_text_version": "autopay-v2",
+            "card_disclosure_version": "card-v2",
+        },
+    }
+    gateway.setup_intents["seti_second"] = {
+        "id": "seti_second",
+        "customer": "cus_parent",
+        "payment_method": "pm_card_2",
+        "metadata": {
+            "academy_id": "acad",
+            "parent_id": "p1",
+            "enrollment_id": "enr-1",
+            "source": "autopay_setup",
+            "consent_text_version": "autopay-v3",
+            "card_disclosure_version": "card-v3",
+        },
+    }
+    gateway.payment_methods["pm_card_1"] = {"id": "pm_card_1", "type": "card"}
+    gateway.payment_methods["pm_card_2"] = {"id": "pm_card_2", "type": "card"}
+    uc = CompleteAutopaySetup(
+        stripe=gateway,
+        parent_customers=customers,
+        enrollment_autopay=enrollment_autopay,
+        consent_repo=consents,
+        outbox=outbox,
+        academy_id="acad",
+        clock=lambda: now,
+    )
+
+    await uc.execute_from_setup_intent(gateway.setup_intents["seti_first"])
+    await uc.execute_from_setup_intent(gateway.setup_intents["seti_second"])
+
+    assert len(consents.consents) == 2
+    assert consents.consents[0].setup_intent_id == "seti_first"
+    assert consents.consents[0].card_disclosure_version == "card-v2"
+    assert consents.consents[1].setup_intent_id == "seti_second"
+    assert consents.consents[1].card_disclosure_version == "card-v3"
+    assert consents.consents[0].consent_id != consents.consents[1].consent_id
+    assert [event.name for event in outbox.events] == [
+        "Billing.AutopayConsentCaptured",
+        "Billing.AutopayConsentCaptured",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_complete_autopay_setup_emits_consent_event_with_method_version_and_source() -> None:
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    customers = _CustomerRepo()
+    consents = _ConsentRepo()
+    outbox = _Outbox()
+    enrollment_autopay = _EnrollmentAutopay()
+    gateway = _CheckoutGateway()
+    gateway.setup_intents["seti_ach"] = {
+        "id": "seti_ach",
+        "customer": "cus_parent",
+        "payment_method": "pm_ach",
+        "mandate": "mandate_ach",
+        "metadata": {
+            "academy_id": "acad",
+            "parent_id": "p1",
+            "enrollment_id": "enr-1",
+            "source": "autopay_setup",
+            "consent_text_version": "autopay-v4",
+            "ach_mandate_version": "ach-v4",
+            "card_disclosure_version": "card-v4",
+        },
+    }
+    gateway.payment_methods["pm_ach"] = {"id": "pm_ach", "type": "us_bank_account"}
+    uc = CompleteAutopaySetup(
+        stripe=gateway,
+        parent_customers=customers,
+        enrollment_autopay=enrollment_autopay,
+        consent_repo=consents,
+        outbox=outbox,
+        academy_id="acad",
+        clock=lambda: now,
+    )
+
+    await uc.execute_from_setup_intent(
+        gateway.setup_intents["seti_ach"],
+        consent_context=AutopayConsentCaptureContext(
+            source="parent_checkout_status",
+            actor_id="p1",
+            ip="203.0.113.10",
+            user_agent="pytest-browser",
+        ),
+    )
+
+    assert len(consents.consents) == 1
+    consent = consents.consents[0]
+    assert consent.method_type == "us_bank_account"
+    assert consent.ach_mandate_version == "ach-v4"
+    assert consent.card_disclosure_version is None
+    assert consent.source == "parent_checkout_status"
+    assert consent.actor_id == "p1"
+    assert consent.ip == "203.0.113.10"
+    assert consent.user_agent == "pytest-browser"
+    event = outbox.events[0]
+    assert event.name == "Billing.AutopayConsentCaptured"
+    assert event.aggregate_id == consent.consent_id
+    assert event.payload.consent_id == consent.consent_id
+    assert event.payload.method_type == "us_bank_account"
+    assert event.payload.ach_mandate_version == "ach-v4"
+    assert event.payload.card_disclosure_version is None
+    assert event.payload.source == "parent_checkout_status"
 
 
 @pytest.mark.asyncio

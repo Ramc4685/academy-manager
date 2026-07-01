@@ -1,0 +1,35 @@
+# autopay slice f consent log
+
+## Current State
+
+Status: active
+
+## Problem
+
+Append-only autopay consent log with ACH/card disclosure versions and outbox event
+
+## Changed Files
+
+- None recorded yet.
+
+## Log
+
+- 2026-07-01T11:26:14 main/NA: Task ledger created.
+- 2026-07-01T11:26:21 main/working: Slice F worktree created at .worktrees/slice-f from main e31f90e5; migration 0141 assigned for autopay_consents/outbox schema if needed; implementer dispatch pending.
+- 2026-07-01T11:28:35 main/working: Starting Slice F. Required requirements file docs/requirements/2026-06-30-autopay-ach-card-fee-requirements-review-v2.md is missing in this worktree; using active ledger, event rules, backend/architecture/test rules, tickets README, and Slice F plan section while locating any renamed copy.
+- 2026-07-01T11:30:29 main/working: Plan: add AutopayConsent domain/repo/event, capture consent in CompleteAutopaySetup with ACH-vs-card version defaults, thread parent checkout-status request metadata, add migration 0141, and cover append-only/outbox/schema/interface/isolation tests. Risk: existing setup path has no transaction helper; keep event emission in same use-case write path using existing outbox pattern.
+- 2026-07-01T11:39:02 main/done: DoD: Slice F implemented with append-only autopay_consents, ACH-vs-card version selection/defaults, parent_billing_customers current consent projection, Billing.AutopayConsentCaptured outbox emission in CompleteAutopaySetup, parent route source/actor/IP/UA forwarding, migration 0141, and focused/required verification recorded. Residual risk: existing setup write path still lacks a repo-wide Mongo transaction helper; consent + outbox are emitted in the same use-case path using the existing outbox mechanics.
+## Verification
+
+- No verification recorded yet.
+- 2026-07-01T11:31:46: RED: focused pytest for new Slice F tests failed as expected at collection: cannot import AutopayConsentCaptureContext from parent_billing.py (consent APIs not implemented yet). Command: source backend/.venv/bin/activate && PYTHONPATH=. python -m pytest backend/v2/tests/application/test_parent_billing_portal.py::test_complete_autopay_setup_appends_new_consent_row_on_reconsent backend/v2/tests/application/test_parent_billing_portal.py::test_complete_autopay_setup_emits_consent_event_with_method_version_and_source backend/v2/tests/unit/test_autopay_consent_events.py backend/v2/tests/contract/test_autopay_consent_repo.py backend/v2/tests/interface/test_parent_sessions_checkout.py::test_parent_reads_checkout_status_with_request_consent_metadata -q
+- 2026-07-01T11:36:46: GREEN focused: 6 Slice F tests passed (append-only re-consent, outbox event payload/source, event schema, Mongo tenant isolation, parent route request metadata). Compile check passed for edited backend modules. git diff --check clean.
+- 2026-07-01T11:36:56: Broader targeted run attempt failed to collect because two webhook test node IDs were stale/not found; locating current names and rerunning. No product-code failure observed in that attempt.
+- 2026-07-01T11:37:14: Broader targeted GREEN: PYTHONPATH=. python -m pytest backend/v2/tests/application/test_parent_billing_portal.py selected webhook setup-completion tests backend/v2/tests/contract/test_autopay_consent_repo.py backend/v2/tests/unit/test_autopay_consent_events.py backend/v2/tests/interface/test_parent_sessions_checkout.py -q => 28 passed, 1 existing StarletteDeprecationWarning.
+- 2026-07-01T11:37:22: Ruff precheck found import ordering in parent.py/parent_billing.py and formatting in parent_billing.py; applying ruff check --fix and ruff format, then rerunning tests.
+- 2026-07-01T11:37:41: Post-format targeted GREEN: 28 passed, 1 existing StarletteDeprecationWarning. ruff check backend/v2 passed; ruff format --check backend/v2 passed; lint-imports --config backend/pyproject.toml passed (4 contracts kept).
+- 2026-07-01T11:38:31: Required full backend test: source backend/.venv/bin/activate && PYTHONPATH=. python -m pytest backend/v2/tests -q => 1913 passed, 1 failed, 5 warnings. The sole failure is the known/allowed bootstrap cwd-path FileNotFoundError in test_bootstrap_source_does_not_reference_default_academy_id reading v2/contexts/... from repo root.
+- 2026-07-01T11:38:37: Required static checks: ruff check backend/v2 passed; ruff format --check backend/v2 passed; lint-imports --config backend/pyproject.toml passed (domain/application/infrastructure/interface contracts kept). git diff --check passed.
+## Reusable Lessons
+
+- None recorded yet.

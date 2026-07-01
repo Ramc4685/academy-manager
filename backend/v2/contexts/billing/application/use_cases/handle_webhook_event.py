@@ -18,6 +18,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 
 from backend.v2.contexts.billing.application.ports import (
+    AutopayConsentRepository,
     EnrollmentAutopayStateRepository,
     EnrollmentBillingIdentity,
     EnrollmentBillingIdentityRepository,
@@ -33,6 +34,7 @@ from backend.v2.contexts.billing.application.use_cases.checkout_allocation impor
     allocate_checkout_payment_across_invoices,
 )
 from backend.v2.contexts.billing.application.use_cases.parent_billing import (
+    AutopayConsentCaptureContext,
     CompleteAutopaySetup,
 )
 from backend.v2.contexts.billing.domain.errors import InvalidWebhookSignature, PaymentNotFound
@@ -112,6 +114,7 @@ class HandleWebhookEvent:
         billing_settings: Any | None = None,
         parent_customers: ParentStripeCustomerRepository | None = None,
         enrollment_autopay: EnrollmentAutopayStateRepository | None = None,
+        consent_repo: AutopayConsentRepository | None = None,
         enrollment_identity: EnrollmentBillingIdentityRepository | None = None,
         invoice_processing: StripeInvoiceProcessingRepository | None = None,
         connected_accounts: AccountAcademyResolver | None = None,
@@ -128,6 +131,7 @@ class HandleWebhookEvent:
         self._billing_settings = billing_settings
         self._parent_customers = parent_customers
         self._enrollment_autopay = enrollment_autopay
+        self._consent_repo = consent_repo
         self._enrollment_identity = enrollment_identity
         self._invoice_processing = invoice_processing
         self._connected_accounts = connected_accounts
@@ -141,6 +145,8 @@ class HandleWebhookEvent:
                 stripe=stripe,
                 parent_customers=parent_customers,
                 enrollment_autopay=enrollment_autopay,
+                consent_repo=consent_repo,
+                outbox=outbox,
                 academy_id=academy_id,
                 clock=clock,
             )
@@ -440,7 +446,10 @@ class HandleWebhookEvent:
             raise _QuarantineStripeEvent("autopay setup completion dependencies are missing")
         checkout = event["data"]["object"]
         try:
-            await self._complete_autopay_setup.execute_from_checkout(checkout)
+            await self._complete_autopay_setup.execute_from_checkout(
+                checkout,
+                consent_context=AutopayConsentCaptureContext(source="stripe_webhook"),
+            )
         except PaymentNotFound as exc:
             raise _QuarantineStripeEvent(str(exc)) from exc
         except ValueError as exc:
@@ -451,7 +460,10 @@ class HandleWebhookEvent:
             raise _QuarantineStripeEvent("autopay setup completion dependencies are missing")
         setup_intent = event["data"]["object"]
         try:
-            await self._complete_autopay_setup.execute_from_setup_intent(setup_intent)
+            await self._complete_autopay_setup.execute_from_setup_intent(
+                setup_intent,
+                consent_context=AutopayConsentCaptureContext(source="setup_intent_webhook"),
+            )
         except PaymentNotFound as exc:
             raise _QuarantineStripeEvent(str(exc)) from exc
         except ValueError as exc:

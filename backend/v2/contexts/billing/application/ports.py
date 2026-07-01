@@ -19,7 +19,12 @@ from backend.v2.contexts.billing.domain.ledger import (
     LedgerPayment,
     PaymentAllocation,
 )
-from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment, Subscription
+from backend.v2.contexts.billing.domain.models import (
+    AutopayConsent,
+    CreditLedgerEntry,
+    Payment,
+    Subscription,
+)
 from backend.v2.contexts.billing.domain.proration import (
     BillingCalculationSnapshot,
     BillingPeriod,
@@ -62,7 +67,16 @@ class ParentStripeCustomerRepository(Protocol):
         setup_intent_id: str,
         checkout_session_id: str | None,
         completed_at: datetime,
+        current_consent_id: str | None = None,
+        consent_text_version: str | None = None,
+        ach_mandate_version: str | None = None,
+        card_disclosure_version: str | None = None,
     ) -> None: ...
+
+
+class AutopayConsentRepository(Protocol):
+    async def append(self, consent: AutopayConsent) -> AutopayConsent: ...
+    async def list_for_parent(self, *, parent_id: str) -> list[AutopayConsent]: ...
 
 
 class EnrollmentAutopayStateRepository(Protocol):

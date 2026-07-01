@@ -80,6 +80,7 @@ class _ParentUseCases:
         self.list_available_sessions = _ListAvailableSessions()
         self.checkout_calls: list[dict[str, str]] = []
         self.autopay_calls: list[dict[str, str]] = []
+        self.checkout_status_calls: list[dict[str, str | None]] = []
 
     async def start_checkout_for_application(
         self,
@@ -125,7 +126,26 @@ class _ParentUseCases:
     async def open_billing_portal(self, *, parent_id: str, return_url: str):
         return {"redirect_url": f"https://fake.stripe.com/portal/{parent_id}?return={return_url}"}
 
-    async def get_checkout_status(self, *, parent_id: str, checkout_session_id: str):
+    async def get_checkout_status(
+        self,
+        *,
+        parent_id: str,
+        checkout_session_id: str,
+        source: str | None = None,
+        actor_id: str | None = None,
+        ip: str | None = None,
+        user_agent: str | None = None,
+    ):
+        self.checkout_status_calls.append(
+            {
+                "parent_id": parent_id,
+                "checkout_session_id": checkout_session_id,
+                "source": source,
+                "actor_id": actor_id,
+                "ip": ip,
+                "user_agent": user_agent,
+            }
+        )
         return {
             "checkout_session_id": checkout_session_id,
             "payment_id": "pay-status",
@@ -270,13 +290,26 @@ def test_parent_opens_billing_portal() -> None:
     assert response.json()["redirect_url"].startswith("https://fake.stripe.com/portal/parent-1")
 
 
-def test_parent_reads_checkout_status() -> None:
-    with _make_client() as (client, _):
-        response = client.get("/api/v2/parent/checkout/status/cs_status")
+def test_parent_reads_checkout_status_with_request_consent_metadata() -> None:
+    with _make_client() as (client, use_cases):
+        response = client.get(
+            "/api/v2/parent/checkout/status/cs_status",
+            headers={"user-agent": "pytest-browser", "x-forwarded-for": "203.0.113.10"},
+        )
 
     assert response.status_code == 200, response.text
     assert response.json()["checkout_session_id"] == "cs_status"
     assert response.json()["status"] == "pending"
+    assert use_cases.checkout_status_calls == [
+        {
+            "parent_id": "parent-1",
+            "checkout_session_id": "cs_status",
+            "source": "parent_checkout_status",
+            "actor_id": "parent-1",
+            "ip": "203.0.113.10",
+            "user_agent": "pytest-browser",
+        }
+    ]
 
 
 @pytest.mark.asyncio

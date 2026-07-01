@@ -229,19 +229,30 @@ class FakeParentStripeCustomers:
         setup_intent_id: str,
         checkout_session_id: str | None,
         completed_at: datetime,
+        current_consent_id: str | None = None,
+        consent_text_version: str | None = None,
+        ach_mandate_version: str | None = None,
+        card_disclosure_version: str | None = None,
     ) -> None:
-        self.default_methods.append(
-            {
-                "parent_id": parent_id,
-                "stripe_customer_id": stripe_customer_id,
-                "stripe_payment_method_id": stripe_payment_method_id,
-                "payment_method_type": payment_method_type,
-                "stripe_mandate_id": stripe_mandate_id,
-                "setup_intent_id": setup_intent_id,
-                "checkout_session_id": checkout_session_id,
-                "completed_at": completed_at,
-            }
-        )
+        row = {
+            "parent_id": parent_id,
+            "stripe_customer_id": stripe_customer_id,
+            "stripe_payment_method_id": stripe_payment_method_id,
+            "payment_method_type": payment_method_type,
+            "stripe_mandate_id": stripe_mandate_id,
+            "setup_intent_id": setup_intent_id,
+            "checkout_session_id": checkout_session_id,
+            "completed_at": completed_at,
+        }
+        if current_consent_id:
+            row["current_consent_id"] = current_consent_id
+        if consent_text_version:
+            row["consent_text_version"] = consent_text_version
+        if ach_mandate_version:
+            row["ach_mandate_version"] = ach_mandate_version
+        if card_disclosure_version:
+            row["card_disclosure_version"] = card_disclosure_version
+        self.default_methods.append(row)
 
 
 class FakeEnrollmentAutopayState:

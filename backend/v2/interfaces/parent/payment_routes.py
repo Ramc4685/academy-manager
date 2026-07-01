@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from backend.v2.interfaces.parent.deps import ParentUseCases, get_parent_use_cases
 from backend.v2.interfaces.parent.views import (
@@ -133,14 +133,26 @@ async def open_billing_portal(
 )
 async def checkout_status(
     checkout_session_id: str,
+    request: Request,
     claims: AuthClaims = Depends(require_persona("parent")),
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> CheckoutStatusResponse:
     result = await use_cases.get_checkout_status(  # type: ignore[operator]
         parent_id=claims.user_id,
         checkout_session_id=checkout_session_id,
+        source="parent_checkout_status",
+        actor_id=claims.user_id,
+        ip=_request_ip(request),
+        user_agent=request.headers.get("user-agent"),
     )
     return CheckoutStatusResponse(**result)
+
+
+def _request_ip(request: Request) -> str | None:
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip() or None
+    return request.client.host if request.client else None
 
 
 @router.get(

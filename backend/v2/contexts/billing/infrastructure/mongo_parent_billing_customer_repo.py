@@ -51,6 +51,10 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
         setup_intent_id: str,
         checkout_session_id: str | None,
         completed_at: datetime,
+        current_consent_id: str | None = None,
+        consent_text_version: str | None = None,
+        ach_mandate_version: str | None = None,
+        card_disclosure_version: str | None = None,
     ) -> None:
         now = datetime.now(UTC)
         update: dict[str, object] = {
@@ -62,15 +66,33 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
             "autopay_setup_completed_at": completed_at,
             "updated_at": now,
         }
+        if current_consent_id:
+            update["current_autopay_consent_id"] = current_consent_id
+        if consent_text_version:
+            update["current_consent_text_version"] = consent_text_version
+        if ach_mandate_version:
+            update["current_ach_mandate_version"] = ach_mandate_version
+            update.pop("current_card_disclosure_version", None)
+        if card_disclosure_version:
+            update["current_card_disclosure_version"] = card_disclosure_version
+            update.pop("current_ach_mandate_version", None)
         if stripe_mandate_id:
             update["stripe_mandate_id"] = stripe_mandate_id
         if checkout_session_id:
             update["autopay_setup_checkout_session_id"] = checkout_session_id
+        unset: dict[str, str] = {}
+        if ach_mandate_version:
+            unset["current_card_disclosure_version"] = ""
+        if card_disclosure_version:
+            unset["current_ach_mandate_version"] = ""
+        mutation: dict[str, object] = {
+            "$set": update,
+            "$setOnInsert": {"created_at": now},
+        }
+        if unset:
+            mutation["$unset"] = unset
         await self._update_one(
             {"parent_id": parent_id},
-            {
-                "$set": update,
-                "$setOnInsert": {"created_at": now},
-            },
+            mutation,
             upsert=True,
         )

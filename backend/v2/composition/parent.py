@@ -26,6 +26,7 @@ from backend.v2.contexts.billing.application.use_cases.handle_webhook_event impo
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
 from backend.v2.contexts.billing.application.use_cases.parent_billing import (
+    AutopayConsentCaptureContext,
     CreateCustomerPortalSession,
     CreateCustomerPortalSessionCommand,
     GetCheckoutStatus,
@@ -42,6 +43,9 @@ from backend.v2.contexts.billing.application.use_cases.start_checkout import (
     StartCheckoutCommand,
 )
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine
+from backend.v2.contexts.billing.infrastructure.mongo_autopay_consent_repo import (
+    MongoAutopayConsentRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_billing_counter_repo import (
     MongoBillingCounterRepository,
 )
@@ -208,6 +212,7 @@ def compose_parent_webhook_handler(
     payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
     subscriptions_repo = MongoSubscriptionRepository(db)
     parent_customers_repo = MongoParentBillingCustomerRepository(db)
+    autopay_consents_repo = MongoAutopayConsentRepository(db)
     student_billing_enrollments = MongoStudentBillingEnrollmentRepository(db)
     connected_accounts_repo = MongoConnectedAccountRepository(db)
     dedup = MongoStripeEventDedup(db)
@@ -262,6 +267,7 @@ def compose_parent_webhook_handler(
         billing_settings=billing_settings_repo,
         parent_customers=parent_customers_repo,
         enrollment_autopay=_EnrollmentAutopayState(),
+        consent_repo=autopay_consents_repo,
         enrollment_identity=_EnrollmentBillingIdentity(),
         invoice_processing=invoice_processing,
         connected_accounts=_ConnectAccountResolver(connected_accounts_repo, academy_id),
@@ -294,6 +300,7 @@ def compose_parent(
     payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
     subscriptions_repo = MongoSubscriptionRepository(db)
     parent_customers_repo = MongoParentBillingCustomerRepository(db)
+    autopay_consents_repo = MongoAutopayConsentRepository(db)
     student_billing_enrollments = MongoStudentBillingEnrollmentRepository(db)
     connected_accounts_repo = MongoConnectedAccountRepository(db)
     session_types_repo = MongoSessionTypeRepository(db)
@@ -364,6 +371,8 @@ def compose_parent(
         stripe=stripe,
         parent_customers=parent_customers_repo,
         enrollment_autopay=enrollment_autopay_state,
+        consent_repo=autopay_consents_repo,
+        outbox=outbox,
         academy_id=academy_id,
     )
 
@@ -378,6 +387,7 @@ def compose_parent(
         billing_settings=billing_settings_repo,
         parent_customers=parent_customers_repo,
         enrollment_autopay=enrollment_autopay_state,
+        consent_repo=autopay_consents_repo,
         enrollment_identity=enrollment_identity,
         invoice_processing=invoice_processing,
         connected_accounts=_ConnectAccountResolver(connected_accounts_repo, academy_id),
@@ -1035,8 +1045,25 @@ def compose_parent(
         )
         return result.model_dump()
 
-    async def get_checkout_status(*, parent_id: str, checkout_session_id: str):
-        result = await checkout_status.execute(checkout_session_id, parent_id=parent_id)
+    async def get_checkout_status(
+        *,
+        parent_id: str,
+        checkout_session_id: str,
+        source: str | None = None,
+        actor_id: str | None = None,
+        ip: str | None = None,
+        user_agent: str | None = None,
+    ):
+        result = await checkout_status.execute(
+            checkout_session_id,
+            parent_id=parent_id,
+            consent_context=AutopayConsentCaptureContext(
+                source=source or "unknown",
+                actor_id=actor_id,
+                ip=ip,
+                user_agent=user_agent,
+            ),
+        )
         return result.model_dump()
 
     async def get_registration_waiver():
