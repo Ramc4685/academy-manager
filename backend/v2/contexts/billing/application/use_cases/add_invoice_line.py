@@ -9,7 +9,9 @@ Mode B — ``student_id`` + ``period`` provided, ``invoice_id=None``:
     Looks up the student's open invoice for that period.  If none exists,
     creates a new ``LedgerInvoice(status="open")`` with a deterministic
     ``invoice_id = f"inv-{student_id}-{period}"`` and saves it, then adds
-    the line to that invoice.
+    the line to that invoice. A fresh invoice also mints ``invoice_number``
+    (Slice D) via the atomic per-academy/month counter and the academy's
+    configured prefix — see ``format_invoice_number``.
 """
 
 from __future__ import annotations
@@ -19,12 +21,17 @@ from datetime import UTC, date, datetime, timedelta
 
 from pydantic import BaseModel, Field, model_validator
 
-from backend.v2.contexts.billing.application.ports import LedgerRepository
+from backend.v2.contexts.billing.application.ports import (
+    BillingCounterRepository,
+    BillingSettingsRepository,
+    LedgerRepository,
+)
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
     InvoiceLineAdded,
     LedgerInvoice,
     add_line,
+    format_invoice_number,
 )
 from backend.v2.shared.ids import new_ulid
 
@@ -81,9 +88,13 @@ class AddInvoiceLine:
         self,
         *,
         ledger: LedgerRepository,
+        counters: BillingCounterRepository | None = None,
+        settings: BillingSettingsRepository | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._ledger = ledger
+        self._counters = counters
+        self._settings = settings
         self._clock = clock
 
     async def execute(self, cmd: AddInvoiceLineCommand) -> AddInvoiceLineResult:
@@ -152,6 +163,10 @@ class AddInvoiceLine:
         else:
             due_date = date(year, month + 1, 1) - timedelta(days=1)
 
+        invoice_number = await self._mint_invoice_number(
+            academy_id=cmd.academy_id, period=cmd.period
+        )
+
         new_invoice = LedgerInvoice(
             invoice_id=invoice_id,
             academy_id=cmd.academy_id,
@@ -165,6 +180,7 @@ class AddInvoiceLine:
             balance_due_cents=0,
             currency="usd",
             due_date=due_date,
+            invoice_number=invoice_number,
             created_at=now,
             updated_at=now,
         )
@@ -176,3 +192,19 @@ class AddInvoiceLine:
             cmd.period,
         )
         return saved
+
+    async def _mint_invoice_number(self, *, academy_id: str, period: str) -> str | None:
+        """Mint a human-facing invoice number for a brand-new invoice.
+
+        Returns ``None`` (rather than raising) when ``counters``/``settings`` were not
+        wired into this use case — callers that predate Slice D keep working unchanged,
+        just without an invoice_number. Once wired, minting is atomic and race-safe
+        (MongoBillingCounterRepository.next_value uses find_one_and_update + $inc), so
+        concurrent invoice creation for the same academy+month never collides.
+        """
+        if self._counters is None or self._settings is None:
+            return None
+        yyyymm = period.replace("-", "")
+        settings = await self._settings.get()
+        seq = await self._counters.next_value(scope=f"invoice:{academy_id}:{yyyymm}")
+        return format_invoice_number(prefix=settings.invoice_number_prefix, yyyymm=yyyymm, seq=seq)

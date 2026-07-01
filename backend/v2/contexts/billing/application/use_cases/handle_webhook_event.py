@@ -55,6 +55,7 @@ from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
     LedgerInvoice,
     LedgerPayment,
+    format_invoice_number,
 )
 from backend.v2.contexts.billing.domain.models import (
     Payment,
@@ -94,6 +95,8 @@ class HandleWebhookEvent:
         academy_id: str,
         billing_enrollments: StudentBillingEnrollmentRepository | None = None,
         billing_ledger: Any | None = None,
+        billing_counters: Any | None = None,
+        billing_settings: Any | None = None,
         parent_customers: ParentStripeCustomerRepository | None = None,
         enrollment_autopay: EnrollmentAutopayStateRepository | None = None,
         enrollment_identity: EnrollmentBillingIdentityRepository | None = None,
@@ -107,6 +110,8 @@ class HandleWebhookEvent:
         self._subscriptions = subscriptions
         self._billing_enrollments = billing_enrollments
         self._billing_ledger = billing_ledger
+        self._billing_counters = billing_counters
+        self._billing_settings = billing_settings
         self._parent_customers = parent_customers
         self._enrollment_autopay = enrollment_autopay
         self._enrollment_identity = enrollment_identity
@@ -1239,6 +1244,9 @@ class HandleWebhookEvent:
             invoice.get("amount_paid" if paid else "amount_due") or invoice.get("amount_due") or 0
         )
         period_label = self._invoice_period_label(invoice, now)
+        invoice_number = await self._mint_invoice_number(
+            academy_id=enrollment.academy_id, period=period_label
+        )
         ledger_invoice = await self._billing_ledger.create_invoice(
             LedgerInvoice(
                 invoice_id=invoice_id,
@@ -1254,6 +1262,7 @@ class HandleWebhookEvent:
                 balance_due_cents=amount_cents,
                 currency=str(invoice.get("currency") or "usd").lower(),
                 due_date=self._invoice_due_date(invoice, now),
+                invoice_number=invoice_number,
                 created_at=now,
                 updated_at=now,
             ),
@@ -1354,6 +1363,24 @@ class HandleWebhookEvent:
             except (TypeError, ValueError, OSError):
                 pass
         return (now + timedelta(days=30)).date()
+
+    async def _mint_invoice_number(self, *, academy_id: str, period: str) -> str | None:
+        """Mint a human-facing invoice number for a brand-new ledger invoice (Slice D).
+
+        Returns ``None`` when ``billing_counters``/``billing_settings`` were not wired
+        into this use case — composition roots that predate Slice D keep working
+        unchanged. ``period`` is the ``YYYY-MM`` billing-period label already computed
+        by ``_invoice_period_label``; the counter scope keys on academy+month so the
+        sequence resets every month and never collides across academies (gaps from
+        voided/failed invoices are expected and allowed — see LedgerInvoice.invoice_number
+        docstring).
+        """
+        if self._billing_counters is None or self._billing_settings is None:
+            return None
+        yyyymm = period.replace("-", "")
+        settings = await self._billing_settings.get()
+        seq = await self._billing_counters.next_value(scope=f"invoice:{academy_id}:{yyyymm}")
+        return format_invoice_number(prefix=settings.invoice_number_prefix, yyyymm=yyyymm, seq=seq)
 
     @staticmethod
     def _invoice_payload(

@@ -42,8 +42,14 @@ from backend.v2.contexts.billing.application.use_cases.start_checkout import (
     StartCheckoutCommand,
 )
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine
+from backend.v2.contexts.billing.infrastructure.mongo_billing_counter_repo import (
+    MongoBillingCounterRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
+    MongoBillingSettingsRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
     MongoCreditLedgerRepository,
@@ -194,6 +200,8 @@ def compose_parent_webhook_handler(
 
     credits_repo = MongoCreditLedgerRepository(db)
     billing_ledger_repo = MongoBillingLedgerRepository(db)
+    billing_counters_repo = MongoBillingCounterRepository(db)
+    billing_settings_repo = MongoBillingSettingsRepository(db)
     payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
     subscriptions_repo = MongoSubscriptionRepository(db)
     parent_customers_repo = MongoParentBillingCustomerRepository(db)
@@ -244,6 +252,8 @@ def compose_parent_webhook_handler(
         subscriptions=subscriptions_repo,
         billing_enrollments=student_billing_enrollments,
         billing_ledger=billing_ledger_repo,
+        billing_counters=billing_counters_repo,
+        billing_settings=billing_settings_repo,
         parent_customers=parent_customers_repo,
         enrollment_autopay=_EnrollmentAutopayState(),
         enrollment_identity=_EnrollmentBillingIdentity(),
@@ -272,6 +282,8 @@ def compose_parent(
     # Billing
     credits_repo = MongoCreditLedgerRepository(db)
     billing_ledger_repo = MongoBillingLedgerRepository(db)
+    billing_counters_repo = MongoBillingCounterRepository(db)
+    billing_settings_repo = MongoBillingSettingsRepository(db)
     payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
     subscriptions_repo = MongoSubscriptionRepository(db)
     parent_customers_repo = MongoParentBillingCustomerRepository(db)
@@ -352,6 +364,8 @@ def compose_parent(
         subscriptions=subscriptions_repo,
         billing_enrollments=student_billing_enrollments,
         billing_ledger=billing_ledger_repo,
+        billing_counters=billing_counters_repo,
+        billing_settings=billing_settings_repo,
         parent_customers=parent_customers_repo,
         enrollment_autopay=enrollment_autopay_state,
         enrollment_identity=enrollment_identity,

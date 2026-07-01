@@ -119,12 +119,33 @@ class FakeLedgerRepo:
         )
 
 
+class FakeBillingCounterRepo:
+    def __init__(self) -> None:
+        self._seqs: dict[str, int] = {}
+
+    async def next_value(self, *, scope: str) -> int:
+        self._seqs[scope] = self._seqs.get(scope, 0) + 1
+        return self._seqs[scope]
+
+
+class FakeBillingSettingsRepo:
+    def __init__(self, prefix: str = "BLNO") -> None:
+        self._prefix = prefix
+
+    async def get(self):
+        from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+
+        return BillingSettings(academy_id="acad", invoice_number_prefix=self._prefix)
+
+
 def _build(
     *,
     payments=None,
     enrollments=None,
     ledger=None,
     outbox=None,
+    counters=None,
+    settings=None,
 ) -> HandleWebhookEvent:
     return HandleWebhookEvent(
         stripe=FakeStripeGateway(),
@@ -133,6 +154,8 @@ def _build(
         subscriptions=FakeSubscriptionRepo(),
         billing_enrollments=enrollments,
         billing_ledger=ledger,
+        billing_counters=counters,
+        billing_settings=settings,
         outbox=outbox or FakeOutbox(),
         academy_id="acad",
         clock=_now,
@@ -192,6 +215,103 @@ async def test_invoice_paid_for_session_type_subscription_writes_ledger_and_skip
     assert ledger.payments["ledger-pay-in_123"].stripe_payment_intent_id == "pi_123"
     assert ledger.allocations[0]["invoice_id"] == "ledger-in_123"
     assert [event.name for event in outbox.events] == ["Billing.InvoicePaid"]
+
+
+@pytest.mark.asyncio
+async def test_invoice_paid_for_session_type_subscription_mints_invoice_number() -> None:
+    """Slice D: when billing_counters/billing_settings are wired, the ledger invoice
+    created from a Stripe subscription invoice gets a minted invoice_number."""
+    enrollments = FakeBillingEnrollmentRepo()
+    ledger = FakeLedgerRepo()
+    enrollments.seed(
+        StudentBillingEnrollment(
+            enrollment_id="bill-1",
+            academy_id="acad",
+            student_id="student-1",
+            parent_id="parent-1",
+            session_type_id="type-elite",
+            stripe_subscription_id="sub_123",
+            billing_start_date=_now(),
+            enrolled_at=_now(),
+            updated_at=_now(),
+        )
+    )
+    uc = _build(
+        enrollments=enrollments,
+        ledger=ledger,
+        counters=FakeBillingCounterRepo(),
+        settings=FakeBillingSettingsRepo(prefix="ACAD"),
+    )
+
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_paid_session_type_number",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_555",
+                        "subscription": "sub_123",
+                        "payment_intent": "pi_555",
+                        "amount_paid": 20_000,
+                        "amount_due": 20_000,
+                        "currency": "usd",
+                        "period_start": 1_779_120_000,
+                        "period_end": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert ledger.invoices["ledger-in_555"].invoice_number == "ACAD-202605-001"
+
+
+@pytest.mark.asyncio
+async def test_invoice_paid_without_counters_leaves_invoice_number_none() -> None:
+    """Backward compatible: callers that don't wire counters/settings still work,
+    just without a minted invoice_number (None)."""
+    enrollments = FakeBillingEnrollmentRepo()
+    ledger = FakeLedgerRepo()
+    enrollments.seed(
+        StudentBillingEnrollment(
+            enrollment_id="bill-1",
+            academy_id="acad",
+            student_id="student-1",
+            parent_id="parent-1",
+            session_type_id="type-elite",
+            stripe_subscription_id="sub_123",
+            billing_start_date=_now(),
+            enrolled_at=_now(),
+            updated_at=_now(),
+        )
+    )
+    uc = _build(enrollments=enrollments, ledger=ledger)
+
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_paid_no_counters",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_556",
+                        "subscription": "sub_123",
+                        "payment_intent": "pi_556",
+                        "amount_paid": 20_000,
+                        "amount_due": 20_000,
+                        "currency": "usd",
+                        "period_start": 1_779_120_000,
+                        "period_end": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert ledger.invoices["ledger-in_556"].invoice_number is None
 
 
 @pytest.mark.asyncio

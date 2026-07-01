@@ -109,7 +109,7 @@ async def list_billing_invoices(
         balance = int(inv.get("balance_due_cents", 0))
         invoices.append(
             InvoiceDto(
-                invoice_number=str(inv.get("invoice_id", "")),
+                invoice_number=str(inv.get("invoice_number") or inv.get("invoice_id", "")),
                 period=str(inv.get("period", "")),
                 lines=lines,
                 total_cents=total,

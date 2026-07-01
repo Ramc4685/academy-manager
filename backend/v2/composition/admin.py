@@ -93,8 +93,14 @@ from backend.v2.contexts.billing.domain.product import Product
 from backend.v2.contexts.billing.infrastructure.mongo_billing_audit_log import (
     MongoBillingAuditLogRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_billing_counter_repo import (
+    MongoBillingCounterRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
+    MongoBillingSettingsRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
     MongoCreditLedgerRepository,
@@ -2523,6 +2529,8 @@ def compose_admin(
 
     # Billing
     billing_ledger_repo = MongoBillingLedgerRepository(db)
+    billing_counters_repo = MongoBillingCounterRepository(db)
+    billing_settings_repo = MongoBillingSettingsRepository(db)
     credits_repo = MongoCreditLedgerRepository(db)
     tuition_discounts_repo = MongoTuitionDiscountRepository(db)
     payments_repo = MongoPaymentRepository(
@@ -2874,7 +2882,11 @@ def compose_admin(
         unit_amount_cents: int,
         product_id: str | None,
     ) -> dict[str, Any]:
-        result = await AddInvoiceLine(ledger=billing_ledger_repo).execute(
+        result = await AddInvoiceLine(
+            ledger=billing_ledger_repo,
+            counters=billing_counters_repo,
+            settings=billing_settings_repo,
+        ).execute(
             AddInvoiceLineCommand(
                 invoice_id=invoice_id,
                 description=description,

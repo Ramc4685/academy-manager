@@ -7,6 +7,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel
 
+from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
     LedgerAllocationResult,
@@ -376,6 +377,18 @@ class StudentBillingEnrollmentRepository(Protocol):
     async def get_by_stripe_subscription(
         self, stripe_subscription_id: str
     ) -> StudentBillingEnrollment | None: ...
+
+
+class BillingCounterRepository(Protocol):
+    """Port for atomic per-academy counters (Slice S0/D — e.g. invoice numbering)."""
+
+    async def next_value(self, *, scope: str) -> int: ...
+
+
+class BillingSettingsRepository(Protocol):
+    """Port for academy-scoped billing configuration (Slice S0/D)."""
+
+    async def get(self) -> BillingSettings: ...
 
 
 class LedgerRepository(Protocol):
