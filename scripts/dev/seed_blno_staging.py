@@ -6,7 +6,7 @@ Creates all BLNO data in one shot:
   Users         Admin + 2 coaches + 36 parent accounts (Firebase emulator auth)
   Students      46 students linked to parents
   Sessions      4 recurring weekly classes (Wed + Thu)
-  Occurrences   Apr 1 - Jun 30 2026 (past = completed, future = scheduled)
+  Occurrences   Rolling local season window (past = completed, future = scheduled)
   Enrollments   All active / hold students
   Attendance    All past occurrences (~88% present, coach + student)
   Coach rates   30% revenue-share on expected revenue
@@ -79,10 +79,12 @@ ADMIN_PASSWORD = "Admin@12345"
 COACH_PASSWORD = "Coach@12345"
 PARENT_PASSWORD = "Parent@12345"
 
-# Season date range for occurrences
-SEASON_START = dt.date(2026, 4, 1)
-SEASON_END = dt.date(2026, 6, 30)
-TODAY = dt.date(2026, 6, 16)  # splits past (completed) from future (scheduled)
+# Season date range for recurring session templates and generated occurrences.
+# Keep this rolling so local Docker registration tests do not expire when the
+# fixed BLNO billing sample months age past the runtime clock.
+TODAY = dt.datetime.now(CHICAGO).date()
+SEASON_START = TODAY - dt.timedelta(days=90)
+SEASON_END = TODAY + dt.timedelta(days=120)
 
 
 # ── safety guard ──────────────────────────────────────────────────────────────
@@ -1285,8 +1287,14 @@ def main() -> None:
         for date in all_weekdays(SEASON_START, SEASON_END, sdef["weekday"]):
             oid = occ_id(sdef["key"], date)
             is_past = date < TODAY
+            start_at = chicago_to_utc(date, sdef["start_time"])
+            end_at = chicago_to_utc(date, sdef["end_time"])
             db.session_occurrences.find_one_and_update(
-                {"occurrence_id": oid},
+                {
+                    "academy_id": ACADEMY_ID,
+                    "session_id": sid,
+                    "start_at": start_at,
+                },
                 {
                     "$setOnInsert": {
                         "occurrence_id": oid,
@@ -1297,8 +1305,8 @@ def main() -> None:
                     },
                     "$set": {
                         "updated_at": ts,
-                        "start_at": chicago_to_utc(date, sdef["start_time"]),
-                        "end_at": chicago_to_utc(date, sdef["end_time"]),
+                        "start_at": start_at,
+                        "end_at": end_at,
                         "status": "completed" if is_past else "scheduled",
                         "scheduled_coach_id": c_uid,
                         "actual_coach_id": c_uid if is_past else None,

@@ -8,10 +8,11 @@ SaaS mode (``saas_mode=True``)
 ------------------------------
 * ``academy_id`` is required at the call site (resolved by the route
   from the request host).
-* Creates the global ``User`` row plus an invited ``AcademyMembership``
-  row ``(academy_id, user_id, roles=("parent",), status="invited")``.
-  Public self-registration does not grant active tenant access; admin
-  approval must activate the membership.
+* Creates the global ``User`` row plus an active ``AcademyMembership``
+  row ``(academy_id, user_id, roles=("parent",), status="active")`` so
+  the verified parent can immediately continue into onboarding. Admin
+  approval still applies to the submitted registration application, not
+  to the parent portal membership itself.
 * ``User.academy_id`` is set to the resolved tenant on first insert
   (legacy field; SaaS reads come from the membership). Existing users
   keep their original ``User.academy_id``; multi-tenant access is
@@ -31,6 +32,7 @@ the resolved tenant in SaaS mode).
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel
@@ -127,14 +129,19 @@ class RegisterPublicParent:
             existing_membership = await self._memberships.get_membership(
                 target_academy_id, user.user_id
             )
-            if existing_membership is None:
+            if existing_membership is None or existing_membership.status == "invited":
                 await self._memberships.upsert_membership(
                     AcademyMembership(
-                        membership_id=new_ulid(),
+                        membership_id=(
+                            existing_membership.membership_id
+                            if existing_membership is not None
+                            else new_ulid()
+                        ),
                         academy_id=target_academy_id,
                         user_id=user.user_id,
                         roles=("parent",),
-                        status="invited",
+                        status="active",
+                        accepted_at=datetime.now(UTC),
                     )
                 )
 

@@ -90,7 +90,7 @@ services:
       FIREBASE_AUTH_EMULATOR_HOST: "firebase-emulator:9099"
       # --- CORS / origins ---
       FRONTEND_URL: "http://localhost:3000"
-      CORS_ORIGINS: "http://localhost:3000,http://acme.localhost:3000,http://127.0.0.1:3000"
+      CORS_ORIGINS: "http://localhost:3000,http://acme.localhost:3000,http://blno-academy.localhost:3000,http://127.0.0.1:3000"
       # --- Email: never live in staging ---
       EMAIL_DELIVERY_MODE: "disabled"
       RESEND_API_KEY: ""
