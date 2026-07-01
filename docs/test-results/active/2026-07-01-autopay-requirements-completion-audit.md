@@ -17,7 +17,7 @@ Source: `/Users/ramc/Documents/Code/academy-manager/docs/requirements/2026-06-30
 | 1 | App-owned off-session recurring-charge mechanism | `enroll_child_in_session_type.py` starts setup checkout so the app owns future invoices and persists `stripe_subscription_id=None`; `ChargeInvoiceViaAutopay` owns off-session PI creation. | Code evidence supports complete. |
 | 2 | Default payment method write gap | `CompleteAutopaySetup` calls `set_customer_default_payment_method`; Stripe adapter writes `invoice_settings.default_payment_method`; parent projection is promoted only for active primary PMs. | Code evidence supports complete. |
 | 3 | Setup-completion tenant re-home, no subscription rows on setup path | Setup completion validates `academy_id`, parent, enrollment, SetupIntent, customer, and payment method from metadata/Stripe before persisting. | Code evidence supports complete. |
-| 4 | Delete 2 leftover historical `subscriptions` rows | This is production/data cleanup, not locally provable from the Slice H worktree. No production data operation was run in this audit. | External/unverified; do not claim full completion from local evidence. |
+| 4 | Delete 2 leftover historical `subscriptions` rows | Added `scripts/dev/cleanup_stale_tuition_subscriptions.py`, a dry-run-first utility that selects only incomplete setup-bookkeeping rows with no Stripe subscription id and requires explicit confirmation for deletion. No production data operation was run in this audit. | Cleanup path implemented; production deletion remains external/unverified. |
 | 5 | Split enrollment status from last attempt outcome, include `paused` | `domain/autopay_status.py` defines `autopay_enrollment_status` and `AutopayAttemptOutcome`; `MongoStudentBillingEnrollmentRepository` has guarded enrollment transitions and records attempt outcome independently. | Code evidence supports complete. |
 | 6 | Cycle/amount-scoped idempotency, dunning retry scope | PI keys are `autopay:{invoice}:{period}:{balance}` with optional `retry_scope`; attempt keys include invoice/period/amount/retry scope/status/PI. | Code evidence supports complete. |
 | 7 | Fee model aligned to cash-discount policy/funding type | `BillingSettings` stores academy-scoped ACH discount policy; `compute_ach_discount` applies only to ACH funding and fail-safes to no discount for card/debit/prepaid/unknown; card surcharge/processing fee is intentionally absent. | Code evidence supports complete for chosen cash-discount path. |
@@ -34,7 +34,7 @@ Source: `/Users/ramc/Documents/Code/academy-manager/docs/requirements/2026-06-30
 
 ## Current Audit Conclusion
 
-Implementation requirements visible from code are covered by current Slice H worktree commits through `f84874a8`. The one item not proved by local code is the historical production data cleanup of two leftover `subscriptions` rows. Because that evidence is external to this worktree and no production data operation was run, this ledger does not claim the entire broader goal is complete.
+Implementation requirements visible from code are covered by current Slice H worktree commits through `f84874a8`, with an additional safe cleanup utility added afterward for the historical subscriptions-row cleanup item. The actual production deletion of the two leftover `subscriptions` rows is still not proved by local code and was not run in this audit, so this ledger does not claim the entire broader goal is complete.
 
 The review document's §11 says the concrete edits are "to be made by the author, not here." This audit treats those edits as requirement-authoring guidance, while verifying the code outcomes requested by the checklist and subsequent slices.
 
@@ -42,12 +42,15 @@ The review document's §11 says the concrete edits are "to be made by the author
 
 - `test_result.md` — active ledger index updated by `scripts/dev/test_result.py start`.
 - `docs/test-results/active/2026-07-01-autopay-requirements-completion-audit.md` — checkpoint ledger for the requirement completion audit.
+- `scripts/dev/cleanup_stale_tuition_subscriptions.py` — dry-run-first audit/delete utility for stale tuition subscription setup rows.
+- `backend/v2/tests/unit/test_cleanup_stale_tuition_subscriptions.py` — unit coverage for candidate selection, defensive delete filter, and explicit apply confirmation.
 
 ## Log
 
 - 2026-07-01T14:59:18 main/NA: Task ledger created.
 - 2026-07-01T14:59:29 main/working: Checkpoint after Slice K: current worktree main/slice-h is at beca87c5. Requirement audit found current code evidence for status split, scoped idempotency, cash-discount fee policy, append-only consent, ACH pending/returns, dunning retry ladder, fallback method projection, invoice numbering, Connect routing, and billing-health dunning UI. No production code changed in this checkpoint.
 - 2026-07-01T15:04:13 main/working: Expanded audit in progress: derived 17 checklist items plus §11 deltas from the review doc. Current implementation evidence supports the code requirements; historical production subscriptions-row cleanup remains external/unverified from this worktree.
+- 2026-07-01T15:09:04 main/working: Added dry-run-first stale tuition subscription cleanup utility for the review checklist's historical subscriptions-row cleanup item. The script selects only incomplete setup bookkeeping rows with no Stripe subscription id and requires --confirm-delete-stale-subscriptions with --apply. No production deletion was run.
 ## Verification
 
 - No verification recorded yet.
@@ -55,6 +58,7 @@ The review document's §11 says the concrete edits are "to be made by the author
 - 2026-07-01T15:04:13: Full backend DoD: source backend/.venv/bin/activate && PYTHONPATH=. python -m pytest backend/v2/tests -q from repo root -> 1 failed, 1993 passed, 5 warnings; failure is known cwd-path bootstrap test FileNotFoundError for v2/contexts/... path. Same test from backend/ passed: 1 passed in 0.42s.
 - 2026-07-01T15:04:13: Backend lint/import gates passed: ruff check backend/v2 -> All checks passed; ruff format --check backend/v2 -> 757 files already formatted; lint-imports --config backend/pyproject.toml -> 4 contracts kept, 0 broken.
 - 2026-07-01T15:04:13: Frontend focused UI gates passed: pnpm typecheck; pnpm lint exited 0 with 5 existing warnings; pnpm exec playwright test e2e/specs/billing-health.spec.ts -> 8 passed.
+- 2026-07-01T15:09:04: Focused cleanup utility verification: RED first failed because scripts/dev/cleanup_stale_tuition_subscriptions.py did not exist; after implementation, PYTHONPATH=. python -m pytest backend/v2/tests/unit/test_cleanup_stale_tuition_subscriptions.py -q -> 3 passed. ruff check and ruff format --check on the script/test passed.
 ## Reusable Lessons
 
 - None recorded yet.
