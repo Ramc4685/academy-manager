@@ -28,28 +28,69 @@ function money(cents: number, currency = "USD"): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
 }
 
-function autopayStatusText(enrollment: { payment_mode: string | null; subscription_status: string | null }) {
-  const status = enrollment.subscription_status ?? "";
+function autopayStatusText(enrollment: {
+  payment_mode: string | null;
+  autopay_enrollment_status?: string | null;
+  last_attempt_outcome?: string | null;
+}) {
+  const status = enrollment.autopay_enrollment_status ?? "";
   if (enrollment.payment_mode !== "monthly") return "Manual payment";
-  if (["active", "trialing"].includes(status)) return `Autopay ${status}`;
-  if (status === "past_due") return "Autopay active, payment issue";
-  if (status === "incomplete") return "Payment setup pending";
-  if (status === "incomplete_expired") return "Payment setup expired";
-  if (status === "unpaid") return "Payment blocked";
-  if (status === "cancelled") return "Autopay off";
+  if (status === "active" && enrollment.last_attempt_outcome === "declined") {
+    return "Autopay active, payment issue";
+  }
+  if (status === "active" && enrollment.last_attempt_outcome === "requires_action") {
+    return "Autopay active, action needed";
+  }
+  if (status === "active") return "Autopay active";
+  if (status === "paused") return "Autopay paused";
+  if (status === "setup_started") return "Payment setup pending";
+  if (status === "offered") return "Autopay available";
+  if (status === "disabled") return "Autopay off";
+  if (status === "not_offered") return "Autopay not set up";
   return "Autopay pending";
 }
 
-function autopayHelperText(enrollment: { payment_mode: string | null; subscription_status: string | null }) {
-  const status = enrollment.subscription_status ?? "";
+function autopayMethodText(enrollment: {
+  payment_mode: string | null;
+  autopay_enrollment_status?: string | null;
+  autopay_payment_method_type?: string | null;
+  autopay_setup_status?: string | null;
+}): string | null {
+  const autopayStatus = enrollment.autopay_enrollment_status ?? "";
   if (enrollment.payment_mode !== "monthly") return null;
-  if (status === "incomplete") {
+  if (!["active", "paused", "setup_started"].includes(autopayStatus)) return null;
+  if (enrollment.autopay_setup_status && enrollment.autopay_setup_status !== "active") {
+    return "Payment method setup is still pending.";
+  }
+  if (enrollment.autopay_payment_method_type === "us_bank_account") {
+    return "Bank account autopay";
+  }
+  if (enrollment.autopay_payment_method_type === "card") {
+    return "Card autopay";
+  }
+  return null;
+}
+
+function autopayHelperText(enrollment: {
+  payment_mode: string | null;
+  autopay_enrollment_status?: string | null;
+  last_attempt_outcome?: string | null;
+  last_failure_code?: string | null;
+}) {
+  const status = enrollment.autopay_enrollment_status ?? "";
+  if (enrollment.payment_mode !== "monthly") return null;
+  if (status === "setup_started") {
     return "If Checkout was completed, the account update may still be pending. You can retry without creating duplicate billing.";
   }
-  if (status === "past_due" || status === "unpaid") {
+  if (status === "active" && enrollment.last_attempt_outcome === "declined") {
+    return enrollment.last_failure_code
+      ? `The latest autopay attempt failed: ${enrollment.last_failure_code}.`
+      : "The latest autopay attempt failed.";
+  }
+  if (status === "active" && enrollment.last_attempt_outcome === "requires_action") {
     return "Open the billing portal to update the payment method.";
   }
-  if (status === "incomplete_expired") {
+  if (status === "disabled") {
     return "Start autopay again to create a fresh checkout.";
   }
   return null;
@@ -314,7 +355,7 @@ export default function ParentPaymentsPage() {
           Confirming autopay…
         </p>
       )}
-      {enrollments.some((e) => e.payment_mode === "monthly" && e.subscription_status === "incomplete") && (
+      {enrollments.some((e) => e.payment_mode === "monthly" && e.autopay_enrollment_status === "setup_started") && (
         <p role="status" data-testid="payment-update-pending" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           Your payment may take a moment to update this page. If it does not update, retry autopay or contact the academy.
         </p>
@@ -363,7 +404,7 @@ export default function ParentPaymentsPage() {
             {invoices.filter((i) => i.balance_due_cents > 0 && i.status !== "void").length} open invoice
             {invoices.filter((i) => i.balance_due_cents > 0 && i.status !== "void").length === 1 ? "" : "s"}
             {" · "}
-            {enrollments.some((e) => e.payment_mode === "monthly" && ["active", "trialing"].includes(e.subscription_status ?? ""))
+            {enrollments.some((e) => e.payment_mode === "monthly" && e.autopay_enrollment_status === "active")
               ? "autopay on"
               : "autopay off"}
           </p>
@@ -493,8 +534,9 @@ export default function ParentPaymentsPage() {
             {enrollments.map((enrollment) => {
               const enabled =
                 enrollment.payment_mode === "monthly" &&
-                ["active", "trialing", "past_due"].includes(enrollment.subscription_status ?? "");
+                enrollment.autopay_enrollment_status === "active";
               const helperText = autopayHelperText(enrollment);
+              const methodText = autopayMethodText(enrollment);
               const starting = startingAutopayEnrollmentId === enrollment.enrollment_id;
               return (
                 <div
@@ -517,6 +559,9 @@ export default function ParentPaymentsPage() {
                       <p className="mt-0.5 text-xs" style={{ color: enabled ? "#0f6e56" : "#888780" }}>
                         {autopayStatusText(enrollment)}
                       </p>
+                      {methodText && (
+                        <p className="mt-0.5 text-xs" style={{ color: "#5f5e5a" }}>{methodText}</p>
+                      )}
                     </div>
                   </div>
                   {helperText && (
@@ -537,9 +582,9 @@ export default function ParentPaymentsPage() {
                         ? "Autopay on"
                         : starting
                           ? "Starting…"
-                          : enrollment.subscription_status === "incomplete"
+                          : enrollment.autopay_enrollment_status === "setup_started"
                             ? "Retry autopay"
-                            : "Subscribe to autopay"}
+                            : "Set up autopay"}
                     </button>
                     <button
                       type="button"

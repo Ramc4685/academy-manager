@@ -644,6 +644,18 @@ def compose_parent(
         by_id = {str(s.get("student_id") or s["_id"]): s for s in students}
         if not by_id:
             return []
+        billing_customer = await db["parent_billing_customers"].find_one(
+            {"academy_id": academy_id, "parent_id": parent_id}
+        )
+        autopay_payment_method_type = None
+        autopay_setup_status = None
+        if billing_customer:
+            autopay_payment_method_type = billing_customer.get(
+                "primary_payment_method_type"
+            ) or billing_customer.get("payment_method_type")
+            autopay_setup_status = billing_customer.get(
+                "primary_setup_status"
+            ) or billing_customer.get("setup_status")
         cursor = (
             db["enrollments"]
             .find(
@@ -658,12 +670,20 @@ def compose_parent(
         rows: list[dict[str, Any]] = []
         async for enrollment in cursor:
             student_id = str(enrollment["student_id"])
+            enrollment_id = str(enrollment.get("enrollment_id") or enrollment["_id"])
             session = await db["sessions"].find_one(
                 {"academy_id": academy_id, "session_id": enrollment["session_id"]}
             )
+            billing_enrollment = await db["student_billing_enrollments"].find_one(
+                {
+                    "academy_id": academy_id,
+                    "parent_id": parent_id,
+                    "enrollment_id": enrollment_id,
+                }
+            )
             rows.append(
                 {
-                    "enrollment_id": str(enrollment.get("enrollment_id") or enrollment["_id"]),
+                    "enrollment_id": enrollment_id,
                     "student_id": student_id,
                     "student_name": str(by_id[student_id].get("full_name") or "Unnamed student"),
                     "session_id": str(enrollment["session_id"]),
@@ -671,6 +691,24 @@ def compose_parent(
                     "status": str(enrollment.get("status") or "active"),
                     "payment_mode": enrollment.get("payment_mode"),
                     "subscription_status": enrollment.get("subscription_status"),
+                    "autopay_enrollment_status": (
+                        billing_enrollment.get("autopay_enrollment_status")
+                        if billing_enrollment
+                        else None
+                    ),
+                    "last_attempt_outcome": (
+                        billing_enrollment.get("last_attempt_outcome")
+                        if billing_enrollment
+                        else None
+                    ),
+                    "last_attempt_at": (
+                        billing_enrollment.get("last_attempt_at") if billing_enrollment else None
+                    ),
+                    "last_failure_code": (
+                        billing_enrollment.get("last_failure_code") if billing_enrollment else None
+                    ),
+                    "autopay_payment_method_type": autopay_payment_method_type,
+                    "autopay_setup_status": autopay_setup_status,
                 }
             )
         return rows

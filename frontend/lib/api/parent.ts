@@ -105,6 +105,12 @@ export interface ParentEnrollment {
   status: string;
   payment_mode: string | null;
   subscription_status: string | null;
+  autopay_enrollment_status?: string | null;
+  last_attempt_outcome?: string | null;
+  last_attempt_at?: string | null;
+  last_failure_code?: string | null;
+  autopay_payment_method_type?: string | null;
+  autopay_setup_status?: string | null;
 }
 
 export interface ParentInvoice {

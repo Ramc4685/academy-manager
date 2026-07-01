@@ -238,6 +238,12 @@ class ParentEnrollmentView(BaseModel):
     status: str
     payment_mode: str | None = None
     subscription_status: str | None = None
+    autopay_enrollment_status: str | None = None
+    last_attempt_outcome: str | None = None
+    last_attempt_at: datetime | None = None
+    last_failure_code: str | None = None
+    autopay_payment_method_type: str | None = None
+    autopay_setup_status: str | None = None
 
 
 class ParentEnrollmentsResponse(BaseModel):
