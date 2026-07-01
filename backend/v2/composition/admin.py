@@ -2772,6 +2772,7 @@ def compose_admin(
             ledger=billing_ledger_repo,
             stripe=stripe,  # type: ignore[arg-type]
             enrollment_autopay=student_billing_enrollment_repo,
+            settings=billing_settings_repo,
         ).execute(invoice_id)
         return result.model_dump(mode="python")
 

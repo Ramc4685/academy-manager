@@ -12,12 +12,22 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from pydantic import BaseModel
 
-from backend.v2.contexts.billing.application.ports import LedgerRepository
-from backend.v2.contexts.billing.domain.ledger import LedgerInvoice, LedgerPayment
+from backend.v2.contexts.billing.application.ports import (
+    BillingSettingsRepository,
+    LedgerRepository,
+)
+from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+from backend.v2.contexts.billing.domain.fees import compute_ach_discount
+from backend.v2.contexts.billing.domain.ledger import (
+    InvoiceLine,
+    LedgerInvoice,
+    LedgerPayment,
+    recompute_totals,
+)
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +92,10 @@ class AutopayStripeGateway(Protocol):
         """Return (stripe_customer_id, payment_method_id) or None if no saved card."""
         ...
 
+    async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict[str, Any]:
+        """Fetch the saved PaymentMethod so funding type is known at charge time."""
+        ...
+
     async def create_off_session_payment_intent(
         self,
         *,
@@ -133,11 +147,13 @@ class ChargeInvoiceViaAutopay:
         ledger: LedgerRepository,
         stripe: AutopayStripeGateway | None = None,
         enrollment_autopay: EnrollmentAutopayGateway | None = None,
+        settings: BillingSettingsRepository | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._ledger = ledger
         self._stripe = stripe
         self._enrollment_autopay = enrollment_autopay
+        self._settings = settings
         self._now = clock
 
     async def execute(self, invoice_id: str) -> ChargeResult:
@@ -228,11 +244,25 @@ class ChargeInvoiceViaAutopay:
                 f"no_saved_payment_method: parent {invoice.parent_id!r} has no saved Stripe card"
             )
         customer_id, pm_id = saved
+        settings, funding_type = await self._resolve_discount_inputs(pm_id)
+        invoice, discount_metadata = await self._apply_ach_discount_if_needed(
+            invoice=invoice,
+            settings=settings,
+            funding_type=funding_type,
+        )
 
         # 4. Create off-session PaymentIntent (idempotency key prevents stale amount replay)
         idempotency_key = (
             f"autopay:{invoice.invoice_id}:{invoice.period}:{invoice.balance_due_cents}"
         )
+        pi_metadata = {
+            "invoice_id": invoice.invoice_id,
+            "academy_id": invoice.academy_id,
+            "parent_id": invoice.parent_id,
+            "source": "autopay",
+        }
+        if discount_metadata.get("disclosure_version"):
+            pi_metadata["disclosure_version"] = discount_metadata["disclosure_version"]
         try:
             pi_id, pi_status, decline_code = await self._stripe.create_off_session_payment_intent(
                 amount_cents=invoice.balance_due_cents,
@@ -240,12 +270,7 @@ class ChargeInvoiceViaAutopay:
                 customer_id=customer_id,
                 payment_method_id=pm_id,
                 idempotency_key=idempotency_key,
-                metadata={
-                    "invoice_id": invoice.invoice_id,
-                    "academy_id": invoice.academy_id,
-                    "parent_id": invoice.parent_id,
-                    "source": "autopay",
-                },
+                metadata=pi_metadata,
             )
         except Exception as exc:
             # Stripe card decline or API error — do NOT change invoice status
@@ -341,6 +366,7 @@ class ChargeInvoiceViaAutopay:
                 payment_method="stripe_autopay",
                 stripe_payment_intent_id=pi_id,
                 paid_at=now,
+                metadata=discount_metadata or None,
                 created_at=now,
                 updated_at=now,
             ),
@@ -409,3 +435,149 @@ class ChargeInvoiceViaAutopay:
                     occurred_at=self._now(),
                     failure_code=failure_code,
                 )
+
+    async def _resolve_discount_inputs(
+        self,
+        payment_method_id: str,
+    ) -> tuple[BillingSettings | None, str | None]:
+        if self._settings is None or self._stripe is None:
+            return None, None
+        try:
+            settings = await self._settings.get()
+        except Exception as exc:
+            log.warning("charge_autopay: billing settings lookup failed; no discount err=%s", exc)
+            return None, None
+        try:
+            payment_method = await self._stripe.retrieve_payment_method(payment_method_id)
+        except Exception as exc:
+            log.warning(
+                "charge_autopay: payment method lookup failed pm=%s; no discount err=%s",
+                payment_method_id,
+                exc,
+            )
+            return settings, None
+        return settings, _funding_type_from_payment_method(payment_method)
+
+    async def _apply_ach_discount_if_needed(
+        self,
+        *,
+        invoice: LedgerInvoice,
+        settings: BillingSettings | None,
+        funding_type: str | None,
+    ) -> tuple[LedgerInvoice, dict[str, str]]:
+        if settings is None:
+            return invoice, {}
+
+        lines = await self._ledger.get_lines_for_invoice(invoice.invoice_id)
+        existing_discount = next(
+            (line for line in lines if line.line_type == "ach_discount"),
+            None,
+        )
+        if existing_discount is not None:
+            if any(line.line_type != "ach_discount" for line in lines):
+                recomputed = _recompute_invoice_projection(invoice, lines, now=self._now())
+                if recomputed != invoice:
+                    invoice = await self._ledger.save_invoice(recomputed)
+            return invoice, _discount_metadata(
+                discount_cents=abs(existing_discount.amount_cents),
+                discount_percent=settings.ach_discount_percent,
+                line_id=existing_discount.line_id,
+                funding_type=funding_type,
+                disclosure_version=settings.disclosure_version,
+            )
+
+        discount_cents = compute_ach_discount(invoice.subtotal_cents, settings, funding_type)
+        if discount_cents <= 0:
+            return invoice, {}
+
+        now = self._now()
+        line = InvoiceLine(
+            line_id=f"ach-discount:{invoice.invoice_id}",
+            academy_id=invoice.academy_id,
+            invoice_id=invoice.invoice_id,
+            line_type="ach_discount",
+            description=settings.ach_discount_label,
+            quantity=1,
+            unit_amount_cents=-discount_cents,
+            amount_cents=-discount_cents,
+            source_type="autopay_cash_discount",
+            source_id=settings.disclosure_version,
+            created_at=now,
+        )
+        await self._ledger.save_line(line)
+        updated_invoice = _recompute_invoice_projection(
+            invoice.model_copy(update={"updated_at": now}),
+            [*lines, line],
+            now=now,
+        )
+        invoice = await self._ledger.save_invoice(updated_invoice)
+        return invoice, _discount_metadata(
+            discount_cents=discount_cents,
+            discount_percent=settings.ach_discount_percent,
+            line_id=line.line_id,
+            funding_type=funding_type,
+            disclosure_version=settings.disclosure_version,
+        )
+
+
+def _funding_type_from_payment_method(payment_method: dict[str, Any]) -> str | None:
+    payment_method_type = str(payment_method.get("type") or "").lower()
+    if payment_method_type == "card":
+        card = payment_method.get("card")
+        if isinstance(card, dict):
+            return str(card.get("funding") or "card").lower()
+        return "card"
+    return payment_method_type or None
+
+
+def _recompute_invoice_projection(
+    invoice: LedgerInvoice,
+    lines: list[InvoiceLine],
+    *,
+    now: datetime,
+) -> LedgerInvoice:
+    non_discount_lines = [line for line in lines if line.line_type != "ach_discount"]
+    discount_lines = [line for line in lines if line.line_type == "ach_discount"]
+    if non_discount_lines:
+        return recompute_totals(invoice.model_copy(update={"updated_at": now}), lines)
+
+    discount_delta = sum(line.amount_cents for line in discount_lines)
+    allocated = max(0, invoice.total_cents - invoice.balance_due_cents)
+    total = max(0, invoice.total_cents + discount_delta)
+    balance = max(0, total - allocated)
+    status = invoice.status
+    if status not in ("draft", "void"):
+        if balance == 0:
+            status = "paid"
+        elif balance < total:
+            status = "partially_paid"
+        else:
+            status = "open"
+    return invoice.model_copy(
+        update={
+            "subtotal_cents": max(0, invoice.subtotal_cents + discount_delta),
+            "total_cents": total,
+            "balance_due_cents": balance,
+            "status": status,
+            "updated_at": now,
+        }
+    )
+
+
+def _discount_metadata(
+    *,
+    discount_cents: int,
+    discount_percent: float,
+    line_id: str,
+    funding_type: str | None,
+    disclosure_version: str | None,
+) -> dict[str, str]:
+    metadata = {
+        "ach_discount_cents": str(discount_cents),
+        "ach_discount_line_id": line_id,
+        "ach_discount_percent": str(discount_percent),
+        "funding_type": str(funding_type or "unknown"),
+    }
+    if disclosure_version:
+        metadata["disclosure_version"] = disclosure_version
+    return metadata

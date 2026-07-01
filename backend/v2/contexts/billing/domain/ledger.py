@@ -100,6 +100,7 @@ class LedgerPayment(BaseModel):
     paid_at: datetime | None = None
     recorded_by: str | None = None
     notes: str | None = None
+    metadata: dict[str, str] | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -21,7 +21,9 @@ import pytest
 from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopay import (
     ChargeInvoiceViaAutopay,
 )
+from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.domain.ledger import (
+    InvoiceLine,
     LedgerAllocationResult,
     LedgerInvoice,
     LedgerPayment,
@@ -110,6 +112,7 @@ class FakeLedgerRepo:
         self._invoices: dict[str, LedgerInvoice] = (
             {inv.invoice_id: inv for inv in invoices} if invoices else {}
         )
+        self.lines_by_invoice: dict[str, list[InvoiceLine]] = {}
         self.recorded_payments: list[tuple[LedgerPayment, str]] = []
         self.allocation_calls: list[tuple[str, str, int, str]] = []
         self.payment_attempts: list[dict] = []
@@ -122,14 +125,21 @@ class FakeLedgerRepo:
     ) -> LedgerInvoice | None:
         return None
 
-    async def get_lines_for_invoice(self, invoice_id: str) -> list:
-        return []
+    async def get_lines_for_invoice(self, invoice_id: str) -> list[InvoiceLine]:
+        return list(self.lines_by_invoice.get(invoice_id, []))
 
     async def save_invoice(self, invoice: LedgerInvoice) -> LedgerInvoice:
         self._invoices[invoice.invoice_id] = invoice
         return invoice
 
-    async def save_line(self, line) -> object:
+    async def save_line(self, line: InvoiceLine) -> InvoiceLine:
+        lines = [
+            existing
+            for existing in self.lines_by_invoice.get(line.invoice_id, [])
+            if existing.line_id != line.line_id
+        ]
+        lines.append(line)
+        self.lines_by_invoice[line.invoice_id] = lines
         return line
 
     async def create_invoice(
@@ -199,6 +209,8 @@ class FakeStripeSucceeds:
         self.pm_id = pm_id
         self.pi_id = pi_id
         self.lookup_calls: list[dict[str, str]] = []
+        self.retrieve_payment_method_calls: list[str] = []
+        self.payment_method: dict = {"id": pm_id, "type": "card"}
         self.create_calls: list[dict] = []
 
     async def get_default_payment_method(
@@ -206,6 +218,10 @@ class FakeStripeSucceeds:
     ) -> tuple[str, str] | None:
         self.lookup_calls.append({"academy_id": academy_id, "parent_id": parent_id})
         return (self.customer_id, self.pm_id)
+
+    async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict:
+        self.retrieve_payment_method_calls.append(stripe_payment_method_id)
+        return dict(self.payment_method)
 
     async def create_off_session_payment_intent(
         self,
@@ -241,6 +257,9 @@ class FakeStripeDeclines:
     ) -> tuple[str, str] | None:
         return ("cus_1", "pm_1")
 
+    async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict:
+        return {"id": stripe_payment_method_id, "type": "card"}
+
     async def create_off_session_payment_intent(self, **kwargs) -> tuple[str, str, str | None]:
         return ("pi_declined", "requires_payment_method", self.decline_code)
 
@@ -252,6 +271,9 @@ class FakeStripeRequiresAction:
         self, *, academy_id: str, parent_id: str
     ) -> tuple[str, str] | None:
         return ("cus_1", "pm_1")
+
+    async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict:
+        return {"id": stripe_payment_method_id, "type": "card"}
 
     async def create_off_session_payment_intent(self, **kwargs) -> tuple[str, str, str | None]:
         return ("pi_3ds", "requires_action", None)
@@ -265,6 +287,9 @@ class FakeStripeRaises:
     ) -> tuple[str, str] | None:
         return ("cus_1", "pm_1")
 
+    async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict:
+        return {"id": stripe_payment_method_id, "type": "card"}
+
     async def create_off_session_payment_intent(self, **kwargs) -> tuple[str, str, str | None]:
         raise RuntimeError("Stripe API unreachable")
 
@@ -276,6 +301,9 @@ class FakeStripeNoCard:
         self, *, academy_id: str, parent_id: str
     ) -> tuple[str, str] | None:
         return None
+
+    async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict:
+        raise AssertionError("should not be called")
 
     async def create_off_session_payment_intent(self, **kwargs) -> tuple[str, str, str | None]:
         raise AssertionError("should not be called")
@@ -321,15 +349,27 @@ class FakeEnrollmentAutopay:
         # autopay_enrollment_status is deliberately never touched here.
 
 
+class FakeBillingSettingsRepo:
+    def __init__(self, settings: BillingSettings) -> None:
+        self.settings = settings
+        self.calls = 0
+
+    async def get(self) -> BillingSettings:
+        self.calls += 1
+        return self.settings
+
+
 def _uc(
     repo: FakeLedgerRepo,
     stripe: object | None = None,
     enrollment_autopay: FakeEnrollmentAutopay | None = None,
+    settings: FakeBillingSettingsRepo | None = None,
 ) -> ChargeInvoiceViaAutopay:
     return ChargeInvoiceViaAutopay(
         ledger=repo,  # type: ignore[arg-type]
         stripe=stripe,  # type: ignore[arg-type]
         enrollment_autopay=enrollment_autopay,  # type: ignore[arg-type]
+        settings=settings,  # type: ignore[arg-type]
         clock=lambda: NOW,
     )
 
@@ -382,6 +422,160 @@ async def test_happy_path_open_invoice_pi_succeeds() -> None:
     assert inv_id == "inv-1"
     assert amount == 10_000
     assert alloc_key == "autopay-alloc:pi_test_123"
+
+
+async def test_ach_payment_method_adds_discount_line_before_charge_amount_and_key() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = FakeStripeSucceeds()
+    stripe.payment_method = {"id": "pm_1", "type": "us_bank_account"}
+    settings = FakeBillingSettingsRepo(
+        BillingSettings(
+            academy_id="acad-1",
+            ach_discount_enabled=True,
+            ach_discount_percent=2.5,
+            ach_discount_label="ACH autopay savings",
+            disclosure_version="cash-discount-v1",
+        )
+    )
+
+    result = await _uc(repo, stripe, settings=settings).execute("inv-1")
+
+    assert result.success is True
+    assert stripe.retrieve_payment_method_calls == ["pm_1"]
+    assert stripe.create_calls[0]["amount_cents"] == 9_750
+    assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-1:2026-06:9750"
+    assert stripe.create_calls[0]["metadata"]["disclosure_version"] == "cash-discount-v1"
+    assert repo.payment_attempts[0]["amount_cents"] == 9_750
+    assert repo.recorded_payments[0][0].amount_cents == 9_750
+    assert repo.recorded_payments[0][0].metadata == {
+        "ach_discount_cents": "250",
+        "ach_discount_line_id": "ach-discount:inv-1",
+        "ach_discount_percent": "2.5",
+        "disclosure_version": "cash-discount-v1",
+        "funding_type": "us_bank_account",
+    }
+    assert repo.allocation_calls[0][2] == 9_750
+    discount_lines = [
+        line for line in repo.lines_by_invoice["inv-1"] if line.line_type == "ach_discount"
+    ]
+    assert len(discount_lines) == 1
+    assert discount_lines[0].line_id == "ach-discount:inv-1"
+    assert discount_lines[0].description == "ACH autopay savings"
+    assert discount_lines[0].amount_cents == -250
+    assert discount_lines[0].source_type == "autopay_cash_discount"
+    assert discount_lines[0].source_id == "cash-discount-v1"
+
+
+async def test_card_payment_method_does_not_add_discount() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = FakeStripeSucceeds()
+    stripe.payment_method = {"id": "pm_1", "type": "card", "card": {"funding": "credit"}}
+    settings = FakeBillingSettingsRepo(
+        BillingSettings(
+            academy_id="acad-1",
+            ach_discount_enabled=True,
+            ach_discount_percent=2.5,
+        )
+    )
+
+    await _uc(repo, stripe, settings=settings).execute("inv-1")
+
+    assert repo.lines_by_invoice.get("inv-1", []) == []
+    assert stripe.create_calls[0]["amount_cents"] == 10_000
+    assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-1:2026-06:10000"
+
+
+async def test_no_settings_repo_fails_safe_to_no_discount_even_for_ach() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = FakeStripeSucceeds()
+    stripe.payment_method = {"id": "pm_1", "type": "us_bank_account"}
+
+    await _uc(repo, stripe, settings=None).execute("inv-1")
+
+    assert repo.lines_by_invoice.get("inv-1", []) == []
+    assert stripe.create_calls[0]["amount_cents"] == 10_000
+
+
+async def test_unknown_payment_method_type_fails_safe_to_no_discount() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = FakeStripeSucceeds()
+    stripe.payment_method = {"id": "pm_1", "type": "cashapp"}
+    settings = FakeBillingSettingsRepo(
+        BillingSettings(
+            academy_id="acad-1",
+            ach_discount_enabled=True,
+            ach_discount_percent=2.5,
+        )
+    )
+
+    await _uc(repo, stripe, settings=settings).execute("inv-1")
+
+    assert repo.lines_by_invoice.get("inv-1", []) == []
+    assert stripe.create_calls[0]["amount_cents"] == 10_000
+
+
+async def test_retrieve_payment_method_failure_fails_safe_to_no_discount() -> None:
+    class StripeRetrieveFails(FakeStripeSucceeds):
+        async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict:
+            self.retrieve_payment_method_calls.append(stripe_payment_method_id)
+            raise RuntimeError("stripe retrieve unavailable")
+
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = StripeRetrieveFails()
+    settings = FakeBillingSettingsRepo(
+        BillingSettings(
+            academy_id="acad-1",
+            ach_discount_enabled=True,
+            ach_discount_percent=2.5,
+        )
+    )
+
+    await _uc(repo, stripe, settings=settings).execute("inv-1")
+
+    assert stripe.retrieve_payment_method_calls == ["pm_1"]
+    assert repo.lines_by_invoice.get("inv-1", []) == []
+    assert stripe.create_calls[0]["amount_cents"] == 10_000
+
+
+async def test_repeated_ach_charge_does_not_duplicate_existing_discount_line() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    existing_line = InvoiceLine(
+        line_id="ach-discount:inv-1",
+        academy_id="acad-1",
+        invoice_id="inv-1",
+        line_type="ach_discount",
+        description="ACH autopay savings",
+        quantity=1,
+        unit_amount_cents=-250,
+        amount_cents=-250,
+        source_type="autopay_cash_discount",
+        source_id="cash-discount-v1",
+        created_at=NOW,
+    )
+    repo.lines_by_invoice["inv-1"] = [existing_line]
+    repo._invoices["inv-1"] = repo._invoices["inv-1"].model_copy(
+        update={"subtotal_cents": 9_750, "total_cents": 9_750, "balance_due_cents": 9_750}
+    )
+    stripe = FakeStripeSucceeds()
+    stripe.payment_method = {"id": "pm_1", "type": "us_bank_account"}
+    settings = FakeBillingSettingsRepo(
+        BillingSettings(
+            academy_id="acad-1",
+            ach_discount_enabled=True,
+            ach_discount_percent=2.5,
+            ach_discount_label="ACH autopay savings",
+            disclosure_version="cash-discount-v1",
+        )
+    )
+
+    await _uc(repo, stripe, settings=settings).execute("inv-1")
+
+    discount_lines = [
+        line for line in repo.lines_by_invoice["inv-1"] if line.line_type == "ach_discount"
+    ]
+    assert discount_lines == [existing_line]
+    assert stripe.create_calls[0]["amount_cents"] == 9_750
+    assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-1:2026-06:9750"
 
 
 async def test_happy_path_partially_paid_invoice() -> None:

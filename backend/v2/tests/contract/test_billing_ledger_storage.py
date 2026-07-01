@@ -56,6 +56,15 @@ def _make_payment(
     )
 
 
+def _make_payment_with_metadata(payment_id: str, academy_id: str, now: datetime) -> LedgerPayment:
+    return _make_payment(payment_id, academy_id, now).model_copy(
+        update={
+            "stripe_payment_intent_id": "pi_metadata_1",
+            "metadata": {"disclosure_version": "cash-discount-v1"},
+        }
+    )
+
+
 def _make_line(line_id: str, invoice_id: str, academy_id: str, amount: int) -> InvoiceLine:
     now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
     return InvoiceLine(
@@ -99,6 +108,26 @@ async def test_record_payment_idempotency_via_ledger_payments(db, acad) -> None:
 
     assert first == second
     assert await db["ledger_payments"].count_documents({"payment_id": "pay-idem-2"}) == 1
+
+
+@pytest.mark.asyncio
+async def test_record_payment_round_trips_metadata(db, acad) -> None:
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+
+    saved = await repo.record_payment(
+        _make_payment_with_metadata("pay-metadata-1", acad, now),
+        idempotency_key="pay:metadata:1",
+    )
+    fetched = await repo.get_payment_by_stripe_payment_intent_id(
+        saved.stripe_payment_intent_id or ""
+    )
+
+    raw = await db["ledger_payments"].find_one({"payment_id": "pay-metadata-1"})
+    assert raw is not None
+    assert raw["metadata"] == {"disclosure_version": "cash-discount-v1"}
+    assert fetched is not None
+    assert fetched.metadata == {"disclosure_version": "cash-discount-v1"}
 
 
 @pytest.mark.asyncio

@@ -61,6 +61,7 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             paid_at=doc.get("paid_at"),  # type: ignore[arg-type]
             recorded_by=doc.get("recorded_by"),  # type: ignore[arg-type]
             notes=doc.get("notes"),  # type: ignore[arg-type]
+            metadata=doc.get("metadata"),  # type: ignore[arg-type]
             created_at=doc["created_at"],  # type: ignore[arg-type]
             updated_at=doc["updated_at"],  # type: ignore[arg-type]
         )
