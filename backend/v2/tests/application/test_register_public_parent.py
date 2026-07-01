@@ -197,7 +197,7 @@ async def test_register_public_parent_does_not_reactivate_disabled_user() -> Non
 @pytest.mark.asyncio
 async def test_register_public_parent_saas_uses_resolved_tenant_not_default() -> None:
     """Issue #81 regression: in SaaS mode the resolved tenant from the
-    request host must flow into User.academy_id and a matching invited
+    request host must flow into User.academy_id and a matching active
     membership row must be created. The configured default_academy_id
     must NOT be used as a fallback in SaaS request paths."""
     users = FakeUsers()
@@ -222,15 +222,17 @@ async def test_register_public_parent_saas_uses_resolved_tenant_not_default() ->
     assert user.academy_id == "acad_acme"
     assert users.ensure_calls[0]["academy_id"] == "acad_acme"
 
-    # Public self-registration creates a durable pending membership row,
-    # but it must not grant tenant access until admin approval activates it.
+    # Public self-registration grants the verified parent enough tenant
+    # access to enter onboarding. Registration application approval remains
+    # a separate admin workflow.
     assert len(memberships.upserts) == 1
     upsert = memberships.upserts[0]
     assert upsert.academy_id == "acad_acme"
     assert upsert.user_id == "firebase-parent-1"
     assert upsert.roles == ("parent",)
-    assert upsert.status == "invited"
-    assert not upsert.is_active()
+    assert upsert.status == "active"
+    assert upsert.accepted_at is not None
+    assert upsert.is_active()
 
 
 @pytest.mark.asyncio
@@ -262,7 +264,41 @@ async def test_register_public_parent_saas_does_not_mutate_existing_membership()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status", ["invited", "suspended", "removed"])
+async def test_register_public_parent_saas_reactivates_invited_self_registration() -> None:
+    existing = AcademyMembership(
+        membership_id="membership-existing",
+        academy_id="acad_acme",
+        user_id="firebase-parent-1",
+        roles=("parent",),
+        status="invited",
+    )
+    memberships = FakeMemberships(existing=existing)
+    use_case = RegisterPublicParent(
+        verifier=FakeVerifier(
+            {
+                "email": "new.parent@example.com",
+                "uid": "firebase-parent-1",
+                "name": "New Parent",
+            }
+        ),
+        users=FakeUsers(),
+        memberships=memberships,
+        saas_mode=True,
+    )
+
+    await use_case.execute("firebase-token", academy_id="acad_acme")
+
+    assert len(memberships.upserts) == 1
+    upsert = memberships.upserts[0]
+    assert upsert.membership_id == existing.membership_id
+    assert upsert.academy_id == "acad_acme"
+    assert upsert.user_id == "firebase-parent-1"
+    assert upsert.roles == ("parent",)
+    assert upsert.status == "active"
+    assert upsert.accepted_at is not None
+
+
+@pytest.mark.parametrize("status", ["suspended", "removed"])
 async def test_register_public_parent_saas_does_not_reactivate_inactive_membership(
     status: str,
 ) -> None:
