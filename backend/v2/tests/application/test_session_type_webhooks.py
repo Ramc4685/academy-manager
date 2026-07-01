@@ -269,6 +269,63 @@ async def test_invoice_paid_for_session_type_subscription_mints_invoice_number()
 
 
 @pytest.mark.asyncio
+async def test_session_type_invoice_for_mismatched_academy_is_quarantined_before_minting() -> None:
+    """Slice D tenant guard: an enrollment belonging to a different academy than the
+    handler's tenant must quarantine the event BEFORE any invoice number is minted or
+    ledger invoice created — otherwise the number would be drawn from the wrong
+    academy's series."""
+    enrollments = FakeBillingEnrollmentRepo()
+    ledger = FakeLedgerRepo()
+    counters = FakeBillingCounterRepo()
+    enrollments.seed(
+        StudentBillingEnrollment(
+            enrollment_id="bill-1",
+            academy_id="other-acad",  # handler is scoped to "acad"
+            student_id="student-1",
+            parent_id="parent-1",
+            session_type_id="type-elite",
+            stripe_subscription_id="sub_123",
+            billing_start_date=_now(),
+            enrolled_at=_now(),
+            updated_at=_now(),
+        )
+    )
+    uc = _build(
+        enrollments=enrollments,
+        ledger=ledger,
+        counters=counters,
+        settings=FakeBillingSettingsRepo(prefix="ACAD"),
+    )
+
+    res = await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_invoice_paid_wrong_acad",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_777",
+                        "subscription": "sub_123",
+                        "payment_intent": "pi_777",
+                        "amount_paid": 20_000,
+                        "amount_due": 20_000,
+                        "currency": "usd",
+                        "period_start": 1_779_120_000,
+                        "period_end": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert res["status"] == "quarantined"
+    # No invoice created and no counter value consumed for the wrong academy.
+    assert ledger.invoices == {}
+    assert counters._seqs == {}
+
+
+@pytest.mark.asyncio
 async def test_invoice_paid_without_counters_leaves_invoice_number_none() -> None:
     """Backward compatible: callers that don't wire counters/settings still work,
     just without a minted invoice_number (None)."""

@@ -1237,6 +1237,16 @@ class HandleWebhookEvent:
         enrollment = await self._billing_enrollments.get_by_stripe_subscription(stripe_sub_id)
         if enrollment is None:
             return False
+        # Tenant guard: the counter/settings repos partition by the tenant_scope
+        # ContextVar (self._academy_id), so minting must only proceed when the
+        # enrollment belongs to the same academy — otherwise the invoice number
+        # would be drawn from a different academy's series. Matches the guards
+        # used by the other subscription/invoice handlers in this file.
+        if enrollment.academy_id != self._academy_id:
+            raise _QuarantineStripeEvent(
+                f"academy mismatch: enrollment={enrollment.academy_id} "
+                f"expected={self._academy_id}"
+            )
 
         now = self._now()
         invoice_id = self._ledger_invoice_id(invoice)
