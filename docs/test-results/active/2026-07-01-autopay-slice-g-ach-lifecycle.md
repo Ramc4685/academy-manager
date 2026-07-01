@@ -47,6 +47,7 @@ ACH processing lifecycle, returns/reversal markers, microdeposit verification wi
 - 2026-07-01T12:15:54: DoD second rework post-format full pytest: PYTHONPATH=. python -m pytest backend/v2/tests -q => 1927 passed, 1 known allowed bootstrap cwd-path FileNotFoundError, 5 warnings.
 - 2026-07-01T12:15:54: DoD second rework static: ruff check backend/v2 && ruff format --check backend/v2 && lint-imports --config backend/pyproject.toml => passed; Import Linter 4 contracts kept.
 - 2026-07-01T12:26:24: Post-rebase focused G/F integration: PYTHONPATH=. python -m pytest backend/v2/tests/contract/test_parent_billing_customer_repo.py backend/v2/tests/application/test_parent_billing_portal.py backend/v2/tests/application/test_webhook_handler.py backend/v2/tests/contract/test_ach_lifecycle_migration.py backend/v2/tests/unit/test_charge_autopay_use_case.py -q => 123 passed.
+- 2026-07-01T12:27:31: Independent orchestrator DoD after rebase onto Slice F: PYTHONPATH=. python -m pytest backend/v2/tests -q => 1945 passed, 1 known allowed bootstrap cwd-path FileNotFoundError, 5 warnings. Static checks: ruff check backend/v2 => passed; ruff format --check backend/v2 => 748 files already formatted; lint-imports --config backend/pyproject.toml => 4 contracts kept.
 ## Reusable Lessons
 
 - None recorded yet.
