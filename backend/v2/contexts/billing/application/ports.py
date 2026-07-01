@@ -82,6 +82,14 @@ class ParentStripeCustomerRepository(Protocol):
         payment_method_role: str = "primary",
         session: Any | None = None,
     ) -> None: ...
+    async def promote_payment_method_to_default(
+        self,
+        *,
+        parent_id: str,
+        stripe_payment_method_id: str,
+        payment_method_type: str,
+        stripe_mandate_id: str | None,
+    ) -> None: ...
 
 
 class AutopayConsentRepository(Protocol):

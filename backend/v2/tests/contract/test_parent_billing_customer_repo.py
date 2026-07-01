@@ -62,10 +62,22 @@ async def test_pending_primary_ach_does_not_replace_chargeable_default(db, acad)
     assert method["updated_at"] == now.replace(tzinfo=None)
 
 
-async def test_active_primary_method_updates_chargeable_default(db, acad) -> None:
+async def test_active_primary_setup_waits_for_explicit_default_promotion(db, acad) -> None:
     repo = MongoParentBillingCustomerRepository(db)
     now = datetime(2026, 7, 1, tzinfo=UTC)
 
+    await db["parent_billing_customers"].insert_one(
+        {
+            "academy_id": acad,
+            "parent_id": "parent-1",
+            "stripe_customer_id": "cus_parent",
+            "default_payment_method_id": "pm_existing_card",
+            "payment_method_type": "card",
+            "stripe_mandate_id": "mandate_existing",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
     await repo.set_default_payment_method(
         parent_id="parent-1",
         stripe_customer_id="cus_parent",
@@ -77,6 +89,22 @@ async def test_active_primary_method_updates_chargeable_default(db, acad) -> Non
         completed_at=now,
         setup_status="active",
         payment_method_role="primary",
+    )
+
+    doc = await db["parent_billing_customers"].find_one(
+        {"academy_id": acad, "parent_id": "parent-1"}
+    )
+    assert doc["default_payment_method_id"] == "pm_existing_card"
+    assert doc["payment_method_type"] == "card"
+    assert doc["stripe_mandate_id"] == "mandate_existing"
+    assert doc["primary_payment_method_id"] == "pm_active_bank"
+    assert doc["primary_setup_status"] == "active"
+
+    await repo.promote_payment_method_to_default(
+        parent_id="parent-1",
+        stripe_payment_method_id="pm_active_bank",
+        payment_method_type="us_bank_account",
+        stripe_mandate_id="mandate_active",
     )
 
     doc = await db["parent_billing_customers"].find_one(

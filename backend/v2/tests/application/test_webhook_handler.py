@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
     HandleWebhookEvent,
@@ -199,8 +200,12 @@ class FakeInvoiceProcessing:
 class FakeOutbox:
     def __init__(self) -> None:
         self.events: list[Any] = []
+        self.event_ids: set[str] = set()
 
     async def append(self, event, *, session=None):
+        if event.event_id in self.event_ids:
+            raise DuplicateKeyError("duplicate event_id")
+        self.event_ids.add(event.event_id)
         self.events.append(event)
 
     async def pull_unprocessed(self, limit=100):
@@ -266,6 +271,31 @@ class FakeParentStripeCustomers:
             )
         ]
         self.default_methods.append(row)
+
+    async def promote_payment_method_to_default(
+        self,
+        *,
+        parent_id: str,
+        stripe_payment_method_id: str,
+        payment_method_type: str,
+        stripe_mandate_id: str | None,
+    ) -> None:
+        for row in reversed(self.default_methods):
+            if row["parent_id"] != parent_id:
+                continue
+            row["default_payment_method_id"] = stripe_payment_method_id
+            row["default_payment_method_type"] = payment_method_type
+            if stripe_mandate_id:
+                row["default_stripe_mandate_id"] = stripe_mandate_id
+            return
+        self.default_methods.append(
+            {
+                "parent_id": parent_id,
+                "default_payment_method_id": stripe_payment_method_id,
+                "default_payment_method_type": payment_method_type,
+                "default_stripe_mandate_id": stripe_mandate_id,
+            }
+        )
 
 
 class FakeEnrollmentAutopayState:
@@ -969,6 +999,9 @@ async def test_autopay_setup_checkout_completed_sets_default_pm_without_subscrip
         "completed_at": None,
         "setup_status": "active",
         "payment_method_role": "primary",
+        "default_payment_method_id": "pm_bank",
+        "default_payment_method_type": "us_bank_account",
+        "default_stripe_mandate_id": "mandate_bank",
     }
     assert enrollment_autopay.setup_completed == ["enr-1"]
     assert enrollment_autopay.synced == []
@@ -1451,6 +1484,7 @@ async def test_autopay_payment_intent_succeeded_records_discount_metadata_when_w
         "ach_discount_percent": "2.5",
         "disclosure_version": "cash-discount-v1",
         "funding_type": "us_bank_account",
+        "invoice_id": "inv-autopay",
     }
 
 
@@ -1691,6 +1725,7 @@ async def test_autopay_ach_return_after_paid_reopens_invoice_and_records_return_
                         "parent_id": "parent-from-invoice",
                         "source": "autopay",
                         "funding_type": "us_bank_account",
+                        "funding_type_source": "server_payment_method",
                     },
                 }
             },
@@ -1721,6 +1756,8 @@ async def test_autopay_ach_return_after_paid_reopens_invoice_and_records_return_
     assert res["processed"] is True
     invoice = ledger.invoices["inv-ach-return"]
     payment = ledger.payments["ledger-pay-autopay:pi_ach_return"]
+    assert payment.metadata["funding_type"] == "us_bank_account"
+    assert payment.metadata["funding_type_source"] == "server_payment_method"
     assert invoice.status == "open"
     assert invoice.balance_due_cents == 10000
     assert payment.status == "refunded"
@@ -1781,6 +1818,77 @@ async def test_autopay_ach_return_after_paid_reopens_invoice_and_records_return_
     assert ledger.invoices["inv-ach-return"].status == "open"
     assert ledger.allocations == []
     assert len(outbox.events) == events_after_return
+
+
+@pytest.mark.asyncio
+async def test_autopay_ach_return_replay_emits_missing_refund_event_after_ledger_mutation() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-ach-return-replay"))
+    dedup = FakeDedup()
+    outbox = FakeOutbox()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger, outbox=outbox)
+    succeeded = json.dumps(
+        {
+            "id": "evt_ach_return_replay_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_ach_return_replay",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-ach-return-replay",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "funding_type": "us_bank_account",
+                        "funding_type_source": "server_payment_method",
+                    },
+                }
+            },
+        }
+    ).encode()
+    returned_without_details = json.dumps(
+        {
+            "id": "evt_ach_return_replay_refund",
+            "type": "charge.refunded",
+            "data": {
+                "object": {
+                    "id": "ch_ach_return_replay",
+                    "payment_intent": "pi_ach_return_replay",
+                    "amount_refunded": 10000,
+                    "failure_code": "insufficient_funds",
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(succeeded, "test_signature")
+    assert (await uc.process_next(processor_id="test-worker"))["processed"] is True
+    await ledger.mark_payment_refunded(
+        "ledger-pay-autopay:pi_ach_return_replay",
+        refunded_cents=10000,
+        status="refunded",
+        updated_at=datetime.now(UTC),
+    )
+    await ledger.reverse_payment_allocation(
+        allocation_idempotency_key="autopay-alloc:pi_ach_return_replay",
+        reversal_idempotency_key="ach-return:pi_ach_return_replay:10000:R01",
+        reason="ach_return",
+        return_code="R01",
+        reversed_at=datetime.now(UTC),
+    )
+
+    await uc.accept(returned_without_details, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    refund_events = [event for event in outbox.events if event.name == "Billing.PaymentRefunded"]
+    assert len(refund_events) == 1
+    assert refund_events[0].event_id == (
+        "billing-payment-refunded:ach-return:pi_ach_return_replay:10000:R01"
+    )
+    assert refund_events[0].payload.reason == "other"
 
 
 @pytest.mark.asyncio

@@ -99,11 +99,6 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
             update["primary_payment_method_id"] = stripe_payment_method_id
             update["primary_payment_method_type"] = payment_method_type
             update["primary_setup_status"] = setup_status
-        if role == "primary" and setup_status == "active":
-            update["default_payment_method_id"] = stripe_payment_method_id
-            update["payment_method_type"] = payment_method_type
-            if stripe_mandate_id:
-                update["stripe_mandate_id"] = stripe_mandate_id
         if stripe_mandate_id:
             update[f"{role}_stripe_mandate_id"] = stripe_mandate_id
         if checkout_session_id:
@@ -136,4 +131,25 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
             {"$push": {"autopay_payment_methods": method_projection}},
             upsert=False,
             session=session,
+        )
+
+    async def promote_payment_method_to_default(
+        self,
+        *,
+        parent_id: str,
+        stripe_payment_method_id: str,
+        payment_method_type: str,
+        stripe_mandate_id: str | None,
+    ) -> None:
+        update: dict[str, object] = {
+            "default_payment_method_id": stripe_payment_method_id,
+            "payment_method_type": payment_method_type,
+            "updated_at": datetime.now(UTC),
+        }
+        if stripe_mandate_id:
+            update["stripe_mandate_id"] = stripe_mandate_id
+        await self._update_one(
+            {"parent_id": parent_id},
+            {"$set": update},
+            upsert=False,
         )

@@ -379,6 +379,31 @@ class _CustomerRepo:
         ]
         self.default_methods.append(row)
 
+    async def promote_payment_method_to_default(
+        self,
+        *,
+        parent_id: str,
+        stripe_payment_method_id: str,
+        payment_method_type: str,
+        stripe_mandate_id: str | None,
+    ) -> None:
+        for row in reversed(self.default_methods):
+            if row["parent_id"] != parent_id:
+                continue
+            row["default_payment_method_id"] = stripe_payment_method_id
+            row["default_payment_method_type"] = payment_method_type
+            if stripe_mandate_id:
+                row["default_stripe_mandate_id"] = stripe_mandate_id
+            return
+        self.default_methods.append(
+            {
+                "parent_id": parent_id,
+                "default_payment_method_id": stripe_payment_method_id,
+                "default_payment_method_type": payment_method_type,
+                "default_stripe_mandate_id": stripe_mandate_id,
+            }
+        )
+
 
 class _ConsentRepo:
     def __init__(self, *, fail: bool = False) -> None:
@@ -676,6 +701,7 @@ async def test_autopay_setup_replay_same_setup_intent_does_not_duplicate_consent
     assert [consent.setup_intent_id for consent in consents.consents] == ["seti_saved_card"]
     assert [event.name for event in outbox.events] == ["Billing.AutopayConsentCaptured"]
     assert [row["setup_intent_id"] for row in customers.default_methods] == ["seti_saved_card"]
+    assert customers.default_methods[0]["default_payment_method_id"] == "pm_saved_card"
     assert enrollment_autopay.setup_completed == ["enr-1"]
 
 
@@ -720,6 +746,9 @@ async def test_autopay_setup_existing_consent_replay_repairs_projection_and_enro
             "current_consent_id": consents.consents[0].consent_id,
             "consent_text_version": "autopay-consent-v1",
             "card_disclosure_version": "card-disclosure-v1",
+            "default_payment_method_id": "pm_saved_card",
+            "default_payment_method_type": "card",
+            "default_stripe_mandate_id": "mandate_saved_card",
         }
     ]
     assert enrollment_autopay.setup_completed == ["enr-1"]
@@ -831,6 +860,7 @@ async def test_autopay_setup_stripe_default_failure_does_not_activate_enrollment
     assert [consent.setup_intent_id for consent in consents.consents] == ["seti_saved_card"]
     assert [event.name for event in outbox.events] == ["Billing.AutopayConsentCaptured"]
     assert [row["setup_intent_id"] for row in customers.default_methods] == ["seti_saved_card"]
+    assert "default_payment_method_id" not in customers.default_methods[0]
     assert gateway.default_payment_methods == []
     assert enrollment_autopay.setup_completed == []
 
@@ -859,6 +889,7 @@ async def test_autopay_setup_enrollment_activation_failure_raises_after_projecti
     assert [consent.setup_intent_id for consent in consents.consents] == ["seti_saved_card"]
     assert [event.name for event in outbox.events] == ["Billing.AutopayConsentCaptured"]
     assert [row["setup_intent_id"] for row in customers.default_methods] == ["seti_saved_card"]
+    assert customers.default_methods[0]["default_payment_method_id"] == "pm_saved_card"
     assert enrollment_autopay.setup_completed == ["enr-1"]
 
 
@@ -990,6 +1021,9 @@ async def test_checkout_status_reconciles_completed_setup_checkout_without_subsc
             "completed_at": now,
             "setup_status": "active",
             "payment_method_role": "primary",
+            "default_payment_method_id": "pm_saved_card",
+            "default_payment_method_type": "card",
+            "default_stripe_mandate_id": "mandate_saved_card",
         }
     ]
     assert enrollment_autopay.setup_completed == ["enr-1"]

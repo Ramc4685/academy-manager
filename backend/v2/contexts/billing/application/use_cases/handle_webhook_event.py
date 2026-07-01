@@ -17,6 +17,8 @@ import logging
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 
+from pymongo.errors import DuplicateKeyError
+
 from backend.v2.contexts.billing.application.ports import (
     AutopayConsentRepository,
     EnrollmentAutopayStateRepository,
@@ -39,9 +41,7 @@ from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     AutopayConsentCaptureContext,
     CompleteAutopaySetup,
 )
-from backend.v2.contexts.billing.domain.ach_returns import (
-    nacha_return_code_for_provider_failure,
-)
+from backend.v2.contexts.billing.domain.ach_returns import normalize_nacha_return_code
 from backend.v2.contexts.billing.domain.errors import InvalidWebhookSignature, PaymentNotFound
 from backend.v2.contexts.billing.domain.events import (
     CheckoutExpired,
@@ -879,6 +879,7 @@ class HandleWebhookEvent:
         invoice_id: str,
     ) -> dict[str, str]:
         metadata = _autopay_discount_metadata_from_pi(pi_metadata)
+        metadata.setdefault("invoice_id", invoice_id)
         get_lines = getattr(self._billing_ledger, "get_lines_for_invoice", None)
         if callable(get_lines):
             lines = await get_lines(invoice_id)
@@ -1344,7 +1345,6 @@ class HandleWebhookEvent:
                     payment=payment,
                     amount_cents=total_refunded,
                     return_code=return_code,
-                    emit_event=payment.refunded_cents < total_refunded,
                 )
                 return
         if total_refunded == payment.refunded_cents:
@@ -1397,7 +1397,6 @@ class HandleWebhookEvent:
         payment: LedgerPayment,
         amount_cents: int,
         return_code: str,
-        emit_event: bool = True,
     ) -> None:
         if amount_cents < payment.amount_cents:
             await self._billing_ledger.record_payment_attempt(
@@ -1465,9 +1464,13 @@ class HandleWebhookEvent:
             ),
             created_by_event_id=event_id or None,
         )
-        if emit_event and allocation_before_reversal is not None:
-            await self._outbox.append(
+        should_emit_refund_event = (
+            allocation_before_reversal is not None or payment.refunded_cents >= total_refunded
+        )
+        if should_emit_refund_event:
+            await self._append_outbox_once(
                 PaymentRefunded(
+                    event_id=f"billing-payment-refunded:ach-return:{pi_id}:{total_refunded}:{return_code}",
                     aggregate_id=updated.payment_id,
                     academy_id=updated.academy_id,
                     payload=PaymentRefundedPayload(
@@ -1478,6 +1481,12 @@ class HandleWebhookEvent:
                     ),
                 )
             )
+
+    async def _append_outbox_once(self, event: Any) -> None:
+        try:
+            await self._outbox.append(event)
+        except DuplicateKeyError:
+            return
 
     async def _on_subscription_changed(self, event: dict[str, Any]) -> None:
         sub = event["data"]["object"]
@@ -2056,6 +2065,7 @@ def _autopay_discount_metadata_from_pi(metadata: dict[str, Any]) -> dict[str, st
         "ach_discount_percent",
         "disclosure_version",
         "funding_type",
+        "funding_type_source",
     }
     return {
         key: str(value)
@@ -2097,10 +2107,31 @@ def _ach_return_code_from_stripe_charge(charge: dict[str, Any]) -> str | None:
 
 def _first_nacha_code(values: list[object]) -> str | None:
     for value in values:
-        code = nacha_return_code_for_provider_failure(value)
+        code = _stripe_failure_to_nacha_return_code(value)
         if code is not None:
             return code
     return None
+
+
+_STRIPE_FAILURE_TO_NACHA: dict[str, str] = {
+    "insufficient_funds": "R01",
+    "bank_account_insufficient_funds": "R01",
+    "account_closed": "R02",
+    "bank_account_closed": "R02",
+    "no_account": "R03",
+    "bank_account_not_found": "R03",
+    "bank_account_unusable": "R03",
+    "debit_not_authorized": "R10",
+    "bank_account_restricted": "R29",
+}
+
+
+def _stripe_failure_to_nacha_return_code(value: object) -> str | None:
+    normalized = normalize_nacha_return_code(value)
+    if normalized is not None:
+        return normalized
+    compact = str(value or "").lower().strip()
+    return _STRIPE_FAILURE_TO_NACHA.get(compact)
 
 
 def _payment_intent_is_ach(pi: dict[str, Any]) -> bool:

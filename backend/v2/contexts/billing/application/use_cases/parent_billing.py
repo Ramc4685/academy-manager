@@ -217,6 +217,12 @@ class CompleteAutopaySetup:
                     "parent_id": parent_id,
                 },
             )
+            await self._parent_customers.promote_payment_method_to_default(
+                parent_id=parent_id,
+                stripe_payment_method_id=stripe_payment_method_id,
+                payment_method_type=payment_method_type,
+                stripe_mandate_id=stripe_mandate_id,
+            )
             activated = await self._enrollment_autopay.mark_autopay_active_from_setup(
                 enrollment_id=enrollment_id,
             )

@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
     HandleWebhookEvent,
@@ -111,8 +112,12 @@ class FakeDedup:
 class FakeOutbox:
     def __init__(self) -> None:
         self.events: list[Any] = []
+        self.event_ids: set[str] = set()
 
     async def append(self, event, *, session=None):
+        if event.event_id in self.event_ids:
+            raise DuplicateKeyError("duplicate event_id")
+        self.event_ids.add(event.event_id)
         self.events.append(event)
 
     async def pull_unprocessed(self, _limit=100):
@@ -621,7 +626,10 @@ async def test_fixture_autopay_ach_succeeded_allocates_after_settlement() -> Non
     assert invoice.status == "paid"
     assert invoice.balance_due_cents == 0
     payment = ledger.payments["ledger-pay-autopay:pi_ach_fixture_01"]
-    assert payment.metadata == {"funding_type": "us_bank_account"}
+    assert payment.metadata == {
+        "funding_type": "us_bank_account",
+        "invoice_id": "inv-ach-fixture-01",
+    }
     assert ledger.allocations[0]["idempotency_key"] == "autopay-alloc:pi_ach_fixture_01"
 
 
