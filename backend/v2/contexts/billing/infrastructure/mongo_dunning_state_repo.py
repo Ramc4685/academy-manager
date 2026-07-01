@@ -112,8 +112,15 @@ class MongoDunningStateRepository(TenantScopedRepository):
         ).sort([("next_attempt_at", ASCENDING), ("updated_at", ASCENDING)])
         async for state_doc in cursor:
             state = self._state_from_doc(state_doc)
+            parked_for_payment_processing = (
+                state.status == "active"
+                and state.next_attempt_at is None
+                and state.suppression_reason == "payment_processing"
+            )
             if state.status == "active":
-                if state.next_attempt_at is None or state.next_attempt_at > now:
+                if state.next_attempt_at is None and not parked_for_payment_processing:
+                    continue
+                if state.next_attempt_at is not None and state.next_attempt_at > now:
                     continue
                 attempt_no = state.attempt_count + 1
             elif state.status == "processing":
@@ -148,6 +155,8 @@ class MongoDunningStateRepository(TenantScopedRepository):
                     now=now,
                 )
                 await self._store_state(parked)
+                continue
+            if parked_for_payment_processing and latest_status not in {"failed", "requires_action"}:
                 continue
 
             lease_expires_at = now + timedelta(minutes=30)

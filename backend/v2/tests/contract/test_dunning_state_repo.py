@@ -277,6 +277,48 @@ async def test_processing_and_succeeded_payment_attempts_block_new_dunning_charg
 
 
 @pytest.mark.asyncio
+async def test_parked_processing_state_resumes_after_latest_attempt_fails(db, acad) -> None:
+    repo = MongoDunningStateRepository(db)
+    await _seed_invoice(db, academy_id=acad, invoice_id="inv-processing", enrollment_id="enr-p")
+    await repo.prepare_due_states(now=NOW, limit=10)
+    await db["payment_attempts"].insert_one(
+        {
+            "academy_id": acad,
+            "attempt_id": "attempt-processing",
+            "invoice_id": "inv-processing",
+            "parent_id": "parent-inv-processing",
+            "amount_cents": 10_000,
+            "currency": "usd",
+            "status": "processing",
+            "idempotency_key": "attempt-processing",
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+    )
+
+    assert await repo.claim_next_due(now=NOW, worker_id="parking-worker") is None
+    parked_state = await db["dunning_states"].find_one({"invoice_id": "inv-processing"})
+    assert parked_state["status"] == "active"
+    assert parked_state["next_attempt_at"] is None
+    assert parked_state["suppression_reason"] == "payment_processing"
+
+    await db["payment_attempts"].update_one(
+        {"attempt_id": "attempt-processing"},
+        {"$set": {"status": "failed", "updated_at": NOW + timedelta(minutes=5)}},
+    )
+
+    claimed = await repo.claim_next_due(now=NOW + timedelta(minutes=5), worker_id="retry-worker")
+
+    assert claimed is not None
+    invoice, state = claimed
+    assert invoice.invoice_id == "inv-processing"
+    assert state.invoice_id == "inv-processing"
+    assert state.status == "processing"
+    assert state.processing_attempt_no == 1
+    assert state.processing_worker_id == "retry-worker"
+
+
+@pytest.mark.asyncio
 async def test_fresh_processing_claim_is_not_reclaimed_but_stale_processing_is(db, acad) -> None:
     repo = MongoDunningStateRepository(db)
     await _seed_invoice(db, academy_id=acad, invoice_id="inv-fresh", enrollment_id="enr-fresh")
