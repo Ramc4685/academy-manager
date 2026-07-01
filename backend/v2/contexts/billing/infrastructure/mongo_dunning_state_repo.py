@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
-from pymongo import ASCENDING
+from pymongo import ASCENDING, ReturnDocument
 
 from backend.v2.contexts.billing.domain.dunning import (
     DunningState,
@@ -32,6 +32,10 @@ class MongoDunningStateRepository(TenantScopedRepository):
             "last_notification_at",
             "terminal_at",
             "resolved_at",
+            "processing_started_at",
+            "lease_expires_at",
+            "suppressed_at",
+            "autopay_disabled_at",
             "created_at",
             "updated_at",
         ):
@@ -60,9 +64,10 @@ class MongoDunningStateRepository(TenantScopedRepository):
                 }
             )
             .sort([("due_date", ASCENDING), ("invoice_id", ASCENDING)])
-            .limit(limit)
         )
         async for invoice_doc in cursor:
+            if created >= limit:
+                break
             enrollment_id = str(invoice_doc.get("enrollment_id") or "")
             if not enrollment_id:
                 continue
@@ -99,47 +104,83 @@ class MongoDunningStateRepository(TenantScopedRepository):
         self, *, now: datetime, worker_id: str
     ) -> tuple[LedgerInvoice, DunningState] | None:
         academy_id = current_academy_id()
-        cursor = (
-            self.collection.find(
-                {
-                    "academy_id": academy_id,
-                    "status": "active",
-                    "next_attempt_at": {"$lte": now},
-                }
-            )
-            .sort([("next_attempt_at", ASCENDING), ("invoice_id", ASCENDING)])
-            .limit(10)
-        )
+        cursor = self.collection.find(
+            {
+                "academy_id": academy_id,
+                "status": {"$in": ["active", "processing"]},
+            }
+        ).sort([("next_attempt_at", ASCENDING), ("updated_at", ASCENDING)])
         async for state_doc in cursor:
             state = self._state_from_doc(state_doc)
-            attempt_no = state.attempt_count + 1
-            claimed = state.claim(attempt_no=attempt_no, worker_id=worker_id, now=now)
-            result = await self.collection.update_one(
+            if state.status == "active":
+                if state.next_attempt_at is None or state.next_attempt_at > now:
+                    continue
+                attempt_no = state.attempt_count + 1
+            elif state.status == "processing":
+                if state.lease_expires_at is None or state.lease_expires_at > now:
+                    continue
+                attempt_no = state.processing_attempt_no or state.attempt_count + 1
+            else:
+                continue
+
+            invoice_doc = await self._db["invoices"].find_one(
+                {"academy_id": academy_id, "invoice_id": state.invoice_id}
+            )
+            if not _invoice_chargeable(invoice_doc):
+                await self._store_state(state.suppress(reason="invoice_not_chargeable", now=now))
+                continue
+            enrollment = await self._db["student_billing_enrollments"].find_one(
                 {
                     "academy_id": academy_id,
-                    "invoice_id": state.invoice_id,
-                    "status": "active",
-                    "attempt_count": state.attempt_count,
-                    "next_attempt_at": state.next_attempt_at,
-                },
+                    "enrollment_id": str(invoice_doc.get("enrollment_id") or ""),
+                }
+            )
+            if enrollment is None or enrollment.get("autopay_enrollment_status") != "active":
+                await self._store_state(state.suppress(reason="autopay_not_active", now=now))
+                continue
+            latest_status = await self._latest_payment_attempt_status(state.invoice_id)
+            if latest_status == "succeeded":
+                await self._store_state(state.resolve(now=now))
+                continue
+            if latest_status == "processing":
+                parked = state.model_copy(update={"status": "processing"}).park(
+                    reason="payment_processing",
+                    now=now,
+                )
+                await self._store_state(parked)
+                continue
+
+            lease_expires_at = now + timedelta(minutes=30)
+            claimed = state.claim(
+                attempt_no=attempt_no,
+                worker_id=worker_id,
+                now=now,
+                lease_expires_at=lease_expires_at,
+            )
+            filter_: dict[str, Any] = {
+                "academy_id": academy_id,
+                "invoice_id": state.invoice_id,
+                "status": state.status,
+            }
+            if state.status == "active":
+                filter_.update(
+                    {
+                        "attempt_count": state.attempt_count,
+                        "next_attempt_at": state.next_attempt_at,
+                    }
+                )
+            else:
+                filter_.update(
+                    {
+                        "processing_attempt_no": state.processing_attempt_no,
+                        "lease_expires_at": state.lease_expires_at,
+                    }
+                )
+            result = await self.collection.update_one(
+                filter_,
                 {"$set": _mongo_doc(claimed)},
             )
             if getattr(result, "matched_count", 0) != 1:
-                continue
-            invoice_doc = await self._db["invoices"].find_one(
-                {
-                    "academy_id": academy_id,
-                    "invoice_id": state.invoice_id,
-                    "status": {"$in": ["open", "partially_paid"]},
-                    "balance_due_cents": {"$gt": 0},
-                }
-            )
-            if invoice_doc is None:
-                await self.release_attempt(
-                    state=claimed,
-                    next_attempt_at=now,
-                    now=now,
-                )
                 continue
             return self._invoice_from_doc(invoice_doc), claimed
         return None
@@ -167,13 +208,26 @@ class MongoDunningStateRepository(TenantScopedRepository):
         self,
         *,
         state: DunningState,
-        next_attempt_at: datetime,
+        next_attempt_at: datetime | None,
         now: datetime,
     ) -> DunningState:
         updated = state.release(next_attempt_at=next_attempt_at, now=now)
         stored = await self._replace_processing_state(state, updated)
         if stored is None:
             raise ValueError("dunning state changed during release; retry")
+        return stored
+
+    async def park_attempt(
+        self,
+        *,
+        state: DunningState,
+        reason: str,
+        now: datetime,
+    ) -> DunningState:
+        updated = state.park(reason=reason, now=now)
+        stored = await self._replace_processing_state(state, updated)
+        if stored is None:
+            raise ValueError("dunning state changed during park; retry")
         return stored
 
     async def mark_notification_sent(
@@ -188,6 +242,45 @@ class MongoDunningStateRepository(TenantScopedRepository):
             },
         )
         doc = await self.collection.find_one({"academy_id": academy_id, "invoice_id": invoice_id})
+        if doc is None:
+            raise ValueError("dunning state not found")
+        return self._state_from_doc(doc)
+
+    async def list_terminal_disable_pending(self, *, limit: int) -> list[DunningState]:
+        cursor = (
+            self.collection.find(
+                {
+                    "academy_id": current_academy_id(),
+                    "status": "dunned",
+                    "autopay_disable_status": {"$in": ["pending", "failed"]},
+                }
+            )
+            .sort([("updated_at", ASCENDING), ("invoice_id", ASCENDING)])
+            .limit(limit)
+        )
+        return [self._state_from_doc(doc) async for doc in cursor]
+
+    async def mark_autopay_disable_result(
+        self,
+        *,
+        invoice_id: str,
+        succeeded: bool,
+        error: str | None,
+        now: datetime,
+    ) -> DunningState:
+        academy_id = current_academy_id()
+        update: dict[str, Any] = {
+            "autopay_disable_status": "succeeded" if succeeded else "failed",
+            "autopay_disable_error": None if succeeded else error,
+            "updated_at": now,
+        }
+        if succeeded:
+            update["autopay_disabled_at"] = now
+        doc = await self.collection.find_one_and_update(
+            {"academy_id": academy_id, "invoice_id": invoice_id},
+            {"$set": update},
+            return_document=ReturnDocument.AFTER,
+        )
         if doc is None:
             raise ValueError("dunning state not found")
         return self._state_from_doc(doc)
@@ -224,11 +317,28 @@ class MongoDunningStateRepository(TenantScopedRepository):
                     "last_attempt_at": state_doc.get("last_attempt_at"),
                     "last_failure_code": state_doc.get("last_failure_code"),
                     "terminal_at": state_doc.get("terminal_at"),
+                    "autopay_disable_status": state_doc.get("autopay_disable_status"),
+                    "autopay_disable_error": state_doc.get("autopay_disable_error"),
+                    "autopay_disabled_at": state_doc.get("autopay_disabled_at"),
                     "balance_due_cents": int(invoice.get("balance_due_cents") or 0),
                     "currency": str(invoice.get("currency") or "usd"),
                 }
             )
         return rows
+
+    async def _store_state(self, state: DunningState) -> DunningState:
+        await self.collection.update_one(
+            {"academy_id": current_academy_id(), "invoice_id": state.invoice_id},
+            {"$set": _mongo_doc(state)},
+        )
+        return state
+
+    async def _latest_payment_attempt_status(self, invoice_id: str) -> str | None:
+        doc = await self._db["payment_attempts"].find_one(
+            {"academy_id": current_academy_id(), "invoice_id": invoice_id},
+            sort=[("created_at", -1), ("attempt_id", -1)],
+        )
+        return str(doc.get("status")) if doc else None
 
     async def _replace_processing_state(
         self, current: DunningState, updated: DunningState
@@ -264,3 +374,12 @@ def _mongo_doc(model: DunningState) -> dict[str, Any]:
     doc = model.model_dump(mode="python")
     doc["notification_attempts"] = list(model.notification_attempts)
     return doc
+
+
+def _invoice_chargeable(invoice_doc: dict[str, Any] | None) -> bool:
+    if invoice_doc is None:
+        return False
+    return (
+        invoice_doc.get("status") in {"open", "partially_paid"}
+        and int(invoice_doc.get("balance_due_cents") or 0) > 0
+    )

@@ -1399,6 +1399,8 @@ def test_list_dunning_failures(admin_client):
             "last_attempt_at": datetime(2026, 7, 8, 9, 0, tzinfo=UTC),
             "last_failure_code": "insufficient_funds",
             "terminal_at": datetime(2026, 7, 8, 9, 0, tzinfo=UTC),
+            "autopay_disable_status": "failed",
+            "autopay_disable_error": "transition rejected",
             "balance_due_cents": 12000,
             "currency": "usd",
         }
@@ -1414,6 +1416,8 @@ def test_list_dunning_failures(admin_client):
     assert body["rows"][0]["status"] == "dunned"
     assert body["rows"][0]["attempt_count"] == 4
     assert body["rows"][0]["last_failure_code"] == "insufficient_funds"
+    assert body["rows"][0]["autopay_disable_status"] == "failed"
+    assert body["rows"][0]["autopay_disable_error"] == "transition rejected"
 
 
 def test_list_invoice_attempts(admin_client):

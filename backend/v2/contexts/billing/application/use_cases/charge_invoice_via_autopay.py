@@ -123,6 +123,7 @@ class ChargeResult(BaseModel):
     status: str  # invoice status after the attempt
     balance_due_cents: int
     requires_action: bool = False
+    processing: bool = False
     decline_code: str | None = None
 
 
@@ -156,7 +157,7 @@ class ChargeInvoiceViaAutopay:
         self._settings = settings
         self._now = clock
 
-    async def execute(self, invoice_id: str) -> ChargeResult:
+    async def execute(self, invoice_id: str, *, retry_scope: str | None = None) -> ChargeResult:
         now = self._now()
 
         # 1. Load invoice
@@ -252,8 +253,11 @@ class ChargeInvoiceViaAutopay:
         )
 
         # 4. Create off-session PaymentIntent (idempotency key prevents stale amount replay)
-        idempotency_key = (
+        base_idempotency_key = (
             f"autopay:{invoice.invoice_id}:{invoice.period}:{invoice.balance_due_cents}"
+        )
+        idempotency_key = (
+            f"{base_idempotency_key}:{retry_scope}" if retry_scope else base_idempotency_key
         )
         pi_metadata = {
             "invoice_id": invoice.invoice_id,
@@ -281,6 +285,7 @@ class ChargeInvoiceViaAutopay:
                 stripe_payment_intent_id=None,
                 failure_code=decline_str,
                 failure_message=decline_str,
+                retry_scope=retry_scope,
             )
             log.warning(
                 "charge_autopay: stripe error invoice=%s err=%s",
@@ -304,6 +309,7 @@ class ChargeInvoiceViaAutopay:
                 stripe_payment_intent_id=pi_id,
                 failure_code=decline_code,
                 failure_message=decline_code,
+                retry_scope=retry_scope,
             )
             log.warning(
                 "charge_autopay: PI declined invoice=%s pi=%s code=%s",
@@ -328,6 +334,7 @@ class ChargeInvoiceViaAutopay:
                 stripe_payment_intent_id=pi_id,
                 failure_code=None,
                 failure_message="ACH debit submitted; awaiting settlement.",
+                retry_scope=retry_scope,
             )
             log.info(
                 "charge_autopay: PI processing invoice=%s pi=%s",
@@ -339,6 +346,7 @@ class ChargeInvoiceViaAutopay:
                 invoice_id=invoice_id,
                 status=invoice.status,
                 balance_due_cents=invoice.balance_due_cents,
+                processing=True,
                 requires_action=False,
             )
 
@@ -351,6 +359,7 @@ class ChargeInvoiceViaAutopay:
                 stripe_payment_intent_id=pi_id,
                 failure_code=None,
                 failure_message=None,
+                retry_scope=retry_scope,
             )
             log.info(
                 "charge_autopay: PI requires_action invoice=%s pi=%s status=%s",
@@ -374,6 +383,7 @@ class ChargeInvoiceViaAutopay:
             stripe_payment_intent_id=pi_id,
             failure_code=None,
             failure_message=None,
+            retry_scope=retry_scope,
         )
         payment_id = f"ledger-pay-autopay:{pi_id}"
         payment = await self._ledger.record_payment(
@@ -426,8 +436,10 @@ class ChargeInvoiceViaAutopay:
         stripe_payment_intent_id: str | None,
         failure_code: str | None,
         failure_message: str | None,
+        retry_scope: str | None = None,
     ) -> None:
         attempt_key_suffix = stripe_payment_intent_id or "stripe-error"
+        retry_part = f"{retry_scope}:" if retry_scope else ""
         await self._ledger.record_payment_attempt(
             invoice_id=invoice.invoice_id,
             parent_id=invoice.parent_id,
@@ -440,7 +452,7 @@ class ChargeInvoiceViaAutopay:
             failure_message=failure_message,
             idempotency_key=(
                 f"autopay-attempt:{invoice.invoice_id}:{invoice.period}:"
-                f"{amount_cents}:{status}:{attempt_key_suffix}"
+                f"{amount_cents}:{retry_part}{status}:{attempt_key_suffix}"
             ),
             created_by_event_id=None,
         )

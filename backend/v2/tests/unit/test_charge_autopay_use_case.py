@@ -1062,6 +1062,40 @@ async def test_idempotency_key_same_on_retry_with_same_period_and_balance() -> N
     assert keys[0] == keys[1] == "autopay:inv-retry:2026-06:10000"
 
 
+async def test_default_idempotency_key_remains_slice_c_shape_without_retry_scope() -> None:
+    repo = FakeLedgerRepo([_invoice("inv-default-scope")])
+    stripe = FakeStripeSucceeds()
+
+    await _uc(repo, stripe).execute("inv-default-scope")
+
+    assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-default-scope:2026-06:10000"
+    assert repo.payment_attempts[0]["idempotency_key"] == (
+        "autopay-attempt:inv-default-scope:2026-06:10000:" "succeeded:pi_test_123"
+    )
+
+
+async def test_dunning_retry_scope_changes_pi_and_attempt_idempotency_keys() -> None:
+    repo = FakeLedgerRepo([_invoice("inv-dunning-scope")])
+    stripe = FakeStripeSucceeds()
+    uc = _uc(repo, stripe)
+
+    await uc.execute("inv-dunning-scope", retry_scope="dunning-attempt:1")
+    repo._invoices["inv-dunning-scope"] = _invoice("inv-dunning-scope")
+    stripe.pi_id = "pi_test_456"
+    await uc.execute("inv-dunning-scope", retry_scope="dunning-attempt:2")
+
+    assert [call["idempotency_key"] for call in stripe.create_calls] == [
+        "autopay:inv-dunning-scope:2026-06:10000:dunning-attempt:1",
+        "autopay:inv-dunning-scope:2026-06:10000:dunning-attempt:2",
+    ]
+    assert [attempt["idempotency_key"] for attempt in repo.payment_attempts] == [
+        "autopay-attempt:inv-dunning-scope:2026-06:10000:"
+        "dunning-attempt:1:succeeded:pi_test_123",
+        "autopay-attempt:inv-dunning-scope:2026-06:10000:"
+        "dunning-attempt:2:succeeded:pi_test_456",
+    ]
+
+
 async def test_idempotency_key_changes_when_balance_due_changes() -> None:
     """Same invoice and period with a changed balance must create a new PI key and amount."""
     repo = FakeLedgerRepo(invoices=[_invoice(invoice_id="inv-balance", status="open")])

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from pydantic import BaseModel
@@ -34,7 +34,15 @@ class DunningStateRepository(Protocol):
         self,
         *,
         state: DunningState,
-        next_attempt_at: datetime,
+        next_attempt_at: datetime | None,
+        now: datetime,
+    ) -> DunningState: ...
+
+    async def park_attempt(
+        self,
+        *,
+        state: DunningState,
+        reason: str,
         now: datetime,
     ) -> DunningState: ...
 
@@ -42,9 +50,20 @@ class DunningStateRepository(Protocol):
         self, *, invoice_id: str, attempt_no: int, sent_at: datetime
     ) -> DunningState: ...
 
+    async def list_terminal_disable_pending(self, *, limit: int) -> list[DunningState]: ...
+
+    async def mark_autopay_disable_result(
+        self,
+        *,
+        invoice_id: str,
+        succeeded: bool,
+        error: str | None,
+        now: datetime,
+    ) -> DunningState: ...
+
 
 class ChargeInvoicePort(Protocol):
-    async def execute(self, invoice_id: str) -> Any: ...
+    async def execute(self, invoice_id: str, *, retry_scope: str | None = None) -> Any: ...
 
 
 class DunningNotificationPort(Protocol):
@@ -74,9 +93,12 @@ class ProcessDunningRetriesResult(BaseModel):
     failed: int = 0
     dunned: int = 0
     transient: int = 0
+    parked: int = 0
+    technical_failures: int = 0
     notifications_sent: int = 0
     notifications_failed: int = 0
     autopay_disabled: int = 0
+    autopay_disable_failed: int = 0
 
 
 class ProcessDunningRetries:
@@ -110,10 +132,14 @@ class ProcessDunningRetries:
             "failed": 0,
             "dunned": 0,
             "transient": 0,
+            "parked": 0,
+            "technical_failures": 0,
             "notifications_sent": 0,
             "notifications_failed": 0,
             "autopay_disabled": 0,
+            "autopay_disable_failed": 0,
         }
+        await self._process_pending_autopay_disables(limit=limit, counts=counts, now=now)
 
         for _ in range(limit):
             claimed = await self._dunning.claim_next_due(now=now, worker_id=worker_id)
@@ -123,24 +149,48 @@ class ProcessDunningRetries:
             counts["processed"] += 1
 
             try:
-                raw_result = await self._charge_invoice.execute(invoice.invoice_id)
+                raw_result = await self._charge_invoice.execute(
+                    invoice.invoice_id,
+                    retry_scope=f"dunning-attempt:{state.processing_attempt_no}",
+                )
             except Exception as exc:
-                raw_result = {
-                    "success": False,
-                    "decline_code": str(exc),
-                    "requires_action": False,
-                }
+                log.warning(
+                    "dunning charge technical failure invoice=%s attempt=%s err=%s",
+                    invoice.invoice_id,
+                    state.processing_attempt_no,
+                    exc,
+                )
+                await self._dunning.park_attempt(
+                    state=state,
+                    reason="charge_technical_failure",
+                    now=now,
+                )
+                counts["technical_failures"] += 1
+                counts["parked"] += 1
+                continue
 
             result = _result_dict(raw_result)
             succeeded = bool(result.get("success"))
             failure_code = _failure_code(result)
-            if not succeeded and failure_code is None:
-                await self._dunning.release_attempt(
+            if not succeeded and (bool(result.get("processing")) or failure_code is None):
+                await self._dunning.park_attempt(
                     state=state,
-                    next_attempt_at=now + timedelta(days=1),
+                    reason="payment_processing"
+                    if bool(result.get("processing"))
+                    else "attempt_indeterminate",
                     now=now,
                 )
-                counts["transient"] += 1
+                counts["parked"] += 1
+                if not bool(result.get("processing")):
+                    counts["transient"] += 1
+                continue
+            if failure_code == "autopay_not_active":
+                await self._dunning.park_attempt(
+                    state=state,
+                    reason="autopay_not_active",
+                    now=now,
+                )
+                counts["parked"] += 1
                 continue
 
             updated = await self._dunning.finish_attempt(
@@ -156,9 +206,7 @@ class ProcessDunningRetries:
             counts["failed"] += 1
             if updated.status == "dunned":
                 counts["dunned"] += 1
-                disabled = await self._disable_autopay(updated)
-                if disabled:
-                    counts["autopay_disabled"] += 1
+                await self._disable_autopay(updated, counts=counts, now=now)
 
             if await self._notify_parent(invoice=invoice, state=updated):
                 counts["notifications_sent"] += 1
@@ -166,6 +214,16 @@ class ProcessDunningRetries:
                 counts["notifications_failed"] += 1
 
         return ProcessDunningRetriesResult(**counts)
+
+    async def _process_pending_autopay_disables(
+        self,
+        *,
+        limit: int,
+        counts: dict[str, int],
+        now: datetime,
+    ) -> None:
+        for state in await self._dunning.list_terminal_disable_pending(limit=limit):
+            await self._disable_autopay(state, counts=counts, now=now)
 
     async def _notify_parent(self, *, invoice: LedgerInvoice, state: DunningState) -> bool:
         attempt_no = state.attempt_count
@@ -196,13 +254,51 @@ class ProcessDunningRetries:
             )
             return False
 
-    async def _disable_autopay(self, state: DunningState) -> bool:
+    async def _disable_autopay(
+        self,
+        state: DunningState,
+        *,
+        counts: dict[str, int],
+        now: datetime,
+    ) -> None:
         if self._enrollment_autopay is None or not state.enrollment_id:
-            return False
-        return await self._enrollment_autopay.set_autopay_enrollment_status(
-            enrollment_id=state.enrollment_id,
-            status="disabled",
-        )
+            await self._dunning.mark_autopay_disable_result(
+                invoice_id=state.invoice_id,
+                succeeded=True,
+                error=None,
+                now=now,
+            )
+            return
+        try:
+            disabled = await self._enrollment_autopay.set_autopay_enrollment_status(
+                enrollment_id=state.enrollment_id,
+                status="disabled",
+            )
+        except Exception as exc:
+            await self._dunning.mark_autopay_disable_result(
+                invoice_id=state.invoice_id,
+                succeeded=False,
+                error=str(exc),
+                now=now,
+            )
+            counts["autopay_disable_failed"] += 1
+            return
+        if disabled:
+            await self._dunning.mark_autopay_disable_result(
+                invoice_id=state.invoice_id,
+                succeeded=True,
+                error=None,
+                now=now,
+            )
+            counts["autopay_disabled"] += 1
+        else:
+            await self._dunning.mark_autopay_disable_result(
+                invoice_id=state.invoice_id,
+                succeeded=False,
+                error="transition rejected",
+                now=now,
+            )
+            counts["autopay_disable_failed"] += 1
 
 
 def _result_dict(raw_result: Any) -> dict[str, Any]:

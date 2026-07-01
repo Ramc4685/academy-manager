@@ -1107,6 +1107,9 @@ class DunningRowDto(BaseModel):
     last_attempt_at: datetime | None = None
     last_failure_code: str | None = None
     terminal_at: datetime | None = None
+    autopay_disable_status: str | None = None
+    autopay_disable_error: str | None = None
+    autopay_disabled_at: datetime | None = None
     balance_due_cents: int
     currency: str = "usd"
 
