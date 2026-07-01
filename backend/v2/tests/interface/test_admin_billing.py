@@ -1386,6 +1386,36 @@ def test_list_failed_payment_attempts(admin_client):
     assert body["rows"][0]["attempt_count"] == 2
 
 
+def test_list_dunning_failures(admin_client):
+    rows = [
+        {
+            "invoice_id": "inv-1",
+            "parent_id": "p1",
+            "parent_name": "Sarah M.",
+            "period": "2026-07",
+            "status": "dunned",
+            "attempt_count": 4,
+            "next_attempt_at": None,
+            "last_attempt_at": datetime(2026, 7, 8, 9, 0, tzinfo=UTC),
+            "last_failure_code": "insufficient_funds",
+            "terminal_at": datetime(2026, 7, 8, 9, 0, tzinfo=UTC),
+            "balance_due_cents": 12000,
+            "currency": "usd",
+        }
+    ]
+
+    async def list_dunning_failures():
+        return rows
+
+    admin_client.use_cases.list_dunning_failures = list_dunning_failures
+    r = admin_client.get("/api/v2/admin/billing/dunning")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["rows"][0]["status"] == "dunned"
+    assert body["rows"][0]["attempt_count"] == 4
+    assert body["rows"][0]["last_failure_code"] == "insufficient_funds"
+
+
 def test_list_invoice_attempts(admin_client):
     attempts = [
         {

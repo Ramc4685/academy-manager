@@ -57,6 +57,9 @@ from backend.v2.contexts.billing.application.use_cases.match_legacy_invoices imp
     ConfirmLegacyMatchCommand,
     ListLegacyMatchQueue,
 )
+from backend.v2.contexts.billing.application.use_cases.process_dunning_retries import (
+    ProcessDunningRetries,
+)
 from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
     QuoteEnrollmentCommand,
@@ -104,6 +107,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo impo
 )
 from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
     MongoCreditLedgerRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import (
+    MongoDunningStateRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
     MongoParentBillingCustomerRepository,
@@ -441,6 +447,61 @@ class _InvoiceEmailAdapter:
         )
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "invoice email delivery failed")
+
+    async def send_dunning_notice(
+        self,
+        *,
+        parent_id: str,
+        invoice_id: str,
+        period: str,
+        balance_due_cents: int,
+        currency: str,
+        attempt_no: int,
+        terminal: bool,
+    ) -> None:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        academy_id = current_academy_id()
+        membership = await self._memberships.get_membership(academy_id, parent_id)
+        if membership is None or not membership.is_active() or "parent" not in membership.roles:
+            raise ValueError("dunning parent has no active membership in request academy")
+
+        user = await self._users.get_by_id(parent_id)
+        email = str(user.email if user else "").strip()
+        if not email:
+            raise ValueError("dunning parent email not found")
+
+        amount = f"{currency.upper()} {balance_due_cents / 100:.2f}"
+        safe_invoice = html.escape(invoice_id)
+        safe_period = html.escape(period)
+        safe_amount = html.escape(amount)
+        if terminal:
+            subject = f"Autopay disabled for invoice {invoice_id}"
+            body = (
+                f"<p>We could not collect invoice <strong>{safe_invoice}</strong> "
+                f"for {safe_period} after {attempt_no} attempts.</p>"
+                f"<p>Balance due: <strong>{safe_amount}</strong>. "
+                "Autopay has been disabled for this enrollment until payment details are updated.</p>"
+            )
+        else:
+            subject = f"Autopay attempt {attempt_no} failed for invoice {invoice_id}"
+            body = (
+                f"<p>We could not collect invoice <strong>{safe_invoice}</strong> "
+                f"for {safe_period}.</p>"
+                f"<p>Balance due: <strong>{safe_amount}</strong>. "
+                "We will retry automatically on the published retry schedule.</p>"
+            )
+        outcome = await self._sender.send(
+            recipient=ResolvedRecipient(
+                user_id=parent_id,
+                email=email,
+                display_name=str(user.display_name if user else "") or None,
+            ),
+            subject=subject,
+            body=body,
+        )
+        if not outcome.ok:
+            raise ValueError(outcome.failed_reason or "dunning email delivery failed")
 
 
 def _make_reports_kpis(db: AsyncIOMotorDatabase[Any]) -> object:
@@ -2547,6 +2608,7 @@ def compose_admin(
 
     # Billing
     billing_ledger_repo = MongoBillingLedgerRepository(db)
+    dunning_state_repo = MongoDunningStateRepository(db)
     billing_counters_repo = MongoBillingCounterRepository(db)
     billing_settings_repo = MongoBillingSettingsRepository(db)
     credits_repo = MongoCreditLedgerRepository(db)
@@ -2776,6 +2838,22 @@ def compose_admin(
         ).execute(invoice_id)
         return result.model_dump(mode="python")
 
+    def _dunning_worker() -> ProcessDunningRetries:
+        required = ("get_default_payment_method", "create_off_session_payment_intent")
+        if not all(hasattr(stripe, name) for name in required):
+            raise RuntimeError("Stripe autopay not configured")
+        return ProcessDunningRetries(
+            dunning=dunning_state_repo,
+            charge_invoice=ChargeInvoiceViaAutopay(
+                ledger=billing_ledger_repo,
+                stripe=stripe,  # type: ignore[arg-type]
+                enrollment_autopay=student_billing_enrollment_repo,
+                settings=billing_settings_repo,
+            ),
+            notifier=_invoice_email_port(),
+            enrollment_autopay=student_billing_enrollment_repo,
+        )
+
     # ---- Billing Health (#235): observability + recovery actions ----------- #
     async def list_reconciliation_runs() -> list[dict[str, Any]]:
         from backend.v2.contexts.billing.infrastructure.mongo_billing_reconciliation_run_repo import (
@@ -2806,6 +2884,9 @@ def compose_admin(
 
     async def list_failed_payment_attempts() -> list[dict[str, Any]]:
         return await billing_ledger_repo.list_open_failed_attempts()
+
+    async def list_dunning_failures() -> list[dict[str, Any]]:
+        return await dunning_state_repo.list_admin_rows()
 
     async def list_invoice_attempts(invoice_id: str) -> list[dict[str, Any]]:
         invoice = await billing_ledger_repo.get_invoice(invoice_id)
@@ -5248,6 +5329,13 @@ def compose_admin(
         run_reconciliation=run_reconciliation,
         list_failed_payment_attempts=list_failed_payment_attempts,
         list_invoice_attempts=list_invoice_attempts,
+        list_dunning_failures=list_dunning_failures,
+        process_dunning_retries=_dunning_worker()
+        if all(
+            hasattr(stripe, name)
+            for name in ("get_default_payment_method", "create_off_session_payment_intent")
+        )
+        else None,
         replay_webhook_event=replay_webhook_event,
         list_legacy_match_queue=list_legacy_match_queue,
         confirm_legacy_match=confirm_legacy_match,

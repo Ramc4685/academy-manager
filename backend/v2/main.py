@@ -338,6 +338,47 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if totals["repaired"] or totals["quarantined"] or totals["failed"]:
             log.info("stripe_payment_intent_reconciliation_processed", extra=totals)
 
+    async def _process_dunning_retries() -> None:
+        totals = {
+            "academy_count": 0,
+            "prepared": 0,
+            "processed": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "dunned": 0,
+            "transient": 0,
+            "notifications_sent": 0,
+            "notifications_failed": 0,
+            "autopay_disabled": 0,
+        }
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            runtime_academy_id,
+        ):
+            with tenant_scope(academy_id):
+                worker = getattr(app.state.admin, "process_dunning_retries", None)
+                if worker is None:
+                    continue
+                result = await worker.execute(
+                    limit=100,
+                    worker_id=f"scheduler-dunning-worker:{academy_id}",
+                )
+            totals["academy_count"] += 1
+            for key in (
+                "prepared",
+                "processed",
+                "succeeded",
+                "failed",
+                "dunned",
+                "transient",
+                "notifications_sent",
+                "notifications_failed",
+                "autopay_disabled",
+            ):
+                totals[key] += int(getattr(result, key, 0) or 0)
+        if totals["processed"] or totals["dunned"] or totals["autopay_disabled"]:
+            log.info("dunning_retries_processed", extra=totals)
+
     async def _send_coach_daily_digests() -> None:
         # Hourly tick. The job runs every hour and only sends for academies whose
         # *effective* digest hour matches the current scheduler-TZ hour. The env
@@ -417,6 +458,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         "interval",
         minutes=10,
         id="reconcile_stripe_payment_intents",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _process_dunning_retries,
+        "interval",
+        minutes=60,
+        id="process_dunning_retries",
         replace_existing=True,
         max_instances=1,
     )
