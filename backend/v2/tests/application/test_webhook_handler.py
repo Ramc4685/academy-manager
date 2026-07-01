@@ -253,6 +253,9 @@ class FakeParentStripeCustomers:
             row["ach_mandate_version"] = ach_mandate_version
         if card_disclosure_version:
             row["card_disclosure_version"] = card_disclosure_version
+        self.default_methods = [
+            existing for existing in self.default_methods if existing["parent_id"] != parent_id
+        ]
         self.default_methods.append(row)
 
 
@@ -277,7 +280,8 @@ class FakeEnrollmentAutopayState:
         return True
 
     async def mark_autopay_active_from_setup(self, *, enrollment_id: str, session=None) -> bool:
-        self.setup_completed.append(enrollment_id)
+        if enrollment_id not in self.setup_completed:
+            self.setup_completed.append(enrollment_id)
         return True
 
 

@@ -239,13 +239,19 @@ class CompleteAutopaySetup:
                     session=session,
                 )
                 inserted_consent = persisted_consent.consent_id == consent.consent_id
-                if not inserted_consent:
-                    return
-                if self._outbox is not None:
+                if inserted_consent and self._outbox is not None:
                     await self._outbox.append(
                         self._consent_event(persisted_consent),
                         session=session,
                     )
+            activated = await self._enrollment_autopay.mark_autopay_active_from_setup(
+                enrollment_id=enrollment_id,
+                session=session,
+            )
+            if not activated:
+                raise RuntimeError(
+                    f"autopay enrollment activation failed for enrollment {enrollment_id}"
+                )
             await self._parent_customers.set_default_payment_method(
                 parent_id=parent_id,
                 stripe_customer_id=stripe_customer_id,
@@ -265,10 +271,6 @@ class CompleteAutopaySetup:
                 card_disclosure_version=(
                     persisted_consent.card_disclosure_version if persisted_consent else None
                 ),
-                session=session,
-            )
-            await self._enrollment_autopay.mark_autopay_active_from_setup(
-                enrollment_id=enrollment_id,
                 session=session,
             )
 

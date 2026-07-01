@@ -12,7 +12,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from pymongo.errors import OperationFailure
 
+from backend.v2.composition.parent import _MongoTransactionRunner
 from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     AutopayConsentCaptureContext,
     CompleteAutopaySetup,
@@ -356,6 +358,9 @@ class _CustomerRepo:
             row["ach_mandate_version"] = ach_mandate_version
         if card_disclosure_version:
             row["card_disclosure_version"] = card_disclosure_version
+        self.default_methods = [
+            existing for existing in self.default_methods if existing["parent_id"] != parent_id
+        ]
         self.default_methods.append(row)
 
 
@@ -388,9 +393,10 @@ class _Outbox:
 
 
 class _EnrollmentAutopay:
-    def __init__(self) -> None:
+    def __init__(self, *, setup_result: bool = True) -> None:
         self.synced: list[dict[str, str | None]] = []
         self.setup_completed: list[str] = []
+        self.setup_result = setup_result
 
     async def set_autopay_state(
         self,
@@ -408,8 +414,49 @@ class _EnrollmentAutopay:
         return True
 
     async def mark_autopay_active_from_setup(self, *, enrollment_id: str, session=None) -> bool:
-        self.setup_completed.append(enrollment_id)
+        if not self.setup_result:
+            self.setup_completed.append(enrollment_id)
+            return False
+        if enrollment_id not in self.setup_completed:
+            self.setup_completed.append(enrollment_id)
         return True
+
+
+class _FakeTransaction:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+class _FakeSession:
+    def start_transaction(self):
+        return _FakeTransaction()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+class _FakeClient:
+    async def start_session(self):
+        return _FakeSession()
+
+
+class _FakeDb:
+    client = _FakeClient()
+
+
+class _NoSessionClient:
+    async def start_session(self):
+        raise OperationFailure("Sessions are not supported by this MongoDB deployment")
+
+
+class _NoSessionDb:
+    client = _NoSessionClient()
 
 
 def _setup_checkout_gateway() -> _CheckoutGateway:
@@ -617,6 +664,50 @@ async def test_autopay_setup_replay_same_setup_intent_does_not_duplicate_consent
 
 
 @pytest.mark.asyncio
+async def test_autopay_setup_existing_consent_replay_repairs_projection_and_enrollment() -> None:
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    customers = _CustomerRepo()
+    consents = _ConsentRepo()
+    outbox = _Outbox()
+    enrollment_autopay = _EnrollmentAutopay()
+    gateway = _setup_checkout_gateway()
+    uc = CompleteAutopaySetup(
+        stripe=gateway,
+        parent_customers=customers,
+        enrollment_autopay=enrollment_autopay,
+        consent_repo=consents,
+        outbox=outbox,
+        academy_id="acad",
+        clock=lambda: now,
+    )
+
+    await uc.execute_from_setup_intent(gateway.setup_intents["seti_saved_card"])
+    customers.default_methods.clear()
+    enrollment_autopay.setup_completed.clear()
+
+    await uc.execute_from_setup_intent(gateway.setup_intents["seti_saved_card"])
+
+    assert [consent.setup_intent_id for consent in consents.consents] == ["seti_saved_card"]
+    assert [event.name for event in outbox.events] == ["Billing.AutopayConsentCaptured"]
+    assert customers.default_methods == [
+        {
+            "parent_id": "p1",
+            "stripe_customer_id": "cus_parent",
+            "stripe_payment_method_id": "pm_saved_card",
+            "payment_method_type": "card",
+            "stripe_mandate_id": "mandate_saved_card",
+            "setup_intent_id": "seti_saved_card",
+            "checkout_session_id": None,
+            "completed_at": now,
+            "current_consent_id": consents.consents[0].consent_id,
+            "consent_text_version": "autopay-consent-v1",
+            "card_disclosure_version": "card-disclosure-v1",
+        }
+    ]
+    assert enrollment_autopay.setup_completed == ["enr-1"]
+
+
+@pytest.mark.asyncio
 async def test_autopay_setup_consent_append_failure_does_not_update_projection_or_enrollment() -> (
     None
 ):
@@ -667,6 +758,62 @@ async def test_autopay_setup_outbox_failure_does_not_update_projection_or_enroll
 
     assert customers.default_methods == []
     assert enrollment_autopay.setup_completed == []
+
+
+@pytest.mark.asyncio
+async def test_autopay_setup_enrollment_activation_failure_raises_without_projection() -> None:
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    customers = _CustomerRepo()
+    consents = _ConsentRepo()
+    outbox = _Outbox()
+    enrollment_autopay = _EnrollmentAutopay(setup_result=False)
+    gateway = _setup_checkout_gateway()
+    uc = CompleteAutopaySetup(
+        stripe=gateway,
+        parent_customers=customers,
+        enrollment_autopay=enrollment_autopay,
+        consent_repo=consents,
+        outbox=outbox,
+        academy_id="acad",
+        clock=lambda: now,
+    )
+
+    with pytest.raises(RuntimeError, match="autopay enrollment activation failed"):
+        await uc.execute_from_setup_intent(gateway.setup_intents["seti_saved_card"])
+
+    assert [consent.setup_intent_id for consent in consents.consents] == ["seti_saved_card"]
+    assert [event.name for event in outbox.events] == ["Billing.AutopayConsentCaptured"]
+    assert customers.default_methods == []
+    assert enrollment_autopay.setup_completed == ["enr-1"]
+
+
+@pytest.mark.asyncio
+async def test_mongo_transaction_runner_does_not_fallback_after_work_started() -> None:
+    runner = _MongoTransactionRunner(_FakeDb())
+    sessions: list[object | None] = []
+
+    async def work(session):
+        sessions.append(session)
+        raise AttributeError("repository bug after transaction started")
+
+    with pytest.raises(AttributeError, match="repository bug"):
+        await runner.run(work)
+
+    assert len(sessions) == 1
+    assert sessions[0] is not None
+
+
+@pytest.mark.asyncio
+async def test_mongo_transaction_runner_falls_back_when_sessions_unavailable() -> None:
+    runner = _MongoTransactionRunner(_NoSessionDb())
+    sessions: list[object | None] = []
+
+    async def work(session):
+        sessions.append(session)
+        return "ok"
+
+    assert await runner.run(work) == "ok"
+    assert sessions == [None]
 
 
 @pytest.mark.asyncio

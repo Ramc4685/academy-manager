@@ -10,6 +10,7 @@ from typing import Any, Protocol, TypeVar
 from zoneinfo import ZoneInfo
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.errors import OperationFailure
 
 from backend.v2.composition.pathway import (
     CurriculumComposition,
@@ -204,11 +205,35 @@ class _MongoTransactionRunner:
 
     async def run(self, work: Callable[[Any | None], Awaitable[T]]) -> T:
         try:
-            async with await self._db.client.start_session() as session:
-                async with session.start_transaction():
-                    return await work(session)
+            session_context = await self._db.client.start_session()
         except (AttributeError, NotImplementedError):
             return await work(None)
+        except OperationFailure as exc:
+            if self._is_transaction_unavailable(exc):
+                return await work(None)
+            raise
+
+        async with session_context as session:
+            try:
+                transaction_context = session.start_transaction()
+            except (AttributeError, NotImplementedError):
+                return await work(None)
+            except OperationFailure as exc:
+                if self._is_transaction_unavailable(exc):
+                    return await work(None)
+                raise
+            async with transaction_context:
+                return await work(session)
+
+    @staticmethod
+    def _is_transaction_unavailable(exc: OperationFailure) -> bool:
+        message = str(exc).lower()
+        return ("transaction" in message or "session" in message) and (
+            "not supported" in message
+            or "replica set" in message
+            or "mongos" in message
+            or "transaction numbers are only allowed" in message
+        )
 
 
 def compose_parent_webhook_handler(
