@@ -1110,7 +1110,7 @@ async def test_ach_setup_requiring_microdeposit_verification_does_not_mark_activ
 
 
 @pytest.mark.asyncio
-async def test_card_setup_can_be_stored_as_fallback_and_active_immediately() -> None:
+async def test_active_fallback_card_setup_does_not_mark_enrollment_active_or_default() -> None:
     repo = FakePaymentRepo()
     stripe = FakeStripeGateway()
     stripe.setup_intents["seti_card_fallback"] = {
@@ -1155,10 +1155,11 @@ async def test_card_setup_can_be_stored_as_fallback_and_active_immediately() -> 
     res = await uc.process_next(processor_id="test-worker")
 
     assert res["processed"] is True
+    assert stripe.customer_default_payment_methods == []
     assert parent_customers.default_methods[0]["setup_status"] == "active"
     assert parent_customers.default_methods[0]["payment_method_role"] == "fallback"
     assert parent_customers.default_methods[0]["payment_method_type"] == "card"
-    assert enrollment_autopay.setup_completed == ["enr-1"]
+    assert enrollment_autopay.setup_completed == []
 
 
 @pytest.mark.asyncio
@@ -1753,6 +1754,72 @@ async def test_autopay_ach_return_after_paid_reopens_invoice_and_records_return_
     assert ledger.invoices["inv-ach-return"].status == "open"
     assert ledger.allocations == []
     assert len(outbox.events) == events_after_return
+
+
+@pytest.mark.asyncio
+async def test_metadata_only_ach_return_code_on_refund_does_not_reopen_invoice() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-ach-normal-refund"))
+    dedup = FakeDedup()
+    outbox = FakeOutbox()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger, outbox=outbox)
+    succeeded = json.dumps(
+        {
+            "id": "evt_ach_normal_refund_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_ach_normal_refund",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-ach-normal-refund",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "funding_type": "us_bank_account",
+                    },
+                }
+            },
+        }
+    ).encode()
+    metadata_only_refund = json.dumps(
+        {
+            "id": "evt_ach_normal_refund",
+            "type": "charge.refunded",
+            "data": {
+                "object": {
+                    "id": "ch_ach_normal_refund",
+                    "payment_intent": "pi_ach_normal_refund",
+                    "amount_refunded": 10000,
+                    "metadata": {"ach_return_code": "R01"},
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(succeeded, "test_signature")
+    assert (await uc.process_next(processor_id="test-worker"))["processed"] is True
+    await uc.accept(metadata_only_refund, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    invoice = ledger.invoices["inv-ach-normal-refund"]
+    payment = ledger.payments["ledger-pay-autopay:pi_ach_normal_refund"]
+    assert invoice.status == "paid"
+    assert invoice.balance_due_cents == 0
+    assert payment.status == "refunded"
+    assert payment.refunded_cents == 10000
+    assert ledger.allocations == [
+        {
+            "payment_id": "ledger-pay-autopay:pi_ach_normal_refund",
+            "invoice_id": "inv-ach-normal-refund",
+            "amount_cents": 10000,
+            "idempotency_key": "autopay-alloc:pi_ach_normal_refund",
+        }
+    ]
+    assert not any(attempt["status"] == "returned" for attempt in ledger.payment_attempts.values())
+    assert outbox.events[-1].payload.reason == "admin_initiated"
 
 
 @pytest.mark.asyncio

@@ -19,6 +19,8 @@ ACH processing lifecycle, returns/reversal markers, microdeposit verification wi
 - 2026-07-01T11:31:19 main/working: Read project/backend/testing/event rules, Slice G plan, parent-checkout ACH requirements from parent checkout because the requested requirements file is missing in this worktree, and inspected autopay charge, webhook, setup, parent customer, ledger, migrations, and Stripe fixture patterns. Starting RED tests for ACH processing/returns/microdeposit/fallback model.
 - 2026-07-01T11:44:06 main/working: Implemented Slice G ACH processing/settlement/return handling, microdeposit pending setup, primary/fallback payment method projection, migration 0142, and ACH Stripe fixture replay coverage.
 - 2026-07-01T11:46:20 main/working: DoD: RED recorded for missing ACH helper and behavior gaps; GREEN focused tests, fixture replay, affected billing tests, required static checks, and full backend/v2 pytest run completed with only the allowed bootstrap cwd-path failure.
+- 2026-07-01T11:58:07 main/working: Rework implemented: reversal replay converges after preinserted reversal row, fallback-only active method no longer marks enrollment active/default, ACH return classification ignores metadata/free-text, webhook ledger port typed as LedgerRepository, and Stripe-shaped return-code traversal moved to application layer.
+- 2026-07-01T12:02:14 main/done: Slice G scoped rework DoD complete: replay convergence, fallback-only activation guard, ACH return classification tightening, LedgerRepository port typing, and provider-neutral Nacha domain normalization are implemented and verified.
 ## Verification
 
 - No verification recorded yet.
@@ -28,6 +30,12 @@ ACH processing lifecycle, returns/reversal markers, microdeposit verification wi
 - 2026-07-01T11:44:06: Required static checks: ruff check backend/v2 && ruff format --check backend/v2 && lint-imports --config backend/pyproject.toml => all passed; import-linter 4 contracts kept.
 - 2026-07-01T11:46:13: Final affected checks after idempotency tweak: focused billing files => 139 passed; ruff check backend/v2, ruff format --check backend/v2, lint-imports --config backend/pyproject.toml => all passed.
 - 2026-07-01T11:46:13: Final required pytest after all changes: PYTHONPATH=. python -m pytest backend/v2/tests -q => 1921 passed, 1 known allowed bootstrap cwd-path FileNotFoundError in test_bootstrap_source_does_not_reference_default_academy_id.
+- 2026-07-01T11:56:21: RED rework: focused Slice G pytest failed at collection because provider-neutral Nacha helpers (nacha_return_code_for_provider_failure / normalize_nacha_return_code) do not exist yet after moving Stripe-shaped traversal out of domain.
+- 2026-07-01T11:58:07: RED rework behavior: focused pytest exposed review gaps after RED tests were added (provider-neutral Nacha helper missing; then reversal replay/fallback-only activation/metadata-only ACH return classification covered by new tests).
+- 2026-07-01T11:58:07: GREEN rework focused: PYTHONPATH=. python -m pytest backend/v2/tests/application/test_webhook_handler.py backend/v2/tests/application/test_parent_billing_portal.py backend/v2/tests/contract/test_stripe_webhook_fixture_replay.py backend/v2/tests/contract/test_ach_lifecycle_migration.py backend/v2/tests/unit/test_ach_return_codes.py backend/v2/tests/unit/test_charge_autopay_use_case.py -q => 125 passed before warning cleanup.
+- 2026-07-01T12:02:10: GREEN rework focused final: PYTHONPATH=. python -m pytest backend/v2/tests/application/test_webhook_handler.py backend/v2/tests/application/test_parent_billing_portal.py backend/v2/tests/contract/test_stripe_webhook_fixture_replay.py backend/v2/tests/contract/test_ach_lifecycle_migration.py backend/v2/tests/unit/test_ach_return_codes.py backend/v2/tests/unit/test_charge_autopay_use_case.py -q => 125 passed.
+- 2026-07-01T12:02:10: DoD rework full pytest: PYTHONPATH=. python -m pytest backend/v2/tests -q => 1924 passed, 1 known allowed bootstrap cwd-path FileNotFoundError, 5 warnings.
+- 2026-07-01T12:02:10: DoD rework static: ruff check backend/v2 && ruff format --check backend/v2 && lint-imports --config backend/pyproject.toml => passed; Import Linter 4 contracts kept.
 ## Reusable Lessons
 
 - None recorded yet.

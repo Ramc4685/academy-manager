@@ -22,6 +22,7 @@ from backend.v2.contexts.billing.application.ports import (
     EnrollmentAutopayStateRepository,
     EnrollmentBillingIdentity,
     EnrollmentBillingIdentityRepository,
+    LedgerRepository,
     ParentStripeCustomerRepository,
     PaymentRepository,
     StripeEventDedup,
@@ -38,7 +39,9 @@ from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     AutopayConsentCaptureContext,
     CompleteAutopaySetup,
 )
-from backend.v2.contexts.billing.domain.ach_returns import ach_return_code_from_stripe_object
+from backend.v2.contexts.billing.domain.ach_returns import (
+    nacha_return_code_for_provider_failure,
+)
 from backend.v2.contexts.billing.domain.errors import InvalidWebhookSignature, PaymentNotFound
 from backend.v2.contexts.billing.domain.events import (
     CheckoutExpired,
@@ -111,7 +114,7 @@ class HandleWebhookEvent:
         outbox: Outbox,
         academy_id: str,
         billing_enrollments: StudentBillingEnrollmentRepository | None = None,
-        billing_ledger: Any | None = None,
+        billing_ledger: LedgerRepository | None = None,
         billing_counters: Any | None = None,
         billing_settings: Any | None = None,
         parent_customers: ParentStripeCustomerRepository | None = None,
@@ -975,7 +978,7 @@ class HandleWebhookEvent:
                 f"parent mismatch: invoice={invoice.parent_id} payment_intent={metadata_parent_id}"
             )
 
-        return_code = ach_return_code_from_stripe_object(pi)
+        return_code = _ach_return_code_from_stripe_payment_intent(pi)
         existing_payment = await self._billing_ledger.get_payment_by_stripe_payment_intent_id(pi_id)
         if (
             return_code is not None
@@ -1330,7 +1333,7 @@ class HandleWebhookEvent:
         total_refunded = int(ch.get("amount_refunded", 0))
         if total_refunded == 0:
             return
-        return_code = ach_return_code_from_stripe_object(ch)
+        return_code = _ach_return_code_from_stripe_charge(ch)
         if return_code is not None and (_ledger_payment_is_ach(payment) or _charge_is_ach(ch)):
             invoice = await self._invoice_for_autopay_payment(pi_id=pi_id, payment=payment)
             if invoice is not None:
@@ -2031,6 +2034,34 @@ def _ledger_payment_is_ach(payment: LedgerPayment) -> bool:
         metadata.get("funding_type") == "us_bank_account"
         or metadata.get("payment_method_type") == "us_bank_account"
     )
+
+
+def _ach_return_code_from_stripe_payment_intent(pi: dict[str, Any]) -> str | None:
+    values: list[object] = [pi.get("failure_code"), pi.get("failure_reason")]
+    last_error = pi.get("last_payment_error")
+    if isinstance(last_error, dict):
+        values.extend([last_error.get("decline_code"), last_error.get("code")])
+    return _first_nacha_code(values)
+
+
+def _ach_return_code_from_stripe_charge(charge: dict[str, Any]) -> str | None:
+    values: list[object] = [charge.get("failure_code"), charge.get("failure_reason")]
+    refunds = charge.get("refunds")
+    if isinstance(refunds, dict):
+        data = refunds.get("data")
+        if isinstance(data, list):
+            for refund in data:
+                if isinstance(refund, dict):
+                    values.append(refund.get("failure_reason"))
+    return _first_nacha_code(values)
+
+
+def _first_nacha_code(values: list[object]) -> str | None:
+    for value in values:
+        code = nacha_return_code_for_provider_failure(value)
+        if code is not None:
+            return code
+    return None
 
 
 def _payment_intent_is_ach(pi: dict[str, Any]) -> bool:

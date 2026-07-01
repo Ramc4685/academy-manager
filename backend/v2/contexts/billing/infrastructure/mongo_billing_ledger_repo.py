@@ -536,36 +536,49 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         existing = await reversals.find_one(
             {"academy_id": academy_id, "idempotency_key": reversal_idempotency_key}
         )
-        if existing is not None:
-            return {k: v for k, v in existing.items() if k != "_id"}
-
         allocation_doc = await self._db["payment_allocations"].find_one(
             {"academy_id": academy_id, "idempotency_key": allocation_idempotency_key}
         )
         if allocation_doc is None:
+            if existing is not None:
+                await self._repair_invoice_after_allocation_change(
+                    academy_id=academy_id,
+                    invoice_id=str(existing["invoice_id"]),
+                    now=reversed_at,
+                )
+                await self._repair_payment_after_allocation_change(
+                    academy_id=academy_id,
+                    payment_id=str(existing["payment_id"]),
+                    now=reversed_at,
+                )
+                return {k: v for k, v in existing.items() if k != "_id"}
             return None
 
-        reversal_doc = {
-            "reversal_id": str(new_ulid()),
-            "academy_id": academy_id,
-            "allocation_id": str(allocation_doc["allocation_id"]),
-            "payment_id": str(allocation_doc["payment_id"]),
-            "invoice_id": str(allocation_doc["invoice_id"]),
-            "amount_cents": int(allocation_doc.get("amount_cents") or 0),
-            "reason": reason,
-            "return_code": return_code,
-            "idempotency_key": reversal_idempotency_key,
-            "created_at": reversed_at,
-        }
-        try:
-            await reversals.insert_one(reversal_doc)
-        except DuplicateKeyError:
-            winner = await reversals.find_one(
-                {"academy_id": academy_id, "idempotency_key": reversal_idempotency_key}
-            )
-            if winner is not None:
-                return {k: v for k, v in winner.items() if k != "_id"}
-            raise
+        if existing is None:
+            reversal_doc = {
+                "reversal_id": str(new_ulid()),
+                "academy_id": academy_id,
+                "allocation_id": str(allocation_doc["allocation_id"]),
+                "payment_id": str(allocation_doc["payment_id"]),
+                "invoice_id": str(allocation_doc["invoice_id"]),
+                "amount_cents": int(allocation_doc.get("amount_cents") or 0),
+                "reason": reason,
+                "return_code": return_code,
+                "idempotency_key": reversal_idempotency_key,
+                "created_at": reversed_at,
+            }
+            try:
+                await reversals.insert_one(reversal_doc)
+            except DuplicateKeyError:
+                winner = await reversals.find_one(
+                    {"academy_id": academy_id, "idempotency_key": reversal_idempotency_key}
+                )
+                if winner is not None:
+                    reversal_doc = {k: v for k, v in winner.items() if k != "_id"}
+                else:
+                    raise
+        else:
+            reversal_doc = {k: v for k, v in existing.items() if k != "_id"}
 
         await self._db["payment_allocations"].delete_one(
             {
