@@ -20,6 +20,33 @@ from backend.v2.contexts.billing.domain.ledger import LedgerInvoice, LedgerPayme
 
 log = logging.getLogger(__name__)
 
+# Maps this use case's internal `payment_attempts` status vocabulary onto the
+# `parent_billing_customers` projection's `AutopayAttemptOutcome` axis
+# (Slice B — see `contexts.billing.domain.autopay_status`).
+_ATTEMPT_STATUS_TO_OUTCOME = {
+    "succeeded": "succeeded",
+    "failed": "declined",
+    "requires_action": "requires_action",
+}
+
+
+class ParentAutopayAttemptProjection(Protocol):
+    """Narrow port: project the latest charge-attempt outcome onto the
+    parent's autopay customer record. Deliberately independent of
+    `autopay_enrollment_status` — a bounced charge does not change whether
+    the parent is enrolled in autopay.
+    """
+
+    async def record_attempt_outcome(
+        self,
+        *,
+        parent_id: str,
+        outcome: str,
+        occurred_at: datetime,
+        failure_code: str | None,
+    ) -> None: ...
+
+
 # ---------------------------------------------------------------------------
 # Narrow port — only what this use case needs from Stripe
 # ---------------------------------------------------------------------------
@@ -94,10 +121,12 @@ class ChargeInvoiceViaAutopay:
         *,
         ledger: LedgerRepository,
         stripe: AutopayStripeGateway | None = None,
+        parent_customers: ParentAutopayAttemptProjection | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._ledger = ledger
         self._stripe = stripe
+        self._parent_customers = parent_customers
         self._now = clock
 
     async def execute(self, invoice_id: str) -> ChargeResult:
@@ -310,3 +339,16 @@ class ChargeInvoiceViaAutopay:
             idempotency_key=f"autopay-attempt:{invoice.invoice_id}:{attempt_key_suffix}",
             created_by_event_id=None,
         )
+        if self._parent_customers is not None:
+            outcome = _ATTEMPT_STATUS_TO_OUTCOME.get(status)
+            if outcome is not None:
+                # Deliberately does NOT touch autopay_enrollment_status: a
+                # bounced/declined charge leaves the parent's autopay
+                # enrollment untouched (they're still enrolled — only the
+                # last-attempt-outcome projection changes). See Slice B.
+                await self._parent_customers.record_attempt_outcome(
+                    parent_id=invoice.parent_id,
+                    outcome=outcome,
+                    occurred_at=self._now(),
+                    failure_code=failure_code,
+                )

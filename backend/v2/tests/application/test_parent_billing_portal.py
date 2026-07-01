@@ -350,13 +350,13 @@ class _EnrollmentAutopay:
         self,
         *,
         enrollment_id: str,
-        subscription_status: str,
-        stripe_subscription_id: str | None,
+        autopay_enrollment_status: str,
+        stripe_subscription_id: str | None = None,
     ) -> None:
         self.synced.append(
             {
                 "enrollment_id": enrollment_id,
-                "subscription_status": subscription_status,
+                "autopay_enrollment_status": autopay_enrollment_status,
                 "stripe_subscription_id": stripe_subscription_id,
             }
         )
@@ -418,7 +418,7 @@ async def test_checkout_status_reconciles_completed_subscription_checkout() -> N
     assert enrollment_autopay.synced == [
         {
             "enrollment_id": "enr-1",
-            "subscription_status": "active",
+            "autopay_enrollment_status": "active",
             "stripe_subscription_id": "sub_live_123",
         }
     ]
@@ -504,7 +504,7 @@ async def test_checkout_status_reconciles_completed_setup_checkout_without_subsc
     assert enrollment_autopay.synced == [
         {
             "enrollment_id": "enr-1",
-            "subscription_status": "active",
+            "autopay_enrollment_status": "active",
             "stripe_subscription_id": None,
         }
     ]

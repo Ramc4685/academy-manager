@@ -214,18 +214,21 @@ def compose_parent_webhook_handler(
             self,
             *,
             enrollment_id: str,
-            subscription_status: str,
-            stripe_subscription_id: str | None,
+            autopay_enrollment_status: str,
+            stripe_subscription_id: str | None = None,
         ) -> None:
+            update: dict[str, Any] = {
+                # Legacy field name retained on the `enrollments` doc for
+                # backward-compat with any existing readers; carries the new
+                # split `autopay_enrollment_status` value (Slice B).
+                "subscription_status": autopay_enrollment_status,
+                "updated_at": datetime.now(UTC),
+            }
+            if stripe_subscription_id is not None:
+                update["stripe_subscription_id"] = stripe_subscription_id
             await db["enrollments"].update_one(
                 {"academy_id": academy_id, "enrollment_id": enrollment_id},
-                {
-                    "$set": {
-                        "subscription_status": subscription_status,
-                        "stripe_subscription_id": stripe_subscription_id,
-                        "updated_at": datetime.now(UTC),
-                    }
-                },
+                {"$set": update},
             )
 
     class _EnrollmentBillingIdentity:
@@ -315,18 +318,21 @@ def compose_parent(
             self,
             *,
             enrollment_id: str,
-            subscription_status: str,
-            stripe_subscription_id: str | None,
+            autopay_enrollment_status: str,
+            stripe_subscription_id: str | None = None,
         ) -> None:
+            update: dict[str, Any] = {
+                # Legacy field name retained on the `enrollments` doc for
+                # backward-compat with any existing readers; carries the new
+                # split `autopay_enrollment_status` value (Slice B).
+                "subscription_status": autopay_enrollment_status,
+                "updated_at": datetime.now(UTC),
+            }
+            if stripe_subscription_id is not None:
+                update["stripe_subscription_id"] = stripe_subscription_id
             await db["enrollments"].update_one(
                 {"academy_id": academy_id, "enrollment_id": enrollment_id},
-                {
-                    "$set": {
-                        "subscription_status": subscription_status,
-                        "stripe_subscription_id": stripe_subscription_id,
-                        "updated_at": datetime.now(UTC),
-                    }
-                },
+                {"$set": update},
             )
 
     class _EnrollmentBillingIdentity:

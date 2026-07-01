@@ -1033,6 +1033,23 @@ class _AdminFakeEnrollmentQuery:
 
 
 @dataclass
+class FakeParentAutopayState:
+    """Fake `parent_billing_customers` autopay-status gateway (Slice B).
+
+    Tracks `set_enrollment_status` calls so interface tests can assert the
+    admin pause/resume routes toggle app-owned autopay status without any
+    Stripe subscription involved.
+    """
+
+    statuses: dict[str, str] = field(default_factory=dict)
+    calls: list[dict[str, str]] = field(default_factory=list)
+
+    async def set_enrollment_status(self, *, parent_id: str, status: str) -> None:
+        self.statuses[parent_id] = status
+        self.calls.append({"parent_id": parent_id, "status": status})
+
+
+@dataclass
 class FakeStudentWriter:
     students: dict[str, Any] = field(default_factory=dict)
     admin_status: dict[str, str] = field(default_factory=dict)
@@ -1512,6 +1529,7 @@ def admin_seed():
         "waitlist": FakeWaitlistRepo(),
         "pause_requests": FakePauseRequestRepo(),
         "billing_deferrals": FakeBillingDeferrals(),
+        "parent_autopay": FakeParentAutopayState(),
         "payments": FakePaymentRepo(),
         "tuition_discounts": FakeTuitionDiscountRepo(),
         "expenses": FakeExpenseRepo(),
@@ -1537,6 +1555,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     waitlist = seed["waitlist"]
     pause_requests = seed["pause_requests"]
     billing_deferrals = seed["billing_deferrals"]
+    parent_autopay = seed["parent_autopay"]
     lifecycle_billing = FakeLifecycleBilling()
     payments = seed["payments"]
     tuition_discounts = seed["tuition_discounts"]
@@ -1585,12 +1604,15 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         students=students,
         waitlist=waitlist,
         enrollment_events=enrollment_events,
+        parent_autopay=parent_autopay,
     )
     resume_enrollment = ResumeEnrollment(
         enrollments=enrollments_w,
         sessions=sessions,
+        students=students,
         waitlist=waitlist,
         enrollment_events=enrollment_events,
+        parent_autopay=parent_autopay,
     )
     withdraw_enrollment = WithdrawEnrollment(
         enrollments=enrollments_w,
@@ -1613,7 +1635,12 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     skip = SkipFromWaitlist(waitlist=waitlist)
     remove = RemoveFromWaitlist(waitlist=waitlist)
     list_admin_pause_requests = ListAdminPauseRequests(pause_requests=pause_requests)
-    approve_pause_request = ApprovePauseRequest(pause_requests=pause_requests)
+    approve_pause_request = ApprovePauseRequest(
+        pause_requests=pause_requests,
+        pause_enrollment=pause_enrollment,
+        billing_deferrals=billing_deferrals,
+        parent_autopay=parent_autopay,
+    )
     decline_pause_request = DeclinePauseRequest(pause_requests=pause_requests)
     issue_refund = IssueRefund(
         payment_repo=payments, stripe=stripe, outbox=outbox, idempotency_store=idem

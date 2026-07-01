@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, date, datetime
-from typing import Any, Literal, Protocol
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, model_validator
 
@@ -100,17 +100,13 @@ class PauseEnrollmentRunner(Protocol):
     async def execute(self, cmd: PauseEnrollmentCommand) -> None: ...
 
 
-class EnrollmentSubscriptionLookup(Protocol):
-    async def latest_for_enrollment(self, enrollment_id: str) -> Any | None: ...
+class ParentAutopayStateGateway(Protocol):
+    """Cross-context port: toggle the parent's app-owned autopay enrollment
+    status (Slice B). Replaces the retired Stripe-subscription-collection
+    pause path — the pause request already carries `parent_id` directly.
+    """
 
-
-class SubscriptionCollectionGateway(Protocol):
-    async def pause_subscription_collection(
-        self,
-        stripe_subscription_id: str,
-        *,
-        behavior: str = "void",
-    ) -> None: ...
+    async def set_enrollment_status(self, *, parent_id: str, status: str) -> None: ...
 
 
 class RequestEnrollmentPauseCommand(BaseModel):
@@ -207,8 +203,7 @@ class ApprovePauseRequest:
         pause_enrollment: PauseEnrollmentRunner | None = None,
         scheduled_actions: ScheduledEnrollmentActionRepository | None = None,
         billing_deferrals: BillingDeferralRepository | None = None,
-        subscriptions: EnrollmentSubscriptionLookup | None = None,
-        stripe: SubscriptionCollectionGateway | None = None,
+        parent_autopay: ParentAutopayStateGateway | None = None,
         academy_id: str | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -216,8 +211,7 @@ class ApprovePauseRequest:
         self._pause_enrollment = pause_enrollment
         self._scheduled_actions = scheduled_actions
         self._billing_deferrals = billing_deferrals
-        self._subscriptions = subscriptions
-        self._stripe = stripe
+        self._parent_autopay = parent_autopay
         self._academy_id = academy_id
         self._now = clock
 
@@ -263,14 +257,13 @@ class ApprovePauseRequest:
                     metadata={"pause_kind": request.pause_kind},
                 )
             )
-        if self._subscriptions is not None and self._stripe is not None:
-            subscription = await self._subscriptions.latest_for_enrollment(request.enrollment_id)
-            stripe_subscription_id = getattr(subscription, "stripe_subscription_id", None)
-            if stripe_subscription_id:
-                await self._stripe.pause_subscription_collection(
-                    str(stripe_subscription_id),
-                    behavior="void",
-                )
+        if self._parent_autopay is not None and request.parent_id:
+            # App-owned autopay (Slice B): pause toggles autopay_enrollment_status
+            # directly — there is no Stripe subscription collection to pause.
+            await self._parent_autopay.set_enrollment_status(
+                parent_id=request.parent_id,
+                status="paused",
+            )
         if (
             request.pause_kind == "fixed"
             and request.resume_on is not None

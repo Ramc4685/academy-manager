@@ -166,8 +166,7 @@ class CompleteAutopaySetup:
         )
         await self._enrollment_autopay.set_autopay_state(
             enrollment_id=enrollment_id,
-            subscription_status="active",
-            stripe_subscription_id=None,
+            autopay_enrollment_status="active",
         )
         return AutopaySetupCompletionResult(
             checkout_session_id=checkout_session_id,
@@ -431,7 +430,7 @@ class GetCheckoutStatus:
         if self._enrollment_autopay is not None and updated.enrollment_id:
             await self._enrollment_autopay.set_autopay_state(
                 enrollment_id=updated.enrollment_id,
-                subscription_status="active",
+                autopay_enrollment_status="active",
                 stripe_subscription_id=stripe_subscription_id or None,
             )
         return updated

@@ -2479,15 +2479,16 @@ def compose_admin(
         waitlist=waitlist,
         enrollment_events=enrollment_events,
         billing_deferrals=billing_deferrals,
-        subscriptions=subscriptions_repo,
-        stripe=stripe,
+        parent_autopay=parent_customers_repo,
     )
     resume_enrollment = ResumeEnrollment(
         enrollments=enrollments_w,
         sessions=sessions_w,
+        students=students_r,
         waitlist=waitlist,
         enrollment_events=enrollment_events,
         billing_deferrals=billing_deferrals,
+        parent_autopay=parent_customers_repo,
     )
     withdraw_enrollment = WithdrawEnrollment(
         enrollments=enrollments_w,
@@ -2514,16 +2515,13 @@ def compose_admin(
         pause_enrollment=pause_enrollment,
         scheduled_actions=scheduled_actions,
         billing_deferrals=billing_deferrals,
-        subscriptions=subscriptions_repo,
-        stripe=stripe,
+        parent_autopay=parent_customers_repo,
         academy_id=academy_id,
     )
     decline_pause_request = DeclinePauseRequest(pause_requests=pause_requests)
     process_scheduled_resume_actions = ProcessScheduledResumeActions(
         scheduled_actions=scheduled_actions,
         resume_enrollment=resume_enrollment,
-        subscriptions=subscriptions_repo,
-        stripe=stripe,
         billing_deferrals=billing_deferrals,
     )
 
@@ -2754,6 +2752,7 @@ def compose_admin(
         result = await ChargeInvoiceViaAutopay(
             ledger=billing_ledger_repo,
             stripe=stripe,  # type: ignore[arg-type]
+            parent_customers=parent_customers_repo,
         ).execute(invoice_id)
         return result.model_dump(mode="python")
 

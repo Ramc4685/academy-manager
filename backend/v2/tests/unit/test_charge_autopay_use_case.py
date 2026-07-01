@@ -283,13 +283,46 @@ class FakeStripeNoCard:
 # ---------------------------------------------------------------------------
 
 
+class FakeParentCustomers:
+    """Fake `parent_billing_customers` projection port (Slice B).
+
+    Tracks calls to `record_attempt_outcome` and a fixed `autopay_enrollment_status`
+    that never changes via this port — mirrors the real repo's separation of
+    enrollment lifecycle from attempt outcome.
+    """
+
+    def __init__(self, *, initial_enrollment_status: str = "active") -> None:
+        self.autopay_enrollment_status = initial_enrollment_status
+        self.recorded: list[dict] = []
+
+    async def record_attempt_outcome(
+        self,
+        *,
+        parent_id: str,
+        outcome: str,
+        occurred_at,
+        failure_code: str | None,
+    ) -> None:
+        self.recorded.append(
+            {
+                "parent_id": parent_id,
+                "outcome": outcome,
+                "occurred_at": occurred_at,
+                "failure_code": failure_code,
+            }
+        )
+        # autopay_enrollment_status is deliberately never touched here.
+
+
 def _uc(
     repo: FakeLedgerRepo,
     stripe: object | None = None,
+    parent_customers: FakeParentCustomers | None = None,
 ) -> ChargeInvoiceViaAutopay:
     return ChargeInvoiceViaAutopay(
         ledger=repo,  # type: ignore[arg-type]
         stripe=stripe,  # type: ignore[arg-type]
+        parent_customers=parent_customers,  # type: ignore[arg-type]
         clock=lambda: NOW,
     )
 
@@ -466,6 +499,66 @@ async def test_decline_returns_charge_result_false_status_unchanged() -> None:
             "failure_message": "insufficient_funds",
             "idempotency_key": "autopay-attempt:inv-1:pi_declined",
             "created_by_event_id": None,
+        }
+    ]
+
+
+async def test_bounced_charge_sets_declined_outcome_but_leaves_enrollment_active() -> None:
+    """Regression (Slice B): a bounced autopay charge projects
+    last_attempt_outcome=declined onto parent_billing_customers but does NOT
+    change autopay_enrollment_status — the parent is still enrolled in
+    autopay, only the last attempt failed."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    parent_customers = FakeParentCustomers(initial_enrollment_status="active")
+
+    result = await _uc(
+        repo,
+        FakeStripeDeclines("insufficient_funds"),
+        parent_customers=parent_customers,
+    ).execute("inv-1")
+
+    assert result.success is False
+    assert parent_customers.recorded == [
+        {
+            "parent_id": "parent-1",
+            "outcome": "declined",
+            "occurred_at": NOW,
+            "failure_code": "insufficient_funds",
+        }
+    ]
+    # Enrollment axis untouched by the attempt-outcome projection.
+    assert parent_customers.autopay_enrollment_status == "active"
+
+
+async def test_successful_charge_projects_succeeded_outcome() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    parent_customers = FakeParentCustomers(initial_enrollment_status="active")
+
+    await _uc(repo, FakeStripeSucceeds(), parent_customers=parent_customers).execute("inv-1")
+
+    assert parent_customers.recorded == [
+        {
+            "parent_id": "parent-1",
+            "outcome": "succeeded",
+            "occurred_at": NOW,
+            "failure_code": None,
+        }
+    ]
+    assert parent_customers.autopay_enrollment_status == "active"
+
+
+async def test_requires_action_projects_requires_action_outcome() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    parent_customers = FakeParentCustomers(initial_enrollment_status="active")
+
+    await _uc(repo, FakeStripeRequiresAction(), parent_customers=parent_customers).execute("inv-1")
+
+    assert parent_customers.recorded == [
+        {
+            "parent_id": "parent-1",
+            "outcome": "requires_action",
+            "occurred_at": NOW,
+            "failure_code": None,
         }
     ]
 

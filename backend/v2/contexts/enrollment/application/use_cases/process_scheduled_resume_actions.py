@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Protocol
 
 from pydantic import BaseModel
 
@@ -28,14 +28,6 @@ class ResumeEnrollmentRunner(Protocol):
     ) -> None: ...
 
 
-class EnrollmentSubscriptionLookup(Protocol):
-    async def latest_for_enrollment(self, enrollment_id: str) -> Any | None: ...
-
-
-class SubscriptionCollectionGateway(Protocol):
-    async def resume_subscription_collection(self, stripe_subscription_id: str) -> None: ...
-
-
 class ProcessScheduledResumeActionsResult(BaseModel):
     model_config = {"frozen": True}
 
@@ -46,21 +38,24 @@ class ProcessScheduledResumeActionsResult(BaseModel):
 
 
 class ProcessScheduledResumeActions:
+    """Resolve scheduled `resume_from_pause` actions.
+
+    `ResumeEnrollmentRunner.execute` (Slice B) already toggles the parent's
+    app-owned `autopay_enrollment_status` back to `active` internally — this
+    worker no longer resumes a Stripe subscription; there is none to resume.
+    """
+
     def __init__(
         self,
         *,
         scheduled_actions: ScheduledEnrollmentActionRepository,
         resume_enrollment: ResumeEnrollmentRunner,
-        subscriptions: EnrollmentSubscriptionLookup,
-        stripe: SubscriptionCollectionGateway,
         billing_deferrals: BillingDeferralRepository | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._scheduled_actions = scheduled_actions
         self._resume_enrollment = resume_enrollment
         self._billing_deferrals = billing_deferrals
-        self._subscriptions = subscriptions
-        self._stripe = stripe
         self._now = clock
 
     async def execute(
@@ -92,10 +87,6 @@ class ProcessScheduledResumeActions:
                 continue
 
             try:
-                subscription = await self._subscriptions.latest_for_enrollment(action.enrollment_id)
-                stripe_subscription_id = getattr(subscription, "stripe_subscription_id", None)
-                if stripe_subscription_id:
-                    await self._stripe.resume_subscription_collection(str(stripe_subscription_id))
                 if self._billing_deferrals is not None:
                     await self._billing_deferrals.close_active_for_enrollment(
                         action.enrollment_id,

@@ -251,13 +251,13 @@ class FakeEnrollmentAutopayState:
         self,
         *,
         enrollment_id: str,
-        subscription_status: str,
-        stripe_subscription_id: str | None,
+        autopay_enrollment_status: str,
+        stripe_subscription_id: str | None = None,
     ) -> None:
         self.synced.append(
             {
                 "enrollment_id": enrollment_id,
-                "subscription_status": subscription_status,
+                "autopay_enrollment_status": autopay_enrollment_status,
                 "stripe_subscription_id": stripe_subscription_id,
             }
         )
@@ -696,7 +696,7 @@ async def test_process_next_fetches_current_checkout_before_projection() -> None
     assert enrollment_autopay.synced == [
         {
             "enrollment_id": "enr-1",
-            "subscription_status": "active",
+            "autopay_enrollment_status": "active",
             "stripe_subscription_id": "sub_live_1",
         }
     ]
@@ -784,7 +784,7 @@ async def test_autopay_setup_checkout_completed_sets_default_pm_without_subscrip
     assert enrollment_autopay.synced == [
         {
             "enrollment_id": "enr-1",
-            "subscription_status": "active",
+            "autopay_enrollment_status": "active",
             "stripe_subscription_id": None,
         }
     ]
@@ -851,7 +851,7 @@ async def test_setup_intent_succeeded_completes_autopay_from_setup_metadata() ->
     assert enrollment_autopay.synced == [
         {
             "enrollment_id": "enr-1",
-            "subscription_status": "active",
+            "autopay_enrollment_status": "active",
             "stripe_subscription_id": None,
         }
     ]
@@ -2658,7 +2658,7 @@ async def test_subscription_checkout_completed_activates_subscription_and_enroll
     assert enrollment_autopay.synced == [
         {
             "enrollment_id": "enr-1",
-            "subscription_status": "active",
+            "autopay_enrollment_status": "active",
             "stripe_subscription_id": "sub_live_1",
         }
     ]
@@ -2738,7 +2738,7 @@ async def test_subscription_updated_syncs_enrollment_autopay_state() -> None:
     assert enrollment_autopay.synced == [
         {
             "enrollment_id": "enr-1",
-            "subscription_status": "past_due",
+            "autopay_enrollment_status": "active",
             "stripe_subscription_id": "sub_live_9",
         }
     ]
@@ -2765,7 +2765,7 @@ async def test_subscription_deleted_syncs_enrollment_cancelled() -> None:
     assert enrollment_autopay.synced == [
         {
             "enrollment_id": "enr-1",
-            "subscription_status": "cancelled",
+            "autopay_enrollment_status": "disabled",
             "stripe_subscription_id": "sub_live_9",
         }
     ]

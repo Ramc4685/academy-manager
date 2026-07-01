@@ -672,7 +672,7 @@ class HandleWebhookEvent:
         if self._enrollment_autopay is not None and enrollment_id:
             await self._enrollment_autopay.set_autopay_state(
                 enrollment_id=enrollment_id,
-                subscription_status="active",
+                autopay_enrollment_status="active",
                 stripe_subscription_id=stripe_sub_id,
             )
         return updated
@@ -1187,7 +1187,9 @@ class HandleWebhookEvent:
         if self._enrollment_autopay is not None and updated.enrollment_id:
             await self._enrollment_autopay.set_autopay_state(
                 enrollment_id=updated.enrollment_id,
-                subscription_status=status,
+                autopay_enrollment_status=self._autopay_enrollment_status_for_legacy_subscription(
+                    status
+                ),
                 stripe_subscription_id=stripe_sub_id,
             )
         await self._outbox.append(
@@ -1214,6 +1216,28 @@ class HandleWebhookEvent:
             "incomplete_expired": "cancelled",
         }
         return mapping.get(stripe_status, "incomplete")
+
+    @staticmethod
+    def _autopay_enrollment_status_for_legacy_subscription(
+        legacy_subscription_status: str,
+    ) -> str:
+        """Map the legacy Stripe-subscription `SubscriptionStatus` vocabulary
+        onto the split `autopay_enrollment_status` axis (Slice B).
+
+        This convergence path only runs for pre-existing Stripe-subscription
+        rows (the recurring-subscription charging path is retired for new
+        enrollments — app-owned off-session autopay is current). `past_due`
+        is a charge-outcome concept, not an enrollment-lifecycle one, so it
+        maps to `active`: the parent is still enrolled in autopay, they just
+        have a failing attempt, which `last_attempt_outcome` tracks instead.
+        """
+        mapping = {
+            "active": "active",
+            "past_due": "active",
+            "cancelled": "disabled",
+            "incomplete": "setup_started",
+        }
+        return mapping.get(legacy_subscription_status, "setup_started")
 
     async def _cancel_student_billing_enrollment(self, stripe_sub_id: str) -> bool:
         if self._billing_enrollments is None:

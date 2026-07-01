@@ -62,16 +62,23 @@ class ParentStripeCustomerRepository(Protocol):
 
 
 class EnrollmentAutopayStateRepository(Protocol):
-    """Cross-context port: Billing pushes subscription lifecycle state onto
-    the Enrollment aggregate so parent-facing autopay status stays accurate.
+    """Cross-context port: Billing pushes autopay enrollment-lifecycle state
+    onto the Enrollment aggregate so parent-facing autopay status stays
+    accurate.
+
+    ``autopay_enrollment_status`` carries the split enrollment-lifecycle axis
+    (see `contexts.billing.domain.autopay_status`) — it is deliberately
+    independent of any single charge attempt's outcome. ``stripe_subscription_id``
+    is retained only for legacy convergence rows already keyed by a Stripe
+    subscription id; new app-owned autopay has none, so it is optional.
     """
 
     async def set_autopay_state(
         self,
         *,
         enrollment_id: str,
-        subscription_status: str,
-        stripe_subscription_id: str | None,
+        autopay_enrollment_status: str,
+        stripe_subscription_id: str | None = None,
     ) -> None: ...
 
 
