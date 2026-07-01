@@ -319,7 +319,30 @@ class ChargeInvoiceViaAutopay:
                 decline_code=decline_code,
             )
 
-        # 5b. PI requires further action (3DS, etc.)
+        # 5b. ACH debit submitted but not yet settled. Do not allocate or mark paid.
+        if pi_status == "processing":
+            await self._record_attempt(
+                invoice=invoice,
+                amount_cents=invoice.balance_due_cents,
+                status="processing",
+                stripe_payment_intent_id=pi_id,
+                failure_code=None,
+                failure_message="ACH debit submitted; awaiting settlement.",
+            )
+            log.info(
+                "charge_autopay: PI processing invoice=%s pi=%s",
+                invoice_id,
+                pi_id,
+            )
+            return ChargeResult(
+                success=False,
+                invoice_id=invoice_id,
+                status=invoice.status,
+                balance_due_cents=invoice.balance_due_cents,
+                requires_action=False,
+            )
+
+        # 5c. PI requires further action (3DS, etc.)
         if pi_status != "succeeded":
             await self._record_attempt(
                 invoice=invoice,

@@ -285,6 +285,21 @@ class FakeStripeRequiresAction:
         return ("pi_3ds", "requires_action", None)
 
 
+class FakeStripeProcessing:
+    """Gateway that returns ACH processing status."""
+
+    async def get_default_payment_method(
+        self, *, academy_id: str, parent_id: str
+    ) -> tuple[str, str] | None:
+        return ("cus_1", "pm_bank")
+
+    async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict:
+        return {"id": stripe_payment_method_id, "type": "us_bank_account"}
+
+    async def create_off_session_payment_intent(self, **kwargs) -> tuple[str, str, str | None]:
+        return ("pi_processing", "processing", None)
+
+
 class FakeStripeRaises:
     """Gateway that raises on PI creation (network / API error)."""
 
@@ -448,6 +463,35 @@ async def test_happy_path_open_invoice_pi_succeeds() -> None:
     assert inv_id == "inv-1"
     assert amount == 10_000
     assert alloc_key == "autopay-alloc:pi_test_123"
+
+
+async def test_ach_processing_records_pending_attempt_without_allocation() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    result = await _uc(repo, FakeStripeProcessing()).execute("inv-1")
+
+    assert result.success is False
+    assert result.invoice_id == "inv-1"
+    assert result.status == "open"
+    assert result.balance_due_cents == 10_000
+    assert result.requires_action is False
+    assert result.decline_code is None
+    assert repo.recorded_payments == []
+    assert repo.allocation_calls == []
+    assert repo.payment_attempts == [
+        {
+            "invoice_id": "inv-1",
+            "parent_id": "parent-1",
+            "amount_cents": 10_000,
+            "currency": "usd",
+            "status": "processing",
+            "stripe_payment_intent_id": "pi_processing",
+            "stripe_checkout_session_id": None,
+            "failure_code": None,
+            "failure_message": "ACH debit submitted; awaiting settlement.",
+            "idempotency_key": "autopay-attempt:inv-1:2026-06:10000:processing:pi_processing",
+            "created_by_event_id": None,
+        }
+    ]
 
 
 async def test_ach_payment_method_adds_discount_line_before_charge_amount_and_key() -> None:

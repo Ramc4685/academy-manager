@@ -78,6 +78,8 @@ class ParentStripeCustomerRepository(Protocol):
         consent_text_version: str | None = None,
         ach_mandate_version: str | None = None,
         card_disclosure_version: str | None = None,
+        setup_status: str = "active",
+        payment_method_role: str = "primary",
         session: Any | None = None,
     ) -> None: ...
 
@@ -583,3 +585,13 @@ class LedgerRepository(Protocol):
         amount_cents: int,
         idempotency_key: str,
     ) -> LedgerAllocationResult: ...
+
+    async def reverse_payment_allocation(
+        self,
+        *,
+        allocation_idempotency_key: str,
+        reversal_idempotency_key: str,
+        reason: str,
+        return_code: str | None,
+        reversed_at: datetime,
+    ) -> dict[str, Any] | None: ...

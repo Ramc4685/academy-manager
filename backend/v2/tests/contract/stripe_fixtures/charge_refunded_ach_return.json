@@ -1,0 +1,24 @@
+{
+  "id": "evt_charge_ach_return_fixture",
+  "object": "event",
+  "type": "charge.refunded",
+  "livemode": false,
+  "data": {
+    "object": {
+      "id": "ch_ach_return_fixture",
+      "object": "charge",
+      "payment_intent": "pi_ach_fixture_01",
+      "amount": 10000,
+      "amount_refunded": 10000,
+      "currency": "usd",
+      "failure_code": "insufficient_funds",
+      "payment_method_details": {
+        "type": "us_bank_account",
+        "us_bank_account": {
+          "bank_name": "STRIPE TEST BANK",
+          "last4": "6789"
+        }
+      }
+    }
+  }
+}

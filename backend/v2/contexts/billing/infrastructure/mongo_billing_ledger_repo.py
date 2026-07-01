@@ -522,6 +522,70 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             raise ValueError("allocation insert failed")
         return await self._existing_allocation_result(stored_allocation)
 
+    async def reverse_payment_allocation(
+        self,
+        *,
+        allocation_idempotency_key: str,
+        reversal_idempotency_key: str,
+        reason: str,
+        return_code: str | None,
+        reversed_at: datetime,
+    ) -> dict[str, Any] | None:
+        academy_id = current_academy_id()
+        reversals = self._db["payment_allocation_reversals"]
+        existing = await reversals.find_one(
+            {"academy_id": academy_id, "idempotency_key": reversal_idempotency_key}
+        )
+        if existing is not None:
+            return {k: v for k, v in existing.items() if k != "_id"}
+
+        allocation_doc = await self._db["payment_allocations"].find_one(
+            {"academy_id": academy_id, "idempotency_key": allocation_idempotency_key}
+        )
+        if allocation_doc is None:
+            return None
+
+        reversal_doc = {
+            "reversal_id": str(new_ulid()),
+            "academy_id": academy_id,
+            "allocation_id": str(allocation_doc["allocation_id"]),
+            "payment_id": str(allocation_doc["payment_id"]),
+            "invoice_id": str(allocation_doc["invoice_id"]),
+            "amount_cents": int(allocation_doc.get("amount_cents") or 0),
+            "reason": reason,
+            "return_code": return_code,
+            "idempotency_key": reversal_idempotency_key,
+            "created_at": reversed_at,
+        }
+        try:
+            await reversals.insert_one(reversal_doc)
+        except DuplicateKeyError:
+            winner = await reversals.find_one(
+                {"academy_id": academy_id, "idempotency_key": reversal_idempotency_key}
+            )
+            if winner is not None:
+                return {k: v for k, v in winner.items() if k != "_id"}
+            raise
+
+        await self._db["payment_allocations"].delete_one(
+            {
+                "academy_id": academy_id,
+                "allocation_id": allocation_doc["allocation_id"],
+                "idempotency_key": allocation_idempotency_key,
+            }
+        )
+        await self._repair_invoice_after_allocation_change(
+            academy_id=academy_id,
+            invoice_id=str(allocation_doc["invoice_id"]),
+            now=reversed_at,
+        )
+        await self._repair_payment_after_allocation_change(
+            academy_id=academy_id,
+            payment_id=str(allocation_doc["payment_id"]),
+            now=reversed_at,
+        )
+        return reversal_doc
+
     async def list_invoices_for_academy(self, limit: int = 100) -> list[dict[str, object]]:
         academy_id = current_academy_id()
         invoices = []
@@ -742,6 +806,64 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         if repaired_invoice is None or repaired_payment is None:
             raise ValueError("ledger allocation repair failed")
         return repaired_invoice, repaired_payment
+
+    async def _repair_invoice_after_allocation_change(
+        self,
+        *,
+        academy_id: str,
+        invoice_id: str,
+        now: datetime,
+    ) -> None:
+        invoice_doc = await self._find_one({"invoice_id": invoice_id})
+        if invoice_doc is None:
+            raise ValueError("allocation reversal invoice not found")
+        allocated_to_invoice = await self._sum_allocations(
+            academy_id=academy_id,
+            invoice_id=invoice_id,
+        )
+        total = int(invoice_doc.get("total_cents") or 0)
+        balance = max(0, total - allocated_to_invoice)
+        current_status = str(invoice_doc.get("status") or "open")
+        if current_status == "void":
+            status = "void"
+        elif balance == 0:
+            status = "paid"
+        elif allocated_to_invoice > 0:
+            status = "partially_paid"
+        else:
+            status = "open"
+        await self.collection.update_one(
+            {"academy_id": academy_id, "invoice_id": invoice_id},
+            {"$set": {"balance_due_cents": balance, "status": status, "updated_at": now}},
+        )
+
+    async def _repair_payment_after_allocation_change(
+        self,
+        *,
+        academy_id: str,
+        payment_id: str,
+        now: datetime,
+    ) -> None:
+        payment_doc = await self.ledger_payments.find_one(
+            {"academy_id": academy_id, "payment_id": payment_id}
+        )
+        if payment_doc is None:
+            raise ValueError("allocation reversal payment not found")
+        allocated_from_payment = await self._sum_allocations(
+            academy_id=academy_id,
+            payment_id=payment_id,
+        )
+        overpayment_credit = await self._sum_overpayment_credits_for_payment(
+            academy_id=academy_id,
+            payment_id=payment_id,
+        )
+        amount = int(payment_doc.get("amount_cents") or 0)
+        refunded = int(payment_doc.get("refunded_cents") or 0)
+        unapplied = max(0, amount - refunded - allocated_from_payment - overpayment_credit)
+        await self.ledger_payments.update_one(
+            {"academy_id": academy_id, "payment_id": payment_id},
+            {"$set": {"unapplied_amount_cents": unapplied, "updated_at": now}},
+        )
 
     async def _sum_allocations(
         self,

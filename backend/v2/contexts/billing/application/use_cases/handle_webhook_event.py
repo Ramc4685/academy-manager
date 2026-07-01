@@ -38,6 +38,7 @@ from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     AutopayConsentCaptureContext,
     CompleteAutopaySetup,
 )
+from backend.v2.contexts.billing.domain.ach_returns import ach_return_code_from_stripe_object
 from backend.v2.contexts.billing.domain.errors import InvalidWebhookSignature, PaymentNotFound
 from backend.v2.contexts.billing.domain.events import (
     CheckoutExpired,
@@ -369,7 +370,11 @@ class HandleWebhookEvent:
             "customer.subscription.deleted",
         ):
             current = await self._stripe.retrieve_subscription(object_id)
-        elif event_type in ("payment_intent.succeeded", "payment_intent.payment_failed"):
+        elif event_type in (
+            "payment_intent.succeeded",
+            "payment_intent.payment_failed",
+            "payment_intent.processing",
+        ):
             current = await self._stripe.retrieve_payment_intent(object_id)
         elif event_type == "setup_intent.succeeded":
             current = await self._stripe.retrieve_setup_intent(object_id)
@@ -421,6 +426,15 @@ class HandleWebhookEvent:
                 return
             else:
                 await self._on_payment_failed(event)
+        elif event_type == "payment_intent.processing":
+            metadata = self._event_metadata(event)
+            if metadata.get("source") == "autopay":
+                await self._handle_autopay_pi_processing(event)
+            else:
+                log.info(
+                    "payment_intent.processing ignored pi=%s",
+                    event.get("data", {}).get("object", {}).get("id"),
+                )
         elif event_type == "invoice.paid":
             await self._on_invoice_paid(event)
         elif event_type == "invoice.payment_failed":
@@ -876,6 +890,60 @@ class HandleWebhookEvent:
                     metadata.setdefault("disclosure_version", str(discount_line.source_id))
         return metadata
 
+    async def _handle_autopay_pi_processing(self, event: dict[str, Any]) -> None:
+        """Handle payment_intent.processing from an ACH autopay debit.
+
+        ACH processing is a known in-flight state. Record an attempt for
+        reconciliation/admin visibility, but do not create a LedgerPayment or
+        allocate the invoice until Stripe emits payment_intent.succeeded.
+        """
+        if self._billing_ledger is None:
+            log.warning("autopay_pi_processing: billing_ledger not configured — skipping")
+            return
+
+        pi = event["data"]["object"]
+        event_id = str(event.get("id") or "")
+        pi_id = str(pi.get("id") or "")
+        metadata = pi.get("metadata") or {}
+        invoice_id = str(metadata.get("invoice_id") or "")
+        if not invoice_id:
+            log.warning("autopay_pi_processing: no invoice_id in metadata pi=%s", pi_id)
+            return
+
+        invoice = await self._billing_ledger.get_invoice(invoice_id)
+        if invoice is None:
+            raise ValueError("autopay invoice not found")
+        if invoice.academy_id != self._academy_id:
+            raise _QuarantineStripeEvent(
+                f"academy mismatch: invoice={invoice.academy_id} expected={self._academy_id}"
+            )
+        metadata_parent_id = str(metadata.get("parent_id") or "")
+        if metadata_parent_id and metadata_parent_id != invoice.parent_id:
+            raise _QuarantineStripeEvent(
+                f"parent mismatch: invoice={invoice.parent_id} payment_intent={metadata_parent_id}"
+            )
+
+        amount_cents = int(pi.get("amount") or invoice.balance_due_cents or invoice.total_cents)
+        currency = str(pi.get("currency") or invoice.currency).lower()
+        await self._billing_ledger.record_payment_attempt(
+            invoice_id=invoice_id,
+            parent_id=invoice.parent_id,
+            amount_cents=amount_cents,
+            currency=currency,
+            status="processing",
+            stripe_payment_intent_id=pi_id or None,
+            stripe_checkout_session_id=None,
+            failure_code=None,
+            failure_message="ACH debit submitted; awaiting settlement.",
+            idempotency_key=f"autopay-processing:{invoice_id}:{pi_id or event_id}",
+            created_by_event_id=event_id or None,
+        )
+        log.info(
+            "autopay_pi_processing: recorded processing attempt pi=%s invoice=%s",
+            pi_id,
+            invoice_id,
+        )
+
     async def _handle_autopay_pi_failed(self, event: dict[str, Any]) -> None:
         """Handle payment_intent.payment_failed from an autopay charge.
 
@@ -906,6 +974,25 @@ class HandleWebhookEvent:
             raise _QuarantineStripeEvent(
                 f"parent mismatch: invoice={invoice.parent_id} payment_intent={metadata_parent_id}"
             )
+
+        return_code = ach_return_code_from_stripe_object(pi)
+        existing_payment = await self._billing_ledger.get_payment_by_stripe_payment_intent_id(pi_id)
+        if (
+            return_code is not None
+            and existing_payment is not None
+            and existing_payment.status in {"succeeded", "partially_refunded", "refunded"}
+            and (_ledger_payment_is_ach(existing_payment) or _payment_intent_is_ach(pi))
+        ):
+            amount_cents = int(pi.get("amount") or existing_payment.amount_cents)
+            await self._record_autopay_ach_return(
+                event_id=event_id,
+                pi_id=pi_id,
+                invoice=invoice,
+                payment=existing_payment,
+                amount_cents=amount_cents,
+                return_code=return_code,
+            )
+            return
 
         last_error = pi.get("last_payment_error") or {}
         if not isinstance(last_error, dict):
@@ -1188,6 +1275,7 @@ class HandleWebhookEvent:
 
     async def _on_charge_refunded(self, event: dict[str, Any]) -> None:
         ch = event["data"]["object"]
+        ch["_event_id"] = str(event.get("id") or "")
         pi_id = ch.get("payment_intent")
         if not pi_id:
             return
@@ -1240,7 +1328,23 @@ class HandleWebhookEvent:
         if payment is None:
             return
         total_refunded = int(ch.get("amount_refunded", 0))
-        if total_refunded == 0 or total_refunded == payment.refunded_cents:
+        if total_refunded == 0:
+            return
+        return_code = ach_return_code_from_stripe_object(ch)
+        if return_code is not None and (_ledger_payment_is_ach(payment) or _charge_is_ach(ch)):
+            invoice = await self._invoice_for_autopay_payment(pi_id=pi_id, payment=payment)
+            if invoice is not None:
+                await self._record_autopay_ach_return(
+                    event_id=str(ch.get("_event_id") or ""),
+                    pi_id=pi_id,
+                    invoice=invoice,
+                    payment=payment,
+                    amount_cents=total_refunded,
+                    return_code=return_code,
+                    emit_event=payment.refunded_cents < total_refunded,
+                )
+                return
+        if total_refunded == payment.refunded_cents:
             return
         delta = max(0, total_refunded - payment.refunded_cents)
         new_status = "refunded" if total_refunded >= payment.amount_cents else "partially_refunded"
@@ -1262,6 +1366,79 @@ class HandleWebhookEvent:
                 ),
             )
         )
+
+    async def _invoice_for_autopay_payment(
+        self,
+        *,
+        pi_id: str,
+        payment: LedgerPayment,
+    ) -> LedgerInvoice | None:
+        metadata = payment.metadata or {}
+        invoice_id = str(metadata.get("invoice_id") or "")
+        if not invoice_id:
+            allocation = await self._billing_ledger.get_payment_allocation_by_idempotency_key(
+                f"autopay-alloc:{pi_id}"
+            )
+            if allocation is not None:
+                invoice_id = str(getattr(allocation, "invoice_id", "") or allocation["invoice_id"])
+        if not invoice_id:
+            return None
+        return await self._billing_ledger.get_invoice(invoice_id)
+
+    async def _record_autopay_ach_return(
+        self,
+        *,
+        event_id: str,
+        pi_id: str,
+        invoice: LedgerInvoice,
+        payment: LedgerPayment,
+        amount_cents: int,
+        return_code: str,
+        emit_event: bool = True,
+    ) -> None:
+        total_refunded = max(amount_cents, payment.refunded_cents)
+        new_status = "refunded" if total_refunded >= payment.amount_cents else "partially_refunded"
+        updated = await self._billing_ledger.mark_payment_refunded(
+            payment.payment_id,
+            refunded_cents=total_refunded,
+            status=new_status,
+            updated_at=self._now(),
+        )
+        await self._billing_ledger.reverse_payment_allocation(
+            allocation_idempotency_key=f"autopay-alloc:{pi_id}",
+            reversal_idempotency_key=f"ach-return:{pi_id}:{total_refunded}:{return_code}",
+            reason="ach_return",
+            return_code=return_code,
+            reversed_at=self._now(),
+        )
+        await self._billing_ledger.record_payment_attempt(
+            invoice_id=invoice.invoice_id,
+            parent_id=invoice.parent_id,
+            amount_cents=total_refunded,
+            currency=invoice.currency,
+            status="returned",
+            stripe_payment_intent_id=pi_id or None,
+            stripe_checkout_session_id=None,
+            failure_code=return_code,
+            failure_message=f"ACH return {return_code}",
+            idempotency_key=(
+                f"autopay-ach-return:{invoice.invoice_id}:{pi_id}:{return_code}:{total_refunded}"
+            ),
+            created_by_event_id=event_id or None,
+        )
+        if emit_event:
+            await self._outbox.append(
+                PaymentRefunded(
+                    aggregate_id=updated.payment_id,
+                    academy_id=updated.academy_id,
+                    payload=PaymentRefundedPayload(
+                        payment_id=updated.payment_id,
+                        refunded_cents=total_refunded,
+                        total_refunded_cents=total_refunded,
+                        reason="other",
+                    ),
+                )
+            )
 
     async def _on_subscription_changed(self, event: dict[str, Any]) -> None:
         sub = event["data"]["object"]
@@ -1846,6 +2023,38 @@ def _autopay_discount_metadata_from_pi(metadata: dict[str, Any]) -> dict[str, st
         for key, value in metadata.items()
         if key in allowed_keys and value is not None and str(value) != ""
     }
+
+
+def _ledger_payment_is_ach(payment: LedgerPayment) -> bool:
+    metadata = payment.metadata or {}
+    return (
+        metadata.get("funding_type") == "us_bank_account"
+        or metadata.get("payment_method_type") == "us_bank_account"
+    )
+
+
+def _payment_intent_is_ach(pi: dict[str, Any]) -> bool:
+    metadata = pi.get("metadata")
+    if isinstance(metadata, dict) and metadata.get("funding_type") == "us_bank_account":
+        return True
+    method_types = pi.get("payment_method_types")
+    if isinstance(method_types, list) and "us_bank_account" in method_types:
+        return True
+    details = pi.get("payment_method_details")
+    if isinstance(details, dict):
+        return details.get("type") == "us_bank_account" or isinstance(
+            details.get("us_bank_account"), dict
+        )
+    return False
+
+
+def _charge_is_ach(charge: dict[str, Any]) -> bool:
+    details = charge.get("payment_method_details")
+    if isinstance(details, dict):
+        return details.get("type") == "us_bank_account" or isinstance(
+            details.get("us_bank_account"), dict
+        )
+    return False
 
 
 def _identity_value(

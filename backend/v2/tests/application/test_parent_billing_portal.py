@@ -339,6 +339,8 @@ class _CustomerRepo:
         consent_text_version: str | None = None,
         ach_mandate_version: str | None = None,
         card_disclosure_version: str | None = None,
+        setup_status: str = "active",
+        payment_method_role: str = "primary",
         session=None,
     ) -> None:
         if self.fail_default_payment_method:
@@ -352,6 +354,8 @@ class _CustomerRepo:
             "setup_intent_id": setup_intent_id,
             "checkout_session_id": checkout_session_id,
             "completed_at": completed_at,
+            "setup_status": setup_status,
+            "payment_method_role": payment_method_role,
         }
         if current_consent_id:
             row["current_consent_id"] = current_consent_id
@@ -362,7 +366,12 @@ class _CustomerRepo:
         if card_disclosure_version:
             row["card_disclosure_version"] = card_disclosure_version
         self.default_methods = [
-            existing for existing in self.default_methods if existing["parent_id"] != parent_id
+            existing
+            for existing in self.default_methods
+            if not (
+                existing["parent_id"] == parent_id
+                and existing.get("payment_method_role", "primary") == payment_method_role
+            )
         ]
         self.default_methods.append(row)
 
@@ -943,6 +952,8 @@ async def test_checkout_status_reconciles_completed_setup_checkout_without_subsc
             "setup_intent_id": "seti_saved_card",
             "checkout_session_id": "cs_setup_complete",
             "completed_at": now,
+            "setup_status": "active",
+            "payment_method_role": "primary",
         }
     ]
     assert enrollment_autopay.setup_completed == ["enr-1"]

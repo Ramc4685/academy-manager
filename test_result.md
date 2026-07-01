@@ -58,6 +58,7 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-07-01-autopay-slice-c-idempotency](docs/test-results/active/2026-07-01-autopay-slice-c-idempotency.md)
 - [2026-07-01-autopay-slice-e-cash-discount](docs/test-results/active/2026-07-01-autopay-slice-e-cash-discount.md)
 - [2026-07-01-autopay-slice-f-consent-log](docs/test-results/active/2026-07-01-autopay-slice-f-consent-log.md)
+- [2026-07-01-autopay-slice-g-ach-lifecycle](docs/test-results/active/2026-07-01-autopay-slice-g-ach-lifecycle.md)
 - [slice-i-connect](docs/test-results/active/slice-i-connect.md)
 
 ## Required Workflow

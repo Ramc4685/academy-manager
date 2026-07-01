@@ -69,6 +69,7 @@ class AutopaySetupCompletionResult(BaseModel):
     stripe_payment_method_id: str
     payment_method_type: str
     status: str = "active"
+    payment_method_role: str = "primary"
 
 
 class AutopayConsentCaptureContext(BaseModel):
@@ -134,7 +135,7 @@ class CompleteAutopaySetup:
     ) -> AutopaySetupCompletionResult:
         setup_metadata = _string_metadata(setup_intent.get("metadata"))
         checkout_metadata = checkout_metadata or {}
-        for key in ("source", "academy_id", "parent_id", "enrollment_id"):
+        for key in ("source", "academy_id", "parent_id", "enrollment_id", "payment_method_role"):
             setup_value = setup_metadata.get(key)
             checkout_value = checkout_metadata.get(key)
             if setup_value and checkout_value and setup_value != checkout_value:
@@ -173,6 +174,11 @@ class CompleteAutopaySetup:
         payment_method = await self._stripe.retrieve_payment_method(stripe_payment_method_id)
         payment_method_type = str(payment_method.get("type") or "unknown")
         stripe_mandate_id = _stripe_id(setup_intent.get("mandate"))
+        setup_status = _setup_status_for_payment_method(
+            setup_intent=setup_intent,
+            payment_method_type=payment_method_type,
+        )
+        payment_method_role = _payment_method_role(metadata.get("payment_method_role"))
         completed_at = self._now()
         consent = self._build_consent(
             parent_id=parent_id,
@@ -186,14 +192,15 @@ class CompleteAutopaySetup:
             context=consent_context,
         )
 
-        await self._stripe.set_customer_default_payment_method(
-            stripe_customer_id=stripe_customer_id,
-            stripe_payment_method_id=stripe_payment_method_id,
-            metadata={
-                "academy_id": self._academy_id,
-                "parent_id": parent_id,
-            },
-        )
+        if setup_status == "active" and payment_method_role == "primary":
+            await self._stripe.set_customer_default_payment_method(
+                stripe_customer_id=stripe_customer_id,
+                stripe_payment_method_id=stripe_payment_method_id,
+                metadata={
+                    "academy_id": self._academy_id,
+                    "parent_id": parent_id,
+                },
+            )
         await self._persist_completion(
             parent_id=parent_id,
             enrollment_id=enrollment_id,
@@ -205,6 +212,8 @@ class CompleteAutopaySetup:
             checkout_session_id=checkout_session_id,
             completed_at=completed_at,
             consent=consent,
+            setup_status=setup_status,
+            payment_method_role=payment_method_role,
         )
         return AutopaySetupCompletionResult(
             checkout_session_id=checkout_session_id,
@@ -214,6 +223,8 @@ class CompleteAutopaySetup:
             stripe_customer_id=stripe_customer_id,
             stripe_payment_method_id=stripe_payment_method_id,
             payment_method_type=payment_method_type,
+            status=setup_status,
+            payment_method_role=payment_method_role,
         )
 
     async def _persist_completion(
@@ -229,6 +240,8 @@ class CompleteAutopaySetup:
         checkout_session_id: str | None,
         completed_at: datetime,
         consent: AutopayConsent | None,
+        setup_status: str = "active",
+        payment_method_role: str = "primary",
     ) -> None:
         async def work(session: Any | None) -> None:
             persisted_consent = consent
@@ -263,16 +276,19 @@ class CompleteAutopaySetup:
                 card_disclosure_version=(
                     persisted_consent.card_disclosure_version if persisted_consent else None
                 ),
+                setup_status=setup_status,
+                payment_method_role=payment_method_role,
                 session=session,
             )
-            activated = await self._enrollment_autopay.mark_autopay_active_from_setup(
-                enrollment_id=enrollment_id,
-                session=session,
-            )
-            if not activated:
-                raise RuntimeError(
-                    f"autopay enrollment activation failed for enrollment {enrollment_id}"
+            if setup_status == "active" and payment_method_role == "primary":
+                activated = await self._enrollment_autopay.mark_autopay_active_from_setup(
+                    enrollment_id=enrollment_id,
+                    session=session,
                 )
+                if not activated:
+                    raise RuntimeError(
+                        f"autopay enrollment activation failed for enrollment {enrollment_id}"
+                    )
 
         if self._transaction_runner is not None:
             await self._transaction_runner.run(work)
@@ -649,6 +665,32 @@ def _stripe_id(value: object) -> str | None:
         object_id = value.get("id")
         return str(object_id) if object_id else None
     return None
+
+
+def _payment_method_role(value: object) -> str:
+    role = str(value or "primary").strip().lower()
+    return role if role in {"primary", "fallback"} else "primary"
+
+
+def _setup_status_for_payment_method(
+    *,
+    setup_intent: dict[str, Any],
+    payment_method_type: str,
+) -> str:
+    if payment_method_type != "us_bank_account":
+        return "active"
+    status = str(setup_intent.get("status") or "")
+    if not status:
+        return "active"
+    next_action = setup_intent.get("next_action")
+    next_action_type = ""
+    if isinstance(next_action, dict):
+        next_action_type = str(next_action.get("type") or "")
+    if status == "succeeded":
+        return "active"
+    if next_action_type == "verify_with_microdeposits" or status == "requires_action":
+        return "verification_required"
+    return "verification_pending"
 
 
 def _is_autopay_setup_checkout(checkout: dict[str, Any]) -> bool:

@@ -56,17 +56,34 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
         consent_text_version: str | None = None,
         ach_mandate_version: str | None = None,
         card_disclosure_version: str | None = None,
+        setup_status: str = "active",
+        payment_method_role: str = "primary",
         session: Any | None = None,
     ) -> None:
         now = datetime.now(UTC)
+        role = payment_method_role if payment_method_role in {"primary", "fallback"} else "primary"
+        method_projection: dict[str, object] = {
+            "role": role,
+            "stripe_payment_method_id": stripe_payment_method_id,
+            "payment_method_type": payment_method_type,
+            "setup_intent_id": setup_intent_id,
+            "setup_status": setup_status,
+            "updated_at": completed_at,
+        }
+        if stripe_mandate_id:
+            method_projection["stripe_mandate_id"] = stripe_mandate_id
+        if checkout_session_id:
+            method_projection["checkout_session_id"] = checkout_session_id
         update: dict[str, object] = {
             "parent_id": parent_id,
             "stripe_customer_id": stripe_customer_id,
-            "default_payment_method_id": stripe_payment_method_id,
-            "payment_method_type": payment_method_type,
             "autopay_setup_intent_id": setup_intent_id,
             "autopay_setup_completed_at": completed_at,
             "updated_at": now,
+            f"{role}_payment_method_id": stripe_payment_method_id,
+            f"{role}_payment_method_type": payment_method_type,
+            f"{role}_setup_intent_id": setup_intent_id,
+            f"{role}_setup_status": setup_status,
         }
         if current_consent_id:
             update["current_autopay_consent_id"] = current_consent_id
@@ -78,8 +95,16 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
         if card_disclosure_version:
             update["current_card_disclosure_version"] = card_disclosure_version
             update.pop("current_ach_mandate_version", None)
+        if role == "primary":
+            update["default_payment_method_id"] = stripe_payment_method_id
+            update["payment_method_type"] = payment_method_type
+            update["primary_payment_method_id"] = stripe_payment_method_id
+            update["primary_payment_method_type"] = payment_method_type
+            update["primary_setup_status"] = setup_status
+            if stripe_mandate_id:
+                update["stripe_mandate_id"] = stripe_mandate_id
         if stripe_mandate_id:
-            update["stripe_mandate_id"] = stripe_mandate_id
+            update[f"{role}_stripe_mandate_id"] = stripe_mandate_id
         if checkout_session_id:
             update["autopay_setup_checkout_session_id"] = checkout_session_id
         unset: dict[str, str] = {}
@@ -97,5 +122,17 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
             {"parent_id": parent_id},
             mutation,
             upsert=True,
+            session=session,
+        )
+        await self._update_one(
+            {"parent_id": parent_id},
+            {"$pull": {"autopay_payment_methods": {"role": role}}},
+            upsert=False,
+            session=session,
+        )
+        await self._update_one(
+            {"parent_id": parent_id},
+            {"$push": {"autopay_payment_methods": method_projection}},
+            upsert=False,
             session=session,
         )
