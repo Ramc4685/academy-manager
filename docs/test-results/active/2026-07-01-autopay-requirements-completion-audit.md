@@ -52,6 +52,7 @@ The review document's §11 says the concrete edits are "to be made by the author
 - 2026-07-01T15:04:13 main/working: Expanded audit in progress: derived 17 checklist items plus §11 deltas from the review doc. Current implementation evidence supports the code requirements; historical production subscriptions-row cleanup remains external/unverified from this worktree.
 - 2026-07-01T15:09:04 main/working: Added dry-run-first stale tuition subscription cleanup utility for the review checklist's historical subscriptions-row cleanup item. The script selects only incomplete setup bookkeeping rows with no Stripe subscription id and requires --confirm-delete-stale-subscriptions with --apply. No production deletion was run.
 - 2026-07-01T15:10:42 main/working: Remaining gate is explicit approval plus evidence for production data cleanup: run the utility first as dry-run with --expected-count 2 against the approved production DB, then rerun with --apply --confirm-delete-stale-subscriptions only after explicit destructive-operation approval.
+- 2026-07-01T15:12:30 main/working: Hardened cleanup utility candidate selection: non-empty local stripe_subscription_id placeholders such as pending:cs_* are preserved for manual review instead of being selected by the in-memory filter. The production query already avoided them; tests now enforce that behavior.
 ## Verification
 
 - No verification recorded yet.
@@ -61,6 +62,7 @@ The review document's §11 says the concrete edits are "to be made by the author
 - 2026-07-01T15:04:13: Frontend focused UI gates passed: pnpm typecheck; pnpm lint exited 0 with 5 existing warnings; pnpm exec playwright test e2e/specs/billing-health.spec.ts -> 8 passed.
 - 2026-07-01T15:09:04: Focused cleanup utility verification: RED first failed because scripts/dev/cleanup_stale_tuition_subscriptions.py did not exist; after implementation, PYTHONPATH=. python -m pytest backend/v2/tests/unit/test_cleanup_stale_tuition_subscriptions.py -q -> 3 passed. ruff check and ruff format --check on the script/test passed.
 - 2026-07-01T15:10:42: Non-destructive local cleanup dry-run passed: source backend/.venv/bin/activate && python scripts/dev/cleanup_stale_tuition_subscriptions.py --mongo-url mongodb://127.0.0.1:27017 --db-name academy_manager --expected-count 0 -> candidate_count 0, result dry_run. No writes performed.
+- 2026-07-01T15:12:30: Cleanup hardening verification: focused test first failed with pending:cs_* selected; after script change, PYTHONPATH=. python -m pytest backend/v2/tests/unit/test_cleanup_stale_tuition_subscriptions.py -q -> 3 passed. ruff check/format passed. Local dry-run with --expected-count 0 still returned candidate_count 0, result dry_run.
 ## Reusable Lessons
 
 - None recorded yet.

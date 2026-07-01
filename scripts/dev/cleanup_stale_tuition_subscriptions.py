@@ -36,7 +36,7 @@ def select_cleanup_candidates(
     for row in subscription_rows:
         if str(row.get("status") or "") != "incomplete":
             continue
-        if _real_stripe_subscription_id(row.get("stripe_subscription_id")):
+        if str(row.get("stripe_subscription_id") or "").strip():
             continue
         if not str(row.get("stripe_checkout_session_id") or "").strip():
             continue

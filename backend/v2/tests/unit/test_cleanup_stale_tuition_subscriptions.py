@@ -57,6 +57,15 @@ def test_candidate_filter_only_selects_stale_setup_bookkeeping_rows() -> None:
             "status": "incomplete",
         },
         {
+            "subscription_id": "sub-non-empty-placeholder",
+            "academy_id": "acad",
+            "parent_id": "parent-1",
+            "enrollment_id": "enr-5",
+            "stripe_subscription_id": "pending:cs_5",
+            "stripe_checkout_session_id": "cs_pending_5",
+            "status": "incomplete",
+        },
+        {
             "subscription_id": "sub-manual",
             "academy_id": "acad",
             "parent_id": "parent-1",
@@ -69,6 +78,7 @@ def test_candidate_filter_only_selects_stale_setup_bookkeeping_rows() -> None:
         "enr-2": {"enrollment_id": "enr-2", "stripe_subscription_id": "sub_live_1"},
         "enr-3": {"enrollment_id": "enr-3", "stripe_subscription_id": "sub_pending"},
         "enr-4": {"enrollment_id": "enr-4", "stripe_subscription_id": None},
+        "enr-5": {"enrollment_id": "enr-5", "stripe_subscription_id": None},
     }
 
     candidates = module.select_cleanup_candidates(rows, enrollments)
