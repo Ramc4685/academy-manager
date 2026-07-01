@@ -26,6 +26,10 @@ class FakeStripeGateway(StripeGateway):
         self.subscription_prorations: list[dict[str, Any]] = []
         self.connect_links: list[dict[str, str]] = []
         self.connect_codes: list[str] = []
+        # Slice I — Connect (Accounts v2 + destination charges).
+        self.connected_accounts: list[dict[str, Any]] = []
+        self.account_onboarding_links: list[dict[str, Any]] = []
+        self.off_session_payment_intents: list[dict[str, Any]] = []
         self.payment_intents: list[dict[str, Any]] = []
         self.setup_intents: dict[str, dict[str, Any]] = {}
         self.payment_methods: dict[str, dict[str, Any]] = {}
@@ -93,6 +97,7 @@ class FakeStripeGateway(StripeGateway):
         success_url: str,
         cancel_url: str,
         metadata: dict[str, str],
+        connected_account_id: str | None = None,
     ) -> tuple[str, str]:
         checkout_id = f"cs_setup_test_{new_ulid()}"
         setup_intent_id = f"seti_fake_{checkout_id}"
@@ -107,6 +112,9 @@ class FakeStripeGateway(StripeGateway):
                 "cancel_url": cancel_url,
                 "metadata": metadata,
                 "setup_intent_id": setup_intent_id,
+                # Slice I: connected academy account the eventual off-session
+                # charges route to (setup_intent_data.on_behalf_of).
+                "connected_account_id": connected_account_id,
             }
         )
         self.setup_intents[setup_intent_id] = {
@@ -308,3 +316,77 @@ class FakeStripeGateway(StripeGateway):
     async def exchange_connect_code(self, code: str) -> str:
         self.connect_codes.append(code)
         return f"acct_fake_{code}"
+
+    async def create_connected_account(
+        self,
+        *,
+        academy_id: str,
+        display_name: str | None = None,
+        contact_email: str | None = None,
+    ) -> str:
+        account_id = f"acct_fake_{academy_id}_{new_ulid()}"
+        # Record the controller-based (Accounts v2) config so tests can assert
+        # the platform accepts liability and no legacy `type` is used.
+        self.connected_accounts.append(
+            {
+                "stripe_account_id": account_id,
+                "academy_id": academy_id,
+                "display_name": display_name,
+                "contact_email": contact_email,
+                "controller": {
+                    "losses": {"payments": "application"},
+                    "fees": {"payer": "account"},
+                    "stripe_dashboard": {"type": "full"},
+                    "requirement_collection": "stripe",
+                },
+            }
+        )
+        return account_id
+
+    async def create_account_onboarding_link(
+        self,
+        *,
+        stripe_account_id: str,
+        refresh_url: str,
+        return_url: str,
+    ) -> str:
+        self.account_onboarding_links.append(
+            {
+                "stripe_account_id": stripe_account_id,
+                "refresh_url": refresh_url,
+                "return_url": return_url,
+            }
+        )
+        return f"https://fake-stripe-connect.example.com/onboard/{stripe_account_id}"
+
+    async def create_off_session_payment_intent(
+        self,
+        *,
+        amount_cents: int,
+        currency: str,
+        customer_id: str,
+        payment_method_id: str,
+        idempotency_key: str,
+        metadata: dict[str, str],
+        connected_account_id: str | None = None,
+    ) -> tuple[str, str, str | None]:
+        pi_id = f"pi_fake_{new_ulid()}"
+        record: dict[str, Any] = {
+            "id": pi_id,
+            "amount_cents": amount_cents,
+            "currency": currency,
+            "customer_id": customer_id,
+            "payment_method_id": payment_method_id,
+            "idempotency_key": idempotency_key,
+            "metadata": dict(metadata),
+            # Slice I: destination-charge routing (on_behalf_of +
+            # transfer_data.destination) when the academy has a connected account.
+            "connected_account_id": connected_account_id,
+            "on_behalf_of": connected_account_id,
+            "transfer_data": (
+                {"destination": connected_account_id} if connected_account_id else None
+            ),
+            "application_fee_amount": 0 if connected_account_id else None,
+        }
+        self.off_session_payment_intents.append(record)
+        return pi_id, "succeeded", None

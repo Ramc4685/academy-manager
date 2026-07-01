@@ -32,3 +32,4 @@ def _include_if_available(module_name: str, router_name: str = "router") -> None
 _include_if_available("backend.v2.interfaces.platform.billing_routes")
 _include_if_available("backend.v2.interfaces.platform.governance_routes")
 _include_if_available("backend.v2.interfaces.platform.audit_routes")
+_include_if_available("backend.v2.interfaces.platform.connect_routes")

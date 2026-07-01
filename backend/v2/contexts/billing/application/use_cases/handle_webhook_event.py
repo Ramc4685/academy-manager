@@ -101,6 +101,7 @@ class HandleWebhookEvent:
         enrollment_autopay: EnrollmentAutopayStateRepository | None = None,
         enrollment_identity: EnrollmentBillingIdentityRepository | None = None,
         invoice_processing: StripeInvoiceProcessingRepository | None = None,
+        connected_accounts: Any | None = None,
         expected_livemode: bool | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
@@ -116,6 +117,7 @@ class HandleWebhookEvent:
         self._enrollment_autopay = enrollment_autopay
         self._enrollment_identity = enrollment_identity
         self._invoice_processing = invoice_processing
+        self._connected_accounts = connected_accounts
         self._expected_livemode = expected_livemode
         self._outbox = outbox
         self._academy_id = academy_id
@@ -171,7 +173,7 @@ class HandleWebhookEvent:
                 event_type = event_type or str(event.get("type", ""))
                 self._validate_livemode(event)
                 event = await self._hydrate_current_stripe_object(event_type, event)
-                self._validate_event_guards(event)
+                await self._validate_event_guards_async(event)
                 await self._dispatch(event_type, event)
                 await self._dedup.mark_processed(event_id)
                 return {"processed": True, "event_id": event_id, "type": event_type}
@@ -266,6 +268,43 @@ class HandleWebhookEvent:
             raise _QuarantineStripeEvent(
                 f"academy mismatch: event={academy_id} expected={self._academy_id}"
             )
+
+    async def _validate_event_guards_async(self, event: dict[str, Any]) -> None:
+        """Full guard: sync metadata checks + Connect account-based tenant check.
+
+        Connect events (``account.*``, ``capability.*``, etc.) carry a top-level
+        ``account`` field naming the connected account they occurred on. We
+        resolve that account to its owning academy and quarantine anything that
+        does not belong to this handler's academy (or is unknown).
+        """
+        self._validate_event_guards(event)
+        await self.resolve_academy_for_event(event)
+
+    async def resolve_academy_for_event(self, event: dict[str, Any]) -> str:
+        """Resolve the academy a Stripe event belongs to.
+
+        For Connect events (top-level ``account``), resolve via the
+        connected-account repo and require it to match this handler's academy —
+        otherwise quarantine. For platform (non-Connect) events, fall back to the
+        handler's configured academy.
+        """
+        account_id = str(event.get("account") or "")
+        if not account_id:
+            return self._academy_id
+        if self._connected_accounts is None:
+            # No resolver wired: cannot safely attribute a Connect event.
+            raise _QuarantineStripeEvent(
+                f"connect event for account={account_id} but no connected-account resolver"
+            )
+        resolved = await self._connected_accounts.academy_id_for_account(account_id)
+        if resolved is None:
+            raise _QuarantineStripeEvent(f"unknown connected account: account={account_id}")
+        if resolved != self._academy_id:
+            raise _QuarantineStripeEvent(
+                f"connect account academy mismatch: account={account_id} "
+                f"resolved={resolved} expected={self._academy_id}"
+            )
+        return resolved
 
     def _validate_livemode(self, event: dict[str, Any]) -> None:
         if self._expected_livemode is not None:

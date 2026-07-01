@@ -29,6 +29,9 @@ from backend.v2.composition.digests import (
 )
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.contexts.billing.application.ports import StripeGateway
+from backend.v2.contexts.billing.application.use_cases.connect_onboarding import (
+    StartConnectOnboarding,
+)
 from backend.v2.contexts.billing.application.use_cases.reconcile_stripe_payment_intents import (
     ReconcileStripePaymentIntents,
 )
@@ -37,6 +40,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import
 )
 from backend.v2.contexts.billing.infrastructure.mongo_billing_reconciliation_run_repo import (
     MongoBillingReconciliationRunRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
+    MongoConnectedAccountRepository,
 )
 from backend.v2.contexts.communications.application.use_cases.send_coach_daily_digest import (
     SendCoachDailyDigestCommand,
@@ -238,6 +244,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         academy_id=runtime_academy_id,
     )
     stripe_webhook_processors = {runtime_academy_id: app.state.parent.handle_webhook_event}
+
+    # Platform Stripe Connect onboarding (Slice I). Composition root wires the
+    # real repo + gateway into the use case; the platform BFF route only sees
+    # app.state.platform_connect_onboarding.
+    app.state.platform_connect_onboarding = StartConnectOnboarding(
+        stripe=stripe_gw,
+        connected_accounts=MongoConnectedAccountRepository(db),
+        academy_id=runtime_academy_id,
+    )
 
     # Admin BFF wiring (Wave 3).
     app.state.admin = compose_admin(db, outbox, idempotency_store, stripe_gw)

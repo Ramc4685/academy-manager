@@ -8,6 +8,10 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel
 
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+from backend.v2.contexts.billing.domain.connected_account import (
+    ConnectedAccount,
+    ConnectedAccountStatus,
+)
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
     LedgerAllocationResult,
@@ -203,8 +207,13 @@ class StripeGateway(Protocol):
         success_url: str,
         cancel_url: str,
         metadata: dict[str, str],
+        connected_account_id: str | None = None,
     ) -> tuple[str, str]:
-        """Returns (checkout_session_id, redirect_url) for saved-card setup."""
+        """Returns (checkout_session_id, redirect_url) for saved-card setup.
+
+        When ``connected_account_id`` is set, the eventual off-session charges
+        route to that connected academy account (``setup_intent_data.on_behalf_of``).
+        """
 
     async def create_customer_portal_session(
         self,
@@ -294,6 +303,49 @@ class StripeGateway(Protocol):
 
     async def exchange_connect_code(self, code: str) -> str:
         """Exchange OAuth authorization code for stripe_user_id (connected account ID)."""
+        ...
+
+    async def create_connected_account(
+        self,
+        *,
+        academy_id: str,
+        display_name: str | None = None,
+        contact_email: str | None = None,
+    ) -> str:
+        """Create an Accounts v2 connected account (controller-based) and return its id.
+
+        Slice I: NEVER the legacy ``type: express/custom/standard``. The platform
+        accepts payment liability (``controller.losses.payments = application``).
+        """
+        ...
+
+    async def create_account_onboarding_link(
+        self,
+        *,
+        stripe_account_id: str,
+        refresh_url: str,
+        return_url: str,
+    ) -> str:
+        """Create a hosted onboarding AccountLink for a connected account."""
+        ...
+
+    async def create_off_session_payment_intent(
+        self,
+        *,
+        amount_cents: int,
+        currency: str,
+        customer_id: str,
+        payment_method_id: str,
+        idempotency_key: str,
+        metadata: dict[str, str],
+        connected_account_id: str | None = None,
+    ) -> tuple[str, str, str | None]:
+        """Confirm an off-session autopay charge; returns (pi_id, status, decline_code).
+
+        When ``connected_account_id`` is set, this is a destination charge to the
+        connected academy account (``on_behalf_of`` + ``transfer_data.destination``,
+        ``application_fee_amount=0`` for now). Customers live on the platform.
+        """
         ...
 
 
@@ -402,6 +454,28 @@ class BillingSettingsRepository(Protocol):
     """Port for academy-scoped billing configuration (Slice S0/D)."""
 
     async def get(self) -> BillingSettings: ...
+
+
+class ConnectedAccountRepository(Protocol):
+    """Port for the per-academy Stripe Connect account store (Slice I).
+
+    Tenant-scoped: every method resolves through the request's academy_id, so
+    an academy can only read/write its own connected account, and can only
+    resolve its own ``stripe_account_id`` (used by the Connect webhook guard).
+    """
+
+    async def get_for_academy(self) -> ConnectedAccount | None: ...
+    async def get_by_stripe_account_id(self, stripe_account_id: str) -> ConnectedAccount | None: ...
+    async def upsert(self, account: ConnectedAccount) -> None: ...
+    async def update_status(
+        self,
+        *,
+        stripe_account_id: str,
+        status: ConnectedAccountStatus,
+        capabilities: dict[str, str] | None = None,
+        charges_enabled: bool | None = None,
+        payouts_enabled: bool | None = None,
+    ) -> None: ...
 
 
 class LedgerRepository(Protocol):

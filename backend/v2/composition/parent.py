@@ -51,6 +51,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import
 from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
     MongoBillingSettingsRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
+    MongoConnectedAccountRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
     MongoCreditLedgerRepository,
 )
@@ -206,6 +209,7 @@ def compose_parent_webhook_handler(
     subscriptions_repo = MongoSubscriptionRepository(db)
     parent_customers_repo = MongoParentBillingCustomerRepository(db)
     student_billing_enrollments = MongoStudentBillingEnrollmentRepository(db)
+    connected_accounts_repo = MongoConnectedAccountRepository(db)
     dedup = MongoStripeEventDedup(db)
     invoice_processing = MongoStripeInvoiceProcessingRepository(db)
 
@@ -260,6 +264,7 @@ def compose_parent_webhook_handler(
         enrollment_autopay=_EnrollmentAutopayState(),
         enrollment_identity=_EnrollmentBillingIdentity(),
         invoice_processing=invoice_processing,
+        connected_accounts=_ConnectAccountResolver(connected_accounts_repo, academy_id),
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
@@ -290,6 +295,7 @@ def compose_parent(
     subscriptions_repo = MongoSubscriptionRepository(db)
     parent_customers_repo = MongoParentBillingCustomerRepository(db)
     student_billing_enrollments = MongoStudentBillingEnrollmentRepository(db)
+    connected_accounts_repo = MongoConnectedAccountRepository(db)
     session_types_repo = MongoSessionTypeRepository(db)
     dedup = MongoStripeEventDedup(db)
     invoice_processing = MongoStripeInvoiceProcessingRepository(db)
@@ -374,6 +380,7 @@ def compose_parent(
         enrollment_autopay=enrollment_autopay_state,
         enrollment_identity=enrollment_identity,
         invoice_processing=invoice_processing,
+        connected_accounts=_ConnectAccountResolver(connected_accounts_repo, academy_id),
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
@@ -1139,6 +1146,23 @@ def compose_parent(
 
 class _StripeGatewayProto(Protocol):
     """Re-export to make this module importable without backing import."""
+
+
+class _ConnectAccountResolver:
+    """Resolve a connected Stripe account id -> owning academy for the webhook
+    guard (Slice I). Bridges the repo method name (``get_by_stripe_account_id``)
+    to the resolver name the webhook handler expects (``academy_id_for_account``)
+    — the Slice-B name-mismatch lesson, covered by a port-drive test.
+    """
+
+    def __init__(self, repo: MongoConnectedAccountRepository, academy_id: str) -> None:
+        self._repo = repo
+        self._academy_id = academy_id
+
+    async def academy_id_for_account(self, stripe_account_id: str) -> str | None:
+        with tenant_scope(self._academy_id):
+            account = await self._repo.get_by_stripe_account_id(stripe_account_id)
+        return account.academy_id if account else None
 
 
 def _require_academy_id(academy_id: str | None) -> str:
