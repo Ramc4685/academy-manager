@@ -2426,6 +2426,9 @@ def compose_admin(
     scheduled_actions = MongoScheduledEnrollmentActionRepository(db)
     subscriptions_repo = MongoSubscriptionRepository(db)
     parent_customers_repo = MongoParentBillingCustomerRepository(db)
+    # Per-enrollment autopay status lives on student_billing_enrollments — the
+    # single source of truth pause/resume + the charge path share (Slice B).
+    student_billing_enrollment_repo = MongoStudentBillingEnrollmentRepository(db)
     curriculum = compose_curriculum(db)
     student_progress = compose_student_progress(db, outbox)
     generate_daily_teaching_plan = GenerateDailyTeachingPlan(
@@ -2479,7 +2482,7 @@ def compose_admin(
         waitlist=waitlist,
         enrollment_events=enrollment_events,
         billing_deferrals=billing_deferrals,
-        parent_autopay=parent_customers_repo,
+        autopay_status=student_billing_enrollment_repo,
     )
     resume_enrollment = ResumeEnrollment(
         enrollments=enrollments_w,
@@ -2488,7 +2491,7 @@ def compose_admin(
         waitlist=waitlist,
         enrollment_events=enrollment_events,
         billing_deferrals=billing_deferrals,
-        parent_autopay=parent_customers_repo,
+        autopay_status=student_billing_enrollment_repo,
     )
     withdraw_enrollment = WithdrawEnrollment(
         enrollments=enrollments_w,
@@ -2515,7 +2518,7 @@ def compose_admin(
         pause_enrollment=pause_enrollment,
         scheduled_actions=scheduled_actions,
         billing_deferrals=billing_deferrals,
-        parent_autopay=parent_customers_repo,
+        autopay_status=student_billing_enrollment_repo,
         academy_id=academy_id,
     )
     decline_pause_request = DeclinePauseRequest(pause_requests=pause_requests)
@@ -2540,7 +2543,6 @@ def compose_admin(
     set_tuition_discount = SetTuitionDiscount(discounts=tuition_discounts_repo)
     remove_tuition_discount = RemoveTuitionDiscount(discounts=tuition_discounts_repo)
     session_type_repo = MongoSessionTypeRepository(db)
-    student_billing_enrollment_repo = MongoStudentBillingEnrollmentRepository(db)
     create_session_type = CreateSessionType(
         session_types=session_type_repo,
         academy_id=academy_id,
@@ -2752,7 +2754,7 @@ def compose_admin(
         result = await ChargeInvoiceViaAutopay(
             ledger=billing_ledger_repo,
             stripe=stripe,  # type: ignore[arg-type]
-            parent_customers=parent_customers_repo,
+            enrollment_autopay=student_billing_enrollment_repo,
         ).execute(invoice_id)
         return result.model_dump(mode="python")
 

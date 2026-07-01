@@ -62,15 +62,16 @@ class ParentStripeCustomerRepository(Protocol):
 
 
 class EnrollmentAutopayStateRepository(Protocol):
-    """Cross-context port: Billing pushes autopay enrollment-lifecycle state
-    onto the Enrollment aggregate so parent-facing autopay status stays
-    accurate.
+    """Port for the single per-enrollment autopay-status store
+    (``student_billing_enrollments``).
 
-    ``autopay_enrollment_status`` carries the split enrollment-lifecycle axis
-    (see `contexts.billing.domain.autopay_status`) — it is deliberately
-    independent of any single charge attempt's outcome. ``stripe_subscription_id``
-    is retained only for legacy convergence rows already keyed by a Stripe
-    subscription id; new app-owned autopay has none, so it is optional.
+    ``autopay_enrollment_status`` carries the enrollment-lifecycle axis (see
+    `contexts.billing.domain.autopay_status`) — independent of any single
+    charge attempt's outcome. This routes through the SAME guarded transition
+    path that pause/resume use, so the webhook/legacy-convergence path cannot
+    silently diverge (BLOCKING #1 collapse). Returns True if the transition was
+    applied, False if it was a rejected (illegal / not-found) transition — a
+    no-op that is logged, never raised, so idempotent replay stays safe.
     """
 
     async def set_autopay_state(
@@ -78,8 +79,13 @@ class EnrollmentAutopayStateRepository(Protocol):
         *,
         enrollment_id: str,
         autopay_enrollment_status: str,
-        stripe_subscription_id: str | None = None,
-    ) -> None: ...
+    ) -> bool: ...
+
+    async def mark_autopay_active_from_setup(self, *, enrollment_id: str) -> bool:
+        """Setup completed successfully — walk the enrollment to ``active``
+        through the guarded transition path (handles first setup and re-setup
+        from ``disabled``). Returns True if it ends up ``active``."""
+        ...
 
 
 class EnrollmentBillingIdentity(BaseModel):

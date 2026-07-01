@@ -345,21 +345,25 @@ class _CustomerRepo:
 class _EnrollmentAutopay:
     def __init__(self) -> None:
         self.synced: list[dict[str, str | None]] = []
+        self.setup_completed: list[str] = []
 
     async def set_autopay_state(
         self,
         *,
         enrollment_id: str,
         autopay_enrollment_status: str,
-        stripe_subscription_id: str | None = None,
-    ) -> None:
+    ) -> bool:
         self.synced.append(
             {
                 "enrollment_id": enrollment_id,
                 "autopay_enrollment_status": autopay_enrollment_status,
-                "stripe_subscription_id": stripe_subscription_id,
             }
         )
+        return True
+
+    async def mark_autopay_active_from_setup(self, *, enrollment_id: str) -> bool:
+        self.setup_completed.append(enrollment_id)
+        return True
 
 
 @pytest.mark.asyncio
@@ -415,13 +419,8 @@ async def test_checkout_status_reconciles_completed_subscription_checkout() -> N
     assert repo.by_id["sub-local"].stripe_subscription_id == "sub_live_123"
     assert repo.by_id["sub-local"].status == "active"
     assert customers.saved == [{"parent_id": "p1", "stripe_customer_id": "cus_parent"}]
-    assert enrollment_autopay.synced == [
-        {
-            "enrollment_id": "enr-1",
-            "autopay_enrollment_status": "active",
-            "stripe_subscription_id": "sub_live_123",
-        }
-    ]
+    assert enrollment_autopay.setup_completed == ["enr-1"]
+    assert enrollment_autopay.synced == []
 
 
 @pytest.mark.asyncio
@@ -501,10 +500,5 @@ async def test_checkout_status_reconciles_completed_setup_checkout_without_subsc
             "completed_at": now,
         }
     ]
-    assert enrollment_autopay.synced == [
-        {
-            "enrollment_id": "enr-1",
-            "autopay_enrollment_status": "active",
-            "stripe_subscription_id": None,
-        }
-    ]
+    assert enrollment_autopay.setup_completed == ["enr-1"]
+    assert enrollment_autopay.synced == []

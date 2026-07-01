@@ -1,39 +1,57 @@
-"""Split autopay_status into autopay_enrollment_status + last_attempt_outcome.
+"""Per-enrollment autopay status split on student_billing_enrollments.
 
-Slice B: `parent_billing_customers.autopay_status` conflated "is the parent
-enrolled in autopay?" with "did the last charge attempt work?" — a classic
-billing state-machine smell (a bounced charge should not look like the
-parent left autopay). This migration:
+Slice B: autopay status is PER-ENROLLMENT (each child's enrollment has its own
+on/off/paused state), and it must NOT be conflated with a single charge
+attempt's outcome. The status therefore lives on ``student_billing_enrollments``
+(the aggregate the charge path resolves from an invoice and that pause/resume
+mutate), NOT on the per-parent ``parent_billing_customers`` record.
 
-1. Backfills the split enrollment-lifecycle field: any existing
-   `autopay_status: "active"` (or bare `autopay_status` value) becomes
-   `autopay_enrollment_status` with the same value, and the legacy field is
-   removed.
-2. Backfills `last_attempt_outcome` (+ `last_attempt_at`, `last_failure_code`)
-   as a projection of each parent's most recent `payment_attempts` row,
-   where one exists. `payment_attempts.status` values (`succeeded` |
-   `failed` | `requires_action`) map onto the outcome vocabulary
-   (`succeeded` | `declined` | `requires_action`).
-3. Updates the Mongo validator for `parent_billing_customers` to describe
-   the new split fields (follows the 0132/0136 validator pattern).
+This migration:
 
-Idempotent: re-running is a no-op once the legacy field is gone and the
-latest attempt has already been projected — `update_many`/`update_one` on a
-stable filter, no unconditional increments.
+1. Backfills ``autopay_enrollment_status`` on each ``student_billing_enrollments``
+   doc that lacks it, derived from the existing billing-relationship ``status``:
+   active -> active, paused -> paused, cancelled/transferred_out -> disabled,
+   anything else -> setup_started (mid-setup default).
+2. Backfills the ``last_attempt_outcome`` (+ ``last_attempt_at``,
+   ``last_failure_code``) projection from the enrollment's most recent
+   ``payment_attempts`` row, linked via its ``invoices`` (invoice.enrollment_id
+   -> payment_attempts.invoice_id). ``payment_attempts.status`` maps
+   succeeded -> succeeded, failed -> declined, requires_action -> requires_action;
+   any other/unknown status maps to ``error`` so a latest-attempt is never
+   silently dropped.
+3. Updates the Mongo validator for ``student_billing_enrollments`` to describe
+   the new fields (follows the 0132/0136 validator pattern).
+
+Idempotent + count-validated: both backfills filter on the target field being
+absent, so re-running is a no-op; applied counts are asserted exactly and logged.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import CollectionInvalid, OperationFailure
+
+log = logging.getLogger(__name__)
 
 version = "0137_autopay_status_split"
 
 OPT_DATE = ["date", "null"]
 OPT_STRING = ["string", "null"]
 
+# billing-relationship status -> initial autopay enrollment status
+_STATUS_TO_AUTOPAY_ENROLLMENT = {
+    "active": "active",
+    "paused": "paused",
+    "cancelled": "disabled",
+    "transferred_out": "disabled",
+}
+
+# payment_attempts.status -> AutopayAttemptOutcome. Unknown statuses fall back
+# to "error" rather than being dropped (an unmapped latest attempt is still a
+# signal that the last charge did not cleanly succeed).
 _ATTEMPT_STATUS_TO_OUTCOME = {
     "succeeded": "succeeded",
     "failed": "declined",
@@ -51,15 +69,17 @@ def _schema(required: list[str], properties: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-PARENT_BILLING_CUSTOMERS_VALIDATOR: dict[str, Any] = _schema(
-    ["academy_id", "parent_id", "created_at"],
+STUDENT_BILLING_ENROLLMENTS_VALIDATOR: dict[str, Any] = _schema(
+    ["enrollment_id", "academy_id", "student_id", "parent_id", "session_type_id"],
     {
+        "enrollment_id": {"bsonType": "string"},
         "academy_id": {"bsonType": "string"},
+        "student_id": {"bsonType": "string"},
         "parent_id": {"bsonType": "string"},
-        "stripe_customer_id": {"bsonType": OPT_STRING},
-        "default_payment_method_id": {"bsonType": OPT_STRING},
-        "payment_method_type": {"bsonType": OPT_STRING},
-        "stripe_mandate_id": {"bsonType": OPT_STRING},
+        "session_type_id": {"bsonType": "string"},
+        "stripe_subscription_id": {"bsonType": OPT_STRING},
+        "billing_start_date": {"bsonType": ["date", "null"]},
+        "status": {"bsonType": OPT_STRING},
         "autopay_enrollment_status": {
             "bsonType": OPT_STRING,
             "enum": [
@@ -78,10 +98,8 @@ PARENT_BILLING_CUSTOMERS_VALIDATOR: dict[str, Any] = _schema(
         },
         "last_attempt_at": {"bsonType": OPT_DATE},
         "last_failure_code": {"bsonType": OPT_STRING},
-        "autopay_setup_intent_id": {"bsonType": OPT_STRING},
-        "autopay_setup_completed_at": {"bsonType": OPT_DATE},
-        "autopay_setup_checkout_session_id": {"bsonType": OPT_STRING},
-        "created_at": {"bsonType": "date"},
+        "override_price_cents": {"bsonType": ["int", "long", "null"]},
+        "enrolled_at": {"bsonType": ["date", "null"]},
         "updated_at": {"bsonType": OPT_DATE},
     },
 )
@@ -122,63 +140,87 @@ async def _apply_validator(
             )
 
 
+async def _latest_attempt_for_enrollment(
+    db: AsyncIOMotorDatabase, *, academy_id: str, enrollment_id: str
+) -> dict[str, Any] | None:
+    """Most recent payment_attempts row for an enrollment, joined via invoices."""
+    invoice_ids = [
+        str(inv["invoice_id"])
+        async for inv in db["invoices"].find(
+            {"academy_id": academy_id, "enrollment_id": enrollment_id},
+            {"invoice_id": 1},
+        )
+        if inv.get("invoice_id")
+    ]
+    if not invoice_ids:
+        return None
+    return await db["payment_attempts"].find_one(
+        {"academy_id": academy_id, "invoice_id": {"$in": invoice_ids}},
+        sort=[("created_at", -1)],
+    )
+
+
 async def up(db: AsyncIOMotorDatabase) -> None:
-    customers = db["parent_billing_customers"]
+    enrollments = db["student_billing_enrollments"]
 
-    # 1. Backfill the split enrollment-lifecycle field from the legacy
-    #    conflated field, then drop the legacy field.
-    legacy_count = await customers.count_documents({"autopay_status": {"$exists": True}})
-    if legacy_count:
-        cursor = customers.find(
-            {"autopay_status": {"$exists": True}},
-            {"_id": 1, "autopay_status": 1},
-        )
-        migrated = 0
-        async for doc in cursor:
-            legacy_status = doc.get("autopay_status") or "active"
-            result = await customers.update_one(
-                {"_id": doc["_id"]},
-                {
-                    "$set": {"autopay_enrollment_status": legacy_status},
-                    "$unset": {"autopay_status": ""},
-                },
-            )
-            if result.modified_count:
-                migrated += 1
-        assert migrated <= legacy_count
-
-    # 2. Backfill last_attempt_outcome (+ last_attempt_at, last_failure_code)
-    #    from each parent's latest payment_attempts row, where present. Only
-    #    touches customer docs that don't already carry a projection, so this
-    #    is safe to re-run.
-    payment_attempts = db["payment_attempts"]
-    async for customer in customers.find(
-        {"last_attempt_outcome": {"$exists": False}},
-        {"_id": 1, "academy_id": 1, "parent_id": 1},
+    # 1. Backfill autopay_enrollment_status from the billing-relationship status.
+    to_backfill = await enrollments.count_documents(
+        {"autopay_enrollment_status": {"$exists": False}}
+    )
+    status_migrated = 0
+    async for doc in enrollments.find(
+        {"autopay_enrollment_status": {"$exists": False}},
+        {"_id": 1, "status": 1},
     ):
-        academy_id = customer.get("academy_id")
-        parent_id = customer.get("parent_id")
-        if not academy_id or not parent_id:
-            continue
-        latest_attempt = await payment_attempts.find_one(
-            {"academy_id": academy_id, "parent_id": parent_id},
-            sort=[("created_at", -1)],
+        current_status = str(doc.get("status") or "active")
+        autopay_status = _STATUS_TO_AUTOPAY_ENROLLMENT.get(current_status, "setup_started")
+        result = await enrollments.update_one(
+            {"_id": doc["_id"]},
+            {"$set": {"autopay_enrollment_status": autopay_status}},
         )
-        if latest_attempt is None:
+        status_migrated += result.modified_count
+    assert status_migrated == to_backfill, (
+        f"autopay_enrollment_status backfill mismatch: migrated={status_migrated} "
+        f"expected={to_backfill}"
+    )
+    log.info(
+        "0137: backfilled autopay_enrollment_status on %d student_billing_enrollments",
+        status_migrated,
+    )
+
+    # 2. Backfill last_attempt_outcome projection from each enrollment's latest
+    #    payment attempt (linked via its invoices). Only docs missing the
+    #    projection are touched, so re-running is a no-op.
+    outcome_migrated = 0
+    async for doc in enrollments.find(
+        {"last_attempt_outcome": {"$exists": False}},
+        {"_id": 1, "academy_id": 1, "enrollment_id": 1},
+    ):
+        academy_id = doc.get("academy_id")
+        enrollment_id = doc.get("enrollment_id")
+        if not academy_id or not enrollment_id:
             continue
-        outcome = _ATTEMPT_STATUS_TO_OUTCOME.get(str(latest_attempt.get("status") or ""))
-        if outcome is None:
+        latest = await _latest_attempt_for_enrollment(
+            db, academy_id=str(academy_id), enrollment_id=str(enrollment_id)
+        )
+        if latest is None:
             continue
-        await customers.update_one(
-            {"_id": customer["_id"]},
+        outcome = _ATTEMPT_STATUS_TO_OUTCOME.get(str(latest.get("status") or ""), "error")
+        result = await enrollments.update_one(
+            {"_id": doc["_id"]},
             {
                 "$set": {
                     "last_attempt_outcome": outcome,
-                    "last_attempt_at": latest_attempt.get("created_at"),
-                    "last_failure_code": latest_attempt.get("failure_code"),
+                    "last_attempt_at": latest.get("created_at"),
+                    "last_failure_code": latest.get("failure_code"),
                 }
             },
         )
+        outcome_migrated += result.modified_count
+    log.info(
+        "0137: backfilled last_attempt_outcome on %d student_billing_enrollments",
+        outcome_migrated,
+    )
 
     # 3. Update the validator to describe the split fields.
-    await _apply_validator(db, "parent_billing_customers", PARENT_BILLING_CUSTOMERS_VALIDATOR)
+    await _apply_validator(db, "student_billing_enrollments", STUDENT_BILLING_ENROLLMENTS_VALIDATOR)

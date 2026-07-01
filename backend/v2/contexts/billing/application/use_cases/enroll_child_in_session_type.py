@@ -118,6 +118,11 @@ class EnrollChildInSessionType:
             stripe_subscription_id=None,
             billing_start_date=now,
             status="active",
+            # Autopay setup checkout is started immediately above, so the
+            # per-enrollment autopay lifecycle begins at setup_started. It
+            # advances to active only when CompleteAutopaySetup confirms a
+            # saved payment method (Slice B).
+            autopay_enrollment_status="setup_started",
             enrolled_at=now,
             updated_at=now,
         )

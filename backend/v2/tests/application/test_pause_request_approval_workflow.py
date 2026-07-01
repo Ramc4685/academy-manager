@@ -49,13 +49,13 @@ async def test_approve_fixed_pause_pauses_roster_autopay_and_schedules_resume() 
     pause_enrollment = _FakePauseEnrollment()
     scheduled = _FakeScheduledActions()
     deferrals = _FakeBillingDeferrals()
-    parent_autopay = _FakeParentAutopay()
+    autopay = _FakeEnrollmentAutopay()
     use_case = ApprovePauseRequest(
         pause_requests=pause_requests,
         pause_enrollment=pause_enrollment,
         scheduled_actions=scheduled,
         billing_deferrals=deferrals,
-        parent_autopay=parent_autopay,
+        autopay_status=autopay,
         academy_id="acad-1",
         clock=_now,
     )
@@ -66,7 +66,7 @@ async def test_approve_fixed_pause_pauses_roster_autopay_and_schedules_resume() 
 
     assert approved.status == "approved"
     assert pause_enrollment.enrollment_ids == ["enr-1"]
-    assert parent_autopay.paused == ["parent-1"]
+    assert autopay.paused == ["enr-1"]
     assert len(scheduled.actions) == 1
     action = scheduled.actions[0]
     assert action.action_type == "resume_from_pause"
@@ -87,7 +87,7 @@ async def test_approve_indefinite_pause_does_not_schedule_resume() -> None:
         pause_enrollment=_FakePauseEnrollment(),
         scheduled_actions=scheduled,
         billing_deferrals=_FakeBillingDeferrals(),
-        parent_autopay=_FakeParentAutopay(),
+        autopay_status=_FakeEnrollmentAutopay(),
         academy_id="acad-1",
         clock=_now,
     )
@@ -100,7 +100,7 @@ async def test_approve_indefinite_pause_does_not_schedule_resume() -> None:
 
 
 @pytest.mark.asyncio
-async def test_approve_pause_without_parent_autopay_gateway_still_pauses_roster() -> None:
+async def test_approve_pause_without_autopay_gateway_still_pauses_roster() -> None:
     pause_enrollment = _FakePauseEnrollment()
     use_case = ApprovePauseRequest(
         pause_requests=_FakePauseRequests(_request()),
@@ -121,12 +121,12 @@ async def test_approve_pause_without_parent_autopay_gateway_still_pauses_roster(
 async def test_approve_already_approved_pause_is_idempotent() -> None:
     pause_enrollment = _FakePauseEnrollment()
     scheduled = _FakeScheduledActions()
-    parent_autopay = _FakeParentAutopay()
+    autopay = _FakeEnrollmentAutopay()
     use_case = ApprovePauseRequest(
         pause_requests=_FakePauseRequests(_request(status="approved")),
         pause_enrollment=pause_enrollment,
         scheduled_actions=scheduled,
-        parent_autopay=parent_autopay,
+        autopay_status=autopay,
         academy_id="acad-1",
         clock=_now,
     )
@@ -138,7 +138,39 @@ async def test_approve_already_approved_pause_is_idempotent() -> None:
     assert approved.status == "approved"
     assert pause_enrollment.enrollment_ids == []
     assert scheduled.actions == []
-    assert parent_autopay.paused == []
+    assert autopay.paused == []
+
+
+@pytest.mark.asyncio
+async def test_approve_pause_illegal_autopay_transition_is_dropped_mid_workflow() -> None:
+    """Review-fix 6(a): if the enrollment's autopay status can't legally move to
+    paused (e.g. it is already disabled), the guarded gateway drops it (returns
+    False) — the rest of the approval workflow still completes and nothing is
+    marked paused."""
+    scheduled = _FakeScheduledActions()
+    deferrals = _FakeBillingDeferrals()
+    autopay = _FakeEnrollmentAutopay(applies=False)  # simulates disabled -> paused rejection
+    use_case = ApprovePauseRequest(
+        pause_requests=_FakePauseRequests(_request()),
+        pause_enrollment=_FakePauseEnrollment(),
+        scheduled_actions=scheduled,
+        billing_deferrals=deferrals,
+        autopay_status=autopay,
+        academy_id="acad-1",
+        clock=_now,
+    )
+
+    approved = await use_case.execute(
+        DecidePauseRequestCommand(pause_request_id="pause-1", admin_id="admin-1")
+    )
+
+    assert approved.status == "approved"
+    # Transition was rejected, not applied — observable via the gateway result.
+    assert autopay.paused == []
+    assert autopay.rejected == ["enr-1"]
+    # Rest of the workflow still ran (deferral + scheduled resume created).
+    assert len(deferrals.rows) == 1
+    assert len(scheduled.actions) == 1
 
 
 @dataclass
@@ -182,9 +214,17 @@ class _FakeBillingDeferrals:
 
 
 @dataclass
-class _FakeParentAutopay:
+class _FakeEnrollmentAutopay:
     paused: list[str] = field(default_factory=list)
+    rejected: list[str] = field(default_factory=list)
+    # When False, mimics the guarded repo dropping an illegal transition
+    # (e.g. disabled -> paused): no state change, returns False.
+    applies: bool = True
 
-    async def set_enrollment_status(self, *, parent_id: str, status: str) -> None:
+    async def set_enrollment_status(self, *, enrollment_id: str, status: str) -> bool:
         assert status == "paused"
-        self.paused.append(parent_id)
+        if not self.applies:
+            self.rejected.append(enrollment_id)
+            return False
+        self.paused.append(enrollment_id)
+        return True

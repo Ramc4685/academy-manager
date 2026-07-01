@@ -670,10 +670,8 @@ class HandleWebhookEvent:
             )
             return None
         if self._enrollment_autopay is not None and enrollment_id:
-            await self._enrollment_autopay.set_autopay_state(
+            await self._enrollment_autopay.mark_autopay_active_from_setup(
                 enrollment_id=enrollment_id,
-                autopay_enrollment_status="active",
-                stripe_subscription_id=stripe_sub_id,
             )
         return updated
 
@@ -1185,13 +1183,29 @@ class HandleWebhookEvent:
         updated = existing.model_copy(update={"status": status, "updated_at": self._now()})
         await self._subscriptions.save(updated)
         if self._enrollment_autopay is not None and updated.enrollment_id:
-            await self._enrollment_autopay.set_autopay_state(
-                enrollment_id=updated.enrollment_id,
-                autopay_enrollment_status=self._autopay_enrollment_status_for_legacy_subscription(
-                    status
-                ),
-                stripe_subscription_id=stripe_sub_id,
-            )
+            # HIGH review-fix #4: only converge autopay status from a legacy
+            # Stripe-subscription event when the billing enrollment is still
+            # subscription-managed. Once an enrollment converges onto app-owned
+            # autopay (its stripe_subscription_id is cleared), a stale/duplicate
+            # subscription webhook must NOT flip its status. Route through the
+            # guarded set_autopay_state so illegal transitions are dropped+logged.
+            if await self._enrollment_is_legacy_subscription_managed(
+                updated.enrollment_id, stripe_sub_id
+            ):
+                await self._enrollment_autopay.set_autopay_state(
+                    enrollment_id=updated.enrollment_id,
+                    autopay_enrollment_status=(
+                        self._autopay_enrollment_status_for_legacy_subscription(status)
+                    ),
+                )
+            else:
+                log.info(
+                    "subscription.%s ignored for converged app-owned autopay "
+                    "enrollment_id=%s stripe_sub=%s",
+                    event.get("type"),
+                    updated.enrollment_id,
+                    stripe_sub_id,
+                )
         await self._outbox.append(
             SubscriptionUpdated(
                 aggregate_id=updated.subscription_id,
@@ -1203,6 +1217,25 @@ class HandleWebhookEvent:
                 ),
             )
         )
+
+    async def _enrollment_is_legacy_subscription_managed(
+        self, enrollment_id: str, stripe_sub_id: str
+    ) -> bool:
+        """True if the billing enrollment is still managed by this legacy Stripe
+        subscription (its stored stripe_subscription_id matches). Returns False
+        once the enrollment has converged onto app-owned autopay (id cleared) or
+        moved to a different subscription — so a stale/duplicate subscription
+        webhook cannot clobber a converged enrollment (HIGH review-fix #4).
+
+        If the billing-enrollment repo is unavailable we conservatively allow
+        the (guarded) convergence to run, preserving prior behavior.
+        """
+        if self._billing_enrollments is None:
+            return True
+        enrollment = await self._billing_enrollments.get(enrollment_id)
+        if enrollment is None:
+            return True
+        return getattr(enrollment, "stripe_subscription_id", None) == stripe_sub_id
 
     @staticmethod
     def _normalize_status(stripe_status: str) -> str:

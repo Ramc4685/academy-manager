@@ -210,25 +210,24 @@ def compose_parent_webhook_handler(
     invoice_processing = MongoStripeInvoiceProcessingRepository(db)
 
     class _EnrollmentAutopayState:
+        """Routes the webhook/legacy-convergence path through the SAME guarded
+        per-enrollment autopay-status write that pause/resume use — the single
+        source of truth on `student_billing_enrollments` (BLOCKING #1)."""
+
         async def set_autopay_state(
             self,
             *,
             enrollment_id: str,
             autopay_enrollment_status: str,
-            stripe_subscription_id: str | None = None,
-        ) -> None:
-            update: dict[str, Any] = {
-                # Legacy field name retained on the `enrollments` doc for
-                # backward-compat with any existing readers; carries the new
-                # split `autopay_enrollment_status` value (Slice B).
-                "subscription_status": autopay_enrollment_status,
-                "updated_at": datetime.now(UTC),
-            }
-            if stripe_subscription_id is not None:
-                update["stripe_subscription_id"] = stripe_subscription_id
-            await db["enrollments"].update_one(
-                {"academy_id": academy_id, "enrollment_id": enrollment_id},
-                {"$set": update},
+        ) -> bool:
+            return await student_billing_enrollments.set_autopay_enrollment_status(
+                enrollment_id=enrollment_id,
+                status=autopay_enrollment_status,  # type: ignore[arg-type]
+            )
+
+        async def mark_autopay_active_from_setup(self, *, enrollment_id: str) -> bool:
+            return await student_billing_enrollments.mark_autopay_active_from_setup(
+                enrollment_id=enrollment_id,
             )
 
     class _EnrollmentBillingIdentity:
@@ -314,25 +313,24 @@ def compose_parent(
     )
 
     class _EnrollmentAutopayState:
+        """Routes the webhook/legacy-convergence path through the SAME guarded
+        per-enrollment autopay-status write that pause/resume use — the single
+        source of truth on `student_billing_enrollments` (BLOCKING #1)."""
+
         async def set_autopay_state(
             self,
             *,
             enrollment_id: str,
             autopay_enrollment_status: str,
-            stripe_subscription_id: str | None = None,
-        ) -> None:
-            update: dict[str, Any] = {
-                # Legacy field name retained on the `enrollments` doc for
-                # backward-compat with any existing readers; carries the new
-                # split `autopay_enrollment_status` value (Slice B).
-                "subscription_status": autopay_enrollment_status,
-                "updated_at": datetime.now(UTC),
-            }
-            if stripe_subscription_id is not None:
-                update["stripe_subscription_id"] = stripe_subscription_id
-            await db["enrollments"].update_one(
-                {"academy_id": academy_id, "enrollment_id": enrollment_id},
-                {"$set": update},
+        ) -> bool:
+            return await student_billing_enrollments.set_autopay_enrollment_status(
+                enrollment_id=enrollment_id,
+                status=autopay_enrollment_status,  # type: ignore[arg-type]
+            )
+
+        async def mark_autopay_active_from_setup(self, *, enrollment_id: str) -> bool:
+            return await student_billing_enrollments.mark_autopay_active_from_setup(
+                enrollment_id=enrollment_id,
             )
 
     class _EnrollmentBillingIdentity:

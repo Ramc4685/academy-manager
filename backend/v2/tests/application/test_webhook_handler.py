@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -246,21 +247,25 @@ class FakeParentStripeCustomers:
 class FakeEnrollmentAutopayState:
     def __init__(self) -> None:
         self.synced: list[dict[str, str | None]] = []
+        self.setup_completed: list[str] = []
 
     async def set_autopay_state(
         self,
         *,
         enrollment_id: str,
         autopay_enrollment_status: str,
-        stripe_subscription_id: str | None = None,
-    ) -> None:
+    ) -> bool:
         self.synced.append(
             {
                 "enrollment_id": enrollment_id,
                 "autopay_enrollment_status": autopay_enrollment_status,
-                "stripe_subscription_id": stripe_subscription_id,
             }
         )
+        return True
+
+    async def mark_autopay_active_from_setup(self, *, enrollment_id: str) -> bool:
+        self.setup_completed.append(enrollment_id)
+        return True
 
 
 class FakeEnrollmentBillingIdentity:
@@ -506,12 +511,14 @@ def _build(
     expected_livemode=None,
     billing_ledger=None,
     invoice_processing=None,
+    billing_enrollments=None,
 ):
     return HandleWebhookEvent(
         stripe=stripe or FakeStripeGateway(),
         dedup=dedup or FakeDedup(),
         payments=repo,
         subscriptions=subscriptions or FakeSubscriptionRepo(),
+        billing_enrollments=billing_enrollments,
         parent_customers=parent_customers,
         enrollment_autopay=enrollment_autopay,
         enrollment_identity=enrollment_identity,
@@ -521,6 +528,30 @@ def _build(
         billing_ledger=billing_ledger,
         invoice_processing=invoice_processing,
     )
+
+
+class _FakeBillingEnrollmentsForGuard:
+    """Minimal billing-enrollment lookup for the legacy-convergence guard.
+
+    ``get(enrollment_id)`` returns an object exposing ``stripe_subscription_id``
+    so ``_enrollment_is_legacy_subscription_managed`` can decide whether a
+    subscription event still governs the enrollment (HIGH review-fix #4).
+    """
+
+    def __init__(self, *, enrollment_id: str, stripe_subscription_id: str | None) -> None:
+        self._enrollment_id = enrollment_id
+        self._stripe_subscription_id = stripe_subscription_id
+
+    async def get(self, enrollment_id: str):
+        if enrollment_id != self._enrollment_id:
+            return None
+        return SimpleNamespace(
+            enrollment_id=self._enrollment_id,
+            stripe_subscription_id=self._stripe_subscription_id,
+        )
+
+    async def get_by_stripe_subscription(self, stripe_subscription_id: str):
+        return None
 
 
 def _ledger_invoice(
@@ -693,13 +724,8 @@ async def test_process_next_fetches_current_checkout_before_projection() -> None
     assert parent_customers.saved == [{"parent_id": "p1", "stripe_customer_id": "cus_fake_parent"}]
     assert subscriptions.by_id["app-sub-1"].stripe_subscription_id == "sub_live_1"
     assert subscriptions.by_id["app-sub-1"].status == "active"
-    assert enrollment_autopay.synced == [
-        {
-            "enrollment_id": "enr-1",
-            "autopay_enrollment_status": "active",
-            "stripe_subscription_id": "sub_live_1",
-        }
-    ]
+    assert enrollment_autopay.setup_completed == ["enr-1"]
+    assert enrollment_autopay.synced == []
 
 
 @pytest.mark.asyncio
@@ -781,13 +807,8 @@ async def test_autopay_setup_checkout_completed_sets_default_pm_without_subscrip
         "checkout_session_id": "cs_setup_1",
         "completed_at": None,
     }
-    assert enrollment_autopay.synced == [
-        {
-            "enrollment_id": "enr-1",
-            "autopay_enrollment_status": "active",
-            "stripe_subscription_id": None,
-        }
-    ]
+    assert enrollment_autopay.setup_completed == ["enr-1"]
+    assert enrollment_autopay.synced == []
 
 
 @pytest.mark.asyncio
@@ -848,13 +869,8 @@ async def test_setup_intent_succeeded_completes_autopay_from_setup_metadata() ->
     ]
     assert parent_customers.default_methods[0]["checkout_session_id"] is None
     assert parent_customers.default_methods[0]["payment_method_type"] == "card"
-    assert enrollment_autopay.synced == [
-        {
-            "enrollment_id": "enr-1",
-            "autopay_enrollment_status": "active",
-            "stripe_subscription_id": None,
-        }
-    ]
+    assert enrollment_autopay.setup_completed == ["enr-1"]
+    assert enrollment_autopay.synced == []
 
 
 @pytest.mark.asyncio
@@ -898,6 +914,7 @@ async def test_checkout_completed_without_tenant_owned_mapping_does_not_mutate_c
     assert result["processed"] is True
     assert parent_customers.saved == []
     assert enrollment_autopay.synced == []
+    assert enrollment_autopay.setup_completed == []
     assert repo.by_id == {}
     assert outbox.events == []
 
@@ -2655,13 +2672,8 @@ async def test_subscription_checkout_completed_activates_subscription_and_enroll
     updated = subs.by_stripe_sub["sub_live_1"]
     assert updated.subscription_id == "sub-1"
     assert updated.status == "active"
-    assert enrollment_autopay.synced == [
-        {
-            "enrollment_id": "enr-1",
-            "autopay_enrollment_status": "active",
-            "stripe_subscription_id": "sub_live_1",
-        }
-    ]
+    assert enrollment_autopay.setup_completed == ["enr-1"]
+    assert enrollment_autopay.synced == []
 
 
 @pytest.mark.asyncio
@@ -2739,8 +2751,74 @@ async def test_subscription_updated_syncs_enrollment_autopay_state() -> None:
         {
             "enrollment_id": "enr-1",
             "autopay_enrollment_status": "active",
-            "stripe_subscription_id": "sub_live_9",
         }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stale_subscription_event_does_not_flip_converged_enrollment() -> None:
+    """HIGH review-fix #4: once an enrollment has converged onto app-owned
+    autopay (its stripe_subscription_id is cleared), a stale/duplicate legacy
+    subscription webhook must NOT flip its autopay status."""
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    _seed_incomplete_subscription(subs, stripe_subscription_id="sub_live_9", status="active")
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    # Billing enrollment has converged: no stripe_subscription_id any more.
+    billing_enrollments = _FakeBillingEnrollmentsForGuard(
+        enrollment_id="enr-1", stripe_subscription_id=None
+    )
+    uc = _build(
+        repo,
+        subscriptions=subs,
+        enrollment_autopay=enrollment_autopay,
+        billing_enrollments=billing_enrollments,
+    )
+    body = json.dumps(
+        {
+            "id": "evt_sub_stale",
+            "type": "customer.subscription.updated",
+            "data": {"object": {"id": "sub_live_9", "status": "canceled"}},
+        }
+    ).encode()
+
+    await uc.execute(body, "test_signature")
+
+    # Subscription row still reconciles, but the converged enrollment's autopay
+    # status is left untouched.
+    assert subs.by_stripe_sub["sub_live_9"].status == "cancelled"
+    assert enrollment_autopay.synced == []
+
+
+@pytest.mark.asyncio
+async def test_subscription_event_converges_when_still_subscription_managed() -> None:
+    """Complement to the guard: when the billing enrollment still carries the
+    matching stripe_subscription_id, convergence still runs (through the guard)."""
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    _seed_incomplete_subscription(subs, stripe_subscription_id="sub_live_9", status="active")
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    billing_enrollments = _FakeBillingEnrollmentsForGuard(
+        enrollment_id="enr-1", stripe_subscription_id="sub_live_9"
+    )
+    uc = _build(
+        repo,
+        subscriptions=subs,
+        enrollment_autopay=enrollment_autopay,
+        billing_enrollments=billing_enrollments,
+    )
+    body = json.dumps(
+        {
+            "id": "evt_sub_managed",
+            "type": "customer.subscription.updated",
+            "data": {"object": {"id": "sub_live_9", "status": "past_due"}},
+        }
+    ).encode()
+
+    await uc.execute(body, "test_signature")
+
+    assert enrollment_autopay.synced == [
+        {"enrollment_id": "enr-1", "autopay_enrollment_status": "active"}
     ]
 
 
@@ -2766,7 +2844,6 @@ async def test_subscription_deleted_syncs_enrollment_cancelled() -> None:
         {
             "enrollment_id": "enr-1",
             "autopay_enrollment_status": "disabled",
-            "stripe_subscription_id": "sub_live_9",
         }
     ]
 

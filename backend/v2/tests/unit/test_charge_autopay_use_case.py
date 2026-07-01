@@ -41,6 +41,7 @@ def _invoice(
     status: str = "open",
     balance_due_cents: int = 10_000,
     parent_id: str = "parent-1",
+    enrollment_id: str | None = "enr-1",
 ) -> LedgerInvoice:
     total = 10_000
     return LedgerInvoice(
@@ -48,6 +49,7 @@ def _invoice(
         academy_id="acad-1",
         parent_id=parent_id,
         student_id="s-1",
+        enrollment_id=enrollment_id,
         period="2026-06",
         status=status,  # type: ignore[arg-type]
         subtotal_cents=total,
@@ -283,29 +285,33 @@ class FakeStripeNoCard:
 # ---------------------------------------------------------------------------
 
 
-class FakeParentCustomers:
-    """Fake `parent_billing_customers` projection port (Slice B).
+class FakeEnrollmentAutopay:
+    """Fake per-enrollment autopay gateway (Slice B).
 
-    Tracks calls to `record_attempt_outcome` and a fixed `autopay_enrollment_status`
-    that never changes via this port — mirrors the real repo's separation of
-    enrollment lifecycle from attempt outcome.
+    Keyed by enrollment_id. Serves the charge-eligibility gate
+    (`get_autopay_enrollment_status`) and records attempt-outcome projections.
+    The enrollment status is fixed here — this port never mutates it — mirroring
+    the real repo's separation of enrollment lifecycle from attempt outcome.
     """
 
-    def __init__(self, *, initial_enrollment_status: str = "active") -> None:
-        self.autopay_enrollment_status = initial_enrollment_status
+    def __init__(self, *, autopay_enrollment_status: str = "active") -> None:
+        self.autopay_enrollment_status = autopay_enrollment_status
         self.recorded: list[dict] = []
+
+    async def get_autopay_enrollment_status(self, *, enrollment_id: str) -> str | None:
+        return self.autopay_enrollment_status
 
     async def record_attempt_outcome(
         self,
         *,
-        parent_id: str,
+        enrollment_id: str,
         outcome: str,
         occurred_at,
         failure_code: str | None,
     ) -> None:
         self.recorded.append(
             {
-                "parent_id": parent_id,
+                "enrollment_id": enrollment_id,
                 "outcome": outcome,
                 "occurred_at": occurred_at,
                 "failure_code": failure_code,
@@ -317,12 +323,12 @@ class FakeParentCustomers:
 def _uc(
     repo: FakeLedgerRepo,
     stripe: object | None = None,
-    parent_customers: FakeParentCustomers | None = None,
+    enrollment_autopay: FakeEnrollmentAutopay | None = None,
 ) -> ChargeInvoiceViaAutopay:
     return ChargeInvoiceViaAutopay(
         ledger=repo,  # type: ignore[arg-type]
         stripe=stripe,  # type: ignore[arg-type]
-        parent_customers=parent_customers,  # type: ignore[arg-type]
+        enrollment_autopay=enrollment_autopay,  # type: ignore[arg-type]
         clock=lambda: NOW,
     )
 
@@ -503,59 +509,96 @@ async def test_decline_returns_charge_result_false_status_unchanged() -> None:
     ]
 
 
+async def test_paused_enrollment_invoice_is_not_charged() -> None:
+    """Security P2: an invoice whose enrollment is paused must NOT be
+    auto-charged — no Stripe call, no attempt recorded — and the result carries
+    the autopay_not_active decline code."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    enrollment_autopay = FakeEnrollmentAutopay(autopay_enrollment_status="paused")
+    stripe = FakeStripeSucceeds()
+
+    result = await _uc(repo, stripe, enrollment_autopay=enrollment_autopay).execute("inv-1")
+
+    assert result.success is False
+    assert result.decline_code == "autopay_not_active"
+    assert result.status == "open"
+    assert result.balance_due_cents == 10_000
+    # No charge attempted, no ledger writes, no attempt-outcome projection.
+    assert stripe.create_calls == []
+    assert stripe.lookup_calls == []
+    assert repo.recorded_payments == []
+    assert repo.payment_attempts == []
+    assert enrollment_autopay.recorded == []
+
+
+async def test_disabled_enrollment_invoice_is_not_charged() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    enrollment_autopay = FakeEnrollmentAutopay(autopay_enrollment_status="disabled")
+    stripe = FakeStripeSucceeds()
+
+    result = await _uc(repo, stripe, enrollment_autopay=enrollment_autopay).execute("inv-1")
+
+    assert result.success is False
+    assert result.decline_code == "autopay_not_active"
+    assert stripe.create_calls == []
+    assert repo.payment_attempts == []
+
+
 async def test_bounced_charge_sets_declined_outcome_but_leaves_enrollment_active() -> None:
     """Regression (Slice B): a bounced autopay charge projects
-    last_attempt_outcome=declined onto parent_billing_customers but does NOT
-    change autopay_enrollment_status — the parent is still enrolled in
-    autopay, only the last attempt failed."""
+    last_attempt_outcome=declined onto the enrollment but does NOT change
+    autopay_enrollment_status — the enrollment is still enrolled in autopay,
+    only the last attempt failed."""
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
-    parent_customers = FakeParentCustomers(initial_enrollment_status="active")
+    enrollment_autopay = FakeEnrollmentAutopay(autopay_enrollment_status="active")
 
     result = await _uc(
         repo,
         FakeStripeDeclines("insufficient_funds"),
-        parent_customers=parent_customers,
+        enrollment_autopay=enrollment_autopay,
     ).execute("inv-1")
 
     assert result.success is False
-    assert parent_customers.recorded == [
+    assert enrollment_autopay.recorded == [
         {
-            "parent_id": "parent-1",
+            "enrollment_id": "enr-1",
             "outcome": "declined",
             "occurred_at": NOW,
             "failure_code": "insufficient_funds",
         }
     ]
     # Enrollment axis untouched by the attempt-outcome projection.
-    assert parent_customers.autopay_enrollment_status == "active"
+    assert enrollment_autopay.autopay_enrollment_status == "active"
 
 
 async def test_successful_charge_projects_succeeded_outcome() -> None:
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
-    parent_customers = FakeParentCustomers(initial_enrollment_status="active")
+    enrollment_autopay = FakeEnrollmentAutopay(autopay_enrollment_status="active")
 
-    await _uc(repo, FakeStripeSucceeds(), parent_customers=parent_customers).execute("inv-1")
+    await _uc(repo, FakeStripeSucceeds(), enrollment_autopay=enrollment_autopay).execute("inv-1")
 
-    assert parent_customers.recorded == [
+    assert enrollment_autopay.recorded == [
         {
-            "parent_id": "parent-1",
+            "enrollment_id": "enr-1",
             "outcome": "succeeded",
             "occurred_at": NOW,
             "failure_code": None,
         }
     ]
-    assert parent_customers.autopay_enrollment_status == "active"
+    assert enrollment_autopay.autopay_enrollment_status == "active"
 
 
 async def test_requires_action_projects_requires_action_outcome() -> None:
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
-    parent_customers = FakeParentCustomers(initial_enrollment_status="active")
+    enrollment_autopay = FakeEnrollmentAutopay(autopay_enrollment_status="active")
 
-    await _uc(repo, FakeStripeRequiresAction(), parent_customers=parent_customers).execute("inv-1")
+    await _uc(repo, FakeStripeRequiresAction(), enrollment_autopay=enrollment_autopay).execute(
+        "inv-1"
+    )
 
-    assert parent_customers.recorded == [
+    assert enrollment_autopay.recorded == [
         {
-            "parent_id": "parent-1",
+            "enrollment_id": "enr-1",
             "outcome": "requires_action",
             "occurred_at": NOW,
             "failure_code": None,

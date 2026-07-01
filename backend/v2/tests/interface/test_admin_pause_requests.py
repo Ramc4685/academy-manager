@@ -85,10 +85,10 @@ def test_admin_approve_pause_request_response_includes_new_fields(admin_client) 
     assert body["review_on"] == "2026-07-01"
 
 
-def test_admin_approve_pause_request_sets_parent_autopay_paused(admin_client) -> None:
-    """Regression (Slice B): approving a pause request toggles the parent's
-    app-owned autopay_enrollment_status to paused — there is no Stripe
-    subscription collection to pause any more."""
+def test_admin_approve_pause_request_sets_enrollment_autopay_paused(admin_client) -> None:
+    """Regression (Slice B): approving a pause request toggles THIS enrollment's
+    app-owned autopay_enrollment_status to paused (per-enrollment — siblings
+    unaffected). There is no Stripe subscription collection to pause any more."""
     _seed_enrollment(
         admin_client, enrollment_id="enr-2", student_id="student-2", parent_id="parent-2"
     )
@@ -105,7 +105,8 @@ def test_admin_approve_pause_request_sets_parent_autopay_paused(admin_client) ->
     response = admin_client.post("/api/v2/admin/pause-requests/pause-2/approve")
 
     assert response.status_code == 200, response.text
-    assert admin_client.seed["parent_autopay"].statuses["parent-2"] == "paused"
+    # Per-enrollment: keyed by enrollment_id, not parent_id.
+    assert admin_client.seed["autopay_status"].statuses["enr-2"] == "paused"
     assert admin_client.seed["enrollments"].rows["enr-2"].status == "paused"
 
 

@@ -21,7 +21,7 @@ from backend.v2.contexts.billing.domain.ledger import LedgerInvoice, LedgerPayme
 log = logging.getLogger(__name__)
 
 # Maps this use case's internal `payment_attempts` status vocabulary onto the
-# `parent_billing_customers` projection's `AutopayAttemptOutcome` axis
+# per-enrollment `AutopayAttemptOutcome` projection axis
 # (Slice B — see `contexts.billing.domain.autopay_status`).
 _ATTEMPT_STATUS_TO_OUTCOME = {
     "succeeded": "succeeded",
@@ -29,18 +29,28 @@ _ATTEMPT_STATUS_TO_OUTCOME = {
     "requires_action": "requires_action",
 }
 
+# Only an actively-autopaying enrollment may be auto-charged. paused / disabled
+# / not_offered / offered / setup_started are all ineligible (Security P2).
+_AUTOPAY_ELIGIBLE_STATUS = "active"
 
-class ParentAutopayAttemptProjection(Protocol):
-    """Narrow port: project the latest charge-attempt outcome onto the
-    parent's autopay customer record. Deliberately independent of
-    `autopay_enrollment_status` — a bounced charge does not change whether
-    the parent is enrolled in autopay.
+
+class EnrollmentAutopayGateway(Protocol):
+    """Narrow per-enrollment port for the autopay charge path (Slice B).
+
+    Resolves and mutates the single per-enrollment autopay store keyed by
+    ``enrollment_id`` (``student_billing_enrollments``). Used for the
+    charge-eligibility gate (``get_autopay_enrollment_status``) and to project
+    the latest attempt outcome (``record_attempt_outcome``). The outcome
+    projection is deliberately independent of ``autopay_enrollment_status``:
+    a bounced charge does not change whether the enrollment is enrolled.
     """
+
+    async def get_autopay_enrollment_status(self, *, enrollment_id: str) -> str | None: ...
 
     async def record_attempt_outcome(
         self,
         *,
-        parent_id: str,
+        enrollment_id: str,
         outcome: str,
         occurred_at: datetime,
         failure_code: str | None,
@@ -121,12 +131,12 @@ class ChargeInvoiceViaAutopay:
         *,
         ledger: LedgerRepository,
         stripe: AutopayStripeGateway | None = None,
-        parent_customers: ParentAutopayAttemptProjection | None = None,
+        enrollment_autopay: EnrollmentAutopayGateway | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._ledger = ledger
         self._stripe = stripe
-        self._parent_customers = parent_customers
+        self._enrollment_autopay = enrollment_autopay
         self._now = clock
 
     async def execute(self, invoice_id: str) -> ChargeResult:
@@ -152,6 +162,31 @@ class ChargeInvoiceViaAutopay:
         if fresh.status not in _CHARGEABLE_STATUSES or fresh.balance_due_cents <= 0:
             raise ValueError(f"invoice {invoice_id!r} no longer chargeable")
         invoice = fresh
+
+        # 2b. Charge-eligibility gate (Security P2): the invoice's enrollment
+        # must be actively autopaying. Refuse to auto-charge a paused / disabled
+        # / not-yet-set-up enrollment — the per-enrollment autopay status is the
+        # single charge-eligibility signal. No Stripe call, no attempt recorded.
+        if self._enrollment_autopay is not None and invoice.enrollment_id:
+            autopay_status = await self._enrollment_autopay.get_autopay_enrollment_status(
+                enrollment_id=invoice.enrollment_id
+            )
+            if autopay_status != _AUTOPAY_ELIGIBLE_STATUS:
+                log.warning(
+                    "charge_autopay: refusing to charge invoice=%s enrollment=%s — "
+                    "autopay_enrollment_status=%s (must be %s)",
+                    invoice_id,
+                    invoice.enrollment_id,
+                    autopay_status,
+                    _AUTOPAY_ELIGIBLE_STATUS,
+                )
+                return ChargeResult(
+                    success=False,
+                    invoice_id=invoice_id,
+                    status=invoice.status,
+                    balance_due_cents=invoice.balance_due_cents,
+                    decline_code="autopay_not_active",
+                )
 
         # 3. Look up parent's saved Stripe card
         if self._stripe is None:
@@ -339,15 +374,15 @@ class ChargeInvoiceViaAutopay:
             idempotency_key=f"autopay-attempt:{invoice.invoice_id}:{attempt_key_suffix}",
             created_by_event_id=None,
         )
-        if self._parent_customers is not None:
+        if self._enrollment_autopay is not None and invoice.enrollment_id:
             outcome = _ATTEMPT_STATUS_TO_OUTCOME.get(status)
             if outcome is not None:
                 # Deliberately does NOT touch autopay_enrollment_status: a
-                # bounced/declined charge leaves the parent's autopay
-                # enrollment untouched (they're still enrolled — only the
-                # last-attempt-outcome projection changes). See Slice B.
-                await self._parent_customers.record_attempt_outcome(
-                    parent_id=invoice.parent_id,
+                # bounced/declined charge leaves THIS enrollment's autopay
+                # enrollment untouched (still enrolled — only the last-attempt
+                # projection changes). Per-enrollment (Slice B).
+                await self._enrollment_autopay.record_attempt_outcome(
+                    enrollment_id=invoice.enrollment_id,
                     outcome=outcome,
                     occurred_at=self._now(),
                     failure_code=failure_code,

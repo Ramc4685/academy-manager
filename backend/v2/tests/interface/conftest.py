@@ -1033,20 +1033,29 @@ class _AdminFakeEnrollmentQuery:
 
 
 @dataclass
-class FakeParentAutopayState:
-    """Fake `parent_billing_customers` autopay-status gateway (Slice B).
+class FakeEnrollmentAutopayStatus:
+    """Fake per-enrollment autopay-status gateway (Slice B).
 
-    Tracks `set_enrollment_status` calls so interface tests can assert the
-    admin pause/resume routes toggle app-owned autopay status without any
-    Stripe subscription involved.
+    Keyed by enrollment_id — mirrors the guarded student_billing_enrollments
+    store. Tracks `set_enrollment_status` calls so interface tests can assert
+    the admin pause/resume routes toggle the enrollment's autopay status
+    (per-enrollment, no Stripe involved). Returns True when applied; returns
+    False for an unknown enrollment so caller warning paths are exercised.
     """
 
     statuses: dict[str, str] = field(default_factory=dict)
     calls: list[dict[str, str]] = field(default_factory=list)
+    known_enrollment_ids: set[str] | None = None
 
-    async def set_enrollment_status(self, *, parent_id: str, status: str) -> None:
-        self.statuses[parent_id] = status
-        self.calls.append({"parent_id": parent_id, "status": status})
+    async def set_enrollment_status(self, *, enrollment_id: str, status: str) -> bool:
+        if self.known_enrollment_ids is not None and enrollment_id not in self.known_enrollment_ids:
+            self.calls.append(
+                {"enrollment_id": enrollment_id, "status": status, "applied": "false"}
+            )
+            return False
+        self.statuses[enrollment_id] = status
+        self.calls.append({"enrollment_id": enrollment_id, "status": status, "applied": "true"})
+        return True
 
 
 @dataclass
@@ -1529,7 +1538,7 @@ def admin_seed():
         "waitlist": FakeWaitlistRepo(),
         "pause_requests": FakePauseRequestRepo(),
         "billing_deferrals": FakeBillingDeferrals(),
-        "parent_autopay": FakeParentAutopayState(),
+        "autopay_status": FakeEnrollmentAutopayStatus(),
         "payments": FakePaymentRepo(),
         "tuition_discounts": FakeTuitionDiscountRepo(),
         "expenses": FakeExpenseRepo(),
@@ -1555,7 +1564,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     waitlist = seed["waitlist"]
     pause_requests = seed["pause_requests"]
     billing_deferrals = seed["billing_deferrals"]
-    parent_autopay = seed["parent_autopay"]
+    autopay_status = seed["autopay_status"]
     lifecycle_billing = FakeLifecycleBilling()
     payments = seed["payments"]
     tuition_discounts = seed["tuition_discounts"]
@@ -1604,7 +1613,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         students=students,
         waitlist=waitlist,
         enrollment_events=enrollment_events,
-        parent_autopay=parent_autopay,
+        autopay_status=autopay_status,
     )
     resume_enrollment = ResumeEnrollment(
         enrollments=enrollments_w,
@@ -1612,7 +1621,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         students=students,
         waitlist=waitlist,
         enrollment_events=enrollment_events,
-        parent_autopay=parent_autopay,
+        autopay_status=autopay_status,
     )
     withdraw_enrollment = WithdrawEnrollment(
         enrollments=enrollments_w,
@@ -1639,7 +1648,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         pause_requests=pause_requests,
         pause_enrollment=pause_enrollment,
         billing_deferrals=billing_deferrals,
-        parent_autopay=parent_autopay,
+        autopay_status=autopay_status,
     )
     decline_pause_request = DeclinePauseRequest(pause_requests=pause_requests)
     issue_refund = IssueRefund(
