@@ -15,11 +15,13 @@ from typing import Any, Protocol
 from pydantic import BaseModel
 
 from backend.v2.contexts.billing.application.ports import (
+    ConnectedAccountRepository,
     SessionTypeRepository,
     StripeGateway,
     StudentBillingEnrollmentRepository,
 )
 from backend.v2.contexts.billing.domain.errors import (
+    CheckoutCreationFailed,
     SessionTypeInactive,
     SessionTypeNotFound,
     StudentBillingEnrollmentNotFound,
@@ -53,6 +55,7 @@ class EnrollChildInSessionType:
         stripe: StripeGateway,
         student_owner_lookup: StudentOwnerLookup,
         academy_id: str,
+        connected_accounts: ConnectedAccountRepository | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
@@ -60,6 +63,7 @@ class EnrollChildInSessionType:
         self._stripe = stripe
         self._owner_lookup = student_owner_lookup
         self._academy_id = academy_id
+        self._connected_accounts = connected_accounts
         self._now = clock
 
     async def execute(self, cmd: EnrollChildCommand) -> dict[str, Any]:
@@ -89,6 +93,7 @@ class EnrollChildInSessionType:
         now = self._now()
 
         # 4. Start Stripe setup checkout so the app owns future invoices.
+        connected_account_id = await self._ready_connected_account_id()
         (
             _checkout_id,
             redirect_url,
@@ -106,6 +111,7 @@ class EnrollChildInSessionType:
                 "session_type_id": cmd.session_type_id,
                 "source": "autopay_setup",
             },
+            connected_account_id=connected_account_id,
         )
 
         # 5. Persist enrollment with active status
@@ -129,6 +135,14 @@ class EnrollChildInSessionType:
         await self._enrollments.save(enrollment)
 
         return {"enrollment": enrollment, "redirect_url": redirect_url}
+
+    async def _ready_connected_account_id(self) -> str | None:
+        if self._connected_accounts is None:
+            return None
+        account = await self._connected_accounts.get_for_academy()
+        if account is None or not account.is_ready_for_charges():
+            raise CheckoutCreationFailed("Stripe connected account is not ready for autopay setup.")
+        return account.stripe_account_id
 
 
 class CancelBillingEnrollment:

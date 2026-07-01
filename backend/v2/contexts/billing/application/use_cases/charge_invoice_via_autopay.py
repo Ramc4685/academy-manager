@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from backend.v2.contexts.billing.application.ports import (
     BillingSettingsRepository,
+    ConnectedAccountRepository,
     LedgerRepository,
 )
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
@@ -105,6 +106,7 @@ class AutopayStripeGateway(Protocol):
         payment_method_id: str,
         idempotency_key: str,
         metadata: dict[str, str],
+        connected_account_id: str | None = None,
     ) -> tuple[str, str, str | None]:
         """Return (pi_id, pi_status, decline_code_or_None)."""
         ...
@@ -149,12 +151,14 @@ class ChargeInvoiceViaAutopay:
         stripe: AutopayStripeGateway | None = None,
         enrollment_autopay: EnrollmentAutopayGateway | None = None,
         settings: BillingSettingsRepository | None = None,
+        connected_accounts: ConnectedAccountRepository | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._ledger = ledger
         self._stripe = stripe
         self._enrollment_autopay = enrollment_autopay
         self._settings = settings
+        self._connected_accounts = connected_accounts
         self._now = clock
 
     async def execute(self, invoice_id: str, *, retry_scope: str | None = None) -> ChargeResult:
@@ -236,6 +240,20 @@ class ChargeInvoiceViaAutopay:
                 decline_code="stripe_not_configured",
             )
 
+        connected_account_id = await self._ready_connected_account_id()
+        if self._connected_accounts is not None and connected_account_id is None:
+            log.warning(
+                "charge_autopay: refusing to charge invoice=%s — connected account not ready",
+                invoice_id,
+            )
+            return ChargeResult(
+                success=False,
+                invoice_id=invoice_id,
+                status=invoice.status,
+                balance_due_cents=invoice.balance_due_cents,
+                decline_code="connected_account_not_ready",
+            )
+
         saved = await self._stripe.get_default_payment_method(
             academy_id=invoice.academy_id,
             parent_id=invoice.parent_id,
@@ -274,6 +292,7 @@ class ChargeInvoiceViaAutopay:
                 payment_method_id=pm_id,
                 idempotency_key=idempotency_key,
                 metadata=pi_metadata,
+                connected_account_id=connected_account_id,
             )
         except Exception as exc:
             # Stripe card decline or API error — do NOT change invoice status
@@ -426,6 +445,14 @@ class ChargeInvoiceViaAutopay:
             status=updated_invoice.status,
             balance_due_cents=updated_invoice.balance_due_cents,
         )
+
+    async def _ready_connected_account_id(self) -> str | None:
+        if self._connected_accounts is None:
+            return None
+        account = await self._connected_accounts.get_for_academy()
+        if account is None or not account.is_ready_for_charges():
+            return None
+        return account.stripe_account_id
 
     async def _record_attempt(
         self,

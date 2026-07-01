@@ -105,6 +105,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import
 from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
     MongoBillingSettingsRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
+    MongoConnectedAccountRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
     MongoCreditLedgerRepository,
 )
@@ -2611,6 +2614,7 @@ def compose_admin(
     dunning_state_repo = MongoDunningStateRepository(db)
     billing_counters_repo = MongoBillingCounterRepository(db)
     billing_settings_repo = MongoBillingSettingsRepository(db)
+    connected_accounts_repo = MongoConnectedAccountRepository(db)
     credits_repo = MongoCreditLedgerRepository(db)
     tuition_discounts_repo = MongoTuitionDiscountRepository(db)
     payments_repo = MongoPaymentRepository(
@@ -2835,6 +2839,7 @@ def compose_admin(
             stripe=stripe,  # type: ignore[arg-type]
             enrollment_autopay=student_billing_enrollment_repo,
             settings=billing_settings_repo,
+            connected_accounts=connected_accounts_repo,
         ).execute(invoice_id)
         return result.model_dump(mode="python")
 
@@ -2849,6 +2854,7 @@ def compose_admin(
                 stripe=stripe,  # type: ignore[arg-type]
                 enrollment_autopay=student_billing_enrollment_repo,
                 settings=billing_settings_repo,
+                connected_accounts=connected_accounts_repo,
             ),
             notifier=_invoice_email_port(),
             enrollment_autopay=student_billing_enrollment_repo,

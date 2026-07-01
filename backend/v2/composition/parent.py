@@ -365,6 +365,7 @@ def compose_parent(
         subscriptions=subscriptions_repo,
         stripe=stripe,
         academy_id=academy_id,
+        connected_accounts=connected_accounts_repo,
     )
     create_portal = CreateCustomerPortalSession(stripe=stripe)
     issue_refund = IssueRefund(
@@ -1229,6 +1230,7 @@ def compose_parent(
         stripe=stripe,
         student_owner_lookup=_StudentOwnerLookup(),
         academy_id=academy_id,
+        connected_accounts=connected_accounts_repo,
     )
     cancel_billing_enrollment_uc = CancelBillingEnrollment(
         enrollments=student_billing_enrollments,

@@ -14,12 +14,35 @@ from __future__ import annotations
 from backend.v2.contexts.billing.application.use_cases.connect_onboarding import (
     StartConnectOnboarding,
 )
+from backend.v2.contexts.billing.application.use_cases.parent_billing import (
+    StartSubscriptionCheckout,
+    StartSubscriptionCheckoutCommand,
+)
+from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
+from backend.v2.contexts.billing.domain.models import Subscription
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
     MongoConnectedAccountRepository,
 )
+
+
+class _SubscriptionRepo:
+    async def save(self, subscription: Subscription) -> None:
+        raise AssertionError("setup checkout should not create subscription rows")
+
+    async def get(self, subscription_id: str) -> Subscription | None:
+        return None
+
+    async def get_by_stripe_sub(self, stripe_sub: str) -> Subscription | None:
+        return None
+
+    async def get_by_checkout_session(self, checkout_session_id: str) -> Subscription | None:
+        return None
+
+    async def latest_for_enrollment(self, enrollment_id: str) -> Subscription | None:
+        return None
 
 
 async def test_start_onboarding_drives_real_repo_and_is_idempotent(db, acad) -> None:
@@ -78,3 +101,33 @@ async def test_webhook_resolver_shim_drives_real_repo(db, acad) -> None:
 
     assert await resolver.academy_id_for_account(acct_id) == acad
     assert await resolver.academy_id_for_account("acct_unknown") is None
+
+
+async def test_autopay_setup_checkout_drives_real_connected_account_repo(db, acad) -> None:
+    stripe = FakeStripeGateway()
+    repo = MongoConnectedAccountRepository(db)
+    await repo.upsert(
+        ConnectedAccount.new(academy_id=acad, stripe_account_id="acct_ready").with_status(
+            status="active",
+            charges_enabled=True,
+        )
+    )
+    use_case = StartSubscriptionCheckout(
+        subscriptions=_SubscriptionRepo(),
+        stripe=stripe,
+        academy_id=acad,
+        connected_accounts=repo,
+    )
+
+    await use_case.execute(
+        StartSubscriptionCheckoutCommand(
+            parent_id="parent-1",
+            enrollment_id="enr-1",
+            session_id="session-1",
+            amount_cents=5_000,
+            success_url="https://app.test/success",
+            cancel_url="https://app.test/cancel",
+        )
+    )
+
+    assert stripe.autopay_setup_checkouts[0]["connected_account_id"] == "acct_ready"

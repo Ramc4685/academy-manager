@@ -22,6 +22,7 @@ from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopa
     ChargeInvoiceViaAutopay,
 )
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
     LedgerAllocationResult,
@@ -238,6 +239,7 @@ class FakeStripeSucceeds:
         payment_method_id: str,
         idempotency_key: str,
         metadata: dict,
+        connected_account_id: str | None = None,
     ) -> tuple[str, str, str | None]:
         self.create_calls.append(
             {
@@ -247,6 +249,7 @@ class FakeStripeSucceeds:
                 "payment_method_id": payment_method_id,
                 "idempotency_key": idempotency_key,
                 "metadata": metadata,
+                "connected_account_id": connected_account_id,
             }
         )
         return (self.pi_id, "succeeded", None)
@@ -380,6 +383,16 @@ class FakeBillingSettingsRepo:
         return self.settings
 
 
+class FakeConnectedAccounts:
+    def __init__(self, account: ConnectedAccount | None) -> None:
+        self.account = account
+        self.calls = 0
+
+    async def get_for_academy(self) -> ConnectedAccount | None:
+        self.calls += 1
+        return self.account
+
+
 def _seed_existing_ach_discount(repo: FakeLedgerRepo) -> None:
     existing_line = InvoiceLine(
         line_id="ach-discount:inv-1",
@@ -405,12 +418,14 @@ def _uc(
     stripe: object | None = None,
     enrollment_autopay: FakeEnrollmentAutopay | None = None,
     settings: FakeBillingSettingsRepo | None = None,
+    connected_accounts: FakeConnectedAccounts | None = None,
 ) -> ChargeInvoiceViaAutopay:
     return ChargeInvoiceViaAutopay(
         ledger=repo,  # type: ignore[arg-type]
         stripe=stripe,  # type: ignore[arg-type]
         enrollment_autopay=enrollment_autopay,  # type: ignore[arg-type]
         settings=settings,  # type: ignore[arg-type]
+        connected_accounts=connected_accounts,  # type: ignore[arg-type]
         clock=lambda: NOW,
     )
 
@@ -463,6 +478,40 @@ async def test_happy_path_open_invoice_pi_succeeds() -> None:
     assert inv_id == "inv-1"
     assert amount == 10_000
     assert alloc_key == "autopay-alloc:pi_test_123"
+
+
+async def test_charge_routes_payment_intent_through_ready_connected_account() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = FakeStripeSucceeds()
+    connected_account = ConnectedAccount.new(
+        academy_id="acad-1",
+        stripe_account_id="acct_ready",
+    ).with_status(status="active", charges_enabled=True)
+    connected_accounts = FakeConnectedAccounts(connected_account)
+
+    result = await _uc(repo, stripe, connected_accounts=connected_accounts).execute("inv-1")
+
+    assert result.success is True
+    assert connected_accounts.calls == 1
+    assert stripe.create_calls[0]["connected_account_id"] == "acct_ready"
+
+
+async def test_charge_fails_closed_without_ready_connected_account() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = FakeStripeSucceeds()
+    connected_accounts = FakeConnectedAccounts(
+        ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_pending")
+    )
+
+    result = await _uc(repo, stripe, connected_accounts=connected_accounts).execute("inv-1")
+
+    assert result.success is False
+    assert result.decline_code == "connected_account_not_ready"
+    assert connected_accounts.calls == 1
+    assert stripe.lookup_calls == []
+    assert stripe.create_calls == []
+    assert repo.recorded_payments == []
+    assert repo.allocation_calls == []
 
 
 async def test_ach_processing_records_pending_attempt_without_allocation() -> None:

@@ -48,6 +48,7 @@ class _FakeDunningRepo:
         self.finished = []
         self.notified: list[int] = []
         self.released = []
+        self.parked: list[str] = []
         self.disable_results = []
         self.disable_pending: list = []
         self._claimed = False
@@ -89,6 +90,7 @@ class _FakeDunningRepo:
     async def park_attempt(self, *, state, reason: str, now):
         self.state = state.park(reason=reason, now=now)
         self.released.append((state.processing_attempt_no, None))
+        self.parked.append(reason)
         return self.state
 
     async def mark_notification_sent(self, *, invoice_id: str, attempt_no: int, sent_at):
@@ -258,6 +260,31 @@ async def test_worker_post_charge_exception_does_not_increment_or_notify() -> No
     assert dunning.finished == []
     assert dunning.notified == []
     assert notifier.calls == []
+
+
+@pytest.mark.asyncio
+async def test_worker_connect_account_not_ready_parks_without_parent_dunning() -> None:
+    invoice = _invoice()
+    dunning = _FakeDunningRepo(invoice)
+    notifier = _FakeNotifier()
+    enrollment_autopay = _FakeEnrollmentAutopay()
+
+    result = await ProcessDunningRetries(
+        dunning=dunning,
+        charge_invoice=_FakeCharge(success=False, decline_code="connected_account_not_ready"),
+        notifier=notifier,
+        enrollment_autopay=enrollment_autopay,
+        clock=lambda: NOW,
+    ).execute(limit=5, worker_id="worker-1")
+
+    assert result.parked == 1
+    assert result.technical_failures == 1
+    assert result.failed == 0
+    assert dunning.finished == []
+    assert dunning.parked == ["connected_account_not_ready"]
+    assert dunning.notified == []
+    assert notifier.calls == []
+    assert enrollment_autopay.disabled == []
 
 
 @pytest.mark.asyncio

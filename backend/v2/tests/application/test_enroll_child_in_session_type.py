@@ -12,7 +12,9 @@ from backend.v2.contexts.billing.application.use_cases.enroll_child_in_session_t
     EnrollChildCommand,
     EnrollChildInSessionType,
 )
+from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
 from backend.v2.contexts.billing.domain.errors import (
+    CheckoutCreationFailed,
     SessionTypeInactive,
     SessionTypeNotFound,
     StudentBillingEnrollmentNotFound,
@@ -77,6 +79,16 @@ class FakeOwnershipLookup:
         return student_id in self._owned.get(parent_id, set())
 
 
+class FakeConnectedAccounts:
+    def __init__(self, account: ConnectedAccount | None) -> None:
+        self.account = account
+        self.calls = 0
+
+    async def get_for_academy(self) -> ConnectedAccount | None:
+        self.calls += 1
+        return self.account
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -103,6 +115,7 @@ def _make_use_case(
     session_type: SessionType | None = None,
     stripe: FakeStripeGateway | None = None,
     owned: dict[str, set[str]] | None = None,
+    connected_accounts: FakeConnectedAccounts | None = None,
 ) -> EnrollChildInSessionType:
     if enrollments is None:
         enrollments = FakeEnrollmentRepo()
@@ -121,6 +134,7 @@ def _make_use_case(
         stripe=stripe,
         student_owner_lookup=ownership,
         academy_id="acad",
+        connected_accounts=connected_accounts,
         clock=lambda: _NOW,
     )
 
@@ -176,6 +190,66 @@ async def test_enroll_creates_enrollment_and_starts_autopay_setup_checkout():
         "session_type_id": "st-1",
         "source": "autopay_setup",
     }
+
+
+@pytest.mark.asyncio
+async def test_enroll_routes_autopay_setup_through_ready_connected_account():
+    enrollments = FakeEnrollmentRepo()
+    stripe = FakeStripeGateway()
+    connected_account = ConnectedAccount.new(
+        academy_id="acad",
+        stripe_account_id="acct_ready",
+    ).with_status(status="active", charges_enabled=True)
+    connected_accounts = FakeConnectedAccounts(connected_account)
+    uc = _make_use_case(
+        enrollments=enrollments,
+        session_type=_make_session_type(),
+        stripe=stripe,
+        connected_accounts=connected_accounts,
+    )
+
+    await uc.execute(
+        EnrollChildCommand(
+            parent_id="parent-1",
+            student_id="student-1",
+            session_type_id="st-1",
+            success_url="https://example.com/success",
+            cancel_url="https://example.com/cancel",
+        )
+    )
+
+    assert connected_accounts.calls == 1
+    assert stripe.autopay_setup_checkouts[0]["connected_account_id"] == "acct_ready"
+
+
+@pytest.mark.asyncio
+async def test_enroll_fails_closed_without_ready_connected_account():
+    enrollments = FakeEnrollmentRepo()
+    stripe = FakeStripeGateway()
+    connected_accounts = FakeConnectedAccounts(
+        ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_pending")
+    )
+    uc = _make_use_case(
+        enrollments=enrollments,
+        session_type=_make_session_type(),
+        stripe=stripe,
+        connected_accounts=connected_accounts,
+    )
+
+    with pytest.raises(CheckoutCreationFailed, match="connected account"):
+        await uc.execute(
+            EnrollChildCommand(
+                parent_id="parent-1",
+                student_id="student-1",
+                session_type_id="st-1",
+                success_url="https://example.com/success",
+                cancel_url="https://example.com/cancel",
+            )
+        )
+
+    assert connected_accounts.calls == 1
+    assert stripe.autopay_setup_checkouts == []
+    assert enrollments.rows == {}
 
 
 @pytest.mark.asyncio

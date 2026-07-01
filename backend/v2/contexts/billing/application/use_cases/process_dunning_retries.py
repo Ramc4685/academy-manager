@@ -192,6 +192,15 @@ class ProcessDunningRetries:
                 )
                 counts["parked"] += 1
                 continue
+            if failure_code == "connected_account_not_ready":
+                await self._dunning.park_attempt(
+                    state=state,
+                    reason="connected_account_not_ready",
+                    now=now,
+                )
+                counts["technical_failures"] += 1
+                counts["parked"] += 1
+                continue
 
             updated = await self._dunning.finish_attempt(
                 state=state,

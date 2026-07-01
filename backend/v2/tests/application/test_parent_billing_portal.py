@@ -24,6 +24,7 @@ from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     StartSubscriptionCheckout,
     StartSubscriptionCheckoutCommand,
 )
+from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
 from backend.v2.contexts.billing.domain.errors import CheckoutCreationFailed
 from backend.v2.contexts.billing.domain.models import Subscription
 
@@ -206,6 +207,16 @@ class _CheckoutGateway:
         )
 
 
+class _ConnectedAccounts:
+    def __init__(self, account: ConnectedAccount | None) -> None:
+        self.account = account
+        self.calls = 0
+
+    async def get_for_academy(self) -> ConnectedAccount | None:
+        self.calls += 1
+        return self.account
+
+
 def _checkout_command() -> StartSubscriptionCheckoutCommand:
     return StartSubscriptionCheckoutCommand(
         parent_id="p1",
@@ -226,6 +237,47 @@ async def test_start_autopay_stripe_rejection_maps_to_checkout_creation_failed()
     )
     with pytest.raises(CheckoutCreationFailed):
         await uc.execute(_checkout_command())
+
+
+@pytest.mark.asyncio
+async def test_start_autopay_setup_routes_checkout_through_ready_connected_account() -> None:
+    connected_account = ConnectedAccount.new(
+        academy_id="acad",
+        stripe_account_id="acct_ready",
+    ).with_status(status="active", charges_enabled=True)
+    connected_accounts = _ConnectedAccounts(connected_account)
+    gateway = _CheckoutGateway()
+    uc = StartSubscriptionCheckout(
+        subscriptions=_SubscriptionRepo(),
+        stripe=gateway,
+        academy_id="acad",
+        connected_accounts=connected_accounts,
+    )
+
+    await uc.execute(_checkout_command())
+
+    assert connected_accounts.calls == 1
+    assert gateway.setup_created[0]["connected_account_id"] == "acct_ready"
+
+
+@pytest.mark.asyncio
+async def test_start_autopay_setup_fails_closed_without_ready_connected_account() -> None:
+    connected_accounts = _ConnectedAccounts(
+        ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_pending")
+    )
+    gateway = _CheckoutGateway()
+    uc = StartSubscriptionCheckout(
+        subscriptions=_SubscriptionRepo(),
+        stripe=gateway,
+        academy_id="acad",
+        connected_accounts=connected_accounts,
+    )
+
+    with pytest.raises(CheckoutCreationFailed, match="connected account"):
+        await uc.execute(_checkout_command())
+
+    assert connected_accounts.calls == 1
+    assert gateway.setup_created == []
 
 
 @pytest.mark.asyncio
@@ -312,6 +364,44 @@ async def test_start_autopay_reuses_existing_open_pending_checkout() -> None:
     assert result.checkout_session_id == "cs_existing"
     assert result.redirect_url == "https://checkout.stripe.com/c/existing"
     assert gateway.created == []
+
+
+@pytest.mark.asyncio
+async def test_start_autopay_does_not_reuse_legacy_checkout_when_connect_is_enforced() -> None:
+    repo = _SubscriptionRepo()
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    await repo.save(
+        Subscription(
+            subscription_id="sub-existing",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="",
+            stripe_checkout_session_id="cs_existing",
+            status="incomplete",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    connected_account = ConnectedAccount.new(
+        academy_id="acad",
+        stripe_account_id="acct_ready",
+    ).with_status(status="active", charges_enabled=True)
+    gateway = _CheckoutGateway()
+    uc = StartSubscriptionCheckout(
+        subscriptions=repo,
+        stripe=gateway,
+        academy_id="acad",
+        connected_accounts=_ConnectedAccounts(connected_account),
+        clock=lambda: now,
+    )
+
+    result = await uc.execute(_checkout_command())
+
+    assert result.subscription_id != "sub-existing"
+    assert result.checkout_session_id == "cs_setup_1"
+    assert gateway.setup_created[0]["connected_account_id"] == "acct_ready"
 
 
 class _NoPaymentRepo:

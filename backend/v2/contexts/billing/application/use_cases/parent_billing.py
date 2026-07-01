@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from backend.v2.contexts.billing.application.ports import (
     AutopayConsentRepository,
+    ConnectedAccountRepository,
     EnrollmentAutopayStateRepository,
     ParentStripeCustomerRepository,
     PaymentRepository,
@@ -396,19 +397,23 @@ class StartSubscriptionCheckout:
         subscriptions: SubscriptionRepository,
         stripe: StripeGateway,
         academy_id: str,
+        connected_accounts: ConnectedAccountRepository | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._subscriptions = subscriptions
         self._stripe = stripe
         self._academy_id = academy_id
+        self._connected_accounts = connected_accounts
         self._now = clock
 
     async def execute(
         self, cmd: StartSubscriptionCheckoutCommand
     ) -> StartSubscriptionCheckoutResult:
+        connected_account_id = await self._ready_connected_account_id()
         existing = await self._subscriptions.latest_for_enrollment(cmd.enrollment_id)
         if (
-            existing is not None
+            self._connected_accounts is None
+            and existing is not None
             and existing.parent_id == cmd.parent_id
             and existing.status == "incomplete"
             and existing.stripe_checkout_session_id
@@ -457,6 +462,7 @@ class StartSubscriptionCheckout:
                     "ach_mandate_version": DEFAULT_ACH_MANDATE_VERSION,
                     "card_disclosure_version": DEFAULT_CARD_DISCLOSURE_VERSION,
                 },
+                connected_account_id=connected_account_id,
             )
         except Exception as exc:  # pragma: no cover - infra path
             raise CheckoutCreationFailed(str(exc)) from exc
@@ -466,6 +472,14 @@ class StartSubscriptionCheckout:
             checkout_session_id=checkout_id,
             redirect_url=url,
         )
+
+    async def _ready_connected_account_id(self) -> str | None:
+        if self._connected_accounts is None:
+            return None
+        account = await self._connected_accounts.get_for_academy()
+        if account is None or not account.is_ready_for_charges():
+            raise CheckoutCreationFailed("Stripe connected account is not ready for autopay setup.")
+        return account.stripe_account_id
 
 
 class CreateCustomerPortalSessionCommand(BaseModel):
