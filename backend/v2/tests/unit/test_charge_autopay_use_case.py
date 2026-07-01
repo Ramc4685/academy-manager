@@ -653,6 +653,49 @@ async def test_repeated_ach_charge_does_not_duplicate_existing_discount_line() -
     assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-1:2026-06:9750"
 
 
+async def test_existing_ach_discount_is_reconciled_when_current_settings_change() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    _seed_existing_ach_discount(repo)
+    stripe = FakeStripeSucceeds()
+    stripe.payment_method = {"id": "pm_1", "type": "us_bank_account"}
+    settings = FakeBillingSettingsRepo(
+        BillingSettings(
+            academy_id="acad-1",
+            ach_discount_enabled=True,
+            ach_discount_percent=3.0,
+            ach_discount_label="Updated ACH savings",
+            disclosure_version="cash-discount-v2",
+        )
+    )
+
+    result = await _uc(repo, stripe, settings=settings).execute("inv-1")
+
+    assert result.success is True
+    discount_lines = [
+        line for line in repo.lines_by_invoice["inv-1"] if line.line_type == "ach_discount"
+    ]
+    assert len(discount_lines) == 1
+    assert discount_lines[0].line_id == "ach-discount:inv-1"
+    assert discount_lines[0].description == "Updated ACH savings"
+    assert discount_lines[0].amount_cents == -300
+    assert discount_lines[0].unit_amount_cents == -300
+    assert discount_lines[0].source_id == "cash-discount-v2"
+    assert stripe.create_calls[0]["amount_cents"] == 9_700
+    assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-1:2026-06:9700"
+    assert stripe.create_calls[0]["metadata"]["ach_discount_cents"] == "300"
+    assert stripe.create_calls[0]["metadata"]["disclosure_version"] == "cash-discount-v2"
+    recorded_payment = repo.recorded_payments[0][0]
+    assert recorded_payment.amount_cents == 9_700
+    assert recorded_payment.metadata == {
+        "ach_discount_cents": "300",
+        "ach_discount_line_id": "ach-discount:inv-1",
+        "ach_discount_percent": "3.0",
+        "disclosure_version": "cash-discount-v2",
+        "funding_type": "us_bank_account",
+    }
+    assert repo.allocation_calls[0][2] == 9_700
+
+
 async def test_happy_path_partially_paid_invoice() -> None:
     """Partially paid invoice also succeeds."""
     repo = FakeLedgerRepo(invoices=[_invoice(status="partially_paid", balance_due_cents=3_000)])

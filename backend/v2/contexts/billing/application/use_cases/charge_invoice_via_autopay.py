@@ -469,7 +469,8 @@ class ChargeInvoiceViaAutopay:
             (line for line in lines if line.line_type == "ach_discount"),
             None,
         )
-        discount_cents = compute_ach_discount(invoice.subtotal_cents, settings, funding_type)
+        discount_base_cents = _discount_base_subtotal_cents(invoice, lines, existing_discount)
+        discount_cents = compute_ach_discount(discount_base_cents, settings, funding_type)
         if existing_discount is not None:
             if discount_cents <= 0:
                 remaining_lines = [
@@ -486,12 +487,41 @@ class ChargeInvoiceViaAutopay:
                     now=self._now(),
                 )
                 return await self._ledger.save_invoice(restored), {}
-            if any(line.line_type != "ach_discount" for line in lines):
+            now = self._now()
+            current_line = InvoiceLine(
+                line_id=existing_discount.line_id,
+                academy_id=invoice.academy_id,
+                invoice_id=invoice.invoice_id,
+                line_type="ach_discount",
+                description=settings.ach_discount_label,
+                quantity=1,
+                unit_amount_cents=-discount_cents,
+                amount_cents=-discount_cents,
+                source_type="autopay_cash_discount",
+                source_id=settings.disclosure_version,
+                created_at=existing_discount.created_at,
+            )
+            if current_line != existing_discount:
+                await self._ledger.save_line(current_line)
+                lines = [
+                    current_line if line.line_id == existing_discount.line_id else line
+                    for line in lines
+                ]
+                recomputed = _replace_discount_in_invoice_projection(
+                    invoice,
+                    old_discount_line=existing_discount,
+                    updated_lines=lines,
+                    now=now,
+                )
+                if recomputed != invoice:
+                    invoice = await self._ledger.save_invoice(recomputed)
+                existing_discount = current_line
+            elif any(line.line_type != "ach_discount" for line in lines):
                 recomputed = _recompute_invoice_projection(invoice, lines, now=self._now())
                 if recomputed != invoice:
                     invoice = await self._ledger.save_invoice(recomputed)
             return invoice, _discount_metadata(
-                discount_cents=abs(existing_discount.amount_cents),
+                discount_cents=discount_cents,
                 discount_percent=settings.ach_discount_percent,
                 line_id=existing_discount.line_id,
                 funding_type=funding_type,
@@ -573,6 +603,37 @@ def _recompute_invoice_projection(
             "updated_at": now,
         }
     )
+
+
+def _replace_discount_in_invoice_projection(
+    invoice: LedgerInvoice,
+    *,
+    old_discount_line: InvoiceLine,
+    updated_lines: list[InvoiceLine],
+    now: datetime,
+) -> LedgerInvoice:
+    restored = _remove_discount_from_invoice_projection(
+        invoice,
+        old_discount_line,
+        [line for line in updated_lines if line.line_id != old_discount_line.line_id],
+        now=now,
+    )
+    return _recompute_invoice_projection(restored, updated_lines, now=now)
+
+
+def _discount_base_subtotal_cents(
+    invoice: LedgerInvoice,
+    lines: list[InvoiceLine],
+    existing_discount: InvoiceLine | None,
+) -> int:
+    if existing_discount is None:
+        return invoice.subtotal_cents
+
+    non_discount_lines = [line for line in lines if line.line_type != "ach_discount"]
+    if non_discount_lines:
+        return sum(line.amount_cents for line in non_discount_lines)
+
+    return invoice.subtotal_cents + abs(existing_discount.amount_cents)
 
 
 def _remove_discount_from_invoice_projection(
