@@ -800,6 +800,10 @@ class HandleWebhookEvent:
         now = self._now()
         idempotency_key = f"autopay-pi:{pi_id}"
         ledger_payment_id = f"ledger-pay-autopay:{pi_id}"
+        payment_metadata = await self._autopay_discount_payment_metadata(
+            pi_metadata=metadata,
+            invoice_id=invoice_id,
+        )
 
         payment = await self._billing_ledger.record_payment(
             LedgerPayment(
@@ -813,6 +817,7 @@ class HandleWebhookEvent:
                 payment_method="stripe_autopay",
                 stripe_payment_intent_id=pi_id,
                 paid_at=now,
+                metadata=payment_metadata or None,
                 created_at=now,
                 updated_at=now,
             ),
@@ -833,6 +838,27 @@ class HandleWebhookEvent:
                 pi_id,
                 amount_cents,
             )
+
+    async def _autopay_discount_payment_metadata(
+        self,
+        *,
+        pi_metadata: dict[str, Any],
+        invoice_id: str,
+    ) -> dict[str, str]:
+        metadata = _autopay_discount_metadata_from_pi(pi_metadata)
+        get_lines = getattr(self._billing_ledger, "get_lines_for_invoice", None)
+        if callable(get_lines):
+            lines = await get_lines(invoice_id)
+            discount_line = next(
+                (line for line in lines if getattr(line, "line_type", None) == "ach_discount"),
+                None,
+            )
+            if discount_line is not None:
+                metadata.setdefault("ach_discount_line_id", str(discount_line.line_id))
+                metadata.setdefault("ach_discount_cents", str(abs(discount_line.amount_cents)))
+                if getattr(discount_line, "source_id", None):
+                    metadata.setdefault("disclosure_version", str(discount_line.source_id))
+        return metadata
 
     async def _handle_autopay_pi_failed(self, event: dict[str, Any]) -> None:
         """Handle payment_intent.payment_failed from an autopay charge.
@@ -1789,6 +1815,21 @@ def _checkout_session_id_from_payment_intent(pi: dict[str, Any]) -> str | None:
     if order_reference.startswith("cs_"):
         return order_reference
     return None
+
+
+def _autopay_discount_metadata_from_pi(metadata: dict[str, Any]) -> dict[str, str]:
+    allowed_keys = {
+        "ach_discount_cents",
+        "ach_discount_line_id",
+        "ach_discount_percent",
+        "disclosure_version",
+        "funding_type",
+    }
+    return {
+        key: str(value)
+        for key, value in metadata.items()
+        if key in allowed_keys and value is not None and str(value) != ""
+    }
 
 
 def _identity_value(

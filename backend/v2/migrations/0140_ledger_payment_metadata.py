@@ -16,7 +16,7 @@ version = "0140_ledger_payment_metadata"
 
 COLLECTION = "ledger_payments"
 
-MONEY = ["int", "long"]
+MONEY = ["int", "long", "double", "decimal"]
 OPT_DATE = ["date", "null"]
 OPT_STRING = ["string", "null"]
 
@@ -41,14 +41,13 @@ VALIDATOR: dict[str, Any] = {
             "amount_cents": {"bsonType": MONEY},
             "unapplied_amount_cents": {"bsonType": MONEY},
             "currency": {"bsonType": "string"},
-            "status": {"bsonType": "string"},
-            "refunded_cents": {"bsonType": MONEY},
+            "status": {
+                "enum": ["pending", "succeeded", "failed", "refunded", "partially_refunded"]
+            },
             "payment_method": {"bsonType": OPT_STRING},
             "stripe_payment_intent_id": {"bsonType": OPT_STRING},
             "stripe_invoice_id": {"bsonType": OPT_STRING},
             "paid_at": {"bsonType": OPT_DATE},
-            "recorded_by": {"bsonType": OPT_STRING},
-            "notes": {"bsonType": OPT_STRING},
             "metadata": {
                 "bsonType": ["object", "null"],
                 "additionalProperties": {"bsonType": "string"},

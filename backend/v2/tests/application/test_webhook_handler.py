@@ -18,7 +18,7 @@ from backend.v2.contexts.billing.application.use_cases.handle_webhook_event impo
     HandleWebhookEvent,
     _QuarantineStripeEvent,
 )
-from backend.v2.contexts.billing.domain.ledger import LedgerInvoice, LedgerPayment
+from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice, LedgerPayment
 from backend.v2.contexts.billing.domain.models import Payment, Subscription
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
@@ -334,6 +334,9 @@ class FakeBillingLedger:
             if invoice.stripe_invoice_id == stripe_invoice_id:
                 return invoice
         return None
+
+    async def get_lines_for_invoice(self, invoice_id: str) -> list[Any]:
+        return list(self.lines.get(invoice_id, []))
 
     async def save_invoice(self, invoice: LedgerInvoice) -> LedgerInvoice:
         self.invoices[invoice.invoice_id] = invoice
@@ -1097,6 +1100,72 @@ async def test_autopay_payment_intent_uses_invoice_parent_when_metadata_parent_m
             "idempotency_key": "autopay-alloc:pi_autopay_1",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_autopay_payment_intent_succeeded_records_discount_metadata_when_webhook_wins() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            balance_due_cents=9_750,
+        )
+    )
+    ledger.lines["inv-autopay"] = [
+        InvoiceLine(
+            line_id="ach-discount:inv-autopay",
+            academy_id="acad",
+            invoice_id="inv-autopay",
+            line_type="ach_discount",
+            description="ACH autopay savings",
+            quantity=1,
+            unit_amount_cents=-250,
+            amount_cents=-250,
+            source_type="autopay_cash_discount",
+            source_id="cash-discount-v1",
+            created_at=datetime.now(UTC),
+        )
+    ]
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger)
+    body = json.dumps(
+        {
+            "id": "evt_autopay_pi_metadata",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_autopay_metadata",
+                    "amount": 9750,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-autopay",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "ach_discount_cents": "250",
+                        "ach_discount_line_id": "ach-discount:inv-autopay",
+                        "ach_discount_percent": "2.5",
+                        "disclosure_version": "cash-discount-v1",
+                        "funding_type": "us_bank_account",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    payment = ledger.payments["ledger-pay-autopay:pi_autopay_metadata"]
+    assert payment.metadata == {
+        "ach_discount_cents": "250",
+        "ach_discount_line_id": "ach-discount:inv-autopay",
+        "ach_discount_percent": "2.5",
+        "disclosure_version": "cash-discount-v1",
+        "funding_type": "us_bank_account",
+    }
 
 
 @pytest.mark.asyncio

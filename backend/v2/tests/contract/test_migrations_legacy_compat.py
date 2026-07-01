@@ -255,6 +255,24 @@ async def test_launch_validators_migration_is_mongomock_safe(db) -> None:
     assert "academy_settings_academy_unique" in settings_indexes
 
 
+async def test_ledger_payment_metadata_migration_preserves_existing_payment_contract() -> None:
+    migration = importlib.import_module("backend.v2.migrations.0140_ledger_payment_metadata")
+    props = migration.VALIDATOR["$jsonSchema"]["properties"]
+
+    assert props["status"] == {
+        "enum": ["pending", "succeeded", "failed", "refunded", "partially_refunded"]
+    }
+    assert props["amount_cents"] == {"bsonType": ["int", "long", "double", "decimal"]}
+    assert props["unapplied_amount_cents"] == {"bsonType": ["int", "long", "double", "decimal"]}
+    assert props["metadata"] == {
+        "bsonType": ["object", "null"],
+        "additionalProperties": {"bsonType": "string"},
+    }
+    assert "refunded_cents" not in props
+    assert "recorded_by" not in props
+    assert "notes" not in props
+
+
 @pytest.mark.asyncio
 async def test_broader_validators_and_outbox_migration_declares_required_contracts() -> None:
     migration = importlib.import_module(

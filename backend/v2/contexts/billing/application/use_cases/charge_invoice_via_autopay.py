@@ -261,8 +261,7 @@ class ChargeInvoiceViaAutopay:
             "parent_id": invoice.parent_id,
             "source": "autopay",
         }
-        if discount_metadata.get("disclosure_version"):
-            pi_metadata["disclosure_version"] = discount_metadata["disclosure_version"]
+        pi_metadata.update(discount_metadata)
         try:
             pi_id, pi_status, decline_code = await self._stripe.create_off_session_payment_intent(
                 amount_cents=invoice.balance_due_cents,
@@ -465,15 +464,28 @@ class ChargeInvoiceViaAutopay:
         settings: BillingSettings | None,
         funding_type: str | None,
     ) -> tuple[LedgerInvoice, dict[str, str]]:
-        if settings is None:
-            return invoice, {}
-
         lines = await self._ledger.get_lines_for_invoice(invoice.invoice_id)
         existing_discount = next(
             (line for line in lines if line.line_type == "ach_discount"),
             None,
         )
+        discount_cents = compute_ach_discount(invoice.subtotal_cents, settings, funding_type)
         if existing_discount is not None:
+            if discount_cents <= 0:
+                remaining_lines = [
+                    line for line in lines if line.line_id != existing_discount.line_id
+                ]
+                await self._ledger.delete_invoice_line(
+                    invoice_id=invoice.invoice_id,
+                    line_id=existing_discount.line_id,
+                )
+                restored = _remove_discount_from_invoice_projection(
+                    invoice,
+                    existing_discount,
+                    remaining_lines,
+                    now=self._now(),
+                )
+                return await self._ledger.save_invoice(restored), {}
             if any(line.line_type != "ach_discount" for line in lines):
                 recomputed = _recompute_invoice_projection(invoice, lines, now=self._now())
                 if recomputed != invoice:
@@ -486,7 +498,6 @@ class ChargeInvoiceViaAutopay:
                 disclosure_version=settings.disclosure_version,
             )
 
-        discount_cents = compute_ach_discount(invoice.subtotal_cents, settings, funding_type)
         if discount_cents <= 0:
             return invoice, {}
 
@@ -556,6 +567,39 @@ def _recompute_invoice_projection(
     return invoice.model_copy(
         update={
             "subtotal_cents": max(0, invoice.subtotal_cents + discount_delta),
+            "total_cents": total,
+            "balance_due_cents": balance,
+            "status": status,
+            "updated_at": now,
+        }
+    )
+
+
+def _remove_discount_from_invoice_projection(
+    invoice: LedgerInvoice,
+    discount_line: InvoiceLine,
+    remaining_lines: list[InvoiceLine],
+    *,
+    now: datetime,
+) -> LedgerInvoice:
+    if any(line.line_type != "ach_discount" for line in remaining_lines):
+        return recompute_totals(invoice.model_copy(update={"updated_at": now}), remaining_lines)
+
+    discount_cents = abs(discount_line.amount_cents)
+    allocated = max(0, invoice.total_cents - invoice.balance_due_cents)
+    total = invoice.total_cents + discount_cents
+    balance = max(0, total - allocated)
+    status = invoice.status
+    if status not in ("draft", "void"):
+        if balance == 0:
+            status = "paid"
+        elif balance < total:
+            status = "partially_paid"
+        else:
+            status = "open"
+    return invoice.model_copy(
+        update={
+            "subtotal_cents": invoice.subtotal_cents + discount_cents,
             "total_cents": total,
             "balance_due_cents": balance,
             "status": status,

@@ -142,6 +142,12 @@ class FakeLedgerRepo:
         self.lines_by_invoice[line.invoice_id] = lines
         return line
 
+    async def delete_invoice_line(self, *, invoice_id: str, line_id: str) -> bool:
+        lines = self.lines_by_invoice.get(invoice_id, [])
+        kept = [line for line in lines if line.line_id != line_id]
+        self.lines_by_invoice[invoice_id] = kept
+        return len(kept) != len(lines)
+
     async def create_invoice(
         self, invoice: LedgerInvoice, *, lines: list, idempotency_key: str
     ) -> LedgerInvoice:
@@ -359,6 +365,26 @@ class FakeBillingSettingsRepo:
         return self.settings
 
 
+def _seed_existing_ach_discount(repo: FakeLedgerRepo) -> None:
+    existing_line = InvoiceLine(
+        line_id="ach-discount:inv-1",
+        academy_id="acad-1",
+        invoice_id="inv-1",
+        line_type="ach_discount",
+        description="ACH autopay savings",
+        quantity=1,
+        unit_amount_cents=-250,
+        amount_cents=-250,
+        source_type="autopay_cash_discount",
+        source_id="cash-discount-v1",
+        created_at=NOW,
+    )
+    repo.lines_by_invoice["inv-1"] = [existing_line]
+    repo._invoices["inv-1"] = repo._invoices["inv-1"].model_copy(
+        update={"subtotal_cents": 9_750, "total_cents": 9_750, "balance_due_cents": 9_750}
+    )
+
+
 def _uc(
     repo: FakeLedgerRepo,
     stripe: object | None = None,
@@ -537,25 +563,74 @@ async def test_retrieve_payment_method_failure_fails_safe_to_no_discount() -> No
     assert stripe.create_calls[0]["amount_cents"] == 10_000
 
 
+async def test_existing_ach_discount_is_removed_when_current_payment_method_is_card() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    _seed_existing_ach_discount(repo)
+    stripe = FakeStripeSucceeds()
+    stripe.payment_method = {"id": "pm_1", "type": "card", "card": {"funding": "credit"}}
+    settings = FakeBillingSettingsRepo(
+        BillingSettings(
+            academy_id="acad-1",
+            ach_discount_enabled=True,
+            ach_discount_percent=2.5,
+        )
+    )
+
+    await _uc(repo, stripe, settings=settings).execute("inv-1")
+
+    assert [line.line_type for line in repo.lines_by_invoice["inv-1"]] == []
+    assert stripe.create_calls[0]["amount_cents"] == 10_000
+    assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-1:2026-06:10000"
+
+
+async def test_existing_ach_discount_is_removed_when_payment_method_retrieve_fails() -> None:
+    class StripeRetrieveFails(FakeStripeSucceeds):
+        async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict:
+            self.retrieve_payment_method_calls.append(stripe_payment_method_id)
+            raise RuntimeError("stripe retrieve unavailable")
+
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    _seed_existing_ach_discount(repo)
+    stripe = StripeRetrieveFails()
+    settings = FakeBillingSettingsRepo(
+        BillingSettings(
+            academy_id="acad-1",
+            ach_discount_enabled=True,
+            ach_discount_percent=2.5,
+        )
+    )
+
+    await _uc(repo, stripe, settings=settings).execute("inv-1")
+
+    assert [line.line_type for line in repo.lines_by_invoice["inv-1"]] == []
+    assert stripe.create_calls[0]["amount_cents"] == 10_000
+    assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-1:2026-06:10000"
+
+
+async def test_existing_ach_discount_is_removed_when_settings_are_disabled() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    _seed_existing_ach_discount(repo)
+    stripe = FakeStripeSucceeds()
+    stripe.payment_method = {"id": "pm_1", "type": "us_bank_account"}
+    settings = FakeBillingSettingsRepo(
+        BillingSettings(
+            academy_id="acad-1",
+            ach_discount_enabled=False,
+            ach_discount_percent=2.5,
+        )
+    )
+
+    await _uc(repo, stripe, settings=settings).execute("inv-1")
+
+    assert [line.line_type for line in repo.lines_by_invoice["inv-1"]] == []
+    assert stripe.create_calls[0]["amount_cents"] == 10_000
+    assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-1:2026-06:10000"
+
+
 async def test_repeated_ach_charge_does_not_duplicate_existing_discount_line() -> None:
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
-    existing_line = InvoiceLine(
-        line_id="ach-discount:inv-1",
-        academy_id="acad-1",
-        invoice_id="inv-1",
-        line_type="ach_discount",
-        description="ACH autopay savings",
-        quantity=1,
-        unit_amount_cents=-250,
-        amount_cents=-250,
-        source_type="autopay_cash_discount",
-        source_id="cash-discount-v1",
-        created_at=NOW,
-    )
-    repo.lines_by_invoice["inv-1"] = [existing_line]
-    repo._invoices["inv-1"] = repo._invoices["inv-1"].model_copy(
-        update={"subtotal_cents": 9_750, "total_cents": 9_750, "balance_due_cents": 9_750}
-    )
+    _seed_existing_ach_discount(repo)
+    existing_line = repo.lines_by_invoice["inv-1"][0]
     stripe = FakeStripeSucceeds()
     stripe.payment_method = {"id": "pm_1", "type": "us_bank_account"}
     settings = FakeBillingSettingsRepo(
