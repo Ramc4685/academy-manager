@@ -9,7 +9,7 @@ Invariants verified:
 - Void → ValueError (not chargeable)
 - Decline (decline_code returned) → ChargeResult(success=False), status unchanged
 - Exception from gateway → ChargeResult(success=False), status unchanged
-- Idempotent retry: same invoice_id → same idempotency key passed to gateway
+- Idempotent retry: same invoice_id/period/balance → same idempotency key passed to gateway
 """
 
 from __future__ import annotations
@@ -42,6 +42,7 @@ def _invoice(
     balance_due_cents: int = 10_000,
     parent_id: str = "parent-1",
     enrollment_id: str | None = "enr-1",
+    period: str = "2026-06",
 ) -> LedgerInvoice:
     total = 10_000
     return LedgerInvoice(
@@ -50,7 +51,7 @@ def _invoice(
         parent_id=parent_id,
         student_id="s-1",
         enrollment_id=enrollment_id,
-        period="2026-06",
+        period=period,
         status=status,  # type: ignore[arg-type]
         subtotal_cents=total,
         discount_cents=0,
@@ -370,7 +371,7 @@ async def test_happy_path_open_invoice_pi_succeeds() -> None:
             "stripe_checkout_session_id": None,
             "failure_code": None,
             "failure_message": None,
-            "idempotency_key": "autopay-attempt:inv-1:pi_test_123",
+            "idempotency_key": "autopay-attempt:inv-1:2026-06:10000:succeeded:pi_test_123",
             "created_by_event_id": None,
         }
     ]
@@ -503,7 +504,7 @@ async def test_decline_returns_charge_result_false_status_unchanged() -> None:
             "stripe_checkout_session_id": None,
             "failure_code": "insufficient_funds",
             "failure_message": "insufficient_funds",
-            "idempotency_key": "autopay-attempt:inv-1:pi_declined",
+            "idempotency_key": "autopay-attempt:inv-1:2026-06:10000:failed:pi_declined",
             "created_by_event_id": None,
         }
     ]
@@ -654,14 +655,14 @@ async def test_requires_action_returns_charge_result_false_with_flag() -> None:
     assert repo.recorded_payments == []
 
 
-async def test_idempotency_key_uses_invoice_id() -> None:
-    """Idempotency key passed to Stripe is deterministic: autopay-{invoice_id}."""
+async def test_idempotency_key_uses_invoice_id_period_and_balance_due() -> None:
+    """Stripe PI idempotency key is scoped by invoice, period, and attempted amount."""
     repo = FakeLedgerRepo(invoices=[_invoice(invoice_id="inv-xyz-99", status="open")])
     stripe = FakeStripeSucceeds()
     await _uc(repo, stripe).execute("inv-xyz-99")
 
     call = stripe.create_calls[0]
-    assert call["idempotency_key"] == "autopay-inv-xyz-99"
+    assert call["idempotency_key"] == "autopay:inv-xyz-99:2026-06:10000"
 
 
 async def test_saved_card_lookup_uses_invoice_academy_and_parent() -> None:
@@ -688,8 +689,8 @@ async def test_saved_card_lookup_uses_invoice_academy_and_parent() -> None:
     }
 
 
-async def test_idempotency_key_same_on_retry() -> None:
-    """Calling execute twice with the same invoice_id produces the same idempotency key."""
+async def test_idempotency_key_same_on_retry_with_same_period_and_balance() -> None:
+    """A true replay for the same invoice, period, and balance reuses the same PI key."""
     repo = FakeLedgerRepo(invoices=[_invoice(invoice_id="inv-retry", status="open")])
     stripe = FakeStripeSucceeds()
     uc = _uc(repo, stripe)
@@ -700,7 +701,68 @@ async def test_idempotency_key_same_on_retry() -> None:
     await uc.execute("inv-retry")
 
     keys = [call["idempotency_key"] for call in stripe.create_calls]
-    assert keys[0] == keys[1] == "autopay-inv-retry"
+    assert keys[0] == keys[1] == "autopay:inv-retry:2026-06:10000"
+
+
+async def test_idempotency_key_changes_when_balance_due_changes() -> None:
+    """Same invoice and period with a changed balance must create a new PI key and amount."""
+    repo = FakeLedgerRepo(invoices=[_invoice(invoice_id="inv-balance", status="open")])
+    stripe = FakeStripeSucceeds()
+    uc = _uc(repo, stripe)
+
+    await uc.execute("inv-balance")
+    repo._invoices["inv-balance"] = _invoice(
+        invoice_id="inv-balance",
+        status="open",
+        balance_due_cents=6_500,
+    )
+    await uc.execute("inv-balance")
+
+    assert [call["idempotency_key"] for call in stripe.create_calls] == [
+        "autopay:inv-balance:2026-06:10000",
+        "autopay:inv-balance:2026-06:6500",
+    ]
+    assert [call["amount_cents"] for call in stripe.create_calls] == [10_000, 6_500]
+
+
+async def test_idempotency_key_changes_when_invoice_period_changes() -> None:
+    """Same invoice and balance in a new billing period must create a new PI key."""
+    repo = FakeLedgerRepo(invoices=[_invoice(invoice_id="inv-period", status="open")])
+    stripe = FakeStripeSucceeds()
+    uc = _uc(repo, stripe)
+
+    await uc.execute("inv-period")
+    repo._invoices["inv-period"] = _invoice(
+        invoice_id="inv-period",
+        status="open",
+        period="2026-07",
+    )
+    await uc.execute("inv-period")
+
+    assert [call["idempotency_key"] for call in stripe.create_calls] == [
+        "autopay:inv-period:2026-06:10000",
+        "autopay:inv-period:2026-07:10000",
+    ]
+
+
+async def test_stripe_exception_failed_attempt_key_includes_period_amount_and_status() -> None:
+    """Stripe-error attempts are scoped so different amount attempts do not collapse."""
+    repo = FakeLedgerRepo(
+        invoices=[
+            _invoice(
+                invoice_id="inv-stripe-error",
+                status="open",
+                balance_due_cents=7_500,
+                period="2026-07",
+            )
+        ]
+    )
+
+    await _uc(repo, FakeStripeRaises()).execute("inv-stripe-error")
+
+    assert repo.payment_attempts[0]["idempotency_key"] == (
+        "autopay-attempt:inv-stripe-error:2026-07:7500:failed:stripe-error"
+    )
 
 
 async def test_stripe_not_configured_returns_decline() -> None:

@@ -4,7 +4,8 @@ Financial status invariant: this use case ONLY changes financial status when the
 succeeds immediately. On decline the invoice stays open/partially_paid. The delivery
 axis (sent_at, delivery_status) is never touched here.
 
-Idempotency key ``autopay-{invoice_id}`` on the PI prevents double-charging on retry.
+PI idempotency is scoped to invoice, billing period, and attempted balance so true
+replays dedupe without replaying stale amounts after the invoice balance changes.
 """
 
 from __future__ import annotations
@@ -228,8 +229,10 @@ class ChargeInvoiceViaAutopay:
             )
         customer_id, pm_id = saved
 
-        # 4. Create off-session PaymentIntent (idempotency key prevents double-charge)
-        idempotency_key = f"autopay-{invoice.invoice_id}"
+        # 4. Create off-session PaymentIntent (idempotency key prevents stale amount replay)
+        idempotency_key = (
+            f"autopay:{invoice.invoice_id}:{invoice.period}:{invoice.balance_due_cents}"
+        )
         try:
             pi_id, pi_status, decline_code = await self._stripe.create_off_session_payment_intent(
                 amount_cents=invoice.balance_due_cents,
@@ -387,7 +390,10 @@ class ChargeInvoiceViaAutopay:
             stripe_checkout_session_id=None,
             failure_code=failure_code,
             failure_message=failure_message,
-            idempotency_key=f"autopay-attempt:{invoice.invoice_id}:{attempt_key_suffix}",
+            idempotency_key=(
+                f"autopay-attempt:{invoice.invoice_id}:{invoice.period}:"
+                f"{amount_cents}:{status}:{attempt_key_suffix}"
+            ),
             created_by_event_id=None,
         )
         if self._enrollment_autopay is not None and invoice.enrollment_id:
