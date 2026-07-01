@@ -586,10 +586,13 @@ async def test_ach_payment_method_adds_discount_line_before_charge_amount_and_ke
     assert discount_lines[0].source_id == "cash-discount-v1"
 
 
-async def test_card_payment_method_does_not_add_discount() -> None:
+@pytest.mark.parametrize("funding_type", ["credit", "debit", "prepaid"])
+async def test_saved_card_payment_method_funding_does_not_add_discount_or_fee(
+    funding_type: str,
+) -> None:
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     stripe = FakeStripeSucceeds()
-    stripe.payment_method = {"id": "pm_1", "type": "card", "card": {"funding": "credit"}}
+    stripe.payment_method = {"id": "pm_1", "type": "card", "card": {"funding": funding_type}}
     settings = FakeBillingSettingsRepo(
         BillingSettings(
             academy_id="acad-1",
@@ -603,6 +606,10 @@ async def test_card_payment_method_does_not_add_discount() -> None:
     assert repo.lines_by_invoice.get("inv-1", []) == []
     assert stripe.create_calls[0]["amount_cents"] == 10_000
     assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-1:2026-06:10000"
+    assert "ach_discount_cents" not in stripe.create_calls[0]["metadata"]
+    assert "processing_fee_cents" not in stripe.create_calls[0]["metadata"]
+    assert "payment_method_fee_cents" not in stripe.create_calls[0]["metadata"]
+    assert repo.recorded_payments[0][0].metadata is None
 
 
 async def test_no_settings_repo_fails_safe_to_no_discount_even_for_ach() -> None:
