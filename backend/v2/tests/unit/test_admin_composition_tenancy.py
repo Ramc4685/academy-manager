@@ -923,6 +923,82 @@ async def test_admin_billing_webhook_queue_uses_request_tenant(mongo_db) -> None
 
 
 @pytest.mark.asyncio
+async def test_admin_dunning_failures_enrich_parent_name_from_request_tenant(
+    mongo_db,
+) -> None:
+    now = datetime(2026, 7, 8, tzinfo=UTC)
+    await mongo_db["users"].insert_many(
+        [
+            {
+                "academy_id": "request-acad",
+                "user_id": "parent-request",
+                "display_name": "Riley Parent",
+            },
+            {
+                "academy_id": "default-academy",
+                "user_id": "parent-request",
+                "display_name": "Wrong Tenant",
+            },
+        ]
+    )
+    await mongo_db["invoices"].insert_many(
+        [
+            {
+                "academy_id": "request-acad",
+                "invoice_id": "inv-dunning-request",
+                "parent_id": "parent-request",
+                "period": "2026-07",
+                "status": "open",
+                "balance_due_cents": 12000,
+                "currency": "usd",
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "academy_id": "default-academy",
+                "invoice_id": "inv-dunning-default",
+                "parent_id": "parent-request",
+                "period": "2026-07",
+                "status": "open",
+                "balance_due_cents": 12000,
+                "currency": "usd",
+                "created_at": now,
+                "updated_at": now,
+            },
+        ]
+    )
+    await mongo_db["dunning_states"].insert_many(
+        [
+            {
+                "academy_id": "request-acad",
+                "invoice_id": "inv-dunning-request",
+                "parent_id": "parent-request",
+                "enrollment_id": "enr-request",
+                "status": "dunned",
+                "attempt_count": 4,
+                "updated_at": now,
+            },
+            {
+                "academy_id": "default-academy",
+                "invoice_id": "inv-dunning-default",
+                "parent_id": "parent-request",
+                "enrollment_id": "enr-default",
+                "status": "dunned",
+                "attempt_count": 4,
+                "updated_at": now,
+            },
+        ]
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope("request-acad"):
+        rows = await admin.list_dunning_failures()
+
+    assert [row["invoice_id"] for row in rows] == ["inv-dunning-request"]
+    assert rows[0]["parent_name"] == "Riley Parent"
+
+
+@pytest.mark.asyncio
 async def test_billing_reconciliation_detects_orphan_stripe_payment(mongo_db) -> None:
     now = datetime(2026, 6, 17, tzinfo=UTC)
     await mongo_db["parent_billing_customers"].insert_one(

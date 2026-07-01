@@ -2891,8 +2891,42 @@ def compose_admin(
     async def list_failed_payment_attempts() -> list[dict[str, Any]]:
         return await billing_ledger_repo.list_open_failed_attempts()
 
+    async def _enrich_parent_names(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        parent_ids = {str(r["parent_id"]) for r in rows if r.get("parent_id")}
+        if not parent_ids:
+            return rows
+        id_list = list(parent_ids)
+        oid_ids = [BsonObjectId(p) for p in id_list if BsonObjectId.is_valid(p)]
+        or_filter: list[dict[str, object]] = [
+            {"user_id": {"$in": id_list}},
+            {"firebase_uid": {"$in": id_list}},
+        ]
+        if oid_ids:
+            or_filter.append({"_id": {"$in": oid_ids}})
+        names: dict[str, str] = {}
+        users = db["users"].find({"academy_id": current_academy_id(), "$or": or_filter})
+        async for user in users:
+            display = str(
+                user.get("display_name")
+                or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+                or ""
+            )
+            for key in (
+                str(user.get("user_id") or ""),
+                str(user.get("firebase_uid") or ""),
+                str(user["_id"]),
+            ):
+                if key and key in parent_ids:
+                    names[key] = display
+        for row in rows:
+            row["parent_name"] = names.get(str(row.get("parent_id") or "")) or None
+        return rows
+
     async def list_dunning_failures() -> list[dict[str, Any]]:
-        return await dunning_state_repo.list_admin_rows()
+        rows = await dunning_state_repo.list_admin_rows()
+        return await _enrich_parent_names(rows)
 
     async def list_invoice_attempts(invoice_id: str) -> list[dict[str, Any]]:
         invoice = await billing_ledger_repo.get_invoice(invoice_id)
@@ -2914,13 +2948,8 @@ def compose_admin(
 
     # ---- Legacy invoice ↔ Stripe charge review queue (#242 WI-3) ----------- #
     async def list_legacy_match_queue() -> list[dict[str, Any]]:
-        from bson import ObjectId as BsonObjectId
-
-        from backend.v2.shared.tenancy import current_academy_id
-
         if not hasattr(stripe, "list_charges_for_customer"):
             raise RuntimeError("Stripe charge matching not configured")
-        request_academy_id = current_academy_id()
         rows = await ListLegacyMatchQueue(
             ledger=billing_ledger_repo,
             stripe=stripe,  # type: ignore[arg-type]
@@ -2929,34 +2958,7 @@ def compose_admin(
         result = [row.model_dump(mode="python") for row in rows]
         # Resolve parent display names for the review UI (same lookup the
         # billing/finance paths use elsewhere in this module).
-        parent_ids = {str(r["parent_id"]) for r in result if r.get("parent_id")}
-        if parent_ids:
-            id_list = list(parent_ids)
-            oid_ids = [BsonObjectId(p) for p in id_list if BsonObjectId.is_valid(p)]
-            or_filter: list[dict[str, object]] = [
-                {"user_id": {"$in": id_list}},
-                {"firebase_uid": {"$in": id_list}},
-            ]
-            if oid_ids:
-                or_filter.append({"_id": {"$in": oid_ids}})
-            names: dict[str, str] = {}
-            users = db["users"].find({"academy_id": request_academy_id, "$or": or_filter})
-            async for user in users:
-                display = str(
-                    user.get("display_name")
-                    or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
-                    or ""
-                )
-                for key in (
-                    str(user.get("user_id") or ""),
-                    str(user.get("firebase_uid") or ""),
-                    str(user["_id"]),
-                ):
-                    if key and key in parent_ids:
-                        names[key] = display
-            for r in result:
-                r["parent_name"] = names.get(str(r.get("parent_id") or "")) or None
-        return result
+        return await _enrich_parent_names(result)
 
     async def confirm_legacy_match(
         *,
