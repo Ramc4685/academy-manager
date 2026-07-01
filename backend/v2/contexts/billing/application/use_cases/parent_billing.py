@@ -244,14 +244,6 @@ class CompleteAutopaySetup:
                         self._consent_event(persisted_consent),
                         session=session,
                     )
-            activated = await self._enrollment_autopay.mark_autopay_active_from_setup(
-                enrollment_id=enrollment_id,
-                session=session,
-            )
-            if not activated:
-                raise RuntimeError(
-                    f"autopay enrollment activation failed for enrollment {enrollment_id}"
-                )
             await self._parent_customers.set_default_payment_method(
                 parent_id=parent_id,
                 stripe_customer_id=stripe_customer_id,
@@ -273,6 +265,14 @@ class CompleteAutopaySetup:
                 ),
                 session=session,
             )
+            activated = await self._enrollment_autopay.mark_autopay_active_from_setup(
+                enrollment_id=enrollment_id,
+                session=session,
+            )
+            if not activated:
+                raise RuntimeError(
+                    f"autopay enrollment activation failed for enrollment {enrollment_id}"
+                )
 
         if self._transaction_runner is not None:
             await self._transaction_runner.run(work)

@@ -316,9 +316,10 @@ class _NoPaymentRepo:
 
 
 class _CustomerRepo:
-    def __init__(self) -> None:
+    def __init__(self, *, fail_default_payment_method: bool = False) -> None:
         self.saved: list[dict[str, str]] = []
         self.default_methods: list[dict[str, object]] = []
+        self.fail_default_payment_method = fail_default_payment_method
 
     async def set_stripe_customer_id(self, *, parent_id: str, stripe_customer_id: str) -> None:
         self.saved.append({"parent_id": parent_id, "stripe_customer_id": stripe_customer_id})
@@ -340,6 +341,8 @@ class _CustomerRepo:
         card_disclosure_version: str | None = None,
         session=None,
     ) -> None:
+        if self.fail_default_payment_method:
+            raise RuntimeError("parent projection write failed")
         row = {
             "parent_id": parent_id,
             "stripe_customer_id": stripe_customer_id,
@@ -761,7 +764,34 @@ async def test_autopay_setup_outbox_failure_does_not_update_projection_or_enroll
 
 
 @pytest.mark.asyncio
-async def test_autopay_setup_enrollment_activation_failure_raises_without_projection() -> None:
+async def test_autopay_setup_projection_failure_does_not_activate_enrollment() -> None:
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    customers = _CustomerRepo(fail_default_payment_method=True)
+    consents = _ConsentRepo()
+    outbox = _Outbox()
+    enrollment_autopay = _EnrollmentAutopay()
+    gateway = _setup_checkout_gateway()
+    uc = CompleteAutopaySetup(
+        stripe=gateway,
+        parent_customers=customers,
+        enrollment_autopay=enrollment_autopay,
+        consent_repo=consents,
+        outbox=outbox,
+        academy_id="acad",
+        clock=lambda: now,
+    )
+
+    with pytest.raises(RuntimeError, match="parent projection write failed"):
+        await uc.execute_from_setup_intent(gateway.setup_intents["seti_saved_card"])
+
+    assert [consent.setup_intent_id for consent in consents.consents] == ["seti_saved_card"]
+    assert [event.name for event in outbox.events] == ["Billing.AutopayConsentCaptured"]
+    assert customers.default_methods == []
+    assert enrollment_autopay.setup_completed == []
+
+
+@pytest.mark.asyncio
+async def test_autopay_setup_enrollment_activation_failure_raises_after_projection() -> None:
     now = datetime(2026, 6, 11, tzinfo=UTC)
     customers = _CustomerRepo()
     consents = _ConsentRepo()
@@ -783,7 +813,7 @@ async def test_autopay_setup_enrollment_activation_failure_raises_without_projec
 
     assert [consent.setup_intent_id for consent in consents.consents] == ["seti_saved_card"]
     assert [event.name for event in outbox.events] == ["Billing.AutopayConsentCaptured"]
-    assert customers.default_methods == []
+    assert [row["setup_intent_id"] for row in customers.default_methods] == ["seti_saved_card"]
     assert enrollment_autopay.setup_completed == ["enr-1"]
 
 
