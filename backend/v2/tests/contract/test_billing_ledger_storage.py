@@ -468,6 +468,312 @@ async def test_reverse_invoice_refund_releases_claim(db, acad) -> None:
 
 
 @pytest.mark.asyncio
+async def test_partial_invoice_refund_leaves_ach_discount_unreversed(db, acad) -> None:
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    invoice = _make_invoice("inv-ach-ref-partial", acad, now).model_copy(
+        update={
+            "status": "paid",
+            "subtotal_cents": 9_750,
+            "total_cents": 9_750,
+            "balance_due_cents": 0,
+        }
+    )
+    await repo.create_invoice(
+        invoice,
+        lines=[
+            _make_line("tuition-ach-partial", invoice.invoice_id, acad, 10_000),
+            InvoiceLine(
+                line_id="ach-discount:inv-ach-ref-partial",
+                academy_id=acad,
+                invoice_id=invoice.invoice_id,
+                line_type="ach_discount",
+                description="ACH autopay discount",
+                quantity=1,
+                unit_amount_cents=-250,
+                amount_cents=-250,
+                source_type="autopay_cash_discount",
+                source_id="cash-discount-v1",
+                created_at=now,
+            ),
+        ],
+        idempotency_key="ach-refund:partial",
+    )
+
+    updated = await repo.apply_invoice_refund(
+        invoice_id="inv-ach-ref-partial",
+        amount_cents=5_000,
+    )
+
+    assert updated.refunded_cents == 5_000
+    lines = await repo.get_lines_for_invoice("inv-ach-ref-partial")
+    assert [line.line_type for line in lines].count("ach_discount") == 1
+    assert (
+        await db["account_credit_ledger"].count_documents(
+            {"academy_id": acad, "source_type": "ACH_DISCOUNT_REVERSAL"}
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_full_invoice_refund_records_ach_discount_reversal_credit_note(db, acad) -> None:
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    invoice = _make_invoice("inv-ach-ref-full", acad, now).model_copy(
+        update={
+            "status": "paid",
+            "subtotal_cents": 9_750,
+            "total_cents": 9_750,
+            "balance_due_cents": 0,
+        }
+    )
+    await repo.create_invoice(
+        invoice,
+        lines=[
+            _make_line("tuition-ach-full", invoice.invoice_id, acad, 10_000),
+            InvoiceLine(
+                line_id="ach-discount:inv-ach-ref-full",
+                academy_id=acad,
+                invoice_id=invoice.invoice_id,
+                line_type="ach_discount",
+                description="ACH autopay discount",
+                quantity=1,
+                unit_amount_cents=-250,
+                amount_cents=-250,
+                source_type="autopay_cash_discount",
+                source_id="cash-discount-v1",
+                created_at=now,
+            ),
+            InvoiceLine(
+                line_id="ach-adjustment:inv-ach-ref-full",
+                academy_id=acad,
+                invoice_id=invoice.invoice_id,
+                line_type="ach_discount",
+                description="Non-discount ACH adjustment",
+                quantity=1,
+                unit_amount_cents=75,
+                amount_cents=75,
+                source_type="autopay_cash_discount",
+                source_id="cash-discount-v1",
+                created_at=now,
+            ),
+        ],
+        idempotency_key="ach-refund:full",
+    )
+
+    updated = await repo.apply_invoice_refund(
+        invoice_id="inv-ach-ref-full",
+        amount_cents=9_750,
+    )
+
+    assert updated.refunded_cents == 9_750
+    reloaded = await repo.get_invoice("inv-ach-ref-full")
+    assert reloaded is not None
+    assert reloaded.status == "paid"
+    assert reloaded.balance_due_cents == 0
+    reversal = await db["account_credit_ledger"].find_one(
+        {"academy_id": acad, "source_type": "ACH_DISCOUNT_REVERSAL"}
+    )
+    assert reversal is not None
+    assert reversal["invoice_id"] == "inv-ach-ref-full"
+    assert reversal["source_id"] == "ach-discount:inv-ach-ref-full"
+    assert reversal["status"] == "VOIDED"
+    assert reversal["amount_cents"] == 250
+    assert reversal["remaining_amount_cents"] == 0
+    assert reversal["refund_invoice_version"] == updated.version
+    assert (
+        await db["account_credit_ledger"].count_documents(
+            {"academy_id": acad, "source_type": "ACH_DISCOUNT_REVERSAL"}
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_full_refund_rolls_back_if_ach_discount_reversal_write_fails(
+    db, acad, monkeypatch
+) -> None:
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    invoice = _make_invoice("inv-ach-ref-write-fails", acad, now).model_copy(
+        update={
+            "status": "paid",
+            "subtotal_cents": 9_750,
+            "total_cents": 9_750,
+            "balance_due_cents": 0,
+        }
+    )
+    await repo.create_invoice(
+        invoice,
+        lines=[
+            _make_line("tuition-ach-write-fails", invoice.invoice_id, acad, 10_000),
+            InvoiceLine(
+                line_id="ach-discount:inv-ach-ref-write-fails",
+                academy_id=acad,
+                invoice_id=invoice.invoice_id,
+                line_type="ach_discount",
+                description="ACH autopay discount",
+                quantity=1,
+                unit_amount_cents=-250,
+                amount_cents=-250,
+                source_type="autopay_cash_discount",
+                source_id="cash-discount-v1",
+                created_at=now,
+            ),
+        ],
+        idempotency_key="ach-refund:write-fails",
+    )
+
+    async def fail_reversal_write(*args, **kwargs):
+        raise RuntimeError("credit ledger unavailable")
+
+    monkeypatch.setattr(repo, "_ensure_ach_discount_reversal_credit_notes", fail_reversal_write)
+
+    with pytest.raises(RuntimeError, match="credit ledger unavailable"):
+        await repo.apply_invoice_refund(
+            invoice_id="inv-ach-ref-write-fails",
+            amount_cents=9_750,
+        )
+
+    reloaded = await repo.get_invoice("inv-ach-ref-write-fails")
+    assert reloaded is not None
+    assert reloaded.refunded_cents == 0
+    assert reloaded.version == 2
+    assert (
+        await db["account_credit_ledger"].count_documents(
+            {
+                "academy_id": acad,
+                "invoice_id": "inv-ach-ref-write-fails",
+                "source_type": "ACH_DISCOUNT_REVERSAL",
+            }
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_reversing_full_refund_removes_ach_discount_reversal_credit_note(db, acad) -> None:
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    invoice = _make_invoice("inv-ach-ref-rollback", acad, now).model_copy(
+        update={
+            "status": "paid",
+            "subtotal_cents": 9_750,
+            "total_cents": 9_750,
+            "balance_due_cents": 0,
+        }
+    )
+    await repo.create_invoice(
+        invoice,
+        lines=[
+            _make_line("tuition-ach-rollback", invoice.invoice_id, acad, 10_000),
+            InvoiceLine(
+                line_id="ach-discount:inv-ach-ref-rollback",
+                academy_id=acad,
+                invoice_id=invoice.invoice_id,
+                line_type="ach_discount",
+                description="ACH autopay discount",
+                quantity=1,
+                unit_amount_cents=-250,
+                amount_cents=-250,
+                source_type="autopay_cash_discount",
+                source_id="cash-discount-v1",
+                created_at=now,
+            ),
+        ],
+        idempotency_key="ach-refund:rollback",
+    )
+
+    await repo.apply_invoice_refund(
+        invoice_id="inv-ach-ref-rollback",
+        amount_cents=9_750,
+    )
+    await repo.reverse_invoice_refund(
+        invoice_id="inv-ach-ref-rollback",
+        amount_cents=9_750,
+    )
+
+    reloaded = await repo.get_invoice("inv-ach-ref-rollback")
+    assert reloaded is not None
+    assert reloaded.refunded_cents == 0
+    assert reloaded.version == 2
+    assert (
+        await db["account_credit_ledger"].count_documents(
+            {
+                "academy_id": acad,
+                "invoice_id": "inv-ach-ref-rollback",
+                "source_type": "ACH_DISCOUNT_REVERSAL",
+            }
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_stale_refund_reversal_cleanup_preserves_newer_discount_reversal(db, acad) -> None:
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    invoice = _make_invoice("inv-ach-ref-race", acad, now).model_copy(
+        update={
+            "status": "paid",
+            "subtotal_cents": 9_750,
+            "total_cents": 9_750,
+            "balance_due_cents": 0,
+        }
+    )
+    await repo.create_invoice(
+        invoice,
+        lines=[
+            _make_line("tuition-ach-race", invoice.invoice_id, acad, 10_000),
+            InvoiceLine(
+                line_id="ach-discount:inv-ach-ref-race",
+                academy_id=acad,
+                invoice_id=invoice.invoice_id,
+                line_type="ach_discount",
+                description="ACH autopay discount",
+                quantity=1,
+                unit_amount_cents=-250,
+                amount_cents=-250,
+                source_type="autopay_cash_discount",
+                source_id="cash-discount-v1",
+                created_at=now,
+            ),
+        ],
+        idempotency_key="ach-refund:race",
+    )
+
+    updated = await repo.apply_invoice_refund(
+        invoice_id="inv-ach-ref-race",
+        amount_cents=9_750,
+    )
+    assert updated.version == 1
+    await db["account_credit_ledger"].update_one(
+        {
+            "academy_id": acad,
+            "invoice_id": "inv-ach-ref-race",
+            "source_type": "ACH_DISCOUNT_REVERSAL",
+        },
+        {"$set": {"refund_invoice_version": 3}},
+    )
+
+    await repo._delete_ach_discount_reversal_credit_notes(
+        invoice_id="inv-ach-ref-race",
+        through_invoice_version=2,
+    )
+
+    reversal = await db["account_credit_ledger"].find_one(
+        {
+            "academy_id": acad,
+            "invoice_id": "inv-ach-ref-race",
+            "source_type": "ACH_DISCOUNT_REVERSAL",
+        }
+    )
+    assert reversal is not None
+    assert reversal["refund_invoice_version"] == 3
+
+
+@pytest.mark.asyncio
 async def test_sum_overpayment_credits_for_invoice(db, acad) -> None:
     """P0-3: the admin view's overpayment_credit_cents must be derivable from the credit
     ledger (no longer hardcoded 0)."""

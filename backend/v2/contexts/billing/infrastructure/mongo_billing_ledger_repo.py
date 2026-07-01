@@ -947,24 +947,117 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
                 "updated_at": self._clock(),
             }
         )
-        return await self.save_invoice(updated)
+        saved = await self.save_invoice(updated)
+        if saved.refunded_cents == saved.total_cents:
+            try:
+                await self._ensure_ach_discount_reversal_credit_notes(saved)
+            except Exception:
+                await self.reverse_invoice_refund(invoice_id=invoice_id, amount_cents=amount_cents)
+                raise
+        return saved
+
+    async def _ensure_ach_discount_reversal_credit_notes(self, invoice: LedgerInvoice) -> None:
+        academy_id = current_academy_id()
+        now = self._clock()
+        async for line_doc in self._db["invoice_lines"].find(
+            {
+                "academy_id": academy_id,
+                "invoice_id": invoice.invoice_id,
+                "line_type": "ach_discount",
+            }
+        ):
+            line_amount_cents = int(line_doc.get("amount_cents", 0))
+            if line_amount_cents >= 0:
+                continue
+            amount_cents = abs(line_amount_cents)
+            line_id = str(line_doc["line_id"])
+            reversal = CreditLedgerEntry(
+                credit_id=f"credit-ach-discount-reversal-{line_id}",
+                academy_id=academy_id,
+                parent_id=invoice.parent_id,
+                student_id=invoice.student_id,
+                enrollment_id=invoice.enrollment_id,
+                invoice_id=invoice.invoice_id,
+                type="CREDIT_VOIDED",
+                status="VOIDED",
+                amount_cents=amount_cents,
+                remaining_amount_cents=0,
+                currency=invoice.currency,
+                reason=f"ACH discount reversal audit for invoice {invoice.invoice_id}",
+                source_type="ACH_DISCOUNT_REVERSAL",
+                source_id=line_id,
+                created_at=now,
+                updated_at=now,
+            )
+            reversal_doc = _mongo_doc(reversal)
+            set_on_insert = {
+                "credit_id": reversal_doc.pop("credit_id"),
+                "created_at": reversal_doc.pop("created_at"),
+            }
+            reversal_doc["refund_invoice_version"] = invoice.version
+            try:
+                await self._db["account_credit_ledger"].update_one(
+                    {
+                        "academy_id": academy_id,
+                        "source_type": "ACH_DISCOUNT_REVERSAL",
+                        "source_id": line_id,
+                    },
+                    {"$setOnInsert": set_on_insert, "$set": reversal_doc},
+                    upsert=True,
+                )
+            except DuplicateKeyError:
+                winner = await self._db["account_credit_ledger"].find_one(
+                    {
+                        "academy_id": academy_id,
+                        "source_type": "ACH_DISCOUNT_REVERSAL",
+                        "source_id": line_id,
+                    }
+                )
+                if winner is None:
+                    raise
+
+    async def _delete_ach_discount_reversal_credit_notes(
+        self, *, invoice_id: str, through_invoice_version: int
+    ) -> None:
+        await self._db["account_credit_ledger"].delete_many(
+            {
+                "academy_id": current_academy_id(),
+                "invoice_id": invoice_id,
+                "source_type": "ACH_DISCOUNT_REVERSAL",
+                "$or": [
+                    {"refund_invoice_version": {"$lte": through_invoice_version}},
+                    {"refund_invoice_version": {"$exists": False}},
+                ],
+            }
+        )
 
     async def reverse_invoice_refund(self, *, invoice_id: str, amount_cents: int) -> None:
         """Compensating decrement of ``refunded_cents`` when a claimed refund fails downstream
-        (e.g. the Stripe call raised after ``apply_invoice_refund`` succeeded). Uses an atomic,
-        non-negative-guarded ``$inc`` so it composes safely with concurrent writers — it is a
-        commutative rollback of a claim we just made, so it does not need the version guard.
+        (e.g. the Stripe call raised after ``apply_invoice_refund`` succeeded). Uses an
+        atomic, non-negative-guarded ``$inc`` and bumps ``version`` so stale invoice saves
+        cannot resurrect the refunded claim after rollback.
         """
         if amount_cents <= 0:
             return
-        await self.collection.update_one(
+        updated = await self.collection.find_one_and_update(
             {
                 "academy_id": current_academy_id(),
                 "invoice_id": invoice_id,
                 "refunded_cents": {"$gte": amount_cents},
             },
-            {"$inc": {"refunded_cents": -amount_cents}, "$set": {"updated_at": self._clock()}},
+            {
+                "$inc": {"refunded_cents": -amount_cents, "version": 1},
+                "$set": {"updated_at": self._clock()},
+            },
+            return_document=ReturnDocument.AFTER,
         )
+        if updated is None:
+            return
+        if int(updated.get("refunded_cents", 0)) < int(updated.get("total_cents", 0)):
+            await self._delete_ach_discount_reversal_credit_notes(
+                invoice_id=invoice_id,
+                through_invoice_version=int(updated.get("version", 0)),
+            )
 
     async def sum_overpayment_credits_for_invoice(self, invoice_id: str) -> int:
         """Total APPROVED overpayment credit attributed to an invoice (for admin views)."""
