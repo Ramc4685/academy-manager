@@ -36,6 +36,9 @@ class FakeStripeGateway(StripeGateway):
         self.customer_default_payment_methods: list[dict[str, Any]] = []
         # customer_id -> list of charge dicts (legacy match candidates, #242 WI-3)
         self.charges_by_customer: dict[str, list[dict[str, Any]]] = {}
+        # stripe_account -> extra PaymentIntents only visible when a
+        # reconciliation search is scoped to that connected account (Slice I).
+        self.connected_payment_intents: dict[str, list[dict[str, Any]]] = {}
 
     async def create_checkout_session(
         self,
@@ -238,13 +241,18 @@ class FakeStripeGateway(StripeGateway):
         )
 
     async def search_app_owned_payment_intents(
-        self, *, academy_id: str, limit: int = 100
+        self, *, academy_id: str, limit: int = 100, stripe_account: str | None = None
     ) -> list[dict[str, Any]]:
+        source = (
+            self.connected_payment_intents.get(stripe_account, [])
+            if stripe_account
+            else self.payment_intents
+        )
         matched = [
             pi
-            for pi in self.payment_intents
+            for pi in source
             if str((pi.get("metadata") or {}).get("academy_id") or "") == academy_id
-            and str(pi.get("status") or "").lower() == "succeeded"
+            and str(pi.get("status") or "").lower() in {"succeeded", "processing"}
         ]
         return matched[: max(1, min(int(limit), 100))]
 

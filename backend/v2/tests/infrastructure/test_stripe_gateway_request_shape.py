@@ -208,10 +208,40 @@ async def test_payment_intent_reconciliation_search_is_scoped_to_academy() -> No
     result = await gateway.search_app_owned_payment_intents(academy_id="academy_1", limit=25)
 
     assert result == [{"id": "pi_search_1", "status": "succeeded"}]
+    # `processing` is included alongside `succeeded` so ACH-in-flight PIs
+    # (§7.2) are visible to reconciliation instead of only appearing once
+    # settled.
     assert _FakePaymentIntent.calls[-1] == {
-        "query": 'metadata["academy_id"]:"academy_1" AND status:"succeeded"',
+        "query": (
+            'metadata["academy_id"]:"academy_1" AND (status:"succeeded" OR status:"processing")'
+        ),
         "limit": 25,
     }
+
+
+@pytest.mark.asyncio
+async def test_payment_intent_reconciliation_search_scopes_to_connected_account() -> None:
+    """Slice I: reconciliation must be able to search a connected account's
+    PaymentIntents by passing Stripe's `stripe_account` header/param, or money
+    routed through that account is invisible to platform-level search."""
+    gateway = RealStripeGateway(api_key="sk_test_fake", webhook_secret="whsec_fake")
+
+    await gateway.search_app_owned_payment_intents(
+        academy_id="academy_1", limit=25, stripe_account="acct_connected_1"
+    )
+
+    assert _FakePaymentIntent.calls[-1]["stripe_account"] == "acct_connected_1"
+
+
+@pytest.mark.asyncio
+async def test_payment_intent_reconciliation_search_omits_stripe_account_when_platform_scoped() -> (
+    None
+):
+    gateway = RealStripeGateway(api_key="sk_test_fake", webhook_secret="whsec_fake")
+
+    await gateway.search_app_owned_payment_intents(academy_id="academy_1", limit=25)
+
+    assert "stripe_account" not in _FakePaymentIntent.calls[-1]
 
 
 @pytest.mark.asyncio

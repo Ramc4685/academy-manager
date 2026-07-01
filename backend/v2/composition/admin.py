@@ -2886,6 +2886,7 @@ def compose_admin(
             ledger=billing_ledger_repo,
             run_recorder=MongoBillingReconciliationRunRepository(db),
             academy_id=current_academy_id(),
+            connected_accounts=connected_accounts_repo,
         ).execute(limit=100)
 
     async def list_failed_payment_attempts() -> list[dict[str, Any]]:
