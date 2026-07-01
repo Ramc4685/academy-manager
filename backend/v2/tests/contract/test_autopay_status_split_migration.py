@@ -26,21 +26,79 @@ def _enrollment(enrollment_id: str, *, status: str = "active", academy_id: str =
 
 
 @pytest.mark.asyncio
-async def test_backfills_autopay_enrollment_status_from_billing_status(db) -> None:
+async def test_backfills_nonactive_status_by_relationship(db) -> None:
     await db["student_billing_enrollments"].insert_many(
         [
-            _enrollment("e-active", status="active"),
             _enrollment("e-paused", status="paused"),
             _enrollment("e-cancelled", status="cancelled"),
+            _enrollment("e-transferred", status="transferred_out"),
         ]
     )
 
     await migration_0137.up(db)
 
     by_id = {d["enrollment_id"]: d async for d in db["student_billing_enrollments"].find({})}
-    assert by_id["e-active"]["autopay_enrollment_status"] == "active"
     assert by_id["e-paused"]["autopay_enrollment_status"] == "paused"
     assert by_id["e-cancelled"]["autopay_enrollment_status"] == "disabled"
+    assert by_id["e-transferred"]["autopay_enrollment_status"] == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_active_relationship_without_setup_evidence_is_not_marked_active(db) -> None:
+    """P3: an active billing relationship with no autopay-setup evidence (no
+    saved PM, no successful attempt) must NOT be marked charge-eligible."""
+    await db["student_billing_enrollments"].insert_one(
+        _enrollment("e-active-no-setup", status="active")
+    )
+
+    await migration_0137.up(db)
+
+    doc = await db["student_billing_enrollments"].find_one({"enrollment_id": "e-active-no-setup"})
+    assert doc["autopay_enrollment_status"] == "setup_started"
+    assert doc["autopay_enrollment_status"] != "active"
+
+
+@pytest.mark.asyncio
+async def test_active_relationship_with_saved_pm_is_marked_active(db) -> None:
+    """P3: setup evidence via a saved default payment method → active."""
+    await db["student_billing_enrollments"].insert_one(_enrollment("e-active-pm", status="active"))
+    await db["parent_billing_customers"].insert_one(
+        {
+            "academy_id": "acad-1",
+            "parent_id": "parent-1",
+            "default_payment_method_id": "pm_saved_123",
+        }
+    )
+
+    await migration_0137.up(db)
+
+    doc = await db["student_billing_enrollments"].find_one({"enrollment_id": "e-active-pm"})
+    assert doc["autopay_enrollment_status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_active_relationship_with_prior_successful_attempt_is_marked_active(db) -> None:
+    """P3: setup evidence via a prior successful autopay attempt → active."""
+    await db["student_billing_enrollments"].insert_one(
+        _enrollment("e-active-paid", status="active")
+    )
+    await db["invoices"].insert_one(
+        {"academy_id": "acad-1", "invoice_id": "inv-paid", "enrollment_id": "e-active-paid"}
+    )
+    await db["payment_attempts"].insert_one(
+        {
+            "academy_id": "acad-1",
+            "invoice_id": "inv-paid",
+            "status": "succeeded",
+            "failure_code": None,
+            "created_at": datetime(2026, 6, 1, tzinfo=UTC),
+        }
+    )
+
+    await migration_0137.up(db)
+
+    doc = await db["student_billing_enrollments"].find_one({"enrollment_id": "e-active-paid"})
+    assert doc["autopay_enrollment_status"] == "active"
 
 
 @pytest.mark.asyncio
@@ -106,7 +164,8 @@ async def test_enrollment_without_attempts_gets_no_outcome_projection(db) -> Non
     await migration_0137.up(db)
 
     doc = await db["student_billing_enrollments"].find_one({"enrollment_id": "e1"})
-    assert doc["autopay_enrollment_status"] == "active"
+    # Active relationship but no setup evidence → not charge-eligible.
+    assert doc["autopay_enrollment_status"] == "setup_started"
     assert "last_attempt_outcome" not in doc
 
 

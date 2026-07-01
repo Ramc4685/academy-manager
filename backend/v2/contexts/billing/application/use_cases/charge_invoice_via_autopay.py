@@ -166,8 +166,24 @@ class ChargeInvoiceViaAutopay:
         # 2b. Charge-eligibility gate (Security P2): the invoice's enrollment
         # must be actively autopaying. Refuse to auto-charge a paused / disabled
         # / not-yet-set-up enrollment — the per-enrollment autopay status is the
-        # single charge-eligibility signal. No Stripe call, no attempt recorded.
-        if self._enrollment_autopay is not None and invoice.enrollment_id:
+        # single charge-eligibility signal. FAIL CLOSED: if the invoice carries
+        # no enrollment_id we cannot resolve an autopay status to authorize the
+        # charge, so we decline rather than bypass the check. No Stripe call, no
+        # attempt recorded in either case.
+        if self._enrollment_autopay is not None:
+            if not invoice.enrollment_id:
+                log.warning(
+                    "charge_autopay: refusing to charge invoice=%s — no enrollment_id to "
+                    "resolve autopay eligibility (fail-closed)",
+                    invoice_id,
+                )
+                return ChargeResult(
+                    success=False,
+                    invoice_id=invoice_id,
+                    status=invoice.status,
+                    balance_due_cents=invoice.balance_due_cents,
+                    decline_code="autopay_not_active",
+                )
             autopay_status = await self._enrollment_autopay.get_autopay_enrollment_status(
                 enrollment_id=invoice.enrollment_id
             )

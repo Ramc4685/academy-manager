@@ -544,6 +544,28 @@ async def test_disabled_enrollment_invoice_is_not_charged() -> None:
     assert repo.payment_attempts == []
 
 
+async def test_invoice_without_enrollment_id_fails_closed_and_is_not_charged() -> None:
+    """P2: the eligibility gate is fail-CLOSED. An autopay invoice with a
+    null/empty enrollment_id cannot be resolved to an autopay status, so it must
+    be declined (autopay_not_active) — never charged by bypassing the check."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open", enrollment_id=None)])
+    enrollment_autopay = FakeEnrollmentAutopay(autopay_enrollment_status="active")
+    stripe = FakeStripeSucceeds()
+
+    result = await _uc(repo, stripe, enrollment_autopay=enrollment_autopay).execute("inv-1")
+
+    assert result.success is False
+    assert result.decline_code == "autopay_not_active"
+    assert result.status == "open"
+    assert result.balance_due_cents == 10_000
+    # No Stripe call, no ledger writes, and the status lookup was never reached.
+    assert stripe.create_calls == []
+    assert stripe.lookup_calls == []
+    assert repo.recorded_payments == []
+    assert repo.payment_attempts == []
+    assert enrollment_autopay.recorded == []
+
+
 async def test_bounced_charge_sets_declined_outcome_but_leaves_enrollment_active() -> None:
     """Regression (Slice B): a bounced autopay charge projects
     last_attempt_outcome=declined onto the enrollment but does NOT change

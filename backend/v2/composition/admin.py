@@ -2429,6 +2429,23 @@ def compose_admin(
     # Per-enrollment autopay status lives on student_billing_enrollments — the
     # single source of truth pause/resume + the charge path share (Slice B).
     student_billing_enrollment_repo = MongoStudentBillingEnrollmentRepository(db)
+
+    class _EnrollmentAutopayStatusGateway:
+        """Adapts the billing enrollment repo to the enrollment-context
+        ``EnrollmentAutopayStatusGateway`` port (``set_enrollment_status``),
+        delegating to the single guarded writer ``set_autopay_enrollment_status``
+        (Slice B). Mirrors the ``_EnrollmentAutopayState`` shim in
+        ``composition/parent.py`` — the port name differs from the repo method,
+        so pause/resume/approve must go through this adapter, not the repo
+        directly."""
+
+        async def set_enrollment_status(self, *, enrollment_id: str, status: str) -> bool:
+            return await student_billing_enrollment_repo.set_autopay_enrollment_status(
+                enrollment_id=enrollment_id,
+                status=status,  # type: ignore[arg-type]
+            )
+
+    enrollment_autopay_status_gateway = _EnrollmentAutopayStatusGateway()
     curriculum = compose_curriculum(db)
     student_progress = compose_student_progress(db, outbox)
     generate_daily_teaching_plan = GenerateDailyTeachingPlan(
@@ -2482,7 +2499,7 @@ def compose_admin(
         waitlist=waitlist,
         enrollment_events=enrollment_events,
         billing_deferrals=billing_deferrals,
-        autopay_status=student_billing_enrollment_repo,
+        autopay_status=enrollment_autopay_status_gateway,
     )
     resume_enrollment = ResumeEnrollment(
         enrollments=enrollments_w,
@@ -2491,7 +2508,7 @@ def compose_admin(
         waitlist=waitlist,
         enrollment_events=enrollment_events,
         billing_deferrals=billing_deferrals,
-        autopay_status=student_billing_enrollment_repo,
+        autopay_status=enrollment_autopay_status_gateway,
     )
     withdraw_enrollment = WithdrawEnrollment(
         enrollments=enrollments_w,
@@ -2518,7 +2535,7 @@ def compose_admin(
         pause_enrollment=pause_enrollment,
         scheduled_actions=scheduled_actions,
         billing_deferrals=billing_deferrals,
-        autopay_status=student_billing_enrollment_repo,
+        autopay_status=enrollment_autopay_status_gateway,
         academy_id=academy_id,
     )
     decline_pause_request = DeclinePauseRequest(pause_requests=pause_requests)

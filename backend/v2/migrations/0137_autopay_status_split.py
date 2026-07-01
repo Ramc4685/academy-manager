@@ -41,9 +41,11 @@ version = "0137_autopay_status_split"
 OPT_DATE = ["date", "null"]
 OPT_STRING = ["string", "null"]
 
-# billing-relationship status -> initial autopay enrollment status
-_STATUS_TO_AUTOPAY_ENROLLMENT = {
-    "active": "active",
+# billing-relationship status -> initial autopay enrollment status for
+# enrollments that are NOT active. An active billing relationship is resolved
+# separately (see _autopay_status_for_active) because "active billing" alone is
+# not evidence that the parent ever set up autopay.
+_NONACTIVE_STATUS_TO_AUTOPAY_ENROLLMENT = {
     "paused": "paused",
     "cancelled": "disabled",
     "transferred_out": "disabled",
@@ -160,20 +162,95 @@ async def _latest_attempt_for_enrollment(
     )
 
 
+async def _has_autopay_setup_evidence(
+    db: AsyncIOMotorDatabase, *, academy_id: str, parent_id: str, enrollment_id: str
+) -> bool:
+    """True if there is real evidence the parent set up autopay for this
+    enrollment — so an ``active`` billing relationship can be marked
+    charge-eligible (``autopay_enrollment_status="active"``). Evidence is
+    either:
+
+    - the parent has a saved default payment method
+      (``parent_billing_customers.default_payment_method_id`` present), OR
+    - the enrollment has a prior *successful* autopay attempt (a
+      ``payment_attempts`` row with ``status="succeeded"`` on one of its
+      invoices).
+
+    Without evidence we must NOT mark the enrollment active — a parent who
+    never set up autopay would otherwise be wrongly charge-eligible.
+    """
+    if parent_id:
+        customer = await db["parent_billing_customers"].find_one(
+            {
+                "academy_id": academy_id,
+                "parent_id": parent_id,
+                "default_payment_method_id": {"$type": "string", "$ne": ""},
+            },
+            {"_id": 1},
+        )
+        if customer is not None:
+            return True
+
+    invoice_ids = [
+        str(inv["invoice_id"])
+        async for inv in db["invoices"].find(
+            {"academy_id": academy_id, "enrollment_id": enrollment_id},
+            {"invoice_id": 1},
+        )
+        if inv.get("invoice_id")
+    ]
+    if invoice_ids:
+        succeeded = await db["payment_attempts"].find_one(
+            {
+                "academy_id": academy_id,
+                "invoice_id": {"$in": invoice_ids},
+                "status": "succeeded",
+            },
+            {"_id": 1},
+        )
+        if succeeded is not None:
+            return True
+    return False
+
+
 async def up(db: AsyncIOMotorDatabase) -> None:
     enrollments = db["student_billing_enrollments"]
 
-    # 1. Backfill autopay_enrollment_status from the billing-relationship status.
+    # 1. Backfill autopay_enrollment_status. An ACTIVE billing relationship is
+    #    only marked charge-eligible ("active") when there is real evidence the
+    #    parent set up autopay (saved default PM or a prior successful autopay
+    #    attempt); otherwise it lands on "setup_started" (a legal, NON-charging
+    #    state that can advance to active on real setup completion). Non-active
+    #    relationships map by status (paused -> paused, cancelled/
+    #    transferred_out -> disabled).
     to_backfill = await enrollments.count_documents(
         {"autopay_enrollment_status": {"$exists": False}}
     )
     status_migrated = 0
+    active_with_evidence = 0
+    active_without_evidence = 0
     async for doc in enrollments.find(
         {"autopay_enrollment_status": {"$exists": False}},
-        {"_id": 1, "status": 1},
+        {"_id": 1, "status": 1, "academy_id": 1, "parent_id": 1, "enrollment_id": 1},
     ):
         current_status = str(doc.get("status") or "active")
-        autopay_status = _STATUS_TO_AUTOPAY_ENROLLMENT.get(current_status, "setup_started")
+        if current_status == "active":
+            has_evidence = await _has_autopay_setup_evidence(
+                db,
+                academy_id=str(doc.get("academy_id") or ""),
+                parent_id=str(doc.get("parent_id") or ""),
+                enrollment_id=str(doc.get("enrollment_id") or ""),
+            )
+            if has_evidence:
+                autopay_status = "active"
+                active_with_evidence += 1
+            else:
+                autopay_status = "setup_started"
+                active_without_evidence += 1
+        else:
+            autopay_status = _NONACTIVE_STATUS_TO_AUTOPAY_ENROLLMENT.get(
+                current_status, "setup_started"
+            )
         result = await enrollments.update_one(
             {"_id": doc["_id"]},
             {"$set": {"autopay_enrollment_status": autopay_status}},
@@ -184,8 +261,11 @@ async def up(db: AsyncIOMotorDatabase) -> None:
         f"expected={to_backfill}"
     )
     log.info(
-        "0137: backfilled autopay_enrollment_status on %d student_billing_enrollments",
+        "0137: backfilled autopay_enrollment_status on %d student_billing_enrollments "
+        "(active_with_evidence=%d, active_without_evidence->setup_started=%d)",
         status_migrated,
+        active_with_evidence,
+        active_without_evidence,
     )
 
     # 2. Backfill last_attempt_outcome projection from each enrollment's latest
