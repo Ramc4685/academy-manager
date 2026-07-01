@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from pymongo.errors import DuplicateKeyError
+
 from backend.v2.contexts.billing.domain.models import AutopayConsent
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -35,11 +37,28 @@ class MongoAutopayConsentRepository(TenantScopedRepository):
             created_at=doc.get("created_at") or captured_at or datetime.now(UTC),
         )
 
-    async def append(self, consent: AutopayConsent) -> AutopayConsent:
+    async def append(
+        self, consent: AutopayConsent, *, session: Any | None = None
+    ) -> AutopayConsent:
+        existing = await self._find_one(
+            {"setup_intent_id": consent.setup_intent_id},
+            session=session,
+        )
+        if existing is not None:
+            return self._to_domain(existing)
         doc = consent.model_dump(mode="python")
         doc["at"] = consent.captured_at
         doc.pop("academy_id", None)
-        await self._insert_one(doc)
+        try:
+            await self._insert_one(doc, session=session)
+        except DuplicateKeyError:
+            existing = await self._find_one(
+                {"setup_intent_id": consent.setup_intent_id},
+                session=session,
+            )
+            if existing is None:
+                raise
+            return self._to_domain(existing)
         return consent
 
     async def list_for_parent(self, *, parent_id: str) -> list[AutopayConsent]:

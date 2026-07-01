@@ -306,7 +306,7 @@ def test_parent_reads_checkout_status_with_request_consent_metadata() -> None:
             "checkout_session_id": "cs_status",
             "source": "parent_checkout_status",
             "actor_id": "parent-1",
-            "ip": "203.0.113.10",
+            "ip": "testclient",
             "user_agent": "pytest-browser",
         }
     ]

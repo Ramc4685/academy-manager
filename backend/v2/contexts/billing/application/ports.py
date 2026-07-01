@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel
 
@@ -34,6 +35,12 @@ from backend.v2.contexts.billing.domain.session_type import (
     SessionType,
     StudentBillingEnrollment,
 )
+
+T = TypeVar("T")
+
+
+class TransactionRunner(Protocol):
+    async def run(self, work: Callable[[Any | None], Awaitable[T]]) -> T: ...
 
 
 class PaymentRepository(Protocol):
@@ -71,11 +78,14 @@ class ParentStripeCustomerRepository(Protocol):
         consent_text_version: str | None = None,
         ach_mandate_version: str | None = None,
         card_disclosure_version: str | None = None,
+        session: Any | None = None,
     ) -> None: ...
 
 
 class AutopayConsentRepository(Protocol):
-    async def append(self, consent: AutopayConsent) -> AutopayConsent: ...
+    async def append(
+        self, consent: AutopayConsent, *, session: Any | None = None
+    ) -> AutopayConsent: ...
     async def list_for_parent(self, *, parent_id: str) -> list[AutopayConsent]: ...
 
 
@@ -97,9 +107,12 @@ class EnrollmentAutopayStateRepository(Protocol):
         *,
         enrollment_id: str,
         autopay_enrollment_status: str,
+        session: Any | None = None,
     ) -> bool: ...
 
-    async def mark_autopay_active_from_setup(self, *, enrollment_id: str) -> bool:
+    async def mark_autopay_active_from_setup(
+        self, *, enrollment_id: str, session: Any | None = None
+    ) -> bool:
         """Setup completed successfully — walk the enrollment to ``active``
         through the guarded transition path (handles first setup and re-setup
         from ``disabled``). Returns True if it ends up ``active``."""

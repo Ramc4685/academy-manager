@@ -11,6 +11,7 @@ per-parent here.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -55,6 +56,7 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
         consent_text_version: str | None = None,
         ach_mandate_version: str | None = None,
         card_disclosure_version: str | None = None,
+        session: Any | None = None,
     ) -> None:
         now = datetime.now(UTC)
         update: dict[str, object] = {
@@ -95,4 +97,5 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
             {"parent_id": parent_id},
             mutation,
             upsert=True,
+            session=session,
         )

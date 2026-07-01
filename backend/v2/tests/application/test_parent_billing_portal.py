@@ -336,6 +336,7 @@ class _CustomerRepo:
         consent_text_version: str | None = None,
         ach_mandate_version: str | None = None,
         card_disclosure_version: str | None = None,
+        session=None,
     ) -> None:
         row = {
             "parent_id": parent_id,
@@ -359,19 +360,30 @@ class _CustomerRepo:
 
 
 class _ConsentRepo:
-    def __init__(self) -> None:
+    def __init__(self, *, fail: bool = False) -> None:
         self.consents: list[object] = []
+        self.by_setup_intent: dict[str, object] = {}
+        self.fail = fail
 
-    async def append(self, consent):
+    async def append(self, consent, *, session=None):
+        if self.fail:
+            raise RuntimeError("consent append failed")
+        existing = self.by_setup_intent.get(consent.setup_intent_id)
+        if existing is not None:
+            return existing
         self.consents.append(consent)
+        self.by_setup_intent[consent.setup_intent_id] = consent
         return consent
 
 
 class _Outbox:
-    def __init__(self) -> None:
+    def __init__(self, *, fail: bool = False) -> None:
         self.events: list[object] = []
+        self.fail = fail
 
     async def append(self, event, *, session=None) -> None:
+        if self.fail:
+            raise RuntimeError("outbox append failed")
         self.events.append(event)
 
 
@@ -385,6 +397,7 @@ class _EnrollmentAutopay:
         *,
         enrollment_id: str,
         autopay_enrollment_status: str,
+        session=None,
     ) -> bool:
         self.synced.append(
             {
@@ -394,9 +407,49 @@ class _EnrollmentAutopay:
         )
         return True
 
-    async def mark_autopay_active_from_setup(self, *, enrollment_id: str) -> bool:
+    async def mark_autopay_active_from_setup(self, *, enrollment_id: str, session=None) -> bool:
         self.setup_completed.append(enrollment_id)
         return True
+
+
+def _setup_checkout_gateway() -> _CheckoutGateway:
+    gateway = _CheckoutGateway(
+        retrieved={
+            "id": "cs_setup_complete",
+            "object": "checkout.session",
+            "mode": "setup",
+            "status": "complete",
+            "customer": "cus_parent",
+            "setup_intent": "seti_saved_card",
+            "client_reference_id": "p1",
+            "metadata": {
+                "parent_id": "p1",
+                "academy_id": "acad",
+                "app_subscription_id": "setup-local",
+                "enrollment_id": "enr-1",
+                "source": "autopay_setup",
+            },
+        }
+    )
+    gateway.setup_intents["seti_saved_card"] = {
+        "id": "seti_saved_card",
+        "object": "setup_intent",
+        "customer": "cus_parent",
+        "payment_method": "pm_saved_card",
+        "mandate": "mandate_saved_card",
+        "metadata": {
+            "parent_id": "p1",
+            "academy_id": "acad",
+            "enrollment_id": "enr-1",
+            "source": "autopay_setup",
+        },
+    }
+    gateway.payment_methods["pm_saved_card"] = {
+        "id": "pm_saved_card",
+        "object": "payment_method",
+        "type": "card",
+    }
+    return gateway
 
 
 @pytest.mark.asyncio
@@ -524,6 +577,99 @@ async def test_complete_autopay_setup_emits_consent_event_with_method_version_an
 
 
 @pytest.mark.asyncio
+async def test_autopay_setup_replay_same_setup_intent_does_not_duplicate_consent_or_event() -> None:
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    repo = _SubscriptionRepo()
+    customers = _CustomerRepo()
+    consents = _ConsentRepo()
+    outbox = _Outbox()
+    enrollment_autopay = _EnrollmentAutopay()
+    gateway = _setup_checkout_gateway()
+    status_uc = GetCheckoutStatus(
+        payments=_NoPaymentRepo(),
+        subscriptions=repo,
+        stripe=gateway,
+        parent_customers=customers,
+        enrollment_autopay=enrollment_autopay,
+        consent_repo=consents,
+        outbox=outbox,
+        academy_id="acad",
+        clock=lambda: now,
+    )
+    complete_uc = CompleteAutopaySetup(
+        stripe=gateway,
+        parent_customers=customers,
+        enrollment_autopay=enrollment_autopay,
+        consent_repo=consents,
+        outbox=outbox,
+        academy_id="acad",
+        clock=lambda: now,
+    )
+
+    await status_uc.execute("cs_setup_complete", parent_id="p1")
+    await complete_uc.execute_from_checkout(gateway.retrieved)
+    await complete_uc.execute_from_setup_intent(gateway.setup_intents["seti_saved_card"])
+
+    assert [consent.setup_intent_id for consent in consents.consents] == ["seti_saved_card"]
+    assert [event.name for event in outbox.events] == ["Billing.AutopayConsentCaptured"]
+    assert [row["setup_intent_id"] for row in customers.default_methods] == ["seti_saved_card"]
+    assert enrollment_autopay.setup_completed == ["enr-1"]
+
+
+@pytest.mark.asyncio
+async def test_autopay_setup_consent_append_failure_does_not_update_projection_or_enrollment() -> (
+    None
+):
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    customers = _CustomerRepo()
+    consents = _ConsentRepo(fail=True)
+    outbox = _Outbox()
+    enrollment_autopay = _EnrollmentAutopay()
+    gateway = _setup_checkout_gateway()
+    uc = CompleteAutopaySetup(
+        stripe=gateway,
+        parent_customers=customers,
+        enrollment_autopay=enrollment_autopay,
+        consent_repo=consents,
+        outbox=outbox,
+        academy_id="acad",
+        clock=lambda: now,
+    )
+
+    with pytest.raises(RuntimeError, match="consent append failed"):
+        await uc.execute_from_setup_intent(gateway.setup_intents["seti_saved_card"])
+
+    assert customers.default_methods == []
+    assert outbox.events == []
+    assert enrollment_autopay.setup_completed == []
+
+
+@pytest.mark.asyncio
+async def test_autopay_setup_outbox_failure_does_not_update_projection_or_enrollment() -> None:
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    customers = _CustomerRepo()
+    consents = _ConsentRepo()
+    outbox = _Outbox(fail=True)
+    enrollment_autopay = _EnrollmentAutopay()
+    gateway = _setup_checkout_gateway()
+    uc = CompleteAutopaySetup(
+        stripe=gateway,
+        parent_customers=customers,
+        enrollment_autopay=enrollment_autopay,
+        consent_repo=consents,
+        outbox=outbox,
+        academy_id="acad",
+        clock=lambda: now,
+    )
+
+    with pytest.raises(RuntimeError, match="outbox append failed"):
+        await uc.execute_from_setup_intent(gateway.setup_intents["seti_saved_card"])
+
+    assert customers.default_methods == []
+    assert enrollment_autopay.setup_completed == []
+
+
+@pytest.mark.asyncio
 async def test_checkout_status_reconciles_completed_subscription_checkout() -> None:
     now = datetime(2026, 6, 11, tzinfo=UTC)
     repo = _SubscriptionRepo()
@@ -586,42 +732,7 @@ async def test_checkout_status_reconciles_completed_setup_checkout_without_subsc
     repo = _SubscriptionRepo()
     customers = _CustomerRepo()
     enrollment_autopay = _EnrollmentAutopay()
-    gateway = _CheckoutGateway(
-        retrieved={
-            "id": "cs_setup_complete",
-            "object": "checkout.session",
-            "mode": "setup",
-            "status": "complete",
-            "customer": "cus_parent",
-            "setup_intent": "seti_saved_card",
-            "client_reference_id": "p1",
-            "metadata": {
-                "parent_id": "p1",
-                "academy_id": "acad",
-                "app_subscription_id": "setup-local",
-                "enrollment_id": "enr-1",
-                "source": "autopay_setup",
-            },
-        }
-    )
-    gateway.setup_intents["seti_saved_card"] = {
-        "id": "seti_saved_card",
-        "object": "setup_intent",
-        "customer": "cus_parent",
-        "payment_method": "pm_saved_card",
-        "mandate": "mandate_saved_card",
-        "metadata": {
-            "parent_id": "p1",
-            "academy_id": "acad",
-            "enrollment_id": "enr-1",
-            "source": "autopay_setup",
-        },
-    }
-    gateway.payment_methods["pm_saved_card"] = {
-        "id": "pm_saved_card",
-        "object": "payment_method",
-        "type": "card",
-    }
+    gateway = _setup_checkout_gateway()
     uc = GetCheckoutStatus(
         payments=_NoPaymentRepo(),
         subscriptions=repo,

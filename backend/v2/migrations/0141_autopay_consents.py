@@ -98,6 +98,8 @@ async def up(db: AsyncIOMotorDatabase) -> None:
         name="tenant_parent_consent_history",
     )
     await consents.create_index(
-        [("academy_id", 1), ("setup_intent_id", 1), ("captured_at", 1)],
-        name="tenant_setup_intent_consent_history",
+        [("academy_id", 1), ("setup_intent_id", 1)],
+        name="tenant_setup_intent_unique",
+        unique=True,
+        sparse=True,
     )

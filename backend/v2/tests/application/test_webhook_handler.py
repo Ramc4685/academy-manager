@@ -233,6 +233,7 @@ class FakeParentStripeCustomers:
         consent_text_version: str | None = None,
         ach_mandate_version: str | None = None,
         card_disclosure_version: str | None = None,
+        session=None,
     ) -> None:
         row = {
             "parent_id": parent_id,
@@ -265,6 +266,7 @@ class FakeEnrollmentAutopayState:
         *,
         enrollment_id: str,
         autopay_enrollment_status: str,
+        session=None,
     ) -> bool:
         self.synced.append(
             {
@@ -274,9 +276,23 @@ class FakeEnrollmentAutopayState:
         )
         return True
 
-    async def mark_autopay_active_from_setup(self, *, enrollment_id: str) -> bool:
+    async def mark_autopay_active_from_setup(self, *, enrollment_id: str, session=None) -> bool:
         self.setup_completed.append(enrollment_id)
         return True
+
+
+class FakeAutopayConsentRepo:
+    def __init__(self) -> None:
+        self.consents: list[Any] = []
+        self.by_setup_intent: dict[str, Any] = {}
+
+    async def append(self, consent, *, session=None):
+        existing = self.by_setup_intent.get(consent.setup_intent_id)
+        if existing is not None:
+            return existing
+        self.consents.append(consent)
+        self.by_setup_intent[consent.setup_intent_id] = consent
+        return consent
 
 
 class FakeEnrollmentBillingIdentity:
@@ -526,6 +542,7 @@ def _build(
     billing_ledger=None,
     invoice_processing=None,
     billing_enrollments=None,
+    consent_repo=None,
 ):
     return HandleWebhookEvent(
         stripe=stripe or FakeStripeGateway(),
@@ -535,6 +552,7 @@ def _build(
         billing_enrollments=billing_enrollments,
         parent_customers=parent_customers,
         enrollment_autopay=enrollment_autopay,
+        consent_repo=consent_repo,
         enrollment_identity=enrollment_identity,
         outbox=outbox or FakeOutbox(),
         academy_id="acad",
@@ -740,6 +758,86 @@ async def test_process_next_fetches_current_checkout_before_projection() -> None
     assert subscriptions.by_id["app-sub-1"].status == "active"
     assert enrollment_autopay.setup_completed == ["enr-1"]
     assert enrollment_autopay.synced == []
+
+
+@pytest.mark.asyncio
+async def test_autopay_setup_checkout_and_setup_intent_replay_do_not_duplicate_consent_event() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    subscriptions = FakeSubscriptionRepo()
+    stripe = FakeStripeGateway()
+    stripe.autopay_setup_checkouts.append(
+        {
+            "checkout_id": "cs_setup_replay",
+            "parent_id": "p1",
+            "enrollment_id": "enr-1",
+            "session_id": "s1",
+            "setup_intent_id": "seti_replay",
+            "metadata": {
+                "academy_id": "acad",
+                "parent_id": "p1",
+                "enrollment_id": "enr-1",
+                "source": "autopay_setup",
+            },
+        }
+    )
+    stripe.setup_intents["seti_replay"] = {
+        "id": "seti_replay",
+        "object": "setup_intent",
+        "customer": "cus_parent",
+        "payment_method": "pm_replay",
+        "mandate": None,
+        "metadata": {
+            "academy_id": "acad",
+            "parent_id": "p1",
+            "enrollment_id": "enr-1",
+            "source": "autopay_setup",
+        },
+    }
+    stripe.payment_methods["pm_replay"] = {
+        "id": "pm_replay",
+        "object": "payment_method",
+        "type": "card",
+    }
+    parent_customers = FakeParentStripeCustomers()
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    consents = FakeAutopayConsentRepo()
+    outbox = FakeOutbox()
+    uc = _build(
+        repo,
+        outbox=outbox,
+        subscriptions=subscriptions,
+        parent_customers=parent_customers,
+        enrollment_autopay=enrollment_autopay,
+        consent_repo=consents,
+        stripe=stripe,
+    )
+
+    checkout_body = json.dumps(
+        {
+            "id": "evt_autopay_setup_checkout_replay",
+            "type": "checkout.session.completed",
+            "data": {"object": {"id": "cs_setup_replay"}},
+        }
+    ).encode()
+    setup_intent_body = json.dumps(
+        {
+            "id": "evt_setup_intent_succeeded_replay",
+            "type": "setup_intent.succeeded",
+            "data": {"object": {"id": "seti_replay"}},
+        }
+    ).encode()
+
+    await uc.accept(checkout_body, "test_signature")
+    await uc.process_next(processor_id="test-worker")
+    await uc.accept(setup_intent_body, "test_signature")
+    await uc.process_next(processor_id="test-worker")
+
+    assert [consent.setup_intent_id for consent in consents.consents] == ["seti_replay"]
+    assert [event.name for event in outbox.events] == ["Billing.AutopayConsentCaptured"]
+    assert [row["setup_intent_id"] for row in parent_customers.default_methods] == ["seti_replay"]
+    assert enrollment_autopay.setup_completed == ["enr-1"]
 
 
 @pytest.mark.asyncio

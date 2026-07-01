@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 from zoneinfo import ZoneInfo
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -157,6 +158,8 @@ from backend.v2.shared.tenancy import tenant_scope
 
 from .event_handlers import HandlerDeps, install_handlers
 
+T = TypeVar("T")
+
 
 @dataclass
 class ParentComposition:
@@ -195,6 +198,19 @@ class ParentComposition:
     curriculum: CurriculumComposition
 
 
+class _MongoTransactionRunner:
+    def __init__(self, db: AsyncIOMotorDatabase[Any]) -> None:
+        self._db = db
+
+    async def run(self, work: Callable[[Any | None], Awaitable[T]]) -> T:
+        try:
+            async with await self._db.client.start_session() as session:
+                async with session.start_transaction():
+                    return await work(session)
+        except (AttributeError, NotImplementedError):
+            return await work(None)
+
+
 def compose_parent_webhook_handler(
     db: AsyncIOMotorDatabase[Any],
     outbox: Outbox,
@@ -217,6 +233,7 @@ def compose_parent_webhook_handler(
     connected_accounts_repo = MongoConnectedAccountRepository(db)
     dedup = MongoStripeEventDedup(db)
     invoice_processing = MongoStripeInvoiceProcessingRepository(db)
+    transaction_runner = _MongoTransactionRunner(db)
 
     class _EnrollmentAutopayState:
         """Routes the webhook/legacy-convergence path through the SAME guarded
@@ -228,15 +245,20 @@ def compose_parent_webhook_handler(
             *,
             enrollment_id: str,
             autopay_enrollment_status: str,
+            session: Any | None = None,
         ) -> bool:
             return await student_billing_enrollments.set_autopay_enrollment_status(
                 enrollment_id=enrollment_id,
                 status=autopay_enrollment_status,  # type: ignore[arg-type]
+                session=session,
             )
 
-        async def mark_autopay_active_from_setup(self, *, enrollment_id: str) -> bool:
+        async def mark_autopay_active_from_setup(
+            self, *, enrollment_id: str, session: Any | None = None
+        ) -> bool:
             return await student_billing_enrollments.mark_autopay_active_from_setup(
                 enrollment_id=enrollment_id,
+                session=session,
             )
 
     class _EnrollmentBillingIdentity:
@@ -268,6 +290,7 @@ def compose_parent_webhook_handler(
         parent_customers=parent_customers_repo,
         enrollment_autopay=_EnrollmentAutopayState(),
         consent_repo=autopay_consents_repo,
+        transaction_runner=transaction_runner,
         enrollment_identity=_EnrollmentBillingIdentity(),
         invoice_processing=invoice_processing,
         connected_accounts=_ConnectAccountResolver(connected_accounts_repo, academy_id),
@@ -306,6 +329,7 @@ def compose_parent(
     session_types_repo = MongoSessionTypeRepository(db)
     dedup = MongoStripeEventDedup(db)
     invoice_processing = MongoStripeInvoiceProcessingRepository(db)
+    transaction_runner = _MongoTransactionRunner(db)
 
     start_checkout = StartCheckout(
         payment_repo=payments_repo,
@@ -335,15 +359,20 @@ def compose_parent(
             *,
             enrollment_id: str,
             autopay_enrollment_status: str,
+            session: Any | None = None,
         ) -> bool:
             return await student_billing_enrollments.set_autopay_enrollment_status(
                 enrollment_id=enrollment_id,
                 status=autopay_enrollment_status,  # type: ignore[arg-type]
+                session=session,
             )
 
-        async def mark_autopay_active_from_setup(self, *, enrollment_id: str) -> bool:
+        async def mark_autopay_active_from_setup(
+            self, *, enrollment_id: str, session: Any | None = None
+        ) -> bool:
             return await student_billing_enrollments.mark_autopay_active_from_setup(
                 enrollment_id=enrollment_id,
+                session=session,
             )
 
     class _EnrollmentBillingIdentity:
@@ -373,6 +402,7 @@ def compose_parent(
         enrollment_autopay=enrollment_autopay_state,
         consent_repo=autopay_consents_repo,
         outbox=outbox,
+        transaction_runner=transaction_runner,
         academy_id=academy_id,
     )
 
@@ -388,6 +418,7 @@ def compose_parent(
         parent_customers=parent_customers_repo,
         enrollment_autopay=enrollment_autopay_state,
         consent_repo=autopay_consents_repo,
+        transaction_runner=transaction_runner,
         enrollment_identity=enrollment_identity,
         invoice_processing=invoice_processing,
         connected_accounts=_ConnectAccountResolver(connected_accounts_repo, academy_id),

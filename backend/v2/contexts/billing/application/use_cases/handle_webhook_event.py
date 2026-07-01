@@ -29,6 +29,7 @@ from backend.v2.contexts.billing.application.ports import (
     StripeInvoiceProcessingRepository,
     StudentBillingEnrollmentRepository,
     SubscriptionRepository,
+    TransactionRunner,
 )
 from backend.v2.contexts.billing.application.use_cases.checkout_allocation import (
     allocate_checkout_payment_across_invoices,
@@ -115,6 +116,7 @@ class HandleWebhookEvent:
         parent_customers: ParentStripeCustomerRepository | None = None,
         enrollment_autopay: EnrollmentAutopayStateRepository | None = None,
         consent_repo: AutopayConsentRepository | None = None,
+        transaction_runner: TransactionRunner | None = None,
         enrollment_identity: EnrollmentBillingIdentityRepository | None = None,
         invoice_processing: StripeInvoiceProcessingRepository | None = None,
         connected_accounts: AccountAcademyResolver | None = None,
@@ -132,6 +134,7 @@ class HandleWebhookEvent:
         self._parent_customers = parent_customers
         self._enrollment_autopay = enrollment_autopay
         self._consent_repo = consent_repo
+        self._transaction_runner = transaction_runner
         self._enrollment_identity = enrollment_identity
         self._invoice_processing = invoice_processing
         self._connected_accounts = connected_accounts
@@ -147,6 +150,7 @@ class HandleWebhookEvent:
                 enrollment_autopay=enrollment_autopay,
                 consent_repo=consent_repo,
                 outbox=outbox,
+                transaction_runner=transaction_runner,
                 academy_id=academy_id,
                 clock=clock,
             )

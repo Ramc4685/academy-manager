@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from backend.v2.contexts.billing.domain.autopay_status import (
     AutopayAttemptOutcome,
@@ -87,6 +88,7 @@ class MongoStudentBillingEnrollmentRepository(TenantScopedRepository):
         *,
         enrollment_id: str,
         status: AutopayEnrollmentStatus,
+        session: Any | None = None,
     ) -> bool:
         """The ONE guarded write for the per-enrollment autopay-status axis.
 
@@ -99,7 +101,7 @@ class MongoStudentBillingEnrollmentRepository(TenantScopedRepository):
         Never touches `last_attempt_outcome`: a charge outcome is orthogonal to
         whether the enrollment is enrolled in autopay.
         """
-        existing = await self._find_one({"enrollment_id": enrollment_id})
+        existing = await self._find_one({"enrollment_id": enrollment_id}, session=session)
         if existing is None:
             log.warning(
                 "autopay status transition skipped: enrollment not found "
@@ -121,10 +123,13 @@ class MongoStudentBillingEnrollmentRepository(TenantScopedRepository):
         await self._update_one(
             {"enrollment_id": enrollment_id},
             {"$set": {"autopay_enrollment_status": status, "updated_at": datetime.now(UTC)}},
+            session=session,
         )
         return True
 
-    async def mark_autopay_active_from_setup(self, *, enrollment_id: str) -> bool:
+    async def mark_autopay_active_from_setup(
+        self, *, enrollment_id: str, session: Any | None = None
+    ) -> bool:
         """Transition an enrollment to ``active`` after a successful autopay
         setup completion, walking the legal intermediate states as needed.
 
@@ -147,7 +152,7 @@ class MongoStudentBillingEnrollmentRepository(TenantScopedRepository):
             "disabled": ["offered", "setup_started", "active"],
             "active": [],
         }
-        existing = await self._find_one({"enrollment_id": enrollment_id})
+        existing = await self._find_one({"enrollment_id": enrollment_id}, session=session)
         if existing is None:
             log.warning(
                 "autopay setup completion skipped: enrollment not found enrollment_id=%s",
@@ -157,7 +162,7 @@ class MongoStudentBillingEnrollmentRepository(TenantScopedRepository):
         current = existing.get("autopay_enrollment_status") or "not_offered"
         for step in walk_to_active.get(current, ["offered", "setup_started", "active"]):
             applied = await self.set_autopay_enrollment_status(
-                enrollment_id=enrollment_id, status=step
+                enrollment_id=enrollment_id, status=step, session=session
             )
             if not applied:
                 return False

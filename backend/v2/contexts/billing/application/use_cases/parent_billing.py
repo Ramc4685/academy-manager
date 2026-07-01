@@ -14,6 +14,7 @@ from backend.v2.contexts.billing.application.ports import (
     PaymentRepository,
     StripeGateway,
     SubscriptionRepository,
+    TransactionRunner,
 )
 from backend.v2.contexts.billing.domain.errors import CheckoutCreationFailed, PaymentNotFound
 from backend.v2.contexts.billing.domain.events import (
@@ -88,6 +89,7 @@ class CompleteAutopaySetup:
         enrollment_autopay: EnrollmentAutopayStateRepository,
         consent_repo: AutopayConsentRepository | None = None,
         outbox: Outbox | None = None,
+        transaction_runner: TransactionRunner | None = None,
         academy_id: str,
         clock=lambda: datetime.now(UTC),
     ) -> None:
@@ -96,6 +98,7 @@ class CompleteAutopaySetup:
         self._enrollment_autopay = enrollment_autopay
         self._consent_repo = consent_repo
         self._outbox = outbox
+        self._transaction_runner = transaction_runner
         self._academy_id = academy_id
         self._now = clock
 
@@ -191,8 +194,9 @@ class CompleteAutopaySetup:
                 "parent_id": parent_id,
             },
         )
-        await self._parent_customers.set_default_payment_method(
+        await self._persist_completion(
             parent_id=parent_id,
+            enrollment_id=enrollment_id,
             stripe_customer_id=stripe_customer_id,
             stripe_payment_method_id=stripe_payment_method_id,
             payment_method_type=payment_method_type,
@@ -200,34 +204,7 @@ class CompleteAutopaySetup:
             setup_intent_id=setup_intent_id,
             checkout_session_id=checkout_session_id,
             completed_at=completed_at,
-            current_consent_id=consent.consent_id if consent else None,
-            consent_text_version=consent.consent_text_version if consent else None,
-            ach_mandate_version=consent.ach_mandate_version if consent else None,
-            card_disclosure_version=consent.card_disclosure_version if consent else None,
-        )
-        if consent is not None:
-            await self._consent_repo.append(consent)  # type: ignore[union-attr]
-            if self._outbox is not None:
-                await self._outbox.append(
-                    AutopayConsentCaptured(
-                        aggregate_id=consent.consent_id,
-                        academy_id=self._academy_id,
-                        occurred_at=consent.captured_at,
-                        payload=AutopayConsentCapturedPayload(
-                            consent_id=consent.consent_id,
-                            parent_id=consent.parent_id,
-                            method_type=consent.method_type,
-                            consent_text_version=consent.consent_text_version,
-                            ach_mandate_version=consent.ach_mandate_version,
-                            card_disclosure_version=consent.card_disclosure_version,
-                            source=consent.source,
-                            actor_id=consent.actor_id,
-                            captured_at=consent.captured_at,
-                        ),
-                    )
-                )
-        await self._enrollment_autopay.mark_autopay_active_from_setup(
-            enrollment_id=enrollment_id,
+            consent=consent,
         )
         return AutopaySetupCompletionResult(
             checkout_session_id=checkout_session_id,
@@ -237,6 +214,85 @@ class CompleteAutopaySetup:
             stripe_customer_id=stripe_customer_id,
             stripe_payment_method_id=stripe_payment_method_id,
             payment_method_type=payment_method_type,
+        )
+
+    async def _persist_completion(
+        self,
+        *,
+        parent_id: str,
+        enrollment_id: str,
+        stripe_customer_id: str,
+        stripe_payment_method_id: str,
+        payment_method_type: str,
+        stripe_mandate_id: str | None,
+        setup_intent_id: str,
+        checkout_session_id: str | None,
+        completed_at: datetime,
+        consent: AutopayConsent | None,
+    ) -> None:
+        async def work(session: Any | None) -> None:
+            persisted_consent = consent
+            inserted_consent = False
+            if consent is not None:
+                persisted_consent = await self._consent_repo.append(  # type: ignore[union-attr]
+                    consent,
+                    session=session,
+                )
+                inserted_consent = persisted_consent.consent_id == consent.consent_id
+                if not inserted_consent:
+                    return
+                if self._outbox is not None:
+                    await self._outbox.append(
+                        self._consent_event(persisted_consent),
+                        session=session,
+                    )
+            await self._parent_customers.set_default_payment_method(
+                parent_id=parent_id,
+                stripe_customer_id=stripe_customer_id,
+                stripe_payment_method_id=stripe_payment_method_id,
+                payment_method_type=payment_method_type,
+                stripe_mandate_id=stripe_mandate_id,
+                setup_intent_id=setup_intent_id,
+                checkout_session_id=checkout_session_id,
+                completed_at=completed_at,
+                current_consent_id=persisted_consent.consent_id if persisted_consent else None,
+                consent_text_version=(
+                    persisted_consent.consent_text_version if persisted_consent else None
+                ),
+                ach_mandate_version=(
+                    persisted_consent.ach_mandate_version if persisted_consent else None
+                ),
+                card_disclosure_version=(
+                    persisted_consent.card_disclosure_version if persisted_consent else None
+                ),
+                session=session,
+            )
+            await self._enrollment_autopay.mark_autopay_active_from_setup(
+                enrollment_id=enrollment_id,
+                session=session,
+            )
+
+        if self._transaction_runner is not None:
+            await self._transaction_runner.run(work)
+        else:
+            await work(None)
+
+    def _consent_event(self, consent: AutopayConsent) -> AutopayConsentCaptured:
+        return AutopayConsentCaptured(
+            aggregate_id=consent.consent_id,
+            academy_id=self._academy_id,
+            occurred_at=consent.captured_at,
+            payload=AutopayConsentCapturedPayload(
+                consent_id=consent.consent_id,
+                parent_id=consent.parent_id,
+                method_type=consent.method_type,
+                consent_text_version=consent.consent_text_version,
+                ach_mandate_version=consent.ach_mandate_version,
+                card_disclosure_version=consent.card_disclosure_version,
+                source=consent.source,
+                actor_id=consent.actor_id,
+                captured_at=consent.captured_at,
+            ),
         )
 
     def _build_consent(
@@ -408,6 +464,7 @@ class GetCheckoutStatus:
         enrollment_autopay: EnrollmentAutopayStateRepository | None = None,
         consent_repo: AutopayConsentRepository | None = None,
         outbox: Outbox | None = None,
+        transaction_runner: TransactionRunner | None = None,
         academy_id: str | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
@@ -418,6 +475,7 @@ class GetCheckoutStatus:
         self._enrollment_autopay = enrollment_autopay
         self._consent_repo = consent_repo
         self._outbox = outbox
+        self._transaction_runner = transaction_runner
         self._academy_id = academy_id
         self._now = clock
 
@@ -510,6 +568,7 @@ class GetCheckoutStatus:
             enrollment_autopay=self._enrollment_autopay,
             consent_repo=self._consent_repo,
             outbox=self._outbox,
+            transaction_runner=self._transaction_runner,
             academy_id=self._academy_id,
             clock=self._now,
         ).execute_from_checkout(
