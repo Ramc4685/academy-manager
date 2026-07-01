@@ -1,10 +1,25 @@
 # ADR-0013: Card Processing Fee As A Method-Conditional Invoice Line
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-22
 **Deciders:** RamC (architect)
 **Related:** ADR-0012 (LedgerInvoice as source of truth), ADR-0011 (separate ledger payment storage), ADR-0006/0007 (tenant scoping)
 **Ticket:** Backlog / P2 — "Add credit card processing fee with ACH fee-free option"
+
+> **Superseded/Updated 2026-07-01:** Slice E shipped this as an **ACH cash discount**,
+> not a card surcharge. Card remains the baseline invoice price; a paying-by-ACH parent
+> gets a disclosed discount off that baseline (`compute_ach_discount`, `line_type`
+> `ach_discount`, negative `amount_cents`), rather than a `processing_fee` line added on
+> top of card payments. Funding-gating stayed the same fail-safe shape the surcharge
+> design specified (§ Decision, point 2): the discount applies only when funding is
+> verified `us_bank_account`/`ach`; card, debit, prepaid, or unknown funding get no
+> discount. The `BillingSettings` fields are `ach_discount_enabled`,
+> `ach_discount_percent`, `ach_discount_label`, and `max_ach_discount_percent` (not the
+> `card_processing_fee_*` names below). The rest of this document is kept as the
+> historical record of the original surcharge proposal and the reasoning that carried
+> over (method-conditional `InvoiceLine`, pay-time computation, fail-safe funding gate,
+> academy-scoped config) — read it as "surcharge" ⇒ "discount off the card baseline"
+> throughout.
 
 ## Context
 

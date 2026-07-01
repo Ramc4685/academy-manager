@@ -328,6 +328,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                     ledger=MongoBillingLedgerRepository(db),
                     run_recorder=MongoBillingReconciliationRunRepository(db),
                     academy_id=academy_id,
+                    connected_accounts=MongoConnectedAccountRepository(db),
                 ).execute(limit=100)
             totals["academy_count"] += 1
             totals["scanned"] += int(result.get("scanned") or 0)

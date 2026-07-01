@@ -279,16 +279,24 @@ class RealStripeGateway(StripeGateway):
             ) from exc
 
     async def search_app_owned_payment_intents(
-        self, *, academy_id: str, limit: int = 100
+        self, *, academy_id: str, limit: int = 100, stripe_account: str | None = None
     ) -> list[dict[str, Any]]:
         safe_academy_id = academy_id.replace('"', '\\"')
         safe_limit = max(1, min(int(limit), 100))
+        # `succeeded` covers card/instant settlement; `processing` is the ACH
+        # in-flight state (§7.2) — both must be visible to reconciliation, or
+        # ACH payments are invisible until they happen to also show up via a
+        # later run after settlement.
+        query = (
+            f'metadata["academy_id"]:"{safe_academy_id}" '
+            'AND (status:"succeeded" OR status:"processing")'
+        )
 
         def _search() -> list[dict[str, Any]]:
-            payment_intents = self._stripe.PaymentIntent.search(
-                query=f'metadata["academy_id"]:"{safe_academy_id}" AND status:"succeeded"',
-                limit=safe_limit,
-            )
+            kwargs: dict[str, Any] = {"query": query, "limit": safe_limit}
+            if stripe_account:
+                kwargs["stripe_account"] = stripe_account
+            payment_intents = self._stripe.PaymentIntent.search(**kwargs)
             data = getattr(payment_intents, "data", None) or []
             return [_stripe_object_to_dict(item) for item in data]
 
