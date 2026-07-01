@@ -75,6 +75,75 @@ async def test_conforms_to_port() -> None:
     _: type[ConnectedAccountRepository] = MongoConnectedAccountRepository  # type: ignore[assignment]
 
 
+async def test_get_by_stripe_account_id_never_resolves_another_academys_account(
+    db, acad, other_acad
+) -> None:
+    """Security-critical property (per this repo's own docstring): the webhook
+    Connect-account guard resolves tenant identity by calling
+    ``get_by_stripe_account_id`` while scoped to the RUNNING handler's own
+    academy (see ``_ConnectAccountResolver`` in ``composition/parent.py``,
+    which wraps this call in ``tenant_scope(self._academy_id)``). This method
+    is deliberately tenant-scoped, not a global/unscoped lookup — so it can
+    only ever resolve an academy's OWN ``stripe_account_id``, never another
+    academy's, even when queried with the exact string of another academy's
+    account id.
+
+    This test proves that property directly against the real Mongo-backed
+    repo (not a fake): each academy can resolve its own stripe_account_id,
+    and querying with another academy's stripe_account_id while scoped to a
+    different academy resolves to None rather than cross-attributing the
+    document.
+    """
+    from backend.v2.shared.tenancy.context import _current as _tv
+
+    repo = MongoConnectedAccountRepository(db)
+
+    token = _tv.set(acad)
+    try:
+        await repo.upsert(
+            ConnectedAccount.new(academy_id=acad, stripe_account_id="acct_owned_by_A")
+        )
+    finally:
+        _tv.reset(token)
+
+    token = _tv.set(other_acad)
+    try:
+        await repo.upsert(
+            ConnectedAccount.new(academy_id=other_acad, stripe_account_id="acct_owned_by_B")
+        )
+    finally:
+        _tv.reset(token)
+
+    # Academy A resolves its OWN stripe_account_id correctly.
+    token = _tv.set(acad)
+    try:
+        own = await repo.get_by_stripe_account_id("acct_owned_by_A")
+        assert own is not None
+        assert own.academy_id == acad
+        assert own.stripe_account_id == "acct_owned_by_A"
+
+        # Academy A can NEVER resolve academy B's stripe_account_id to B's
+        # document — the webhook guard for A's handler must not attribute
+        # a Connect event on B's account to A (or to anyone, from A's view).
+        cross = await repo.get_by_stripe_account_id("acct_owned_by_B")
+        assert cross is None
+    finally:
+        _tv.reset(token)
+
+    # And the symmetric case: academy B resolves its own account id, and can
+    # never resolve academy A's id into A's document either.
+    token = _tv.set(other_acad)
+    try:
+        own_b = await repo.get_by_stripe_account_id("acct_owned_by_B")
+        assert own_b is not None
+        assert own_b.academy_id == other_acad
+
+        cross_b = await repo.get_by_stripe_account_id("acct_owned_by_A")
+        assert cross_b is None
+    finally:
+        _tv.reset(token)
+
+
 async def test_tenant_isolation_between_academies(db, acad, other_acad) -> None:
     from backend.v2.shared.tenancy.context import _current as _tv
 

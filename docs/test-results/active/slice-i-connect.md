@@ -109,3 +109,132 @@ lint-imports --config backend/pyproject.toml => Contracts: 4 kept, 0 broken.
   (async). No behavior change for existing platform events.
 - Connect account country hardcoded to `us` in the gateway (matches current
   single-country launch); revisit for multi-country in a later slice.
+
+## Rework pass — review fixes (2026-07-01)
+
+Three reviewers (quality, security, boundary) reviewed this branch's diff vs
+main ref `a50c9e5e`. No CRITICAL/blocking findings; 4 real gaps fixed below.
+Commit `80e89504` (original Slice I) left untouched — this is a new commit on
+top. Scope: exactly the 4 items below, 7 files touched, nothing else.
+
+### 1. [HIGH quality] Type-unsafe `connected_accounts: Any` bridge
+`handle_webhook_event.py` accepted `connected_accounts: Any | None`, the raw
+binding for the `_ConnectAccountResolver` shim in `composition/parent.py`
+(bridges the repo's `get_by_stripe_account_id` to the handler's expected
+`academy_id_for_account` — the "Slice-B lesson": an untyped port/repo name
+mismatch previously reached production).
+
+Fix: added a local `AccountAcademyResolver(Protocol)` in
+`handle_webhook_event.py` (next to `HandleWebhookEvent`, since this is a
+handler-specific bridging shape, not a real repo port that belongs in
+`ports.py`):
+```python
+class AccountAcademyResolver(Protocol):
+    async def academy_id_for_account(self, stripe_account_id: str) -> str | None: ...
+```
+`HandleWebhookEvent.__init__`'s `connected_accounts` param is now typed
+`AccountAcademyResolver | None` instead of `Any | None`. Verified
+`_ConnectAccountResolver` (composition) and `_FakeConnectAccountResolver`
+(test) both structurally satisfy it, and that `main.py`'s
+`MongoConnectedAccountRepository(db)` is correctly bound to
+`StartConnectOnboarding` (a different port), not to `HandleWebhookEvent` — so
+no accidental mismatch existed, but one is now caught by the type checker if
+ever introduced.
+
+### 2. [HIGH quality] Cross-tenant isolation of `get_by_stripe_account_id` untested against the real repo
+Read `mongo_connected_account_repo.py`: `get_by_stripe_account_id` is
+deliberately **tenant-scoped** (goes through `TenantScopedRepository._find_one`,
+which ANDs in `current_academy_id()`), not a global/unscoped lookup. The
+webhook guard works because `_ConnectAccountResolver.academy_id_for_account`
+wraps the call in `tenant_scope(self._academy_id)` — the running handler's
+OWN academy — then asks "does this stripe_account_id belong to MY academy?".
+A foreign academy's id naturally resolves to `None` rather than ever
+returning that academy's document.
+
+Fix: added
+`test_get_by_stripe_account_id_never_resolves_another_academys_account` to
+`tests/contract/test_connected_account_repo.py`, against the REAL
+`MongoConnectedAccountRepository` (not a fake). Proves, for both directions
+(A resolving A/B, B resolving B/A): each academy resolves its own
+`stripe_account_id` correctly, and resolving another academy's
+`stripe_account_id` while scoped to a different academy returns `None`
+rather than cross-attributing the document. This is in addition to (not a
+replacement for) the pre-existing general `test_tenant_isolation_between_academies`.
+
+### 3. [LOW quality+security] Non-unique index on `stripe_account_id`
+`migrations/0139_connected_accounts.py` had a unique index on `academy_id`
+but only a plain lookup index on `stripe_account_id` — the exact field the
+webhook Connect-account guard trusts to resolve tenant identity.
+
+Fix: made the `stripe_account_id` index `unique=True, sparse=True` (same
+`unique+sparse` pattern as migration 0138's
+`invoices_academy_invoice_number_unique`, for the same reason: defense in
+depth at the DB layer, sparse so it never collides on absent values). Index
+name unchanged (`academy_connected_accounts_stripe_account`). Added
+`test_stripe_account_index_is_unique_and_sparse` and
+`test_rejects_duplicate_stripe_account_id_across_academies` to
+`tests/contract/test_connected_accounts_migration.py`.
+
+### 4. [MEDIUM quality+security] Unhandled `ValueError` on academy-id mismatch → raw 500
+`connect_onboarding.py`'s `StartConnectOnboarding.start()` raised a bare
+`ValueError("academy_id mismatch for connect onboarding")` on mismatch, with
+no handling in `connect_routes.py` — would have surfaced as an unhandled 500.
+
+Checked `require_platform_admin` (`bootstrap_routes.py`): it already returns
+`HTTPException(status_code=404, detail="Not found")` for the non-platform-admin
+case specifically to avoid confirming/denying anything to an unauthorized
+caller. Matched that convention exactly rather than inventing a new one.
+
+Fix: added `AcademyMismatchError(DomainError)` to
+`contexts/billing/domain/errors.py` (`code="Billing.AcademyMismatch"`,
+`status_code=404`), following this codebase's established
+`DomainError`-subclass pattern (verified `register_exception_handlers` is
+wired app-wide in `main.py`, so `DomainError` subclasses are translated to
+JSON automatically — the route layer is not supposed to catch these
+explicitly, per `shared/http/errors.py`'s own docstring). Changed
+`connect_onboarding.py` to `raise AcademyMismatchError(...)` instead of
+`ValueError`. No route-level try/except needed — this is the existing
+convention, not a new one. Added
+`test_start_onboarding_academy_mismatch_returns_clean_4xx_not_500` to
+`tests/interface/test_platform_connect_routes.py`, asserting a 404 with
+`error.code == "Billing.AcademyMismatch"` (not a 500) and that the use case
+was still called with the mismatched academy_id from the path.
+
+### Files touched (7)
+```
+backend/v2/contexts/billing/application/use_cases/connect_onboarding.py
+backend/v2/contexts/billing/application/use_cases/handle_webhook_event.py
+backend/v2/contexts/billing/domain/errors.py
+backend/v2/migrations/0139_connected_accounts.py
+backend/v2/tests/contract/test_connected_account_repo.py
+backend/v2/tests/contract/test_connected_accounts_migration.py
+backend/v2/tests/interface/test_platform_connect_routes.py
+```
+Nothing else touched: Stripe Connect design decisions (Accounts v2,
+`on_behalf_of`, destination charges, `application_fee_amount=0`), legacy
+webhook branches, and everything else out of scope for these 4 findings.
+
+### DoD output (rework pass)
+
+```
+PYTHONPATH=. python -m pytest backend/v2/tests -q
+  => 1 failed, 1880 passed, 5 warnings
+     ONLY failure: test_bootstrap_source_does_not_reference_default_academy_id
+     (same pre-existing cwd-relative-path bug as before this rework — unrelated)
+
+ruff check backend/v2          => All checks passed!
+ruff format --check backend/v2 => 736 files already formatted
+lint-imports --config backend/pyproject.toml => Contracts: 4 kept, 0 broken.
+```
+
+New test count: 4 new tests added for this rework pass:
+- `test_get_by_stripe_account_id_never_resolves_another_academys_account`
+  (`test_connected_account_repo.py`) — item 2
+- `test_stripe_account_index_is_unique_and_sparse` and
+  `test_rejects_duplicate_stripe_account_id_across_academies`
+  (`test_connected_accounts_migration.py`) — item 3
+- `test_start_onboarding_academy_mismatch_returns_clean_4xx_not_500`
+  (`test_platform_connect_routes.py`) — item 4
+
+Full suite went from 1876 passed (original Slice I doc, above) to 1880
+passed on this rework pass; the 4-test delta matches exactly.

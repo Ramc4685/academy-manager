@@ -8,6 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend.v2.contexts.billing.domain.errors import AcademyMismatchError
 from backend.v2.interfaces.platform.connect_routes import (
     ConnectOnboardingUseCase,
 )
@@ -32,6 +33,18 @@ class _FakeConnectOnboarding:
             "onboarding_url": f"https://connect.stripe.test/onboard/{academy_id}",
             "status": "pending",
         }
+
+
+class _MismatchedConnectOnboarding:
+    """Simulates the real use case's guard: raises when the path's academy_id
+    does not match the composed use case's bound academy_id."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def start(self, *, academy_id: str, refresh_url: str, return_url: str) -> dict:
+        self.calls.append(academy_id)
+        raise AcademyMismatchError("academy_id mismatch for connect onboarding")
 
 
 def _platform_claims() -> AuthClaims:
@@ -122,3 +135,19 @@ def test_start_onboarding_rejects_non_platform_admin(
 
     assert response.status_code == 404
     assert use_case.calls == []
+
+
+def test_start_onboarding_academy_mismatch_returns_clean_4xx_not_500() -> None:
+    """The use case's ``AcademyMismatchError`` must surface as a clean 404
+    (matching ``require_platform_admin``'s authz-failure convention — not
+    confirming or denying academy existence to a caller who shouldn't get a
+    detailed error), never as a raw unhandled 500."""
+    mismatched_use_case = _MismatchedConnectOnboarding()
+    with TestClient(_app(_platform_claims(), mismatched_use_case)) as client:
+        response = client.post(
+            "/api/v2/platform/academies/acad-1/connect/onboarding", json=_payload()
+        )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "Billing.AcademyMismatch"
+    assert mismatched_use_case.calls == ["acad-1"]

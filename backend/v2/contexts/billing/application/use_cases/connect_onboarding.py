@@ -15,6 +15,7 @@ from backend.v2.contexts.billing.application.ports import (
     StripeGateway,
 )
 from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
+from backend.v2.contexts.billing.domain.errors import AcademyMismatchError
 from backend.v2.shared.tenancy import tenant_scope
 
 
@@ -48,7 +49,7 @@ class StartConnectOnboarding:
         contact_email: str | None = None,
     ) -> dict[str, str]:
         if academy_id != self._academy_id:
-            raise ValueError("academy_id mismatch for connect onboarding")
+            raise AcademyMismatchError("academy_id mismatch for connect onboarding")
 
         with tenant_scope(academy_id):
             existing = await self._connected_accounts.get_for_academy()

@@ -5,7 +5,13 @@ academy holding its Stripe Connect merchant identity + onboarding
 status/capabilities.
 
 - Unique index on ``academy_id`` (one connected account per academy).
-- Lookup index on ``stripe_account_id`` (Connect webhook account resolution).
+- Unique, sparse index on ``stripe_account_id`` (Connect webhook account
+  resolution). This is the field the webhook Connect-account guard trusts to
+  resolve tenant identity, so it must be 1:1 with the owning academy at the
+  database layer too, not just by application-level convention. Sparse
+  because the field is required by the collection's own validator for new
+  docs, but sparse costs nothing and protects against any future doc that
+  legitimately lacks it (e.g. a manual/partial migration write).
 - A Mongo JSON-schema validator (moderate/error) following the launch-validator
   pattern used elsewhere in this package.
 
@@ -89,6 +95,8 @@ async def up(db: AsyncIOMotorDatabase) -> None:
     )
     await collection.create_index(
         "stripe_account_id",
+        unique=True,
+        sparse=True,
         name="academy_connected_accounts_stripe_account",
     )
 

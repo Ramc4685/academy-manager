@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 
 from backend.v2.contexts.billing.application.ports import (
     EnrollmentAutopayStateRepository,
@@ -83,6 +83,19 @@ class _QuarantineStripeEvent(Exception):
     """Stored event is valid Stripe input but unsafe to project into Mongo."""
 
 
+class AccountAcademyResolver(Protocol):
+    """Resolves a Stripe Connect account id to its owning academy id.
+
+    Typed against this Protocol (rather than ``Any``) so a composition-root
+    mismatch — e.g. passing the raw ``ConnectedAccountRepository`` instead of
+    the ``_ConnectAccountResolver`` shim that bridges its method name — fails
+    at type-check time instead of at the first live webhook (the Slice-B
+    lesson: an untyped port/repo name mismatch reached production before).
+    """
+
+    async def academy_id_for_account(self, stripe_account_id: str) -> str | None: ...
+
+
 class HandleWebhookEvent:
     def __init__(
         self,
@@ -101,7 +114,7 @@ class HandleWebhookEvent:
         enrollment_autopay: EnrollmentAutopayStateRepository | None = None,
         enrollment_identity: EnrollmentBillingIdentityRepository | None = None,
         invoice_processing: StripeInvoiceProcessingRepository | None = None,
-        connected_accounts: Any | None = None,
+        connected_accounts: AccountAcademyResolver | None = None,
         expected_livemode: bool | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
