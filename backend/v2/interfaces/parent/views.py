@@ -243,6 +243,8 @@ class ParentEnrollmentView(BaseModel):
     last_attempt_at: datetime | None = None
     last_failure_code: str | None = None
     autopay_payment_method_type: str | None = None
+    autopay_payment_method_label: str | None = None
+    autopay_payment_method_last4: str | None = None
     autopay_setup_status: str | None = None
 
 

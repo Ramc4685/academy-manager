@@ -249,6 +249,8 @@ async def test_parent_enrollment_visibility_uses_app_owned_autopay_projection() 
                         "academy_id": "acad",
                         "parent_id": "parent-1",
                         "primary_payment_method_type": "us_bank_account",
+                        "primary_payment_method_label": "Stripe Test Bank",
+                        "primary_payment_method_last4": "6789",
                         "primary_setup_status": "active",
                     }
                 ]
@@ -281,6 +283,8 @@ async def test_parent_enrollment_visibility_uses_app_owned_autopay_projection() 
             "last_attempt_at": now,
             "last_failure_code": "insufficient_funds",
             "autopay_payment_method_type": "us_bank_account",
+            "autopay_payment_method_label": "Stripe Test Bank",
+            "autopay_payment_method_last4": "6789",
             "autopay_setup_status": "active",
         }
     ]

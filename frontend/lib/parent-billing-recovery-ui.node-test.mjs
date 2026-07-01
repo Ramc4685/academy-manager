@@ -24,9 +24,13 @@ test("parent billing portal hides stale Stripe customer internals", () => {
 test("parent payments page renders app-owned autopay visibility", () => {
   assert.match(parentApi, /autopay_enrollment_status/);
   assert.match(parentApi, /autopay_payment_method_type/);
+  assert.match(parentApi, /autopay_payment_method_label/);
+  assert.match(parentApi, /autopay_payment_method_last4/);
   assert.match(paymentsPage, /autopay_enrollment_status/);
   assert.match(paymentsPage, /autopayMethodText/);
   assert.match(paymentsPage, /Bank account autopay/);
+  assert.match(paymentsPage, /autopay_payment_method_label/);
+  assert.match(paymentsPage, /autopay_payment_method_last4/);
   assert.match(paymentsPage, /e\.autopay_enrollment_status === "setup_started"/);
   assert.doesNotMatch(paymentsPage, /subscription_status === "incomplete"/);
   assert.doesNotMatch(paymentsPage, /Subscribe to autopay/);

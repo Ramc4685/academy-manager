@@ -240,6 +240,8 @@ class FakeParentStripeCustomers:
         card_disclosure_version: str | None = None,
         setup_status: str = "active",
         payment_method_role: str = "primary",
+        payment_method_label: str | None = None,
+        payment_method_last4: str | None = None,
         session=None,
     ) -> None:
         row = {
@@ -254,6 +256,10 @@ class FakeParentStripeCustomers:
             "setup_status": setup_status,
             "payment_method_role": payment_method_role,
         }
+        if payment_method_label:
+            row["payment_method_label"] = payment_method_label
+        if payment_method_last4:
+            row["payment_method_last4"] = payment_method_last4
         if current_consent_id:
             row["current_consent_id"] = current_consent_id
         if consent_text_version:
@@ -279,12 +285,18 @@ class FakeParentStripeCustomers:
         stripe_payment_method_id: str,
         payment_method_type: str,
         stripe_mandate_id: str | None,
+        payment_method_label: str | None = None,
+        payment_method_last4: str | None = None,
     ) -> None:
         for row in reversed(self.default_methods):
             if row["parent_id"] != parent_id:
                 continue
             row["default_payment_method_id"] = stripe_payment_method_id
             row["default_payment_method_type"] = payment_method_type
+            if payment_method_label:
+                row["default_payment_method_label"] = payment_method_label
+            if payment_method_last4:
+                row["default_payment_method_last4"] = payment_method_last4
             if stripe_mandate_id:
                 row["default_stripe_mandate_id"] = stripe_mandate_id
             return
@@ -296,6 +308,10 @@ class FakeParentStripeCustomers:
                 "default_stripe_mandate_id": stripe_mandate_id,
             }
         )
+        if payment_method_label:
+            self.default_methods[-1]["default_payment_method_label"] = payment_method_label
+        if payment_method_last4:
+            self.default_methods[-1]["default_payment_method_last4"] = payment_method_last4
 
 
 class FakeEnrollmentAutopayState:

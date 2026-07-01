@@ -648,11 +648,19 @@ def compose_parent(
             {"academy_id": academy_id, "parent_id": parent_id}
         )
         autopay_payment_method_type = None
+        autopay_payment_method_label = None
+        autopay_payment_method_last4 = None
         autopay_setup_status = None
         if billing_customer:
             autopay_payment_method_type = billing_customer.get(
                 "primary_payment_method_type"
             ) or billing_customer.get("payment_method_type")
+            autopay_payment_method_label = billing_customer.get(
+                "primary_payment_method_label"
+            ) or billing_customer.get("payment_method_label")
+            autopay_payment_method_last4 = billing_customer.get(
+                "primary_payment_method_last4"
+            ) or billing_customer.get("payment_method_last4")
             autopay_setup_status = billing_customer.get(
                 "primary_setup_status"
             ) or billing_customer.get("setup_status")
@@ -708,6 +716,8 @@ def compose_parent(
                         billing_enrollment.get("last_failure_code") if billing_enrollment else None
                     ),
                     "autopay_payment_method_type": autopay_payment_method_type,
+                    "autopay_payment_method_label": autopay_payment_method_label,
+                    "autopay_payment_method_last4": autopay_payment_method_last4,
                     "autopay_setup_status": autopay_setup_status,
                 }
             )

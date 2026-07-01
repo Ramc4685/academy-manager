@@ -54,6 +54,8 @@ function autopayMethodText(enrollment: {
   payment_mode: string | null;
   autopay_enrollment_status?: string | null;
   autopay_payment_method_type?: string | null;
+  autopay_payment_method_label?: string | null;
+  autopay_payment_method_last4?: string | null;
   autopay_setup_status?: string | null;
 }): string | null {
   const autopayStatus = enrollment.autopay_enrollment_status ?? "";
@@ -63,12 +65,27 @@ function autopayMethodText(enrollment: {
     return "Payment method setup is still pending.";
   }
   if (enrollment.autopay_payment_method_type === "us_bank_account") {
-    return "Bank account autopay";
+    return methodDetail("Bank account autopay", enrollment);
   }
   if (enrollment.autopay_payment_method_type === "card") {
-    return "Card autopay";
+    return methodDetail("Card autopay", enrollment);
   }
   return null;
+}
+
+function methodDetail(
+  prefix: string,
+  enrollment: {
+    autopay_payment_method_label?: string | null;
+    autopay_payment_method_last4?: string | null;
+  },
+): string {
+  const label = enrollment.autopay_payment_method_label?.trim();
+  const last4 = enrollment.autopay_payment_method_last4?.trim();
+  if (label && last4) return `${prefix} - ${label} ending in ${last4}`;
+  if (label) return `${prefix} - ${label}`;
+  if (last4) return `${prefix} ending in ${last4}`;
+  return prefix;
 }
 
 function autopayHelperText(enrollment: {

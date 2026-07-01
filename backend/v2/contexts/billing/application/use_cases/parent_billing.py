@@ -173,6 +173,7 @@ class CompleteAutopaySetup:
             raise ValueError("autopay setup missing payment method")
         payment_method = await self._stripe.retrieve_payment_method(stripe_payment_method_id)
         payment_method_type = str(payment_method.get("type") or "unknown")
+        payment_method_label, payment_method_last4 = _payment_method_display_details(payment_method)
         stripe_mandate_id = _stripe_id(setup_intent.get("mandate"))
         setup_status = _setup_status_for_payment_method(
             setup_intent=setup_intent,
@@ -206,6 +207,8 @@ class CompleteAutopaySetup:
             consent=consent,
             setup_status=setup_status,
             payment_method_role=payment_method_role,
+            payment_method_label=payment_method_label,
+            payment_method_last4=payment_method_last4,
             activate_enrollment=False,
         )
         if should_activate:
@@ -222,6 +225,8 @@ class CompleteAutopaySetup:
                 stripe_payment_method_id=stripe_payment_method_id,
                 payment_method_type=payment_method_type,
                 stripe_mandate_id=stripe_mandate_id,
+                payment_method_label=payment_method_label,
+                payment_method_last4=payment_method_last4,
             )
             activated = await self._enrollment_autopay.mark_autopay_active_from_setup(
                 enrollment_id=enrollment_id,
@@ -257,6 +262,8 @@ class CompleteAutopaySetup:
         consent: AutopayConsent | None,
         setup_status: str = "active",
         payment_method_role: str = "primary",
+        payment_method_label: str | None = None,
+        payment_method_last4: str | None = None,
         activate_enrollment: bool = True,
     ) -> None:
         async def work(session: Any | None) -> None:
@@ -294,6 +301,8 @@ class CompleteAutopaySetup:
                 ),
                 setup_status=setup_status,
                 payment_method_role=payment_method_role,
+                payment_method_label=payment_method_label,
+                payment_method_last4=payment_method_last4,
                 session=session,
             )
             if (
@@ -711,6 +720,38 @@ def _setup_status_for_payment_method(
     if next_action_type == "verify_with_microdeposits" or status == "requires_action":
         return "verification_required"
     return "verification_pending"
+
+
+def _payment_method_display_details(
+    payment_method: dict[str, Any],
+) -> tuple[str | None, str | None]:
+    payment_method_type = str(payment_method.get("type") or "")
+    if payment_method_type == "card":
+        card = payment_method.get("card")
+        if not isinstance(card, dict):
+            return None, None
+        brand = str(card.get("brand") or "").strip()
+        label = brand.title() if brand else "Card"
+        return label, _last4(card.get("last4"))
+    if payment_method_type == "us_bank_account":
+        bank = payment_method.get("us_bank_account")
+        if not isinstance(bank, dict):
+            return None, None
+        bank_name = str(bank.get("bank_name") or "").strip()
+        last4 = _last4(bank.get("last4"))
+        if bank_name:
+            return bank_name, last4
+        if last4:
+            return "Bank account", last4
+        return None, None
+    return None, None
+
+
+def _last4(value: object) -> str | None:
+    text = str(value or "").strip()
+    if len(text) == 4 and text.isdigit():
+        return text
+    return None
 
 
 def _is_autopay_setup_checkout(checkout: dict[str, Any]) -> bool:

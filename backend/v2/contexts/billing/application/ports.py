@@ -80,6 +80,8 @@ class ParentStripeCustomerRepository(Protocol):
         card_disclosure_version: str | None = None,
         setup_status: str = "active",
         payment_method_role: str = "primary",
+        payment_method_label: str | None = None,
+        payment_method_last4: str | None = None,
         session: Any | None = None,
     ) -> None: ...
     async def promote_payment_method_to_default(
@@ -89,6 +91,8 @@ class ParentStripeCustomerRepository(Protocol):
         stripe_payment_method_id: str,
         payment_method_type: str,
         stripe_mandate_id: str | None,
+        payment_method_label: str | None = None,
+        payment_method_last4: str | None = None,
     ) -> None: ...
 
 

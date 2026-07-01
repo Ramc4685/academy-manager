@@ -58,6 +58,8 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
         card_disclosure_version: str | None = None,
         setup_status: str = "active",
         payment_method_role: str = "primary",
+        payment_method_label: str | None = None,
+        payment_method_last4: str | None = None,
         session: Any | None = None,
     ) -> None:
         now = datetime.now(UTC)
@@ -72,8 +74,13 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
         }
         if stripe_mandate_id:
             method_projection["stripe_mandate_id"] = stripe_mandate_id
+        if payment_method_label:
+            method_projection["payment_method_label"] = payment_method_label
+        if payment_method_last4:
+            method_projection["payment_method_last4"] = payment_method_last4
         if checkout_session_id:
             method_projection["checkout_session_id"] = checkout_session_id
+        unset: dict[str, str] = {}
         update: dict[str, object] = {
             "parent_id": parent_id,
             "stripe_customer_id": stripe_customer_id,
@@ -85,6 +92,14 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
             f"{role}_setup_intent_id": setup_intent_id,
             f"{role}_setup_status": setup_status,
         }
+        if payment_method_label:
+            update[f"{role}_payment_method_label"] = payment_method_label
+        else:
+            unset[f"{role}_payment_method_label"] = ""
+        if payment_method_last4:
+            update[f"{role}_payment_method_last4"] = payment_method_last4
+        else:
+            unset[f"{role}_payment_method_last4"] = ""
         if current_consent_id:
             update["current_autopay_consent_id"] = current_consent_id
         if consent_text_version:
@@ -99,11 +114,23 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
             update["primary_payment_method_id"] = stripe_payment_method_id
             update["primary_payment_method_type"] = payment_method_type
             update["primary_setup_status"] = setup_status
+            if payment_method_label:
+                update["primary_payment_method_label"] = payment_method_label
+            if payment_method_last4:
+                update["primary_payment_method_last4"] = payment_method_last4
+            if setup_status == "active":
+                if payment_method_label:
+                    update["payment_method_label"] = payment_method_label
+                else:
+                    unset["payment_method_label"] = ""
+                if payment_method_last4:
+                    update["payment_method_last4"] = payment_method_last4
+                else:
+                    unset["payment_method_last4"] = ""
         if stripe_mandate_id:
             update[f"{role}_stripe_mandate_id"] = stripe_mandate_id
         if checkout_session_id:
             update["autopay_setup_checkout_session_id"] = checkout_session_id
-        unset: dict[str, str] = {}
         if ach_mandate_version:
             unset["current_card_disclosure_version"] = ""
         if card_disclosure_version:
@@ -140,6 +167,8 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
         stripe_payment_method_id: str,
         payment_method_type: str,
         stripe_mandate_id: str | None,
+        payment_method_label: str | None = None,
+        payment_method_last4: str | None = None,
     ) -> None:
         update: dict[str, object] = {
             "default_payment_method_id": stripe_payment_method_id,
@@ -148,8 +177,20 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
         }
         if stripe_mandate_id:
             update["stripe_mandate_id"] = stripe_mandate_id
+        unset: dict[str, str] = {}
+        if payment_method_label:
+            update["payment_method_label"] = payment_method_label
+        else:
+            unset["payment_method_label"] = ""
+        if payment_method_last4:
+            update["payment_method_last4"] = payment_method_last4
+        else:
+            unset["payment_method_last4"] = ""
+        mutation: dict[str, object] = {"$set": update}
+        if unset:
+            mutation["$unset"] = unset
         await self._update_one(
             {"parent_id": parent_id},
-            {"$set": update},
+            mutation,
             upsert=False,
         )

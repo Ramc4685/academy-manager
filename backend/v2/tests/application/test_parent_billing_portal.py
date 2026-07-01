@@ -345,6 +345,8 @@ class _CustomerRepo:
         card_disclosure_version: str | None = None,
         setup_status: str = "active",
         payment_method_role: str = "primary",
+        payment_method_label: str | None = None,
+        payment_method_last4: str | None = None,
         session=None,
     ) -> None:
         if self.fail_default_payment_method:
@@ -361,6 +363,10 @@ class _CustomerRepo:
             "setup_status": setup_status,
             "payment_method_role": payment_method_role,
         }
+        if payment_method_label:
+            row["payment_method_label"] = payment_method_label
+        if payment_method_last4:
+            row["payment_method_last4"] = payment_method_last4
         if current_consent_id:
             row["current_consent_id"] = current_consent_id
         if consent_text_version:
@@ -386,12 +392,18 @@ class _CustomerRepo:
         stripe_payment_method_id: str,
         payment_method_type: str,
         stripe_mandate_id: str | None,
+        payment_method_label: str | None = None,
+        payment_method_last4: str | None = None,
     ) -> None:
         for row in reversed(self.default_methods):
             if row["parent_id"] != parent_id:
                 continue
             row["default_payment_method_id"] = stripe_payment_method_id
             row["default_payment_method_type"] = payment_method_type
+            if payment_method_label:
+                row["default_payment_method_label"] = payment_method_label
+            if payment_method_last4:
+                row["default_payment_method_last4"] = payment_method_last4
             if stripe_mandate_id:
                 row["default_stripe_mandate_id"] = stripe_mandate_id
             return
@@ -403,6 +415,10 @@ class _CustomerRepo:
                 "default_stripe_mandate_id": stripe_mandate_id,
             }
         )
+        if payment_method_label:
+            self.default_methods[-1]["default_payment_method_label"] = payment_method_label
+        if payment_method_last4:
+            self.default_methods[-1]["default_payment_method_last4"] = payment_method_last4
 
 
 class _ConsentRepo:
@@ -599,6 +615,79 @@ async def test_complete_autopay_setup_appends_new_consent_row_on_reconsent() -> 
         "Billing.AutopayConsentCaptured",
         "Billing.AutopayConsentCaptured",
     ]
+
+
+@pytest.mark.asyncio
+async def test_complete_autopay_setup_projects_card_display_details() -> None:
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    customers = _CustomerRepo()
+    enrollment_autopay = _EnrollmentAutopay()
+    gateway = _CheckoutGateway()
+    gateway.setup_intents["seti_card"] = {
+        "id": "seti_card",
+        "customer": "cus_parent",
+        "payment_method": "pm_card",
+        "metadata": {
+            "academy_id": "acad",
+            "parent_id": "p1",
+            "enrollment_id": "enr-1",
+            "source": "autopay_setup",
+        },
+    }
+    gateway.payment_methods["pm_card"] = {
+        "id": "pm_card",
+        "type": "card",
+        "card": {"brand": "visa", "last4": "4242"},
+    }
+    uc = CompleteAutopaySetup(
+        stripe=gateway,
+        parent_customers=customers,
+        enrollment_autopay=enrollment_autopay,
+        academy_id="acad",
+        clock=lambda: now,
+    )
+
+    await uc.execute_from_setup_intent(gateway.setup_intents["seti_card"])
+
+    assert customers.default_methods[0]["payment_method_label"] == "Visa"
+    assert customers.default_methods[0]["payment_method_last4"] == "4242"
+
+
+@pytest.mark.asyncio
+async def test_complete_autopay_setup_projects_bank_display_details() -> None:
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    customers = _CustomerRepo()
+    enrollment_autopay = _EnrollmentAutopay()
+    gateway = _CheckoutGateway()
+    gateway.setup_intents["seti_bank"] = {
+        "id": "seti_bank",
+        "customer": "cus_parent",
+        "payment_method": "pm_bank",
+        "mandate": "mandate_bank",
+        "metadata": {
+            "academy_id": "acad",
+            "parent_id": "p1",
+            "enrollment_id": "enr-1",
+            "source": "autopay_setup",
+        },
+    }
+    gateway.payment_methods["pm_bank"] = {
+        "id": "pm_bank",
+        "type": "us_bank_account",
+        "us_bank_account": {"bank_name": "STRIPE TEST BANK", "last4": "6789"},
+    }
+    uc = CompleteAutopaySetup(
+        stripe=gateway,
+        parent_customers=customers,
+        enrollment_autopay=enrollment_autopay,
+        academy_id="acad",
+        clock=lambda: now,
+    )
+
+    await uc.execute_from_setup_intent(gateway.setup_intents["seti_bank"])
+
+    assert customers.default_methods[0]["payment_method_label"] == "STRIPE TEST BANK"
+    assert customers.default_methods[0]["payment_method_last4"] == "6789"
 
 
 @pytest.mark.asyncio

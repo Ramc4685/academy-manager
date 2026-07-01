@@ -225,6 +225,8 @@ def test_enrollments_expose_app_owned_autopay_visibility_fields() -> None:
             "last_attempt_at": _NOW,
             "last_failure_code": "insufficient_funds",
             "autopay_payment_method_type": "us_bank_account",
+            "autopay_payment_method_label": "Stripe Test Bank",
+            "autopay_payment_method_last4": "6789",
             "autopay_setup_status": "active",
         }
     ]
@@ -238,6 +240,8 @@ def test_enrollments_expose_app_owned_autopay_visibility_fields() -> None:
     assert row["last_attempt_at"] == "2026-05-31T12:00:00Z"
     assert row["last_failure_code"] == "insufficient_funds"
     assert row["autopay_payment_method_type"] == "us_bank_account"
+    assert row["autopay_payment_method_label"] == "Stripe Test Bank"
+    assert row["autopay_payment_method_last4"] == "6789"
     assert row["autopay_setup_status"] == "active"
 
 

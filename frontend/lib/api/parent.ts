@@ -110,6 +110,8 @@ export interface ParentEnrollment {
   last_attempt_at?: string | null;
   last_failure_code?: string | null;
   autopay_payment_method_type?: string | null;
+  autopay_payment_method_label?: string | null;
+  autopay_payment_method_last4?: string | null;
   autopay_setup_status?: string | null;
 }
 
