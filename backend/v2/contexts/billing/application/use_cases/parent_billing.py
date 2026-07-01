@@ -290,7 +290,11 @@ class CompleteAutopaySetup:
                 payment_method_role=payment_method_role,
                 session=session,
             )
-            if activate_enrollment and setup_status == "active" and payment_method_role == "primary":
+            if (
+                activate_enrollment
+                and setup_status == "active"
+                and payment_method_role == "primary"
+            ):
                 activated = await self._enrollment_autopay.mark_autopay_active_from_setup(
                     enrollment_id=enrollment_id,
                     session=session,
