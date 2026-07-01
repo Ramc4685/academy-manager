@@ -96,11 +96,12 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
             update["current_card_disclosure_version"] = card_disclosure_version
             update.pop("current_ach_mandate_version", None)
         if role == "primary":
-            update["default_payment_method_id"] = stripe_payment_method_id
-            update["payment_method_type"] = payment_method_type
             update["primary_payment_method_id"] = stripe_payment_method_id
             update["primary_payment_method_type"] = payment_method_type
             update["primary_setup_status"] = setup_status
+        if role == "primary" and setup_status == "active":
+            update["default_payment_method_id"] = stripe_payment_method_id
+            update["payment_method_type"] = payment_method_type
             if stripe_mandate_id:
                 update["stripe_mandate_id"] = stripe_mandate_id
         if stripe_mandate_id:

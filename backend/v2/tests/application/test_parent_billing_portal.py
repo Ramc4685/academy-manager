@@ -711,6 +711,8 @@ async def test_autopay_setup_existing_consent_replay_repairs_projection_and_enro
             "setup_intent_id": "seti_saved_card",
             "checkout_session_id": None,
             "completed_at": now,
+            "setup_status": "active",
+            "payment_method_role": "primary",
             "current_consent_id": consents.consents[0].consent_id,
             "consent_text_version": "autopay-consent-v1",
             "card_disclosure_version": "card-disclosure-v1",
