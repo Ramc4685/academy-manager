@@ -106,6 +106,8 @@ test.describe("billing trust and recovery surfaces", () => {
             status: "active",
             payment_mode: "monthly",
             subscription_status: "past_due",
+            autopay_enrollment_status: "active",
+            last_attempt_outcome: "declined",
           },
         ],
       });
@@ -135,7 +137,7 @@ test.describe("billing trust and recovery surfaces", () => {
     await expect(page.getByRole("button", { name: "Billing portal" })).toBeVisible();
     await expect(page.getByText("Autopay active, payment issue")).toBeVisible();
     await expect(
-      page.getByText("Open the billing portal to update the payment method."),
+      page.getByText("The latest autopay attempt failed."),
     ).toBeVisible();
     await page.getByRole("button", { name: "Payment history" }).click();
     await expect(page.getByText("Invoice in_test_paid_1")).toBeVisible();

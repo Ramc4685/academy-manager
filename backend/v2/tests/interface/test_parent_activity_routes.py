@@ -59,9 +59,11 @@ class _FakeParentUseCases:
         self,
         attendance_rows: list[dict],
         progress_rows: list[dict],
+        enrollment_rows: list[dict] | None = None,
     ) -> None:
         self._attendance = attendance_rows
         self._progress = progress_rows
+        self._enrollments = enrollment_rows or []
 
     async def list_attendance_for_parent(
         self,
@@ -83,6 +85,9 @@ class _FakeParentUseCases:
         total = len(self._progress)
         return self._progress[offset : offset + limit], total
 
+    async def list_enrollments_for_parent(self, parent_id: str) -> list[dict]:
+        return list(self._enrollments)
+
 
 def _seed_attendance(n: int = 3, coach_name: str | None = "Coach Bob") -> list[dict]:
     return [_attendance_row(idx=i, coach_name=coach_name) for i in range(1, n + 1)]
@@ -96,6 +101,7 @@ def _seed_progress(n: int = 3, coach_name: str | None = "Coach Bob") -> list[dic
 def _make_client(
     attendance: list[dict] | None = None,
     progress: list[dict] | None = None,
+    enrollments: list[dict] | None = None,
     role: str = "parent",
     user_id: str = "parent-1",
 ) -> Iterator[TestClient]:
@@ -108,7 +114,7 @@ def _make_client(
     app.include_router(parent_router, prefix="/api/v2")
     app.dependency_overrides[get_auth_claims] = lambda: _claims(role, user_id)
     app.dependency_overrides[get_parent_use_cases] = lambda: _FakeParentUseCases(
-        attendance, progress
+        attendance, progress, enrollments
     )
     with TestClient(app) as client:
         yield client
@@ -201,6 +207,42 @@ def test_attendance_anonymous_returns_401() -> None:
     with _anon_client() as client:
         response = client.get("/api/v2/parent/attendance")
     assert response.status_code == 401
+
+
+def test_enrollments_expose_app_owned_autopay_visibility_fields() -> None:
+    enrollments = [
+        {
+            "enrollment_id": "enr-1",
+            "student_id": "student-1",
+            "student_name": "Alice Smith",
+            "session_id": "sess-1",
+            "session_title": "Morning Squad",
+            "status": "active",
+            "payment_mode": "monthly",
+            "subscription_status": None,
+            "autopay_enrollment_status": "active",
+            "last_attempt_outcome": "declined",
+            "last_attempt_at": _NOW,
+            "last_failure_code": "insufficient_funds",
+            "autopay_payment_method_type": "us_bank_account",
+            "autopay_payment_method_label": "Stripe Test Bank",
+            "autopay_payment_method_last4": "6789",
+            "autopay_setup_status": "active",
+        }
+    ]
+    with _make_client(enrollments=enrollments) as client:
+        response = client.get("/api/v2/parent/enrollments")
+
+    assert response.status_code == 200
+    row = response.json()["enrollments"][0]
+    assert row["autopay_enrollment_status"] == "active"
+    assert row["last_attempt_outcome"] == "declined"
+    assert row["last_attempt_at"] == "2026-05-31T12:00:00Z"
+    assert row["last_failure_code"] == "insufficient_funds"
+    assert row["autopay_payment_method_type"] == "us_bank_account"
+    assert row["autopay_payment_method_label"] == "Stripe Test Bank"
+    assert row["autopay_payment_method_last4"] == "6789"
+    assert row["autopay_setup_status"] == "active"
 
 
 # ---------------------------------------------------------------------------

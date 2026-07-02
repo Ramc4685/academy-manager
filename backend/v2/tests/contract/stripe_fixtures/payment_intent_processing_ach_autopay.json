@@ -1,0 +1,23 @@
+{
+  "id": "evt_pi_ach_processing_fixture",
+  "object": "event",
+  "type": "payment_intent.processing",
+  "livemode": false,
+  "data": {
+    "object": {
+      "id": "pi_ach_fixture_01",
+      "object": "payment_intent",
+      "amount": 10000,
+      "currency": "usd",
+      "status": "processing",
+      "payment_method_types": ["us_bank_account"],
+      "metadata": {
+        "academy_id": "test-academy",
+        "invoice_id": "inv-ach-fixture-01",
+        "parent_id": "parent-ach-fixture",
+        "source": "autopay",
+        "funding_type": "us_bank_account"
+      }
+    }
+  }
+}

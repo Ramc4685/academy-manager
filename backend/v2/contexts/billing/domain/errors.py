@@ -53,3 +53,14 @@ class StudentBillingEnrollmentNotFound(DomainError):
 class SessionTypeInactive(DomainError):
     code = "Billing.SessionTypeInactive"
     status_code = 400
+
+
+class AcademyMismatchError(DomainError):
+    """Raised when a use case's bound academy_id does not match the academy_id
+    supplied by the caller (e.g. a route path param). Maps to 404, matching
+    ``require_platform_admin``'s convention for authz-adjacent failures: it
+    must not confirm or deny to an unauthorized caller whether the target
+    academy exists."""
+
+    code = "Billing.AcademyMismatch"
+    status_code = 404

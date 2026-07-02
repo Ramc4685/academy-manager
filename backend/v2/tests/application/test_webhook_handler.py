@@ -9,15 +9,17 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
     HandleWebhookEvent,
     _QuarantineStripeEvent,
 )
-from backend.v2.contexts.billing.domain.ledger import LedgerInvoice, LedgerPayment
+from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice, LedgerPayment
 from backend.v2.contexts.billing.domain.models import Payment, Subscription
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
@@ -198,8 +200,12 @@ class FakeInvoiceProcessing:
 class FakeOutbox:
     def __init__(self) -> None:
         self.events: list[Any] = []
+        self.event_ids: set[str] = set()
 
     async def append(self, event, *, session=None):
+        if event.event_id in self.event_ids:
+            raise DuplicateKeyError("duplicate event_id")
+        self.event_ids.add(event.event_id)
         self.events.append(event)
 
     async def pull_unprocessed(self, limit=100):
@@ -228,39 +234,124 @@ class FakeParentStripeCustomers:
         setup_intent_id: str,
         checkout_session_id: str | None,
         completed_at: datetime,
+        current_consent_id: str | None = None,
+        consent_text_version: str | None = None,
+        ach_mandate_version: str | None = None,
+        card_disclosure_version: str | None = None,
+        setup_status: str = "active",
+        payment_method_role: str = "primary",
+        payment_method_label: str | None = None,
+        payment_method_last4: str | None = None,
+        session=None,
     ) -> None:
+        row = {
+            "parent_id": parent_id,
+            "stripe_customer_id": stripe_customer_id,
+            "stripe_payment_method_id": stripe_payment_method_id,
+            "payment_method_type": payment_method_type,
+            "stripe_mandate_id": stripe_mandate_id,
+            "setup_intent_id": setup_intent_id,
+            "checkout_session_id": checkout_session_id,
+            "completed_at": completed_at,
+            "setup_status": setup_status,
+            "payment_method_role": payment_method_role,
+        }
+        if payment_method_label:
+            row["payment_method_label"] = payment_method_label
+        if payment_method_last4:
+            row["payment_method_last4"] = payment_method_last4
+        if current_consent_id:
+            row["current_consent_id"] = current_consent_id
+        if consent_text_version:
+            row["consent_text_version"] = consent_text_version
+        if ach_mandate_version:
+            row["ach_mandate_version"] = ach_mandate_version
+        if card_disclosure_version:
+            row["card_disclosure_version"] = card_disclosure_version
+        self.default_methods = [
+            existing
+            for existing in self.default_methods
+            if not (
+                existing["parent_id"] == parent_id
+                and existing.get("payment_method_role", "primary") == payment_method_role
+            )
+        ]
+        self.default_methods.append(row)
+
+    async def promote_payment_method_to_default(
+        self,
+        *,
+        parent_id: str,
+        stripe_payment_method_id: str,
+        payment_method_type: str,
+        stripe_mandate_id: str | None,
+        payment_method_label: str | None = None,
+        payment_method_last4: str | None = None,
+    ) -> None:
+        for row in reversed(self.default_methods):
+            if row["parent_id"] != parent_id:
+                continue
+            row["default_payment_method_id"] = stripe_payment_method_id
+            row["default_payment_method_type"] = payment_method_type
+            if payment_method_label:
+                row["default_payment_method_label"] = payment_method_label
+            if payment_method_last4:
+                row["default_payment_method_last4"] = payment_method_last4
+            if stripe_mandate_id:
+                row["default_stripe_mandate_id"] = stripe_mandate_id
+            return
         self.default_methods.append(
             {
                 "parent_id": parent_id,
-                "stripe_customer_id": stripe_customer_id,
-                "stripe_payment_method_id": stripe_payment_method_id,
-                "payment_method_type": payment_method_type,
-                "stripe_mandate_id": stripe_mandate_id,
-                "setup_intent_id": setup_intent_id,
-                "checkout_session_id": checkout_session_id,
-                "completed_at": completed_at,
+                "default_payment_method_id": stripe_payment_method_id,
+                "default_payment_method_type": payment_method_type,
+                "default_stripe_mandate_id": stripe_mandate_id,
             }
         )
+        if payment_method_label:
+            self.default_methods[-1]["default_payment_method_label"] = payment_method_label
+        if payment_method_last4:
+            self.default_methods[-1]["default_payment_method_last4"] = payment_method_last4
 
 
 class FakeEnrollmentAutopayState:
     def __init__(self) -> None:
         self.synced: list[dict[str, str | None]] = []
+        self.setup_completed: list[str] = []
 
     async def set_autopay_state(
         self,
         *,
         enrollment_id: str,
-        subscription_status: str,
-        stripe_subscription_id: str | None,
-    ) -> None:
+        autopay_enrollment_status: str,
+        session=None,
+    ) -> bool:
         self.synced.append(
             {
                 "enrollment_id": enrollment_id,
-                "subscription_status": subscription_status,
-                "stripe_subscription_id": stripe_subscription_id,
+                "autopay_enrollment_status": autopay_enrollment_status,
             }
         )
+        return True
+
+    async def mark_autopay_active_from_setup(self, *, enrollment_id: str, session=None) -> bool:
+        if enrollment_id not in self.setup_completed:
+            self.setup_completed.append(enrollment_id)
+        return True
+
+
+class FakeAutopayConsentRepo:
+    def __init__(self) -> None:
+        self.consents: list[Any] = []
+        self.by_setup_intent: dict[str, Any] = {}
+
+    async def append(self, consent, *, session=None):
+        existing = self.by_setup_intent.get(consent.setup_intent_id)
+        if existing is not None:
+            return existing
+        self.consents.append(consent)
+        self.by_setup_intent[consent.setup_intent_id] = consent
+        return consent
 
 
 class FakeEnrollmentBillingIdentity:
@@ -329,6 +420,9 @@ class FakeBillingLedger:
             if invoice.stripe_invoice_id == stripe_invoice_id:
                 return invoice
         return None
+
+    async def get_lines_for_invoice(self, invoice_id: str) -> list[Any]:
+        return list(self.lines.get(invoice_id, []))
 
     async def save_invoice(self, invoice: LedgerInvoice) -> LedgerInvoice:
         self.invoices[invoice.invoice_id] = invoice
@@ -493,6 +587,42 @@ class FakeBillingLedger:
         self.payments[payment_id] = updated
         return updated
 
+    async def reverse_payment_allocation(
+        self,
+        *,
+        allocation_idempotency_key: str,
+        reversal_idempotency_key: str,
+        reason: str,
+        return_code: str | None,
+        reversed_at: datetime,
+    ) -> dict[str, Any] | None:
+        for allocation in list(self.allocations):
+            if allocation["idempotency_key"] != allocation_idempotency_key:
+                continue
+            invoice = self.invoices[allocation["invoice_id"]]
+            payment = self.payments[allocation["payment_id"]]
+            self.allocations.remove(allocation)
+            self.allocation_keys.discard(allocation_idempotency_key)
+            self.invoices[invoice.invoice_id] = invoice.model_copy(
+                update={
+                    "status": "open",
+                    "balance_due_cents": invoice.total_cents,
+                    "updated_at": reversed_at,
+                }
+            )
+            self.payments[payment.payment_id] = payment.model_copy(
+                update={"unapplied_amount_cents": 0, "updated_at": reversed_at}
+            )
+            return {
+                "payment_id": payment.payment_id,
+                "invoice_id": invoice.invoice_id,
+                "amount_cents": allocation["amount_cents"],
+                "reason": reason,
+                "return_code": return_code,
+                "idempotency_key": reversal_idempotency_key,
+            }
+        return None
+
 
 def _build(
     repo,
@@ -506,14 +636,18 @@ def _build(
     expected_livemode=None,
     billing_ledger=None,
     invoice_processing=None,
+    billing_enrollments=None,
+    consent_repo=None,
 ):
     return HandleWebhookEvent(
         stripe=stripe or FakeStripeGateway(),
         dedup=dedup or FakeDedup(),
         payments=repo,
         subscriptions=subscriptions or FakeSubscriptionRepo(),
+        billing_enrollments=billing_enrollments,
         parent_customers=parent_customers,
         enrollment_autopay=enrollment_autopay,
+        consent_repo=consent_repo,
         enrollment_identity=enrollment_identity,
         outbox=outbox or FakeOutbox(),
         academy_id="acad",
@@ -521,6 +655,30 @@ def _build(
         billing_ledger=billing_ledger,
         invoice_processing=invoice_processing,
     )
+
+
+class _FakeBillingEnrollmentsForGuard:
+    """Minimal billing-enrollment lookup for the legacy-convergence guard.
+
+    ``get(enrollment_id)`` returns an object exposing ``stripe_subscription_id``
+    so ``_enrollment_is_legacy_subscription_managed`` can decide whether a
+    subscription event still governs the enrollment (HIGH review-fix #4).
+    """
+
+    def __init__(self, *, enrollment_id: str, stripe_subscription_id: str | None) -> None:
+        self._enrollment_id = enrollment_id
+        self._stripe_subscription_id = stripe_subscription_id
+
+    async def get(self, enrollment_id: str):
+        if enrollment_id != self._enrollment_id:
+            return None
+        return SimpleNamespace(
+            enrollment_id=self._enrollment_id,
+            stripe_subscription_id=self._stripe_subscription_id,
+        )
+
+    async def get_by_stripe_subscription(self, stripe_subscription_id: str):
+        return None
 
 
 def _ledger_invoice(
@@ -693,13 +851,88 @@ async def test_process_next_fetches_current_checkout_before_projection() -> None
     assert parent_customers.saved == [{"parent_id": "p1", "stripe_customer_id": "cus_fake_parent"}]
     assert subscriptions.by_id["app-sub-1"].stripe_subscription_id == "sub_live_1"
     assert subscriptions.by_id["app-sub-1"].status == "active"
-    assert enrollment_autopay.synced == [
+    assert enrollment_autopay.setup_completed == ["enr-1"]
+    assert enrollment_autopay.synced == []
+
+
+@pytest.mark.asyncio
+async def test_autopay_setup_checkout_and_setup_intent_replay_do_not_duplicate_consent_event() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    subscriptions = FakeSubscriptionRepo()
+    stripe = FakeStripeGateway()
+    stripe.autopay_setup_checkouts.append(
         {
+            "checkout_id": "cs_setup_replay",
+            "parent_id": "p1",
             "enrollment_id": "enr-1",
-            "subscription_status": "active",
-            "stripe_subscription_id": "sub_live_1",
+            "session_id": "s1",
+            "setup_intent_id": "seti_replay",
+            "metadata": {
+                "academy_id": "acad",
+                "parent_id": "p1",
+                "enrollment_id": "enr-1",
+                "source": "autopay_setup",
+            },
         }
-    ]
+    )
+    stripe.setup_intents["seti_replay"] = {
+        "id": "seti_replay",
+        "object": "setup_intent",
+        "customer": "cus_parent",
+        "payment_method": "pm_replay",
+        "mandate": None,
+        "metadata": {
+            "academy_id": "acad",
+            "parent_id": "p1",
+            "enrollment_id": "enr-1",
+            "source": "autopay_setup",
+        },
+    }
+    stripe.payment_methods["pm_replay"] = {
+        "id": "pm_replay",
+        "object": "payment_method",
+        "type": "card",
+    }
+    parent_customers = FakeParentStripeCustomers()
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    consents = FakeAutopayConsentRepo()
+    outbox = FakeOutbox()
+    uc = _build(
+        repo,
+        outbox=outbox,
+        subscriptions=subscriptions,
+        parent_customers=parent_customers,
+        enrollment_autopay=enrollment_autopay,
+        consent_repo=consents,
+        stripe=stripe,
+    )
+
+    checkout_body = json.dumps(
+        {
+            "id": "evt_autopay_setup_checkout_replay",
+            "type": "checkout.session.completed",
+            "data": {"object": {"id": "cs_setup_replay"}},
+        }
+    ).encode()
+    setup_intent_body = json.dumps(
+        {
+            "id": "evt_setup_intent_succeeded_replay",
+            "type": "setup_intent.succeeded",
+            "data": {"object": {"id": "seti_replay"}},
+        }
+    ).encode()
+
+    await uc.accept(checkout_body, "test_signature")
+    await uc.process_next(processor_id="test-worker")
+    await uc.accept(setup_intent_body, "test_signature")
+    await uc.process_next(processor_id="test-worker")
+
+    assert [consent.setup_intent_id for consent in consents.consents] == ["seti_replay"]
+    assert [event.name for event in outbox.events] == ["Billing.AutopayConsentCaptured"]
+    assert [row["setup_intent_id"] for row in parent_customers.default_methods] == ["seti_replay"]
+    assert enrollment_autopay.setup_completed == ["enr-1"]
 
 
 @pytest.mark.asyncio
@@ -780,14 +1013,14 @@ async def test_autopay_setup_checkout_completed_sets_default_pm_without_subscrip
         "setup_intent_id": "seti_setup_1",
         "checkout_session_id": "cs_setup_1",
         "completed_at": None,
+        "setup_status": "active",
+        "payment_method_role": "primary",
+        "default_payment_method_id": "pm_bank",
+        "default_payment_method_type": "us_bank_account",
+        "default_stripe_mandate_id": "mandate_bank",
     }
-    assert enrollment_autopay.synced == [
-        {
-            "enrollment_id": "enr-1",
-            "subscription_status": "active",
-            "stripe_subscription_id": None,
-        }
-    ]
+    assert enrollment_autopay.setup_completed == ["enr-1"]
+    assert enrollment_autopay.synced == []
 
 
 @pytest.mark.asyncio
@@ -848,13 +1081,134 @@ async def test_setup_intent_succeeded_completes_autopay_from_setup_metadata() ->
     ]
     assert parent_customers.default_methods[0]["checkout_session_id"] is None
     assert parent_customers.default_methods[0]["payment_method_type"] == "card"
-    assert enrollment_autopay.synced == [
+    assert parent_customers.default_methods[0]["setup_status"] == "active"
+    assert parent_customers.default_methods[0]["payment_method_role"] == "primary"
+    assert enrollment_autopay.setup_completed == ["enr-1"]
+    assert enrollment_autopay.synced == []
+
+
+@pytest.mark.asyncio
+async def test_ach_setup_requiring_microdeposit_verification_does_not_mark_active() -> None:
+    repo = FakePaymentRepo()
+    subscriptions = FakeSubscriptionRepo()
+    stripe = FakeStripeGateway()
+    stripe.autopay_setup_checkouts.append(
         {
+            "checkout_id": "cs_setup_verify",
+            "parent_id": "p1",
             "enrollment_id": "enr-1",
-            "subscription_status": "active",
-            "stripe_subscription_id": None,
+            "session_id": "s1",
+            "setup_intent_id": "seti_setup_verify",
+            "metadata": {
+                "academy_id": "acad",
+                "parent_id": "p1",
+                "enrollment_id": "enr-1",
+                "source": "autopay_setup",
+            },
         }
-    ]
+    )
+    stripe.setup_intents["seti_setup_verify"] = {
+        "id": "seti_setup_verify",
+        "object": "setup_intent",
+        "status": "requires_action",
+        "next_action": {"type": "verify_with_microdeposits"},
+        "customer": "cus_parent",
+        "payment_method": "pm_bank_pending",
+        "mandate": "mandate_bank_pending",
+        "metadata": {
+            "academy_id": "acad",
+            "parent_id": "p1",
+            "enrollment_id": "enr-1",
+            "source": "autopay_setup",
+        },
+    }
+    stripe.payment_methods["pm_bank_pending"] = {
+        "id": "pm_bank_pending",
+        "object": "payment_method",
+        "type": "us_bank_account",
+    }
+    parent_customers = FakeParentStripeCustomers()
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    dedup = FakeDedup()
+    uc = _build(
+        repo,
+        dedup=dedup,
+        subscriptions=subscriptions,
+        parent_customers=parent_customers,
+        enrollment_autopay=enrollment_autopay,
+        stripe=stripe,
+    )
+    body = json.dumps(
+        {
+            "id": "evt_autopay_setup_verify",
+            "type": "checkout.session.completed",
+            "data": {"object": {"id": "cs_setup_verify"}},
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    assert stripe.customer_default_payment_methods == []
+    assert parent_customers.default_methods[0]["setup_status"] == "verification_required"
+    assert parent_customers.default_methods[0]["payment_method_type"] == "us_bank_account"
+    assert parent_customers.default_methods[0]["payment_method_role"] == "primary"
+    assert enrollment_autopay.setup_completed == []
+    assert enrollment_autopay.synced == []
+
+
+@pytest.mark.asyncio
+async def test_active_fallback_card_setup_does_not_mark_enrollment_active_or_default() -> None:
+    repo = FakePaymentRepo()
+    stripe = FakeStripeGateway()
+    stripe.setup_intents["seti_card_fallback"] = {
+        "id": "seti_card_fallback",
+        "object": "setup_intent",
+        "status": "succeeded",
+        "customer": "cus_parent",
+        "payment_method": "pm_card_fallback",
+        "mandate": None,
+        "metadata": {
+            "academy_id": "acad",
+            "parent_id": "p1",
+            "enrollment_id": "enr-1",
+            "source": "autopay_setup",
+            "payment_method_role": "fallback",
+        },
+    }
+    stripe.payment_methods["pm_card_fallback"] = {
+        "id": "pm_card_fallback",
+        "object": "payment_method",
+        "type": "card",
+    }
+    parent_customers = FakeParentStripeCustomers()
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    dedup = FakeDedup()
+    uc = _build(
+        repo,
+        dedup=dedup,
+        parent_customers=parent_customers,
+        enrollment_autopay=enrollment_autopay,
+        stripe=stripe,
+    )
+    body = json.dumps(
+        {
+            "id": "evt_setup_intent_card_fallback",
+            "type": "setup_intent.succeeded",
+            "data": {"object": {"id": "seti_card_fallback"}},
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    assert stripe.customer_default_payment_methods == []
+    assert parent_customers.default_methods[0]["setup_status"] == "active"
+    assert parent_customers.default_methods[0]["payment_method_role"] == "fallback"
+    assert parent_customers.default_methods[0]["payment_method_type"] == "card"
+    assert enrollment_autopay.setup_completed == []
 
 
 @pytest.mark.asyncio
@@ -898,6 +1252,7 @@ async def test_checkout_completed_without_tenant_owned_mapping_does_not_mutate_c
     assert result["processed"] is True
     assert parent_customers.saved == []
     assert enrollment_autopay.synced == []
+    assert enrollment_autopay.setup_completed == []
     assert repo.by_id == {}
     assert outbox.events == []
 
@@ -1083,6 +1438,162 @@ async def test_autopay_payment_intent_uses_invoice_parent_when_metadata_parent_m
 
 
 @pytest.mark.asyncio
+async def test_autopay_payment_intent_succeeded_records_discount_metadata_when_webhook_wins() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            balance_due_cents=9_750,
+        )
+    )
+    ledger.lines["inv-autopay"] = [
+        InvoiceLine(
+            line_id="ach-discount:inv-autopay",
+            academy_id="acad",
+            invoice_id="inv-autopay",
+            line_type="ach_discount",
+            description="ACH autopay savings",
+            quantity=1,
+            unit_amount_cents=-250,
+            amount_cents=-250,
+            source_type="autopay_cash_discount",
+            source_id="cash-discount-v1",
+            created_at=datetime.now(UTC),
+        )
+    ]
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger)
+    body = json.dumps(
+        {
+            "id": "evt_autopay_pi_metadata",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_autopay_metadata",
+                    "amount": 9750,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-autopay",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "ach_discount_cents": "250",
+                        "ach_discount_line_id": "ach-discount:inv-autopay",
+                        "ach_discount_percent": "2.5",
+                        "disclosure_version": "cash-discount-v1",
+                        "funding_type": "us_bank_account",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    payment = ledger.payments["ledger-pay-autopay:pi_autopay_metadata"]
+    assert payment.metadata == {
+        "ach_discount_cents": "250",
+        "ach_discount_line_id": "ach-discount:inv-autopay",
+        "ach_discount_percent": "2.5",
+        "disclosure_version": "cash-discount-v1",
+        "funding_type": "us_bank_account",
+        "invoice_id": "inv-autopay",
+    }
+
+
+@pytest.mark.asyncio
+async def test_autopay_ach_payment_intent_processing_records_pending_attempt_only() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-autopay-processing"))
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger)
+    body = json.dumps(
+        {
+            "id": "evt_autopay_pi_processing",
+            "type": "payment_intent.processing",
+            "data": {
+                "object": {
+                    "id": "pi_autopay_processing",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "payment_method_types": ["us_bank_account"],
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-autopay-processing",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "funding_type": "us_bank_account",
+                    },
+                    "status": "processing",
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    assert ledger.invoices["inv-autopay-processing"].status == "open"
+    assert ledger.invoices["inv-autopay-processing"].balance_due_cents == 10000
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+    assert list(ledger.payment_attempts.values()) == [
+        {
+            "invoice_id": "inv-autopay-processing",
+            "parent_id": "parent-from-invoice",
+            "amount_cents": 10000,
+            "currency": "usd",
+            "status": "processing",
+            "stripe_payment_intent_id": "pi_autopay_processing",
+            "stripe_checkout_session_id": None,
+            "failure_code": None,
+            "failure_message": "ACH debit submitted; awaiting settlement.",
+            "idempotency_key": "autopay-processing:inv-autopay-processing:pi_autopay_processing",
+            "created_by_event_id": "evt_autopay_pi_processing",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_autopay_ach_processing_cross_tenant_invoice_is_quarantined() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-other", academy_id="other-acad"))
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger)
+    body = json.dumps(
+        {
+            "id": "evt_autopay_pi_processing_tenant",
+            "type": "payment_intent.processing",
+            "data": {
+                "object": {
+                    "id": "pi_autopay_processing_tenant",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "payment_method_types": ["us_bank_account"],
+                    "metadata": {
+                        "academy_id": "other-acad",
+                        "invoice_id": "inv-other",
+                        "source": "autopay",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["status"] == "quarantined"
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+    assert ledger.payment_attempts == {}
+
+
+@pytest.mark.asyncio
 async def test_autopay_payment_intent_parent_metadata_mismatch_is_quarantined() -> None:
     repo = FakePaymentRepo()
     ledger = FakeBillingLedger(_ledger_invoice(parent_id="parent-from-invoice"))
@@ -1206,6 +1717,497 @@ async def test_autopay_payment_intent_failed_records_attempt_without_closing_inv
             "created_by_event_id": "evt_autopay_pi_failed",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_autopay_ach_return_after_paid_reopens_invoice_and_records_return_code() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-ach-return"))
+    dedup = FakeDedup()
+    outbox = FakeOutbox()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger, outbox=outbox)
+    succeeded = json.dumps(
+        {
+            "id": "evt_ach_return_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_ach_return",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-ach-return",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "funding_type": "us_bank_account",
+                        "funding_type_source": "server_payment_method",
+                    },
+                }
+            },
+        }
+    ).encode()
+    returned = json.dumps(
+        {
+            "id": "evt_ach_return_refund",
+            "type": "charge.refunded",
+            "data": {
+                "object": {
+                    "id": "ch_ach_return",
+                    "payment_intent": "pi_ach_return",
+                    "amount_refunded": 10000,
+                    "failure_code": "insufficient_funds",
+                    "payment_method_details": {"type": "us_bank_account"},
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(succeeded, "test_signature")
+    assert (await uc.process_next(processor_id="test-worker"))["processed"] is True
+    assert ledger.invoices["inv-ach-return"].status == "paid"
+    await uc.accept(returned, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    invoice = ledger.invoices["inv-ach-return"]
+    payment = ledger.payments["ledger-pay-autopay:pi_ach_return"]
+    assert payment.metadata["funding_type"] == "us_bank_account"
+    assert payment.metadata["funding_type_source"] == "server_payment_method"
+    assert invoice.status == "open"
+    assert invoice.balance_due_cents == 10000
+    assert payment.status == "refunded"
+    assert payment.refunded_cents == 10000
+    assert payment.unapplied_amount_cents == 0
+    assert ledger.allocations == []
+    returned_attempts = [
+        attempt for attempt in ledger.payment_attempts.values() if attempt["status"] == "returned"
+    ]
+    assert returned_attempts == [
+        {
+            "invoice_id": "inv-ach-return",
+            "parent_id": "parent-from-invoice",
+            "amount_cents": 10000,
+            "currency": "usd",
+            "status": "returned",
+            "stripe_payment_intent_id": "pi_ach_return",
+            "stripe_checkout_session_id": None,
+            "failure_code": "R01",
+            "failure_message": "ACH return R01",
+            "idempotency_key": "autopay-ach-return:inv-ach-return:pi_ach_return:R01:10000",
+            "created_by_event_id": "evt_ach_return_refund",
+        }
+    ]
+    events_after_return = len(outbox.events)
+    duplicate_return = json.loads(returned.decode())
+    duplicate_return["id"] = "evt_ach_return_refund_duplicate"
+    await uc.accept(json.dumps(duplicate_return).encode(), "test_signature")
+    duplicate_res = await uc.process_next(processor_id="test-worker")
+    assert duplicate_res["processed"] is True
+    assert ledger.invoices["inv-ach-return"].status == "open"
+    assert ledger.allocations == []
+    assert len(outbox.events) == events_after_return
+    alternate_return = json.dumps(
+        {
+            "id": "evt_ach_return_payment_failed_duplicate",
+            "type": "payment_intent.payment_failed",
+            "data": {
+                "object": {
+                    "id": "pi_ach_return",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "payment_method_types": ["us_bank_account"],
+                    "last_payment_error": {"code": "insufficient_funds"},
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-ach-return",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                    },
+                }
+            },
+        }
+    ).encode()
+    await uc.accept(alternate_return, "test_signature")
+    alternate_res = await uc.process_next(processor_id="test-worker")
+    assert alternate_res["processed"] is True
+    assert ledger.invoices["inv-ach-return"].status == "open"
+    assert ledger.allocations == []
+    assert len(outbox.events) == events_after_return
+
+
+@pytest.mark.asyncio
+async def test_autopay_ach_return_replay_emits_missing_refund_event_after_ledger_mutation() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-ach-return-replay"))
+    dedup = FakeDedup()
+    outbox = FakeOutbox()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger, outbox=outbox)
+    succeeded = json.dumps(
+        {
+            "id": "evt_ach_return_replay_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_ach_return_replay",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-ach-return-replay",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "funding_type": "us_bank_account",
+                        "funding_type_source": "server_payment_method",
+                    },
+                }
+            },
+        }
+    ).encode()
+    returned_without_details = json.dumps(
+        {
+            "id": "evt_ach_return_replay_refund",
+            "type": "charge.refunded",
+            "data": {
+                "object": {
+                    "id": "ch_ach_return_replay",
+                    "payment_intent": "pi_ach_return_replay",
+                    "amount_refunded": 10000,
+                    "failure_code": "insufficient_funds",
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(succeeded, "test_signature")
+    assert (await uc.process_next(processor_id="test-worker"))["processed"] is True
+    await ledger.mark_payment_refunded(
+        "ledger-pay-autopay:pi_ach_return_replay",
+        refunded_cents=10000,
+        status="refunded",
+        updated_at=datetime.now(UTC),
+    )
+    await ledger.reverse_payment_allocation(
+        allocation_idempotency_key="autopay-alloc:pi_ach_return_replay",
+        reversal_idempotency_key="ach-return:pi_ach_return_replay:10000:R01",
+        reason="ach_return",
+        return_code="R01",
+        reversed_at=datetime.now(UTC),
+    )
+
+    await uc.accept(returned_without_details, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    refund_events = [event for event in outbox.events if event.name == "Billing.PaymentRefunded"]
+    assert len(refund_events) == 1
+    assert refund_events[0].event_id == (
+        "billing-payment-refunded:ach-return:pi_ach_return_replay:10000:R01"
+    )
+    assert refund_events[0].payload.reason == "other"
+
+
+@pytest.mark.asyncio
+async def test_partial_ach_return_is_recorded_as_unsupported_without_reversing_allocation() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-ach-partial-return"))
+    dedup = FakeDedup()
+    outbox = FakeOutbox()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger, outbox=outbox)
+    succeeded = json.dumps(
+        {
+            "id": "evt_ach_partial_return_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_ach_partial_return",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-ach-partial-return",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                    },
+                    "payment_method_types": ["us_bank_account"],
+                }
+            },
+        }
+    ).encode()
+    partial_return = json.dumps(
+        {
+            "id": "evt_ach_partial_return_refund",
+            "type": "charge.refunded",
+            "data": {
+                "object": {
+                    "id": "ch_ach_partial_return",
+                    "payment_intent": "pi_ach_partial_return",
+                    "amount_refunded": 4000,
+                    "failure_code": "insufficient_funds",
+                    "payment_method_details": {"type": "us_bank_account"},
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(succeeded, "test_signature")
+    assert (await uc.process_next(processor_id="test-worker"))["processed"] is True
+    await uc.accept(partial_return, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    invoice = ledger.invoices["inv-ach-partial-return"]
+    payment = ledger.payments["ledger-pay-autopay:pi_ach_partial_return"]
+    assert invoice.status == "paid"
+    assert invoice.balance_due_cents == 0
+    assert payment.status == "succeeded"
+    assert payment.refunded_cents == 0
+    assert ledger.allocations == [
+        {
+            "payment_id": "ledger-pay-autopay:pi_ach_partial_return",
+            "invoice_id": "inv-ach-partial-return",
+            "amount_cents": 10000,
+            "idempotency_key": "autopay-alloc:pi_ach_partial_return",
+        }
+    ]
+    attempts = list(ledger.payment_attempts.values())
+    assert attempts == [
+        {
+            "invoice_id": "inv-ach-partial-return",
+            "parent_id": "parent-from-invoice",
+            "amount_cents": 4000,
+            "currency": "usd",
+            "status": "failed",
+            "stripe_payment_intent_id": "pi_ach_partial_return",
+            "stripe_checkout_session_id": None,
+            "failure_code": "unsupported_partial_ach_return",
+            "failure_message": "Unsupported partial ACH return R01 for 4000 of 10000 cents",
+            "idempotency_key": (
+                "autopay-ach-return-unsupported-partial:"
+                "inv-ach-partial-return:pi_ach_partial_return:R01:4000"
+            ),
+            "created_by_event_id": "evt_ach_partial_return_refund",
+        }
+    ]
+    assert not any(type(event).__name__ == "PaymentRefunded" for event in outbox.events)
+
+
+@pytest.mark.asyncio
+async def test_metadata_only_funding_type_with_return_code_on_refund_does_not_reopen_invoice() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-metadata-bank-false-positive"))
+    dedup = FakeDedup()
+    outbox = FakeOutbox()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger, outbox=outbox)
+    succeeded = json.dumps(
+        {
+            "id": "evt_metadata_bank_false_positive_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_metadata_bank_false_positive",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-metadata-bank-false-positive",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "funding_type": "us_bank_account",
+                    },
+                }
+            },
+        }
+    ).encode()
+    returned = json.dumps(
+        {
+            "id": "evt_metadata_bank_false_positive_refund",
+            "type": "charge.refunded",
+            "data": {
+                "object": {
+                    "id": "ch_metadata_bank_false_positive",
+                    "payment_intent": "pi_metadata_bank_false_positive",
+                    "amount_refunded": 10000,
+                    "failure_code": "insufficient_funds",
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(succeeded, "test_signature")
+    assert (await uc.process_next(processor_id="test-worker"))["processed"] is True
+    await uc.accept(returned, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    invoice = ledger.invoices["inv-metadata-bank-false-positive"]
+    payment = ledger.payments["ledger-pay-autopay:pi_metadata_bank_false_positive"]
+    assert invoice.status == "paid"
+    assert invoice.balance_due_cents == 0
+    assert payment.status == "refunded"
+    assert payment.refunded_cents == 10000
+    assert ledger.allocations == [
+        {
+            "payment_id": "ledger-pay-autopay:pi_metadata_bank_false_positive",
+            "invoice_id": "inv-metadata-bank-false-positive",
+            "amount_cents": 10000,
+            "idempotency_key": "autopay-alloc:pi_metadata_bank_false_positive",
+        }
+    ]
+    assert not any(attempt["status"] == "returned" for attempt in ledger.payment_attempts.values())
+    assert outbox.events[-1].payload.reason == "admin_initiated"
+
+
+@pytest.mark.asyncio
+async def test_metadata_only_funding_type_with_payment_failed_return_code_does_not_reopen_invoice() -> (
+    None
+):
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-metadata-pi-false-positive"))
+    dedup = FakeDedup()
+    outbox = FakeOutbox()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger, outbox=outbox)
+    succeeded = json.dumps(
+        {
+            "id": "evt_metadata_pi_false_positive_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_metadata_pi_false_positive",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-metadata-pi-false-positive",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "funding_type": "us_bank_account",
+                    },
+                }
+            },
+        }
+    ).encode()
+    failed = json.dumps(
+        {
+            "id": "evt_metadata_pi_false_positive_failed",
+            "type": "payment_intent.payment_failed",
+            "data": {
+                "object": {
+                    "id": "pi_metadata_pi_false_positive",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "last_payment_error": {"code": "insufficient_funds"},
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-metadata-pi-false-positive",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "funding_type": "us_bank_account",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(succeeded, "test_signature")
+    assert (await uc.process_next(processor_id="test-worker"))["processed"] is True
+    await uc.accept(failed, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    invoice = ledger.invoices["inv-metadata-pi-false-positive"]
+    payment = ledger.payments["ledger-pay-autopay:pi_metadata_pi_false_positive"]
+    assert invoice.status == "paid"
+    assert invoice.balance_due_cents == 0
+    assert payment.status == "succeeded"
+    assert payment.refunded_cents == 0
+    assert len(ledger.allocations) == 1
+    attempts = list(ledger.payment_attempts.values())
+    assert attempts == [
+        {
+            "invoice_id": "inv-metadata-pi-false-positive",
+            "parent_id": "parent-from-invoice",
+            "amount_cents": 10000,
+            "currency": "usd",
+            "status": "failed",
+            "stripe_payment_intent_id": "pi_metadata_pi_false_positive",
+            "stripe_checkout_session_id": None,
+            "failure_code": "insufficient_funds",
+            "failure_message": "Payment failed",
+            "idempotency_key": (
+                "autopay-failed:" "inv-metadata-pi-false-positive:pi_metadata_pi_false_positive"
+            ),
+            "created_by_event_id": "evt_metadata_pi_false_positive_failed",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_metadata_only_ach_return_code_on_refund_does_not_reopen_invoice() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-ach-normal-refund"))
+    dedup = FakeDedup()
+    outbox = FakeOutbox()
+    uc = _build(repo, dedup=dedup, billing_ledger=ledger, outbox=outbox)
+    succeeded = json.dumps(
+        {
+            "id": "evt_ach_normal_refund_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_ach_normal_refund",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-ach-normal-refund",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "funding_type": "us_bank_account",
+                    },
+                }
+            },
+        }
+    ).encode()
+    metadata_only_refund = json.dumps(
+        {
+            "id": "evt_ach_normal_refund",
+            "type": "charge.refunded",
+            "data": {
+                "object": {
+                    "id": "ch_ach_normal_refund",
+                    "payment_intent": "pi_ach_normal_refund",
+                    "amount_refunded": 10000,
+                    "metadata": {"ach_return_code": "R01"},
+                }
+            },
+        }
+    ).encode()
+
+    await uc.accept(succeeded, "test_signature")
+    assert (await uc.process_next(processor_id="test-worker"))["processed"] is True
+    await uc.accept(metadata_only_refund, "test_signature")
+    res = await uc.process_next(processor_id="test-worker")
+
+    assert res["processed"] is True
+    invoice = ledger.invoices["inv-ach-normal-refund"]
+    payment = ledger.payments["ledger-pay-autopay:pi_ach_normal_refund"]
+    assert invoice.status == "paid"
+    assert invoice.balance_due_cents == 0
+    assert payment.status == "refunded"
+    assert payment.refunded_cents == 10000
+    assert ledger.allocations == [
+        {
+            "payment_id": "ledger-pay-autopay:pi_ach_normal_refund",
+            "invoice_id": "inv-ach-normal-refund",
+            "amount_cents": 10000,
+            "idempotency_key": "autopay-alloc:pi_ach_normal_refund",
+        }
+    ]
+    assert not any(attempt["status"] == "returned" for attempt in ledger.payment_attempts.values())
+    assert outbox.events[-1].payload.reason == "admin_initiated"
 
 
 @pytest.mark.asyncio
@@ -2655,13 +3657,8 @@ async def test_subscription_checkout_completed_activates_subscription_and_enroll
     updated = subs.by_stripe_sub["sub_live_1"]
     assert updated.subscription_id == "sub-1"
     assert updated.status == "active"
-    assert enrollment_autopay.synced == [
-        {
-            "enrollment_id": "enr-1",
-            "subscription_status": "active",
-            "stripe_subscription_id": "sub_live_1",
-        }
-    ]
+    assert enrollment_autopay.setup_completed == ["enr-1"]
+    assert enrollment_autopay.synced == []
 
 
 @pytest.mark.asyncio
@@ -2738,9 +3735,75 @@ async def test_subscription_updated_syncs_enrollment_autopay_state() -> None:
     assert enrollment_autopay.synced == [
         {
             "enrollment_id": "enr-1",
-            "subscription_status": "past_due",
-            "stripe_subscription_id": "sub_live_9",
+            "autopay_enrollment_status": "active",
         }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stale_subscription_event_does_not_flip_converged_enrollment() -> None:
+    """HIGH review-fix #4: once an enrollment has converged onto app-owned
+    autopay (its stripe_subscription_id is cleared), a stale/duplicate legacy
+    subscription webhook must NOT flip its autopay status."""
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    _seed_incomplete_subscription(subs, stripe_subscription_id="sub_live_9", status="active")
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    # Billing enrollment has converged: no stripe_subscription_id any more.
+    billing_enrollments = _FakeBillingEnrollmentsForGuard(
+        enrollment_id="enr-1", stripe_subscription_id=None
+    )
+    uc = _build(
+        repo,
+        subscriptions=subs,
+        enrollment_autopay=enrollment_autopay,
+        billing_enrollments=billing_enrollments,
+    )
+    body = json.dumps(
+        {
+            "id": "evt_sub_stale",
+            "type": "customer.subscription.updated",
+            "data": {"object": {"id": "sub_live_9", "status": "canceled"}},
+        }
+    ).encode()
+
+    await uc.execute(body, "test_signature")
+
+    # Subscription row still reconciles, but the converged enrollment's autopay
+    # status is left untouched.
+    assert subs.by_stripe_sub["sub_live_9"].status == "cancelled"
+    assert enrollment_autopay.synced == []
+
+
+@pytest.mark.asyncio
+async def test_subscription_event_converges_when_still_subscription_managed() -> None:
+    """Complement to the guard: when the billing enrollment still carries the
+    matching stripe_subscription_id, convergence still runs (through the guard)."""
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    _seed_incomplete_subscription(subs, stripe_subscription_id="sub_live_9", status="active")
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    billing_enrollments = _FakeBillingEnrollmentsForGuard(
+        enrollment_id="enr-1", stripe_subscription_id="sub_live_9"
+    )
+    uc = _build(
+        repo,
+        subscriptions=subs,
+        enrollment_autopay=enrollment_autopay,
+        billing_enrollments=billing_enrollments,
+    )
+    body = json.dumps(
+        {
+            "id": "evt_sub_managed",
+            "type": "customer.subscription.updated",
+            "data": {"object": {"id": "sub_live_9", "status": "past_due"}},
+        }
+    ).encode()
+
+    await uc.execute(body, "test_signature")
+
+    assert enrollment_autopay.synced == [
+        {"enrollment_id": "enr-1", "autopay_enrollment_status": "active"}
     ]
 
 
@@ -2765,8 +3828,7 @@ async def test_subscription_deleted_syncs_enrollment_cancelled() -> None:
     assert enrollment_autopay.synced == [
         {
             "enrollment_id": "enr-1",
-            "subscription_status": "cancelled",
-            "stripe_subscription_id": "sub_live_9",
+            "autopay_enrollment_status": "disabled",
         }
     ]
 

@@ -27,6 +27,12 @@ CreditEntryType = Literal[
     "EARLY_WITHDRAWAL_CREDIT", "MANUAL_CREDIT", "CREDIT_APPLIED", "CREDIT_VOIDED"
 ]
 CreditStatus = Literal["PENDING", "APPROVED", "APPLIED", "EXPIRED", "VOIDED"]
+AutopayConsentSource = Literal[
+    "parent_checkout_status",
+    "stripe_webhook",
+    "setup_intent_webhook",
+    "unknown",
+]
 
 ALLOWED_PAYMENT_PROJECTION_TRANSITIONS: dict[str, set[str]] = {
     "pending": {"succeeded", "failed", "cancelled"},
@@ -106,3 +112,27 @@ class CreditLedgerEntry(BaseModel):
     stripe_customer_balance_txn_id: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class AutopayConsent(BaseModel):
+    """Append-only authorization record for saved autopay payment methods."""
+
+    model_config = {"frozen": True}
+
+    consent_id: str
+    academy_id: str
+    parent_id: str
+    enrollment_id: str
+    setup_intent_id: str
+    checkout_session_id: str | None = None
+    stripe_payment_method_id: str
+    method_type: str
+    consent_text_version: str
+    ach_mandate_version: str | None = None
+    card_disclosure_version: str | None = None
+    source: AutopayConsentSource = "unknown"
+    actor_id: str | None = None
+    ip: str | None = None
+    user_agent: str | None = None
+    captured_at: datetime
+    created_at: datetime

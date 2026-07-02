@@ -57,6 +57,9 @@ from backend.v2.contexts.billing.application.use_cases.match_legacy_invoices imp
     ConfirmLegacyMatchCommand,
     ListLegacyMatchQueue,
 )
+from backend.v2.contexts.billing.application.use_cases.process_dunning_retries import (
+    ProcessDunningRetries,
+)
 from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
     QuoteEnrollmentCommand,
@@ -93,11 +96,23 @@ from backend.v2.contexts.billing.domain.product import Product
 from backend.v2.contexts.billing.infrastructure.mongo_billing_audit_log import (
     MongoBillingAuditLogRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_billing_counter_repo import (
+    MongoBillingCounterRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
+    MongoBillingSettingsRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
+    MongoConnectedAccountRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
     MongoCreditLedgerRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import (
+    MongoDunningStateRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
     MongoParentBillingCustomerRepository,
@@ -435,6 +450,61 @@ class _InvoiceEmailAdapter:
         )
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "invoice email delivery failed")
+
+    async def send_dunning_notice(
+        self,
+        *,
+        parent_id: str,
+        invoice_id: str,
+        period: str,
+        balance_due_cents: int,
+        currency: str,
+        attempt_no: int,
+        terminal: bool,
+    ) -> None:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        academy_id = current_academy_id()
+        membership = await self._memberships.get_membership(academy_id, parent_id)
+        if membership is None or not membership.is_active() or "parent" not in membership.roles:
+            raise ValueError("dunning parent has no active membership in request academy")
+
+        user = await self._users.get_by_id(parent_id)
+        email = str(user.email if user else "").strip()
+        if not email:
+            raise ValueError("dunning parent email not found")
+
+        amount = f"{currency.upper()} {balance_due_cents / 100:.2f}"
+        safe_invoice = html.escape(invoice_id)
+        safe_period = html.escape(period)
+        safe_amount = html.escape(amount)
+        if terminal:
+            subject = f"Autopay disabled for invoice {invoice_id}"
+            body = (
+                f"<p>We could not collect invoice <strong>{safe_invoice}</strong> "
+                f"for {safe_period} after {attempt_no} attempts.</p>"
+                f"<p>Balance due: <strong>{safe_amount}</strong>. "
+                "Autopay has been disabled for this enrollment until payment details are updated.</p>"
+            )
+        else:
+            subject = f"Autopay attempt {attempt_no} failed for invoice {invoice_id}"
+            body = (
+                f"<p>We could not collect invoice <strong>{safe_invoice}</strong> "
+                f"for {safe_period}.</p>"
+                f"<p>Balance due: <strong>{safe_amount}</strong>. "
+                "We will retry automatically on the published retry schedule.</p>"
+            )
+        outcome = await self._sender.send(
+            recipient=ResolvedRecipient(
+                user_id=parent_id,
+                email=email,
+                display_name=str(user.display_name if user else "") or None,
+            ),
+            subject=subject,
+            body=body,
+        )
+        if not outcome.ok:
+            raise ValueError(outcome.failed_reason or "dunning email delivery failed")
 
 
 def _make_reports_kpis(db: AsyncIOMotorDatabase[Any]) -> object:
@@ -2420,6 +2490,26 @@ def compose_admin(
     scheduled_actions = MongoScheduledEnrollmentActionRepository(db)
     subscriptions_repo = MongoSubscriptionRepository(db)
     parent_customers_repo = MongoParentBillingCustomerRepository(db)
+    # Per-enrollment autopay status lives on student_billing_enrollments — the
+    # single source of truth pause/resume + the charge path share (Slice B).
+    student_billing_enrollment_repo = MongoStudentBillingEnrollmentRepository(db)
+
+    class _EnrollmentAutopayStatusGateway:
+        """Adapts the billing enrollment repo to the enrollment-context
+        ``EnrollmentAutopayStatusGateway`` port (``set_enrollment_status``),
+        delegating to the single guarded writer ``set_autopay_enrollment_status``
+        (Slice B). Mirrors the ``_EnrollmentAutopayState`` shim in
+        ``composition/parent.py`` — the port name differs from the repo method,
+        so pause/resume/approve must go through this adapter, not the repo
+        directly."""
+
+        async def set_enrollment_status(self, *, enrollment_id: str, status: str) -> bool:
+            return await student_billing_enrollment_repo.set_autopay_enrollment_status(
+                enrollment_id=enrollment_id,
+                status=status,  # type: ignore[arg-type]
+            )
+
+    enrollment_autopay_status_gateway = _EnrollmentAutopayStatusGateway()
     curriculum = compose_curriculum(db)
     student_progress = compose_student_progress(db, outbox)
     generate_daily_teaching_plan = GenerateDailyTeachingPlan(
@@ -2473,15 +2563,16 @@ def compose_admin(
         waitlist=waitlist,
         enrollment_events=enrollment_events,
         billing_deferrals=billing_deferrals,
-        subscriptions=subscriptions_repo,
-        stripe=stripe,
+        autopay_status=enrollment_autopay_status_gateway,
     )
     resume_enrollment = ResumeEnrollment(
         enrollments=enrollments_w,
         sessions=sessions_w,
+        students=students_r,
         waitlist=waitlist,
         enrollment_events=enrollment_events,
         billing_deferrals=billing_deferrals,
+        autopay_status=enrollment_autopay_status_gateway,
     )
     withdraw_enrollment = WithdrawEnrollment(
         enrollments=enrollments_w,
@@ -2508,21 +2599,22 @@ def compose_admin(
         pause_enrollment=pause_enrollment,
         scheduled_actions=scheduled_actions,
         billing_deferrals=billing_deferrals,
-        subscriptions=subscriptions_repo,
-        stripe=stripe,
+        autopay_status=enrollment_autopay_status_gateway,
         academy_id=academy_id,
     )
     decline_pause_request = DeclinePauseRequest(pause_requests=pause_requests)
     process_scheduled_resume_actions = ProcessScheduledResumeActions(
         scheduled_actions=scheduled_actions,
         resume_enrollment=resume_enrollment,
-        subscriptions=subscriptions_repo,
-        stripe=stripe,
         billing_deferrals=billing_deferrals,
     )
 
     # Billing
     billing_ledger_repo = MongoBillingLedgerRepository(db)
+    dunning_state_repo = MongoDunningStateRepository(db)
+    billing_counters_repo = MongoBillingCounterRepository(db)
+    billing_settings_repo = MongoBillingSettingsRepository(db)
+    connected_accounts_repo = MongoConnectedAccountRepository(db)
     credits_repo = MongoCreditLedgerRepository(db)
     tuition_discounts_repo = MongoTuitionDiscountRepository(db)
     payments_repo = MongoPaymentRepository(
@@ -2534,7 +2626,6 @@ def compose_admin(
     set_tuition_discount = SetTuitionDiscount(discounts=tuition_discounts_repo)
     remove_tuition_discount = RemoveTuitionDiscount(discounts=tuition_discounts_repo)
     session_type_repo = MongoSessionTypeRepository(db)
-    student_billing_enrollment_repo = MongoStudentBillingEnrollmentRepository(db)
     create_session_type = CreateSessionType(
         session_types=session_type_repo,
         academy_id=academy_id,
@@ -2746,8 +2837,28 @@ def compose_admin(
         result = await ChargeInvoiceViaAutopay(
             ledger=billing_ledger_repo,
             stripe=stripe,  # type: ignore[arg-type]
+            enrollment_autopay=student_billing_enrollment_repo,
+            settings=billing_settings_repo,
+            connected_accounts=connected_accounts_repo,
         ).execute(invoice_id)
         return result.model_dump(mode="python")
+
+    def _dunning_worker() -> ProcessDunningRetries:
+        required = ("get_default_payment_method", "create_off_session_payment_intent")
+        if not all(hasattr(stripe, name) for name in required):
+            raise RuntimeError("Stripe autopay not configured")
+        return ProcessDunningRetries(
+            dunning=dunning_state_repo,
+            charge_invoice=ChargeInvoiceViaAutopay(
+                ledger=billing_ledger_repo,
+                stripe=stripe,  # type: ignore[arg-type]
+                enrollment_autopay=student_billing_enrollment_repo,
+                settings=billing_settings_repo,
+                connected_accounts=connected_accounts_repo,
+            ),
+            notifier=_invoice_email_port(),
+            enrollment_autopay=student_billing_enrollment_repo,
+        )
 
     # ---- Billing Health (#235): observability + recovery actions ----------- #
     async def list_reconciliation_runs() -> list[dict[str, Any]]:
@@ -2775,10 +2886,48 @@ def compose_admin(
             ledger=billing_ledger_repo,
             run_recorder=MongoBillingReconciliationRunRepository(db),
             academy_id=current_academy_id(),
+            connected_accounts=connected_accounts_repo,
         ).execute(limit=100)
 
     async def list_failed_payment_attempts() -> list[dict[str, Any]]:
         return await billing_ledger_repo.list_open_failed_attempts()
+
+    async def _enrich_parent_names(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        parent_ids = {str(r["parent_id"]) for r in rows if r.get("parent_id")}
+        if not parent_ids:
+            return rows
+        id_list = list(parent_ids)
+        oid_ids = [BsonObjectId(p) for p in id_list if BsonObjectId.is_valid(p)]
+        or_filter: list[dict[str, object]] = [
+            {"user_id": {"$in": id_list}},
+            {"firebase_uid": {"$in": id_list}},
+        ]
+        if oid_ids:
+            or_filter.append({"_id": {"$in": oid_ids}})
+        names: dict[str, str] = {}
+        users = db["users"].find({"academy_id": current_academy_id(), "$or": or_filter})
+        async for user in users:
+            display = str(
+                user.get("display_name")
+                or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+                or ""
+            )
+            for key in (
+                str(user.get("user_id") or ""),
+                str(user.get("firebase_uid") or ""),
+                str(user["_id"]),
+            ):
+                if key and key in parent_ids:
+                    names[key] = display
+        for row in rows:
+            row["parent_name"] = names.get(str(row.get("parent_id") or "")) or None
+        return rows
+
+    async def list_dunning_failures() -> list[dict[str, Any]]:
+        rows = await dunning_state_repo.list_admin_rows()
+        return await _enrich_parent_names(rows)
 
     async def list_invoice_attempts(invoice_id: str) -> list[dict[str, Any]]:
         invoice = await billing_ledger_repo.get_invoice(invoice_id)
@@ -2800,13 +2949,8 @@ def compose_admin(
 
     # ---- Legacy invoice ↔ Stripe charge review queue (#242 WI-3) ----------- #
     async def list_legacy_match_queue() -> list[dict[str, Any]]:
-        from bson import ObjectId as BsonObjectId
-
-        from backend.v2.shared.tenancy import current_academy_id
-
         if not hasattr(stripe, "list_charges_for_customer"):
             raise RuntimeError("Stripe charge matching not configured")
-        request_academy_id = current_academy_id()
         rows = await ListLegacyMatchQueue(
             ledger=billing_ledger_repo,
             stripe=stripe,  # type: ignore[arg-type]
@@ -2815,34 +2959,7 @@ def compose_admin(
         result = [row.model_dump(mode="python") for row in rows]
         # Resolve parent display names for the review UI (same lookup the
         # billing/finance paths use elsewhere in this module).
-        parent_ids = {str(r["parent_id"]) for r in result if r.get("parent_id")}
-        if parent_ids:
-            id_list = list(parent_ids)
-            oid_ids = [BsonObjectId(p) for p in id_list if BsonObjectId.is_valid(p)]
-            or_filter: list[dict[str, object]] = [
-                {"user_id": {"$in": id_list}},
-                {"firebase_uid": {"$in": id_list}},
-            ]
-            if oid_ids:
-                or_filter.append({"_id": {"$in": oid_ids}})
-            names: dict[str, str] = {}
-            users = db["users"].find({"academy_id": request_academy_id, "$or": or_filter})
-            async for user in users:
-                display = str(
-                    user.get("display_name")
-                    or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
-                    or ""
-                )
-                for key in (
-                    str(user.get("user_id") or ""),
-                    str(user.get("firebase_uid") or ""),
-                    str(user["_id"]),
-                ):
-                    if key and key in parent_ids:
-                        names[key] = display
-            for r in result:
-                r["parent_name"] = names.get(str(r.get("parent_id") or "")) or None
-        return result
+        return await _enrich_parent_names(result)
 
     async def confirm_legacy_match(
         *,
@@ -2874,7 +2991,11 @@ def compose_admin(
         unit_amount_cents: int,
         product_id: str | None,
     ) -> dict[str, Any]:
-        result = await AddInvoiceLine(ledger=billing_ledger_repo).execute(
+        result = await AddInvoiceLine(
+            ledger=billing_ledger_repo,
+            counters=billing_counters_repo,
+            settings=billing_settings_repo,
+        ).execute(
             AddInvoiceLineCommand(
                 invoice_id=invoice_id,
                 description=description,
@@ -5217,6 +5338,13 @@ def compose_admin(
         run_reconciliation=run_reconciliation,
         list_failed_payment_attempts=list_failed_payment_attempts,
         list_invoice_attempts=list_invoice_attempts,
+        list_dunning_failures=list_dunning_failures,
+        process_dunning_retries=_dunning_worker()
+        if all(
+            hasattr(stripe, name)
+            for name in ("get_default_payment_method", "create_off_session_payment_intent")
+        )
+        else None,
         replay_webhook_event=replay_webhook_event,
         list_legacy_match_queue=list_legacy_match_queue,
         confirm_legacy_match=confirm_legacy_match,

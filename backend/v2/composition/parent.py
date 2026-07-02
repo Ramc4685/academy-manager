@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 from zoneinfo import ZoneInfo
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.errors import OperationFailure
 
 from backend.v2.composition.pathway import (
     CurriculumComposition,
@@ -26,6 +28,7 @@ from backend.v2.contexts.billing.application.use_cases.handle_webhook_event impo
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
 from backend.v2.contexts.billing.application.use_cases.parent_billing import (
+    AutopayConsentCaptureContext,
     CreateCustomerPortalSession,
     CreateCustomerPortalSessionCommand,
     GetCheckoutStatus,
@@ -42,8 +45,20 @@ from backend.v2.contexts.billing.application.use_cases.start_checkout import (
     StartCheckoutCommand,
 )
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine
+from backend.v2.contexts.billing.infrastructure.mongo_autopay_consent_repo import (
+    MongoAutopayConsentRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_billing_counter_repo import (
+    MongoBillingCounterRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
+    MongoBillingSettingsRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
+    MongoConnectedAccountRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
     MongoCreditLedgerRepository,
@@ -144,6 +159,8 @@ from backend.v2.shared.tenancy import tenant_scope
 
 from .event_handlers import HandlerDeps, install_handlers
 
+T = TypeVar("T")
+
 
 @dataclass
 class ParentComposition:
@@ -182,6 +199,43 @@ class ParentComposition:
     curriculum: CurriculumComposition
 
 
+class _MongoTransactionRunner:
+    def __init__(self, db: AsyncIOMotorDatabase[Any]) -> None:
+        self._db = db
+
+    async def run(self, work: Callable[[Any | None], Awaitable[T]]) -> T:
+        try:
+            session_context = await self._db.client.start_session()
+        except (AttributeError, NotImplementedError):
+            return await work(None)
+        except OperationFailure as exc:
+            if self._is_transaction_unavailable(exc):
+                return await work(None)
+            raise
+
+        async with session_context as session:
+            try:
+                transaction_context = session.start_transaction()
+            except (AttributeError, NotImplementedError):
+                return await work(None)
+            except OperationFailure as exc:
+                if self._is_transaction_unavailable(exc):
+                    return await work(None)
+                raise
+            async with transaction_context:
+                return await work(session)
+
+    @staticmethod
+    def _is_transaction_unavailable(exc: OperationFailure) -> bool:
+        message = str(exc).lower()
+        return ("transaction" in message or "session" in message) and (
+            "not supported" in message
+            or "replica set" in message
+            or "mongos" in message
+            or "transaction numbers are only allowed" in message
+        )
+
+
 def compose_parent_webhook_handler(
     db: AsyncIOMotorDatabase[Any],
     outbox: Outbox,
@@ -194,30 +248,42 @@ def compose_parent_webhook_handler(
 
     credits_repo = MongoCreditLedgerRepository(db)
     billing_ledger_repo = MongoBillingLedgerRepository(db)
+    billing_counters_repo = MongoBillingCounterRepository(db)
+    billing_settings_repo = MongoBillingSettingsRepository(db)
     payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
     subscriptions_repo = MongoSubscriptionRepository(db)
     parent_customers_repo = MongoParentBillingCustomerRepository(db)
+    autopay_consents_repo = MongoAutopayConsentRepository(db)
     student_billing_enrollments = MongoStudentBillingEnrollmentRepository(db)
+    connected_accounts_repo = MongoConnectedAccountRepository(db)
     dedup = MongoStripeEventDedup(db)
     invoice_processing = MongoStripeInvoiceProcessingRepository(db)
+    transaction_runner = _MongoTransactionRunner(db)
 
     class _EnrollmentAutopayState:
+        """Routes the webhook/legacy-convergence path through the SAME guarded
+        per-enrollment autopay-status write that pause/resume use — the single
+        source of truth on `student_billing_enrollments` (BLOCKING #1)."""
+
         async def set_autopay_state(
             self,
             *,
             enrollment_id: str,
-            subscription_status: str,
-            stripe_subscription_id: str | None,
-        ) -> None:
-            await db["enrollments"].update_one(
-                {"academy_id": academy_id, "enrollment_id": enrollment_id},
-                {
-                    "$set": {
-                        "subscription_status": subscription_status,
-                        "stripe_subscription_id": stripe_subscription_id,
-                        "updated_at": datetime.now(UTC),
-                    }
-                },
+            autopay_enrollment_status: str,
+            session: Any | None = None,
+        ) -> bool:
+            return await student_billing_enrollments.set_autopay_enrollment_status(
+                enrollment_id=enrollment_id,
+                status=autopay_enrollment_status,  # type: ignore[arg-type]
+                session=session,
+            )
+
+        async def mark_autopay_active_from_setup(
+            self, *, enrollment_id: str, session: Any | None = None
+        ) -> bool:
+            return await student_billing_enrollments.mark_autopay_active_from_setup(
+                enrollment_id=enrollment_id,
+                session=session,
             )
 
     class _EnrollmentBillingIdentity:
@@ -244,10 +310,15 @@ def compose_parent_webhook_handler(
         subscriptions=subscriptions_repo,
         billing_enrollments=student_billing_enrollments,
         billing_ledger=billing_ledger_repo,
+        billing_counters=billing_counters_repo,
+        billing_settings=billing_settings_repo,
         parent_customers=parent_customers_repo,
         enrollment_autopay=_EnrollmentAutopayState(),
+        consent_repo=autopay_consents_repo,
+        transaction_runner=transaction_runner,
         enrollment_identity=_EnrollmentBillingIdentity(),
         invoice_processing=invoice_processing,
+        connected_accounts=_ConnectAccountResolver(connected_accounts_repo, academy_id),
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
@@ -272,13 +343,18 @@ def compose_parent(
     # Billing
     credits_repo = MongoCreditLedgerRepository(db)
     billing_ledger_repo = MongoBillingLedgerRepository(db)
+    billing_counters_repo = MongoBillingCounterRepository(db)
+    billing_settings_repo = MongoBillingSettingsRepository(db)
     payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
     subscriptions_repo = MongoSubscriptionRepository(db)
     parent_customers_repo = MongoParentBillingCustomerRepository(db)
+    autopay_consents_repo = MongoAutopayConsentRepository(db)
     student_billing_enrollments = MongoStudentBillingEnrollmentRepository(db)
+    connected_accounts_repo = MongoConnectedAccountRepository(db)
     session_types_repo = MongoSessionTypeRepository(db)
     dedup = MongoStripeEventDedup(db)
     invoice_processing = MongoStripeInvoiceProcessingRepository(db)
+    transaction_runner = _MongoTransactionRunner(db)
 
     start_checkout = StartCheckout(
         payment_repo=payments_repo,
@@ -289,6 +365,7 @@ def compose_parent(
         subscriptions=subscriptions_repo,
         stripe=stripe,
         academy_id=academy_id,
+        connected_accounts=connected_accounts_repo,
     )
     create_portal = CreateCustomerPortalSession(stripe=stripe)
     issue_refund = IssueRefund(
@@ -299,22 +376,29 @@ def compose_parent(
     )
 
     class _EnrollmentAutopayState:
+        """Routes the webhook/legacy-convergence path through the SAME guarded
+        per-enrollment autopay-status write that pause/resume use — the single
+        source of truth on `student_billing_enrollments` (BLOCKING #1)."""
+
         async def set_autopay_state(
             self,
             *,
             enrollment_id: str,
-            subscription_status: str,
-            stripe_subscription_id: str | None,
-        ) -> None:
-            await db["enrollments"].update_one(
-                {"academy_id": academy_id, "enrollment_id": enrollment_id},
-                {
-                    "$set": {
-                        "subscription_status": subscription_status,
-                        "stripe_subscription_id": stripe_subscription_id,
-                        "updated_at": datetime.now(UTC),
-                    }
-                },
+            autopay_enrollment_status: str,
+            session: Any | None = None,
+        ) -> bool:
+            return await student_billing_enrollments.set_autopay_enrollment_status(
+                enrollment_id=enrollment_id,
+                status=autopay_enrollment_status,  # type: ignore[arg-type]
+                session=session,
+            )
+
+        async def mark_autopay_active_from_setup(
+            self, *, enrollment_id: str, session: Any | None = None
+        ) -> bool:
+            return await student_billing_enrollments.mark_autopay_active_from_setup(
+                enrollment_id=enrollment_id,
+                session=session,
             )
 
     class _EnrollmentBillingIdentity:
@@ -342,6 +426,9 @@ def compose_parent(
         stripe=stripe,
         parent_customers=parent_customers_repo,
         enrollment_autopay=enrollment_autopay_state,
+        consent_repo=autopay_consents_repo,
+        outbox=outbox,
+        transaction_runner=transaction_runner,
         academy_id=academy_id,
     )
 
@@ -352,10 +439,15 @@ def compose_parent(
         subscriptions=subscriptions_repo,
         billing_enrollments=student_billing_enrollments,
         billing_ledger=billing_ledger_repo,
+        billing_counters=billing_counters_repo,
+        billing_settings=billing_settings_repo,
         parent_customers=parent_customers_repo,
         enrollment_autopay=enrollment_autopay_state,
+        consent_repo=autopay_consents_repo,
+        transaction_runner=transaction_runner,
         enrollment_identity=enrollment_identity,
         invoice_processing=invoice_processing,
+        connected_accounts=_ConnectAccountResolver(connected_accounts_repo, academy_id),
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
@@ -553,6 +645,26 @@ def compose_parent(
         by_id = {str(s.get("student_id") or s["_id"]): s for s in students}
         if not by_id:
             return []
+        billing_customer = await db["parent_billing_customers"].find_one(
+            {"academy_id": academy_id, "parent_id": parent_id}
+        )
+        autopay_payment_method_type = None
+        autopay_payment_method_label = None
+        autopay_payment_method_last4 = None
+        autopay_setup_status = None
+        if billing_customer:
+            autopay_payment_method_type = billing_customer.get(
+                "primary_payment_method_type"
+            ) or billing_customer.get("payment_method_type")
+            autopay_payment_method_label = billing_customer.get(
+                "primary_payment_method_label"
+            ) or billing_customer.get("payment_method_label")
+            autopay_payment_method_last4 = billing_customer.get(
+                "primary_payment_method_last4"
+            ) or billing_customer.get("payment_method_last4")
+            autopay_setup_status = billing_customer.get(
+                "primary_setup_status"
+            ) or billing_customer.get("setup_status")
         cursor = (
             db["enrollments"]
             .find(
@@ -567,12 +679,20 @@ def compose_parent(
         rows: list[dict[str, Any]] = []
         async for enrollment in cursor:
             student_id = str(enrollment["student_id"])
+            enrollment_id = str(enrollment.get("enrollment_id") or enrollment["_id"])
             session = await db["sessions"].find_one(
                 {"academy_id": academy_id, "session_id": enrollment["session_id"]}
             )
+            billing_enrollment = await db["student_billing_enrollments"].find_one(
+                {
+                    "academy_id": academy_id,
+                    "parent_id": parent_id,
+                    "enrollment_id": enrollment_id,
+                }
+            )
             rows.append(
                 {
-                    "enrollment_id": str(enrollment.get("enrollment_id") or enrollment["_id"]),
+                    "enrollment_id": enrollment_id,
                     "student_id": student_id,
                     "student_name": str(by_id[student_id].get("full_name") or "Unnamed student"),
                     "session_id": str(enrollment["session_id"]),
@@ -580,6 +700,26 @@ def compose_parent(
                     "status": str(enrollment.get("status") or "active"),
                     "payment_mode": enrollment.get("payment_mode"),
                     "subscription_status": enrollment.get("subscription_status"),
+                    "autopay_enrollment_status": (
+                        billing_enrollment.get("autopay_enrollment_status")
+                        if billing_enrollment
+                        else None
+                    ),
+                    "last_attempt_outcome": (
+                        billing_enrollment.get("last_attempt_outcome")
+                        if billing_enrollment
+                        else None
+                    ),
+                    "last_attempt_at": (
+                        billing_enrollment.get("last_attempt_at") if billing_enrollment else None
+                    ),
+                    "last_failure_code": (
+                        billing_enrollment.get("last_failure_code") if billing_enrollment else None
+                    ),
+                    "autopay_payment_method_type": autopay_payment_method_type,
+                    "autopay_payment_method_label": autopay_payment_method_label,
+                    "autopay_payment_method_last4": autopay_payment_method_last4,
+                    "autopay_setup_status": autopay_setup_status,
                 }
             )
         return rows
@@ -1010,8 +1150,25 @@ def compose_parent(
         )
         return result.model_dump()
 
-    async def get_checkout_status(*, parent_id: str, checkout_session_id: str):
-        result = await checkout_status.execute(checkout_session_id, parent_id=parent_id)
+    async def get_checkout_status(
+        *,
+        parent_id: str,
+        checkout_session_id: str,
+        source: str | None = None,
+        actor_id: str | None = None,
+        ip: str | None = None,
+        user_agent: str | None = None,
+    ):
+        result = await checkout_status.execute(
+            checkout_session_id,
+            parent_id=parent_id,
+            consent_context=AutopayConsentCaptureContext(
+                source=source or "unknown",
+                actor_id=actor_id,
+                ip=ip,
+                user_agent=user_agent,
+            ),
+        )
         return result.model_dump()
 
     async def get_registration_waiver():
@@ -1073,6 +1230,7 @@ def compose_parent(
         stripe=stripe,
         student_owner_lookup=_StudentOwnerLookup(),
         academy_id=academy_id,
+        connected_accounts=connected_accounts_repo,
     )
     cancel_billing_enrollment_uc = CancelBillingEnrollment(
         enrollments=student_billing_enrollments,
@@ -1121,6 +1279,41 @@ def compose_parent(
 
 class _StripeGatewayProto(Protocol):
     """Re-export to make this module importable without backing import."""
+
+
+class _ConnectAccountResolver:
+    """Resolve a connected Stripe account id -> owning academy for the webhook
+    guard (Slice I). Bridges the repo method name (``get_by_stripe_account_id``)
+    to the resolver name the webhook handler expects (``academy_id_for_account``)
+    — the Slice-B name-mismatch lesson, covered by a port-drive test.
+    """
+
+    def __init__(self, repo: MongoConnectedAccountRepository, academy_id: str) -> None:
+        self._repo = repo
+        self._academy_id = academy_id
+
+    async def academy_id_for_account(self, stripe_account_id: str) -> str | None:
+        with tenant_scope(self._academy_id):
+            account = await self._repo.get_by_stripe_account_id(stripe_account_id)
+        return account.academy_id if account else None
+
+    async def update_status(
+        self,
+        *,
+        stripe_account_id: str,
+        status: str,
+        charges_enabled: bool | None,
+        payouts_enabled: bool | None,
+        capabilities: dict[str, str],
+    ) -> None:
+        with tenant_scope(self._academy_id):
+            await self._repo.update_status(
+                stripe_account_id=stripe_account_id,
+                status=status,
+                charges_enabled=charges_enabled,
+                payouts_enabled=payouts_enabled,
+                capabilities=capabilities,
+            )
 
 
 def _require_academy_id(academy_id: str | None) -> str:

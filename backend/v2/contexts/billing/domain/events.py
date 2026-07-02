@@ -85,6 +85,26 @@ class SubscriptionUpdated(DomainEvent):
     payload: SubscriptionUpdatedPayload  # type: ignore[assignment]
 
 
+class AutopayConsentCapturedPayload(BaseModel):
+    model_config = {"frozen": True}
+
+    consent_id: str
+    parent_id: str
+    method_type: str
+    consent_text_version: str
+    ach_mandate_version: str | None
+    card_disclosure_version: str | None
+    source: str
+    actor_id: str | None
+    captured_at: datetime
+
+
+class AutopayConsentCaptured(DomainEvent):
+    name: Literal["Billing.AutopayConsentCaptured"] = "Billing.AutopayConsentCaptured"  # type: ignore[assignment]
+    schema_version: Literal[1] = 1  # type: ignore[assignment]
+    payload: AutopayConsentCapturedPayload  # type: ignore[assignment]
+
+
 class InvoiceLifecyclePayload(BaseModel):
     model_config = {"frozen": True}
 

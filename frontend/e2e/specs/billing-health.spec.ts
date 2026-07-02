@@ -46,6 +46,24 @@ const QUARANTINED_EVENT = {
   error_message: "parent mismatch: invoice=parent_A payment_intent=parent_B",
 };
 
+const DUNNING_ROW = {
+  invoice_id: "inv-dunned",
+  parent_id: "parent-2",
+  parent_name: "Ana P.",
+  period: "2026-07",
+  status: "dunned",
+  attempt_count: 4,
+  next_attempt_at: null,
+  last_attempt_at: "2026-07-08T09:00:00Z",
+  last_failure_code: "insufficient_funds",
+  terminal_at: "2026-07-08T09:00:00Z",
+  autopay_disable_status: "failed",
+  autopay_disable_error: "transition rejected",
+  autopay_disabled_at: null,
+  balance_due_cents: 12000,
+  currency: "usd",
+};
+
 async function stubAdmin(page: Page): Promise<void> {
   await stubMe(page, ADMIN_USER_A);
   await stubMemberships(page, [
@@ -59,8 +77,14 @@ async function stubAdmin(page: Page): Promise<void> {
   });
 }
 
+async function stubDunning(page: Page, rows: unknown[] = []): Promise<void> {
+  await page.route("**/api/v2/admin/billing/dunning", (route) =>
+    fulfillJson(route, { rows }),
+  );
+}
+
 test.describe("admin billing health", () => {
-  test("renders all three sections with stat counts", async ({ page }) => {
+  test("renders billing health sections with stat counts", async ({ page }) => {
     const guard = installTenantGuard(page);
     const errors = collectConsoleErrors(page);
     await stubAdmin(page);
@@ -88,14 +112,20 @@ test.describe("admin billing health", () => {
     await page.route("**/api/v2/admin/billing/webhooks**", (route) =>
       fulfillJson(route, { events: [QUARANTINED_EVENT] }),
     );
+    await stubDunning(page, [DUNNING_ROW]);
 
     await page.goto("/admin/billing-health");
 
     await expect(page.getByTestId("billing-health-page")).toBeVisible();
     await expect(page.getByTestId("reconciliation-runs-table")).toBeVisible();
     await expect(page.getByTestId("failed-payments-table")).toBeVisible();
+    await expect(page.getByTestId("dunning-table")).toBeVisible();
     await expect(page.getByTestId("quarantined-events-table")).toBeVisible();
     await expect(page.getByText("Sarah M.")).toBeVisible();
+    await expect(page.getByTestId("dunning-row-inv-dunned")).toContainText("Ana P.");
+    await expect(page.getByTestId("dunning-row-inv-dunned")).toContainText(
+      "Disable failed: transition rejected",
+    );
     await expect(page.getByTestId("billing-health-status")).toContainText("Needs attention");
 
     expect(errors).toEqual([]);
@@ -131,6 +161,7 @@ test.describe("admin billing health", () => {
     await page.route("**/api/v2/admin/billing/webhooks**", (route) =>
       fulfillJson(route, { events: [] }),
     );
+    await stubDunning(page);
 
     let postFired = false;
     await page.route("**/api/v2/admin/billing/reconcile-now", (route: Route) => {
@@ -165,6 +196,7 @@ test.describe("admin billing health", () => {
     await page.route("**/api/v2/admin/billing/webhooks**", (route) =>
       fulfillJson(route, { events: [] }),
     );
+    await stubDunning(page);
 
     let chargeFired = false;
     await page.route(
@@ -202,6 +234,7 @@ test.describe("admin billing health", () => {
     await page.route("**/api/v2/admin/billing/webhooks**", (route) =>
       fulfillJson(route, { events: [] }),
     );
+    await stubDunning(page);
     await page.route(
       "**/api/v2/admin/billing/invoices/inv-2026-06/attempts",
       (route) =>

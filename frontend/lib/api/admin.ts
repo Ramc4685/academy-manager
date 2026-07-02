@@ -1669,6 +1669,28 @@ export interface FailedPaymentsResponse {
   rows: FailedPaymentRow[];
 }
 
+export interface DunningRow {
+  invoice_id: string;
+  parent_id: string;
+  parent_name: string | null;
+  period: string;
+  status: string;
+  attempt_count: number;
+  next_attempt_at: string | null;
+  last_attempt_at: string | null;
+  last_failure_code: string | null;
+  terminal_at: string | null;
+  autopay_disable_status: string | null;
+  autopay_disable_error: string | null;
+  autopay_disabled_at: string | null;
+  balance_due_cents: number;
+  currency: string;
+}
+
+export interface DunningResponse {
+  rows: DunningRow[];
+}
+
 export interface BillingPaymentAttempt {
   attempt_id: string;
   status: string;
@@ -1696,6 +1718,12 @@ export function triggerReconciliation(): Promise<ReconciliationRun> {
 
 export function fetchFailedPaymentAttempts(): Promise<FailedPaymentsResponse> {
   return apiFetch<FailedPaymentsResponse>("/admin/billing/failed-payment-attempts", {
+    method: "GET",
+  });
+}
+
+export function fetchDunningFailures(): Promise<DunningResponse> {
+  return apiFetch<DunningResponse>("/admin/billing/dunning", {
     method: "GET",
   });
 }

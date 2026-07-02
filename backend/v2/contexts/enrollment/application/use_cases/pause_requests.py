@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import UTC, date, datetime
-from typing import Any, Literal, Protocol
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, model_validator
 
@@ -21,6 +22,8 @@ from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions impo
 )
 from backend.v2.contexts.enrollment.domain.errors import EnrollmentNotFound
 from backend.v2.shared.ids import new_ulid
+
+log = logging.getLogger(__name__)
 
 PauseRequestStatus = Literal["pending", "approved", "declined"]
 PauseKind = Literal["fixed", "indefinite"]
@@ -100,17 +103,15 @@ class PauseEnrollmentRunner(Protocol):
     async def execute(self, cmd: PauseEnrollmentCommand) -> None: ...
 
 
-class EnrollmentSubscriptionLookup(Protocol):
-    async def latest_for_enrollment(self, enrollment_id: str) -> Any | None: ...
+class EnrollmentAutopayStatusGateway(Protocol):
+    """Cross-context port: toggle a single enrollment's app-owned autopay
+    status (Slice B). Per-enrollment — pausing one child never affects a
+    sibling. Routes through the guarded transition path; returns True if
+    applied, False if rejected/unresolved (so the caller can log). Replaces the
+    retired Stripe-subscription-collection pause path.
+    """
 
-
-class SubscriptionCollectionGateway(Protocol):
-    async def pause_subscription_collection(
-        self,
-        stripe_subscription_id: str,
-        *,
-        behavior: str = "void",
-    ) -> None: ...
+    async def set_enrollment_status(self, *, enrollment_id: str, status: str) -> bool: ...
 
 
 class RequestEnrollmentPauseCommand(BaseModel):
@@ -207,8 +208,7 @@ class ApprovePauseRequest:
         pause_enrollment: PauseEnrollmentRunner | None = None,
         scheduled_actions: ScheduledEnrollmentActionRepository | None = None,
         billing_deferrals: BillingDeferralRepository | None = None,
-        subscriptions: EnrollmentSubscriptionLookup | None = None,
-        stripe: SubscriptionCollectionGateway | None = None,
+        autopay_status: EnrollmentAutopayStatusGateway | None = None,
         academy_id: str | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -216,8 +216,7 @@ class ApprovePauseRequest:
         self._pause_enrollment = pause_enrollment
         self._scheduled_actions = scheduled_actions
         self._billing_deferrals = billing_deferrals
-        self._subscriptions = subscriptions
-        self._stripe = stripe
+        self._autopay_status = autopay_status
         self._academy_id = academy_id
         self._now = clock
 
@@ -263,13 +262,19 @@ class ApprovePauseRequest:
                     metadata={"pause_kind": request.pause_kind},
                 )
             )
-        if self._subscriptions is not None and self._stripe is not None:
-            subscription = await self._subscriptions.latest_for_enrollment(request.enrollment_id)
-            stripe_subscription_id = getattr(subscription, "stripe_subscription_id", None)
-            if stripe_subscription_id:
-                await self._stripe.pause_subscription_collection(
-                    str(stripe_subscription_id),
-                    behavior="void",
+        if self._autopay_status is not None:
+            # App-owned autopay (Slice B): pause toggles THIS enrollment's
+            # autopay_enrollment_status directly (per-enrollment — siblings
+            # unaffected). No Stripe subscription collection to pause.
+            applied = await self._autopay_status.set_enrollment_status(
+                enrollment_id=request.enrollment_id,
+                status="paused",
+            )
+            if not applied:
+                log.warning(
+                    "autopay not paused on pause-request approval for enrollment_id=%s: "
+                    "rejected transition or no billing enrollment (BLOCKING#2 observability)",
+                    request.enrollment_id,
                 )
         if (
             request.pause_kind == "fixed"

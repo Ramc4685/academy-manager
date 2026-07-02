@@ -923,6 +923,82 @@ async def test_admin_billing_webhook_queue_uses_request_tenant(mongo_db) -> None
 
 
 @pytest.mark.asyncio
+async def test_admin_dunning_failures_enrich_parent_name_from_request_tenant(
+    mongo_db,
+) -> None:
+    now = datetime(2026, 7, 8, tzinfo=UTC)
+    await mongo_db["users"].insert_many(
+        [
+            {
+                "academy_id": "request-acad",
+                "user_id": "parent-request",
+                "display_name": "Riley Parent",
+            },
+            {
+                "academy_id": "default-academy",
+                "user_id": "parent-request",
+                "display_name": "Wrong Tenant",
+            },
+        ]
+    )
+    await mongo_db["invoices"].insert_many(
+        [
+            {
+                "academy_id": "request-acad",
+                "invoice_id": "inv-dunning-request",
+                "parent_id": "parent-request",
+                "period": "2026-07",
+                "status": "open",
+                "balance_due_cents": 12000,
+                "currency": "usd",
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "academy_id": "default-academy",
+                "invoice_id": "inv-dunning-default",
+                "parent_id": "parent-request",
+                "period": "2026-07",
+                "status": "open",
+                "balance_due_cents": 12000,
+                "currency": "usd",
+                "created_at": now,
+                "updated_at": now,
+            },
+        ]
+    )
+    await mongo_db["dunning_states"].insert_many(
+        [
+            {
+                "academy_id": "request-acad",
+                "invoice_id": "inv-dunning-request",
+                "parent_id": "parent-request",
+                "enrollment_id": "enr-request",
+                "status": "dunned",
+                "attempt_count": 4,
+                "updated_at": now,
+            },
+            {
+                "academy_id": "default-academy",
+                "invoice_id": "inv-dunning-default",
+                "parent_id": "parent-request",
+                "enrollment_id": "enr-default",
+                "status": "dunned",
+                "attempt_count": 4,
+                "updated_at": now,
+            },
+        ]
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope("request-acad"):
+        rows = await admin.list_dunning_failures()
+
+    assert [row["invoice_id"] for row in rows] == ["inv-dunning-request"]
+    assert rows[0]["parent_name"] == "Riley Parent"
+
+
+@pytest.mark.asyncio
 async def test_billing_reconciliation_detects_orphan_stripe_payment(mongo_db) -> None:
     now = datetime(2026, 6, 17, tzinfo=UTC)
     await mongo_db["parent_billing_customers"].insert_one(
@@ -1231,3 +1307,49 @@ async def test_admin_enrollment_funnel_uses_request_tenant_not_default(mongo_db)
 
     assert result.confirmed == 1
     assert result.leads == 0
+
+
+@pytest.mark.asyncio
+async def test_pause_enrollment_autopay_gateway_uses_port_method_through_real_repo(
+    mongo_db,
+) -> None:
+    """P1 regression: the composed pause/resume/approve autopay gateway must
+    expose the ``EnrollmentAutopayStatusGateway`` port method
+    (``set_enrollment_status``) — not the raw repo method
+    (``set_autopay_enrollment_status``). Wiring the raw repo as the port caused
+    an AttributeError in production that no fake-injecting test caught. This
+    exercises the REAL composed gateway end-to-end against the repo/collection.
+    """
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    await mongo_db["student_billing_enrollments"].insert_one(
+        {
+            "enrollment_id": "enr-x",
+            "academy_id": "request-acad",
+            "student_id": "student-1",
+            "parent_id": "parent-1",
+            "session_type_id": "st-1",
+            "status": "active",
+            "autopay_enrollment_status": "active",
+            "billing_start_date": now,
+            "enrolled_at": now,
+            "updated_at": now,
+        }
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope("request-acad"):
+        # Call the port method the use cases actually invoke, on the composed
+        # gateway (would AttributeError on the pre-fix raw-repo wiring).
+        applied = await admin.pause_enrollment._autopay_status.set_enrollment_status(
+            enrollment_id="enr-x", status="paused"
+        )
+
+        assert applied is True
+        doc = await mongo_db["student_billing_enrollments"].find_one(
+            {"academy_id": "request-acad", "enrollment_id": "enr-x"}
+        )
+    assert doc["autopay_enrollment_status"] == "paused"
+
+    # Resume + approve wire the SAME gateway instance, so they share the fix.
+    assert admin.resume_enrollment._autopay_status is admin.pause_enrollment._autopay_status
+    assert admin.approve_pause_request._autopay_status is admin.pause_enrollment._autopay_status

@@ -483,6 +483,11 @@ The Billing tab is the primary surface and the **single largest remaining gap**.
 
 **Refund / credit — ⛔ NOT BUILT (future slice).** `refund_invoice_line.py` and the first-class refund-to-card / credit-to-account invoice-line workflow described under "Refund & Credit Behavior" and in the UI acceptance criteria are **not implemented**. They are deferred to a separate slice; do not assume they exist before Phase 5. The "Refund / credit" UI action and the `CreditLedgerEntry`-as-refund path remain design-only.
 
+Slice E cash-discount follow-up: full refunds should reverse the ACH discount
+line proportionally, while partial refunds leave the discount untouched. This is
+deferred to Slice R / the refund ledger contract so the rule is implemented with
+the first-class refund/credit-note model instead of a narrow autopay patch.
+
 **Backend — modified**
 - `backend/v2/contexts/billing/domain/ledger.py` — statuses, `sent_at`/`finalized_at`, ops + events
 - `backend/v2/contexts/billing/infrastructure/mongo_billing_ledger_repo.py` — `ledger_payments` collection

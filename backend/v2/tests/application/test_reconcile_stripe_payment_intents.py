@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -11,6 +11,7 @@ import pytest
 from backend.v2.contexts.billing.application.use_cases.reconcile_stripe_payment_intents import (
     ReconcileStripePaymentIntents,
 )
+from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
     LedgerAllocationResult,
@@ -26,13 +27,36 @@ _NOW = datetime(2026, 6, 21, 12, 0, tzinfo=UTC)
 @dataclass
 class FakeStripeGateway:
     payment_intents: list[dict[str, Any]] = field(default_factory=list)
+    # stripe_account -> extra PIs only visible when searching that connected account
+    connected_payment_intents: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     searched: list[dict[str, Any]] = field(default_factory=list)
 
     async def search_app_owned_payment_intents(
-        self, *, academy_id: str, limit: int = 100
+        self, *, academy_id: str, limit: int = 100, stripe_account: str | None = None
     ) -> list[dict[str, Any]]:
-        self.searched.append({"academy_id": academy_id, "limit": limit})
+        self.searched.append(
+            {"academy_id": academy_id, "limit": limit, "stripe_account": stripe_account}
+        )
+        if stripe_account is not None:
+            return self.connected_payment_intents.get(stripe_account, [])[:limit]
         return self.payment_intents[:limit]
+
+
+class FailingStripeGateway(FakeStripeGateway):
+    async def search_app_owned_payment_intents(
+        self, *, academy_id: str, limit: int = 100, stripe_account: str | None = None
+    ) -> list[dict[str, Any]]:
+        raise RuntimeError("stripe search unavailable")
+
+
+@dataclass
+class FakeConnectedAccounts:
+    account: ConnectedAccount | None = None
+    calls: int = 0
+
+    async def get_for_academy(self) -> ConnectedAccount | None:
+        self.calls += 1
+        return self.account
 
 
 @dataclass
@@ -172,11 +196,14 @@ def _payment_intent(
     pi_id: str = "pi_reconcile_1",
     amount: int = 5_000,
     metadata: dict[str, str] | None = None,
+    status: str = "succeeded",
+    payment_method_types: list[str] | None = None,
+    created: datetime | None = None,
 ) -> dict[str, Any]:
-    return {
+    pi: dict[str, Any] = {
         "id": pi_id,
         "object": "payment_intent",
-        "status": "succeeded",
+        "status": status,
         "amount": amount,
         "currency": "usd",
         "metadata": metadata
@@ -187,6 +214,28 @@ def _payment_intent(
             "source": "app_invoice_autopay",
         },
     }
+    if payment_method_types is not None:
+        pi["payment_method_types"] = payment_method_types
+    if created is not None:
+        pi["created"] = int(created.timestamp())
+    return pi
+
+
+def _ach_processing_pi(
+    *,
+    pi_id: str = "pi_ach_processing",
+    amount: int = 5_000,
+    metadata: dict[str, str] | None = None,
+    created: datetime | None = None,
+) -> dict[str, Any]:
+    return _payment_intent(
+        pi_id=pi_id,
+        amount=amount,
+        metadata=metadata,
+        status="processing",
+        payment_method_types=["us_bank_account"],
+        created=created or _NOW,
+    )
 
 
 @pytest.mark.asyncio
@@ -547,3 +596,245 @@ async def test_reconciler_skips_balance_payment_already_recorded_by_webhook() ->
     assert result["repaired"] == 0
     assert result["skipped"] == 1
     assert len(ledger.payments) == 1  # no duplicate phantom payment
+
+
+# ---------------------------------------------------------------------------
+# ACH-aware reconciliation (checklist item #16, §7.2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconciler_counts_ach_processing_pi_separately_not_as_error() -> None:
+    """An in-flight ACH debit (status=processing) is a known, non-erroring state.
+
+    It must not be counted as failed/quarantined/mismatched, and must not create
+    a ledger payment (settlement hasn't happened yet) — but it must be visible
+    in a dedicated bucket so reconciliation isn't silently blind to it.
+    """
+    ledger = FakeLedger(invoices={"inv-1": _invoice()})
+    stripe = FakeStripeGateway(payment_intents=[_ach_processing_pi()])
+    recorder = FakeRunRecorder()
+    uc = ReconcileStripePaymentIntents(
+        stripe=stripe,
+        ledger=ledger,
+        run_recorder=recorder,
+        academy_id="acad",
+        clock=lambda: _NOW,
+    )
+
+    result = await uc.execute()
+
+    assert result["scanned"] == 1
+    assert result["ach_processing_count"] == 1
+    assert result["failed"] == 0
+    assert result["quarantined"] == 0
+    assert result["repaired"] == 0
+    # Not treated as a generic skip either — it's distinguishable.
+    assert result["skipped"] == 0
+    assert len(ledger.payments) == 0
+    assert ledger.invoices["inv-1"].status == "open"
+    assert recorder.runs[-1]["ach_processing_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_reconciler_flags_stale_ach_processing_for_human_review() -> None:
+    """An ACH PI stuck in `processing` well past normal settlement (5 business
+    days) is still not a hard error, but must be surfaced for a human to look
+    at — mirroring the existing 'notes'-style soft-surface pattern rather than
+    silently swallowing a legitimately stuck payment."""
+    stale_created = _NOW - timedelta(days=10)
+    ledger = FakeLedger(invoices={"inv-1": _invoice()})
+    stripe = FakeStripeGateway(
+        payment_intents=[_ach_processing_pi(pi_id="pi_ach_stale", created=stale_created)]
+    )
+    recorder = FakeRunRecorder()
+    uc = ReconcileStripePaymentIntents(
+        stripe=stripe,
+        ledger=ledger,
+        run_recorder=recorder,
+        academy_id="acad",
+        clock=lambda: _NOW,
+    )
+
+    result = await uc.execute()
+
+    assert result["ach_processing_count"] == 1
+    assert result["failed"] == 0
+    assert result["quarantined"] == 0
+    assert len(result["stale_ach_processing"]) == 1
+    assert result["stale_ach_processing"][0]["payment_intent_id"] == "pi_ach_stale"
+    assert recorder.runs[-1]["stale_ach_processing"] == result["stale_ach_processing"]
+
+
+@pytest.mark.asyncio
+async def test_reconciler_recent_ach_processing_is_not_flagged_stale() -> None:
+    ledger = FakeLedger(invoices={"inv-1": _invoice()})
+    stripe = FakeStripeGateway(payment_intents=[_ach_processing_pi(created=_NOW)])
+    uc = ReconcileStripePaymentIntents(
+        stripe=stripe,
+        ledger=ledger,
+        run_recorder=FakeRunRecorder(),
+        academy_id="acad",
+        clock=lambda: _NOW,
+    )
+
+    result = await uc.execute()
+
+    assert result["ach_processing_count"] == 1
+    assert result["stale_ach_processing"] == []
+
+
+@pytest.mark.asyncio
+async def test_reconciler_records_and_returns_when_search_fails() -> None:
+    ledger = FakeLedger(invoices={"inv-1": _invoice()})
+    recorder = FakeRunRecorder()
+    uc = ReconcileStripePaymentIntents(
+        stripe=FailingStripeGateway(),
+        ledger=ledger,
+        run_recorder=recorder,
+        academy_id="acad",
+        clock=lambda: _NOW,
+    )
+
+    result = await uc.execute()
+
+    assert result["scanned"] == 0
+    assert result["failed"] == 1
+    assert result["finished_at"] == _NOW
+    assert result["errors"] == ["PaymentIntent search failed: stripe search unavailable"]
+    assert recorder.runs[-1] == result
+
+
+@pytest.mark.asyncio
+async def test_reconciler_searches_platform_only_when_no_connected_account() -> None:
+    ledger = FakeLedger(invoices={"inv-1": _invoice()})
+    stripe = FakeStripeGateway(payment_intents=[_payment_intent()])
+    connected_accounts = FakeConnectedAccounts(account=None)
+    uc = ReconcileStripePaymentIntents(
+        stripe=stripe,
+        ledger=ledger,
+        run_recorder=FakeRunRecorder(),
+        academy_id="acad",
+        connected_accounts=connected_accounts,
+        clock=lambda: _NOW,
+    )
+
+    result = await uc.execute()
+
+    assert result["repaired"] == 1
+    assert connected_accounts.calls == 1
+    assert len(stripe.searched) == 1
+    assert stripe.searched[0]["stripe_account"] is None
+
+
+@pytest.mark.asyncio
+async def test_reconciler_searches_per_connected_account_with_stripe_account_scoping() -> None:
+    """Slice I: money routed through a connected account must not be invisible
+    to reconciliation. The gateway must be called once for platform-level PIs
+    and once more scoped to the academy's connected Stripe account."""
+    ledger = FakeLedger(
+        invoices={
+            "inv-1": _invoice(invoice_id="inv-1"),
+            "inv-2": _invoice(invoice_id="inv-2", enrollment_id="enr-2"),
+        }
+    )
+    connected_pi = _payment_intent(
+        pi_id="pi_connected_1",
+        metadata={
+            "academy_id": "acad",
+            "invoice_id": "inv-2",
+            "parent_id": "parent-1",
+            "source": "app_invoice_autopay",
+        },
+    )
+    stripe = FakeStripeGateway(
+        payment_intents=[_payment_intent(pi_id="pi_platform_1")],
+        connected_payment_intents={"acct_connected_acad": [connected_pi]},
+    )
+    connected_accounts = FakeConnectedAccounts(
+        account=ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_connected_acad")
+    )
+    uc = ReconcileStripePaymentIntents(
+        stripe=stripe,
+        ledger=ledger,
+        run_recorder=FakeRunRecorder(),
+        academy_id="acad",
+        connected_accounts=connected_accounts,
+        clock=lambda: _NOW,
+    )
+
+    result = await uc.execute()
+
+    assert result["scanned"] == 2
+    assert result["repaired"] == 2
+    assert ledger.invoices["inv-1"].status == "paid"
+    assert ledger.invoices["inv-2"].status == "paid"
+    assert len(stripe.searched) == 2
+    stripe_account_args = {call["stripe_account"] for call in stripe.searched}
+    assert stripe_account_args == {None, "acct_connected_acad"}
+
+
+@pytest.mark.asyncio
+async def test_reconciler_tenant_isolation_across_connected_accounts() -> None:
+    """One academy's connected-account PIs must attribute to that academy only;
+    a differently-scoped academy_id in metadata on a connected-account PI must
+    still be quarantined, never silently attributed cross-tenant."""
+    ledger = FakeLedger(invoices={"inv-1": _invoice(academy_id="acad")})
+    mismatched_pi = _payment_intent(
+        pi_id="pi_wrong_academy",
+        metadata={
+            "academy_id": "other-academy",
+            "invoice_id": "inv-1",
+            "parent_id": "parent-1",
+        },
+    )
+    stripe = FakeStripeGateway(
+        payment_intents=[],
+        connected_payment_intents={"acct_connected_acad": [mismatched_pi]},
+    )
+    connected_accounts = FakeConnectedAccounts(
+        account=ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_connected_acad")
+    )
+    uc = ReconcileStripePaymentIntents(
+        stripe=stripe,
+        ledger=ledger,
+        run_recorder=FakeRunRecorder(),
+        academy_id="acad",
+        connected_accounts=connected_accounts,
+        clock=lambda: _NOW,
+    )
+
+    result = await uc.execute()
+
+    assert result["quarantined"] == 1
+    assert len(ledger.payments) == 0
+    assert ledger.invoices["inv-1"].status == "open"
+
+
+@pytest.mark.asyncio
+async def test_reconciler_dedupes_pi_seen_in_both_platform_and_connected_search() -> None:
+    """If the same PI id shows up in both searches (shouldn't normally happen,
+    but defensively), it must only be reconciled once."""
+    ledger = FakeLedger(invoices={"inv-1": _invoice()})
+    pi = _payment_intent(pi_id="pi_dupe")
+    stripe = FakeStripeGateway(
+        payment_intents=[pi],
+        connected_payment_intents={"acct_connected_acad": [pi]},
+    )
+    connected_accounts = FakeConnectedAccounts(
+        account=ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_connected_acad")
+    )
+    uc = ReconcileStripePaymentIntents(
+        stripe=stripe,
+        ledger=ledger,
+        run_recorder=FakeRunRecorder(),
+        academy_id="acad",
+        connected_accounts=connected_accounts,
+        clock=lambda: _NOW,
+    )
+
+    result = await uc.execute()
+
+    assert result["scanned"] == 1
+    assert result["repaired"] == 1
+    assert len(ledger.payments) == 1

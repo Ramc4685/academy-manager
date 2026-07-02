@@ -72,6 +72,7 @@ export const queryKeys = {
     reconciliationRuns: () =>
       ["admin", "billing", "reconciliation-runs"] as const,
     failedAttempts: () => ["admin", "billing", "failed-attempts"] as const,
+    dunningFailures: () => ["admin", "billing", "dunning-failures"] as const,
     quarantinedEvents: () =>
       ["admin", "billing", "quarantined-events"] as const,
     invoiceAttempts: (invoiceId: string) =>

@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel
 
+from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+from backend.v2.contexts.billing.domain.connected_account import (
+    ConnectedAccount,
+    ConnectedAccountStatus,
+)
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
     LedgerAllocationResult,
@@ -14,7 +20,12 @@ from backend.v2.contexts.billing.domain.ledger import (
     LedgerPayment,
     PaymentAllocation,
 )
-from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment, Subscription
+from backend.v2.contexts.billing.domain.models import (
+    AutopayConsent,
+    CreditLedgerEntry,
+    Payment,
+    Subscription,
+)
 from backend.v2.contexts.billing.domain.proration import (
     BillingCalculationSnapshot,
     BillingPeriod,
@@ -24,6 +35,12 @@ from backend.v2.contexts.billing.domain.session_type import (
     SessionType,
     StudentBillingEnrollment,
 )
+
+T = TypeVar("T")
+
+
+class TransactionRunner(Protocol):
+    async def run(self, work: Callable[[Any | None], Awaitable[T]]) -> T: ...
 
 
 class PaymentRepository(Protocol):
@@ -57,21 +74,63 @@ class ParentStripeCustomerRepository(Protocol):
         setup_intent_id: str,
         checkout_session_id: str | None,
         completed_at: datetime,
+        current_consent_id: str | None = None,
+        consent_text_version: str | None = None,
+        ach_mandate_version: str | None = None,
+        card_disclosure_version: str | None = None,
+        setup_status: str = "active",
+        payment_method_role: str = "primary",
+        payment_method_label: str | None = None,
+        payment_method_last4: str | None = None,
+        session: Any | None = None,
+    ) -> None: ...
+    async def promote_payment_method_to_default(
+        self,
+        *,
+        parent_id: str,
+        stripe_payment_method_id: str,
+        payment_method_type: str,
+        stripe_mandate_id: str | None,
+        payment_method_label: str | None = None,
+        payment_method_last4: str | None = None,
     ) -> None: ...
 
 
+class AutopayConsentRepository(Protocol):
+    async def append(
+        self, consent: AutopayConsent, *, session: Any | None = None
+    ) -> AutopayConsent: ...
+    async def list_for_parent(self, *, parent_id: str) -> list[AutopayConsent]: ...
+
+
 class EnrollmentAutopayStateRepository(Protocol):
-    """Cross-context port: Billing pushes subscription lifecycle state onto
-    the Enrollment aggregate so parent-facing autopay status stays accurate.
+    """Port for the single per-enrollment autopay-status store
+    (``student_billing_enrollments``).
+
+    ``autopay_enrollment_status`` carries the enrollment-lifecycle axis (see
+    `contexts.billing.domain.autopay_status`) — independent of any single
+    charge attempt's outcome. This routes through the SAME guarded transition
+    path that pause/resume use, so the webhook/legacy-convergence path cannot
+    silently diverge (BLOCKING #1 collapse). Returns True if the transition was
+    applied, False if it was a rejected (illegal / not-found) transition — a
+    no-op that is logged, never raised, so idempotent replay stays safe.
     """
 
     async def set_autopay_state(
         self,
         *,
         enrollment_id: str,
-        subscription_status: str,
-        stripe_subscription_id: str | None,
-    ) -> None: ...
+        autopay_enrollment_status: str,
+        session: Any | None = None,
+    ) -> bool: ...
+
+    async def mark_autopay_active_from_setup(
+        self, *, enrollment_id: str, session: Any | None = None
+    ) -> bool:
+        """Setup completed successfully — walk the enrollment to ``active``
+        through the guarded transition path (handles first setup and re-setup
+        from ``disabled``). Returns True if it ends up ``active``."""
+        ...
 
 
 class EnrollmentBillingIdentity(BaseModel):
@@ -189,8 +248,13 @@ class StripeGateway(Protocol):
         success_url: str,
         cancel_url: str,
         metadata: dict[str, str],
+        connected_account_id: str | None = None,
     ) -> tuple[str, str]:
-        """Returns (checkout_session_id, redirect_url) for saved-card setup."""
+        """Returns (checkout_session_id, redirect_url) for saved-card setup.
+
+        When ``connected_account_id`` is set, the eventual off-session charges
+        route to that connected academy account (``setup_intent_data.on_behalf_of``).
+        """
 
     async def create_customer_portal_session(
         self,
@@ -231,9 +295,14 @@ class StripeGateway(Protocol):
         """Set the Customer default PM used by off-session autopay charges."""
 
     async def search_app_owned_payment_intents(
-        self, *, academy_id: str, limit: int = 100
+        self, *, academy_id: str, limit: int = 100, stripe_account: str | None = None
     ) -> list[dict[str, Any]]:
-        """Find recently paid PaymentIntents carrying app-owned invoice metadata."""
+        """Find recent app-owned PaymentIntents (succeeded or ACH `processing`).
+
+        When ``stripe_account`` is set (Slice I), the search is scoped to that
+        connected account rather than the platform account — money routed
+        through a connected account is otherwise invisible to this search.
+        """
 
     async def list_charges_for_customer(
         self, *, stripe_customer_id: str, limit: int = 100
@@ -280,6 +349,51 @@ class StripeGateway(Protocol):
 
     async def exchange_connect_code(self, code: str) -> str:
         """Exchange OAuth authorization code for stripe_user_id (connected account ID)."""
+        ...
+
+    async def create_connected_account(
+        self,
+        *,
+        academy_id: str,
+        display_name: str | None = None,
+        contact_email: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> str:
+        """Create an Accounts v2 connected account and return its id.
+
+        Slice I: NEVER the legacy ``type: express/custom/standard`` or v1
+        ``controller`` shape. The platform accepts payment liability through
+        ``defaults.responsibilities``.
+        """
+        ...
+
+    async def create_account_onboarding_link(
+        self,
+        *,
+        stripe_account_id: str,
+        refresh_url: str,
+        return_url: str,
+    ) -> str:
+        """Create a hosted onboarding AccountLink for a connected account."""
+        ...
+
+    async def create_off_session_payment_intent(
+        self,
+        *,
+        amount_cents: int,
+        currency: str,
+        customer_id: str,
+        payment_method_id: str,
+        idempotency_key: str,
+        metadata: dict[str, str],
+        connected_account_id: str | None = None,
+    ) -> tuple[str, str, str | None]:
+        """Confirm an off-session autopay charge; returns (pi_id, status, decline_code).
+
+        When ``connected_account_id`` is set, this is a destination charge to the
+        connected academy account (``on_behalf_of`` + ``transfer_data.destination``,
+        ``application_fee_amount=0`` for now). Customers live on the platform.
+        """
         ...
 
 
@@ -378,6 +492,40 @@ class StudentBillingEnrollmentRepository(Protocol):
     ) -> StudentBillingEnrollment | None: ...
 
 
+class BillingCounterRepository(Protocol):
+    """Port for atomic per-academy counters (Slice S0/D — e.g. invoice numbering)."""
+
+    async def next_value(self, *, scope: str) -> int: ...
+
+
+class BillingSettingsRepository(Protocol):
+    """Port for academy-scoped billing configuration (Slice S0/D)."""
+
+    async def get(self) -> BillingSettings: ...
+
+
+class ConnectedAccountRepository(Protocol):
+    """Port for the per-academy Stripe Connect account store (Slice I).
+
+    Tenant-scoped: every method resolves through the request's academy_id, so
+    an academy can only read/write its own connected account, and can only
+    resolve its own ``stripe_account_id`` (used by the Connect webhook guard).
+    """
+
+    async def get_for_academy(self) -> ConnectedAccount | None: ...
+    async def get_by_stripe_account_id(self, stripe_account_id: str) -> ConnectedAccount | None: ...
+    async def upsert(self, account: ConnectedAccount) -> None: ...
+    async def update_status(
+        self,
+        *,
+        stripe_account_id: str,
+        status: ConnectedAccountStatus,
+        capabilities: dict[str, str] | None = None,
+        charges_enabled: bool | None = None,
+        payouts_enabled: bool | None = None,
+    ) -> None: ...
+
+
 class LedgerRepository(Protocol):
     """Port for ledger invoice + line persistence (Phase 2A+)."""
 
@@ -456,3 +604,13 @@ class LedgerRepository(Protocol):
         amount_cents: int,
         idempotency_key: str,
     ) -> LedgerAllocationResult: ...
+
+    async def reverse_payment_allocation(
+        self,
+        *,
+        allocation_idempotency_key: str,
+        reversal_idempotency_key: str,
+        reason: str,
+        return_code: str | None,
+        reversed_at: datetime,
+    ) -> dict[str, Any] | None: ...

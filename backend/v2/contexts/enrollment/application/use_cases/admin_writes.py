@@ -10,6 +10,7 @@ promotion on cancellation, comms notifications, etc.) react.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal, Protocol
@@ -45,6 +46,8 @@ from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, St
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
+
+log = logging.getLogger(__name__)
 
 Clock = Callable[[], datetime]
 
@@ -651,17 +654,17 @@ class PauseEnrollmentCommand(BaseModel):
     pause_stripe_collection: bool = True
 
 
-class EnrollmentSubscriptionLookup(Protocol):
-    async def latest_for_enrollment(self, enrollment_id: str) -> object | None: ...
+class EnrollmentAutopayStatusGateway(Protocol):
+    """Cross-context port: toggle a single enrollment's app-owned autopay
+    status (Slice B). Per-enrollment — pausing one child never affects a
+    sibling. Routes through the guarded transition path on
+    ``student_billing_enrollments``; returns True if applied, False if the
+    transition was rejected or the enrollment could not be resolved (so the
+    caller can log an observable warning). Stripe subscriptions no longer back
+    autopay pause/resume — this replaces the Stripe-collection pause path.
+    """
 
-
-class SubscriptionCollectionGateway(Protocol):
-    async def pause_subscription_collection(
-        self,
-        stripe_subscription_id: str,
-        *,
-        behavior: str = "void",
-    ) -> None: ...
+    async def set_enrollment_status(self, *, enrollment_id: str, status: str) -> bool: ...
 
 
 class PauseEnrollment:
@@ -678,8 +681,7 @@ class PauseEnrollment:
         waitlist: WaitlistRepository | None = None,
         enrollment_events: EnrollmentEventRepository | None = None,
         billing_deferrals: BillingDeferralRepository | None = None,
-        subscriptions: EnrollmentSubscriptionLookup | None = None,
-        stripe: SubscriptionCollectionGateway | None = None,
+        autopay_status: EnrollmentAutopayStatusGateway | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
@@ -688,8 +690,7 @@ class PauseEnrollment:
         self._waitlist = waitlist
         self._enrollment_events = enrollment_events
         self._billing_deferrals = billing_deferrals
-        self._subscriptions = subscriptions
-        self._stripe = stripe
+        self._autopay_status = autopay_status
         self._now = clock
 
     async def execute(self, cmd: PauseEnrollmentCommand) -> None:
@@ -701,6 +702,11 @@ class PauseEnrollment:
         await self._enrollments.update_status(e.enrollment_id, "paused")
         now = self._now()
         effective_at = cmd.effective_at or now
+        parent_id = ""
+        if self._students is not None:
+            students = await self._students.by_ids([e.student_id])
+            if students:
+                parent_id = students[0].parent_id
         waitlist_id: str | None = None
         if self._sessions is not None:
             await self._sessions.release_seat(e.session_id)
@@ -711,11 +717,6 @@ class PauseEnrollment:
             if existing_waitlist is not None:
                 waitlist_id = existing_waitlist.waitlist_id
             else:
-                parent_id = ""
-                if self._students is not None:
-                    students = await self._students.by_ids([e.student_id])
-                    if students:
-                        parent_id = students[0].parent_id
                 entry = WaitlistEntry(
                     waitlist_id=str(new_ulid()),
                     academy_id=e.academy_id,
@@ -764,15 +765,25 @@ class PauseEnrollment:
                         metadata={"seat_policy": "released_to_waitlist"},
                     )
                 )
-        if (
-            cmd.pause_stripe_collection
-            and self._subscriptions is not None
-            and self._stripe is not None
-        ):
-            subscription = await self._subscriptions.latest_for_enrollment(e.enrollment_id)
-            stripe_subscription_id = getattr(subscription, "stripe_subscription_id", None)
-            if stripe_subscription_id:
-                await self._stripe.pause_subscription_collection(str(stripe_subscription_id))
+        if cmd.pause_stripe_collection and self._autopay_status is not None:
+            # App-owned autopay (Slice B): pause toggles THIS enrollment's
+            # autopay_enrollment_status to paused (per-enrollment — siblings are
+            # unaffected). Stripe subscriptions no longer back autopay.
+            applied = await self._autopay_status.set_enrollment_status(
+                enrollment_id=e.enrollment_id,
+                status="paused",
+            )
+            if not applied:
+                log.warning(
+                    "autopay not paused for enrollment_id=%s: rejected transition "
+                    "or no billing enrollment (MEDIUM/BLOCKING#2 observability)",
+                    e.enrollment_id,
+                )
+        elif cmd.pause_stripe_collection and self._autopay_status is None:
+            log.warning(
+                "autopay pause skipped: autopay_status gateway unwired for enrollment_id=%s",
+                cmd.enrollment_id,
+            )
 
 
 class WithdrawEnrollmentCommand(BaseModel):
@@ -843,16 +854,20 @@ class ResumeEnrollment:
         self,
         enrollments: EnrollmentWriter,
         sessions: SessionWriter | None = None,
+        students: StudentQuery | None = None,
         waitlist: WaitlistRepository | None = None,
         enrollment_events: EnrollmentEventRepository | None = None,
         billing_deferrals: BillingDeferralRepository | None = None,
+        autopay_status: EnrollmentAutopayStatusGateway | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
         self._sessions = sessions
+        self._students = students
         self._waitlist = waitlist
         self._enrollment_events = enrollment_events
         self._billing_deferrals = billing_deferrals
+        self._autopay_status = autopay_status
         self._now = clock
 
     async def execute(
@@ -862,6 +877,7 @@ class ResumeEnrollment:
         actor_id: str | None = None,
         reason: str | None = None,
         close_billing_deferral: bool = True,
+        resume_autopay_collection: bool = True,
     ) -> None:
         e = await self._enrollments.get(enrollment_id)
         if e is None:
@@ -890,6 +906,25 @@ class ResumeEnrollment:
             effective_at=now,
             occurred_at=now,
         )
+        if resume_autopay_collection and self._autopay_status is not None:
+            # App-owned autopay (Slice B): resume toggles THIS enrollment's
+            # autopay_enrollment_status back to active (per-enrollment). No
+            # Stripe subscription to resume collection on any more.
+            applied = await self._autopay_status.set_enrollment_status(
+                enrollment_id=e.enrollment_id,
+                status="active",
+            )
+            if not applied:
+                log.warning(
+                    "autopay not resumed for enrollment_id=%s: rejected transition "
+                    "or no billing enrollment (MEDIUM/BLOCKING#2 observability)",
+                    e.enrollment_id,
+                )
+        elif resume_autopay_collection and self._autopay_status is None:
+            log.warning(
+                "autopay resume skipped: autopay_status gateway unwired for enrollment_id=%s",
+                enrollment_id,
+            )
         if self._billing_deferrals is not None and close_billing_deferral:
             await self._billing_deferrals.close_active_for_enrollment(
                 e.enrollment_id,

@@ -11,6 +11,7 @@ from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
     AddInvoiceLineCommand,
 )
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
+from backend.v2.shared.tenancy import tenant_scope
 
 # ---------------------------------------------------------------------------
 # In-memory fake repository
@@ -93,13 +94,46 @@ class FakeLedgerRepository:
         return invoice
 
 
+class FakeBillingCounterRepository:
+    """In-memory stand-in for MongoBillingCounterRepository."""
+
+    def __init__(self) -> None:
+        self._seqs: dict[str, int] = {}
+
+    async def next_value(self, *, scope: str) -> int:
+        self._seqs[scope] = self._seqs.get(scope, 0) + 1
+        return self._seqs[scope]
+
+
+class FakeBillingSettingsRepository:
+    """In-memory stand-in for MongoBillingSettingsRepository."""
+
+    def __init__(self, prefix: str = "BLNO") -> None:
+        self._prefix = prefix
+
+    async def get(self):
+        from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+
+        return BillingSettings(academy_id="acad-1", invoice_number_prefix=self._prefix)
+
+
 # ---------------------------------------------------------------------------
 # Helper: build and execute use case
 # ---------------------------------------------------------------------------
 
 
-def _use_case(repo: FakeLedgerRepository) -> AddInvoiceLine:
-    return AddInvoiceLine(ledger=repo, clock=lambda: NOW)
+def _use_case(
+    repo: FakeLedgerRepository,
+    *,
+    counters: FakeBillingCounterRepository | None = None,
+    settings: FakeBillingSettingsRepository | None = None,
+) -> AddInvoiceLine:
+    return AddInvoiceLine(
+        ledger=repo,
+        counters=counters or FakeBillingCounterRepository(),
+        settings=settings or FakeBillingSettingsRepository(),
+        clock=lambda: NOW,
+    )
 
 
 def _line_cmd(**overrides) -> dict:
@@ -171,6 +205,83 @@ async def test_mode_b_creates_invoice_when_none_exists() -> None:
     # Invoice was persisted
     stored = await repo.get_invoice("inv-s1-2026-06")
     assert stored is not None
+
+
+async def test_mode_b_rejects_academy_mismatch_from_tenant_context() -> None:
+    repo = FakeLedgerRepository()
+    uc = _use_case(repo)
+
+    with (
+        tenant_scope("acad-2"),
+        pytest.raises(ValueError, match="academy_id does not match current tenant"),
+    ):
+        await uc.execute(
+            AddInvoiceLineCommand(
+                student_id="s1",
+                period="2026-06",
+                academy_id="acad-1",
+                parent_id="parent-1",
+                **_line_cmd(),
+            )
+        )
+
+
+async def test_mode_b_mints_invoice_number_using_prefix_and_period() -> None:
+    """New on-the-fly invoices get a minted invoice_number: {prefix}-{yyyymm}-{seq}."""
+    repo = FakeLedgerRepository()
+    uc = _use_case(repo, settings=FakeBillingSettingsRepository(prefix="ACAD"))
+
+    result = await uc.execute(
+        AddInvoiceLineCommand(
+            student_id="s1",
+            period="2026-06",
+            academy_id="acad-1",
+            parent_id="parent-1",
+            **_line_cmd(),
+        )
+    )
+
+    assert result.invoice.invoice_number == "ACAD-202606-001"
+
+
+async def test_mode_b_invoice_number_increments_within_same_academy_month() -> None:
+    repo = FakeLedgerRepository()
+    counters = FakeBillingCounterRepository()
+    uc = _use_case(repo, counters=counters)
+
+    first = await uc.execute(
+        AddInvoiceLineCommand(
+            student_id="s1",
+            period="2026-06",
+            academy_id="acad-1",
+            parent_id="parent-1",
+            **_line_cmd(),
+        )
+    )
+    second = await uc.execute(
+        AddInvoiceLineCommand(
+            student_id="s2",
+            period="2026-06",
+            academy_id="acad-1",
+            parent_id="parent-1",
+            **_line_cmd(),
+        )
+    )
+
+    assert first.invoice.invoice_number == "BLNO-202606-001"
+    assert second.invoice.invoice_number == "BLNO-202606-002"
+
+
+async def test_mode_a_does_not_mint_a_new_invoice_number_for_existing_invoice() -> None:
+    """Mode A adds a line to an existing invoice; it must not re-mint invoice_number."""
+    existing = _open_invoice()
+    existing = existing.model_copy(update={"invoice_number": "BLNO-202606-999"})
+    repo = FakeLedgerRepository(invoices=[existing])
+    uc = _use_case(repo)
+
+    result = await uc.execute(AddInvoiceLineCommand(invoice_id="inv-1", **_line_cmd()))
+
+    assert result.invoice.invoice_number == "BLNO-202606-999"
 
 
 async def test_mode_b_reuses_existing_open_invoice() -> None:

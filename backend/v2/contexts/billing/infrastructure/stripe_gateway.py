@@ -114,12 +114,19 @@ class RealStripeGateway(StripeGateway):
         success_url: str,
         cancel_url: str,
         metadata: dict[str, str],
+        connected_account_id: str | None = None,
     ) -> tuple[str, str]:
         setup_metadata = metadata | {
             "enrollment_id": enrollment_id,
             "session_id": session_id,
             "source": metadata.get("source") or "autopay_setup",
         }
+        # Customers are created on the PLATFORM; when the academy has a connected
+        # account, the eventual off-session charges route to it as the merchant of
+        # record via setup_intent_data.on_behalf_of.
+        setup_intent_data: dict[str, Any] = {"metadata": setup_metadata}
+        if connected_account_id:
+            setup_intent_data["on_behalf_of"] = connected_account_id
 
         def _create() -> Any:
             return self._stripe.checkout.Session.create(
@@ -130,7 +137,7 @@ class RealStripeGateway(StripeGateway):
                 client_reference_id=parent_id,
                 customer_creation="always",
                 metadata=setup_metadata,
-                setup_intent_data={"metadata": setup_metadata},
+                setup_intent_data=setup_intent_data,
             )
 
         result = await asyncio.to_thread(_create)
@@ -272,18 +279,33 @@ class RealStripeGateway(StripeGateway):
             ) from exc
 
     async def search_app_owned_payment_intents(
-        self, *, academy_id: str, limit: int = 100
+        self, *, academy_id: str, limit: int = 100, stripe_account: str | None = None
     ) -> list[dict[str, Any]]:
         safe_academy_id = academy_id.replace('"', '\\"')
         safe_limit = max(1, min(int(limit), 100))
+        # `succeeded` covers card/instant settlement; `processing` is the ACH
+        # in-flight state (§7.2) — both must be visible to reconciliation, or
+        # ACH payments are invisible until they happen to also show up via a
+        # later run after settlement.
+        queries = [
+            f'metadata["academy_id"]:"{safe_academy_id}" AND status:"succeeded"',
+            f'metadata["academy_id"]:"{safe_academy_id}" AND status:"processing"',
+        ]
 
         def _search() -> list[dict[str, Any]]:
-            payment_intents = self._stripe.PaymentIntent.search(
-                query=f'metadata["academy_id"]:"{safe_academy_id}" AND status:"succeeded"',
-                limit=safe_limit,
-            )
-            data = getattr(payment_intents, "data", None) or []
-            return [_stripe_object_to_dict(item) for item in data]
+            by_id: dict[str, dict[str, Any]] = {}
+            for query in queries:
+                kwargs: dict[str, Any] = {"query": query, "limit": safe_limit}
+                if stripe_account:
+                    kwargs["stripe_account"] = stripe_account
+                payment_intents = self._stripe.PaymentIntent.search(**kwargs)
+                data = getattr(payment_intents, "data", None) or []
+                for item in data:
+                    converted = _stripe_object_to_dict(item)
+                    pi_id = str(converted.get("id") or "")
+                    if pi_id and pi_id not in by_id:
+                        by_id[pi_id] = converted
+            return list(by_id.values())[:safe_limit]
 
         try:
             return await asyncio.to_thread(_search)
@@ -416,6 +438,80 @@ class RealStripeGateway(StripeGateway):
 
         return await asyncio.to_thread(_exchange)
 
+    async def create_connected_account(
+        self,
+        *,
+        academy_id: str,
+        display_name: str | None = None,
+        contact_email: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> str:
+        """Create an Accounts v2 connected account via ``POST /v2/core/accounts``.
+
+        Configured through Accounts v2 ``configuration`` and
+        ``defaults.responsibilities`` (never legacy ``type`` or v1
+        ``controller``). The platform accepts payment liability for destination
+        charges and uses an idempotency key so retries after local persistence
+        failures do not create duplicate Stripe accounts.
+        """
+        request: dict[str, Any] = {
+            "dashboard": "full",
+            "configuration": {
+                "merchant": {
+                    "capabilities": {
+                        "card_payments": {"requested": True},
+                    }
+                }
+            },
+            "defaults": {
+                "currency": "usd",
+                "responsibilities": {
+                    "fees_collector": "application",
+                    "losses_collector": "application",
+                },
+            },
+            "identity": {"country": "us"},
+            "metadata": {"academy_id": academy_id},
+        }
+        if display_name:
+            request["display_name"] = display_name
+        if contact_email:
+            request["contact_email"] = contact_email
+
+        def _create() -> Any:
+            kwargs = dict(request)
+            kwargs["idempotency_key"] = idempotency_key or f"connect-account:{academy_id}"
+            return self._stripe.v2.core.accounts.create(**kwargs)
+
+        try:
+            account = await asyncio.to_thread(_create)
+        except self._stripe.StripeError as exc:
+            raise ValueError(f"Stripe connected account creation failed: {exc}") from exc
+        return str(account["id"])
+
+    async def create_account_onboarding_link(
+        self,
+        *,
+        stripe_account_id: str,
+        refresh_url: str,
+        return_url: str,
+    ) -> str:
+        """Create a hosted onboarding AccountLink for the connected account."""
+
+        def _create() -> Any:
+            return self._stripe.AccountLink.create(
+                account=stripe_account_id,
+                refresh_url=refresh_url,
+                return_url=return_url,
+                type="account_onboarding",
+            )
+
+        try:
+            link = await asyncio.to_thread(_create)
+        except self._stripe.StripeError as exc:
+            raise ValueError(f"Stripe account onboarding link creation failed: {exc}") from exc
+        return str(link["url"])
+
     async def _run_stripe_retrieve(self, fn: Any, *, label: str) -> Any:
         try:
             return await asyncio.to_thread(fn)
@@ -465,20 +561,33 @@ class RealStripeGateway(StripeGateway):
         payment_method_id: str,
         idempotency_key: str,
         metadata: dict[str, str],
+        connected_account_id: str | None = None,
     ) -> tuple[str, str, str | None]:
-        """Return (pi_id, pi_status, decline_code_or_None)."""
+        """Return (pi_id, pi_status, decline_code_or_None).
+
+        Slice I: when ``connected_account_id`` is set, this is a DESTINATION
+        charge — the connected academy account is the merchant of record
+        (``on_behalf_of``) and funds settle to it (``transfer_data.destination``).
+        The platform accepts liability, so ``application_fee_amount`` stays 0.
+        The Customer stays on the platform (no ``stripe_account`` header).
+        """
 
         def _create() -> Any:
-            return self._stripe.PaymentIntent.create(
-                amount=amount_cents,
-                currency=currency,
-                customer=customer_id,
-                payment_method=payment_method_id,
-                off_session=True,
-                confirm=True,
-                idempotency_key=idempotency_key,
-                metadata=metadata,
-            )
+            request: dict[str, Any] = {
+                "amount": amount_cents,
+                "currency": currency,
+                "customer": customer_id,
+                "payment_method": payment_method_id,
+                "off_session": True,
+                "confirm": True,
+                "idempotency_key": idempotency_key,
+                "metadata": metadata,
+            }
+            if connected_account_id:
+                request["on_behalf_of"] = connected_account_id
+                request["transfer_data"] = {"destination": connected_account_id}
+                request["application_fee_amount"] = 0
+            return self._stripe.PaymentIntent.create(**request)
 
         try:
             pi = await asyncio.to_thread(_create)
