@@ -331,21 +331,30 @@ class FakeStripeGateway(StripeGateway):
         academy_id: str,
         display_name: str | None = None,
         contact_email: str | None = None,
+        idempotency_key: str | None = None,
     ) -> str:
         account_id = f"acct_fake_{academy_id}_{new_ulid()}"
-        # Record the controller-based (Accounts v2) config so tests can assert
-        # the platform accepts liability and no legacy `type` is used.
         self.connected_accounts.append(
             {
                 "stripe_account_id": account_id,
                 "academy_id": academy_id,
                 "display_name": display_name,
                 "contact_email": contact_email,
-                "controller": {
-                    "losses": {"payments": "application"},
-                    "fees": {"payer": "account"},
-                    "stripe_dashboard": {"type": "full"},
-                    "requirement_collection": "stripe",
+                "idempotency_key": idempotency_key or f"connect-account:{academy_id}",
+                "dashboard": "full",
+                "configuration": {
+                    "merchant": {
+                        "capabilities": {
+                            "card_payments": {"requested": True},
+                        }
+                    }
+                },
+                "defaults": {
+                    "currency": "usd",
+                    "responsibilities": {
+                        "fees_collector": "application",
+                        "losses_collector": "application",
+                    },
                 },
             }
         )

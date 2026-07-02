@@ -4,8 +4,8 @@ These assert the exact params the RealStripeGateway sends to Stripe without
 hitting the network: we install a fake ``stripe`` module, capture kwargs, and
 assert on them. The LOCKED design decisions verified here:
 
-* Accounts v2 (``/v2/core/accounts``) via ``controller`` props — never the
-  legacy ``type: express/custom/standard``.
+* Accounts v2 (``/v2/core/accounts``) via v2 ``configuration`` and
+  ``defaults.responsibilities`` — never legacy ``type`` or v1 ``controller``.
 * Destination charges: ``on_behalf_of`` + ``transfer_data.destination`` are
   PRESENT on the off-session PaymentIntent and the autopay setup checkout.
 * ``payment_method_types`` is ABSENT everywhere (dynamic payment methods).
@@ -103,7 +103,7 @@ def _gateway() -> RealStripeGateway:
     return RealStripeGateway(api_key="sk_test", webhook_secret="whsec_test")
 
 
-async def test_create_connected_account_uses_accounts_v2_controller_props_not_legacy_type(
+async def test_create_connected_account_uses_accounts_v2_payload_not_legacy_controller(
     fake_stripe: _Recorder,
 ) -> None:
     gw = _gateway()
@@ -116,14 +116,24 @@ async def test_create_connected_account_uses_accounts_v2_controller_props_not_le
 
     assert account_id == "acct_v2_123"
     call = fake_stripe.calls["v2.core.accounts.create"]
-    # No legacy account type param.
     assert "type" not in call
-    # Controller-based configuration (Accounts v2).
-    controller = call["controller"]
-    assert controller["losses"]["payments"] == "application"
-    assert "fees" in controller
-    assert "stripe_dashboard" in controller
-    assert "requirement_collection" in controller
+    assert "controller" not in call
+    assert call["dashboard"] == "full"
+    assert call["configuration"] == {
+        "merchant": {
+            "capabilities": {
+                "card_payments": {"requested": True},
+            }
+        }
+    }
+    assert call["defaults"] == {
+        "currency": "usd",
+        "responsibilities": {
+            "fees_collector": "application",
+            "losses_collector": "application",
+        },
+    }
+    assert call["idempotency_key"] == "connect-account:acad-1"
 
 
 async def test_create_account_onboarding_link_uses_account_link(

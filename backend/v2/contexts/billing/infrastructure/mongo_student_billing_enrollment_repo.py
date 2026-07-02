@@ -120,12 +120,31 @@ class MongoStudentBillingEnrollmentRepository(TenantScopedRepository):
                 enrollment_id,
             )
             return False
-        await self._update_one(
-            {"enrollment_id": enrollment_id},
+        filter_: dict[str, Any] = {"enrollment_id": enrollment_id}
+        if current == "not_offered":
+            filter_["$or"] = [
+                {"autopay_enrollment_status": "not_offered"},
+                {"autopay_enrollment_status": {"$exists": False}},
+                {"autopay_enrollment_status": None},
+                {"autopay_enrollment_status": ""},
+            ]
+        else:
+            filter_["autopay_enrollment_status"] = current
+        result = await self._update_one(
+            filter_,
             {"$set": {"autopay_enrollment_status": status, "updated_at": datetime.now(UTC)}},
             session=session,
         )
-        return True
+        applied = getattr(result, "matched_count", 0) == 1
+        if not applied:
+            log.warning(
+                "autopay status transition skipped: enrollment changed during update "
+                "current=%s target=%s enrollment_id=%s",
+                current,
+                status,
+                enrollment_id,
+            )
+        return applied
 
     async def mark_autopay_active_from_setup(
         self, *, enrollment_id: str, session: Any | None = None

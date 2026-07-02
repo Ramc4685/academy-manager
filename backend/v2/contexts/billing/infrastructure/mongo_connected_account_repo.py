@@ -32,6 +32,10 @@ class MongoConnectedAccountRepository(TenantScopedRepository):
         doc = await self._find_one({"stripe_account_id": stripe_account_id})
         return self._to_domain(doc)
 
+    async def academy_id_for_account(self, stripe_account_id: str) -> str | None:
+        account = await self.get_by_stripe_account_id(stripe_account_id)
+        return account.academy_id if account else None
+
     async def upsert(self, account: ConnectedAccount) -> None:
         payload = account.model_dump(mode="python")
         payload.pop("academy_id", None)

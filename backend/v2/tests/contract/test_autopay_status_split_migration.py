@@ -59,9 +59,14 @@ async def test_active_relationship_without_setup_evidence_is_not_marked_active(d
 
 
 @pytest.mark.asyncio
-async def test_active_relationship_with_saved_pm_is_marked_active(db) -> None:
-    """P3: setup evidence via a saved default payment method → active."""
-    await db["student_billing_enrollments"].insert_one(_enrollment("e-active-pm", status="active"))
+async def test_parent_saved_pm_does_not_mark_sibling_enrollment_active(db) -> None:
+    """A parent-level default PM is not per-enrollment autopay authorization."""
+    await db["student_billing_enrollments"].insert_many(
+        [
+            _enrollment("e-authorized", status="active"),
+            _enrollment("e-sibling-no-setup", status="active"),
+        ]
+    )
     await db["parent_billing_customers"].insert_one(
         {
             "academy_id": "acad-1",
@@ -69,11 +74,27 @@ async def test_active_relationship_with_saved_pm_is_marked_active(db) -> None:
             "default_payment_method_id": "pm_saved_123",
         }
     )
+    await db["invoices"].insert_one(
+        {"academy_id": "acad-1", "invoice_id": "inv-paid", "enrollment_id": "e-authorized"}
+    )
+    await db["payment_attempts"].insert_one(
+        {
+            "academy_id": "acad-1",
+            "invoice_id": "inv-paid",
+            "status": "succeeded",
+            "failure_code": None,
+            "created_at": datetime(2026, 6, 1, tzinfo=UTC),
+        }
+    )
 
     await migration_0137.up(db)
 
-    doc = await db["student_billing_enrollments"].find_one({"enrollment_id": "e-active-pm"})
-    assert doc["autopay_enrollment_status"] == "active"
+    authorized = await db["student_billing_enrollments"].find_one({"enrollment_id": "e-authorized"})
+    sibling = await db["student_billing_enrollments"].find_one(
+        {"enrollment_id": "e-sibling-no-setup"}
+    )
+    assert authorized["autopay_enrollment_status"] == "active"
+    assert sibling["autopay_enrollment_status"] == "setup_started"
 
 
 @pytest.mark.asyncio

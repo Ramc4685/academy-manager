@@ -96,6 +96,13 @@ def test_delete_filter_targets_exact_candidate_ids() -> None:
     }
 
 
+def test_candidate_subscription_ids_rejects_missing_id_before_apply() -> None:
+    module = _load_module()
+
+    with pytest.raises(SystemExit, match="candidate missing subscription_id"):
+        module.candidate_subscription_ids([{"status": "incomplete"}])
+
+
 def test_apply_requires_explicit_cleanup_confirmation() -> None:
     module = _load_module()
     args = module.parse_args(["--mongo-url", "mongodb://example.test", "--apply"])

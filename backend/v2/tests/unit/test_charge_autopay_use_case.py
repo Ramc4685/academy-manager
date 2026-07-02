@@ -203,6 +203,18 @@ class FakeLedgerRepo:
         return result
 
 
+class FailingSaveInvoiceLedgerRepo(FakeLedgerRepo):
+    def __init__(self, invoices: list[LedgerInvoice] | None = None) -> None:
+        super().__init__(invoices)
+        self.fail_next_save_invoice = False
+
+    async def save_invoice(self, invoice: LedgerInvoice) -> LedgerInvoice:
+        if self.fail_next_save_invoice:
+            self.fail_next_save_invoice = False
+            raise ValueError("stale invoice version")
+        return await super().save_invoice(invoice)
+
+
 class FakeStripeSucceeds:
     """Gateway that always succeeds with pi_test_123."""
 
@@ -584,6 +596,52 @@ async def test_ach_payment_method_adds_discount_line_before_charge_amount_and_ke
     assert discount_lines[0].amount_cents == -250
     assert discount_lines[0].source_type == "autopay_cash_discount"
     assert discount_lines[0].source_id == "cash-discount-v1"
+
+
+async def test_ach_discount_new_line_rolls_back_when_invoice_save_fails() -> None:
+    repo = FailingSaveInvoiceLedgerRepo(invoices=[_invoice(status="open")])
+    repo.fail_next_save_invoice = True
+    stripe = FakeStripeSucceeds()
+    stripe.payment_method = {"id": "pm_1", "type": "us_bank_account"}
+    settings = FakeBillingSettingsRepo(
+        BillingSettings(
+            academy_id="acad-1",
+            ach_discount_enabled=True,
+            ach_discount_percent=2.5,
+            ach_discount_label="ACH autopay savings",
+            disclosure_version="cash-discount-v1",
+        )
+    )
+
+    with pytest.raises(ValueError, match="stale invoice version"):
+        await _uc(repo, stripe, settings=settings).execute("inv-1")
+
+    assert repo.lines_by_invoice["inv-1"] == []
+    assert stripe.create_calls == []
+
+
+async def test_ach_discount_existing_line_is_restored_when_invoice_save_fails() -> None:
+    repo = FailingSaveInvoiceLedgerRepo(invoices=[_invoice(status="open")])
+    _seed_existing_ach_discount(repo)
+    original_line = repo.lines_by_invoice["inv-1"][0]
+    repo.fail_next_save_invoice = True
+    stripe = FakeStripeSucceeds()
+    stripe.payment_method = {"id": "pm_1", "type": "card", "card": {"funding": "credit"}}
+    settings = FakeBillingSettingsRepo(
+        BillingSettings(
+            academy_id="acad-1",
+            ach_discount_enabled=True,
+            ach_discount_percent=2.5,
+            ach_discount_label="ACH autopay savings",
+            disclosure_version="cash-discount-v1",
+        )
+    )
+
+    with pytest.raises(ValueError, match="stale invoice version"):
+        await _uc(repo, stripe, settings=settings).execute("inv-1")
+
+    assert repo.lines_by_invoice["inv-1"] == [original_line]
+    assert stripe.create_calls == []
 
 
 @pytest.mark.parametrize("funding_type", ["credit", "debit", "prepaid"])

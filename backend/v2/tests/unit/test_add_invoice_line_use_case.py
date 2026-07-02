@@ -11,6 +11,7 @@ from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
     AddInvoiceLineCommand,
 )
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
+from backend.v2.shared.tenancy import tenant_scope
 
 # ---------------------------------------------------------------------------
 # In-memory fake repository
@@ -204,6 +205,25 @@ async def test_mode_b_creates_invoice_when_none_exists() -> None:
     # Invoice was persisted
     stored = await repo.get_invoice("inv-s1-2026-06")
     assert stored is not None
+
+
+async def test_mode_b_rejects_academy_mismatch_from_tenant_context() -> None:
+    repo = FakeLedgerRepository()
+    uc = _use_case(repo)
+
+    with (
+        tenant_scope("acad-2"),
+        pytest.raises(ValueError, match="academy_id does not match current tenant"),
+    ):
+        await uc.execute(
+            AddInvoiceLineCommand(
+                student_id="s1",
+                period="2026-06",
+                academy_id="acad-1",
+                parent_id="parent-1",
+                **_line_cmd(),
+            )
+        )
 
 
 async def test_mode_b_mints_invoice_number_using_prefix_and_period() -> None:

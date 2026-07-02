@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -18,6 +19,7 @@ from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import MongoSessionRepository
 from backend.v2.contexts.onboarding.domain.errors import MissingSelectedSession
 from backend.v2.interfaces.parent.deps import get_parent_use_cases
+from backend.v2.interfaces.parent.payment_routes import _request_ip
 from backend.v2.interfaces.parent.router import router as parent_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
@@ -310,6 +312,24 @@ def test_parent_reads_checkout_status_with_request_consent_metadata() -> None:
             "user_agent": "pytest-browser",
         }
     ]
+
+
+def test_request_ip_uses_forwarded_for_from_trusted_proxy() -> None:
+    request = SimpleNamespace(
+        client=SimpleNamespace(host="127.0.0.1"),
+        headers={"x-forwarded-for": "203.0.113.10, 10.0.0.5"},
+    )
+
+    assert _request_ip(request) == "203.0.113.10"
+
+
+def test_request_ip_ignores_forwarded_for_from_untrusted_peer() -> None:
+    request = SimpleNamespace(
+        client=SimpleNamespace(host="8.8.8.8"),
+        headers={"x-forwarded-for": "203.0.113.10"},
+    )
+
+    assert _request_ip(request) == "8.8.8.8"
 
 
 @pytest.mark.asyncio

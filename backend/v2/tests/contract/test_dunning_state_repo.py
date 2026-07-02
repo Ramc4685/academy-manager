@@ -319,6 +319,31 @@ async def test_parked_processing_state_resumes_after_latest_attempt_fails(db, ac
 
 
 @pytest.mark.asyncio
+async def test_retryable_parked_states_are_rechecked(db, acad) -> None:
+    repo = MongoDunningStateRepository(db)
+    await _seed_invoice(db, academy_id=acad, invoice_id="inv-connect", enrollment_id="enr-connect")
+    await repo.prepare_due_states(now=NOW, limit=10)
+    await db["dunning_states"].update_one(
+        {"invoice_id": "inv-connect"},
+        {
+            "$set": {
+                "next_attempt_at": None,
+                "suppression_reason": "connected_account_not_ready",
+                "suppressed_at": NOW,
+            }
+        },
+    )
+
+    claimed = await repo.claim_next_due(now=NOW + timedelta(minutes=5), worker_id="retry-worker")
+
+    assert claimed is not None
+    invoice, state = claimed
+    assert invoice.invoice_id == "inv-connect"
+    assert state.status == "processing"
+    assert state.processing_worker_id == "retry-worker"
+
+
+@pytest.mark.asyncio
 async def test_fresh_processing_claim_is_not_reclaimed_but_stale_processing_is(db, acad) -> None:
     repo = MongoDunningStateRepository(db)
     await _seed_invoice(db, academy_id=acad, invoice_id="inv-fresh", enrollment_id="enr-fresh")

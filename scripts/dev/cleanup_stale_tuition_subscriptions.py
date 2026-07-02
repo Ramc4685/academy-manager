@@ -62,6 +62,20 @@ def delete_filter(subscription_ids: Sequence[str]) -> dict[str, Any]:
     }
 
 
+def candidate_subscription_ids(candidates: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Return validated subscription ids for destructive cleanup."""
+
+    ids: list[str] = []
+    for row in candidates:
+        subscription_id = str(row.get("subscription_id") or "").strip()
+        if not subscription_id:
+            raise SystemExit("candidate missing subscription_id; aborting cleanup")
+        ids.append(subscription_id)
+    if len(set(ids)) != len(ids):
+        raise SystemExit("duplicate candidate subscription_id; aborting cleanup")
+    return ids
+
+
 def build_report(
     *, candidates: Sequence[Mapping[str, Any]], applied: bool
 ) -> dict[str, Any]:
@@ -169,7 +183,7 @@ def run(args: argparse.Namespace) -> int:
         )
 
     if args.apply and candidates:
-        ids = [str(row["subscription_id"]) for row in candidates]
+        ids = candidate_subscription_ids(candidates)
         result = db["subscriptions"].delete_many(delete_filter(ids))
         if result.deleted_count != len(ids):
             raise SystemExit(

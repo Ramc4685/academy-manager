@@ -251,7 +251,6 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.platform_connect_onboarding = StartConnectOnboarding(
         stripe=stripe_gw,
         connected_accounts=MongoConnectedAccountRepository(db),
-        academy_id=runtime_academy_id,
     )
 
     # Admin BFF wiring (Wave 3).

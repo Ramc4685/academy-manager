@@ -146,6 +146,33 @@ async def test_set_autopay_enrollment_status_unknown_enrollment_returns_false(db
 
 
 @pytest.mark.asyncio
+async def test_set_autopay_enrollment_status_rejects_stale_read_race(db, acad, monkeypatch) -> None:
+    repo = MongoStudentBillingEnrollmentRepository(db)
+    await _seed_enrollment(
+        repo, enrollment_id="e1", academy_id=acad, autopay_enrollment_status="active"
+    )
+    original_update_one = repo._update_one
+    raced = False
+
+    async def racing_update_one(filter_, update, **kwargs):
+        nonlocal raced
+        if not raced and filter_.get("enrollment_id") == "e1":
+            raced = True
+            await db["student_billing_enrollments"].update_one(
+                {"academy_id": acad, "enrollment_id": "e1"},
+                {"$set": {"autopay_enrollment_status": "disabled"}},
+            )
+        return await original_update_one(filter_, update, **kwargs)
+
+    monkeypatch.setattr(repo, "_update_one", racing_update_one)
+
+    applied = await repo.set_autopay_enrollment_status(enrollment_id="e1", status="paused")
+
+    assert applied is False
+    assert await repo.get_autopay_enrollment_status(enrollment_id="e1") == "disabled"
+
+
+@pytest.mark.asyncio
 async def test_record_attempt_outcome_leaves_enrollment_status_untouched(db, acad) -> None:
     repo = MongoStudentBillingEnrollmentRepository(db)
     await _seed_enrollment(

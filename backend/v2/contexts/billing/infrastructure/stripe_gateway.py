@@ -287,18 +287,25 @@ class RealStripeGateway(StripeGateway):
         # in-flight state (§7.2) — both must be visible to reconciliation, or
         # ACH payments are invisible until they happen to also show up via a
         # later run after settlement.
-        query = (
-            f'metadata["academy_id"]:"{safe_academy_id}" '
-            'AND (status:"succeeded" OR status:"processing")'
-        )
+        queries = [
+            f'metadata["academy_id"]:"{safe_academy_id}" AND status:"succeeded"',
+            f'metadata["academy_id"]:"{safe_academy_id}" AND status:"processing"',
+        ]
 
         def _search() -> list[dict[str, Any]]:
-            kwargs: dict[str, Any] = {"query": query, "limit": safe_limit}
-            if stripe_account:
-                kwargs["stripe_account"] = stripe_account
-            payment_intents = self._stripe.PaymentIntent.search(**kwargs)
-            data = getattr(payment_intents, "data", None) or []
-            return [_stripe_object_to_dict(item) for item in data]
+            by_id: dict[str, dict[str, Any]] = {}
+            for query in queries:
+                kwargs: dict[str, Any] = {"query": query, "limit": safe_limit}
+                if stripe_account:
+                    kwargs["stripe_account"] = stripe_account
+                payment_intents = self._stripe.PaymentIntent.search(**kwargs)
+                data = getattr(payment_intents, "data", None) or []
+                for item in data:
+                    converted = _stripe_object_to_dict(item)
+                    pi_id = str(converted.get("id") or "")
+                    if pi_id and pi_id not in by_id:
+                        by_id[pi_id] = converted
+            return list(by_id.values())[:safe_limit]
 
         try:
             return await asyncio.to_thread(_search)
@@ -437,21 +444,31 @@ class RealStripeGateway(StripeGateway):
         academy_id: str,
         display_name: str | None = None,
         contact_email: str | None = None,
+        idempotency_key: str | None = None,
     ) -> str:
         """Create an Accounts v2 connected account via ``POST /v2/core/accounts``.
 
-        Configured entirely through ``controller`` properties (never the legacy
-        ``type: express/custom/standard``). The platform accepts payment
-        liability (``controller.losses.payments = application``) for destination
-        charges; the connected account pays Stripe fees and collects its own
-        onboarding requirements via the Stripe-hosted dashboard/onboarding.
+        Configured through Accounts v2 ``configuration`` and
+        ``defaults.responsibilities`` (never legacy ``type`` or v1
+        ``controller``). The platform accepts payment liability for destination
+        charges and uses an idempotency key so retries after local persistence
+        failures do not create duplicate Stripe accounts.
         """
         request: dict[str, Any] = {
-            "controller": {
-                "losses": {"payments": "application"},
-                "fees": {"payer": "account"},
-                "stripe_dashboard": {"type": "full"},
-                "requirement_collection": "stripe",
+            "dashboard": "full",
+            "configuration": {
+                "merchant": {
+                    "capabilities": {
+                        "card_payments": {"requested": True},
+                    }
+                }
+            },
+            "defaults": {
+                "currency": "usd",
+                "responsibilities": {
+                    "fees_collector": "application",
+                    "losses_collector": "application",
+                },
             },
             "identity": {"country": "us"},
             "metadata": {"academy_id": academy_id},
@@ -462,7 +479,9 @@ class RealStripeGateway(StripeGateway):
             request["contact_email"] = contact_email
 
         def _create() -> Any:
-            return self._stripe.v2.core.accounts.create(**request)
+            kwargs = dict(request)
+            kwargs["idempotency_key"] = idempotency_key or f"connect-account:{academy_id}"
+            return self._stripe.v2.core.accounts.create(**kwargs)
 
         try:
             account = await asyncio.to_thread(_create)

@@ -11,7 +11,7 @@ Mode B — ``student_id`` + ``period`` provided, ``invoice_id=None``:
     ``invoice_id = f"inv-{student_id}-{period}"`` and saves it, then adds
     the line to that invoice. A fresh invoice also mints ``invoice_number``
     (Slice D) via the atomic per-academy/month counter and the academy's
-    configured prefix — see ``format_invoice_number``.
+        configured prefix.
 """
 
 from __future__ import annotations
@@ -26,14 +26,17 @@ from backend.v2.contexts.billing.application.ports import (
     BillingSettingsRepository,
     LedgerRepository,
 )
+from backend.v2.contexts.billing.application.use_cases.invoice_numbering import (
+    mint_invoice_number,
+)
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
     InvoiceLineAdded,
     LedgerInvoice,
     add_line,
-    format_invoice_number,
 )
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +152,12 @@ class AddInvoiceLine:
 
         # --- Mode B: student + period ---
         assert cmd.student_id is not None and cmd.period is not None  # validated above
+        try:
+            request_academy_id = current_academy_id()
+        except TenantContextUnset:
+            request_academy_id = cmd.academy_id
+        if cmd.academy_id != request_academy_id:
+            raise ValueError("academy_id does not match current tenant")
 
         existing = await self._ledger.get_open_invoice_for_student(cmd.student_id, cmd.period)
         if existing is not None:
@@ -202,9 +211,9 @@ class AddInvoiceLine:
         (MongoBillingCounterRepository.next_value uses find_one_and_update + $inc), so
         concurrent invoice creation for the same academy+month never collides.
         """
-        if self._counters is None or self._settings is None:
-            return None
-        yyyymm = period.replace("-", "")
-        settings = await self._settings.get()
-        seq = await self._counters.next_value(scope=f"invoice:{academy_id}:{yyyymm}")
-        return format_invoice_number(prefix=settings.invoice_number_prefix, yyyymm=yyyymm, seq=seq)
+        return await mint_invoice_number(
+            billing_counters=self._counters,
+            billing_settings=self._settings,
+            academy_id=academy_id,
+            period=period,
+        )

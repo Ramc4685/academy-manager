@@ -357,11 +357,13 @@ class StripeGateway(Protocol):
         academy_id: str,
         display_name: str | None = None,
         contact_email: str | None = None,
+        idempotency_key: str | None = None,
     ) -> str:
-        """Create an Accounts v2 connected account (controller-based) and return its id.
+        """Create an Accounts v2 connected account and return its id.
 
-        Slice I: NEVER the legacy ``type: express/custom/standard``. The platform
-        accepts payment liability (``controller.losses.payments = application``).
+        Slice I: NEVER the legacy ``type: express/custom/standard`` or v1
+        ``controller`` shape. The platform accepts payment liability through
+        ``defaults.responsibilities``.
         """
         ...
 

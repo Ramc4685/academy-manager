@@ -26,27 +26,20 @@ async def test_migration_is_idempotent(db, migration) -> None:
     assert "invoices_academy_invoice_number_unique" in indexes
 
 
-async def test_migration_creates_unique_sparse_index_on_academy_and_invoice_number(
+async def test_migration_creates_unique_partial_index_on_academy_and_invoice_number(
     db, migration
 ) -> None:
-    """The index must be unique (catch accidental duplicate mints) AND sparse (so
-    invoices predating Slice D, which have no invoice_number field at all, are
-    excluded from the uniqueness check and never collide with each other).
+    """The index must be unique and partial so legacy/null invoice numbers are excluded.
 
-    NOTE: this asserts the index was *requested* with the right options, rather than
-    exercising the sparse-exclusion runtime behavior end-to-end. mongomock-motor's
-    sparse-index support does not correctly replicate MongoDB's "exclude
-    missing/null field" semantics (a known mongomock limitation — see
-    test_migrations_legacy_compat.py for a related workaround elsewhere in this
-    suite), so a behavioral assertion here would be testing mongomock's bug, not our
-    migration. Real MongoDB is trusted to honor `sparse=True` correctly.
+    A compound sparse index would still include rows with ``academy_id`` but no
+    ``invoice_number``; the partial filter limits uniqueness to minted strings.
     """
     await migration.up(db)
 
     indexes = await db["invoices"].index_information()
     idx = indexes["invoices_academy_invoice_number_unique"]
     assert idx.get("unique") is True
-    assert idx.get("sparse") is True
+    assert idx.get("partialFilterExpression") == {"invoice_number": {"$type": "string"}}
 
 
 async def test_migration_rejects_duplicate_invoice_number_within_academy(

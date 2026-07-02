@@ -144,7 +144,7 @@ async def up(db: AsyncIOMotorDatabase) -> None:
     await invoices.create_index(
         [("academy_id", 1), ("invoice_number", 1)],
         unique=True,
-        sparse=True,
+        partialFilterExpression={"invoice_number": {"$type": "string"}},
         name="invoices_academy_invoice_number_unique",
     )
 

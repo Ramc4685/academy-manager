@@ -5,8 +5,9 @@ its connected Stripe account via destination charges (``on_behalf_of`` +
 ``transfer_data.destination``); the platform initially accepts liability.
 
 Pure domain model. No infra imports. The account is created via the Accounts v2
-API (``POST /v2/core/accounts``) with ``controller`` properties — the legacy
-``type: express/custom/standard`` model is never used.
+API (``POST /v2/core/accounts``) with ``configuration`` and
+``defaults.responsibilities`` — the legacy ``type: express/custom/standard`` /
+v1 ``controller`` model is never used.
 """
 
 from __future__ import annotations

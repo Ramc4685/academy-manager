@@ -42,6 +42,13 @@ class FakeStripeGateway:
         return self.payment_intents[:limit]
 
 
+class FailingStripeGateway(FakeStripeGateway):
+    async def search_app_owned_payment_intents(
+        self, *, academy_id: str, limit: int = 100, stripe_account: str | None = None
+    ) -> list[dict[str, Any]]:
+        raise RuntimeError("stripe search unavailable")
+
+
 @dataclass
 class FakeConnectedAccounts:
     account: ConnectedAccount | None = None
@@ -675,6 +682,27 @@ async def test_reconciler_recent_ach_processing_is_not_flagged_stale() -> None:
 
     assert result["ach_processing_count"] == 1
     assert result["stale_ach_processing"] == []
+
+
+@pytest.mark.asyncio
+async def test_reconciler_records_and_returns_when_search_fails() -> None:
+    ledger = FakeLedger(invoices={"inv-1": _invoice()})
+    recorder = FakeRunRecorder()
+    uc = ReconcileStripePaymentIntents(
+        stripe=FailingStripeGateway(),
+        ledger=ledger,
+        run_recorder=recorder,
+        academy_id="acad",
+        clock=lambda: _NOW,
+    )
+
+    result = await uc.execute()
+
+    assert result["scanned"] == 0
+    assert result["failed"] == 1
+    assert result["finished_at"] == _NOW
+    assert result["errors"] == ["PaymentIntent search failed: stripe search unavailable"]
+    assert recorder.runs[-1] == result
 
 
 @pytest.mark.asyncio

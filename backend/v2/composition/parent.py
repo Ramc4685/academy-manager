@@ -1297,6 +1297,24 @@ class _ConnectAccountResolver:
             account = await self._repo.get_by_stripe_account_id(stripe_account_id)
         return account.academy_id if account else None
 
+    async def update_status(
+        self,
+        *,
+        stripe_account_id: str,
+        status: str,
+        charges_enabled: bool | None,
+        payouts_enabled: bool | None,
+        capabilities: dict[str, str],
+    ) -> None:
+        with tenant_scope(self._academy_id):
+            await self._repo.update_status(
+                stripe_account_id=stripe_account_id,
+                status=status,
+                charges_enabled=charges_enabled,
+                payouts_enabled=payouts_enabled,
+                capabilities=capabilities,
+            )
+
 
 def _require_academy_id(academy_id: str | None) -> str:
     if not academy_id:

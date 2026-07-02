@@ -548,9 +548,14 @@ class ChargeInvoiceViaAutopay:
                     remaining_lines,
                     now=self._now(),
                 )
-                return await self._ledger.save_invoice(restored), _server_payment_method_metadata(
-                    funding_type
-                )
+                try:
+                    return (
+                        await self._ledger.save_invoice(restored),
+                        _server_payment_method_metadata(funding_type),
+                    )
+                except Exception:
+                    await self._ledger.save_line(existing_discount)
+                    raise
             now = self._now()
             current_line = InvoiceLine(
                 line_id=existing_discount.line_id,
@@ -578,7 +583,11 @@ class ChargeInvoiceViaAutopay:
                     now=now,
                 )
                 if recomputed != invoice:
-                    invoice = await self._ledger.save_invoice(recomputed)
+                    try:
+                        invoice = await self._ledger.save_invoice(recomputed)
+                    except Exception:
+                        await self._ledger.save_line(existing_discount)
+                        raise
                 existing_discount = current_line
             elif any(line.line_type != "ach_discount" for line in lines):
                 recomputed = _recompute_invoice_projection(invoice, lines, now=self._now())
@@ -615,7 +624,14 @@ class ChargeInvoiceViaAutopay:
             [*lines, line],
             now=now,
         )
-        invoice = await self._ledger.save_invoice(updated_invoice)
+        try:
+            invoice = await self._ledger.save_invoice(updated_invoice)
+        except Exception:
+            await self._ledger.delete_invoice_line(
+                invoice_id=invoice.invoice_id,
+                line_id=line.line_id,
+            )
+            raise
         return invoice, _discount_metadata(
             discount_cents=discount_cents,
             discount_percent=settings.ach_discount_percent,

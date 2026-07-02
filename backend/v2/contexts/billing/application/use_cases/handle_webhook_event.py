@@ -37,6 +37,9 @@ from backend.v2.contexts.billing.application.ports import (
 from backend.v2.contexts.billing.application.use_cases.checkout_allocation import (
     allocate_checkout_payment_across_invoices,
 )
+from backend.v2.contexts.billing.application.use_cases.invoice_numbering import (
+    mint_invoice_number,
+)
 from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     AutopayConsentCaptureContext,
     CompleteAutopaySetup,
@@ -62,7 +65,6 @@ from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
     LedgerInvoice,
     LedgerPayment,
-    format_invoice_number,
 )
 from backend.v2.contexts.billing.domain.models import (
     Payment,
@@ -86,6 +88,10 @@ SUBSCRIPTION_INVOICE_RECOVERY_POINTS = {
 }
 
 
+def _optional_bool(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
 class _QuarantineStripeEvent(Exception):
     """Stored event is valid Stripe input but unsafe to project into Mongo."""
 
@@ -101,6 +107,16 @@ class AccountAcademyResolver(Protocol):
     """
 
     async def academy_id_for_account(self, stripe_account_id: str) -> str | None: ...
+
+    async def update_status(
+        self,
+        *,
+        stripe_account_id: str,
+        status: str,
+        charges_enabled: bool | None,
+        payouts_enabled: bool | None,
+        capabilities: dict[str, str],
+    ) -> None: ...
 
 
 class HandleWebhookEvent:
@@ -459,8 +475,51 @@ class HandleWebhookEvent:
             "customer.subscription.deleted",
         ):
             await self._on_subscription_changed(event)
+        elif event_type == "account.updated" or event_type.startswith("capability."):
+            await self._handle_connected_account_status_updated(event)
         else:
             log.info("stripe_webhook_ignored type=%s", event_type)
+
+    async def _handle_connected_account_status_updated(self, event: dict[str, Any]) -> None:
+        if self._connected_accounts is None:
+            log.warning("connect_account_status_updated: connected_accounts not configured")
+            return
+        obj = event.get("data", {}).get("object", {})
+        if not isinstance(obj, dict):
+            obj = {}
+        event_type = str(event.get("type") or "")
+        if event_type.startswith("capability."):
+            stripe_account_id = str(obj.get("account") or event.get("account") or "")
+        else:
+            stripe_account_id = str(
+                obj.get("id") or obj.get("account") or event.get("account") or ""
+            )
+        if not stripe_account_id:
+            raise _QuarantineStripeEvent("Connect account status event missing account id")
+
+        capabilities_obj = obj.get("capabilities") or {}
+        capabilities: dict[str, str] = {}
+        if isinstance(capabilities_obj, dict):
+            capabilities = {str(key): str(value) for key, value in capabilities_obj.items()}
+        elif event_type.startswith("capability."):
+            capability_id = str(obj.get("id") or "")
+            capability_status = str(obj.get("status") or "")
+            if capability_id and capability_id != stripe_account_id and capability_status:
+                capabilities[capability_id] = capability_status
+
+        charges_enabled = _optional_bool(obj.get("charges_enabled"))
+        payouts_enabled = _optional_bool(obj.get("payouts_enabled"))
+        status = "active" if charges_enabled else "restricted"
+        if str(obj.get("disabled_reason") or ""):
+            status = "disabled"
+
+        await self._connected_accounts.update_status(
+            stripe_account_id=stripe_account_id,
+            status=status,
+            charges_enabled=charges_enabled,
+            payouts_enabled=payouts_enabled,
+            capabilities=capabilities,
+        )
 
     async def _handle_autopay_setup_checkout_completed(self, event: dict[str, Any]) -> None:
         if self._complete_autopay_setup is None:
@@ -1761,12 +1820,12 @@ class HandleWebhookEvent:
         voided/failed invoices are expected and allowed — see LedgerInvoice.invoice_number
         docstring).
         """
-        if self._billing_counters is None or self._billing_settings is None:
-            return None
-        yyyymm = period.replace("-", "")
-        settings = await self._billing_settings.get()
-        seq = await self._billing_counters.next_value(scope=f"invoice:{academy_id}:{yyyymm}")
-        return format_invoice_number(prefix=settings.invoice_number_prefix, yyyymm=yyyymm, seq=seq)
+        return await mint_invoice_number(
+            billing_counters=self._billing_counters,
+            billing_settings=self._billing_settings,
+            academy_id=academy_id,
+            period=period,
+        )
 
     @staticmethod
     def _invoice_payload(

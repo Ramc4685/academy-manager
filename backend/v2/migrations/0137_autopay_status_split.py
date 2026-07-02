@@ -163,34 +163,18 @@ async def _latest_attempt_for_enrollment(
 
 
 async def _has_autopay_setup_evidence(
-    db: AsyncIOMotorDatabase, *, academy_id: str, parent_id: str, enrollment_id: str
+    db: AsyncIOMotorDatabase, *, academy_id: str, enrollment_id: str
 ) -> bool:
     """True if there is real evidence the parent set up autopay for this
     enrollment — so an ``active`` billing relationship can be marked
     charge-eligible (``autopay_enrollment_status="active"``). Evidence is
-    either:
-
-    - the parent has a saved default payment method
-      (``parent_billing_customers.default_payment_method_id`` present), OR
-    - the enrollment has a prior *successful* autopay attempt (a
-      ``payment_attempts`` row with ``status="succeeded"`` on one of its
-      invoices).
+    the enrollment has a prior *successful* autopay attempt (a
+    ``payment_attempts`` row with ``status="succeeded"`` on one of its
+    invoices).
 
     Without evidence we must NOT mark the enrollment active — a parent who
     never set up autopay would otherwise be wrongly charge-eligible.
     """
-    if parent_id:
-        customer = await db["parent_billing_customers"].find_one(
-            {
-                "academy_id": academy_id,
-                "parent_id": parent_id,
-                "default_payment_method_id": {"$type": "string", "$ne": ""},
-            },
-            {"_id": 1},
-        )
-        if customer is not None:
-            return True
-
     invoice_ids = [
         str(inv["invoice_id"])
         async for inv in db["invoices"].find(
@@ -238,7 +222,6 @@ async def up(db: AsyncIOMotorDatabase) -> None:
             has_evidence = await _has_autopay_setup_evidence(
                 db,
                 academy_id=str(doc.get("academy_id") or ""),
-                parent_id=str(doc.get("parent_id") or ""),
                 enrollment_id=str(doc.get("enrollment_id") or ""),
             )
             if has_evidence:
@@ -256,10 +239,11 @@ async def up(db: AsyncIOMotorDatabase) -> None:
             {"$set": {"autopay_enrollment_status": autopay_status}},
         )
         status_migrated += result.modified_count
-    assert status_migrated == to_backfill, (
-        f"autopay_enrollment_status backfill mismatch: migrated={status_migrated} "
-        f"expected={to_backfill}"
-    )
+    if status_migrated != to_backfill:
+        raise RuntimeError(
+            f"autopay_enrollment_status backfill mismatch: migrated={status_migrated} "
+            f"expected={to_backfill}"
+        )
     log.info(
         "0137: backfilled autopay_enrollment_status on %d student_billing_enrollments "
         "(active_with_evidence=%d, active_without_evidence->setup_started=%d)",

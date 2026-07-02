@@ -74,7 +74,15 @@ class ReconcileStripePaymentIntents:
             "finished_at": None,
         }
         with tenant_scope(self._academy_id):
-            payment_intents = await self._search_all_payment_intents(limit=limit)
+            try:
+                payment_intents = await self._search_all_payment_intents(limit=limit)
+            except Exception as exc:
+                counts["failed"] += 1
+                counts["errors"].append(f"PaymentIntent search failed: {exc}")
+                counts["finished_at"] = self._now()
+                if self._run_recorder is not None:
+                    await self._run_recorder.record_run(**counts)
+                return counts
             for payment_intent in payment_intents:
                 counts["scanned"] += 1
                 try:

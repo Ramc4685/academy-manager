@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Any
+from typing import Any, ClassVar
 
 from pymongo import ASCENDING, ReturnDocument
 
@@ -18,6 +18,13 @@ from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
 class MongoDunningStateRepository(TenantScopedRepository):
     collection_name = "dunning_states"
+    retryable_parked_reasons: ClassVar[set[str]] = {
+        "payment_processing",
+        "charge_technical_failure",
+        "attempt_indeterminate",
+        "autopay_not_active",
+        "connected_account_not_ready",
+    }
 
     @staticmethod
     def _state_from_doc(doc: dict[str, object]) -> DunningState:
@@ -112,13 +119,16 @@ class MongoDunningStateRepository(TenantScopedRepository):
         ).sort([("next_attempt_at", ASCENDING), ("updated_at", ASCENDING)])
         async for state_doc in cursor:
             state = self._state_from_doc(state_doc)
-            parked_for_payment_processing = (
+            parked_for_retry_recheck = (
                 state.status == "active"
                 and state.next_attempt_at is None
-                and state.suppression_reason == "payment_processing"
+                and state.suppression_reason in self.retryable_parked_reasons
+            )
+            parked_for_payment_processing = (
+                parked_for_retry_recheck and state.suppression_reason == "payment_processing"
             )
             if state.status == "active":
-                if state.next_attempt_at is None and not parked_for_payment_processing:
+                if state.next_attempt_at is None and not parked_for_retry_recheck:
                     continue
                 if state.next_attempt_at is not None and state.next_attempt_at > now:
                     continue

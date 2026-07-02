@@ -21,9 +21,29 @@ class _FakeConnectAccountResolver:
 
     def __init__(self, mapping: dict[str, str]) -> None:
         self._mapping = mapping
+        self.status_updates: list[dict[str, object]] = []
 
     async def academy_id_for_account(self, stripe_account_id: str) -> str | None:
         return self._mapping.get(stripe_account_id)
+
+    async def update_status(
+        self,
+        *,
+        stripe_account_id: str,
+        status: str,
+        charges_enabled: bool | None,
+        payouts_enabled: bool | None,
+        capabilities: dict[str, str],
+    ) -> None:
+        self.status_updates.append(
+            {
+                "stripe_account_id": stripe_account_id,
+                "status": status,
+                "charges_enabled": charges_enabled,
+                "payouts_enabled": payouts_enabled,
+                "capabilities": capabilities,
+            }
+        )
 
 
 def _handler(*, academy_id: str, resolver: _FakeConnectAccountResolver) -> HandleWebhookEvent:
@@ -102,3 +122,36 @@ async def test_validate_event_guards_quarantines_unknown_connect_account() -> No
 
     with pytest.raises(_QuarantineStripeEvent):
         await handler._validate_event_guards_async(_connect_event(account="acct_unknown"))
+
+
+async def test_account_updated_projects_connected_account_status() -> None:
+    resolver = _FakeConnectAccountResolver({"acct_A": "acad-1"})
+    handler = _handler(academy_id="acad-1", resolver=resolver)
+
+    await handler._dispatch(
+        "account.updated",
+        {
+            "id": "evt_account_updated",
+            "type": "account.updated",
+            "account": "acct_A",
+            "data": {
+                "object": {
+                    "id": "acct_A",
+                    "object": "account",
+                    "charges_enabled": True,
+                    "payouts_enabled": True,
+                    "capabilities": {"card_payments": "active"},
+                }
+            },
+        },
+    )
+
+    assert resolver.status_updates == [
+        {
+            "stripe_account_id": "acct_A",
+            "status": "active",
+            "charges_enabled": True,
+            "payouts_enabled": True,
+            "capabilities": {"card_payments": "active"},
+        }
+    ]

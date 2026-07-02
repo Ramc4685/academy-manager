@@ -33,7 +33,7 @@ class StartConnectOnboarding:
         *,
         stripe: StripeGateway,
         connected_accounts: ConnectedAccountRepository,
-        academy_id: str,
+        academy_id: str | None = None,
     ) -> None:
         self._stripe = stripe
         self._connected_accounts = connected_accounts
@@ -48,7 +48,7 @@ class StartConnectOnboarding:
         display_name: str | None = None,
         contact_email: str | None = None,
     ) -> dict[str, str]:
-        if academy_id != self._academy_id:
+        if self._academy_id is not None and academy_id != self._academy_id:
             raise AcademyMismatchError("academy_id mismatch for connect onboarding")
 
         with tenant_scope(academy_id):
@@ -58,6 +58,7 @@ class StartConnectOnboarding:
                     academy_id=academy_id,
                     display_name=display_name,
                     contact_email=contact_email,
+                    idempotency_key=f"connect-account:{academy_id}",
                 )
                 account = ConnectedAccount.new(
                     academy_id=academy_id,

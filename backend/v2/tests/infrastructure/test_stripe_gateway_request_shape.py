@@ -88,7 +88,9 @@ class _FakePaymentIntent:
     @classmethod
     def search(cls, **kwargs: object) -> object:
         cls.calls.append(kwargs)
-        return SimpleNamespace(data=[{"id": "pi_search_1", "status": "succeeded"}])
+        query = str(kwargs.get("query") or "")
+        status = "processing" if 'status:"processing"' in query else "succeeded"
+        return SimpleNamespace(data=[{"id": f"pi_search_{status}", "status": status}])
 
 
 class _FakeSetupIntent:
@@ -207,16 +209,23 @@ async def test_payment_intent_reconciliation_search_is_scoped_to_academy() -> No
 
     result = await gateway.search_app_owned_payment_intents(academy_id="academy_1", limit=25)
 
-    assert result == [{"id": "pi_search_1", "status": "succeeded"}]
+    assert result == [
+        {"id": "pi_search_succeeded", "status": "succeeded"},
+        {"id": "pi_search_processing", "status": "processing"},
+    ]
     # `processing` is included alongside `succeeded` so ACH-in-flight PIs
     # (§7.2) are visible to reconciliation instead of only appearing once
     # settled.
-    assert _FakePaymentIntent.calls[-1] == {
-        "query": (
-            'metadata["academy_id"]:"academy_1" AND (status:"succeeded" OR status:"processing")'
-        ),
-        "limit": 25,
-    }
+    assert _FakePaymentIntent.calls == [
+        {
+            "query": 'metadata["academy_id"]:"academy_1" AND status:"succeeded"',
+            "limit": 25,
+        },
+        {
+            "query": 'metadata["academy_id"]:"academy_1" AND status:"processing"',
+            "limit": 25,
+        },
+    ]
 
 
 @pytest.mark.asyncio
