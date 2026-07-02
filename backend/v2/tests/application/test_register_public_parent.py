@@ -264,6 +264,45 @@ async def test_register_public_parent_saas_does_not_mutate_existing_membership()
 
 
 @pytest.mark.asyncio
+async def test_register_public_parent_saas_grants_parent_role_on_active_non_parent_membership() -> (
+    None
+):
+    """P2: a user already active at this academy as coach/admin (no parent role)
+    must have parent granted on their membership, not silently skipped — otherwise
+    ensure_parent_user grants User.roles=parent globally but LoadAuthClaims/
+    require_persona("parent") reads AcademyMembership.roles and /parent/onboarding
+    404s despite a 'successful' registration response. Existing roles must survive."""
+    existing = AcademyMembership(
+        membership_id="membership-existing-coach",
+        academy_id="acad_acme",
+        user_id="firebase-parent-1",
+        roles=("coach",),
+        status="active",
+    )
+    memberships = FakeMemberships(existing=existing)
+    use_case = RegisterPublicParent(
+        verifier=FakeVerifier(
+            {
+                "email": "new.parent@example.com",
+                "uid": "firebase-parent-1",
+                "name": "New Parent",
+            }
+        ),
+        users=FakeUsers(),
+        memberships=memberships,
+        saas_mode=True,
+    )
+
+    await use_case.execute("firebase-token", academy_id="acad_acme")
+
+    assert len(memberships.upserts) == 1
+    upsert = memberships.upserts[0]
+    assert upsert.membership_id == existing.membership_id
+    assert set(upsert.roles) == {"coach", "parent"}
+    assert upsert.status == "active"
+
+
+@pytest.mark.asyncio
 async def test_register_public_parent_saas_reactivates_invited_self_registration() -> None:
     existing = AcademyMembership(
         membership_id="membership-existing",
