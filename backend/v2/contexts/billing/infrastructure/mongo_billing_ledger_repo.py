@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime, time
 from typing import Any
 
@@ -20,6 +21,8 @@ from backend.v2.contexts.billing.domain.ledger import (
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
+
+log = logging.getLogger(__name__)
 
 
 class MongoBillingLedgerRepository(TenantScopedRepository):
@@ -948,7 +951,7 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             }
         )
         saved = await self.save_invoice(updated)
-        if saved.refunded_cents == saved.total_cents:
+        if saved.refunded_cents > 0:
             try:
                 await self._ensure_ach_discount_reversal_credit_notes(saved)
             except Exception:
@@ -969,8 +972,21 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             line_amount_cents = int(line_doc.get("amount_cents", 0))
             if line_amount_cents >= 0:
                 continue
-            amount_cents = abs(line_amount_cents)
             line_id = str(line_doc["line_id"])
+            if invoice.total_cents <= 0:
+                continue
+            # ADR-0013: the discount line is refunded proportionally. Floor keeps the
+            # audit note conservative; a full refund yields the exact line amount.
+            amount_cents = abs(line_amount_cents) * invoice.refunded_cents // invoice.total_cents
+            if amount_cents == 0:
+                await self._db["account_credit_ledger"].delete_many(
+                    {
+                        "academy_id": academy_id,
+                        "source_type": "ACH_DISCOUNT_REVERSAL",
+                        "source_id": line_id,
+                    }
+                )
+                continue
             reversal = CreditLedgerEntry(
                 credit_id=f"credit-ach-discount-reversal-{line_id}",
                 academy_id=academy_id,
@@ -1053,10 +1069,24 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         if updated is None:
             return
-        if int(updated.get("refunded_cents", 0)) < int(updated.get("total_cents", 0)):
+        if int(updated.get("refunded_cents", 0)) == 0:
             await self._delete_ach_discount_reversal_credit_notes(
                 invoice_id=invoice_id,
                 through_invoice_version=int(updated.get("version", 0)),
+            )
+            return
+        # A partial claim was released: shrink the proportional audit notes to the new
+        # cumulative refund. Best-effort — the compensating decrement above is the
+        # money-truth and must not be undone by a failed audit-note write.
+        try:
+            invoice = await self.get_invoice(invoice_id)
+            if invoice is not None:
+                await self._ensure_ach_discount_reversal_credit_notes(invoice)
+        except Exception:
+            log.warning(
+                "ach-discount reversal recompute failed for invoice %s after refund release",
+                invoice_id,
+                exc_info=True,
             )
 
     async def sum_overpayment_credits_for_invoice(self, invoice_id: str) -> int:

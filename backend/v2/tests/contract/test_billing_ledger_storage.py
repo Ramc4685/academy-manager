@@ -468,7 +468,9 @@ async def test_reverse_invoice_refund_releases_claim(db, acad) -> None:
 
 
 @pytest.mark.asyncio
-async def test_partial_invoice_refund_leaves_ach_discount_unreversed(db, acad) -> None:
+async def test_partial_invoice_refund_records_proportional_ach_discount_reversal(db, acad) -> None:
+    """ADR-0013: the discount line is refunded proportionally, not only at full refund.
+    5_000 of 9_750 refunded with a -250 discount → floor(250 * 5000 / 9750) = 128."""
     repo = MongoBillingLedgerRepository(db)
     now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
     invoice = _make_invoice("inv-ach-ref-partial", acad, now).model_copy(
@@ -508,6 +510,122 @@ async def test_partial_invoice_refund_leaves_ach_discount_unreversed(db, acad) -
     assert updated.refunded_cents == 5_000
     lines = await repo.get_lines_for_invoice("inv-ach-ref-partial")
     assert [line.line_type for line in lines].count("ach_discount") == 1
+    reversal = await db["account_credit_ledger"].find_one(
+        {"academy_id": acad, "source_type": "ACH_DISCOUNT_REVERSAL"}
+    )
+    assert reversal is not None
+    assert reversal["invoice_id"] == "inv-ach-ref-partial"
+    assert reversal["source_id"] == "ach-discount:inv-ach-ref-partial"
+    assert reversal["status"] == "VOIDED"
+    assert reversal["amount_cents"] == 128
+    assert reversal["remaining_amount_cents"] == 0
+    assert reversal["refund_invoice_version"] == updated.version
+
+
+@pytest.mark.asyncio
+async def test_successive_partial_refunds_update_one_proportional_reversal_note(db, acad) -> None:
+    """Cumulative partial refunds keep exactly one audit note per discount line, updated
+    to the proportional share of the cumulative refund (never a second note)."""
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    invoice = _make_invoice("inv-ach-ref-steps", acad, now).model_copy(
+        update={
+            "status": "paid",
+            "subtotal_cents": 9_750,
+            "total_cents": 9_750,
+            "balance_due_cents": 0,
+        }
+    )
+    await repo.create_invoice(
+        invoice,
+        lines=[
+            _make_line("tuition-ach-steps", invoice.invoice_id, acad, 10_000),
+            InvoiceLine(
+                line_id="ach-discount:inv-ach-ref-steps",
+                academy_id=acad,
+                invoice_id=invoice.invoice_id,
+                line_type="ach_discount",
+                description="ACH autopay discount",
+                quantity=1,
+                unit_amount_cents=-250,
+                amount_cents=-250,
+                source_type="autopay_cash_discount",
+                source_id="cash-discount-v1",
+                created_at=now,
+            ),
+        ],
+        idempotency_key="ach-refund:steps",
+    )
+
+    await repo.apply_invoice_refund(invoice_id="inv-ach-ref-steps", amount_cents=2_000)
+    reversal = await db["account_credit_ledger"].find_one(
+        {"academy_id": acad, "source_type": "ACH_DISCOUNT_REVERSAL"}
+    )
+    assert reversal is not None
+    # floor(250 * 2000 / 9750) = 51
+    assert reversal["amount_cents"] == 51
+
+    await repo.apply_invoice_refund(invoice_id="inv-ach-ref-steps", amount_cents=7_750)
+    assert (
+        await db["account_credit_ledger"].count_documents(
+            {"academy_id": acad, "source_type": "ACH_DISCOUNT_REVERSAL"}
+        )
+        == 1
+    )
+    reversal = await db["account_credit_ledger"].find_one(
+        {"academy_id": acad, "source_type": "ACH_DISCOUNT_REVERSAL"}
+    )
+    assert reversal is not None
+    # fully refunded → exact discount amount, matching the full-refund contract
+    assert reversal["amount_cents"] == 250
+
+
+@pytest.mark.asyncio
+async def test_reversing_partial_refund_recomputes_proportional_reversal(db, acad) -> None:
+    """A released refund claim shrinks the proportional note; releasing the whole refund
+    removes it (no phantom discount reversal for money that was never refunded)."""
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    invoice = _make_invoice("inv-ach-ref-shrink", acad, now).model_copy(
+        update={
+            "status": "paid",
+            "subtotal_cents": 9_750,
+            "total_cents": 9_750,
+            "balance_due_cents": 0,
+        }
+    )
+    await repo.create_invoice(
+        invoice,
+        lines=[
+            _make_line("tuition-ach-shrink", invoice.invoice_id, acad, 10_000),
+            InvoiceLine(
+                line_id="ach-discount:inv-ach-ref-shrink",
+                academy_id=acad,
+                invoice_id=invoice.invoice_id,
+                line_type="ach_discount",
+                description="ACH autopay discount",
+                quantity=1,
+                unit_amount_cents=-250,
+                amount_cents=-250,
+                source_type="autopay_cash_discount",
+                source_id="cash-discount-v1",
+                created_at=now,
+            ),
+        ],
+        idempotency_key="ach-refund:shrink",
+    )
+
+    await repo.apply_invoice_refund(invoice_id="inv-ach-ref-shrink", amount_cents=5_000)
+    await repo.reverse_invoice_refund(invoice_id="inv-ach-ref-shrink", amount_cents=3_000)
+
+    reversal = await db["account_credit_ledger"].find_one(
+        {"academy_id": acad, "source_type": "ACH_DISCOUNT_REVERSAL"}
+    )
+    assert reversal is not None
+    # refunded now 2_000 → floor(250 * 2000 / 9750) = 51
+    assert reversal["amount_cents"] == 51
+
+    await repo.reverse_invoice_refund(invoice_id="inv-ach-ref-shrink", amount_cents=2_000)
     assert (
         await db["account_credit_ledger"].count_documents(
             {"academy_id": acad, "source_type": "ACH_DISCOUNT_REVERSAL"}
