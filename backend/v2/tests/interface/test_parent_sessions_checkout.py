@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -18,6 +19,7 @@ from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import MongoSessionRepository
 from backend.v2.contexts.onboarding.domain.errors import MissingSelectedSession
 from backend.v2.interfaces.parent.deps import get_parent_use_cases
+from backend.v2.interfaces.parent.payment_routes import _request_ip
 from backend.v2.interfaces.parent.router import router as parent_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
@@ -80,6 +82,7 @@ class _ParentUseCases:
         self.list_available_sessions = _ListAvailableSessions()
         self.checkout_calls: list[dict[str, str]] = []
         self.autopay_calls: list[dict[str, str]] = []
+        self.checkout_status_calls: list[dict[str, str | None]] = []
 
     async def start_checkout_for_application(
         self,
@@ -125,7 +128,26 @@ class _ParentUseCases:
     async def open_billing_portal(self, *, parent_id: str, return_url: str):
         return {"redirect_url": f"https://fake.stripe.com/portal/{parent_id}?return={return_url}"}
 
-    async def get_checkout_status(self, *, parent_id: str, checkout_session_id: str):
+    async def get_checkout_status(
+        self,
+        *,
+        parent_id: str,
+        checkout_session_id: str,
+        source: str | None = None,
+        actor_id: str | None = None,
+        ip: str | None = None,
+        user_agent: str | None = None,
+    ):
+        self.checkout_status_calls.append(
+            {
+                "parent_id": parent_id,
+                "checkout_session_id": checkout_session_id,
+                "source": source,
+                "actor_id": actor_id,
+                "ip": ip,
+                "user_agent": user_agent,
+            }
+        )
         return {
             "checkout_session_id": checkout_session_id,
             "payment_id": "pay-status",
@@ -270,13 +292,44 @@ def test_parent_opens_billing_portal() -> None:
     assert response.json()["redirect_url"].startswith("https://fake.stripe.com/portal/parent-1")
 
 
-def test_parent_reads_checkout_status() -> None:
-    with _make_client() as (client, _):
-        response = client.get("/api/v2/parent/checkout/status/cs_status")
+def test_parent_reads_checkout_status_with_request_consent_metadata() -> None:
+    with _make_client() as (client, use_cases):
+        response = client.get(
+            "/api/v2/parent/checkout/status/cs_status",
+            headers={"user-agent": "pytest-browser", "x-forwarded-for": "203.0.113.10"},
+        )
 
     assert response.status_code == 200, response.text
     assert response.json()["checkout_session_id"] == "cs_status"
     assert response.json()["status"] == "pending"
+    assert use_cases.checkout_status_calls == [
+        {
+            "parent_id": "parent-1",
+            "checkout_session_id": "cs_status",
+            "source": "parent_checkout_status",
+            "actor_id": "parent-1",
+            "ip": "testclient",
+            "user_agent": "pytest-browser",
+        }
+    ]
+
+
+def test_request_ip_uses_forwarded_for_from_trusted_proxy() -> None:
+    request = SimpleNamespace(
+        client=SimpleNamespace(host="127.0.0.1"),
+        headers={"x-forwarded-for": "203.0.113.10, 10.0.0.5"},
+    )
+
+    assert _request_ip(request) == "203.0.113.10"
+
+
+def test_request_ip_ignores_forwarded_for_from_untrusted_peer() -> None:
+    request = SimpleNamespace(
+        client=SimpleNamespace(host="8.8.8.8"),
+        headers={"x-forwarded-for": "203.0.113.10"},
+    )
+
+    assert _request_ip(request) == "8.8.8.8"
 
 
 @pytest.mark.asyncio

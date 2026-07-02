@@ -29,6 +29,9 @@ from backend.v2.composition.digests import (
 )
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.contexts.billing.application.ports import StripeGateway
+from backend.v2.contexts.billing.application.use_cases.connect_onboarding import (
+    StartConnectOnboarding,
+)
 from backend.v2.contexts.billing.application.use_cases.reconcile_stripe_payment_intents import (
     ReconcileStripePaymentIntents,
 )
@@ -37,6 +40,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import
 )
 from backend.v2.contexts.billing.infrastructure.mongo_billing_reconciliation_run_repo import (
     MongoBillingReconciliationRunRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
+    MongoConnectedAccountRepository,
 )
 from backend.v2.contexts.communications.application.use_cases.send_coach_daily_digest import (
     SendCoachDailyDigestCommand,
@@ -239,6 +245,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     stripe_webhook_processors = {runtime_academy_id: app.state.parent.handle_webhook_event}
 
+    # Platform Stripe Connect onboarding (Slice I). Composition root wires the
+    # real repo + gateway into the use case; the platform BFF route only sees
+    # app.state.platform_connect_onboarding.
+    app.state.platform_connect_onboarding = StartConnectOnboarding(
+        stripe=stripe_gw,
+        connected_accounts=MongoConnectedAccountRepository(db),
+    )
+
     # Admin BFF wiring (Wave 3).
     app.state.admin = compose_admin(db, outbox, idempotency_store, stripe_gw)
 
@@ -313,6 +327,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                     ledger=MongoBillingLedgerRepository(db),
                     run_recorder=MongoBillingReconciliationRunRepository(db),
                     academy_id=academy_id,
+                    connected_accounts=MongoConnectedAccountRepository(db),
                 ).execute(limit=100)
             totals["academy_count"] += 1
             totals["scanned"] += int(result.get("scanned") or 0)
@@ -322,6 +337,47 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             totals["failed"] += int(result.get("failed") or 0)
         if totals["repaired"] or totals["quarantined"] or totals["failed"]:
             log.info("stripe_payment_intent_reconciliation_processed", extra=totals)
+
+    async def _process_dunning_retries() -> None:
+        totals = {
+            "academy_count": 0,
+            "prepared": 0,
+            "processed": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "dunned": 0,
+            "transient": 0,
+            "notifications_sent": 0,
+            "notifications_failed": 0,
+            "autopay_disabled": 0,
+        }
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            runtime_academy_id,
+        ):
+            with tenant_scope(academy_id):
+                worker = getattr(app.state.admin, "process_dunning_retries", None)
+                if worker is None:
+                    continue
+                result = await worker.execute(
+                    limit=100,
+                    worker_id=f"scheduler-dunning-worker:{academy_id}",
+                )
+            totals["academy_count"] += 1
+            for key in (
+                "prepared",
+                "processed",
+                "succeeded",
+                "failed",
+                "dunned",
+                "transient",
+                "notifications_sent",
+                "notifications_failed",
+                "autopay_disabled",
+            ):
+                totals[key] += int(getattr(result, key, 0) or 0)
+        if totals["processed"] or totals["dunned"] or totals["autopay_disabled"]:
+            log.info("dunning_retries_processed", extra=totals)
 
     async def _send_coach_daily_digests() -> None:
         # Hourly tick. The job runs every hour and only sends for academies whose
@@ -402,6 +458,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         "interval",
         minutes=10,
         id="reconcile_stripe_payment_intents",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _process_dunning_retries,
+        "interval",
+        minutes=60,
+        id="process_dunning_retries",
         replace_existing=True,
         max_instances=1,
     )

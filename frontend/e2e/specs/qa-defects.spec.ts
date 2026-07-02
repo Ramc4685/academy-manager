@@ -217,6 +217,7 @@ test.describe("QA defect regressions", () => {
             status: "active",
             payment_mode: null,
             subscription_status: null,
+            autopay_enrollment_status: null,
           },
         ],
       }),
@@ -233,7 +234,7 @@ test.describe("QA defect regressions", () => {
     });
 
     await page.goto("/parent/payments");
-    await page.getByRole("button", { name: "Subscribe to autopay" }).click();
+    await page.getByRole("button", { name: "Set up autopay" }).click();
 
     await expect(page.getByTestId("autopay-error")).toContainText(
       "Autopay could not start",
@@ -244,8 +245,8 @@ test.describe("QA defect regressions", () => {
 
   test("incomplete autopay setup can be retried", async ({ page }) => {
     // Regression: an abandoned Stripe Checkout used to leave the enrollment at
-    // subscription_status="incomplete", which rendered a disabled "Autopay on"
-    // button and locked parents out of autopay forever.
+    // autopay_enrollment_status="setup_started", which rendered a disabled
+    // "Autopay on" button and locked parents out of autopay forever.
     await stubParentShell(page);
     await page.route("**/api/v2/parent/payments", (route) =>
       fulfillJson(route, { payments: [] }),
@@ -262,6 +263,7 @@ test.describe("QA defect regressions", () => {
             status: "active",
             payment_mode: "monthly",
             subscription_status: "incomplete",
+            autopay_enrollment_status: "setup_started",
           },
         ],
       }),
@@ -302,6 +304,7 @@ test.describe("QA defect regressions", () => {
             status: "active",
             payment_mode: "monthly",
             subscription_status: enrollmentReads > 1 ? "active" : "incomplete",
+            autopay_enrollment_status: enrollmentReads > 1 ? "active" : "setup_started",
           },
         ],
       });
@@ -347,6 +350,7 @@ test.describe("QA defect regressions", () => {
             status: "active",
             payment_mode: "monthly",
             subscription_status: "active",
+            autopay_enrollment_status: "active",
           },
         ],
       }),

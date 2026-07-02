@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime, time
 from typing import Any
 
@@ -20,6 +21,8 @@ from backend.v2.contexts.billing.domain.ledger import (
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
+
+log = logging.getLogger(__name__)
 
 
 class MongoBillingLedgerRepository(TenantScopedRepository):
@@ -61,6 +64,7 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             paid_at=doc.get("paid_at"),  # type: ignore[arg-type]
             recorded_by=doc.get("recorded_by"),  # type: ignore[arg-type]
             notes=doc.get("notes"),  # type: ignore[arg-type]
+            metadata=doc.get("metadata"),  # type: ignore[arg-type]
             created_at=doc["created_at"],  # type: ignore[arg-type]
             updated_at=doc["updated_at"],  # type: ignore[arg-type]
         )
@@ -521,6 +525,83 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             raise ValueError("allocation insert failed")
         return await self._existing_allocation_result(stored_allocation)
 
+    async def reverse_payment_allocation(
+        self,
+        *,
+        allocation_idempotency_key: str,
+        reversal_idempotency_key: str,
+        reason: str,
+        return_code: str | None,
+        reversed_at: datetime,
+    ) -> dict[str, Any] | None:
+        academy_id = current_academy_id()
+        reversals = self._db["payment_allocation_reversals"]
+        existing = await reversals.find_one(
+            {"academy_id": academy_id, "idempotency_key": reversal_idempotency_key}
+        )
+        allocation_doc = await self._db["payment_allocations"].find_one(
+            {"academy_id": academy_id, "idempotency_key": allocation_idempotency_key}
+        )
+        if allocation_doc is None:
+            if existing is not None:
+                await self._repair_invoice_after_allocation_change(
+                    academy_id=academy_id,
+                    invoice_id=str(existing["invoice_id"]),
+                    now=reversed_at,
+                )
+                await self._repair_payment_after_allocation_change(
+                    academy_id=academy_id,
+                    payment_id=str(existing["payment_id"]),
+                    now=reversed_at,
+                )
+                return {k: v for k, v in existing.items() if k != "_id"}
+            return None
+
+        if existing is None:
+            reversal_doc = {
+                "reversal_id": str(new_ulid()),
+                "academy_id": academy_id,
+                "allocation_id": str(allocation_doc["allocation_id"]),
+                "payment_id": str(allocation_doc["payment_id"]),
+                "invoice_id": str(allocation_doc["invoice_id"]),
+                "amount_cents": int(allocation_doc.get("amount_cents") or 0),
+                "reason": reason,
+                "return_code": return_code,
+                "idempotency_key": reversal_idempotency_key,
+                "created_at": reversed_at,
+            }
+            try:
+                await reversals.insert_one(reversal_doc)
+            except DuplicateKeyError:
+                winner = await reversals.find_one(
+                    {"academy_id": academy_id, "idempotency_key": reversal_idempotency_key}
+                )
+                if winner is not None:
+                    reversal_doc = {k: v for k, v in winner.items() if k != "_id"}
+                else:
+                    raise
+        else:
+            reversal_doc = {k: v for k, v in existing.items() if k != "_id"}
+
+        await self._db["payment_allocations"].delete_one(
+            {
+                "academy_id": academy_id,
+                "allocation_id": allocation_doc["allocation_id"],
+                "idempotency_key": allocation_idempotency_key,
+            }
+        )
+        await self._repair_invoice_after_allocation_change(
+            academy_id=academy_id,
+            invoice_id=str(allocation_doc["invoice_id"]),
+            now=reversed_at,
+        )
+        await self._repair_payment_after_allocation_change(
+            academy_id=academy_id,
+            payment_id=str(allocation_doc["payment_id"]),
+            now=reversed_at,
+        )
+        return reversal_doc
+
     async def list_invoices_for_academy(self, limit: int = 100) -> list[dict[str, object]]:
         academy_id = current_academy_id()
         invoices = []
@@ -742,6 +823,64 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             raise ValueError("ledger allocation repair failed")
         return repaired_invoice, repaired_payment
 
+    async def _repair_invoice_after_allocation_change(
+        self,
+        *,
+        academy_id: str,
+        invoice_id: str,
+        now: datetime,
+    ) -> None:
+        invoice_doc = await self._find_one({"invoice_id": invoice_id})
+        if invoice_doc is None:
+            raise ValueError("allocation reversal invoice not found")
+        allocated_to_invoice = await self._sum_allocations(
+            academy_id=academy_id,
+            invoice_id=invoice_id,
+        )
+        total = int(invoice_doc.get("total_cents") or 0)
+        balance = max(0, total - allocated_to_invoice)
+        current_status = str(invoice_doc.get("status") or "open")
+        if current_status == "void":
+            status = "void"
+        elif balance == 0:
+            status = "paid"
+        elif allocated_to_invoice > 0:
+            status = "partially_paid"
+        else:
+            status = "open"
+        await self.collection.update_one(
+            {"academy_id": academy_id, "invoice_id": invoice_id},
+            {"$set": {"balance_due_cents": balance, "status": status, "updated_at": now}},
+        )
+
+    async def _repair_payment_after_allocation_change(
+        self,
+        *,
+        academy_id: str,
+        payment_id: str,
+        now: datetime,
+    ) -> None:
+        payment_doc = await self.ledger_payments.find_one(
+            {"academy_id": academy_id, "payment_id": payment_id}
+        )
+        if payment_doc is None:
+            raise ValueError("allocation reversal payment not found")
+        allocated_from_payment = await self._sum_allocations(
+            academy_id=academy_id,
+            payment_id=payment_id,
+        )
+        overpayment_credit = await self._sum_overpayment_credits_for_payment(
+            academy_id=academy_id,
+            payment_id=payment_id,
+        )
+        amount = int(payment_doc.get("amount_cents") or 0)
+        refunded = int(payment_doc.get("refunded_cents") or 0)
+        unapplied = max(0, amount - refunded - allocated_from_payment - overpayment_credit)
+        await self.ledger_payments.update_one(
+            {"academy_id": academy_id, "payment_id": payment_id},
+            {"$set": {"unapplied_amount_cents": unapplied, "updated_at": now}},
+        )
+
     async def _sum_allocations(
         self,
         *,
@@ -811,24 +950,144 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
                 "updated_at": self._clock(),
             }
         )
-        return await self.save_invoice(updated)
+        saved = await self.save_invoice(updated)
+        if saved.refunded_cents > 0:
+            try:
+                await self._ensure_ach_discount_reversal_credit_notes(saved)
+            except Exception:
+                await self.reverse_invoice_refund(invoice_id=invoice_id, amount_cents=amount_cents)
+                raise
+        return saved
+
+    async def _ensure_ach_discount_reversal_credit_notes(self, invoice: LedgerInvoice) -> None:
+        academy_id = current_academy_id()
+        now = self._clock()
+        async for line_doc in self._db["invoice_lines"].find(
+            {
+                "academy_id": academy_id,
+                "invoice_id": invoice.invoice_id,
+                "line_type": "ach_discount",
+            }
+        ):
+            line_amount_cents = int(line_doc.get("amount_cents", 0))
+            if line_amount_cents >= 0:
+                continue
+            line_id = str(line_doc["line_id"])
+            if invoice.total_cents <= 0:
+                continue
+            # ADR-0013: the discount line is refunded proportionally. Floor keeps the
+            # audit note conservative; a full refund yields the exact line amount.
+            amount_cents = abs(line_amount_cents) * invoice.refunded_cents // invoice.total_cents
+            if amount_cents == 0:
+                await self._db["account_credit_ledger"].delete_many(
+                    {
+                        "academy_id": academy_id,
+                        "source_type": "ACH_DISCOUNT_REVERSAL",
+                        "source_id": line_id,
+                    }
+                )
+                continue
+            reversal = CreditLedgerEntry(
+                credit_id=f"credit-ach-discount-reversal-{line_id}",
+                academy_id=academy_id,
+                parent_id=invoice.parent_id,
+                student_id=invoice.student_id,
+                enrollment_id=invoice.enrollment_id,
+                invoice_id=invoice.invoice_id,
+                type="CREDIT_VOIDED",
+                status="VOIDED",
+                amount_cents=amount_cents,
+                remaining_amount_cents=0,
+                currency=invoice.currency,
+                reason=f"ACH discount reversal audit for invoice {invoice.invoice_id}",
+                source_type="ACH_DISCOUNT_REVERSAL",
+                source_id=line_id,
+                created_at=now,
+                updated_at=now,
+            )
+            reversal_doc = _mongo_doc(reversal)
+            set_on_insert = {
+                "credit_id": reversal_doc.pop("credit_id"),
+                "created_at": reversal_doc.pop("created_at"),
+            }
+            reversal_doc["refund_invoice_version"] = invoice.version
+            try:
+                await self._db["account_credit_ledger"].update_one(
+                    {
+                        "academy_id": academy_id,
+                        "source_type": "ACH_DISCOUNT_REVERSAL",
+                        "source_id": line_id,
+                    },
+                    {"$setOnInsert": set_on_insert, "$set": reversal_doc},
+                    upsert=True,
+                )
+            except DuplicateKeyError:
+                winner = await self._db["account_credit_ledger"].find_one(
+                    {
+                        "academy_id": academy_id,
+                        "source_type": "ACH_DISCOUNT_REVERSAL",
+                        "source_id": line_id,
+                    }
+                )
+                if winner is None:
+                    raise
+
+    async def _delete_ach_discount_reversal_credit_notes(
+        self, *, invoice_id: str, through_invoice_version: int
+    ) -> None:
+        await self._db["account_credit_ledger"].delete_many(
+            {
+                "academy_id": current_academy_id(),
+                "invoice_id": invoice_id,
+                "source_type": "ACH_DISCOUNT_REVERSAL",
+                "$or": [
+                    {"refund_invoice_version": {"$lte": through_invoice_version}},
+                    {"refund_invoice_version": {"$exists": False}},
+                ],
+            }
+        )
 
     async def reverse_invoice_refund(self, *, invoice_id: str, amount_cents: int) -> None:
         """Compensating decrement of ``refunded_cents`` when a claimed refund fails downstream
-        (e.g. the Stripe call raised after ``apply_invoice_refund`` succeeded). Uses an atomic,
-        non-negative-guarded ``$inc`` so it composes safely with concurrent writers — it is a
-        commutative rollback of a claim we just made, so it does not need the version guard.
+        (e.g. the Stripe call raised after ``apply_invoice_refund`` succeeded). Uses an
+        atomic, non-negative-guarded ``$inc`` and bumps ``version`` so stale invoice saves
+        cannot resurrect the refunded claim after rollback.
         """
         if amount_cents <= 0:
             return
-        await self.collection.update_one(
+        updated = await self.collection.find_one_and_update(
             {
                 "academy_id": current_academy_id(),
                 "invoice_id": invoice_id,
                 "refunded_cents": {"$gte": amount_cents},
             },
-            {"$inc": {"refunded_cents": -amount_cents}, "$set": {"updated_at": self._clock()}},
+            {
+                "$inc": {"refunded_cents": -amount_cents, "version": 1},
+                "$set": {"updated_at": self._clock()},
+            },
+            return_document=ReturnDocument.AFTER,
         )
+        if updated is None:
+            return
+        if int(updated.get("refunded_cents", 0)) == 0:
+            await self._delete_ach_discount_reversal_credit_notes(
+                invoice_id=invoice_id,
+                through_invoice_version=int(updated.get("version", 0)),
+            )
+            return
+        # A partial claim was released: shrink the proportional audit notes to the new
+        # cumulative refund. Best-effort — the compensating decrement above is the
+        # money-truth and must not be undone by a failed audit-note write.
+        try:
+            invoice = await self.get_invoice(invoice_id)
+            if invoice is not None:
+                await self._ensure_ach_discount_reversal_credit_notes(invoice)
+        except Exception:
+            log.warning(
+                "ach-discount reversal recompute failed for invoice %s after refund release",
+                invoice_id,
+                exc_info=True,
+            )
 
     async def sum_overpayment_credits_for_invoice(self, invoice_id: str) -> int:
         """Total APPROVED overpayment credit attributed to an invoice (for admin views)."""

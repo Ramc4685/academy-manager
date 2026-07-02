@@ -37,6 +37,15 @@ class LedgerInvoice(BaseModel):
     refunded_cents: int = Field(default=0, ge=0)
     currency: str = Field(default="usd", min_length=3, max_length=3)
     due_date: date
+    # Human-facing invoice number, e.g. "BLNO-202606-001". Minted once at invoice-creation
+    # time via MongoBillingCounterRepository (atomic per academy+month counter) — see
+    # format_invoice_number() below. None for invoices created before Slice D (not
+    # backfilled; see migration 0138 docstring for the backfill decision). Gaps in the
+    # sequence ARE allowed: a voided/failed invoice still consumes a counter value, and
+    # that number is never reused or reassigned. This is intentional — gapless numbering
+    # would require serializing invoice creation across the whole academy+month, which is
+    # unnecessary for this use case (unlike, say, government-mandated sequential invoicing).
+    invoice_number: str | None = None
     pdf_artifact_id: str | None = None
     stripe_invoice_id: str | None = None
     source_type: str | None = None
@@ -91,6 +100,7 @@ class LedgerPayment(BaseModel):
     paid_at: datetime | None = None
     recorded_by: str | None = None
     notes: str | None = None
+    metadata: dict[str, str] | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -113,6 +123,25 @@ class LedgerAllocationResult(BaseModel):
     payment: LedgerPayment
     allocation: PaymentAllocation
     overpayment_credit: CreditLedgerEntry | None = None
+
+
+def format_invoice_number(*, prefix: str, yyyymm: str, seq: int) -> str:
+    """Format a human-facing invoice number: ``{prefix}-{yyyymm}-{seq:03d}``.
+
+    Pure formatting only — the caller supplies the already-minted, race-safe
+    sequence value (from ``MongoBillingCounterRepository.next_value``) and the
+    tenant's configured prefix (from ``BillingSettings.invoice_number_prefix``).
+    ``seq`` is zero-padded to 3 digits but never truncated: sequences beyond
+    999 simply widen the field (e.g. ``BLNO-202606-1234``) rather than
+    wrapping or colliding with an earlier number.
+    """
+    if not prefix:
+        raise ValueError("prefix must not be blank")
+    if len(yyyymm) != 6 or not yyyymm.isdigit():
+        raise ValueError("yyyymm must be 6 digits (YYYYMM)")
+    if seq <= 0:
+        raise ValueError("seq must be positive")
+    return f"{prefix}-{yyyymm}-{seq:03d}"
 
 
 def allocate_payment_to_invoice(

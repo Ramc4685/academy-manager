@@ -20,3 +20,26 @@ test("parent billing portal hides stale Stripe customer internals", () => {
   assert.match(paymentsPage, /No such customer/);
   assert.match(paymentsPage, /BILLING_PORTAL_PREREQUISITE/);
 });
+
+test("parent payments page renders app-owned autopay visibility", () => {
+  assert.match(parentApi, /autopay_enrollment_status/);
+  assert.match(parentApi, /autopay_payment_method_type/);
+  assert.match(parentApi, /autopay_payment_method_label/);
+  assert.match(parentApi, /autopay_payment_method_last4/);
+  assert.match(paymentsPage, /autopay_enrollment_status/);
+  assert.match(paymentsPage, /autopayMethodText/);
+  assert.match(paymentsPage, /Bank account autopay/);
+  assert.match(paymentsPage, /autopay_payment_method_label/);
+  assert.match(paymentsPage, /autopay_payment_method_last4/);
+  assert.match(paymentsPage, /e\.autopay_enrollment_status === "setup_started"/);
+  assert.doesNotMatch(paymentsPage, /subscription_status === "incomplete"/);
+  assert.doesNotMatch(paymentsPage, /Subscribe to autopay/);
+});
+
+test("parent payments page suppresses method copy outside app-owned autopay states", () => {
+  assert.match(paymentsPage, /if \(enrollment\.payment_mode !== "monthly"\) return null;/);
+  assert.match(
+    paymentsPage,
+    /if \(!\["active", "paused", "setup_started"\]\.includes\(autopayStatus\)\) return null;/,
+  );
+});

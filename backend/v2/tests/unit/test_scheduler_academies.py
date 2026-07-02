@@ -53,3 +53,10 @@ def test_scheduler_registers_stripe_payment_intent_reconciliation_job() -> None:
 
     assert "_reconcile_stripe_payment_intents" in source
     assert 'id="reconcile_stripe_payment_intents"' in source
+
+
+def test_scheduler_registers_dunning_retry_job() -> None:
+    source = inspect.getsource(_lifespan)
+
+    assert "_process_dunning_retries" in source
+    assert 'id="process_dunning_retries"' in source

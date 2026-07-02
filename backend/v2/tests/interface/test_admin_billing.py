@@ -1386,6 +1386,40 @@ def test_list_failed_payment_attempts(admin_client):
     assert body["rows"][0]["attempt_count"] == 2
 
 
+def test_list_dunning_failures(admin_client):
+    rows = [
+        {
+            "invoice_id": "inv-1",
+            "parent_id": "p1",
+            "parent_name": "Sarah M.",
+            "period": "2026-07",
+            "status": "dunned",
+            "attempt_count": 4,
+            "next_attempt_at": None,
+            "last_attempt_at": datetime(2026, 7, 8, 9, 0, tzinfo=UTC),
+            "last_failure_code": "insufficient_funds",
+            "terminal_at": datetime(2026, 7, 8, 9, 0, tzinfo=UTC),
+            "autopay_disable_status": "failed",
+            "autopay_disable_error": "transition rejected",
+            "balance_due_cents": 12000,
+            "currency": "usd",
+        }
+    ]
+
+    async def list_dunning_failures():
+        return rows
+
+    admin_client.use_cases.list_dunning_failures = list_dunning_failures
+    r = admin_client.get("/api/v2/admin/billing/dunning")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["rows"][0]["status"] == "dunned"
+    assert body["rows"][0]["attempt_count"] == 4
+    assert body["rows"][0]["last_failure_code"] == "insufficient_funds"
+    assert body["rows"][0]["autopay_disable_status"] == "failed"
+    assert body["rows"][0]["autopay_disable_error"] == "transition rejected"
+
+
 def test_list_invoice_attempts(admin_client):
     attempts = [
         {
@@ -1534,3 +1568,84 @@ def test_confirm_legacy_match_invalid_returns_400(admin_client):
         },
     )
     assert r.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Slice D: admin sees the minted invoice number
+# ---------------------------------------------------------------------------
+
+
+def test_admin_sees_minted_invoice_number_on_invoice_detail(admin_client):
+    async def get_billing_invoice_detail(invoice_id: str) -> dict:
+        return {
+            "invoice_id": "inv-1",
+            "invoice_number": "BLNO-202606-001",
+            "period": "2026-06",
+            "lines": [],
+            "subtotal_cents": 7_000,
+            "discount_cents": 0,
+            "total_cents": 7_000,
+            "balance_due_cents": 7_000,
+            "due_amount_cents": 7_000,
+            "paid_amount_cents": 0,
+            "status": "open",
+            "allocations": [],
+            "credit_usage": [],
+        }
+
+    admin_client.use_cases.get_billing_invoice_detail = get_billing_invoice_detail
+
+    response = admin_client.get("/api/v2/admin/billing/invoices/inv-1")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["invoice_number"] == "BLNO-202606-001"
+
+
+def test_admin_sees_minted_invoice_number_on_invoice_list(admin_client):
+    async def list_billing_invoices() -> list[dict]:
+        return [
+            {
+                "invoice": {
+                    "invoice_id": "inv-1",
+                    "invoice_number": "BLNO-202606-001",
+                    "period": "2026-06",
+                    "total_cents": 7_000,
+                    "balance_due_cents": 7_000,
+                    "status": "open",
+                },
+                "lines": [],
+            }
+        ]
+
+    admin_client.use_cases.list_billing_invoices = list_billing_invoices
+
+    response = admin_client.get("/api/v2/admin/billing/invoices")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["invoices"][0]["invoice_number"] == "BLNO-202606-001"
+
+
+def test_admin_invoice_list_falls_back_to_invoice_id_when_no_number_minted(admin_client):
+    """Legacy invoices created before Slice D have no invoice_number — the list
+    endpoint falls back to invoice_id so the UI still shows a stable identifier."""
+
+    async def list_billing_invoices() -> list[dict]:
+        return [
+            {
+                "invoice": {
+                    "invoice_id": "inv-legacy-1",
+                    "period": "2026-05",
+                    "total_cents": 5_000,
+                    "balance_due_cents": 0,
+                    "status": "paid",
+                },
+                "lines": [],
+            }
+        ]
+
+    admin_client.use_cases.list_billing_invoices = list_billing_invoices
+
+    response = admin_client.get("/api/v2/admin/billing/invoices")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["invoices"][0]["invoice_number"] == "inv-legacy-1"

@@ -78,6 +78,12 @@ if [ -f "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]; then
   source "${NVM_DIR:-$HOME/.nvm}/nvm.sh" --no-use 2>/dev/null || true
   NODE_BIN="$(nvm which 22 2>/dev/null || echo node)"
 fi
+# pnpm below is invoked bare (not via $NODE_BIN), so it must also resolve
+# through a Node 22 PATH — corepack's pnpm shim is known to crash under some
+# Node 20.x patch releases (ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING).
+case "$NODE_BIN" in
+  */bin/node) PATH="$(dirname "$NODE_BIN"):$PATH" ;;
+esac
 run_check "node unit tests" "$NODE_BIN" --no-warnings --test \
   lib/canonical-host.node-test.mjs \
   lib/brand.node-test.mjs \

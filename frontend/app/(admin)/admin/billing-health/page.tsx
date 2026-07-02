@@ -17,6 +17,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import {
   chargeAdminInvoiceAutopay,
   confirmLegacyMatch,
+  fetchDunningFailures,
   fetchFailedPaymentAttempts,
   fetchInvoiceAttempts,
   fetchLegacyMatchQueue,
@@ -25,6 +26,7 @@ import {
   replayWebhookEvent,
   triggerReconciliation,
   type BillingPaymentAttempt,
+  type DunningRow,
   type FailedPaymentRow,
   type LegacyMatchCandidate,
   type LegacyMatchRow,
@@ -83,6 +85,25 @@ function runStatusDot(run: ReconciliationRun): string {
   return "#16a34a"; // green
 }
 
+function dunningChip(status: string): { variant: ChipVariant; label: string } {
+  if (status === "resolved") return { variant: "paid", label: "RESOLVED" };
+  if (status === "dunned") return { variant: "failed", label: "DUNNED" };
+  if (status === "processing") return { variant: "pending", label: "PROCESSING" };
+  if (status === "suppressed") return { variant: "manual", label: "SUPPRESSED" };
+  return { variant: "overdue", label: status.replace(/_/g, " ").toUpperCase() };
+}
+
+function dunningDisableText(row: DunningRow): string {
+  if (row.autopay_disable_status === "failed") {
+    return `Disable failed: ${row.autopay_disable_error ?? "needs retry"}`;
+  }
+  if (row.autopay_disable_status === "succeeded") {
+    return `Disabled ${formatTimestamp(row.autopay_disabled_at)}`;
+  }
+  if (row.status === "dunned") return "Disable pending";
+  return "—";
+}
+
 export default function BillingHealthPage() {
   const queryClient = useQueryClient();
   const [attemptsInvoice, setAttemptsInvoice] = useState<FailedPaymentRow | null>(null);
@@ -102,6 +123,10 @@ export default function BillingHealthPage() {
     queryKey: queryKeys.admin.failedAttempts(),
     queryFn: () => fetchFailedPaymentAttempts(),
   });
+  const dunningQuery = useQuery({
+    queryKey: queryKeys.admin.dunningFailures(),
+    queryFn: () => fetchDunningFailures(),
+  });
   const quarantinedQuery = useQuery({
     queryKey: queryKeys.admin.quarantinedEvents(),
     queryFn: () => listBillingWebhookEvents({ status: "quarantined", limit: 50 }),
@@ -116,10 +141,12 @@ export default function BillingHealthPage() {
   const quarantined = quarantinedQuery.data?.events ?? [];
   const legacyRows = legacyQuery.data?.rows ?? [];
   const latestRun = runs[0];
+  const dunningRows = dunningQuery.data?.rows ?? [];
 
   const invalidateAll = () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.admin.reconciliationRuns() });
     void queryClient.invalidateQueries({ queryKey: queryKeys.admin.failedAttempts() });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.dunningFailures() });
     void queryClient.invalidateQueries({ queryKey: queryKeys.admin.quarantinedEvents() });
   };
 
@@ -173,7 +200,7 @@ export default function BillingHealthPage() {
     },
   });
 
-  const healthy = failedRows.length === 0 && quarantined.length === 0;
+  const healthy = failedRows.length === 0 && dunningRows.length === 0 && quarantined.length === 0;
 
   return (
     <div className="space-y-6 p-4 sm:p-6" data-testid="billing-health-page">
@@ -213,10 +240,11 @@ export default function BillingHealthPage() {
       )}
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Metric label="Last Run Scanned" value={String(latestRun?.scanned ?? 0)} />
         <Metric label="Repaired" value={String(latestRun?.repaired ?? 0)} accent="#16a34a" />
         <Metric label="Open Failed Payments" value={String(failedRows.length)} accent="#dc2626" />
+        <Metric label="Dunning Cases" value={String(dunningRows.length)} accent="#dc2626" />
         <Metric label="Quarantined Events" value={String(quarantined.length)} accent="#d97706" />
       </div>
 
@@ -334,7 +362,87 @@ export default function BillingHealthPage() {
         </Card>
       </Section>
 
-      {/* Section 3: Quarantined webhook events */}
+      {/* Section 3: Dunning ladder */}
+      <Section
+        title="Dunning Ladder"
+        hint="App-owned retry states and terminal autopay disable status"
+        badge={dunningRows.length > 0 ? `${dunningRows.length} need review` : undefined}
+      >
+        <Card p={0}>
+          {dunningQuery.isLoading ? (
+            <TableSkeleton />
+          ) : dunningRows.length === 0 ? (
+            <Alert tone="green">No active or terminal dunning cases.</Alert>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[920px] text-sm" data-testid="dunning-table">
+                <thead>
+                  <tr className="border-b border-rally-line text-left">
+                    <Th>Parent · Invoice</Th>
+                    <Th>Status</Th>
+                    <Th align="right">Balance</Th>
+                    <Th>Attempts</Th>
+                    <Th>Next / terminal</Th>
+                    <Th>Autopay disable</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dunningRows.map((row) => {
+                    const chip = dunningChip(row.status);
+                    return (
+                      <tr
+                        key={row.invoice_id}
+                        className="border-b border-rally-line/60"
+                        data-testid={`dunning-row-${row.invoice_id}`}
+                      >
+                        <Td>
+                          <div className="font-medium text-rally-ink">
+                            {row.parent_name ?? row.parent_id}
+                          </div>
+                          <div className="text-xs text-rally-muted">
+                            {row.invoice_id} · {row.period}
+                          </div>
+                        </Td>
+                        <Td>
+                          <Chip variant={chip.variant} label={chip.label} />
+                          {row.last_failure_code && (
+                            <div className="mt-1 text-xs text-rally-muted">
+                              {row.last_failure_code}
+                            </div>
+                          )}
+                        </Td>
+                        <Td align="right">{formatCents(row.balance_due_cents)}</Td>
+                        <Td>{row.attempt_count}</Td>
+                        <Td>
+                          <div>{formatTimestamp(row.next_attempt_at ?? row.terminal_at)}</div>
+                          {row.last_attempt_at && (
+                            <div className="text-xs text-rally-muted">
+                              Last {formatTimestamp(row.last_attempt_at)}
+                            </div>
+                          )}
+                        </Td>
+                        <Td>
+                          <span
+                            className={
+                              row.autopay_disable_status === "failed"
+                                ? "text-xs font-medium text-red-600"
+                                : "text-xs text-rally-muted"
+                            }
+                          >
+                            {dunningDisableText(row)}
+                          </span>
+                        </Td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      </Section>
+
+      {/* Section 4: Quarantined webhook events */}
       <Section
         title="Quarantined Webhook Events"
         badge={quarantined.length > 0 ? `${quarantined.length} pending` : undefined}
@@ -402,7 +510,7 @@ export default function BillingHealthPage() {
         </Card>
       </Section>
 
-      {/* Section 4: Legacy invoice ↔ Stripe charge review queue (#242 WI-3) */}
+      {/* Section 5: Legacy invoice ↔ Stripe charge review queue (#242 WI-3) */}
       <Section
         title="Legacy Invoice Matches"
         hint="Migrated invoices with no app-linked payment · confirm a charge to settle"

@@ -15,12 +15,16 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
+
+from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.billing.application.ports import (
+    AutopayConsentRepository,
     EnrollmentAutopayStateRepository,
     EnrollmentBillingIdentity,
     EnrollmentBillingIdentityRepository,
+    LedgerRepository,
     ParentStripeCustomerRepository,
     PaymentRepository,
     StripeEventDedup,
@@ -28,13 +32,19 @@ from backend.v2.contexts.billing.application.ports import (
     StripeInvoiceProcessingRepository,
     StudentBillingEnrollmentRepository,
     SubscriptionRepository,
+    TransactionRunner,
 )
 from backend.v2.contexts.billing.application.use_cases.checkout_allocation import (
     allocate_checkout_payment_across_invoices,
 )
+from backend.v2.contexts.billing.application.use_cases.invoice_numbering import (
+    mint_invoice_number,
+)
 from backend.v2.contexts.billing.application.use_cases.parent_billing import (
+    AutopayConsentCaptureContext,
     CompleteAutopaySetup,
 )
+from backend.v2.contexts.billing.domain.ach_returns import normalize_nacha_return_code
 from backend.v2.contexts.billing.domain.errors import InvalidWebhookSignature, PaymentNotFound
 from backend.v2.contexts.billing.domain.events import (
     CheckoutExpired,
@@ -78,8 +88,35 @@ SUBSCRIPTION_INVOICE_RECOVERY_POINTS = {
 }
 
 
+def _optional_bool(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
 class _QuarantineStripeEvent(Exception):
     """Stored event is valid Stripe input but unsafe to project into Mongo."""
+
+
+class AccountAcademyResolver(Protocol):
+    """Resolves a Stripe Connect account id to its owning academy id.
+
+    Typed against this Protocol (rather than ``Any``) so a composition-root
+    mismatch — e.g. passing the raw ``ConnectedAccountRepository`` instead of
+    the ``_ConnectAccountResolver`` shim that bridges its method name — fails
+    at type-check time instead of at the first live webhook (the Slice-B
+    lesson: an untyped port/repo name mismatch reached production before).
+    """
+
+    async def academy_id_for_account(self, stripe_account_id: str) -> str | None: ...
+
+    async def update_status(
+        self,
+        *,
+        stripe_account_id: str,
+        status: str,
+        charges_enabled: bool | None,
+        payouts_enabled: bool | None,
+        capabilities: dict[str, str],
+    ) -> None: ...
 
 
 class HandleWebhookEvent:
@@ -93,11 +130,16 @@ class HandleWebhookEvent:
         outbox: Outbox,
         academy_id: str,
         billing_enrollments: StudentBillingEnrollmentRepository | None = None,
-        billing_ledger: Any | None = None,
+        billing_ledger: LedgerRepository | None = None,
+        billing_counters: Any | None = None,
+        billing_settings: Any | None = None,
         parent_customers: ParentStripeCustomerRepository | None = None,
         enrollment_autopay: EnrollmentAutopayStateRepository | None = None,
+        consent_repo: AutopayConsentRepository | None = None,
+        transaction_runner: TransactionRunner | None = None,
         enrollment_identity: EnrollmentBillingIdentityRepository | None = None,
         invoice_processing: StripeInvoiceProcessingRepository | None = None,
+        connected_accounts: AccountAcademyResolver | None = None,
         expected_livemode: bool | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
@@ -107,10 +149,15 @@ class HandleWebhookEvent:
         self._subscriptions = subscriptions
         self._billing_enrollments = billing_enrollments
         self._billing_ledger = billing_ledger
+        self._billing_counters = billing_counters
+        self._billing_settings = billing_settings
         self._parent_customers = parent_customers
         self._enrollment_autopay = enrollment_autopay
+        self._consent_repo = consent_repo
+        self._transaction_runner = transaction_runner
         self._enrollment_identity = enrollment_identity
         self._invoice_processing = invoice_processing
+        self._connected_accounts = connected_accounts
         self._expected_livemode = expected_livemode
         self._outbox = outbox
         self._academy_id = academy_id
@@ -121,6 +168,9 @@ class HandleWebhookEvent:
                 stripe=stripe,
                 parent_customers=parent_customers,
                 enrollment_autopay=enrollment_autopay,
+                consent_repo=consent_repo,
+                outbox=outbox,
+                transaction_runner=transaction_runner,
                 academy_id=academy_id,
                 clock=clock,
             )
@@ -166,7 +216,7 @@ class HandleWebhookEvent:
                 event_type = event_type or str(event.get("type", ""))
                 self._validate_livemode(event)
                 event = await self._hydrate_current_stripe_object(event_type, event)
-                self._validate_event_guards(event)
+                await self._validate_event_guards_async(event)
                 await self._dispatch(event_type, event)
                 await self._dedup.mark_processed(event_id)
                 return {"processed": True, "event_id": event_id, "type": event_type}
@@ -262,6 +312,43 @@ class HandleWebhookEvent:
                 f"academy mismatch: event={academy_id} expected={self._academy_id}"
             )
 
+    async def _validate_event_guards_async(self, event: dict[str, Any]) -> None:
+        """Full guard: sync metadata checks + Connect account-based tenant check.
+
+        Connect events (``account.*``, ``capability.*``, etc.) carry a top-level
+        ``account`` field naming the connected account they occurred on. We
+        resolve that account to its owning academy and quarantine anything that
+        does not belong to this handler's academy (or is unknown).
+        """
+        self._validate_event_guards(event)
+        await self.resolve_academy_for_event(event)
+
+    async def resolve_academy_for_event(self, event: dict[str, Any]) -> str:
+        """Resolve the academy a Stripe event belongs to.
+
+        For Connect events (top-level ``account``), resolve via the
+        connected-account repo and require it to match this handler's academy —
+        otherwise quarantine. For platform (non-Connect) events, fall back to the
+        handler's configured academy.
+        """
+        account_id = str(event.get("account") or "")
+        if not account_id:
+            return self._academy_id
+        if self._connected_accounts is None:
+            # No resolver wired: cannot safely attribute a Connect event.
+            raise _QuarantineStripeEvent(
+                f"connect event for account={account_id} but no connected-account resolver"
+            )
+        resolved = await self._connected_accounts.academy_id_for_account(account_id)
+        if resolved is None:
+            raise _QuarantineStripeEvent(f"unknown connected account: account={account_id}")
+        if resolved != self._academy_id:
+            raise _QuarantineStripeEvent(
+                f"connect account academy mismatch: account={account_id} "
+                f"resolved={resolved} expected={self._academy_id}"
+            )
+        return resolved
+
     def _validate_livemode(self, event: dict[str, Any]) -> None:
         if self._expected_livemode is not None:
             livemode = bool(event.get("livemode", False))
@@ -302,7 +389,11 @@ class HandleWebhookEvent:
             "customer.subscription.deleted",
         ):
             current = await self._stripe.retrieve_subscription(object_id)
-        elif event_type in ("payment_intent.succeeded", "payment_intent.payment_failed"):
+        elif event_type in (
+            "payment_intent.succeeded",
+            "payment_intent.payment_failed",
+            "payment_intent.processing",
+        ):
             current = await self._stripe.retrieve_payment_intent(object_id)
         elif event_type == "setup_intent.succeeded":
             current = await self._stripe.retrieve_setup_intent(object_id)
@@ -354,6 +445,15 @@ class HandleWebhookEvent:
                 return
             else:
                 await self._on_payment_failed(event)
+        elif event_type == "payment_intent.processing":
+            metadata = self._event_metadata(event)
+            if metadata.get("source") == "autopay":
+                await self._handle_autopay_pi_processing(event)
+            else:
+                log.info(
+                    "payment_intent.processing ignored pi=%s",
+                    event.get("data", {}).get("object", {}).get("id"),
+                )
         elif event_type == "invoice.paid":
             await self._on_invoice_paid(event)
         elif event_type == "invoice.payment_failed":
@@ -375,15 +475,61 @@ class HandleWebhookEvent:
             "customer.subscription.deleted",
         ):
             await self._on_subscription_changed(event)
+        elif event_type == "account.updated" or event_type.startswith("capability."):
+            await self._handle_connected_account_status_updated(event)
         else:
             log.info("stripe_webhook_ignored type=%s", event_type)
+
+    async def _handle_connected_account_status_updated(self, event: dict[str, Any]) -> None:
+        if self._connected_accounts is None:
+            log.warning("connect_account_status_updated: connected_accounts not configured")
+            return
+        obj = event.get("data", {}).get("object", {})
+        if not isinstance(obj, dict):
+            obj = {}
+        event_type = str(event.get("type") or "")
+        if event_type.startswith("capability."):
+            stripe_account_id = str(obj.get("account") or event.get("account") or "")
+        else:
+            stripe_account_id = str(
+                obj.get("id") or obj.get("account") or event.get("account") or ""
+            )
+        if not stripe_account_id:
+            raise _QuarantineStripeEvent("Connect account status event missing account id")
+
+        capabilities_obj = obj.get("capabilities") or {}
+        capabilities: dict[str, str] = {}
+        if isinstance(capabilities_obj, dict):
+            capabilities = {str(key): str(value) for key, value in capabilities_obj.items()}
+        elif event_type.startswith("capability."):
+            capability_id = str(obj.get("id") or "")
+            capability_status = str(obj.get("status") or "")
+            if capability_id and capability_id != stripe_account_id and capability_status:
+                capabilities[capability_id] = capability_status
+
+        charges_enabled = _optional_bool(obj.get("charges_enabled"))
+        payouts_enabled = _optional_bool(obj.get("payouts_enabled"))
+        status = "active" if charges_enabled else "restricted"
+        if str(obj.get("disabled_reason") or ""):
+            status = "disabled"
+
+        await self._connected_accounts.update_status(
+            stripe_account_id=stripe_account_id,
+            status=status,
+            charges_enabled=charges_enabled,
+            payouts_enabled=payouts_enabled,
+            capabilities=capabilities,
+        )
 
     async def _handle_autopay_setup_checkout_completed(self, event: dict[str, Any]) -> None:
         if self._complete_autopay_setup is None:
             raise _QuarantineStripeEvent("autopay setup completion dependencies are missing")
         checkout = event["data"]["object"]
         try:
-            await self._complete_autopay_setup.execute_from_checkout(checkout)
+            await self._complete_autopay_setup.execute_from_checkout(
+                checkout,
+                consent_context=AutopayConsentCaptureContext(source="stripe_webhook"),
+            )
         except PaymentNotFound as exc:
             raise _QuarantineStripeEvent(str(exc)) from exc
         except ValueError as exc:
@@ -394,7 +540,10 @@ class HandleWebhookEvent:
             raise _QuarantineStripeEvent("autopay setup completion dependencies are missing")
         setup_intent = event["data"]["object"]
         try:
-            await self._complete_autopay_setup.execute_from_setup_intent(setup_intent)
+            await self._complete_autopay_setup.execute_from_setup_intent(
+                setup_intent,
+                consent_context=AutopayConsentCaptureContext(source="setup_intent_webhook"),
+            )
         except PaymentNotFound as exc:
             raise _QuarantineStripeEvent(str(exc)) from exc
         except ValueError as exc:
@@ -665,10 +814,8 @@ class HandleWebhookEvent:
             )
             return None
         if self._enrollment_autopay is not None and enrollment_id:
-            await self._enrollment_autopay.set_autopay_state(
+            await self._enrollment_autopay.mark_autopay_active_from_setup(
                 enrollment_id=enrollment_id,
-                subscription_status="active",
-                stripe_subscription_id=stripe_sub_id,
             )
         return updated
 
@@ -745,6 +892,10 @@ class HandleWebhookEvent:
         now = self._now()
         idempotency_key = f"autopay-pi:{pi_id}"
         ledger_payment_id = f"ledger-pay-autopay:{pi_id}"
+        payment_metadata = await self._autopay_discount_payment_metadata(
+            pi_metadata=metadata,
+            invoice_id=invoice_id,
+        )
 
         payment = await self._billing_ledger.record_payment(
             LedgerPayment(
@@ -758,6 +909,7 @@ class HandleWebhookEvent:
                 payment_method="stripe_autopay",
                 stripe_payment_intent_id=pi_id,
                 paid_at=now,
+                metadata=payment_metadata or None,
                 created_at=now,
                 updated_at=now,
             ),
@@ -778,6 +930,82 @@ class HandleWebhookEvent:
                 pi_id,
                 amount_cents,
             )
+
+    async def _autopay_discount_payment_metadata(
+        self,
+        *,
+        pi_metadata: dict[str, Any],
+        invoice_id: str,
+    ) -> dict[str, str]:
+        metadata = _autopay_discount_metadata_from_pi(pi_metadata)
+        metadata.setdefault("invoice_id", invoice_id)
+        get_lines = getattr(self._billing_ledger, "get_lines_for_invoice", None)
+        if callable(get_lines):
+            lines = await get_lines(invoice_id)
+            discount_line = next(
+                (line for line in lines if getattr(line, "line_type", None) == "ach_discount"),
+                None,
+            )
+            if discount_line is not None:
+                metadata.setdefault("ach_discount_line_id", str(discount_line.line_id))
+                metadata.setdefault("ach_discount_cents", str(abs(discount_line.amount_cents)))
+                if getattr(discount_line, "source_id", None):
+                    metadata.setdefault("disclosure_version", str(discount_line.source_id))
+        return metadata
+
+    async def _handle_autopay_pi_processing(self, event: dict[str, Any]) -> None:
+        """Handle payment_intent.processing from an ACH autopay debit.
+
+        ACH processing is a known in-flight state. Record an attempt for
+        reconciliation/admin visibility, but do not create a LedgerPayment or
+        allocate the invoice until Stripe emits payment_intent.succeeded.
+        """
+        if self._billing_ledger is None:
+            log.warning("autopay_pi_processing: billing_ledger not configured — skipping")
+            return
+
+        pi = event["data"]["object"]
+        event_id = str(event.get("id") or "")
+        pi_id = str(pi.get("id") or "")
+        metadata = pi.get("metadata") or {}
+        invoice_id = str(metadata.get("invoice_id") or "")
+        if not invoice_id:
+            log.warning("autopay_pi_processing: no invoice_id in metadata pi=%s", pi_id)
+            return
+
+        invoice = await self._billing_ledger.get_invoice(invoice_id)
+        if invoice is None:
+            raise ValueError("autopay invoice not found")
+        if invoice.academy_id != self._academy_id:
+            raise _QuarantineStripeEvent(
+                f"academy mismatch: invoice={invoice.academy_id} expected={self._academy_id}"
+            )
+        metadata_parent_id = str(metadata.get("parent_id") or "")
+        if metadata_parent_id and metadata_parent_id != invoice.parent_id:
+            raise _QuarantineStripeEvent(
+                f"parent mismatch: invoice={invoice.parent_id} payment_intent={metadata_parent_id}"
+            )
+
+        amount_cents = int(pi.get("amount") or invoice.balance_due_cents or invoice.total_cents)
+        currency = str(pi.get("currency") or invoice.currency).lower()
+        await self._billing_ledger.record_payment_attempt(
+            invoice_id=invoice_id,
+            parent_id=invoice.parent_id,
+            amount_cents=amount_cents,
+            currency=currency,
+            status="processing",
+            stripe_payment_intent_id=pi_id or None,
+            stripe_checkout_session_id=None,
+            failure_code=None,
+            failure_message="ACH debit submitted; awaiting settlement.",
+            idempotency_key=f"autopay-processing:{invoice_id}:{pi_id or event_id}",
+            created_by_event_id=event_id or None,
+        )
+        log.info(
+            "autopay_pi_processing: recorded processing attempt pi=%s invoice=%s",
+            pi_id,
+            invoice_id,
+        )
 
     async def _handle_autopay_pi_failed(self, event: dict[str, Any]) -> None:
         """Handle payment_intent.payment_failed from an autopay charge.
@@ -809,6 +1037,25 @@ class HandleWebhookEvent:
             raise _QuarantineStripeEvent(
                 f"parent mismatch: invoice={invoice.parent_id} payment_intent={metadata_parent_id}"
             )
+
+        return_code = _ach_return_code_from_stripe_payment_intent(pi)
+        existing_payment = await self._billing_ledger.get_payment_by_stripe_payment_intent_id(pi_id)
+        if (
+            return_code is not None
+            and existing_payment is not None
+            and existing_payment.status in {"succeeded", "partially_refunded", "refunded"}
+            and (_ledger_payment_is_ach(existing_payment) or _payment_intent_is_ach(pi))
+        ):
+            amount_cents = int(pi.get("amount") or existing_payment.amount_cents)
+            await self._record_autopay_ach_return(
+                event_id=event_id,
+                pi_id=pi_id,
+                invoice=invoice,
+                payment=existing_payment,
+                amount_cents=amount_cents,
+                return_code=return_code,
+            )
+            return
 
         last_error = pi.get("last_payment_error") or {}
         if not isinstance(last_error, dict):
@@ -1091,6 +1338,7 @@ class HandleWebhookEvent:
 
     async def _on_charge_refunded(self, event: dict[str, Any]) -> None:
         ch = event["data"]["object"]
+        ch["_event_id"] = str(event.get("id") or "")
         pi_id = ch.get("payment_intent")
         if not pi_id:
             return
@@ -1143,7 +1391,22 @@ class HandleWebhookEvent:
         if payment is None:
             return
         total_refunded = int(ch.get("amount_refunded", 0))
-        if total_refunded == 0 or total_refunded == payment.refunded_cents:
+        if total_refunded == 0:
+            return
+        return_code = _ach_return_code_from_stripe_charge(ch)
+        if return_code is not None and (_ledger_payment_is_ach(payment) or _charge_is_ach(ch)):
+            invoice = await self._invoice_for_autopay_payment(pi_id=pi_id, payment=payment)
+            if invoice is not None:
+                await self._record_autopay_ach_return(
+                    event_id=str(ch.get("_event_id") or ""),
+                    pi_id=pi_id,
+                    invoice=invoice,
+                    payment=payment,
+                    amount_cents=total_refunded,
+                    return_code=return_code,
+                )
+                return
+        if total_refunded == payment.refunded_cents:
             return
         delta = max(0, total_refunded - payment.refunded_cents)
         new_status = "refunded" if total_refunded >= payment.amount_cents else "partially_refunded"
@@ -1166,6 +1429,124 @@ class HandleWebhookEvent:
             )
         )
 
+    async def _invoice_for_autopay_payment(
+        self,
+        *,
+        pi_id: str,
+        payment: LedgerPayment,
+    ) -> LedgerInvoice | None:
+        metadata = payment.metadata or {}
+        invoice_id = str(metadata.get("invoice_id") or "")
+        if not invoice_id:
+            allocation = await self._billing_ledger.get_payment_allocation_by_idempotency_key(
+                f"autopay-alloc:{pi_id}"
+            )
+            if allocation is not None:
+                invoice_id = str(getattr(allocation, "invoice_id", "") or allocation["invoice_id"])
+        if not invoice_id:
+            return None
+        return await self._billing_ledger.get_invoice(invoice_id)
+
+    async def _record_autopay_ach_return(
+        self,
+        *,
+        event_id: str,
+        pi_id: str,
+        invoice: LedgerInvoice,
+        payment: LedgerPayment,
+        amount_cents: int,
+        return_code: str,
+    ) -> None:
+        if amount_cents < payment.amount_cents:
+            await self._billing_ledger.record_payment_attempt(
+                invoice_id=invoice.invoice_id,
+                parent_id=invoice.parent_id,
+                amount_cents=amount_cents,
+                currency=invoice.currency,
+                status="failed",
+                stripe_payment_intent_id=pi_id or None,
+                stripe_checkout_session_id=None,
+                failure_code="unsupported_partial_ach_return",
+                failure_message=(
+                    f"Unsupported partial ACH return {return_code} for "
+                    f"{amount_cents} of {payment.amount_cents} cents"
+                ),
+                idempotency_key=(
+                    f"autopay-ach-return-unsupported-partial:"
+                    f"{invoice.invoice_id}:{pi_id}:{return_code}:{amount_cents}"
+                ),
+                created_by_event_id=event_id or None,
+            )
+            log.warning(
+                "autopay_ach_return: unsupported partial return pi=%s invoice=%s "
+                "amount=%d original=%d code=%s",
+                pi_id,
+                invoice.invoice_id,
+                amount_cents,
+                payment.amount_cents,
+                return_code,
+            )
+            return
+
+        total_refunded = amount_cents
+        allocation_idempotency_key = f"autopay-alloc:{pi_id}"
+        allocation_before_reversal = (
+            await self._billing_ledger.get_payment_allocation_by_idempotency_key(
+                allocation_idempotency_key
+            )
+        )
+        updated = await self._billing_ledger.mark_payment_refunded(
+            payment.payment_id,
+            refunded_cents=total_refunded,
+            status="refunded",
+            updated_at=self._now(),
+        )
+        await self._billing_ledger.reverse_payment_allocation(
+            allocation_idempotency_key=allocation_idempotency_key,
+            reversal_idempotency_key=f"ach-return:{pi_id}:{total_refunded}:{return_code}",
+            reason="ach_return",
+            return_code=return_code,
+            reversed_at=self._now(),
+        )
+        await self._billing_ledger.record_payment_attempt(
+            invoice_id=invoice.invoice_id,
+            parent_id=invoice.parent_id,
+            amount_cents=total_refunded,
+            currency=invoice.currency,
+            status="returned",
+            stripe_payment_intent_id=pi_id or None,
+            stripe_checkout_session_id=None,
+            failure_code=return_code,
+            failure_message=f"ACH return {return_code}",
+            idempotency_key=(
+                f"autopay-ach-return:{invoice.invoice_id}:{pi_id}:{return_code}:{total_refunded}"
+            ),
+            created_by_event_id=event_id or None,
+        )
+        should_emit_refund_event = (
+            allocation_before_reversal is not None or payment.refunded_cents >= total_refunded
+        )
+        if should_emit_refund_event:
+            await self._append_outbox_once(
+                PaymentRefunded(
+                    event_id=f"billing-payment-refunded:ach-return:{pi_id}:{total_refunded}:{return_code}",
+                    aggregate_id=updated.payment_id,
+                    academy_id=updated.academy_id,
+                    payload=PaymentRefundedPayload(
+                        payment_id=updated.payment_id,
+                        refunded_cents=total_refunded,
+                        total_refunded_cents=total_refunded,
+                        reason="other",
+                    ),
+                )
+            )
+
+    async def _append_outbox_once(self, event: Any) -> None:
+        try:
+            await self._outbox.append(event)
+        except DuplicateKeyError:
+            return
+
     async def _on_subscription_changed(self, event: dict[str, Any]) -> None:
         sub = event["data"]["object"]
         stripe_sub_id = sub["id"]
@@ -1180,11 +1561,29 @@ class HandleWebhookEvent:
         updated = existing.model_copy(update={"status": status, "updated_at": self._now()})
         await self._subscriptions.save(updated)
         if self._enrollment_autopay is not None and updated.enrollment_id:
-            await self._enrollment_autopay.set_autopay_state(
-                enrollment_id=updated.enrollment_id,
-                subscription_status=status,
-                stripe_subscription_id=stripe_sub_id,
-            )
+            # HIGH review-fix #4: only converge autopay status from a legacy
+            # Stripe-subscription event when the billing enrollment is still
+            # subscription-managed. Once an enrollment converges onto app-owned
+            # autopay (its stripe_subscription_id is cleared), a stale/duplicate
+            # subscription webhook must NOT flip its status. Route through the
+            # guarded set_autopay_state so illegal transitions are dropped+logged.
+            if await self._enrollment_is_legacy_subscription_managed(
+                updated.enrollment_id, stripe_sub_id
+            ):
+                await self._enrollment_autopay.set_autopay_state(
+                    enrollment_id=updated.enrollment_id,
+                    autopay_enrollment_status=(
+                        self._autopay_enrollment_status_for_legacy_subscription(status)
+                    ),
+                )
+            else:
+                log.info(
+                    "subscription.%s ignored for converged app-owned autopay "
+                    "enrollment_id=%s stripe_sub=%s",
+                    event.get("type"),
+                    updated.enrollment_id,
+                    stripe_sub_id,
+                )
         await self._outbox.append(
             SubscriptionUpdated(
                 aggregate_id=updated.subscription_id,
@@ -1196,6 +1595,25 @@ class HandleWebhookEvent:
                 ),
             )
         )
+
+    async def _enrollment_is_legacy_subscription_managed(
+        self, enrollment_id: str, stripe_sub_id: str
+    ) -> bool:
+        """True if the billing enrollment is still managed by this legacy Stripe
+        subscription (its stored stripe_subscription_id matches). Returns False
+        once the enrollment has converged onto app-owned autopay (id cleared) or
+        moved to a different subscription — so a stale/duplicate subscription
+        webhook cannot clobber a converged enrollment (HIGH review-fix #4).
+
+        If the billing-enrollment repo is unavailable we conservatively allow
+        the (guarded) convergence to run, preserving prior behavior.
+        """
+        if self._billing_enrollments is None:
+            return True
+        enrollment = await self._billing_enrollments.get(enrollment_id)
+        if enrollment is None:
+            return True
+        return getattr(enrollment, "stripe_subscription_id", None) == stripe_sub_id
 
     @staticmethod
     def _normalize_status(stripe_status: str) -> str:
@@ -1209,6 +1627,28 @@ class HandleWebhookEvent:
             "incomplete_expired": "cancelled",
         }
         return mapping.get(stripe_status, "incomplete")
+
+    @staticmethod
+    def _autopay_enrollment_status_for_legacy_subscription(
+        legacy_subscription_status: str,
+    ) -> str:
+        """Map the legacy Stripe-subscription `SubscriptionStatus` vocabulary
+        onto the split `autopay_enrollment_status` axis (Slice B).
+
+        This convergence path only runs for pre-existing Stripe-subscription
+        rows (the recurring-subscription charging path is retired for new
+        enrollments — app-owned off-session autopay is current). `past_due`
+        is a charge-outcome concept, not an enrollment-lifecycle one, so it
+        maps to `active`: the parent is still enrolled in autopay, they just
+        have a failing attempt, which `last_attempt_outcome` tracks instead.
+        """
+        mapping = {
+            "active": "active",
+            "past_due": "active",
+            "cancelled": "disabled",
+            "incomplete": "setup_started",
+        }
+        return mapping.get(legacy_subscription_status, "setup_started")
 
     async def _cancel_student_billing_enrollment(self, stripe_sub_id: str) -> bool:
         if self._billing_enrollments is None:
@@ -1232,6 +1672,16 @@ class HandleWebhookEvent:
         enrollment = await self._billing_enrollments.get_by_stripe_subscription(stripe_sub_id)
         if enrollment is None:
             return False
+        # Tenant guard: the counter/settings repos partition by the tenant_scope
+        # ContextVar (self._academy_id), so minting must only proceed when the
+        # enrollment belongs to the same academy — otherwise the invoice number
+        # would be drawn from a different academy's series. Matches the guards
+        # used by the other subscription/invoice handlers in this file.
+        if enrollment.academy_id != self._academy_id:
+            raise _QuarantineStripeEvent(
+                f"academy mismatch: enrollment={enrollment.academy_id} "
+                f"expected={self._academy_id}"
+            )
 
         now = self._now()
         invoice_id = self._ledger_invoice_id(invoice)
@@ -1239,6 +1689,9 @@ class HandleWebhookEvent:
             invoice.get("amount_paid" if paid else "amount_due") or invoice.get("amount_due") or 0
         )
         period_label = self._invoice_period_label(invoice, now)
+        invoice_number = await self._mint_invoice_number(
+            academy_id=enrollment.academy_id, period=period_label
+        )
         ledger_invoice = await self._billing_ledger.create_invoice(
             LedgerInvoice(
                 invoice_id=invoice_id,
@@ -1254,6 +1707,7 @@ class HandleWebhookEvent:
                 balance_due_cents=amount_cents,
                 currency=str(invoice.get("currency") or "usd").lower(),
                 due_date=self._invoice_due_date(invoice, now),
+                invoice_number=invoice_number,
                 created_at=now,
                 updated_at=now,
             ),
@@ -1354,6 +1808,24 @@ class HandleWebhookEvent:
             except (TypeError, ValueError, OSError):
                 pass
         return (now + timedelta(days=30)).date()
+
+    async def _mint_invoice_number(self, *, academy_id: str, period: str) -> str | None:
+        """Mint a human-facing invoice number for a brand-new ledger invoice (Slice D).
+
+        Returns ``None`` when ``billing_counters``/``billing_settings`` were not wired
+        into this use case — composition roots that predate Slice D keep working
+        unchanged. ``period`` is the ``YYYY-MM`` billing-period label already computed
+        by ``_invoice_period_label``; the counter scope keys on academy+month so the
+        sequence resets every month and never collides across academies (gaps from
+        voided/failed invoices are expected and allowed — see LedgerInvoice.invoice_number
+        docstring).
+        """
+        return await mint_invoice_number(
+            billing_counters=self._billing_counters,
+            billing_settings=self._billing_settings,
+            academy_id=academy_id,
+            period=period,
+        )
 
     @staticmethod
     def _invoice_payload(
@@ -1643,6 +2115,103 @@ def _checkout_session_id_from_payment_intent(pi: dict[str, Any]) -> str | None:
     if order_reference.startswith("cs_"):
         return order_reference
     return None
+
+
+def _autopay_discount_metadata_from_pi(metadata: dict[str, Any]) -> dict[str, str]:
+    allowed_keys = {
+        "ach_discount_cents",
+        "ach_discount_line_id",
+        "ach_discount_percent",
+        "disclosure_version",
+        "funding_type",
+        "funding_type_source",
+    }
+    return {
+        key: str(value)
+        for key, value in metadata.items()
+        if key in allowed_keys and value is not None and str(value) != ""
+    }
+
+
+def _ledger_payment_is_ach(payment: LedgerPayment) -> bool:
+    metadata = payment.metadata or {}
+    return (
+        metadata.get("funding_type") == "us_bank_account"
+        and metadata.get("funding_type_source") == "server_payment_method"
+    ) or (
+        metadata.get("payment_method_type") == "us_bank_account"
+        and metadata.get("payment_method_type_source") == "server_payment_method"
+    )
+
+
+def _ach_return_code_from_stripe_payment_intent(pi: dict[str, Any]) -> str | None:
+    values: list[object] = [pi.get("failure_code"), pi.get("failure_reason")]
+    last_error = pi.get("last_payment_error")
+    if isinstance(last_error, dict):
+        values.extend([last_error.get("decline_code"), last_error.get("code")])
+    return _first_nacha_code(values)
+
+
+def _ach_return_code_from_stripe_charge(charge: dict[str, Any]) -> str | None:
+    values: list[object] = [charge.get("failure_code"), charge.get("failure_reason")]
+    refunds = charge.get("refunds")
+    if isinstance(refunds, dict):
+        data = refunds.get("data")
+        if isinstance(data, list):
+            for refund in data:
+                if isinstance(refund, dict):
+                    values.append(refund.get("failure_reason"))
+    return _first_nacha_code(values)
+
+
+def _first_nacha_code(values: list[object]) -> str | None:
+    for value in values:
+        code = _stripe_failure_to_nacha_return_code(value)
+        if code is not None:
+            return code
+    return None
+
+
+_STRIPE_FAILURE_TO_NACHA: dict[str, str] = {
+    "insufficient_funds": "R01",
+    "bank_account_insufficient_funds": "R01",
+    "account_closed": "R02",
+    "bank_account_closed": "R02",
+    "no_account": "R03",
+    "bank_account_not_found": "R03",
+    "bank_account_unusable": "R03",
+    "debit_not_authorized": "R10",
+    "bank_account_restricted": "R29",
+}
+
+
+def _stripe_failure_to_nacha_return_code(value: object) -> str | None:
+    normalized = normalize_nacha_return_code(value)
+    if normalized is not None:
+        return normalized
+    compact = str(value or "").lower().strip()
+    return _STRIPE_FAILURE_TO_NACHA.get(compact)
+
+
+def _payment_intent_is_ach(pi: dict[str, Any]) -> bool:
+    method_types = pi.get("payment_method_types")
+    if isinstance(method_types, list) and "us_bank_account" in method_types:
+        return True
+    details = pi.get("payment_method_details")
+    if isinstance(details, dict):
+        return details.get("type") == "us_bank_account" or isinstance(
+            details.get("us_bank_account"), dict
+        )
+    return False
+
+
+def _charge_is_ach(charge: dict[str, Any]) -> bool:
+    details = charge.get("payment_method_details")
+    if isinstance(details, dict):
+        return details.get("type") == "us_bank_account" or isinstance(
+            details.get("us_bank_account"), dict
+        )
+    return False
 
 
 def _identity_value(

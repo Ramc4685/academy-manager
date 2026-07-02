@@ -85,3 +85,157 @@ async def test_student_billing_enrollment_repo_reads_are_tenant_isolated(db, aca
         assert await other_repo.list_for_student("student-1") == []
         assert await other_repo.list_for_parent("parent-1") == []
         assert await other_repo.get_by_stripe_subscription("sub_123") is None
+
+
+async def _seed_enrollment(
+    repo: MongoStudentBillingEnrollmentRepository,
+    *,
+    enrollment_id: str,
+    academy_id: str,
+    autopay_enrollment_status: str = "active",
+    parent_id: str = "parent-1",
+) -> None:
+    now = _now()
+    await repo.save(
+        StudentBillingEnrollment(
+            enrollment_id=enrollment_id,
+            academy_id=academy_id,
+            student_id="student-1",
+            parent_id=parent_id,
+            session_type_id="type-beginner",
+            billing_start_date=now,
+            autopay_enrollment_status=autopay_enrollment_status,  # type: ignore[arg-type]
+            enrolled_at=now,
+            updated_at=now,
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_set_autopay_enrollment_status_applies_legal_transition(db, acad) -> None:
+    repo = MongoStudentBillingEnrollmentRepository(db)
+    await _seed_enrollment(
+        repo, enrollment_id="e1", academy_id=acad, autopay_enrollment_status="active"
+    )
+
+    applied = await repo.set_autopay_enrollment_status(enrollment_id="e1", status="paused")
+
+    assert applied is True
+    assert await repo.get_autopay_enrollment_status(enrollment_id="e1") == "paused"
+
+
+@pytest.mark.asyncio
+async def test_set_autopay_enrollment_status_drops_illegal_transition(db, acad) -> None:
+    repo = MongoStudentBillingEnrollmentRepository(db)
+    await _seed_enrollment(
+        repo, enrollment_id="e1", academy_id=acad, autopay_enrollment_status="disabled"
+    )
+
+    # disabled -> paused is illegal; must be a logged no-op returning False.
+    applied = await repo.set_autopay_enrollment_status(enrollment_id="e1", status="paused")
+
+    assert applied is False
+    assert await repo.get_autopay_enrollment_status(enrollment_id="e1") == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_set_autopay_enrollment_status_unknown_enrollment_returns_false(db, acad) -> None:
+    repo = MongoStudentBillingEnrollmentRepository(db)
+    applied = await repo.set_autopay_enrollment_status(enrollment_id="missing", status="paused")
+    assert applied is False
+
+
+@pytest.mark.asyncio
+async def test_set_autopay_enrollment_status_rejects_stale_read_race(db, acad, monkeypatch) -> None:
+    repo = MongoStudentBillingEnrollmentRepository(db)
+    await _seed_enrollment(
+        repo, enrollment_id="e1", academy_id=acad, autopay_enrollment_status="active"
+    )
+    original_update_one = repo._update_one
+    raced = False
+
+    async def racing_update_one(filter_, update, **kwargs):
+        nonlocal raced
+        if not raced and filter_.get("enrollment_id") == "e1":
+            raced = True
+            await db["student_billing_enrollments"].update_one(
+                {"academy_id": acad, "enrollment_id": "e1"},
+                {"$set": {"autopay_enrollment_status": "disabled"}},
+            )
+        return await original_update_one(filter_, update, **kwargs)
+
+    monkeypatch.setattr(repo, "_update_one", racing_update_one)
+
+    applied = await repo.set_autopay_enrollment_status(enrollment_id="e1", status="paused")
+
+    assert applied is False
+    assert await repo.get_autopay_enrollment_status(enrollment_id="e1") == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_record_attempt_outcome_leaves_enrollment_status_untouched(db, acad) -> None:
+    repo = MongoStudentBillingEnrollmentRepository(db)
+    await _seed_enrollment(
+        repo, enrollment_id="e1", academy_id=acad, autopay_enrollment_status="active"
+    )
+
+    await repo.record_attempt_outcome(
+        enrollment_id="e1",
+        outcome="declined",
+        occurred_at=datetime(2026, 6, 15, tzinfo=UTC),
+        failure_code="card_declined",
+    )
+
+    stored = await repo.get("e1")
+    assert stored is not None
+    assert stored.autopay_enrollment_status == "active"
+    assert stored.last_attempt_outcome == "declined"
+    assert stored.last_failure_code == "card_declined"
+    assert stored.last_attempt_at is not None
+
+
+@pytest.mark.asyncio
+async def test_mark_autopay_active_from_setup_walks_disabled_to_active(db, acad) -> None:
+    """Review-fix 6(b): a disabled enrollment completing setup must reach active
+    via the guarded walk (disabled -> offered -> setup_started -> active)."""
+    repo = MongoStudentBillingEnrollmentRepository(db)
+    await _seed_enrollment(
+        repo, enrollment_id="e1", academy_id=acad, autopay_enrollment_status="disabled"
+    )
+
+    ok = await repo.mark_autopay_active_from_setup(enrollment_id="e1")
+
+    assert ok is True
+    assert await repo.get_autopay_enrollment_status(enrollment_id="e1") == "active"
+
+
+@pytest.mark.asyncio
+async def test_mark_autopay_active_from_setup_from_setup_started(db, acad) -> None:
+    repo = MongoStudentBillingEnrollmentRepository(db)
+    await _seed_enrollment(
+        repo, enrollment_id="e1", academy_id=acad, autopay_enrollment_status="setup_started"
+    )
+
+    ok = await repo.mark_autopay_active_from_setup(enrollment_id="e1")
+
+    assert ok is True
+    assert await repo.get_autopay_enrollment_status(enrollment_id="e1") == "active"
+
+
+@pytest.mark.asyncio
+async def test_autopay_status_writes_are_tenant_isolated(db, acad) -> None:
+    repo = MongoStudentBillingEnrollmentRepository(db)
+    await _seed_enrollment(
+        repo, enrollment_id="shared", academy_id=acad, autopay_enrollment_status="active"
+    )
+
+    with tenant_scope("other-academy"):
+        other_repo = MongoStudentBillingEnrollmentRepository(db)
+        # No such enrollment in the other tenant — guarded write is a no-op.
+        assert (
+            await other_repo.set_autopay_enrollment_status(enrollment_id="shared", status="paused")
+        ) is False
+        assert await other_repo.get_autopay_enrollment_status(enrollment_id="shared") is None
+
+    # Academy A's enrollment is unchanged by the cross-tenant attempt.
+    assert await repo.get_autopay_enrollment_status(enrollment_id="shared") == "active"

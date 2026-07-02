@@ -18,6 +18,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from backend.v2.contexts.billing.domain.autopay_status import (
+    AutopayAttemptOutcome,
+    AutopayEnrollmentStatus,
+)
+
 BillingPeriodType = Literal["monthly", "per_session"]
 StudentBillingEnrollmentStatus = Literal["active", "paused", "cancelled", "transferred_out"]
 
@@ -48,6 +53,15 @@ class StudentBillingEnrollment(BaseModel):
     stripe_subscription_id: str | None = None
     billing_start_date: datetime
     status: StudentBillingEnrollmentStatus = "active"
+    # Per-enrollment autopay state (Slice B). Independent of `status` (the
+    # billing-relationship lifecycle) and of any single charge outcome. This is
+    # the single charge-eligibility signal: ChargeInvoiceViaAutopay only charges
+    # when autopay_enrollment_status == "active".
+    autopay_enrollment_status: AutopayEnrollmentStatus = "not_offered"
+    # Projection of the latest charge attempt — orthogonal to enrollment state.
+    last_attempt_outcome: AutopayAttemptOutcome | None = None
+    last_attempt_at: datetime | None = None
+    last_failure_code: str | None = None
     override_price_cents: int | None = Field(default=None, ge=0)
     enrolled_at: datetime
     updated_at: datetime

@@ -100,6 +100,9 @@ def _matches(doc: dict[str, Any], query: dict[str, Any]) -> bool:
         if key == "$or":
             if not any(_matches(doc, option) for option in expected):
                 return False
+        elif isinstance(expected, dict) and "$in" in expected:
+            if doc.get(key) not in expected["$in"]:
+                return False
         elif doc.get(key) != expected:
             return False
     return True
@@ -179,6 +182,112 @@ async def test_parent_payment_history_suppresses_matching_legacy_projection() ->
         rows = await parent.list_payments_for_parent("parent-1")
 
     assert [row.payment_id for row in rows] == ["ledger-payment"]
+
+
+@pytest.mark.asyncio
+async def test_parent_enrollment_visibility_uses_app_owned_autopay_projection() -> None:
+    from datetime import UTC, datetime
+
+    now = datetime(2026, 7, 1, 9, 0, tzinfo=UTC)
+    db = _FakeDb(
+        {
+            "students": _FakeCollection(
+                [
+                    {
+                        "academy_id": "acad",
+                        "student_id": "student-1",
+                        "parent_id": "parent-1",
+                        "full_name": "Alice Smith",
+                    }
+                ]
+            ),
+            "enrollments": _FakeCollection(
+                [
+                    {
+                        "academy_id": "acad",
+                        "enrollment_id": "enr-1",
+                        "student_id": "student-1",
+                        "session_id": "sess-1",
+                        "status": "active",
+                        "payment_mode": "monthly",
+                        "subscription_status": "incomplete",
+                        "created_at": now,
+                    }
+                ]
+            ),
+            "sessions": _FakeCollection(
+                [
+                    {
+                        "academy_id": "acad",
+                        "session_id": "sess-1",
+                        "title": "Morning Squad",
+                    }
+                ]
+            ),
+            "student_billing_enrollments": _FakeCollection(
+                [
+                    {
+                        "academy_id": "acad",
+                        "enrollment_id": "enr-1",
+                        "student_id": "student-1",
+                        "parent_id": "parent-1",
+                        "session_type_id": "stype-1",
+                        "billing_start_date": now,
+                        "status": "active",
+                        "autopay_enrollment_status": "active",
+                        "last_attempt_outcome": "declined",
+                        "last_attempt_at": now,
+                        "last_failure_code": "insufficient_funds",
+                        "enrolled_at": now,
+                        "updated_at": now,
+                    }
+                ]
+            ),
+            "parent_billing_customers": _FakeCollection(
+                [
+                    {
+                        "academy_id": "acad",
+                        "parent_id": "parent-1",
+                        "primary_payment_method_type": "us_bank_account",
+                        "primary_payment_method_label": "Stripe Test Bank",
+                        "primary_payment_method_last4": "6789",
+                        "primary_setup_status": "active",
+                    }
+                ]
+            ),
+        }
+    )
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=_PortalStripe(),  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"):
+        rows = await parent.list_enrollments_for_parent("parent-1")
+
+    assert rows == [
+        {
+            "enrollment_id": "enr-1",
+            "student_id": "student-1",
+            "student_name": "Alice Smith",
+            "session_id": "sess-1",
+            "session_title": "Morning Squad",
+            "status": "active",
+            "payment_mode": "monthly",
+            "subscription_status": "incomplete",
+            "autopay_enrollment_status": "active",
+            "last_attempt_outcome": "declined",
+            "last_attempt_at": now,
+            "last_failure_code": "insufficient_funds",
+            "autopay_payment_method_type": "us_bank_account",
+            "autopay_payment_method_label": "Stripe Test Bank",
+            "autopay_payment_method_last4": "6789",
+            "autopay_setup_status": "active",
+        }
+    ]
 
 
 @pytest.mark.asyncio

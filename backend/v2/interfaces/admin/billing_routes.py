@@ -109,7 +109,7 @@ async def list_billing_invoices(
         balance = int(inv.get("balance_due_cents", 0))
         invoices.append(
             InvoiceDto(
-                invoice_number=str(inv.get("invoice_id", "")),
+                invoice_number=str(inv.get("invoice_number") or inv.get("invoice_id", "")),
                 period=str(inv.get("period", "")),
                 lines=lines,
                 total_cents=total,
@@ -1094,6 +1094,30 @@ class FailedPaymentsResponse(BaseModel):
     rows: list[FailedPaymentRowDto]
 
 
+class DunningRowDto(BaseModel):
+    model_config = {"extra": "ignore"}
+
+    invoice_id: str
+    parent_id: str
+    parent_name: str | None = None
+    period: str
+    status: str
+    attempt_count: int = 0
+    next_attempt_at: datetime | None = None
+    last_attempt_at: datetime | None = None
+    last_failure_code: str | None = None
+    terminal_at: datetime | None = None
+    autopay_disable_status: str | None = None
+    autopay_disable_error: str | None = None
+    autopay_disabled_at: datetime | None = None
+    balance_due_cents: int
+    currency: str = "usd"
+
+
+class DunningResponse(BaseModel):
+    rows: list[DunningRowDto]
+
+
 class PaymentAttemptDto(BaseModel):
     model_config = {"extra": "ignore"}
 
@@ -1149,6 +1173,16 @@ async def list_failed_payment_attempts(
     )
     rows = await list_failed()  # type: ignore[operator]
     return FailedPaymentsResponse(rows=[FailedPaymentRowDto(**r) for r in rows])
+
+
+@router.get("/billing/dunning", response_model=DunningResponse)
+async def list_dunning_failures(
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> DunningResponse:
+    list_dunning = _required_callable(use_cases.list_dunning_failures, "Dunning failures")
+    rows = await list_dunning()  # type: ignore[operator]
+    return DunningResponse(rows=[DunningRowDto(**r) for r in rows])
 
 
 @router.get(

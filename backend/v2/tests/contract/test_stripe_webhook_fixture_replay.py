@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
     HandleWebhookEvent,
@@ -111,8 +112,12 @@ class FakeDedup:
 class FakeOutbox:
     def __init__(self) -> None:
         self.events: list[Any] = []
+        self.event_ids: set[str] = set()
 
     async def append(self, event, *, session=None):
+        if event.event_id in self.event_ids:
+            raise DuplicateKeyError("duplicate event_id")
+        self.event_ids.add(event.event_id)
         self.events.append(event)
 
     async def pull_unprocessed(self, _limit=100):
@@ -333,6 +338,7 @@ class FakeBillingLedger:
         self.payment_keys: dict[str, str] = {}
         self.allocation_keys: set[str] = set()
         self.allocations: list[dict[str, Any]] = []
+        self.payment_attempts: dict[str, dict[str, Any]] = {}
         self.fail_allocate = False
 
     async def create_invoice(
@@ -449,6 +455,111 @@ class FakeBillingLedger:
             }
         )
 
+    async def get_payment_allocation_by_idempotency_key(
+        self, idempotency_key: str
+    ) -> dict[str, Any] | None:
+        for allocation in self.allocations:
+            if allocation["idempotency_key"] == idempotency_key:
+                return allocation
+        return None
+
+    async def get_payment_by_stripe_payment_intent_id(
+        self, stripe_payment_intent_id: str
+    ) -> LedgerPayment | None:
+        for payment in self.payments.values():
+            if payment.stripe_payment_intent_id == stripe_payment_intent_id:
+                return payment
+        return None
+
+    async def mark_payment_refunded(
+        self,
+        payment_id: str,
+        *,
+        refunded_cents: int,
+        status: str,
+        updated_at: datetime,
+    ) -> LedgerPayment:
+        payment = self.payments[payment_id]
+        updated = payment.model_copy(
+            update={
+                "refunded_cents": refunded_cents,
+                "status": status,
+                "updated_at": updated_at,
+            }
+        )
+        self.payments[payment_id] = updated
+        return updated
+
+    async def record_payment_attempt(
+        self,
+        *,
+        invoice_id: str,
+        parent_id: str,
+        amount_cents: int,
+        currency: str,
+        status: str,
+        stripe_payment_intent_id: str | None,
+        stripe_checkout_session_id: str | None,
+        failure_code: str | None,
+        failure_message: str | None,
+        idempotency_key: str,
+        created_by_event_id: str | None = None,
+    ) -> dict[str, Any]:
+        attempt = self.payment_attempts.get(idempotency_key)
+        if attempt is not None:
+            return attempt
+        attempt = {
+            "invoice_id": invoice_id,
+            "parent_id": parent_id,
+            "amount_cents": amount_cents,
+            "currency": currency,
+            "status": status,
+            "stripe_payment_intent_id": stripe_payment_intent_id,
+            "stripe_checkout_session_id": stripe_checkout_session_id,
+            "failure_code": failure_code,
+            "failure_message": failure_message,
+            "idempotency_key": idempotency_key,
+            "created_by_event_id": created_by_event_id,
+        }
+        self.payment_attempts[idempotency_key] = attempt
+        return attempt
+
+    async def reverse_payment_allocation(
+        self,
+        *,
+        allocation_idempotency_key: str,
+        reversal_idempotency_key: str,
+        reason: str,
+        return_code: str | None,
+        reversed_at: datetime,
+    ) -> dict[str, Any] | None:
+        for allocation in list(self.allocations):
+            if allocation["idempotency_key"] != allocation_idempotency_key:
+                continue
+            invoice = self.invoices[allocation["invoice_id"]]
+            payment = self.payments[allocation["payment_id"]]
+            self.allocations.remove(allocation)
+            self.allocation_keys.discard(allocation_idempotency_key)
+            self.invoices[invoice.invoice_id] = invoice.model_copy(
+                update={
+                    "status": "open",
+                    "balance_due_cents": invoice.total_cents,
+                    "updated_at": reversed_at,
+                }
+            )
+            self.payments[payment.payment_id] = payment.model_copy(
+                update={"unapplied_amount_cents": 0, "updated_at": reversed_at}
+            )
+            return {
+                "payment_id": payment.payment_id,
+                "invoice_id": invoice.invoice_id,
+                "amount_cents": allocation["amount_cents"],
+                "reason": reason,
+                "return_code": return_code,
+                "idempotency_key": reversal_idempotency_key,
+            }
+        return None
+
 
 def _build_with_ledger(repo, ledger, outbox=None, dedup=None, subscriptions=None):
     return HandleWebhookEvent(
@@ -460,6 +571,92 @@ def _build_with_ledger(repo, ledger, outbox=None, dedup=None, subscriptions=None
         academy_id="test-academy",
         billing_ledger=ledger,
     )
+
+
+def _seed_autopay_invoice(ledger: FakeBillingLedger) -> None:
+    now = datetime(2026, 6, 17, 12, 0, tzinfo=UTC)
+    ledger.invoices["inv-ach-fixture-01"] = LedgerInvoice(
+        invoice_id="inv-ach-fixture-01",
+        academy_id="test-academy",
+        parent_id="parent-ach-fixture",
+        student_id="student-ach-fixture",
+        enrollment_id="enr-ach-fixture",
+        period="2026-06",
+        status="open",
+        subtotal_cents=10_000,
+        discount_cents=0,
+        total_cents=10_000,
+        balance_due_cents=10_000,
+        currency="usd",
+        due_date=date(2026, 6, 30),
+        created_at=now,
+        updated_at=now,
+    )
+
+
+@pytest.mark.asyncio
+async def test_fixture_autopay_ach_processing_records_attempt_without_allocation() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger()
+    _seed_autopay_invoice(ledger)
+    uc = _build_with_ledger(repo, ledger)
+
+    res = await uc.execute(_load("payment_intent_processing_ach_autopay.json"), "test_signature")
+
+    assert res["received"] is True
+    invoice = ledger.invoices["inv-ach-fixture-01"]
+    assert invoice.status == "open"
+    assert invoice.balance_due_cents == 10_000
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+    assert next(iter(ledger.payment_attempts.values()))["status"] == "processing"
+
+
+@pytest.mark.asyncio
+async def test_fixture_autopay_ach_succeeded_allocates_after_settlement() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger()
+    _seed_autopay_invoice(ledger)
+    uc = _build_with_ledger(repo, ledger)
+
+    res = await uc.execute(_load("payment_intent_succeeded_ach_autopay.json"), "test_signature")
+
+    assert res["received"] is True
+    invoice = ledger.invoices["inv-ach-fixture-01"]
+    assert invoice.status == "paid"
+    assert invoice.balance_due_cents == 0
+    payment = ledger.payments["ledger-pay-autopay:pi_ach_fixture_01"]
+    assert payment.metadata == {
+        "funding_type": "us_bank_account",
+        "invoice_id": "inv-ach-fixture-01",
+    }
+    assert ledger.allocations[0]["idempotency_key"] == "autopay-alloc:pi_ach_fixture_01"
+
+
+@pytest.mark.asyncio
+async def test_fixture_autopay_ach_return_reopens_paid_invoice() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger()
+    _seed_autopay_invoice(ledger)
+    outbox = FakeOutbox()
+    uc = _build_with_ledger(repo, ledger, outbox=outbox)
+
+    await uc.execute(_load("payment_intent_succeeded_ach_autopay.json"), "test_signature")
+    res = await uc.execute(_load("charge_refunded_ach_return.json"), "test_signature")
+
+    assert res["received"] is True
+    invoice = ledger.invoices["inv-ach-fixture-01"]
+    payment = ledger.payments["ledger-pay-autopay:pi_ach_fixture_01"]
+    assert invoice.status == "open"
+    assert invoice.balance_due_cents == 10_000
+    assert payment.status == "refunded"
+    assert payment.refunded_cents == 10_000
+    assert ledger.allocations == []
+    returned_attempt = next(
+        attempt for attempt in ledger.payment_attempts.values() if attempt["status"] == "returned"
+    )
+    assert returned_attempt["failure_code"] == "R01"
+    assert outbox.events[-1].name == "Billing.PaymentRefunded"
 
 
 @pytest.mark.asyncio
