@@ -9,10 +9,13 @@ SaaS mode (``saas_mode=True``)
 * ``academy_id`` is required at the call site (resolved by the route
   from the request host).
 * Creates the global ``User`` row plus an active ``AcademyMembership``
-  row ``(academy_id, user_id, roles=("parent",), status="active")`` so
-  the verified parent can immediately continue into onboarding. Admin
+  row with ``status="active"`` and ``"parent"`` in ``roles`` so the
+  verified parent can immediately continue into onboarding. Admin
   approval still applies to the submitted registration application, not
-  to the parent portal membership itself.
+  to the parent portal membership itself. A user who already has an
+  active membership at this academy under another role (coach/admin)
+  keeps those roles and simply gains ``"parent"`` — the write is never
+  skipped just because a membership row already exists.
 * ``User.academy_id`` is set to the resolved tenant on first insert
   (legacy field; SaaS reads come from the membership). Existing users
   keep their original ``User.academy_id``; multi-tenant access is
@@ -129,7 +132,15 @@ class RegisterPublicParent:
             existing_membership = await self._memberships.get_membership(
                 target_academy_id, user.user_id
             )
-            if existing_membership is None or existing_membership.status == "invited":
+            needs_upsert = existing_membership is None or (
+                existing_membership.status == "invited"
+                or (
+                    existing_membership.status == "active"
+                    and "parent" not in existing_membership.roles
+                )
+            )
+            if needs_upsert:
+                existing_roles = existing_membership.roles if existing_membership else ()
                 await self._memberships.upsert_membership(
                     AcademyMembership(
                         membership_id=(
@@ -139,7 +150,7 @@ class RegisterPublicParent:
                         ),
                         academy_id=target_academy_id,
                         user_id=user.user_id,
-                        roles=("parent",),
+                        roles=tuple(dict.fromkeys((*existing_roles, "parent"))),
                         status="active",
                         accepted_at=datetime.now(UTC),
                     )
