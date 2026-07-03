@@ -2375,6 +2375,31 @@ class _ConnectedAccountGatewayReader:
         return account.is_ready_for_charges(), account.stripe_account_id
 
 
+class _ConnectedAccountGatewayDisabler:
+    """Marks an academy's Accounts-v2 ``ConnectedAccount`` disabled on disconnect.
+
+    Companion to ``_ConnectedAccountGatewayReader``: without this, disconnecting
+    only clears the legacy ``academy.stripe_account_id`` field while the
+    ConnectedAccount record — the real "connected"/charge-eligibility source
+    of truth — stays active.
+    """
+
+    def __init__(self, repo: MongoConnectedAccountRepository) -> None:
+        self._repo = repo
+
+    async def disable_for_academy(self, academy_id: str) -> None:
+        with tenant_scope(academy_id):
+            account = await self._repo.get_for_academy()
+            if account is None:
+                return
+            await self._repo.update_status(
+                stripe_account_id=account.stripe_account_id,
+                status="disabled",
+                charges_enabled=False,
+                payouts_enabled=False,
+            )
+
+
 class _FinancePayoutCalculator:
     def __init__(self, compute: ComputeCoachPayout) -> None:
         self._compute = compute
@@ -3313,7 +3338,10 @@ def compose_admin(
         repo=academy_repo,
         state_secret=_state_secret,
     )
-    disconnect_stripe_use_case = DisconnectStripeUseCase(repo=academy_repo)
+    disconnect_stripe_use_case = DisconnectStripeUseCase(
+        repo=academy_repo,
+        connected_accounts=_ConnectedAccountGatewayDisabler(connected_accounts_repo),
+    )
     change_user_role = ChangeUserRole(users_r)
 
     list_admin_users = ListAdminUsers(users_r)

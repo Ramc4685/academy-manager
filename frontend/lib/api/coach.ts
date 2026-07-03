@@ -21,7 +21,7 @@ export interface CoachRosterEntry {
   full_name: string;
   enrollment_status: EnrollmentStatus;
   /** Mark already recorded for this occurrence (hydrates state on reload). */
-  attendance_status?: "present" | "absent" | null;
+  attendance_status?: AttendanceStatus | null;
 }
 
 export interface CoachSession {
