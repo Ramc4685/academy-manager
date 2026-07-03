@@ -75,12 +75,25 @@ def fake_stripe(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
 
     mod.PaymentIntent = _PaymentIntent  # type: ignore[attr-defined]
 
-    # v2 accounts + account links (Accounts v2)
+    # v2 accounts + account links (Accounts v2). The v2 surface is only
+    # exposed on StripeClient, mirroring the real SDK.
     class _AccountsV2:
         @staticmethod
-        def create(**kwargs: Any) -> _FakeResult:
-            recorder.record("v2.core.accounts.create", kwargs)
+        def create(
+            params: dict[str, Any] | None = None,
+            options: dict[str, Any] | None = None,
+        ) -> _FakeResult:
+            call = dict(params or {})
+            if options and options.get("idempotency_key"):
+                call["idempotency_key"] = options["idempotency_key"]
+            recorder.record("v2.core.accounts.create", call)
             return _FakeResult(id="acct_v2_123")
+
+    class _StripeClient:
+        def __init__(self, api_key: str) -> None:
+            self.v2 = types.SimpleNamespace(
+                core=types.SimpleNamespace(accounts=_AccountsV2()),
+            )
 
     class _AccountLink:
         @staticmethod
@@ -88,10 +101,7 @@ def fake_stripe(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
             recorder.record("AccountLink.create", kwargs)
             return _FakeResult(url="https://connect.stripe.test/onboard/abc")
 
-    v2 = types.SimpleNamespace(
-        core=types.SimpleNamespace(accounts=_AccountsV2()),
-    )
-    mod.v2 = v2  # type: ignore[attr-defined]
+    mod.StripeClient = _StripeClient  # type: ignore[attr-defined]
     mod.AccountLink = _AccountLink  # type: ignore[attr-defined]
     mod.api_key = None  # type: ignore[attr-defined]
 
@@ -118,7 +128,8 @@ async def test_create_connected_account_uses_accounts_v2_payload_not_legacy_cont
     call = fake_stripe.calls["v2.core.accounts.create"]
     assert "type" not in call
     assert "controller" not in call
-    assert call["dashboard"] == "full"
+    assert call["dashboard"] == "express"
+    assert call["idempotency_key"] == "connect-account:acad-1"
     assert call["configuration"] == {
         "merchant": {
             "capabilities": {

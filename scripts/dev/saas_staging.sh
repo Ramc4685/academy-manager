@@ -83,7 +83,7 @@ LOCAL_AUTH_CONTROL_EVIDENCE_SCRIPT="${REPO_ROOT}/scripts/dev/audit_inventory_con
 LOCAL_AUTH_GATE_SCRIPT="${REPO_ROOT}/scripts/dev/audit_inventory_gate.py"
 LOCAL_AUTH_ARTIFACTS_SCRIPT="${REPO_ROOT}/scripts/dev/prepare_local_auth_audit_artifacts.py"
 STRIPE_WEBHOOK_URL="http://127.0.0.1:8001/api/v2/parent/webhooks/stripe"
-STRIPE_WEBHOOK_EVENTS="checkout.session.completed,checkout.session.expired,payment_intent.succeeded,payment_intent.payment_failed,invoice.paid,invoice.payment_failed,charge.refunded,customer.subscription.updated,customer.subscription.deleted"
+STRIPE_WEBHOOK_EVENTS="checkout.session.completed,checkout.session.expired,payment_intent.succeeded,payment_intent.payment_failed,invoice.paid,invoice.payment_failed,charge.refunded,customer.subscription.updated,customer.subscription.deleted,account.updated,capability.updated"
 
 # Ports the stack binds. Used by pre-flight + status.
 declare -a REQUIRED_PORTS=(3000 4000 8001 9099 27017)
@@ -355,6 +355,7 @@ cmd_stripe_listen() {
   stripe listen \
     --api-key "${api_key}" \
     --forward-to "${STRIPE_WEBHOOK_URL}" \
+    --forward-connect-to "${STRIPE_WEBHOOK_URL}" \
     --events "${STRIPE_WEBHOOK_EVENTS}" \
     2>&1 | sed -E 's/whsec_[A-Za-z0-9_]+/[redacted-whsec]/g; s/(sk|rk)_(test|live)_[A-Za-z0-9_]+/[redacted-stripe-key]/g'
 }

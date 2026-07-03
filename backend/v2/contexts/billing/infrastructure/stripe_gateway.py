@@ -32,6 +32,9 @@ class RealStripeGateway(StripeGateway):
 
         stripe.api_key = api_key
         self._stripe = stripe
+        # Accounts v2 (/v2/core/accounts) is only exposed on StripeClient,
+        # not the module-level namespace.
+        self._client = stripe.StripeClient(api_key)
         self._webhook_secret = webhook_secret
         self._connect_client_id = connect_client_id
         self._skip_signature_verify = skip_signature_verify
@@ -455,7 +458,9 @@ class RealStripeGateway(StripeGateway):
         failures do not create duplicate Stripe accounts.
         """
         request: dict[str, Any] = {
-            "dashboard": "full",
+            # Express dashboard: Stripe rejects "full" when the application
+            # collects fees/losses (destination charges, platform liability).
+            "dashboard": "express",
             "configuration": {
                 "merchant": {
                     "capabilities": {
@@ -479,9 +484,10 @@ class RealStripeGateway(StripeGateway):
             request["contact_email"] = contact_email
 
         def _create() -> Any:
-            kwargs = dict(request)
-            kwargs["idempotency_key"] = idempotency_key or f"connect-account:{academy_id}"
-            return self._stripe.v2.core.accounts.create(**kwargs)
+            return self._client.v2.core.accounts.create(
+                params=request,
+                options={"idempotency_key": idempotency_key or f"connect-account:{academy_id}"},
+            )
 
         try:
             account = await asyncio.to_thread(_create)

@@ -132,6 +132,10 @@ def fake_stripe_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
         Subscription=SimpleNamespace(),
         Invoice=SimpleNamespace(),
         StripeError=_FakeStripeError,
+        # RealStripeGateway.__init__ builds a StripeClient for Accounts v2.
+        StripeClient=lambda api_key: SimpleNamespace(
+            v2=SimpleNamespace(core=SimpleNamespace(accounts=SimpleNamespace()))
+        ),
     )
     monkeypatch.setitem(sys.modules, "stripe", fake_stripe)
 
