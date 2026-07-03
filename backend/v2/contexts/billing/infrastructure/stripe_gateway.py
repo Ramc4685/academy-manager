@@ -23,6 +23,7 @@ class RealStripeGateway(StripeGateway):
         *,
         api_key: str,
         webhook_secret: str,
+        connect_webhook_secret: str | None = None,
         connect_client_id: str | None = None,
         skip_signature_verify: bool = False,
     ) -> None:
@@ -35,7 +36,9 @@ class RealStripeGateway(StripeGateway):
         # Accounts v2 (/v2/core/accounts) is only exposed on StripeClient,
         # not the module-level namespace.
         self._client = stripe.StripeClient(api_key)
-        self._webhook_secret = webhook_secret
+        self._webhook_secrets = [webhook_secret]
+        if connect_webhook_secret and connect_webhook_secret not in self._webhook_secrets:
+            self._webhook_secrets.append(connect_webhook_secret)
         self._connect_client_id = connect_client_id
         self._skip_signature_verify = skip_signature_verify
 
@@ -226,7 +229,16 @@ class RealStripeGateway(StripeGateway):
             # returned stripe.Event because in stripe-python >=15 StripeObject
             # no longer subclasses dict; the handler requires a plain dict, so
             # we parse the (now verified) raw payload instead.
-            self._stripe.Webhook.construct_event(payload, signature, self._webhook_secret)
+            last_exc: Exception | None = None
+            for secret in self._webhook_secrets:
+                try:
+                    self._stripe.Webhook.construct_event(payload, signature, secret)
+                    break
+                except Exception as exc:
+                    last_exc = exc
+            else:
+                assert last_exc is not None
+                raise last_exc
         return json.loads(payload)  # type: ignore[no-any-return]
 
     async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, Any]:

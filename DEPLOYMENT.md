@@ -28,6 +28,9 @@ FRONTEND_URL=https://academy.example.com
 CORS_ORIGINS=https://academy.example.com
 STRIPE_API_KEY=sk_live_...
 STRIPE_WEBHOOK_SECRET=whsec_...
+# Required when a separate Connect-scoped webhook endpoint is configured for
+# connected-account events such as account.updated and capability.updated.
+STRIPE_CONNECT_WEBHOOK_SECRET=whsec_...
 SCHEDULER_TZ=America/Chicago
 RESEND_API_KEY=re_...
 SENDER_EMAIL=hello@academy.example.com
@@ -93,6 +96,7 @@ The following variables were introduced in Phase 5 and must be set in production
 |---|---|---|
 | `STRIPE_API_KEY` | Yes | Stripe secret key (`sk_live_...` or `sk_test_...`). Without this, all billing endpoints return 503. |
 | `STRIPE_WEBHOOK_SECRET` | Yes | Stripe webhook signing secret (`whsec_...`). Without this, `POST /api/v2/parent/webhooks/stripe` returns 503 and all Stripe payment confirmations are silently dropped. |
+| `STRIPE_CONNECT_WEBHOOK_SECRET` | Required for Connect | Signing secret for the Connect-scoped Stripe webhook endpoint that receives connected-account events (`account.updated`, `capability.updated`). Keep `STRIPE_WEBHOOK_SECRET` for account-level billing events. |
 | `SCHEDULER_TZ` | No | IANA timezone for scheduled billing jobs. The backend default is `UTC`; production sets `America/Chicago` in `backend/fly.toml`. |
 
 Set these on Fly with:
@@ -101,6 +105,7 @@ Set these on Fly with:
 flyctl secrets set \
   STRIPE_API_KEY='sk_live_...' \
   STRIPE_WEBHOOK_SECRET='whsec_...' \
+  STRIPE_CONNECT_WEBHOOK_SECRET='whsec_...' \
   -a courtmastr-academy-api
 ```
 
@@ -200,6 +205,7 @@ flyctl secrets set \
   FIREBASE_PROJECT_ID='academy-courtmastr' \
   STRIPE_API_KEY='sk_live_...' \
   STRIPE_WEBHOOK_SECRET='whsec_...' \
+  STRIPE_CONNECT_WEBHOOK_SECRET='whsec_...' \
   RESEND_API_KEY='re_...' \
   SENDER_EMAIL='noreply@academy.courtmastr.com' \
   -a courtmastr-academy-api
@@ -250,10 +256,11 @@ Actions.
 ## Payments
 
 1. Configure Stripe live or test keys.
-2. Create a webhook endpoint pointing to `/api/v2/parent/webhooks/stripe`.
-3. Subscribe to checkout session events used by the app.
-4. Store the Stripe webhook signing secret in `STRIPE_WEBHOOK_SECRET`.
-5. Run a test registration checkout and confirm the registration payment changes from pending to paid.
+2. Create an account-level webhook endpoint pointing to `/api/v2/parent/webhooks/stripe`.
+3. Subscribe that account-level endpoint to checkout/payment events used by the app.
+4. Store the account-level webhook signing secret in `STRIPE_WEBHOOK_SECRET`.
+5. For Stripe Connect, create a Connect-scoped webhook endpoint pointing to the same path, subscribe it to `account.updated` and `capability.updated`, and store its signing secret in `STRIPE_CONNECT_WEBHOOK_SECRET`.
+6. Run a test registration checkout and confirm the registration payment changes from pending to paid.
 
 Refunds are tracked in local payment records. Stripe payments are refunded through Stripe when the payment has a captured Stripe payment intent.
 
