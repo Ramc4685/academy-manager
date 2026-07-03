@@ -204,6 +204,8 @@ async def list_payments(
                 session_id=p.session_id,
                 stripe_invoice_id=getattr(p, "stripe_invoice_id", None),
                 stripe_payment_intent_id=getattr(p, "stripe_payment_intent_id", None),
+                invoice_id=getattr(p, "invoice_id", None),
+                invoice_period=getattr(p, "invoice_period", None),
             )
             for p in payments
         ]

@@ -20,6 +20,8 @@ export interface CoachRosterEntry {
   student_id: string;
   full_name: string;
   enrollment_status: EnrollmentStatus;
+  /** Mark already recorded for this occurrence (hydrates state on reload). */
+  attendance_status?: AttendanceStatus | null;
 }
 
 export interface CoachSession {
@@ -142,6 +144,27 @@ export interface MarkAttendanceResponse {
   marked_at: string;
 }
 
+export interface BulkAttendanceEntry {
+  student_id: string;
+  status: AttendanceStatus;
+}
+
+export interface BulkMarkAttendanceRequest {
+  mutation_id: string;
+  session_id: string;
+  entries: BulkAttendanceEntry[];
+}
+
+export interface BulkAttendanceEntryResult {
+  student_id: string;
+  status: AttendanceStatus;
+  attendance_id: string;
+}
+
+export interface BulkMarkAttendanceResponse {
+  results: BulkAttendanceEntryResult[];
+}
+
 export interface LessonPlan {
   lesson_plan_id: string;
   session_id: string;
@@ -230,6 +253,19 @@ export async function markAttendance(
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export async function bulkMarkAttendance(
+  occurrenceId: string,
+  payload: BulkMarkAttendanceRequest,
+): Promise<BulkMarkAttendanceResponse> {
+  return apiFetch<BulkMarkAttendanceResponse>(
+    `/coach/occurrences/${encodeURIComponent(occurrenceId)}/attendance/bulk`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 export function listLessonPlans(

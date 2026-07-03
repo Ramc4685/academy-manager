@@ -342,28 +342,52 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         return [{k: v for k, v in doc.items() if k != "_id"} async for doc in cursor]
 
-    async def list_open_failed_attempts(self) -> list[dict[str, Any]]:
+    async def list_open_failed_attempts(self, *, limit: int = 100) -> list[dict[str, Any]]:
         """One row per unpaid invoice whose latest payment attempt failed.
 
         Includes invoices with status ``open``/``partially_paid`` whose most
         recent attempt is ``failed`` or ``requires_action``. Paid/void invoices
         and invoices whose latest attempt succeeded are excluded. Newest failed
-        attempt first.
+        attempt first. Single aggregation (no per-invoice round-trips), capped
+        at ``limit`` rows like the other admin list reads in this module.
         """
         academy_id = current_academy_id()
+        pipeline: list[dict[str, Any]] = [
+            {"$match": {"academy_id": academy_id}},
+            {"$sort": {"created_at": -1}},
+            {
+                "$group": {
+                    "_id": "$invoice_id",
+                    "latest_status": {"$first": "$status"},
+                    "latest_attempt_at": {"$first": "$created_at"},
+                    "latest_decline_code": {"$first": "$failure_code"},
+                    "attempt_count": {"$sum": 1},
+                }
+            },
+            {"$match": {"latest_status": {"$in": ["failed", "requires_action"]}}},
+            {
+                "$lookup": {
+                    "from": self.collection_name,
+                    "localField": "_id",
+                    "foreignField": "invoice_id",
+                    "as": "invoice",
+                }
+            },
+            {"$unwind": "$invoice"},
+            {
+                "$match": {
+                    "invoice.academy_id": academy_id,
+                    "invoice.status": {"$in": ["open", "partially_paid"]},
+                }
+            },
+            {"$sort": {"latest_attempt_at": -1}},
+            {"$limit": max(1, int(limit))},
+        ]
         rows: list[dict[str, Any]] = []
-        inv_cursor = self.collection.find(
-            {"academy_id": academy_id, "status": {"$in": ["open", "partially_paid"]}}
-        )
-        async for inv in inv_cursor:
+        async for doc in self._db["payment_attempts"].aggregate(pipeline):
+            inv = doc.get("invoice") or {}
             invoice_id = str(inv.get("invoice_id") or "")
             if not invoice_id:
-                continue
-            attempts = await self.list_payment_attempts(invoice_id)
-            if not attempts:
-                continue
-            latest = attempts[0]
-            if latest.get("status") not in ("failed", "requires_action"):
                 continue
             rows.append(
                 {
@@ -373,40 +397,48 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
                     "total_cents": int(inv.get("total_cents", 0)),
                     "balance_due_cents": int(inv.get("balance_due_cents", 0)),
                     "currency": str(inv.get("currency", "usd")),
-                    "latest_attempt_at": latest.get("created_at"),
-                    "latest_decline_code": latest.get("failure_code"),
-                    "attempt_count": len(attempts),
+                    "latest_attempt_at": doc.get("latest_attempt_at"),
+                    "latest_decline_code": doc.get("latest_decline_code"),
+                    "attempt_count": int(doc.get("attempt_count", 0)),
                 }
             )
-        rows.sort(
-            key=lambda r: r["latest_attempt_at"] or datetime.min.replace(tzinfo=UTC),
-            reverse=True,
-        )
         return rows
 
-    async def list_unmatched_invoices(self) -> list[dict[str, Any]]:
+    async def list_unmatched_invoices(self, *, limit: int = 100) -> list[dict[str, Any]]:
         """Open/partially_paid invoices with no payment allocation yet.
 
         These are the legacy/migrated invoices whose historical Stripe payments
         carry no app metadata, so the reconciler can never auto-match them. They
         are the input to the human-reviewed match queue (issue #242 WI-3). An
         invoice with any ``payment_allocations`` row is considered matched and
-        excluded. Newest invoice first.
+        excluded. Newest invoice first. Single aggregation (no per-invoice
+        round-trips), capped at ``limit`` rows like the other admin list reads
+        in this module.
         """
         academy_id = current_academy_id()
+        pipeline: list[dict[str, Any]] = [
+            {
+                "$match": {
+                    "academy_id": academy_id,
+                    "status": {"$in": ["open", "partially_paid"]},
+                }
+            },
+            {"$sort": {"created_at": -1}},
+            {
+                "$lookup": {
+                    "from": "payment_allocations",
+                    "localField": "invoice_id",
+                    "foreignField": "invoice_id",
+                    "as": "allocations",
+                }
+            },
+            {"$match": {"allocations": {"$not": {"$elemMatch": {"academy_id": academy_id}}}}},
+            {"$limit": max(1, int(limit))},
+        ]
         rows: list[dict[str, Any]] = []
-        inv_cursor = self.collection.find(
-            {"academy_id": academy_id, "status": {"$in": ["open", "partially_paid"]}},
-            sort=[("created_at", -1)],
-        )
-        async for inv in inv_cursor:
+        async for inv in self.collection.aggregate(pipeline):
             invoice_id = str(inv.get("invoice_id") or "")
             if not invoice_id:
-                continue
-            allocation = await self._db["payment_allocations"].find_one(
-                {"academy_id": academy_id, "invoice_id": invoice_id}
-            )
-            if allocation is not None:
                 continue
             rows.append(
                 {

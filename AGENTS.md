@@ -42,32 +42,12 @@ Do not treat `.claude/worktrees/*` as canonical project source unless the user e
 
 ## Test Result Kickoff
 
+Use the maintained testing runbook: `docs/testing.md`.
+
 `test_result.md` is only an index. Detailed testing state lives in
-`docs/test-results/active/`.
-
-At the start of a task:
-
-```bash
-git status --short --branch
-sed -n '1,160p' test_result.md
-ls docs/test-results/active
-```
-
-If there is no active ledger for the task, create one:
-
-```bash
-scripts/dev/test_result.py start "task title" --problem "What needs to be verified"
-```
-
-During and after work, update the task ledger:
-
-```bash
-scripts/dev/test_result.py log task-title --agent main --status working --message "What changed"
-scripts/dev/test_result.py verify task-title --message "Command/result or skipped check reason"
-scripts/dev/test_result.py close task-title
-```
-
-Do not manually restore the old global YAML ledger in `test_result.md`.
+`docs/test-results/active/`. Create, update, verify, and close task ledgers with
+`scripts/dev/test_result.py`; do not manually restore the old global YAML
+ledger in `test_result.md`.
 
 ---
 
@@ -78,8 +58,8 @@ Do not manually restore the old global YAML ledger in `test_result.md`.
 | Architecture / DDD / BFF / migration plan | `docs/agent/architecture-rules.md` |
 | Backend / API / Mongo / auth / payments | `docs/agent/backend-api-rules.md` |
 | Frontend / React / UI / PWA | `docs/agent/frontend-rules.md` |
-| Testing / verification / bug fixing | `docs/agent/testing-verification.md` |
-| Production-scale local real-user audit | `docs/agent/testing-verification.md` |
+| Testing / verification / bug fixing | `docs/testing.md` and `docs/agent/testing-verification.md` |
+| Production-scale local real-user audit | `docs/testing.md` and `docs/agent/testing-verification.md` |
 | Status handoff / agent loop / ticket updates | `docs/agent/feedback-loop.md` |
 | Drafting Codex prompts / goals / agent handoffs | `docs/agent/codex-prompting.md` |
 
@@ -185,123 +165,23 @@ For ticketed work, map the plan to the ticket ID and acceptance criteria.
 
 ---
 
-## Common Commands
+## Testing Commands
 
-Backend:
+Testing commands, local stack usage, Docker SaaS staging, rebuild guidance,
+pre-push checks, UI verification, and production-scale audit steps live in
+`docs/testing.md`.
 
-```bash
-cd backend
-source .venv/bin/activate
-pytest
-uvicorn backend.v2.main:app --host 127.0.0.1 --port 8001 --reload
-```
-
-Frontend:
+High-frequency entry points:
 
 ```bash
-cd frontend
-pnpm install
-pnpm dev
-pnpm typecheck
-pnpm build
-pnpm generate:api
-```
-
-Pre-push checks (run before every `git push`):
-
-```bash
-# Install once after cloning — git will run checks automatically on every push
-scripts/dev/install-hooks.sh
-
-# Run manually at any time
-scripts/dev/pre-push-checks.sh          # skips E2E unless e2e/ files changed
-scripts/dev/pre-push-checks.sh --full   # always runs E2E
-```
-
-What the script checks (mirrors CI exactly):
-
-| Check | Command |
-| --- | --- |
-| Backend format | `ruff format --check v2` (must use `.venv` — system ruff differs) |
-| Backend lint | `ruff check v2` |
-| Backend tests | `pytest v2/tests -q` |
-| Frontend unit | `node --no-warnings --test lib/api/*.node-test.mjs lib/auth/*.node-test.mjs` |
-| Frontend types | `pnpm typecheck` |
-| Frontend lint | `pnpm lint` |
-| E2E | `pnpm e2e` (auto-skipped unless `e2e/` files changed; `--full` forces it) |
-
-**Always activate the backend `.venv` before running ruff manually.** The system ruff
-version differs from CI's and will produce false "already formatted" results.
-
-**Never push without running this first. If it fails locally, fix it — do not push to unblock CI.**
-
-Local testing stack (recommended — use this for all manual testing):
-
-```bash
-scripts/local_test_stack.sh fresh     # FULL RESET: stop → start everything → seed demo data
-scripts/local_test_stack.sh all       # start everything (skips already-running) + smoke check
-scripts/local_test_stack.sh status    # show what is running and on which port
-scripts/local_test_stack.sh infra     # start MongoDB + Firebase Auth emulator only
-scripts/local_test_stack.sh app       # start backend + frontend only (infra must be up)
-scripts/local_test_stack.sh smoke     # hit health endpoints and report status
-scripts/local_test_stack.sh seed      # load demo data into local MongoDB
-scripts/local_test_stack.sh test      # run backend v2 tests + frontend typecheck
-scripts/local_test_stack.sh logs      # tail all service logs
-scripts/local_test_stack.sh stop      # stop only processes started by this script
-```
-
-This starts MongoDB, Firebase Auth emulator, backend (FastAPI `--reload`), and
-frontend (`pnpm dev`) with all services wired together. Logs and PID files go
-under `/tmp/academy-manager-local`. Frontend runs on port `3001`.
-
-One-time setup: create `frontend/.env.local` with the real Firebase Web API key
-(copy from `frontend/.env.example` and fill in `NEXT_PUBLIC_FIREBASE_API_KEY`).
-The script also falls back to `REACT_APP_FIREBASE_API_KEY` in `frontend/.env`
-if `.env.local` is absent. Never use `dummy` — Firebase Auth will fail silently.
-
-Local Firebase/Auth testing guardrails:
-
-- Prefer `scripts/local_test_stack.sh all` over ad hoc `pnpm dev` restarts. The
-  helper sets all required env vars automatically.
-- Next.js client code reads `NEXT_PUBLIC_FIREBASE_*` only. `REACT_APP_FIREBASE_*`
-  values in `frontend/.env` do not reach the browser directly.
-- Frontend Auth emulator URL must include a protocol:
-  `NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST=http://127.0.0.1:9099`.
-  Backend Admin SDK uses host:port only: `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099`.
-- After starting the frontend, open a browser and sign in to confirm Firebase
-  calls reach the Auth emulator without `auth/invalid-api-key`.
-- For local BLNO tenant testing, use `http://blno.localhost:3001` — the seed registers the academy with `slug: "blno"` and the backend starts with `V2_DEFAULT_ACADEMY_ID=blno`. Plain `http://localhost:3001` also works (falls back to `default_academy_id`).
-
-Container smoke (build verification only — NOT for real testing):
-
-```bash
-docker compose up --build
-curl http://127.0.0.1:8001/api/v2/healthz
-```
-
-Docker uses a hardcoded `dummy` Firebase API key so Firebase Auth will not work.
-Use it only to verify the app builds and the health endpoint responds.
-
-Production-scale local audit (use before broad release claims):
-
-```bash
+scripts/local_test_stack.sh all
+scripts/dev/saas_staging.sh up-dev
 scripts/dev/saas_staging.sh blno-seed
-scripts/dev/saas_staging.sh scale --apply --parents 250 --students-per-parent 2
-scripts/dev/saas_staging.sh local-auth-env > /tmp/academy-local-auth-env.sh
-set -a; . /tmp/academy-local-auth-env.sh; set +a
-LOCAL_AUTH_E2E=1 scripts/dev/saas_staging.sh audit-readiness
-cd frontend && LOCAL_AUTH_E2E=1 pnpm exec playwright test -c playwright.local-auth.config.ts
-cd ..
-LOCAL_AUTH_E2E=1 scripts/dev/saas_staging.sh audit-gate
-LOCAL_AUTH_E2E=1 scripts/dev/saas_staging.sh audit-artifacts
+scripts/dev/pre-push-checks.sh
 ```
 
-This local-only audit uses sanitized BLNO staging data and Firebase Auth emulator
-accounts. It must end at `audit-readiness` = `READY`, `audit-gate` =
-`CLEAN_PASS`, and a Playwright report with no failed or skipped tests before an
-agent claims every user-facing route/control/workflow has passed. The scale
-data is intentionally local and deterministic; cleanup or reset still requires
-explicit approval because it deletes local Mongo/emulator state.
+Use `http://blno.localhost:3000/login` for Docker SaaS BLNO testing and
+`http://blno.localhost:3001` for the non-Docker local stack.
 
 ---
 

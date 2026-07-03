@@ -23,6 +23,7 @@ class RealStripeGateway(StripeGateway):
         *,
         api_key: str,
         webhook_secret: str,
+        connect_webhook_secret: str | None = None,
         connect_client_id: str | None = None,
         skip_signature_verify: bool = False,
     ) -> None:
@@ -32,7 +33,12 @@ class RealStripeGateway(StripeGateway):
 
         stripe.api_key = api_key
         self._stripe = stripe
-        self._webhook_secret = webhook_secret
+        # Accounts v2 (/v2/core/accounts) is only exposed on StripeClient,
+        # not the module-level namespace.
+        self._client = stripe.StripeClient(api_key)
+        self._webhook_secrets = [webhook_secret]
+        if connect_webhook_secret and connect_webhook_secret not in self._webhook_secrets:
+            self._webhook_secrets.append(connect_webhook_secret)
         self._connect_client_id = connect_client_id
         self._skip_signature_verify = skip_signature_verify
 
@@ -153,8 +159,22 @@ class RealStripeGateway(StripeGateway):
         cancel_url: str,
         metadata: dict[str, str],
         idempotency_key: str | None = None,
+        connected_account_id: str | None = None,
     ) -> tuple[str, str]:
+        """When ``connected_account_id`` is set, the checkout's PaymentIntent is a
+        DESTINATION charge: the connected academy account is the merchant of
+        record (``on_behalf_of``) and funds settle to it
+        (``transfer_data.destination``) — same fund flow as
+        ``create_off_session_payment_intent``. The platform accepts liability,
+        so ``application_fee_amount`` stays 0.
+        """
+
         def _create() -> Any:
+            payment_intent_data: dict[str, Any] = {"metadata": metadata}
+            if connected_account_id:
+                payment_intent_data["on_behalf_of"] = connected_account_id
+                payment_intent_data["transfer_data"] = {"destination": connected_account_id}
+                payment_intent_data["application_fee_amount"] = 0
             request: dict[str, Any] = {
                 "mode": "payment",
                 "line_items": [
@@ -171,7 +191,7 @@ class RealStripeGateway(StripeGateway):
                 "cancel_url": cancel_url,
                 "client_reference_id": metadata.get("parent_id"),
                 "metadata": metadata,
-                "payment_intent_data": {"metadata": metadata},
+                "payment_intent_data": payment_intent_data,
             }
             if idempotency_key:
                 request["idempotency_key"] = idempotency_key
@@ -209,7 +229,16 @@ class RealStripeGateway(StripeGateway):
             # returned stripe.Event because in stripe-python >=15 StripeObject
             # no longer subclasses dict; the handler requires a plain dict, so
             # we parse the (now verified) raw payload instead.
-            self._stripe.Webhook.construct_event(payload, signature, self._webhook_secret)
+            last_exc: Exception | None = None
+            for secret in self._webhook_secrets:
+                try:
+                    self._stripe.Webhook.construct_event(payload, signature, secret)
+                    break
+                except Exception as exc:
+                    last_exc = exc
+            else:
+                assert last_exc is not None
+                raise last_exc
         return json.loads(payload)  # type: ignore[no-any-return]
 
     async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, Any]:
@@ -455,7 +484,9 @@ class RealStripeGateway(StripeGateway):
         failures do not create duplicate Stripe accounts.
         """
         request: dict[str, Any] = {
-            "dashboard": "full",
+            # Express dashboard: Stripe rejects "full" when the application
+            # collects fees/losses (destination charges, platform liability).
+            "dashboard": "express",
             "configuration": {
                 "merchant": {
                     "capabilities": {
@@ -479,9 +510,10 @@ class RealStripeGateway(StripeGateway):
             request["contact_email"] = contact_email
 
         def _create() -> Any:
-            kwargs = dict(request)
-            kwargs["idempotency_key"] = idempotency_key or f"connect-account:{academy_id}"
-            return self._stripe.v2.core.accounts.create(**kwargs)
+            return self._client.v2.core.accounts.create(
+                params=request,
+                options={"idempotency_key": idempotency_key or f"connect-account:{academy_id}"},
+            )
 
         try:
             account = await asyncio.to_thread(_create)

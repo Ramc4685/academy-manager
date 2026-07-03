@@ -4,12 +4,14 @@ import { useQuery } from "@tanstack/react-query";
 
 import {
   getChildSchedule,
+  getParentAcademy,
   listParentAttendance,
   listParentChildren,
   type ParentAttendanceRecord,
   type ParentChild,
   type ParentScheduleEntry,
 } from "@/lib/api/parent";
+import { formatAcademyDate, formatAcademyTimeRange } from "@/lib/format/academy-time";
 
 const GRADIENTS = [
   "linear-gradient(135deg,#2563eb,#4f46e5)",
@@ -33,9 +35,14 @@ export default function ParentChildrenPage() {
     queryKey: ["parent", "attendance"],
     queryFn: listParentAttendance,
   });
+  const { data: academy } = useQuery({
+    queryKey: ["parent", "academy"],
+    queryFn: getParentAcademy,
+  });
 
   const children = data?.children ?? [];
   const allAttendance = attendanceData?.records ?? [];
+  const academyTimezone = academy?.timezone ?? null;
 
   return (
     <section data-testid="parent-children">
@@ -73,6 +80,7 @@ export default function ParentChildrenPage() {
               key={child.student_id}
               child={child}
               attendance={allAttendance.filter((r) => r.student_id === child.student_id)}
+              academyTimezone={academyTimezone}
             />
           ))}
         </div>
@@ -81,7 +89,15 @@ export default function ParentChildrenPage() {
   );
 }
 
-function ChildCard({ child, attendance }: { child: ParentChild; attendance: ParentAttendanceRecord[] }) {
+function ChildCard({
+  child,
+  attendance,
+  academyTimezone,
+}: {
+  child: ParentChild;
+  attendance: ParentAttendanceRecord[];
+  academyTimezone: string | null;
+}) {
   const { data: scheduleData } = useQuery({
     queryKey: ["parent", "child-schedule", child.student_id],
     queryFn: () => getChildSchedule(child.student_id),
@@ -136,7 +152,9 @@ function ChildCard({ child, attendance }: { child: ParentChild; attendance: Pare
           <p className="text-xs py-1" style={{ color: "var(--rally-subtle)" }}>No upcoming sessions.</p>
         ) : (
           <ul className="space-y-2">
-            {sessions.map((s) => <SessionRow key={s.occurrence_id} entry={s} />)}
+            {sessions.map((s) => (
+              <SessionRow key={s.occurrence_id} entry={s} academyTimezone={academyTimezone} />
+            ))}
           </ul>
         )}
       </div>
@@ -150,7 +168,9 @@ function ChildCard({ child, attendance }: { child: ParentChild; attendance: Pare
           <p className="text-xs py-1" style={{ color: "var(--rally-subtle)" }}>No records yet.</p>
         ) : (
           <ul className="divide-y" style={{ borderColor: "var(--rally-line)" }}>
-            {attendance.map((r) => <AttendanceRow key={r.attendance_id} record={r} />)}
+            {attendance.map((r) => (
+              <AttendanceRow key={r.attendance_id} record={r} academyTimezone={academyTimezone} />
+            ))}
           </ul>
         )}
       </div>
@@ -158,11 +178,14 @@ function ChildCard({ child, attendance }: { child: ParentChild; attendance: Pare
   );
 }
 
-function SessionRow({ entry }: { entry: ParentScheduleEntry }) {
-  const start = new Date(entry.start_at);
-  const end = new Date(entry.end_at);
-  const dateStr = start.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-  const timeStr = `${start.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} – ${end.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+function SessionRow({
+  entry,
+  academyTimezone,
+}: {
+  entry: ParentScheduleEntry;
+  academyTimezone: string | null;
+}) {
+  const whenStr = formatAcademyTimeRange(entry.start_at, entry.end_at, academyTimezone);
 
   return (
     <li className="flex gap-3 rounded-xl p-3" style={{ background: "var(--rally-cobalt-soft)" }}>
@@ -176,7 +199,7 @@ function SessionRow({ entry }: { entry: ParentScheduleEntry }) {
       </div>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-semibold truncate" style={{ color: "var(--rally-ink)" }}>{entry.session_title}</p>
-        <p className="text-xs mt-0.5" style={{ color: "var(--rally-muted)" }}>{dateStr} · {timeStr}</p>
+        <p className="text-xs mt-0.5" style={{ color: "var(--rally-muted)" }}>{whenStr}</p>
         {(entry.location || entry.coach_name) && (
           <div className="flex flex-wrap gap-1.5 mt-1">
             {entry.location && (
@@ -197,7 +220,13 @@ function SessionRow({ entry }: { entry: ParentScheduleEntry }) {
   );
 }
 
-function AttendanceRow({ record }: { record: ParentAttendanceRecord }) {
+function AttendanceRow({
+  record,
+  academyTimezone,
+}: {
+  record: ParentAttendanceRecord;
+  academyTimezone: string | null;
+}) {
   const present = record.status === "present" || record.status === "late";
   return (
     <li className="flex items-center justify-between gap-3 py-2.5 text-xs">
@@ -208,7 +237,7 @@ function AttendanceRow({ record }: { record: ParentAttendanceRecord }) {
         )}
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <span style={{ color: "var(--rally-subtle)" }}>{new Date(record.marked_at).toLocaleDateString()}</span>
+        <span style={{ color: "var(--rally-subtle)" }}>{formatAcademyDate(record.marked_at, academyTimezone)}</span>
         <span
           className="rounded-full px-2 py-0.5 font-bold text-[11px]"
           style={present ? { background: "#dcfce7", color: "#16a34a" } : { background: "#fee2e2", color: "#dc2626" }}

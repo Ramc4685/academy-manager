@@ -23,6 +23,53 @@ def test_coach_today_happy_path(coach_client):
     assert {r["full_name"] for r in first["roster"]} == {"Alice", "Bob"}
 
 
+def test_coach_today_hydrates_existing_attendance(coach_client):
+    """A recorded mark must come back on /today so reloads don't render a
+    marked class as unmarked (and bulk mark-all doesn't 409 on re-send)."""
+    mark = coach_client.post(
+        "/api/v2/coach/attendance",
+        json={
+            "mutation_id": "01HTESTHYDRATE0000000000001",
+            "occurrence_id": "occ-today-1",
+            "session_id": "s-today-1",
+            "student_id": "st1",
+            "status": "present",
+        },
+    )
+    assert mark.status_code in (200, 201), mark.text
+
+    r = coach_client.get("/api/v2/coach/today?date=2026-05-16")
+    assert r.status_code == 200, r.text
+    first = r.json()["sessions"][0]
+    by_id = {entry["student_id"]: entry for entry in first["roster"]}
+    assert by_id["st1"]["attendance_status"] == "present"
+    unmarked = [e for sid, e in by_id.items() if sid != "st1"]
+    assert all(e["attendance_status"] is None for e in unmarked)
+
+
+def test_coach_today_hydrates_late_attendance_without_response_validation_error(coach_client):
+    """A "late" mark must round-trip through /today — the roster DTO's
+    attendance_status must accept it, not just present/absent, or FastAPI
+    response validation fails the whole day payload."""
+    mark = coach_client.post(
+        "/api/v2/coach/attendance",
+        json={
+            "mutation_id": "01HTESTHYDRATE0000000000002",
+            "occurrence_id": "occ-today-1",
+            "session_id": "s-today-1",
+            "student_id": "st1",
+            "status": "late",
+        },
+    )
+    assert mark.status_code in (200, 201), mark.text
+
+    r = coach_client.get("/api/v2/coach/today?date=2026-05-16")
+    assert r.status_code == 200, r.text
+    first = r.json()["sessions"][0]
+    by_id = {entry["student_id"]: entry for entry in first["roster"]}
+    assert by_id["st1"]["attendance_status"] == "late"
+
+
 def test_coach_today_other_day_empty(coach_client):
     r = coach_client.get("/api/v2/coach/today?date=2026-05-17")
     assert r.status_code == 200

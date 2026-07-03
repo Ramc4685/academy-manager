@@ -77,6 +77,7 @@ class Settings(BaseSettings):
 
     stripe_api_key: str | None = Field(default=None)
     stripe_webhook_secret: str | None = Field(default=None)
+    stripe_connect_webhook_secret: str | None = Field(default=None)
     stripe_connect_client_id: str | None = Field(default=None)
     stripe_connect_callback_uri: str | None = Field(default=None)
     stripe_connect_state_secret: str | None = Field(default=None)
@@ -136,6 +137,11 @@ class Settings(BaseSettings):
         if "V2_STRIPE_WEBHOOK_SECRET" not in os.environ:
             self.stripe_webhook_secret = os.environ.get(
                 "STRIPE_WEBHOOK_SECRET", self.stripe_webhook_secret
+            )
+        if "V2_STRIPE_CONNECT_WEBHOOK_SECRET" not in os.environ:
+            self.stripe_connect_webhook_secret = os.environ.get(
+                "STRIPE_CONNECT_WEBHOOK_SECRET",
+                self.stripe_connect_webhook_secret,
             )
         if "V2_TENANCY_MODE" not in os.environ and os.environ.get("APP_TENANCY_MODE"):
             self.tenancy_mode = os.environ["APP_TENANCY_MODE"].strip().lower()  # type: ignore[assignment]

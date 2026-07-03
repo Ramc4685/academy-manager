@@ -18,6 +18,9 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     SendDuesReminders,
     UndoPaymentPaid,
 )
+from backend.v2.contexts.billing.application.use_cases.connect_onboarding import (
+    StartConnectOnboarding,
+)
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
     DeleteExpense,
     EditExpense,
@@ -276,6 +279,9 @@ class AdminUseCases:
     start_stripe_connect_use_case: StartStripeConnectUseCase | None = None
     complete_stripe_connect_use_case: CompleteStripeConnectUseCase | None = None
     disconnect_stripe_use_case: DisconnectStripeUseCase | None = None
+    # Accounts-v2 Connect onboarding (Slice I) — supersedes the legacy OAuth
+    # trio above for actually unblocking billing; see academy_routes.py.
+    start_connect_onboarding_use_case: StartConnectOnboarding | None = None
     # Coach teaching-plan digest: test-send + delivery log (Stream 2 C/D).
     send_coach_digest_test: object | None = None  # SendCoachDigestTest
     get_digest_delivery_log: object | None = None  # GetDigestDeliveryLog

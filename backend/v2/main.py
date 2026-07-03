@@ -251,6 +251,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.platform_connect_onboarding = StartConnectOnboarding(
         stripe=stripe_gw,
         connected_accounts=MongoConnectedAccountRepository(db),
+        allowed_redirect_origins=settings.cors_allowed_origins(),
     )
 
     # Admin BFF wiring (Wave 3).
@@ -358,6 +359,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             with tenant_scope(academy_id):
                 worker = getattr(app.state.admin, "process_dunning_retries", None)
                 if worker is None:
+                    log.warning(
+                        "dunning_retries_worker_missing: process_dunning_retries is not "
+                        "wired on app.state.admin; dunning is NOT running",
+                        extra={"academy_id": academy_id},
+                    )
                     continue
                 result = await worker.execute(
                     limit=100,
@@ -576,6 +582,7 @@ def _build_stripe(settings: Settings) -> StripeGateway:
     return RealStripeGateway(
         api_key=settings.stripe_api_key,
         webhook_secret=settings.stripe_webhook_secret,
+        connect_webhook_secret=settings.stripe_connect_webhook_secret,
         connect_client_id=settings.stripe_connect_client_id,
     )
 

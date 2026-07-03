@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ulid } from "ulid";
 
 import {
+  bulkMarkAttendance,
   createProgressNote,
   getCoachToday,
   markAttendance,
@@ -138,6 +139,78 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
     },
   });
 
+  const bulkAttendanceMutation = useMutation({
+    mutationFn: async (studentIds: string[]) =>
+      bulkMarkAttendance(session?.occurrence_id ?? decodedId, {
+        mutation_id: ulid(),
+        session_id: session?.session_id ?? decodedId,
+        entries: studentIds.map((student_id) => ({
+          student_id,
+          status: "present" as const,
+        })),
+      }),
+    onMutate: (studentIds) => {
+      setLocalMarks((m) => {
+        const next = { ...m };
+        for (const student_id of studentIds) {
+          next[student_id] = { student_id, status: "present", pending: true };
+        }
+        return next;
+      });
+    },
+    onSuccess: (res) => {
+      setLocalMarks((m) => {
+        const next = { ...m };
+        for (const r of res.results) {
+          next[r.student_id] = {
+            student_id: r.student_id,
+            status: r.status as MarkStatus,
+            pending: false,
+          };
+        }
+        return next;
+      });
+    },
+    onError: (err: unknown, studentIds) => {
+      const conflict = (err as { status?: number }).status === 409;
+      setLocalMarks((m) => {
+        const next = { ...m };
+        for (const student_id of studentIds) {
+          if (conflict) {
+            // Server truth wins after the refetch below; a lingering local
+            // null entry would mask the already-recorded mark.
+            delete next[student_id];
+          } else {
+            next[student_id] = {
+              student_id,
+              status: null,
+              pending: false,
+              error: formatApiError(err),
+            };
+          }
+        }
+        return next;
+      });
+      // 409 = someone in the batch is already marked server-side. The offline
+      // caches (SW stale-while-revalidate + persisted query cache) can lag, so
+      // refetch the truth; the roster then shows real marks and a retry only
+      // sends the genuinely unmarked students.
+      if (conflict) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.coach.today(date),
+          refetchType: "all",
+        });
+      }
+    },
+  });
+
+  const unmarkedStudentIds = roster
+    .filter(
+      (student) =>
+        !localMarks[student.student_id]?.status && !student.attendance_status,
+    )
+    .map((student) => student.student_id);
+
   if (isLoading)
     return <div className="text-neutral-500">Loading session…</div>;
 
@@ -205,12 +278,32 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
 
       {/* Attendance roster */}
       <section>
-        <h2
-          className="mb-2 text-sm font-semibold uppercase tracking-wide"
-          style={{ color: "var(--rally-muted)" }}
-        >
-          Attendance · {roster.length} students
-        </h2>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h2
+            className="text-sm font-semibold uppercase tracking-wide"
+            style={{ color: "var(--rally-muted)" }}
+          >
+            Attendance · {roster.length} students
+          </h2>
+          {roster.length > 0 && (
+            <button
+              data-testid="mark-all-present"
+              disabled={
+                !online ||
+                bulkAttendanceMutation.isPending ||
+                unmarkedStudentIds.length === 0
+              }
+              onClick={() => bulkAttendanceMutation.mutate(unmarkedStudentIds)}
+              className="min-h-[36px] rounded-md bg-green-600 px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-green-700 disabled:opacity-50"
+            >
+              {bulkAttendanceMutation.isPending
+                ? "Marking all…"
+                : unmarkedStudentIds.length === 0
+                  ? "All marked"
+                  : `Mark all present (${unmarkedStudentIds.length})`}
+            </button>
+          )}
+        </div>
         {roster.length === 0 ? (
           <p className="text-sm" style={{ color: "var(--rally-muted)" }}>
             No students enrolled.
@@ -278,7 +371,9 @@ function RosterRow({
   onNoteSave: (body: string) => void;
   noteSaving: boolean;
 }) {
-  const marked = local?.status;
+  // Optimistic local state wins; otherwise fall back to the server-recorded
+  // mark so a reload doesn't render a marked class as unmarked.
+  const marked = local ? local.status : (student.attendance_status ?? null);
   const passportParams = new URLSearchParams({
     from_session: sessionId,
     student_name: student.full_name,
@@ -313,6 +408,7 @@ function RosterRow({
           <button
             data-testid={`mark-${student.student_id}-present`}
             disabled={disabled || local?.pending}
+            aria-pressed={marked === "present"}
             onClick={() => onMark("present")}
             className="min-h-[36px] rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50"
             style={
@@ -321,6 +417,7 @@ function RosterRow({
                     background: "#16a34a",
                     borderColor: "#16a34a",
                     color: "#fff",
+                    fontWeight: 700,
                   }
                 : {
                     borderColor: "var(--rally-line)",
@@ -328,12 +425,19 @@ function RosterRow({
                   }
             }
           >
-            Present
+            {marked === "present" ? (
+              <>
+                <span aria-hidden="true">✓ </span>Present
+              </>
+            ) : (
+              "Present"
+            )}
           </button>
           {/* Absent */}
           <button
             data-testid={`mark-${student.student_id}-absent`}
             disabled={disabled || local?.pending}
+            aria-pressed={marked === "absent"}
             onClick={() => onMark("absent")}
             className="min-h-[36px] rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50"
             style={
@@ -342,6 +446,7 @@ function RosterRow({
                     background: "#dc2626",
                     borderColor: "#dc2626",
                     color: "#fff",
+                    fontWeight: 700,
                   }
                 : {
                     borderColor: "var(--rally-line)",
@@ -349,11 +454,18 @@ function RosterRow({
                   }
             }
           >
-            Absent
+            {marked === "absent" ? (
+              <>
+                <span aria-hidden="true">✕ </span>Absent
+              </>
+            ) : (
+              "Absent"
+            )}
           </button>
           {/* Note toggle */}
           <button
             onClick={onToggleNote}
+            aria-expanded={noteOpen}
             className="min-h-[36px] rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
             style={
               noteOpen

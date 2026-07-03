@@ -93,6 +93,18 @@ class _FakePaymentIntent:
         return SimpleNamespace(data=[{"id": f"pi_search_{status}", "status": status}])
 
 
+class _FakeWebhook:
+    calls: ClassVar[list[str]] = []
+    valid_secret: ClassVar[str] = "whsec_fake"
+
+    @classmethod
+    def construct_event(cls, payload: bytes, signature: str, secret: str) -> object:
+        cls.calls.append(secret)
+        if secret != cls.valid_secret:
+            raise _FakeStripeError("signature verification failed")
+        return {"id": "evt_test"}
+
+
 class _FakeSetupIntent:
     @classmethod
     def retrieve(cls, setup_intent_id: str) -> object:
@@ -119,6 +131,8 @@ def fake_stripe_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeCustomer.calls.clear()
     _FakeCustomer.modify_calls.clear()
     _FakePaymentIntent.calls.clear()
+    _FakeWebhook.calls.clear()
+    _FakeWebhook.valid_secret = "whsec_fake"
     fake_stripe = SimpleNamespace(
         api_key=None,
         checkout=SimpleNamespace(Session=_FakeCheckoutSession),
@@ -127,13 +141,44 @@ def fake_stripe_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
         PaymentIntent=_FakePaymentIntent,
         SetupIntent=_FakeSetupIntent,
         PaymentMethod=_FakePaymentMethod,
-        Webhook=SimpleNamespace(),
+        Webhook=_FakeWebhook,
         Refund=SimpleNamespace(),
         Subscription=SimpleNamespace(),
         Invoice=SimpleNamespace(),
         StripeError=_FakeStripeError,
+        # RealStripeGateway.__init__ builds a StripeClient for Accounts v2.
+        StripeClient=lambda api_key: SimpleNamespace(
+            v2=SimpleNamespace(core=SimpleNamespace(accounts=SimpleNamespace()))
+        ),
     )
     monkeypatch.setitem(sys.modules, "stripe", fake_stripe)
+
+
+def test_verify_webhook_accepts_primary_webhook_secret() -> None:
+    gateway = RealStripeGateway(
+        api_key="sk_test_fake",
+        webhook_secret="whsec_fake",
+        connect_webhook_secret="whsec_connect_fake",
+    )
+
+    event = gateway.verify_webhook(b'{"id":"evt_1","type":"checkout.session.completed"}', "sig")
+
+    assert event["id"] == "evt_1"
+    assert _FakeWebhook.calls == ["whsec_fake"]
+
+
+def test_verify_webhook_accepts_connect_webhook_secret_after_primary_mismatch() -> None:
+    _FakeWebhook.valid_secret = "whsec_connect_fake"
+    gateway = RealStripeGateway(
+        api_key="sk_test_fake",
+        webhook_secret="whsec_account_fake",
+        connect_webhook_secret="whsec_connect_fake",
+    )
+
+    event = gateway.verify_webhook(b'{"id":"evt_2","type":"account.updated"}', "sig")
+
+    assert event["id"] == "evt_2"
+    assert _FakeWebhook.calls == ["whsec_account_fake", "whsec_connect_fake"]
 
 
 @pytest.mark.asyncio

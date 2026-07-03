@@ -164,6 +164,10 @@ class ParentPaymentView(BaseModel):
     session_id: str | None
     stripe_invoice_id: str | None = None
     stripe_payment_intent_id: str | None = None
+    # Ledger linkage (via payment_allocations) so the UI can label what the
+    # payment paid for; None for legacy/unallocated payments.
+    invoice_id: str | None = None
+    invoice_period: str | None = None
 
 
 class ParentPaymentHistoryResponse(BaseModel):
@@ -419,6 +423,7 @@ class ParentAvailableSessionsResponse(BaseModel):
 
 class ParentAcademyView(BaseModel):
     display_name: str
+    timezone: str | None = None
     contact_email: str | None = None
     contact_phone: str | None = None
     hours_text: str | None = None

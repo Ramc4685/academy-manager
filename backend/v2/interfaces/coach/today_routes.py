@@ -52,6 +52,18 @@ async def get_today(
         *[use_cases.get_roster.execute(s.roster_session_id) for s in sessions]
     )
 
+    # Existing marks per occurrence, so a reload doesn't present a marked
+    # class as unmarked (and "Mark all present" doesn't re-send marked rows,
+    # which the bulk endpoint rejects whole-batch with 409).
+    list_attendance = getattr(use_cases, "list_attendance_for_occurrence", None)
+    marks_by_occurrence: dict[str, dict[str, str]] = {}
+    if list_attendance is not None:
+        attendance_lists = await asyncio.gather(
+            *[list_attendance(s.occurrence_id) for s in sessions]
+        )
+        for s, marks in zip(sessions, attendance_lists, strict=False):
+            marks_by_occurrence[s.occurrence_id] = {m.student_id: m.status for m in marks}
+
     out = [
         CoachSession(
             session_id=s.session_id,
@@ -66,6 +78,9 @@ async def get_today(
                     student_id=r.student_id,
                     full_name=r.full_name,
                     enrollment_status=r.status,
+                    attendance_status=marks_by_occurrence.get(s.occurrence_id, {}).get(
+                        r.student_id
+                    ),
                 )
                 for r in roster
             ],

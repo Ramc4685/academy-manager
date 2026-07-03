@@ -15,12 +15,17 @@ import os
 from pathlib import Path
 import shlex
 import sys
-import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from pymongo import MongoClient
+
+_SCRIPTS_DEV_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPTS_DEV_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DEV_DIR)
+
+from mongo_guard import assert_local_mongo_url  # noqa: E402
 
 ACADEMY_ID = "blno"
 STAGING_DB_NAME = "academy_manager_saas_staging"
@@ -51,16 +56,6 @@ DEFAULT_MONGO_URL = default_mongo_url_from_env(os.environ)
 class InventoryEnvResult:
     values: dict[str, str]
     missing: list[str]
-
-
-def assert_local_mongo_url(mongo_url: str) -> None:
-    parsed = urllib.parse.urlparse(mongo_url)
-    host = (parsed.hostname or "").lower()
-    allowed_hosts = {"127.0.0.1", "localhost", "::1", "mongo"}
-    if parsed.scheme != "mongodb" or host not in allowed_hosts:
-        raise SystemExit(
-            f"REFUSING: Mongo URL must target local staging only; got host={host!r}"
-        )
 
 
 def assert_staging_db_name(db_name: str) -> None:

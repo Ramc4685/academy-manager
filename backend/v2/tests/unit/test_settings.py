@@ -20,8 +20,10 @@ def _clear_production_env(monkeypatch) -> None:
         "V2_FIREBASE_PROJECT_ID",
         "STRIPE_API_KEY",
         "STRIPE_WEBHOOK_SECRET",
+        "STRIPE_CONNECT_WEBHOOK_SECRET",
         "V2_STRIPE_API_KEY",
         "V2_STRIPE_WEBHOOK_SECRET",
+        "V2_STRIPE_CONNECT_WEBHOOK_SECRET",
         "V2_STRIPE_USE_FAKE_GATEWAY",
         "JWT_SECRET",
         "CORS_ORIGINS",
@@ -54,6 +56,7 @@ def test_settings_reuse_legacy_deploy_env_names(monkeypatch) -> None:
     monkeypatch.setenv("V2_STRIPE_USE_FAKE_GATEWAY", "false")
     monkeypatch.setenv("STRIPE_API_KEY", "sk_test_existing")
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_existing")
+    monkeypatch.setenv("STRIPE_CONNECT_WEBHOOK_SECRET", "whsec_connect_existing")
 
     settings = Settings(_env_file=None)
 
@@ -62,6 +65,7 @@ def test_settings_reuse_legacy_deploy_env_names(monkeypatch) -> None:
     assert settings.mongo_db == "legacy_db"
     assert settings.stripe_api_key == "sk_test_existing"
     assert settings.stripe_webhook_secret == "whsec_existing"
+    assert settings.stripe_connect_webhook_secret == "whsec_connect_existing"
 
 
 def test_v2_env_names_win_over_legacy_names(monkeypatch) -> None:
@@ -70,11 +74,13 @@ def test_v2_env_names_win_over_legacy_names(monkeypatch) -> None:
     monkeypatch.setenv("DB_NAME", "legacy_db")
     monkeypatch.setenv("STRIPE_API_KEY", "sk_test_legacy")
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_legacy")
+    monkeypatch.setenv("STRIPE_CONNECT_WEBHOOK_SECRET", "whsec_connect_legacy")
     monkeypatch.setenv("V2_ENV", "staging")
     monkeypatch.setenv("V2_MONGO_URL", "mongodb+srv://v2")
     monkeypatch.setenv("V2_MONGO_DB", "v2_db")
     monkeypatch.setenv("V2_STRIPE_API_KEY", "sk_test_v2")
     monkeypatch.setenv("V2_STRIPE_WEBHOOK_SECRET", "whsec_v2")
+    monkeypatch.setenv("V2_STRIPE_CONNECT_WEBHOOK_SECRET", "whsec_connect_v2")
 
     settings = Settings(_env_file=None)
 
@@ -83,6 +89,7 @@ def test_v2_env_names_win_over_legacy_names(monkeypatch) -> None:
     assert settings.mongo_db == "v2_db"
     assert settings.stripe_api_key == "sk_test_v2"
     assert settings.stripe_webhook_secret == "whsec_v2"
+    assert settings.stripe_connect_webhook_secret == "whsec_connect_v2"
 
 
 def test_saas_mode_defaults_to_false(monkeypatch) -> None:

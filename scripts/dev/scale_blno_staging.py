@@ -14,13 +14,18 @@ import json
 import os
 import re
 import sys
-import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from pymongo import MongoClient, UpdateOne
+
+_SCRIPTS_DEV_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPTS_DEV_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DEV_DIR)
+
+from mongo_guard import assert_local_mongo_url  # noqa: E402
 
 ACADEMY_ID = "blno"
 ACADEMY_TZ = "America/Chicago"
@@ -118,16 +123,6 @@ class ScalePlan:
             "waiver_templates": len(self.waiver_templates),
             "waiver_signatures": len(self.waiver_signatures),
         }
-
-
-def assert_local_mongo_url(mongo_url: str) -> None:
-    parsed = urllib.parse.urlparse(mongo_url)
-    host = (parsed.hostname or "").lower()
-    allowed_hosts = {"127.0.0.1", "localhost", "::1", "mongo"}
-    if parsed.scheme not in {"mongodb"} or host not in allowed_hosts:
-        raise SystemExit(
-            f"REFUSING: Mongo URL must target local staging only; got host={host!r}"
-        )
 
 
 def assert_staging_db_name(db_name: str) -> None:

@@ -19,6 +19,18 @@ class _AcademyRepo(Protocol):
     ) -> dict[str, Any] | None: ...
 
 
+class _ConnectedAccountDisabler(Protocol):
+    """Disables the Accounts-v2 ``ConnectedAccount`` source of truth.
+
+    Cross-context boundary: identity cannot import billing directly, so the
+    real implementation wraps billing's ``ConnectedAccountRepository`` and
+    lives in the composition root — same pattern as
+    ``ConnectedAccountStatusReader`` in ``get_academy_gateway_use_case.py``.
+    """
+
+    async def disable_for_academy(self, academy_id: str) -> None: ...
+
+
 class _StripeConnectGateway(Protocol):
     def create_connect_link(self, *, redirect_uri: str, state: str) -> str: ...
     async def exchange_connect_code(self, code: str) -> str: ...
@@ -106,10 +118,21 @@ class CompleteStripeConnectUseCase:
 
 
 class DisconnectStripeUseCase:
-    def __init__(self, *, repo: _AcademyRepo) -> None:
+    def __init__(
+        self,
+        *,
+        repo: _AcademyRepo,
+        connected_accounts: _ConnectedAccountDisabler | None = None,
+    ) -> None:
         self._repo = repo
+        self._connected_accounts = connected_accounts
 
     async def execute(self, academy_id: str) -> None:
         result = await self._repo.update_by_id(academy_id, {"stripe_account_id": None})
         if result is None:
             raise ValueError(f"Academy {academy_id} not found")
+        # Accounts-v2 connected accounts (Slice I) are the real source of
+        # truth for "connected" / charge eligibility now — clearing the
+        # legacy field alone leaves that record ready for charges.
+        if self._connected_accounts is not None:
+            await self._connected_accounts.disable_for_academy(academy_id)

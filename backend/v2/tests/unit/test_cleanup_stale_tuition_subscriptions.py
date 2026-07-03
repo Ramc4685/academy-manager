@@ -105,7 +105,32 @@ def test_candidate_subscription_ids_rejects_missing_id_before_apply() -> None:
 
 def test_apply_requires_explicit_cleanup_confirmation() -> None:
     module = _load_module()
-    args = module.parse_args(["--mongo-url", "mongodb://example.test", "--apply"])
+    args = module.parse_args(["--mongo-url", "mongodb://127.0.0.1:27017", "--apply"])
 
     with pytest.raises(SystemExit, match="confirm-delete-stale-subscriptions"):
         module.run(args)
+
+
+def test_run_refuses_remote_mongo_url_before_touching_db() -> None:
+    module = _load_module()
+    args = module.parse_args(["--mongo-url", "mongodb://prod-cluster.example.com:27017"])
+
+    with pytest.raises(SystemExit, match="REFUSING"):
+        module.run(args)
+
+
+def test_run_refuses_multi_host_seed_list_with_remote_host() -> None:
+    module = _load_module()
+    args = module.parse_args(
+        ["--mongo-url", "mongodb://127.0.0.1:27017,prod-host.example.com:27017/db"]
+    )
+
+    with pytest.raises(SystemExit, match="REFUSING"):
+        module.run(args)
+
+
+def test_db_name_no_longer_defaults_to_production_database() -> None:
+    module = _load_module()
+    args = module.parse_args(["--mongo-url", "mongodb://127.0.0.1:27017"])
+
+    assert args.db_name == "academy_manager_saas_staging"

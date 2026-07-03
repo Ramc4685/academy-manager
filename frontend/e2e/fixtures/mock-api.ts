@@ -27,6 +27,7 @@ export interface MockState {
     }>;
   };
   attendanceCalls: Array<Record<string, unknown>>;
+  bulkAttendanceCalls: Array<Record<string, unknown>>;
   bulkSkillCalls: Array<Record<string, unknown>>;
   skillStatusCalls: Array<Record<string, unknown>>;
   attendanceResponder?: (body: Record<string, unknown>) => {
@@ -139,6 +140,7 @@ export const test = base.extend<{
         ],
       },
       attendanceCalls: [],
+      bulkAttendanceCalls: [],
       bulkSkillCalls: [],
       skillStatusCalls: [],
       statusCalls: [],
@@ -417,6 +419,30 @@ export const test = base.extend<{
         }),
       });
     });
+
+    await page.route(
+      "**/api/v2/coach/occurrences/*/attendance/bulk",
+      async (route: Route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        const body = JSON.parse(route.request().postData() ?? "{}");
+        state.bulkAttendanceCalls.push(body);
+        const entries = (body.entries ?? []) as Array<{
+          student_id: string;
+          status: string;
+        }>;
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            results: entries.map((entry, index) => ({
+              student_id: entry.student_id,
+              status: entry.status,
+              attendance_id: `${body.mutation_id}-${index}`,
+            })),
+          }),
+        });
+      },
+    );
 
     await page.route(
       "**/api/v2/coach/sessions/*/lesson-plans",

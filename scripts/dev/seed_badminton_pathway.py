@@ -19,6 +19,7 @@ Override defaults via environment variables::
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 
@@ -142,7 +143,10 @@ async def main() -> None:
         f"[seed] Done. program_id={program.program_id!r}  name={program.name!r}",
         file=sys.stderr,
     )
-    print(program.model_dump(mode="json"))
+    # Machine-readable stdout: seed_blno_staging.py json.loads() this to get
+    # the program_id for student placement — a dict repr here silently
+    # disables all pathway placements downstream.
+    print(json.dumps(program.model_dump(mode="json")))
 
     client.close()
 

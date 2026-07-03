@@ -115,6 +115,23 @@ class FakeInvoiceStripe:
         return ("cs_test_123", "https://checkout.stripe.com/pay/test")
 
 
+class _StubConnectedAccount:
+    def __init__(self, *, ready: bool, stripe_account_id: str = "acct_ready_1") -> None:
+        self._ready = ready
+        self.stripe_account_id = stripe_account_id
+
+    def is_ready_for_charges(self) -> bool:
+        return self._ready
+
+
+class _FakeConnectedAccounts:
+    def __init__(self, account: _StubConnectedAccount | None) -> None:
+        self._account = account
+
+    async def get_for_academy(self):
+        return self._account
+
+
 # ---------------------------------------------------------------------------
 # Use-case factory
 # ---------------------------------------------------------------------------
@@ -270,41 +287,83 @@ async def test_send_invoice_skips_checkout_for_void_invoice_even_with_positive_b
     assert result.checkout_url is None
 
 
-async def test_checkout_url_returned_when_stripe_configured() -> None:
-    """When Stripe gateway is injected and balance > 0, checkout_url is returned."""
-
-    class _FakeStripe:
-        async def create_invoice_checkout_session(self, **kwargs) -> tuple[str, str]:  # type: ignore[override]
-            return ("cs_test_123", "https://checkout.stripe.com/pay/test")
-
-    stripe = _FakeStripe()
+async def test_checkout_refused_when_connected_accounts_not_configured() -> None:
+    stripe = FakeInvoiceStripe()
     repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
-    uc = SendInvoice(ledger=repo, stripe=stripe, email=None, clock=lambda: NOW)  # type: ignore[arg-type]
+    uc = SendInvoice(ledger=repo, stripe=stripe, email=None, clock=lambda: NOW)
     result = await uc.execute("inv-1")
 
-    assert result.checkout_url == "https://checkout.stripe.com/pay/test"
-    assert result.invoice.delivery_status == "not_sent"
+    assert stripe.calls == []
+    assert result.checkout_url is None
 
 
 async def test_checkout_url_is_passed_to_successful_email_before_marking_sent() -> None:
-    class _FakeStripe:
-        async def create_invoice_checkout_session(self, **kwargs) -> tuple[str, str]:  # type: ignore[override]
-            return ("cs_test_123", "https://checkout.stripe.com/pay/test")
-
+    stripe = FakeInvoiceStripe()
     email = FakeInvoiceEmail()
     repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
     uc = SendInvoice(
         ledger=repo,
-        stripe=_FakeStripe(),  # type: ignore[arg-type]
+        stripe=stripe,
         email=email,  # type: ignore[arg-type]
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),  # type: ignore[arg-type]
         clock=lambda: NOW,
     )
     result = await uc.execute("inv-1")
 
     assert result.checkout_url == "https://checkout.stripe.com/pay/test"
+    assert stripe.calls[0]["connected_account_id"] == "acct_ready_1"
     assert result.invoice.delivery_status == "sent"
     assert result.invoice.sent_at == NOW
     assert email.calls[0]["checkout_url"] == "https://checkout.stripe.com/pay/test"
+
+
+async def test_checkout_routes_destination_charge_when_connected_account_ready() -> None:
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=stripe,
+        email=None,
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    result = await uc.execute("inv-1")
+
+    assert result.checkout_url == "https://checkout.stripe.com/pay/test"
+    assert stripe.calls[0]["connected_account_id"] == "acct_ready_1"
+
+
+async def test_checkout_refused_when_connected_account_not_ready() -> None:
+    """Repo wired but account not charge-ready: no platform-charge pay link is minted."""
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=stripe,
+        email=None,
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=False)),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    result = await uc.execute("inv-1")
+
+    assert stripe.calls == []
+    assert result.checkout_url is None
+
+
+async def test_checkout_refused_when_connected_account_missing() -> None:
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=stripe,
+        email=None,
+        connected_accounts=_FakeConnectedAccounts(None),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    result = await uc.execute("inv-1")
+
+    assert stripe.calls == []
+    assert result.checkout_url is None
 
 
 async def test_email_failure_records_delivery_failed_without_sent_at() -> None:

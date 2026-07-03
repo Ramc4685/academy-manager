@@ -33,6 +33,35 @@ test.describe("Coach Today", () => {
     });
   });
 
+  test("mark all present bulk-marks only unmarked students", async ({ page, mock }) => {
+    await page.goto("/coach/sessions/s-today-1");
+
+    // Mark st1 absent individually first; bulk should then only cover st2.
+    await page.getByTestId("mark-st1-absent").click();
+    await expect.poll(() => mock.attendanceCalls.length).toBe(1);
+    await expect(page.getByTestId("mark-st1-absent")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    const bulkButton = page.getByTestId("mark-all-present");
+    await expect(bulkButton).toContainText("Mark all present (1)");
+    await bulkButton.click();
+
+    await expect.poll(() => mock.bulkAttendanceCalls.length).toBe(1);
+    expect(mock.bulkAttendanceCalls[0]).toMatchObject({
+      session_id: "s-today-1",
+      entries: [{ student_id: "st2", status: "present" }],
+    });
+
+    await expect(page.getByTestId("mark-st2-present")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(bulkButton).toBeDisabled();
+    await expect(bulkButton).toContainText("All marked");
+  });
+
   // FIXME: the today route mock fulfills for the adjacent tests (renders /
   // mark-attendance / 409-conflict) but the session-detail page in this
   // specific test ends up with `today === { sessions: [] }`. Possibly a

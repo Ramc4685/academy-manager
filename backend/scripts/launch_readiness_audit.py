@@ -37,7 +37,25 @@ _P0_VALIDATORS = importlib.import_module(
 _P1_P2_VALIDATORS = importlib.import_module(
     "backend.v2.migrations.0133_broader_validators_and_outbox_retry_lock"
 ).VALIDATORS
-VALIDATORS = {**_P0_VALIDATORS, **_P1_P2_VALIDATORS}
+# Later migrations legitimately extend some 0132/0133 validators via collMod;
+# the audit must expect the LATEST applied validator per collection or a fully
+# migrated database is reported as "mismatched".
+_INVOICES_VALIDATOR = importlib.import_module(
+    "backend.v2.migrations.0138_invoice_numbering"
+).INVOICES_VALIDATOR
+_LEDGER_PAYMENTS_VALIDATOR = importlib.import_module(
+    "backend.v2.migrations.0140_ledger_payment_metadata"
+).VALIDATOR
+_PARENT_BILLING_CUSTOMERS_VALIDATOR = importlib.import_module(
+    "backend.v2.migrations.0144_parent_payment_method_display"
+)._validator()
+VALIDATORS = {
+    **_P0_VALIDATORS,
+    **_P1_P2_VALIDATORS,
+    "invoices": _INVOICES_VALIDATOR,
+    "ledger_payments": _LEDGER_PAYMENTS_VALIDATOR,
+    "parent_billing_customers": _PARENT_BILLING_CUSTOMERS_VALIDATOR,
+}
 
 EXPECTED_LAUNCH_FLAGS = {
     "APP_TENANCY_MODE": "single_academy",

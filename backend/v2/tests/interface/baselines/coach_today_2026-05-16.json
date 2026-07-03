@@ -10,8 +10,18 @@
       "start_at": "2026-05-16T09:00:00Z",
       "end_at": "2026-05-16T10:30:00Z",
       "roster": [
-        { "student_id": "st1", "full_name": "Alice", "enrollment_status": "active" },
-        { "student_id": "st2", "full_name": "Bob", "enrollment_status": "active" }
+        {
+          "student_id": "st1",
+          "full_name": "Alice",
+          "enrollment_status": "active",
+          "attendance_status": null
+        },
+        {
+          "student_id": "st2",
+          "full_name": "Bob",
+          "enrollment_status": "active",
+          "attendance_status": null
+        }
       ]
     },
     {

@@ -1154,7 +1154,6 @@ export interface DuesFollowupParentView {
   parent_name: string | null;
   email: string | null;
   pending_count: number;
-  followup_stage?: string;
   total_due_cents: number;
 }
 

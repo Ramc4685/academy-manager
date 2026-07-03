@@ -509,7 +509,14 @@ class HandleWebhookEvent:
 
         charges_enabled = _optional_bool(obj.get("charges_enabled"))
         payouts_enabled = _optional_bool(obj.get("payouts_enabled"))
-        status = "active" if charges_enabled else "restricted"
+        if charges_enabled is None:
+            # capability.* payloads carry no account-level flags; keep the
+            # status derived from the last account.updated event instead of
+            # silently downgrading an active account to "restricted".
+            existing = await self._connected_accounts.get_by_stripe_account_id(stripe_account_id)
+            status = existing.status if existing is not None else "restricted"
+        else:
+            status = "active" if charges_enabled else "restricted"
         if str(obj.get("disabled_reason") or ""):
             status = "disabled"
 

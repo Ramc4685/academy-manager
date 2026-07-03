@@ -2,7 +2,7 @@
 """seed_blno_staging.py - Full BLNO Badminton Academy seed for local SaaS staging.
 
 Creates all BLNO data in one shot:
-  Academy       BLno Badminton Academy  blno-academy.localhost  America/Chicago
+  Academy       BLno Badminton Academy  blno.localhost  America/Chicago
   Users         Admin + 2 coaches + 36 parent accounts (Firebase emulator auth)
   Students      46 students linked to parents
   Sessions      4 recurring weekly classes (Wed + Thu)
@@ -68,7 +68,7 @@ from backend.scripts.backfill_p4_legacy_payments import map_legacy_payment  # no
 
 ACADEMY_ID = "blno"
 ACADEMY_SLUG = "blno"
-ACADEMY_DOMAIN = "blno-academy.localhost"
+ACADEMY_DOMAIN = "blno.localhost"
 ACADEMY_DISPLAY_NAME = "BLno Badminton Academy"
 ACADEMY_TZ = "America/Chicago"
 CHICAGO = ZoneInfo(ACADEMY_TZ)
@@ -1244,6 +1244,23 @@ def main() -> None:
         _upsert_user(uid, email, meta["name"], meta["phone"], ["parent"])
         _upsert_membership(uid, ["parent"])
 
+    # Emulator resets mint new Firebase uids; earlier seed generations leave
+    # memberships behind whose user_id no longer matches any users doc. Those
+    # orphans confuse admin rosters, so drop them (scoped to this academy).
+    known_uids = {
+        str(doc["firebase_uid"])
+        for doc in db.users.find({"firebase_uid": {"$ne": None}}, {"firebase_uid": 1})
+    }
+    orphan_result = db.academy_memberships.delete_many(
+        {"academy_id": ACADEMY_ID, "user_id": {"$nin": sorted(known_uids)}}
+    )
+    if orphan_result.deleted_count:
+        print(
+            f"[blno-seed]      removed {orphan_result.deleted_count} orphaned "
+            "memberships from prior seed generations",
+            file=sys.stderr,
+        )
+
     # ── 4. Sessions ───────────────────────────────────────────────────────────
     print("[blno-seed] 4/9  Sessions...", file=sys.stderr)
     for sdef in SESSIONS_DEF:
@@ -1352,10 +1369,13 @@ def main() -> None:
                 "$setOnInsert": {
                     "student_id": sid,
                     "academy_id": ACADEMY_ID,
-                    "parent_id": p_uid,
                     "created_at": ts,
                 },
                 "$set": {
+                    # parent_id lives in $set, not $setOnInsert: emulator resets
+                    # mint new Firebase uids, and a re-seed must remap students
+                    # to the parent's current uid or the parent portal goes empty.
+                    "parent_id": p_uid,
                     "updated_at": ts,
                     "full_name": student_name,
                     "date_of_birth": f"{2026 - age}-06-15",
@@ -1730,7 +1750,14 @@ def main() -> None:
             try:
                 program_id = json.loads(result.stdout).get("program_id")
             except (json.JSONDecodeError, AttributeError):
-                pass
+                # Without a program_id every placement below is skipped and the
+                # whole coach/parent skill pathway renders empty — never fail
+                # this silently.
+                print(
+                    "  ERROR: could not parse program_id from pathway seed stdout; "
+                    f"student placements will be SKIPPED. stdout was: {result.stdout[:200]!r}",
+                    file=sys.stderr,
+                )
     else:
         print(f"  WARNING: {PATHWAY_SCRIPT} not found — skipping", file=sys.stderr)
 
@@ -1746,7 +1773,9 @@ def main() -> None:
             level_id = level["level_id"]
             level1_skills = [s for s in all_skills if s.get("level_id") == level_id]
             statuses = ["NOT_STARTED", "INTRODUCED", "LEARNING", "PRACTICING", "PASSED"]
-            active_sample = [r for r in student_records if r["status"] == "active"][:20]
+            # Place every active student: unplaced students render an empty
+            # skill pathway for coaches and parents, which reads as broken.
+            active_sample = [r for r in student_records if r["status"] == "active"]
 
             for i, rec in enumerate(active_sample):
                 sid = rec["student_id"]
@@ -1759,7 +1788,9 @@ def main() -> None:
                     },
                     {
                         "$setOnInsert": {
-                            "progress_id": f"lp_blno_{sid[:16]}",
+                            # Full student_id: truncation collides across the
+                            # std_blno_NNN_* family.
+                            "progress_id": f"lp_blno_{sid}",
                             "academy_id": ACADEMY_ID,
                             "student_id": sid,
                             "program_id": program_id,
@@ -1785,7 +1816,9 @@ def main() -> None:
                         },
                         {
                             "$setOnInsert": {
-                                "skill_progress_id": f"sp_{sid[:12]}_{skill['skill_id'][:8]}",
+                                # Full ids: ULID skill ids share their first 8
+                                # chars (timestamp), so truncating collides.
+                                "skill_progress_id": f"sp_{sid}_{skill['skill_id']}",
                                 "academy_id": ACADEMY_ID,
                                 "student_id": sid,
                                 "program_id": program_id,

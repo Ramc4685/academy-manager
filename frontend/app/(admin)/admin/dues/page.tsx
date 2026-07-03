@@ -6,7 +6,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listDuesFollowup, sendDuesReminders } from "@/lib/api/admin";
 import { useAdminAction } from "@/components/admin/admin-action-slot";
 import { Button } from "@/components/ds/button";
-import { Chip } from "@/components/ds/chip";
 import { Card } from "@/components/ds/card";
 import { BigNum, Overline } from "@/components/ds/typography";
 
@@ -98,7 +97,6 @@ export default function AdminDuesPage() {
                 </th>
                 <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Parent</th>
                 <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Email</th>
-                <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Stage</th>
                 <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted text-right">Open invoices</th>
                 <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted text-right">Due</th>
               </tr>
@@ -124,11 +122,6 @@ export default function AdminDuesPage() {
                     <div className="font-medium">{parent.parent_name || "Parent"}</div>
                   </td>
                   <td className="px-4 py-3 text-neutral-600 dark:text-neutral-300">{parent.email ?? "-"}</td>
-                  <td className="px-4 py-3">
-                    {parent.followup_stage && (
-                      <Chip variant={parent.followup_stage as any} label={parent.followup_stage} />
-                    )}
-                  </td>
                   <td className="px-4 py-3 text-right font-mono tabular-nums">{parent.pending_count}</td>
                   <td className="px-4 py-3 text-right font-mono tabular-nums font-medium">
                     {money(parent.total_due_cents)}

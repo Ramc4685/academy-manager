@@ -32,7 +32,6 @@ function shiftDate(value: string, days: number): string {
 
 export default function CoachDashboardPage() {
   const [date, setDate] = useState(() => localISO());
-  const [notice, setNotice] = useState<string | null>(null);
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: queryKeys.coach.dayHub(date),
     queryFn: () => getCoachDayHub(date),
@@ -54,15 +53,6 @@ export default function CoachDashboardPage() {
         </div>
         <DateControls date={date} onChange={setDate} />
       </header>
-
-      {notice && (
-        <p
-          role="status"
-          className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"
-        >
-          {notice}
-        </p>
-      )}
 
       {isLoading && <HubSkeleton />}
 
@@ -107,12 +97,7 @@ export default function CoachDashboardPage() {
 
       <ul className="space-y-3">
         {sessions.map((session) => (
-          <SessionCard
-            key={session.occurrence_id}
-            session={session}
-            date={date}
-            onUnavailable={setNotice}
-          />
+          <SessionCard key={session.occurrence_id} session={session} date={date} />
         ))}
       </ul>
 
@@ -197,11 +182,9 @@ function SummaryTile({ label, value }: { label: string; value: number }) {
 function SessionCard({
   session,
   date,
-  onUnavailable,
 }: {
   session: CoachDayHubSession;
   date: string;
-  onUnavailable: (message: string) => void;
 }) {
   const sessionHref = `/coach/sessions/${encodeURIComponent(session.occurrence_id)}?date=${date}`;
   const skillsHref = `/coach/sessions/${encodeURIComponent(session.occurrence_id)}/skills?date=${date}`;
@@ -244,26 +227,6 @@ function SessionCard({
         <ActionLink href={sessionHref} label="Open session" />
         <ActionLink href={planHref} label="Prepare" />
         <ActionLink href={skillsHref} label="Open skill updates" />
-        <button
-          onClick={() =>
-            onUnavailable(
-              "Parent messaging needs the coach-scoped messaging service before it can be used here.",
-            )
-          }
-          className="min-h-touch scroll-mb-[calc(var(--coach-bottom-nav-height)+2rem)] rounded-md border border-slate-300 px-3 text-sm font-medium text-slate-700"
-        >
-          Message parents
-        </button>
-        <button
-          onClick={() =>
-            onUnavailable(
-              "Absence notices need a coach-scoped replacement request workflow before they can be sent here.",
-            )
-          }
-          className="min-h-touch scroll-mb-[calc(var(--coach-bottom-nav-height)+2rem)] rounded-md border border-slate-300 px-3 text-sm font-medium text-slate-700 min-[360px]:col-span-2"
-        >
-          I can&apos;t attend
-        </button>
       </div>
     </li>
   );

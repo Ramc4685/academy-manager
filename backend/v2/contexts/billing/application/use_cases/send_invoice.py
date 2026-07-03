@@ -24,7 +24,10 @@ from typing import Protocol
 
 from pydantic import BaseModel
 
-from backend.v2.contexts.billing.application.ports import LedgerRepository
+from backend.v2.contexts.billing.application.ports import (
+    ConnectedAccountRepository,
+    LedgerRepository,
+)
 from backend.v2.contexts.billing.domain.ledger import (
     LedgerInvoice,
     finalize,
@@ -52,6 +55,7 @@ class InvoiceStripeGateway(Protocol):
         cancel_url: str,
         metadata: dict[str, str],
         idempotency_key: str | None = None,
+        connected_account_id: str | None = None,
     ) -> tuple[str, str]:
         """Returns (checkout_session_id, checkout_url)."""
         ...
@@ -99,6 +103,7 @@ class SendInvoice:
         ledger: LedgerRepository,
         stripe: InvoiceStripeGateway | None = None,
         email: InvoiceEmailPort | None = None,
+        connected_accounts: ConnectedAccountRepository | None = None,
         success_url: str = "https://app.example.com/pay/success",
         cancel_url: str = "https://app.example.com/pay/cancel",
         clock=lambda: datetime.now(UTC),
@@ -106,6 +111,7 @@ class SendInvoice:
         self._ledger = ledger
         self._stripe = stripe
         self._email = email
+        self._connected_accounts = connected_accounts
         self._success_url = success_url
         self._cancel_url = cancel_url
         self._now = clock
@@ -128,9 +134,31 @@ class SendInvoice:
         checkout_url: str | None = None
         payable_statuses = {"open", "partially_paid"}
         can_create_checkout = invoice.status in payable_statuses and invoice.balance_due_cents > 0
+        # Same posture as ChargeInvoiceViaAutopay: when the connected-accounts
+        # repo is wired, funds must route to the academy's connected account —
+        # refuse to mint a platform-charge pay link if it is not charge-ready.
+        connected_account_id: str | None = None
+        connected_account_blocked = False
         if can_create_checkout and self._stripe is not None:
+            if self._connected_accounts is None:
+                log.warning(
+                    "send_invoice: refusing pay link for invoice=%s — connected accounts not configured",
+                    invoice_id,
+                )
+                connected_account_blocked = True
+            else:
+                account = await self._connected_accounts.get_for_academy()
+                if account is None or not account.is_ready_for_charges():
+                    log.warning(
+                        "send_invoice: refusing pay link for invoice=%s — connected account not ready",
+                        invoice_id,
+                    )
+                    connected_account_blocked = True
+                else:
+                    connected_account_id = account.stripe_account_id
+        if can_create_checkout and self._stripe is not None and not connected_account_blocked:
             try:
-                _session_id, checkout_url = await self._stripe.create_invoice_checkout_session(
+                session_id, checkout_url = await self._stripe.create_invoice_checkout_session(
                     invoice_id=invoice_id,
                     amount_cents=invoice.balance_due_cents,
                     currency=invoice.currency,
@@ -145,11 +173,12 @@ class SendInvoice:
                     idempotency_key=(
                         f"invoice-checkout:{invoice.invoice_id}:{invoice.balance_due_cents}"
                     ),
+                    connected_account_id=connected_account_id,
                 )
                 log.info(
-                    "send_invoice: checkout_session created invoice=%s url=%s",
+                    "send_invoice: checkout_session created invoice=%s session=%s",
                     invoice_id,
-                    checkout_url,
+                    session_id,
                 )
             except Exception as exc:
                 log.warning(
@@ -165,7 +194,7 @@ class SendInvoice:
                 invoice.status,
                 invoice.balance_due_cents,
             )
-        else:
+        elif not connected_account_blocked:
             log.info(
                 "send_invoice: stripe gateway not configured — skipping checkout for invoice=%s",
                 invoice_id,

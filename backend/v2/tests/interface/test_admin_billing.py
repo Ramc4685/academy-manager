@@ -178,6 +178,23 @@ class _FakeInvoiceStripe:
         return "cs_invoice_test", "https://checkout.stripe.test/invoice"
 
 
+class _StubConnectedAccount:
+    def __init__(self, *, ready: bool, stripe_account_id: str = "acct_ready_1") -> None:
+        self._ready = ready
+        self.stripe_account_id = stripe_account_id
+
+    def is_ready_for_charges(self) -> bool:
+        return self._ready
+
+
+class _FakeConnectedAccounts:
+    def __init__(self, account: _StubConnectedAccount | None) -> None:
+        self._account = account
+
+    async def get_for_academy(self):
+        return self._account
+
+
 class _FakeInvoiceEmail:
     def __init__(self) -> None:
         self.calls: list[dict] = []
@@ -256,6 +273,7 @@ def _override_ledger(admin_client, ledger: _FakeLedger) -> None:
             ledger=ledger,
             stripe=getattr(admin_client, "_test_invoice_stripe", None),
             email=getattr(admin_client, "_test_invoice_email", None),
+            connected_accounts=getattr(admin_client, "_test_connected_accounts", None),
             success_url="https://app.example.com/parent/payments?invoice=paid",
             cancel_url="https://app.example.com/parent/payments?invoice=cancelled",
         ).execute(invoice_id)
@@ -334,6 +352,10 @@ def _override_ledger(admin_client, ledger: _FakeLedger) -> None:
 
 def _override_invoice_stripe(admin_client, stripe: _FakeInvoiceStripe) -> None:
     admin_client._test_invoice_stripe = stripe
+
+
+def _override_connected_accounts(admin_client, connected_accounts: _FakeConnectedAccounts) -> None:
+    admin_client._test_connected_accounts = connected_accounts
 
 
 def _override_invoice_email(admin_client, email: _FakeInvoiceEmail) -> None:
@@ -713,6 +735,10 @@ def test_send_invoice_returns_checkout_url_when_stripe_configured(admin_client):
     stripe = _FakeInvoiceStripe()
     _override_ledger(admin_client, ledger)
     _override_invoice_stripe(admin_client, stripe)
+    _override_connected_accounts(
+        admin_client,
+        _FakeConnectedAccounts(_StubConnectedAccount(ready=True)),
+    )
 
     response = admin_client.post("/api/v2/admin/billing/invoices/inv-1/send")
 
@@ -734,6 +760,7 @@ def test_send_invoice_returns_checkout_url_when_stripe_configured(admin_client):
                 "parent_id": "parent-1",
             },
             "idempotency_key": "invoice-checkout:inv-1:7000",
+            "connected_account_id": "acct_ready_1",
         }
     ]
 
@@ -854,6 +881,10 @@ def test_send_invoice_with_email_marks_sent_and_passes_checkout_url(admin_client
     email = _FakeInvoiceEmail()
     _override_ledger(admin_client, ledger)
     _override_invoice_stripe(admin_client, stripe)
+    _override_connected_accounts(
+        admin_client,
+        _FakeConnectedAccounts(_StubConnectedAccount(ready=True)),
+    )
     _override_invoice_email(admin_client, email)
 
     response = admin_client.post("/api/v2/admin/billing/invoices/inv-1/send")
@@ -862,6 +893,7 @@ def test_send_invoice_with_email_marks_sent_and_passes_checkout_url(admin_client
     body = response.json()
     assert body["checkout_url"] == "https://checkout.stripe.test/invoice"
     assert body["delivery_status"] == "sent"
+    assert stripe.calls[0]["connected_account_id"] == "acct_ready_1"
     assert email.calls == [
         {
             "parent_id": "parent-1",

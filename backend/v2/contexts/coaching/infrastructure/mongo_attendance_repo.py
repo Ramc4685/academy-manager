@@ -67,6 +67,11 @@ class MongoAttendanceRepository(TenantScopedRepository):
         doc = await self._find_one({"attendance_id": attendance_id})
         return self._to_domain(doc) if doc else None
 
+    async def list_for_occurrence(self, occurrence_id: str) -> list[Attendance]:
+        """All student attendance rows already recorded for one occurrence."""
+        cursor = self._find_many({"occurrence_id": occurrence_id}, sort=[("marked_at", 1)])
+        return [self._to_domain(doc) async for doc in cursor]
+
 
 class MongoCoachAttendanceRepository(TenantScopedRepository):
     collection_name = "coach_attendance"

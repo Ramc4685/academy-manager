@@ -1,7 +1,7 @@
 # BLNO local manual test checklist
 
-Use this checklist for local SaaS-mode manual testing of the seeded BLNO-style
-academy data. It complements the automated smoke in
+Use this checklist for local Docker SaaS-mode manual testing of the seeded
+BLNO-style academy data. It complements the automated smoke in
 [saas-local-staging.md](saas-local-staging.md); it does not replace the smoke
 or prove production readiness.
 
@@ -10,19 +10,24 @@ or prove production readiness.
 1. Start the local stack from the project root:
 
    ```bash
-   scripts/local_test_stack.sh all
+   scripts/dev/saas_staging.sh up
+   scripts/dev/saas_staging.sh blno-seed
    ```
 
 2. Open the BLNO tenant frontend:
 
    ```text
-   http://blno.localhost:3000
+   http://blno.localhost:3000/login
    ```
+
+   Use `blno.localhost` for Docker SaaS manual testing. Tenant resolution is
+   host-based, and `blno-academy.localhost` is not the canonical local BLNO
+   route.
 
 3. If the stack has stale data, reseed it:
 
    ```bash
-   scripts/local_test_stack.sh seed
+   scripts/dev/saas_staging.sh blno-seed
    ```
 
 4. Use Firebase Auth emulator credentials only. The SaaS staging emulator
