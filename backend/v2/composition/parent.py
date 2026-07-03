@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
@@ -160,6 +161,7 @@ from backend.v2.shared.tenancy import tenant_scope
 from .event_handlers import HandlerDeps, install_handlers
 
 T = TypeVar("T")
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -976,6 +978,7 @@ def compose_parent(
             ledger=billing_ledger_repo,
             stripe=invoice_stripe,  # type: ignore[arg-type]
             email=None,
+            connected_accounts=connected_accounts_repo,
             success_url=success_url,
             cancel_url=cancel_url,
         ).execute(invoice_id)
@@ -1014,6 +1017,11 @@ def compose_parent(
         invoice_stripe = stripe if hasattr(stripe, "create_invoice_checkout_session") else None
         if invoice_stripe is None:
             raise ValueError("balance payment unavailable")
+        # Destination-charge routing (Slice I posture): funds must settle to the
+        # academy's connected account; refuse a platform charge if not ready.
+        account = await connected_accounts_repo.get_for_academy()
+        if account is None or not account.is_ready_for_charges():
+            raise ValueError("balance payment unavailable")
         currencies = {inv.currency for inv in payable}
         if len(currencies) != 1:
             raise ValueError("cannot pay invoices with mixed currencies in one checkout")
@@ -1025,21 +1033,31 @@ def compose_parent(
         # invoice set reuse one Stripe Checkout session instead of creating
         # duplicate collection attempts.
         fingerprint = hashlib.sha256(f"{academy_id}:{parent_id}:{invoice_ids}".encode()).hexdigest()
-        _, url = await invoice_stripe.create_invoice_checkout_session(
-            invoice_id=f"balance-{parent_id[:8]}",
-            amount_cents=total_cents,
-            currency=currency,
-            success_url=success_url,
-            cancel_url=cancel_url,
-            metadata={
-                "academy_id": academy_id,
-                "parent_id": parent_id,
-                "invoice_ids": invoice_ids,
-                "source": "invoice_balance",
-                "type": "balance_payment",
-            },
-            idempotency_key=f"balance-payment:{fingerprint}",
-        )
+        try:
+            _, url = await invoice_stripe.create_invoice_checkout_session(
+                invoice_id=f"balance-{parent_id[:8]}",
+                amount_cents=total_cents,
+                currency=currency,
+                success_url=success_url,
+                cancel_url=cancel_url,
+                metadata={
+                    "academy_id": academy_id,
+                    "parent_id": parent_id,
+                    "invoice_ids": invoice_ids,
+                    "source": "invoice_balance",
+                    "type": "balance_payment",
+                },
+                idempotency_key=f"balance-payment:{fingerprint}",
+                connected_account_id=account.stripe_account_id,
+            )
+        except Exception as exc:
+            log.warning(
+                "start_balance_payment: checkout creation failed parent=%s invoice_count=%d err=%s",
+                parent_id,
+                len(payable),
+                exc,
+            )
+            raise ValueError("balance payment unavailable") from exc
         return {"redirect_url": url}
 
     async def quote_enrollment(

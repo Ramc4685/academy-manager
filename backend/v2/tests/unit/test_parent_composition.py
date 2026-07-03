@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
 from typing import Any
 
 import pytest
 
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
+from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
 from backend.v2.contexts.billing.domain.errors import CheckoutCreationFailed
+from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
+from backend.v2.shared.config import get_settings
 from backend.v2.shared.tenancy import tenant_scope
 
 
@@ -95,6 +99,19 @@ class _PortalStripe:
         return "https://billing.stripe.com/session"
 
 
+class _InvoiceCheckoutStripe(_PortalStripe):
+    def __init__(self, *, fail: bool = False) -> None:
+        super().__init__()
+        self.fail = fail
+        self.invoice_checkout_calls: list[dict[str, Any]] = []
+
+    async def create_invoice_checkout_session(self, **kwargs: Any) -> tuple[str, str]:
+        self.invoice_checkout_calls.append(kwargs)
+        if self.fail:
+            raise RuntimeError("stripe rejected destination account")
+        return "cs_invoice_test", "https://checkout.stripe.test/balance"
+
+
 def _matches(doc: dict[str, Any], query: dict[str, Any]) -> bool:
     for key, expected in query.items():
         if key == "$or":
@@ -106,6 +123,50 @@ def _matches(doc: dict[str, Any], query: dict[str, Any]) -> bool:
         elif doc.get(key) != expected:
             return False
     return True
+
+
+def _invoice_doc(
+    *,
+    invoice_id: str,
+    parent_id: str = "parent-1",
+    balance_due_cents: int = 7_000,
+    created_at: datetime | None = None,
+) -> dict[str, Any]:
+    now = created_at or datetime(2026, 7, 3, 10, 0, tzinfo=UTC)
+    return LedgerInvoice(
+        invoice_id=invoice_id,
+        academy_id="acad",
+        parent_id=parent_id,
+        student_id="student-1",
+        period="2026-07",
+        status="open",
+        subtotal_cents=balance_due_cents,
+        discount_cents=0,
+        total_cents=balance_due_cents,
+        balance_due_cents=balance_due_cents,
+        currency="usd",
+        due_date=date(2026, 7, 31),
+        created_at=now,
+        updated_at=now,
+    ).model_dump(mode="python")
+
+
+def _connected_account_doc(*, ready: bool = True) -> dict[str, Any]:
+    account = ConnectedAccount.new(
+        academy_id="acad",
+        stripe_account_id="acct_ready",
+    )
+    if ready:
+        account = account.with_status(status="active", charges_enabled=True)
+    return account.model_dump(mode="python")
+
+
+@pytest.fixture
+def allow_app_origin(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("V2_CORS_ORIGINS", "https://app.example.com")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def test_parent_composition_requires_explicit_academy_id() -> None:
@@ -182,6 +243,188 @@ async def test_parent_payment_history_suppresses_matching_legacy_projection() ->
         rows = await parent.list_payments_for_parent("parent-1")
 
     assert [row.payment_id for row in rows] == ["ledger-payment"]
+
+
+@pytest.mark.asyncio
+async def test_parent_single_invoice_payment_routes_checkout_to_ready_connected_account(
+    allow_app_origin,
+) -> None:
+    stripe = _InvoiceCheckoutStripe()
+    db = _FakeDb(
+        {
+            "invoices": _FakeCollection([_invoice_doc(invoice_id="inv-1")]),
+            "academy_connected_accounts": _FakeCollection([_connected_account_doc()]),
+        }
+    )
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"):
+        result = await parent.start_invoice_payment_for_parent(
+            parent_id="parent-1",
+            invoice_id="inv-1",
+            success_url="https://app.example.com/parent/payments?invoice=paid",
+            cancel_url="https://app.example.com/parent/payments?invoice=cancelled",
+        )
+
+    assert result == {
+        "invoice_id": "inv-1",
+        "checkout_url": "https://checkout.stripe.test/balance",
+    }
+    assert stripe.invoice_checkout_calls[0]["connected_account_id"] == "acct_ready"
+
+
+@pytest.mark.asyncio
+async def test_parent_single_invoice_payment_refuses_platform_charge_without_ready_account(
+    allow_app_origin,
+) -> None:
+    stripe = _InvoiceCheckoutStripe()
+    db = _FakeDb(
+        {
+            "invoices": _FakeCollection([_invoice_doc(invoice_id="inv-1")]),
+            "academy_connected_accounts": _FakeCollection([]),
+        }
+    )
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"):
+        with pytest.raises(ValueError, match="invoice payment link unavailable"):
+            await parent.start_invoice_payment_for_parent(
+                parent_id="parent-1",
+                invoice_id="inv-1",
+                success_url="https://app.example.com/parent/payments?invoice=paid",
+                cancel_url="https://app.example.com/parent/payments?invoice=cancelled",
+            )
+
+    assert stripe.invoice_checkout_calls == []
+
+
+@pytest.mark.asyncio
+async def test_parent_balance_payment_routes_checkout_to_ready_connected_account(
+    allow_app_origin,
+) -> None:
+    stripe = _InvoiceCheckoutStripe()
+    db = _FakeDb(
+        {
+            "invoices": _FakeCollection(
+                [
+                    _invoice_doc(
+                        invoice_id="inv-later",
+                        created_at=datetime(2026, 7, 10, tzinfo=UTC),
+                    ),
+                    _invoice_doc(
+                        invoice_id="inv-earlier",
+                        balance_due_cents=5_000,
+                        created_at=datetime(2026, 7, 1, tzinfo=UTC),
+                    ),
+                ]
+            ),
+            "academy_connected_accounts": _FakeCollection([_connected_account_doc()]),
+        }
+    )
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"):
+        result = await parent.start_balance_payment_for_parent(
+            parent_id="parent-1",
+            success_url="https://app.example.com/parent/payments?invoice=paid",
+            cancel_url="https://app.example.com/parent/payments?invoice=cancelled",
+        )
+
+    assert result == {"redirect_url": "https://checkout.stripe.test/balance"}
+    assert stripe.invoice_checkout_calls
+    call = stripe.invoice_checkout_calls[0]
+    assert call["amount_cents"] == 12_000
+    assert call["connected_account_id"] == "acct_ready"
+    assert call["metadata"]["invoice_ids"] == "inv-earlier,inv-later"
+    assert call["metadata"]["type"] == "balance_payment"
+
+
+@pytest.mark.asyncio
+async def test_parent_balance_payment_refuses_platform_charge_without_ready_account(
+    allow_app_origin,
+) -> None:
+    stripe = _InvoiceCheckoutStripe()
+    db = _FakeDb(
+        {
+            "invoices": _FakeCollection(
+                [
+                    _invoice_doc(invoice_id="inv-1"),
+                    _invoice_doc(invoice_id="inv-2", balance_due_cents=5_000),
+                ]
+            ),
+            "academy_connected_accounts": _FakeCollection([]),
+        }
+    )
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"):
+        with pytest.raises(ValueError, match="balance payment unavailable"):
+            await parent.start_balance_payment_for_parent(
+                parent_id="parent-1",
+                success_url="https://app.example.com/parent/payments?invoice=paid",
+                cancel_url="https://app.example.com/parent/payments?invoice=cancelled",
+            )
+
+    assert stripe.invoice_checkout_calls == []
+
+
+@pytest.mark.asyncio
+async def test_parent_balance_payment_provider_failure_returns_unavailable(
+    allow_app_origin,
+) -> None:
+    stripe = _InvoiceCheckoutStripe(fail=True)
+    db = _FakeDb(
+        {
+            "invoices": _FakeCollection(
+                [
+                    _invoice_doc(invoice_id="inv-1"),
+                    _invoice_doc(invoice_id="inv-2", balance_due_cents=5_000),
+                ]
+            ),
+            "academy_connected_accounts": _FakeCollection([_connected_account_doc()]),
+        }
+    )
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"):
+        with pytest.raises(ValueError, match="balance payment unavailable"):
+            await parent.start_balance_payment_for_parent(
+                parent_id="parent-1",
+                success_url="https://app.example.com/parent/payments?invoice=paid",
+                cancel_url="https://app.example.com/parent/payments?invoice=cancelled",
+            )
+
+    assert stripe.invoice_checkout_calls[0]["connected_account_id"] == "acct_ready"
 
 
 @pytest.mark.asyncio

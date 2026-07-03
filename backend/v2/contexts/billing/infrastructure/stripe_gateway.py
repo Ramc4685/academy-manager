@@ -156,8 +156,22 @@ class RealStripeGateway(StripeGateway):
         cancel_url: str,
         metadata: dict[str, str],
         idempotency_key: str | None = None,
+        connected_account_id: str | None = None,
     ) -> tuple[str, str]:
+        """When ``connected_account_id`` is set, the checkout's PaymentIntent is a
+        DESTINATION charge: the connected academy account is the merchant of
+        record (``on_behalf_of``) and funds settle to it
+        (``transfer_data.destination``) — same fund flow as
+        ``create_off_session_payment_intent``. The platform accepts liability,
+        so ``application_fee_amount`` stays 0.
+        """
+
         def _create() -> Any:
+            payment_intent_data: dict[str, Any] = {"metadata": metadata}
+            if connected_account_id:
+                payment_intent_data["on_behalf_of"] = connected_account_id
+                payment_intent_data["transfer_data"] = {"destination": connected_account_id}
+                payment_intent_data["application_fee_amount"] = 0
             request: dict[str, Any] = {
                 "mode": "payment",
                 "line_items": [
@@ -174,7 +188,7 @@ class RealStripeGateway(StripeGateway):
                 "cancel_url": cancel_url,
                 "client_reference_id": metadata.get("parent_id"),
                 "metadata": metadata,
-                "payment_intent_data": {"metadata": metadata},
+                "payment_intent_data": payment_intent_data,
             }
             if idempotency_key:
                 request["idempotency_key"] = idempotency_key

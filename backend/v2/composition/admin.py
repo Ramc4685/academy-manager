@@ -2866,6 +2866,7 @@ def compose_admin(
             ledger=billing_ledger_repo,
             stripe=invoice_stripe,  # type: ignore[arg-type]
             email=_invoice_email_port(),
+            connected_accounts=connected_accounts_repo,
             success_url=f"{frontend_url}/parent/payments?invoice=paid",
             cancel_url=f"{frontend_url}/parent/payments?invoice=cancelled",
         ).execute(invoice_id)

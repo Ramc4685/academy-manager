@@ -211,6 +211,57 @@ async def test_off_session_payment_intent_without_connected_account_omits_connec
     assert "payment_method_types" not in call
 
 
+async def test_invoice_checkout_has_destination_charge_params_and_no_pmt_types(
+    fake_stripe: _Recorder,
+) -> None:
+    gw = _gateway()
+
+    await gw.create_invoice_checkout_session(
+        invoice_id="inv-1",
+        amount_cents=4100,
+        currency="usd",
+        success_url="https://app.test/ok",
+        cancel_url="https://app.test/cancel",
+        metadata={"academy_id": "acad-1", "parent_id": "parent-1"},
+        idempotency_key="invoice-checkout:inv-1:4100",
+        connected_account_id="acct_v2_123",
+    )
+
+    call = fake_stripe.calls["checkout.Session.create"]
+    pi_data = call["payment_intent_data"]
+    assert pi_data["on_behalf_of"] == "acct_v2_123"
+    assert pi_data["transfer_data"] == {"destination": "acct_v2_123"}
+    assert pi_data.get("application_fee_amount", 0) == 0
+    assert pi_data["metadata"] == {"academy_id": "acad-1", "parent_id": "parent-1"}
+    assert call["idempotency_key"] == "invoice-checkout:inv-1:4100"
+    # Dynamic payment methods: never pin payment_method_types.
+    assert "payment_method_types" not in call
+    # Customer stays on the platform.
+    assert "stripe_account" not in call
+
+
+async def test_invoice_checkout_without_connected_account_omits_connect_params(
+    fake_stripe: _Recorder,
+) -> None:
+    gw = _gateway()
+
+    await gw.create_invoice_checkout_session(
+        invoice_id="inv-1",
+        amount_cents=4100,
+        currency="usd",
+        success_url="https://app.test/ok",
+        cancel_url="https://app.test/cancel",
+        metadata={"academy_id": "acad-1", "parent_id": "parent-1"},
+        connected_account_id=None,
+    )
+
+    call = fake_stripe.calls["checkout.Session.create"]
+    pi_data = call["payment_intent_data"]
+    assert "on_behalf_of" not in pi_data
+    assert "transfer_data" not in pi_data
+    assert "payment_method_types" not in call
+
+
 async def test_autopay_setup_checkout_has_connect_params_and_no_pmt_types(
     fake_stripe: _Recorder,
 ) -> None:
