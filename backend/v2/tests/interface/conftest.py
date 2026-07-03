@@ -171,6 +171,9 @@ class FakeAttendanceRepo:
                 return a
         return None
 
+    async def list_for_occurrence(self, occurrence_id):
+        return [a for a in self.saved if a.occurrence_id == occurrence_id]
+
 
 class FakeCoachingNotesRepo:
     def __init__(self) -> None:
@@ -605,6 +608,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             academy_id="test-academy",
             clock=_now,
         ),
+        list_attendance_for_occurrence=_attendance_repo.list_for_occurrence,
         get_dashboard_metrics=_dashboard,
         create_lesson_plan=CreateLessonPlan(notes=notes, sessions=session_lookup),
         list_lesson_plans=ListLessonPlans(notes=notes, sessions=session_lookup),

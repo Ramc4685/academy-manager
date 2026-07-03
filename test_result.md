@@ -60,6 +60,7 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-07-01-autopay-slice-f-consent-log](docs/test-results/active/2026-07-01-autopay-slice-f-consent-log.md)
 - [2026-07-01-autopay-slice-g-ach-lifecycle](docs/test-results/active/2026-07-01-autopay-slice-g-ach-lifecycle.md)
 - [2026-07-01-autopay-slice-h-dunning-ladder](docs/test-results/active/2026-07-01-autopay-slice-h-dunning-ladder.md)
+- [2026-07-02-production-autopay-502-investigation](docs/test-results/active/2026-07-02-production-autopay-502-investigation.md)
 - [slice-i-connect](docs/test-results/active/slice-i-connect.md)
 
 ## Required Workflow

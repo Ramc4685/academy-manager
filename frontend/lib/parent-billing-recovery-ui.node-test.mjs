@@ -9,6 +9,8 @@ const paymentsPage = readFileSync(
 
 const parentApi = readFileSync(new URL("api/parent.ts", import.meta.url), "utf8");
 
+const paymentErrorLib = readFileSync(new URL("api/payment-error.ts", import.meta.url), "utf8");
+
 test("parent billing page exposes ledger invoice retry and card update actions", () => {
   assert.match(parentApi, /startParentInvoicePayment/);
   assert.match(paymentsPage, /startParentInvoicePayment/);
@@ -17,8 +19,13 @@ test("parent billing page exposes ledger invoice retry and card update actions",
 });
 
 test("parent billing portal hides stale Stripe customer internals", () => {
-  assert.match(paymentsPage, /No such customer/);
-  assert.match(paymentsPage, /BILLING_PORTAL_PREREQUISITE/);
+  // The Stripe-detail mapping lives in the shared payment-error mapper; the
+  // page must route every mutation error through it instead of interpolating
+  // backend detail itself.
+  assert.match(paymentErrorLib, /No such customer/);
+  assert.match(paymentErrorLib, /BILLING_PORTAL_PREREQUISITE/);
+  assert.match(paymentsPage, /toPaymentErrorMessage/);
+  assert.doesNotMatch(paymentsPage, /error\.message/);
 });
 
 test("parent payments page renders app-owned autopay visibility", () => {

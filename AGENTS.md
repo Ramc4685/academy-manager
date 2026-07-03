@@ -270,7 +270,8 @@ Local Firebase/Auth testing guardrails:
   Backend Admin SDK uses host:port only: `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099`.
 - After starting the frontend, open a browser and sign in to confirm Firebase
   calls reach the Auth emulator without `auth/invalid-api-key`.
-- For local BLNO tenant testing, use `http://blno.localhost:3001` — the seed registers the academy with `slug: "blno"` and the backend starts with `V2_DEFAULT_ACADEMY_ID=blno`. Plain `http://localhost:3001` also works (falls back to `default_academy_id`).
+- For local BLNO tenant testing with `scripts/local_test_stack.sh`, use `http://blno.localhost:3001` — the seed registers the academy with `slug: "blno"` and the backend starts with `V2_DEFAULT_ACADEMY_ID=blno`. Plain `http://localhost:3001` also works (falls back to `default_academy_id`).
+- For Docker SaaS staging with `scripts/dev/saas_staging.sh`, use `http://blno.localhost:3000/login`. SaaS tenant resolution is host-based, and `blno.localhost` is the canonical local BLNO tenant host.
 
 Container smoke (build verification only — NOT for real testing):
 

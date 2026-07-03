@@ -85,6 +85,8 @@ function runStatusDot(run: ReconciliationRun): string {
   return "#16a34a"; // green
 }
 
+const ACTIVE_DUNNING_STATUSES = new Set(["active", "processing", "dunned"]);
+
 function dunningChip(status: string): { variant: ChipVariant; label: string } {
   if (status === "resolved") return { variant: "paid", label: "RESOLVED" };
   if (status === "dunned") return { variant: "failed", label: "DUNNED" };
@@ -142,6 +144,12 @@ export default function BillingHealthPage() {
   const legacyRows = legacyQuery.data?.rows ?? [];
   const latestRun = runs[0];
   const dunningRows = dunningQuery.data?.rows ?? [];
+  // The backend endpoint (MongoDunningStateRepository.list_admin_rows) returns
+  // only "dunned" / "active" (attempt_count > 0) / "processing" states, but
+  // filter defensively so resolved/suppressed rows never trip the red metric.
+  const activeDunningRows = dunningRows.filter((row) =>
+    ACTIVE_DUNNING_STATUSES.has(row.status),
+  );
 
   const invalidateAll = () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.admin.reconciliationRuns() });
@@ -200,7 +208,11 @@ export default function BillingHealthPage() {
     },
   });
 
-  const healthy = failedRows.length === 0 && dunningRows.length === 0 && quarantined.length === 0;
+  const healthy =
+    failedRows.length === 0 && activeDunningRows.length === 0 && quarantined.length === 0;
+  // "Healthy" is only a meaningful claim once at least one reconciliation run
+  // has happened; before that, the system state is unknown, not healthy.
+  const hasRunData = runs.length > 0;
 
   return (
     <div className="space-y-6 p-4 sm:p-6" data-testid="billing-health-page">
@@ -215,11 +227,20 @@ export default function BillingHealthPage() {
         <div className="flex items-center gap-2">
           <span
             className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
-              healthy ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
+              !healthy
+                ? "bg-red-50 text-red-700"
+                : hasRunData
+                  ? "bg-green-50 text-green-700"
+                  : "bg-neutral-100 text-neutral-600"
             }`}
             data-testid="billing-health-status"
           >
-            ● {healthy ? "System healthy" : "Needs attention"}
+            ●{" "}
+            {!healthy
+              ? "Needs attention"
+              : hasRunData
+                ? "System healthy"
+                : "No reconciliation run yet"}
           </span>
           <Button
             variant="primary"
@@ -244,7 +265,7 @@ export default function BillingHealthPage() {
         <Metric label="Last Run Scanned" value={String(latestRun?.scanned ?? 0)} />
         <Metric label="Repaired" value={String(latestRun?.repaired ?? 0)} accent="#16a34a" />
         <Metric label="Open Failed Payments" value={String(failedRows.length)} accent="#dc2626" />
-        <Metric label="Dunning Cases" value={String(dunningRows.length)} accent="#dc2626" />
+        <Metric label="Dunning Cases" value={String(activeDunningRows.length)} accent="#dc2626" />
         <Metric label="Quarantined Events" value={String(quarantined.length)} accent="#d97706" />
       </div>
 
@@ -414,7 +435,13 @@ export default function BillingHealthPage() {
                         <Td align="right">{formatCents(row.balance_due_cents)}</Td>
                         <Td>{row.attempt_count}</Td>
                         <Td>
-                          <div>{formatTimestamp(row.next_attempt_at ?? row.terminal_at)}</div>
+                          <div>
+                            {row.next_attempt_at
+                              ? `Next: ${formatTimestamp(row.next_attempt_at)}`
+                              : row.terminal_at
+                                ? `Terminal: ${formatTimestamp(row.terminal_at)}`
+                                : "—"}
+                          </div>
                           {row.last_attempt_at && (
                             <div className="text-xs text-rally-muted">
                               Last {formatTimestamp(row.last_attempt_at)}
@@ -570,15 +597,31 @@ function ReconciliationRunRow({ run }: { run: ReconciliationRun }) {
       <Td align="right">{run.skipped}</Td>
       <Td align="right">{run.quarantined}</Td>
       <Td>
-        <span className="text-rally-muted">
-          {errors.length > 0
-            ? truncate(String(errors[0]), 80)
-            : notes.length > 0
-              ? truncate(notes[0], 80)
-              : "—"}
-        </span>
+        <NotesCell errors={errors} notes={notes} />
       </Td>
     </tr>
+  );
+}
+
+function NotesCell({ errors, notes }: { errors: unknown[]; notes: string[] }) {
+  const all = [...errors.map(String), ...notes.map(String)];
+  if (all.length === 0) return <span className="text-rally-muted">—</span>;
+  const first = all[0];
+  if (all.length === 1 && first.length <= 80) {
+    return <span className="text-rally-muted">{first}</span>;
+  }
+  return (
+    <details className="text-rally-muted">
+      <summary className="cursor-pointer select-none">
+        {truncate(first, 80)}
+        {all.length > 1 ? ` (+${all.length - 1} more)` : ""}
+      </summary>
+      <ul className="mt-1 max-w-md space-y-1 whitespace-pre-wrap break-words text-xs">
+        {all.map((text, i) => (
+          <li key={i}>{text}</li>
+        ))}
+      </ul>
+    </details>
   );
 }
 

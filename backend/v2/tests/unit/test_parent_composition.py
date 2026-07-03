@@ -185,6 +185,87 @@ async def test_parent_payment_history_suppresses_matching_legacy_projection() ->
 
 
 @pytest.mark.asyncio
+async def test_parent_payment_history_labels_ledger_payments_with_invoice_period() -> None:
+    """Ledger payments are linked (via payment_allocations) to the invoice they
+    paid, so the UI can render "Tuition · Apr 2026" instead of two identical
+    monthly rows that look like a duplicate charge."""
+    from datetime import UTC, datetime
+
+    april = datetime(2026, 4, 3, 9, 0, tzinfo=UTC)
+    may = datetime(2026, 5, 3, 9, 0, tzinfo=UTC)
+    db = _FakeDb(
+        {
+            "ledger_payments": _FakeCollection(
+                [
+                    {
+                        "academy_id": "acad",
+                        "payment_id": "pay-apr",
+                        "parent_id": "parent-1",
+                        "amount_cents": 6_000,
+                        "currency": "usd",
+                        "status": "succeeded",
+                        "stripe_payment_intent_id": "pi_apr",
+                        "created_at": april,
+                        "updated_at": april,
+                    },
+                    {
+                        "academy_id": "acad",
+                        "payment_id": "pay-may",
+                        "parent_id": "parent-1",
+                        "amount_cents": 6_000,
+                        "currency": "usd",
+                        "status": "succeeded",
+                        "stripe_payment_intent_id": "pi_may",
+                        "created_at": may,
+                        "updated_at": may,
+                    },
+                ]
+            ),
+            "payment_allocations": _FakeCollection(
+                [
+                    {
+                        "academy_id": "acad",
+                        "allocation_id": "alloc-1",
+                        "payment_id": "pay-apr",
+                        "invoice_id": "inv-apr",
+                        "amount_cents": 6_000,
+                    },
+                    {
+                        "academy_id": "acad",
+                        "allocation_id": "alloc-2",
+                        "payment_id": "pay-may",
+                        "invoice_id": "inv-may",
+                        "amount_cents": 6_000,
+                    },
+                ]
+            ),
+            "invoices": _FakeCollection(
+                [
+                    {"academy_id": "acad", "invoice_id": "inv-apr", "period": "2026-04"},
+                    {"academy_id": "acad", "invoice_id": "inv-may", "period": "2026-05"},
+                ]
+            ),
+        }
+    )
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=_PortalStripe(),  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"):
+        rows = await parent.list_payments_for_parent("parent-1")
+
+    by_id = {row.payment_id: row for row in rows}
+    assert by_id["pay-apr"].invoice_id == "inv-apr"
+    assert by_id["pay-apr"].invoice_period == "2026-04"
+    assert by_id["pay-may"].invoice_id == "inv-may"
+    assert by_id["pay-may"].invoice_period == "2026-05"
+
+
+@pytest.mark.asyncio
 async def test_parent_enrollment_visibility_uses_app_owned_autopay_projection() -> None:
     from datetime import UTC, datetime
 

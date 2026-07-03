@@ -201,6 +201,16 @@ Then open `http://blno.localhost:3000/login`, sign in with
 `admin@blno-badminton.dev` and the generated emulator password, and confirm
 the admin pages load through `/api/v2/*` without 401/500 responses.
 
+For the full BLNO demo-data seed, run:
+
+```bash
+scripts/dev/saas_staging.sh blno-seed
+```
+
+Then open `http://blno.localhost:3000/login`. Use this host for Docker SaaS
+manual testing; tenant resolution is host-based, and stale references to
+`blno-academy.localhost` are not the canonical local BLNO route.
+
 The seed path is intended to be idempotent. Re-running the BLNO command
 upserts the academy, owner user, active admin membership, academy settings,
 and platform admin role, then mints a fresh emulator ID token. The generated

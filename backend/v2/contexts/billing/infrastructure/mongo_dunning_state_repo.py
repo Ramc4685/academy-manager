@@ -111,10 +111,24 @@ class MongoDunningStateRepository(TenantScopedRepository):
         self, *, now: datetime, worker_id: str
     ) -> tuple[LedgerInvoice, DunningState] | None:
         academy_id = current_academy_id()
+        # Due-ness is filtered in the query so we never stream the whole active
+        # backlog: an active state is a candidate when its next_attempt_at has
+        # passed, or when it is parked (next_attempt_at=None) for a retryable
+        # recheck reason; a processing state only when its lease has expired.
+        # The Python guards below re-check the same conditions on the decoded
+        # state as a race-safe belt-and-braces before the CAS claim.
         cursor = self.collection.find(
             {
                 "academy_id": academy_id,
-                "status": {"$in": ["active", "processing"]},
+                "$or": [
+                    {"status": "active", "next_attempt_at": {"$lte": now}},
+                    {
+                        "status": "active",
+                        "next_attempt_at": None,
+                        "suppression_reason": {"$in": sorted(self.retryable_parked_reasons)},
+                    },
+                    {"status": "processing", "lease_expires_at": {"$lte": now}},
+                ],
             }
         ).sort([("next_attempt_at", ASCENDING), ("updated_at", ASCENDING)])
         async for state_doc in cursor:

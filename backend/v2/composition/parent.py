@@ -539,6 +539,8 @@ def compose_parent(
             session_id: str | None
             stripe_payment_intent_id: str | None = None
             stripe_invoice_id: str | None = None
+            invoice_id: str | None = None
+            invoice_period: str | None = None
 
         rows: list[_Row] = []
         legacy_rows: list[_Row] = []
@@ -583,6 +585,37 @@ def compose_parent(
                     stripe_invoice_id=stripe_invoice_id,
                 )
             )
+        # Label ledger payments with the invoice they paid: payment_allocations
+        # links payment_id -> invoice_id, and the invoice carries the period,
+        # so two monthly payments stop looking like a duplicate charge.
+        ledger_payment_ids = [row.payment_id for row in rows if row.payment_id]
+        if ledger_payment_ids:
+            invoice_by_payment: dict[str, str] = {}
+            async for alloc in db["payment_allocations"].find(
+                {"academy_id": academy_id, "payment_id": {"$in": ledger_payment_ids}}
+            ):
+                payment_key = str(alloc.get("payment_id") or "")
+                alloc_invoice_id = str(alloc.get("invoice_id") or "")
+                if payment_key and alloc_invoice_id and payment_key not in invoice_by_payment:
+                    invoice_by_payment[payment_key] = alloc_invoice_id
+            period_by_invoice: dict[str, str] = {}
+            if invoice_by_payment:
+                async for inv in db["invoices"].find(
+                    {
+                        "academy_id": academy_id,
+                        "invoice_id": {"$in": sorted(set(invoice_by_payment.values()))},
+                    },
+                    {"invoice_id": 1, "period": 1},
+                ):
+                    period_by_invoice[str(inv.get("invoice_id") or "")] = str(
+                        inv.get("period") or ""
+                    )
+            for row in rows:
+                linked_invoice_id = invoice_by_payment.get(row.payment_id)
+                if linked_invoice_id:
+                    row.invoice_id = linked_invoice_id
+                    row.invoice_period = period_by_invoice.get(linked_invoice_id) or None
+
         rows.extend(
             row
             for row in legacy_rows
@@ -1179,6 +1212,7 @@ def compose_parent(
         if not doc:
             return {
                 "display_name": "Academy",
+                "timezone": None,
                 "contact_email": None,
                 "contact_phone": None,
                 "hours_text": None,
@@ -1187,6 +1221,7 @@ def compose_parent(
             }
         return {
             "display_name": str(doc.get("display_name") or "Academy"),
+            "timezone": doc.get("timezone"),
             "contact_email": doc.get("contact_email"),
             "contact_phone": doc.get("contact_phone"),
             "hours_text": doc.get("hours_text"),

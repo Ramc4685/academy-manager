@@ -75,16 +75,19 @@ async def start_stripe_connect(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminGatewayConnectLinkView:
-    if use_cases.start_stripe_connect_use_case is None:
+    if use_cases.start_connect_onboarding_use_case is None:
         raise HTTPException(
             status_code=503,
             detail="Online payouts are not set up yet. Finish payment setup in academy settings.",
         )
-    try:
-        out = await use_cases.start_stripe_connect_use_case.execute(claims.academy_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return AdminGatewayConnectLinkView(url=out.url)
+    settings = get_settings()
+    frontend = (settings.frontend_url or "").rstrip("/")
+    result = await use_cases.start_connect_onboarding_use_case.start(
+        academy_id=claims.academy_id,
+        refresh_url=f"{frontend}/admin/settings?panel=gateway&stripe=error",
+        return_url=f"{frontend}/admin/settings?panel=gateway&stripe=connected",
+    )
+    return AdminGatewayConnectLinkView(url=result["onboarding_url"])
 
 
 @router.get("/academy/gateway/stripe/callback")

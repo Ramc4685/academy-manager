@@ -43,6 +43,8 @@ export interface ParentPayment {
   session_id: string | null;
   stripe_invoice_id?: string | null;
   stripe_payment_intent_id?: string | null;
+  invoice_id?: string | null;
+  invoice_period?: string | null;
 }
 
 export interface ParentCredit {
@@ -104,6 +106,7 @@ export interface ParentEnrollment {
   session_title: string;
   status: string;
   payment_mode: string | null;
+  /** @deprecated Not populated by the v2 BFF; autopay state lives in autopay_enrollment_status. Do not read. */
   subscription_status: string | null;
   autopay_enrollment_status?: string | null;
   last_attempt_outcome?: string | null;
@@ -402,6 +405,7 @@ export function getChildSchedule(
 
 export interface ParentAcademy {
   display_name: string;
+  timezone: string | null;
   contact_email: string | null;
   contact_phone: string | null;
   hours_text: string | null;

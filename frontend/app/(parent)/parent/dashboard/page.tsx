@@ -31,6 +31,7 @@ import {
   type ParentAcademy,
 } from "@/lib/api/parent";
 import { getParentProgressSummary } from "@/lib/api/curriculum";
+import { resolveAcademyTimeZone } from "@/lib/format/academy-time";
 import {
   buildParentHomeModel,
   type ParentHomeAction,
@@ -142,11 +143,11 @@ export default function ParentDashboardPage() {
         <>
           <MetricGrid metrics={model.metrics} />
           <div className="grid gap-3 sm:grid-cols-2">
-            <LatestNoteCard note={model.latestNote} />
+            <LatestNoteCard note={model.latestNote} academyTimezone={academyQuery.data?.timezone ?? null} />
             <NextClassCard action={model.primaryAction} enrollmentTitle={model.nextEnrollment?.session_title ?? null} />
           </div>
           <PrimaryActionCard action={model.primaryAction} />
-          <RecentActivityCard activity={model.recentActivity} />
+          <RecentActivityCard activity={model.recentActivity} academyTimezone={academyQuery.data?.timezone ?? null} />
         </>
       )}
 
@@ -354,13 +355,19 @@ function MetricGrid({ metrics }: { metrics: ParentHomeMetric[] }) {
   );
 }
 
-function LatestNoteCard({ note }: { note: ReturnType<typeof buildParentHomeModel>["latestNote"] }) {
+function LatestNoteCard({
+  note,
+  academyTimezone,
+}: {
+  note: ReturnType<typeof buildParentHomeModel>["latestNote"];
+  academyTimezone: string | null;
+}) {
   return (
     <InfoCard
       overline="Latest coach note"
       title={note ? "Coach feedback" : "Notes will appear here"}
       body={note?.body ?? "Coach updates and encouragement will show up after class."}
-      meta={note ? `${note.coach_name ?? "Coach"} · ${formatShortDate(note.created_at)}` : "Progress"}
+      meta={note ? `${note.coach_name ?? "Coach"} · ${formatShortDate(note.created_at, academyTimezone)}` : "Progress"}
       icon={<MessageSquare size={17} />}
       accent="#059669"
       href="/parent/progress"
@@ -417,7 +424,13 @@ function PrimaryActionCard({ action }: { action: ParentHomeAction }) {
   );
 }
 
-function RecentActivityCard({ activity }: { activity: ParentHomeActivity[] }) {
+function RecentActivityCard({
+  activity,
+  academyTimezone,
+}: {
+  activity: ParentHomeActivity[];
+  academyTimezone: string | null;
+}) {
   return (
     <div
       className="rounded-xl border bg-white p-4 animate-fade-in-up"
@@ -455,7 +468,7 @@ function RecentActivityCard({ activity }: { activity: ParentHomeActivity[] }) {
                 </p>
               </div>
               <time className="shrink-0 text-[11px]" style={{ color: "var(--rally-subtle)" }}>
-                {formatShortDate(item.at)}
+                {formatShortDate(item.at, academyTimezone)}
               </time>
             </li>
           ))}
@@ -641,8 +654,9 @@ function firstName(name: string): string {
   return name.trim().split(/\s+/)[0] || name;
 }
 
-function formatShortDate(value: string): string {
+function formatShortDate(value: string, academyTimezone: string | null): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const { timeZone } = resolveAcademyTimeZone(academyTimezone);
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone });
 }

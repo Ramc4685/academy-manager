@@ -18,11 +18,36 @@ import {
   startParentBalancePayment,
   startParentInvoicePayment,
 } from "@/lib/api/parent";
+import { toPaymentErrorMessage, toPortalErrorMessage } from "@/lib/api/payment-error";
 
-const BILLING_PORTAL_PREREQUISITE =
-  "Billing portal is not set up yet. Start autopay for an enrollment first to get portal access.";
 const AUTOPAY_START_FAILED =
-  "Autopay could not start. Please try again. If it still does not open, contact the academy.";
+  "Something went wrong starting autopay. Please try again or contact the academy.";
+const PORTAL_OPEN_FAILED =
+  "Billing portal could not open. Please try again or contact the academy.";
+const PAYMENT_START_FAILED =
+  "Payment could not start. Please try again or contact the academy.";
+
+// Checkout-status polling: stop on terminal statuses ("active" plus the ACH
+// micro-deposit verification states and dead Stripe sessions), and hard-cap
+// at ~5 minutes so a never-terminal status can't poll forever.
+const CHECKOUT_POLL_TERMINAL_STATUSES = new Set([
+  "active",
+  "past_due",
+  "cancelled",
+  "verification_required",
+  "verification_pending",
+  "expired",
+]);
+const CHECKOUT_POLL_INTERVAL_MS = 3000;
+const CHECKOUT_POLL_MAX_ATTEMPTS = 100; // 100 × 3s ≈ 5 minutes
+
+/** "2026-04" -> "Apr 2026"; unknown formats render as-is. */
+function formatPeriodLabel(period: string): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(period);
+  if (!match) return period;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, 1);
+  return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+}
 
 function money(cents: number, currency = "USD"): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
@@ -130,7 +155,9 @@ export default function ParentPaymentsPage() {
   const returnedFromAutopayCheckout = autopayReturn === "success";
   const [pauseEnrollmentId, setPauseEnrollmentId] = useState("");
   const [pauseKind, setPauseKind] = useState<"fixed" | "indefinite">("fixed");
-  const [resumeOn, setResumeOn] = useState(currentDate());
+  // Blank by default: resuming "today" is never a valid pause, so force an
+  // explicit future choice (the submit button stays disabled until set).
+  const [resumeOn, setResumeOn] = useState("");
   const [reviewOn, setReviewOn] = useState(dateFromOffset(14));
   const [pauseReason, setPauseReason] = useState("");
   const [portalError, setPortalError] = useState<string | null>(null);
@@ -174,7 +201,14 @@ export default function ParentPaymentsPage() {
     refetchOnMount: "always",
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      return status === "active" || status === "past_due" || status === "cancelled" ? false : 3000;
+      if (status && CHECKOUT_POLL_TERMINAL_STATUSES.has(status)) return false;
+      if (
+        query.state.dataUpdateCount + query.state.errorUpdateCount >=
+        CHECKOUT_POLL_MAX_ATTEMPTS
+      ) {
+        return false;
+      }
+      return CHECKOUT_POLL_INTERVAL_MS;
     },
   });
   const pauseRequestsQuery = useQuery({
@@ -197,20 +231,7 @@ export default function ParentPaymentsPage() {
       window.location.href = res.redirect_url;
     },
     onError: (error) => {
-      const detail = error instanceof Error ? error.message : "Request failed";
-      if (
-        detail.includes("Stripe customer") ||
-        detail.includes("autopay setup") ||
-        detail.includes("No such customer")
-      ) {
-        setPortalError(BILLING_PORTAL_PREREQUISITE);
-        return;
-      }
-      setPortalError(
-        detail === "Request failed"
-          ? "Billing portal could not open. Please try again."
-          : `Billing portal could not open. ${detail}`,
-      );
+      setPortalError(toPortalErrorMessage(error, PORTAL_OPEN_FAILED));
     },
   });
 
@@ -234,8 +255,7 @@ export default function ParentPaymentsPage() {
       window.location.href = res.redirect_url;
     },
     onError: (error) => {
-      const detail = error instanceof Error ? error.message : "Request failed";
-      setAutopayError(detail === "Request failed" ? AUTOPAY_START_FAILED : `Autopay could not start. ${detail}`);
+      setAutopayError(toPaymentErrorMessage(error, AUTOPAY_START_FAILED));
     },
     onSettled: () => { setStartingAutopayEnrollmentId(null); },
   });
@@ -259,8 +279,7 @@ export default function ParentPaymentsPage() {
       window.location.href = res.redirect_url;
     },
     onError: (error) => {
-      const detail = error instanceof Error ? error.message : "Request failed";
-      setInvoicePaymentError(detail === "Request failed" ? "Payment could not start." : `Payment could not start. ${detail}`);
+      setInvoicePaymentError(toPaymentErrorMessage(error, PAYMENT_START_FAILED));
     },
     onSettled: () => { setPayingInvoiceId(null); },
   });
@@ -280,8 +299,7 @@ export default function ParentPaymentsPage() {
       window.location.href = res.redirect_url;
     },
     onError: (error) => {
-      const detail = error instanceof Error ? error.message : "Request failed";
-      setBalancePaymentError(detail === "Request failed" ? "Payment could not start." : `Payment could not start. ${detail}`);
+      setBalancePaymentError(toPaymentErrorMessage(error, PAYMENT_START_FAILED));
     },
   });
 
@@ -298,7 +316,7 @@ export default function ParentPaymentsPage() {
     onSuccess: () => {
       setPauseEnrollmentId("");
       setPauseKind("fixed");
-      setResumeOn(currentDate());
+      setResumeOn("");
       setReviewOn(dateFromOffset(14));
       setPauseReason("");
       void pauseRequestsQuery.refetch();
@@ -458,7 +476,7 @@ export default function ParentPaymentsPage() {
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-sm font-medium" style={{ color: "#0a0f1c" }}>{invoice.period}</p>
+                      <p className="text-sm font-medium" style={{ color: "#0a0f1c" }}>{formatPeriodLabel(invoice.period)}</p>
                       <StatusPill status={invoice.status} />
                     </div>
                     <p className="text-base font-semibold tabular-nums" style={{ color: "#0a0f1c" }}>
@@ -609,7 +627,7 @@ export default function ParentPaymentsPage() {
                       className="rounded-xl border px-4 py-2.5 text-sm"
                       style={{ borderColor: "#d3d1c7", background: "#fff", color: "#5f5e5a" }}
                     >
-                      Pause
+                      Pause enrollment
                     </button>
                   </div>
                 </div>
@@ -622,7 +640,10 @@ export default function ParentPaymentsPage() {
       {/* Pause form */}
       {pauseEnrollmentId && (
         <div className="rounded-2xl border p-4" style={{ background: "#fff", borderColor: "#e6e3da" }}>
-          <p className="mb-3 text-sm font-semibold" style={{ color: "#0a0f1c" }}>Pause request</p>
+          <p className="mb-3 text-sm font-semibold" style={{ color: "#0a0f1c" }}>Pause enrollment</p>
+          <p className="mb-3 text-xs" style={{ color: "#5f5e5a" }}>
+            This pauses your child&apos;s class enrollment (and its billing) — it does not change your autopay payment method.
+          </p>
           <div className="space-y-3">
             <fieldset className="space-y-2">
               <legend className="text-xs font-medium" style={{ color: "#5f5e5a" }}>Pause type</legend>
@@ -649,6 +670,7 @@ export default function ParentPaymentsPage() {
                 <input
                   type="date"
                   value={resumeOn}
+                  min={dateFromOffset(1)}
                   onChange={(e) => setResumeOn(e.target.value)}
                   className="mt-1 h-11 w-full rounded-xl border px-3 text-sm"
                   style={{ borderColor: "#d3d1c7" }}
@@ -687,7 +709,7 @@ export default function ParentPaymentsPage() {
                 onClick={() => pauseMutation.mutate()}
                 disabled={
                   pauseMutation.isPending ||
-                  (pauseKind === "fixed" ? !resumeOn : !reviewOn)
+                  (pauseKind === "fixed" ? !resumeOn || resumeOn <= currentDate() : !reviewOn)
                 }
                 className="min-h-touch flex-1 rounded-xl text-sm font-semibold text-white disabled:opacity-60"
                 style={{ background: "#0a0f1c" }}
@@ -699,7 +721,7 @@ export default function ParentPaymentsPage() {
                 onClick={() => {
                   setPauseEnrollmentId("");
                   setPauseKind("fixed");
-                  setResumeOn(currentDate());
+                  setResumeOn("");
                   setReviewOn(dateFromOffset(14));
                   setPauseReason("");
                 }}
@@ -771,7 +793,9 @@ export default function ParentPaymentsPage() {
                   <StatusPill status={payment.status} />
                 </div>
                 <p className="mt-1 text-xs" style={{ color: "#888780" }}>
-                  {new Date(payment.created_at).toLocaleString()}
+                  {payment.invoice_period
+                    ? `Tuition · ${formatPeriodLabel(payment.invoice_period)} · ${new Date(payment.created_at).toLocaleDateString()}`
+                    : new Date(payment.created_at).toLocaleString()}
                 </p>
                 {payment.refunded_cents > 0 && (
                   <p className="text-xs" style={{ color: "#854f0b" }}>

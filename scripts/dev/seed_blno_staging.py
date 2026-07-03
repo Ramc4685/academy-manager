@@ -2,7 +2,7 @@
 """seed_blno_staging.py - Full BLNO Badminton Academy seed for local SaaS staging.
 
 Creates all BLNO data in one shot:
-  Academy       BLno Badminton Academy  blno-academy.localhost  America/Chicago
+  Academy       BLno Badminton Academy  blno.localhost  America/Chicago
   Users         Admin + 2 coaches + 36 parent accounts (Firebase emulator auth)
   Students      46 students linked to parents
   Sessions      4 recurring weekly classes (Wed + Thu)
@@ -68,7 +68,7 @@ from backend.scripts.backfill_p4_legacy_payments import map_legacy_payment  # no
 
 ACADEMY_ID = "blno"
 ACADEMY_SLUG = "blno"
-ACADEMY_DOMAIN = "blno-academy.localhost"
+ACADEMY_DOMAIN = "blno.localhost"
 ACADEMY_DISPLAY_NAME = "BLno Badminton Academy"
 ACADEMY_TZ = "America/Chicago"
 CHICAGO = ZoneInfo(ACADEMY_TZ)
@@ -1244,6 +1244,23 @@ def main() -> None:
         _upsert_user(uid, email, meta["name"], meta["phone"], ["parent"])
         _upsert_membership(uid, ["parent"])
 
+    # Emulator resets mint new Firebase uids; earlier seed generations leave
+    # memberships behind whose user_id no longer matches any users doc. Those
+    # orphans confuse admin rosters, so drop them (scoped to this academy).
+    known_uids = {
+        str(doc["firebase_uid"])
+        for doc in db.users.find({"firebase_uid": {"$ne": None}}, {"firebase_uid": 1})
+    }
+    orphan_result = db.academy_memberships.delete_many(
+        {"academy_id": ACADEMY_ID, "user_id": {"$nin": sorted(known_uids)}}
+    )
+    if orphan_result.deleted_count:
+        print(
+            f"[blno-seed]      removed {orphan_result.deleted_count} orphaned "
+            "memberships from prior seed generations",
+            file=sys.stderr,
+        )
+
     # ── 4. Sessions ───────────────────────────────────────────────────────────
     print("[blno-seed] 4/9  Sessions...", file=sys.stderr)
     for sdef in SESSIONS_DEF:
@@ -1352,10 +1369,13 @@ def main() -> None:
                 "$setOnInsert": {
                     "student_id": sid,
                     "academy_id": ACADEMY_ID,
-                    "parent_id": p_uid,
                     "created_at": ts,
                 },
                 "$set": {
+                    # parent_id lives in $set, not $setOnInsert: emulator resets
+                    # mint new Firebase uids, and a re-seed must remap students
+                    # to the parent's current uid or the parent portal goes empty.
+                    "parent_id": p_uid,
                     "updated_at": ts,
                     "full_name": student_name,
                     "date_of_birth": f"{2026 - age}-06-15",

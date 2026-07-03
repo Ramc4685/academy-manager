@@ -201,14 +201,37 @@ def test_get_gateway_contract(admin_client):
 
 
 def test_start_stripe_connect_returns_clear_error_when_not_configured(admin_client):
-    admin_client.use_cases.start_stripe_connect_use_case = SimpleNamespace(
-        execute=AsyncMock(side_effect=ValueError("Stripe Connect client ID is not configured"))
-    )
+    admin_client.use_cases.start_connect_onboarding_use_case = None
 
     response = admin_client.post("/api/v2/admin/academy/gateway/stripe/connect-link")
 
     assert response.status_code == 503, response.text
-    assert response.json() == {"detail": "Stripe Connect client ID is not configured"}
+    assert response.json() == {
+        "detail": "Online payouts are not set up yet. Finish payment setup in academy settings."
+    }
+
+
+def test_start_stripe_connect_returns_onboarding_url(admin_client):
+    admin_client.use_cases.start_connect_onboarding_use_case = SimpleNamespace(
+        start=AsyncMock(
+            return_value={
+                "academy_id": "acad",
+                "stripe_account_id": "acct_123",
+                "onboarding_url": "https://connect.stripe.com/setup/acct_123",
+                "status": "pending",
+            }
+        )
+    )
+
+    response = admin_client.post("/api/v2/admin/academy/gateway/stripe/connect-link")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"url": "https://connect.stripe.com/setup/acct_123"}
+    call = admin_client.use_cases.start_connect_onboarding_use_case.start
+    call.assert_awaited_once()
+    assert call.await_args.kwargs["academy_id"] == "acad"
+    assert "panel=gateway&stripe=connected" in call.await_args.kwargs["return_url"]
+    assert "panel=gateway&stripe=error" in call.await_args.kwargs["refresh_url"]
 
 
 def test_patch_user_role_contract(admin_client):

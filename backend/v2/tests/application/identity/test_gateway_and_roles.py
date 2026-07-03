@@ -27,6 +27,36 @@ async def test_gateway_masks_stripe_account_and_defaults_manual_methods():
 
 
 @pytest.mark.asyncio
+async def test_gateway_prefers_connected_account_reader_when_ready():
+    repo = AsyncMock()
+    repo.find_by_id.return_value = {"stripe_account_id": None}
+    reader = AsyncMock()
+    reader.get_status_for_academy.return_value = (True, "acct_9876543210")
+
+    output = await GetAcademyGatewayUseCase(repo, connected_accounts=reader).execute("acad")
+
+    reader.get_status_for_academy.assert_awaited_once_with("acad")
+    assert output.stripe_connected is True
+    assert output.stripe_account_id_masked == "acct...3210"
+
+
+@pytest.mark.asyncio
+async def test_gateway_connected_account_reader_overrides_stale_legacy_field():
+    # A legacy `academy.stripe_account_id` from the old OAuth flow must not
+    # report "connected" once the new Connect-account reader is wired — that
+    # field is no longer read by any billing/charging code path.
+    repo = AsyncMock()
+    repo.find_by_id.return_value = {"stripe_account_id": "acct_1234567890"}
+    reader = AsyncMock()
+    reader.get_status_for_academy.return_value = (False, None)
+
+    output = await GetAcademyGatewayUseCase(repo, connected_accounts=reader).execute("acad")
+
+    assert output.stripe_connected is False
+    assert output.stripe_account_id_masked is None
+
+
+@pytest.mark.asyncio
 async def test_change_user_role_requires_same_academy_match():
     repo = AsyncMock()
     repo.change_role.return_value = AdminUserSummary(

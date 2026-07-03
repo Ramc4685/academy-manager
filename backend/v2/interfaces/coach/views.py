@@ -37,6 +37,9 @@ class CoachRosterEntry(BaseModel):
     student_id: str
     full_name: str
     enrollment_status: Literal["active", "paused", "cancelled"]
+    # Already-recorded mark for this occurrence, so the client can hydrate
+    # attendance state after a reload instead of treating everyone as unmarked.
+    attendance_status: Literal["present", "absent"] | None = None
 
 
 class CoachSession(BaseModel):

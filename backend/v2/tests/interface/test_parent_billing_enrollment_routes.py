@@ -222,6 +222,7 @@ def test_parent_academy_uses_request_tenant(client, setup):
     setup["use_cases"].get_academy_info = AsyncMock(
         return_value={
             "display_name": "Request Academy",
+            "timezone": "America/Chicago",
             "contact_email": "hello@example.com",
             "contact_phone": None,
             "hours_text": None,
@@ -234,7 +235,26 @@ def test_parent_academy_uses_request_tenant(client, setup):
 
     assert resp.status_code == 200
     assert resp.json()["display_name"] == "Request Academy"
+    assert resp.json()["timezone"] == "America/Chicago"
     setup["use_cases"].get_academy_info.assert_awaited_once_with(academy_id="acad")
+
+
+def test_parent_academy_timezone_null_when_not_configured(client, setup):
+    setup["use_cases"].get_academy_info = AsyncMock(
+        return_value={
+            "display_name": "Request Academy",
+            "contact_email": None,
+            "contact_phone": None,
+            "hours_text": None,
+            "address": None,
+            "logo_url": None,
+        }
+    )
+
+    resp = client.get("/api/v2/parent/academy")
+
+    assert resp.status_code == 200
+    assert resp.json()["timezone"] is None
 
 
 # ---------------------------------------------------------------------------

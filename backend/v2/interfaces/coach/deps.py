@@ -85,6 +85,10 @@ class CoachUseCases:
     # Coach daily teaching plan (lesson guidance). Optional for backward compat
     # with test fixtures that predate it; real coach composition always sets it.
     generate_daily_teaching_plan: object | None = None  # GenerateDailyTeachingPlan
+    # Callable[[str], Awaitable[list[Attendance]]] — existing student marks for
+    # one occurrence so /coach/today can hydrate attendance state on reload.
+    # Optional for fixtures that predate it; real composition always sets it.
+    list_attendance_for_occurrence: object | None = None
 
 
 def get_coach_use_cases(request: Request) -> CoachUseCases:

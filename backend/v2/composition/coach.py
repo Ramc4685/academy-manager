@@ -149,6 +149,10 @@ class CoachComposition:
     curriculum: CurriculumComposition
     # Coach daily teaching plan (lesson guidance)
     generate_daily_teaching_plan: GenerateDailyTeachingPlan
+    # Callable[[str], Awaitable[list[Attendance]]] — existing student marks for
+    # one occurrence, so /coach/today can hydrate attendance state on reload.
+    # Optional default keeps hand-built test compositions working.
+    list_attendance_for_occurrence: object = None
 
 
 class CoachAssignedSessionLookup:
@@ -331,6 +335,7 @@ def compose_coach(
             idempotency_store=idempotency_store,
             academy_id=settings.default_academy_id,
         ),
+        list_attendance_for_occurrence=attendance_repo.list_for_occurrence,
         get_dashboard_metrics=get_dashboard_metrics,
         create_lesson_plan=CreateLessonPlan(notes=notes_repo, sessions=assigned_sessions),
         list_lesson_plans=ListLessonPlans(notes=notes_repo, sessions=assigned_sessions),

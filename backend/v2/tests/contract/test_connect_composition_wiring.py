@@ -11,6 +11,8 @@ lesson).
 
 from __future__ import annotations
 
+import pytest
+
 from backend.v2.contexts.billing.application.use_cases.connect_onboarding import (
     StartConnectOnboarding,
 )
@@ -26,6 +28,7 @@ from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
 from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
     MongoConnectedAccountRepository,
 )
+from backend.v2.shared.security.redirect import InvalidRedirectUrl
 
 
 class _SubscriptionRepo:
@@ -45,10 +48,18 @@ class _SubscriptionRepo:
         return None
 
 
+_ALLOWED_ORIGINS = ("https://app.test",)
+
+
 async def test_start_onboarding_drives_real_repo_and_is_idempotent(db, acad) -> None:
     stripe = FakeStripeGateway()
     repo = MongoConnectedAccountRepository(db)
-    use_case = StartConnectOnboarding(stripe=stripe, connected_accounts=repo, academy_id=acad)
+    use_case = StartConnectOnboarding(
+        stripe=stripe,
+        connected_accounts=repo,
+        allowed_redirect_origins=_ALLOWED_ORIGINS,
+        academy_id=acad,
+    )
 
     first = await use_case.start(
         academy_id=acad,
@@ -71,6 +82,35 @@ async def test_start_onboarding_drives_real_repo_and_is_idempotent(db, acad) -> 
     assert await repo.collection.count_documents({}) == 1
 
 
+async def test_start_onboarding_rejects_disallowed_redirect_origin(db, acad) -> None:
+    """refresh_url/return_url go through the same allowlist as parent checkout
+    redirects — a non-allowlisted origin must be rejected before any Stripe call."""
+    stripe = FakeStripeGateway()
+    repo = MongoConnectedAccountRepository(db)
+    use_case = StartConnectOnboarding(
+        stripe=stripe,
+        connected_accounts=repo,
+        allowed_redirect_origins=_ALLOWED_ORIGINS,
+        academy_id=acad,
+    )
+
+    with pytest.raises(InvalidRedirectUrl):
+        await use_case.start(
+            academy_id=acad,
+            refresh_url="https://evil.example/refresh",
+            return_url="https://app.test/return",
+        )
+    with pytest.raises(InvalidRedirectUrl):
+        await use_case.start(
+            academy_id=acad,
+            refresh_url="https://app.test/refresh",
+            return_url="http://blno.localhost:3001/return",
+        )
+    # Nothing was created on the rejected calls.
+    assert len(stripe.connected_accounts) == 0
+    assert await repo.collection.count_documents({}) == 0
+
+
 class _ConnectAccountResolver:
     """Same shim shape composition installs on the webhook handler."""
 
@@ -89,7 +129,12 @@ class _ConnectAccountResolver:
 async def test_webhook_resolver_shim_drives_real_repo(db, acad) -> None:
     stripe = FakeStripeGateway()
     repo = MongoConnectedAccountRepository(db)
-    use_case = StartConnectOnboarding(stripe=stripe, connected_accounts=repo, academy_id=acad)
+    use_case = StartConnectOnboarding(
+        stripe=stripe,
+        connected_accounts=repo,
+        allowed_redirect_origins=_ALLOWED_ORIGINS,
+        academy_id=acad,
+    )
     created = await use_case.start(
         academy_id=acad,
         refresh_url="https://app.test/refresh",

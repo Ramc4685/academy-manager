@@ -167,6 +167,76 @@ async def test_list_open_failed_attempts_requires_action_included(db, acad) -> N
     assert [r["invoice_id"] for r in rows] == ["inv-ra"]
 
 
+@pytest.mark.asyncio
+async def test_list_open_failed_attempts_newest_first_and_limit(db, acad) -> None:
+    repo = MongoBillingLedgerRepository(db)
+    for i in range(3):
+        await _open_invoice(db, acad, f"inv-{i}", status="open")
+        await _attempt(
+            repo,
+            invoice_id=f"inv-{i}",
+            status="failed",
+            when=NOW - timedelta(days=i),
+            code="card_declined",
+        )
+
+    rows = await repo.list_open_failed_attempts()
+    assert [r["invoice_id"] for r in rows] == ["inv-0", "inv-1", "inv-2"]
+
+    limited = await repo.list_open_failed_attempts(limit=2)
+    assert [r["invoice_id"] for r in limited] == ["inv-0", "inv-1"]
+
+
+@pytest.mark.asyncio
+async def test_list_open_failed_attempts_tenant_scoped(db, acad, other_acad) -> None:
+    # other_acad fixture sets the tenant context to "other-academy"; write there.
+    repo = MongoBillingLedgerRepository(db)
+    await _open_invoice(db, other_acad, "inv-other", status="open")
+    await _attempt(repo, invoice_id="inv-other", status="failed", when=NOW, code="card_declined")
+
+    from backend.v2.shared.tenancy.context import _current as _tv
+
+    token = _tv.set(acad)
+    try:
+        assert await repo.list_open_failed_attempts() == []
+    finally:
+        _tv.reset(token)
+
+
+# --------------------------------------------------------------------------- #
+# unmatched invoices (legacy match queue input)
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_list_unmatched_invoices_excludes_allocated_and_orders_newest_first(db, acad) -> None:
+    repo = MongoBillingLedgerRepository(db)
+    await _open_invoice(db, acad, "inv-old")
+    await db["invoices"].update_one(
+        {"academy_id": acad, "invoice_id": "inv-old"},
+        {"$set": {"created_at": NOW - timedelta(days=1)}},
+    )
+    await _open_invoice(db, acad, "inv-new")
+    # inv-matched has a payment allocation -> excluded
+    await _open_invoice(db, acad, "inv-matched")
+    await db["payment_allocations"].insert_one(
+        {"academy_id": acad, "invoice_id": "inv-matched", "amount_cents": 12000}
+    )
+    # allocation from another tenant does not count as matched
+    await db["payment_allocations"].insert_one(
+        {"academy_id": "other-academy", "invoice_id": "inv-new", "amount_cents": 12000}
+    )
+    # paid invoices are never in the queue
+    await _open_invoice(db, acad, "inv-paid", status="paid")
+
+    rows = await repo.list_unmatched_invoices()
+
+    assert [r["invoice_id"] for r in rows] == ["inv-new", "inv-old"]
+    assert rows[0]["balance_due_cents"] == 12000
+    assert rows[0]["status"] == "open"
+
+    limited = await repo.list_unmatched_invoices(limit=1)
+    assert [r["invoice_id"] for r in limited] == ["inv-new"]
+
+
 # --------------------------------------------------------------------------- #
 # webhook replay
 # --------------------------------------------------------------------------- #

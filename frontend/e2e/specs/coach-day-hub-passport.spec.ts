@@ -54,17 +54,11 @@ test.describe("Coach Day Hub and Skill Passport", () => {
       .toBe(1);
 
     await page.goto("/coach/dashboard");
-    await page.getByRole("button", { name: "Message parents" }).click();
-    await expect(page.getByRole("status")).toContainText(
-      "Parent messaging needs the coach-scoped messaging service"
-    );
-    await expect(page.getByRole("status")).not.toContainText("404");
-
-    await page.getByRole("button", { name: "I can't attend" }).click();
-    await expect(page.getByRole("status")).toContainText(
-      "Absence notices need a coach-scoped replacement request workflow"
-    );
-    await expect(page.getByRole("status")).not.toContainText("500");
+    await expect(page.getByTestId("coach-day-hub")).toBeVisible();
+    // Dead placeholder actions must not ship: no coach-scoped messaging or
+    // absence workflow exists yet, so these buttons were removed.
+    await expect(page.getByRole("button", { name: "Message parents" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "I can't attend" })).toHaveCount(0);
 
     await Promise.all([
       page.waitForURL(/\/coach\/today\/plan\?date=\d{4}-\d{2}-\d{2}$/),

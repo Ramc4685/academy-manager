@@ -15,6 +15,15 @@ import sys
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+_SCRIPTS_DEV_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPTS_DEV_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DEV_DIR)
+
+from mongo_guard import assert_local_mongo_url  # noqa: E402
+
+STAGING_DB_NAME = "academy_manager_saas_staging"
+DEFAULT_DB_NAME = os.environ.get("SAAS_STAGING_DB_NAME", STAGING_DB_NAME)
+
 
 def _real_stripe_subscription_id(value: object) -> str | None:
     text = str(value or "").strip()
@@ -106,8 +115,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--db-name",
-        default=os.environ.get("DB_NAME", "academy_manager"),
-        help="Mongo database name. Defaults to DB_NAME or academy_manager.",
+        default=DEFAULT_DB_NAME,
+        help=(
+            "Mongo database name. Defaults to SAAS_STAGING_DB_NAME or "
+            f"{STAGING_DB_NAME}."
+        ),
     )
     parser.add_argument(
         "--academy-id",
@@ -147,6 +159,7 @@ def _candidate_query(academy_id: str | None) -> dict[str, Any]:
 def run(args: argparse.Namespace) -> int:
     if not args.mongo_url:
         raise SystemExit("MONGO_URL is required via --mongo-url or environment.")
+    assert_local_mongo_url(args.mongo_url)
     if args.apply and not args.confirm_delete_stale_subscriptions:
         raise SystemExit("--apply requires --confirm-delete-stale-subscriptions")
 

@@ -40,6 +40,9 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
 from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopay import (
     ChargeInvoiceViaAutopay,
 )
+from backend.v2.contexts.billing.application.use_cases.connect_onboarding import (
+    StartConnectOnboarding,
+)
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
     DeleteExpense,
     EditExpense,
@@ -384,6 +387,7 @@ from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.tenancy import tenant_scope
 
 
 class _InvoiceEmailAdapter:
@@ -2353,6 +2357,24 @@ class _MongoCoachRateRepository:
         return [coach_rate_from_mongo_doc(doc) async for doc in cursor]
 
 
+class _ConnectedAccountGatewayReader:
+    """Bridges billing's ConnectedAccountRepository into identity's gateway
+    settings use case (Slice I follow-up). Lives in the composition root, not
+    in either context, per the cross-context-import boundary rule — same
+    pattern as ``_ConnectAccountResolver`` in ``composition/parent.py``.
+    """
+
+    def __init__(self, repo: MongoConnectedAccountRepository) -> None:
+        self._repo = repo
+
+    async def get_status_for_academy(self, academy_id: str) -> tuple[bool, str | None]:
+        with tenant_scope(academy_id):
+            account = await self._repo.get_for_academy()
+        if account is None:
+            return False, None
+        return account.is_ready_for_charges(), account.stripe_account_id
+
+
 class _FinancePayoutCalculator:
     def __init__(self, compute: ComputeCoachPayout) -> None:
         self._compute = compute
@@ -3270,7 +3292,15 @@ def compose_admin(
         default_coach_digest_enabled=settings.coach_digest_enabled,
         default_coach_digest_hour=settings.coach_digest_hour,
     )
-    get_academy_gateway_use_case = GetAcademyGatewayUseCase(academy_repo)
+    get_academy_gateway_use_case = GetAcademyGatewayUseCase(
+        academy_repo,
+        connected_accounts=_ConnectedAccountGatewayReader(connected_accounts_repo),
+    )
+    start_connect_onboarding_use_case = StartConnectOnboarding(
+        stripe=stripe,
+        connected_accounts=connected_accounts_repo,
+        allowed_redirect_origins=settings.cors_allowed_origins(),
+    )
     _connect_callback_uri = settings.stripe_connect_callback_uri or ""
     _state_secret = settings.stripe_connect_state_secret or settings.stripe_webhook_secret or ""
     start_stripe_connect_use_case = StartStripeConnectUseCase(
@@ -5438,6 +5468,7 @@ def compose_admin(
         get_digest_delivery_log=compose_get_digest_delivery_log(db),
         get_academy_gateway_use_case=get_academy_gateway_use_case,
         start_stripe_connect_use_case=start_stripe_connect_use_case,
+        start_connect_onboarding_use_case=start_connect_onboarding_use_case,
         complete_stripe_connect_use_case=complete_stripe_connect_use_case,
         disconnect_stripe_use_case=disconnect_stripe_use_case,
         change_user_role=change_user_role,
