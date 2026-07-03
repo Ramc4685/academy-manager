@@ -61,9 +61,10 @@ class GetAcademyGatewayUseCase:
             # Source of truth for "connected" is the Connect-account status
             # (Slice I), not the legacy `academy.stripe_account_id` field —
             # billing's charge/checkout gates no longer read that field.
-            stripe_connected, stripe_account_id = (
-                await self._connected_accounts.get_status_for_academy(academy_id)
-            )
+            (
+                stripe_connected,
+                stripe_account_id,
+            ) = await self._connected_accounts.get_status_for_academy(academy_id)
         else:
             stripe_account_id = doc.get("stripe_account_id")
             stripe_connected = bool(stripe_account_id)
