@@ -66,6 +66,11 @@ class StartApplication:
             created_at=now,
             updated_at=now,
         )
+        if existing is not None:
+            # Returning parent adding another child: carry their own details
+            # over from the previous application so they never retype them.
+            # The child profile intentionally starts blank.
+            app = app.model_copy(update={"parent_profile": existing.parent_profile})
         await self._apps.save(app)
         return app
 

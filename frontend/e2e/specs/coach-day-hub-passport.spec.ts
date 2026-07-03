@@ -1,7 +1,9 @@
 import { test, expect } from "../fixtures/mock-api";
 
 test.describe("Coach Day Hub and Skill Passport", () => {
-  test.describe.configure({ mode: "serial" });
+  // This journey crosses several routes; under parallel-project load the Next
+  // dev server's first-compile latency can exceed the default 30s timeout.
+  test.describe.configure({ mode: "serial", timeout: 90_000 });
 
   test("covers day hub, future date controls, skills workspace, passport, and prep link", async ({
     page,

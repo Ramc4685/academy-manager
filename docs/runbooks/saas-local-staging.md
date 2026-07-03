@@ -278,3 +278,34 @@ After a clean run, paste in the PR comment:
   `SaaS readiness smoke checks passed` line.
 - `docker compose -p saas-staging ps` output (showing all four services healthy).
 - Any deviations from this runbook.
+
+## Stripe test mode (payments + Connect on staging)
+
+The backend reads Stripe config from the container environment; the compose
+stack already injects `.local/saas-staging.env` (git-ignored), so no compose
+changes are needed. Append your **test-mode** values there:
+
+```bash
+# .local/saas-staging.env  (test mode only — never live keys)
+STRIPE_API_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...   # printed by `stripe listen` below
+```
+
+Then restart the backend and forward webhooks:
+
+```bash
+docker compose -p saas-staging -f docker-compose.yml -f docker-compose.saas.yml up -d backend
+stripe listen --forward-to http://127.0.0.1:8001/api/v2/parent/webhooks/stripe
+```
+
+Connect flow (Express account links — no `STRIPE_CONNECT_CLIENT_ID` needed):
+
+1. Sign in as admin → Settings → payment gateway panel → start Stripe Connect.
+2. Complete the Express onboarding in Stripe's test sandbox (any test data).
+3. The gateway panel shows the connected-account status; once the account is
+   ready for charges, parent "Set up autopay" / "Pay" produce real test-mode
+   Checkout sessions, and the webhook forwarder updates the app ledger.
+
+Until a connected account is ready, parent payment attempts fail with the
+parent-safe message "Online payments aren't fully set up for your academy
+yet…" — that is expected, not a bug.

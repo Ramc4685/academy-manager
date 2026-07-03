@@ -104,3 +104,35 @@ async def test_get_status_without_caller_skips_check() -> None:
     uc = GetApplicationStatus(apps=repo)
     result = await uc.execute("app-1")
     assert result.application_id == "app-1"
+
+
+@pytest.mark.asyncio
+async def test_start_application_prefills_parent_profile_from_prior_application() -> None:
+    """A returning parent adding a second child must not retype their own
+    details: the new draft carries parent_profile from the last application."""
+    from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
+        StartApplication,
+        StartApplicationCommand,
+    )
+    from backend.v2.contexts.onboarding.domain.models import ParentProfile
+
+    prior = _app(parent_user_id="alice").model_copy(
+        update={
+            "status": "COMPLETED",
+            "parent_profile": ParentProfile(first_name="Alice", last_name="Ng", phone="5551234"),
+        }
+    )
+    repo = FakeAppRepo(prior)
+    uc = StartApplication(apps=repo, academy_id="acad")
+
+    fresh = await uc.execute(
+        StartApplicationCommand(parent_user_id="alice", parent_email="alice@example.com")
+    )
+
+    assert fresh.application_id != prior.application_id
+    assert fresh.status == "DRAFT"
+    assert fresh.parent_profile.first_name == "Alice"
+    assert fresh.parent_profile.last_name == "Ng"
+    assert fresh.parent_profile.phone == "5551234"
+    # Child details must start blank for the new application.
+    assert fresh.child_profile.first_name == ""

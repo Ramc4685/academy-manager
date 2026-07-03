@@ -33,6 +33,13 @@ function currentMonthKey(): string {
   return new Date().toISOString().slice(0, 7);
 }
 
+function prevMonthKey(): string {
+  const d = new Date();
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() - 1);
+  return d.toISOString().slice(0, 7);
+}
+
 function formatCents(cents: number): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -118,9 +125,14 @@ export default function AdminDashboardPage() {
           loading={sessionsQuery.isLoading}
         />
         <KpiCard
-          label="Revenue this month"
+          label="Revenue (month to date)"
           value={revenueQuery.isLoading ? "—" : formatCents(monthRevenue)}
           loading={revenueQuery.isLoading}
+          hint={
+            revenueQuery.isLoading
+              ? undefined
+              : `Last month ${formatCents(revenueByMonth[prevMonthKey()] ?? 0)}`
+          }
         />
         <KpiCard
           label="Payments tracked"
@@ -252,10 +264,12 @@ function KpiCard({
   label,
   value,
   loading,
+  hint,
 }: {
   label: string;
   value: string;
   loading: boolean;
+  hint?: string;
 }) {
   return (
     <Card p={20}>
@@ -265,6 +279,7 @@ function KpiCard({
       ) : (
         <div className="mt-1.5">
           <BigNum size={32}>{value}</BigNum>
+          {hint && <p className="mt-1 text-xs text-rally-muted">{hint}</p>}
         </div>
       )}
     </Card>

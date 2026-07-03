@@ -1750,7 +1750,14 @@ def main() -> None:
             try:
                 program_id = json.loads(result.stdout).get("program_id")
             except (json.JSONDecodeError, AttributeError):
-                pass
+                # Without a program_id every placement below is skipped and the
+                # whole coach/parent skill pathway renders empty — never fail
+                # this silently.
+                print(
+                    "  ERROR: could not parse program_id from pathway seed stdout; "
+                    f"student placements will be SKIPPED. stdout was: {result.stdout[:200]!r}",
+                    file=sys.stderr,
+                )
     else:
         print(f"  WARNING: {PATHWAY_SCRIPT} not found — skipping", file=sys.stderr)
 
@@ -1766,7 +1773,9 @@ def main() -> None:
             level_id = level["level_id"]
             level1_skills = [s for s in all_skills if s.get("level_id") == level_id]
             statuses = ["NOT_STARTED", "INTRODUCED", "LEARNING", "PRACTICING", "PASSED"]
-            active_sample = [r for r in student_records if r["status"] == "active"][:20]
+            # Place every active student: unplaced students render an empty
+            # skill pathway for coaches and parents, which reads as broken.
+            active_sample = [r for r in student_records if r["status"] == "active"]
 
             for i, rec in enumerate(active_sample):
                 sid = rec["student_id"]
@@ -1779,7 +1788,9 @@ def main() -> None:
                     },
                     {
                         "$setOnInsert": {
-                            "progress_id": f"lp_blno_{sid[:16]}",
+                            # Full student_id: truncation collides across the
+                            # std_blno_NNN_* family.
+                            "progress_id": f"lp_blno_{sid}",
                             "academy_id": ACADEMY_ID,
                             "student_id": sid,
                             "program_id": program_id,
@@ -1805,7 +1816,9 @@ def main() -> None:
                         },
                         {
                             "$setOnInsert": {
-                                "skill_progress_id": f"sp_{sid[:12]}_{skill['skill_id'][:8]}",
+                                # Full ids: ULID skill ids share their first 8
+                                # chars (timestamp), so truncating collides.
+                                "skill_progress_id": f"sp_{sid}_{skill['skill_id']}",
                                 "academy_id": ACADEMY_ID,
                                 "student_id": sid,
                                 "program_id": program_id,
