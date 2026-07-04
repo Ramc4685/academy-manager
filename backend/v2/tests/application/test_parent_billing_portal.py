@@ -290,9 +290,7 @@ class _SettingsRepo:
 
         if self._error:
             raise RuntimeError("settings lookup failed")
-        return BillingSettings(
-            academy_id="acad", allow_platform_charge_fallback=self._fallback
-        )
+        return BillingSettings(academy_id="acad", allow_platform_charge_fallback=self._fallback)
 
 
 @pytest.mark.asyncio

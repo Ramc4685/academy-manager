@@ -1031,7 +1031,9 @@ def compose_parent(
         else:
             fallback_enabled = False
             try:
-                fallback_enabled = (await billing_settings_repo.get()).allow_platform_charge_fallback
+                fallback_enabled = (
+                    await billing_settings_repo.get()
+                ).allow_platform_charge_fallback
             except Exception as exc:
                 log.warning(
                     "start_balance_payment: billing settings lookup failed; keeping "
