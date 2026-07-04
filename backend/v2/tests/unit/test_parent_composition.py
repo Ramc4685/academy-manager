@@ -393,6 +393,44 @@ async def test_parent_balance_payment_refuses_platform_charge_without_ready_acco
 
 
 @pytest.mark.asyncio
+async def test_parent_balance_payment_falls_back_to_platform_when_flag_on(
+    allow_app_origin,
+) -> None:
+    stripe = _InvoiceCheckoutStripe()
+    db = _FakeDb(
+        {
+            "invoices": _FakeCollection(
+                [
+                    _invoice_doc(invoice_id="inv-1"),
+                    _invoice_doc(invoice_id="inv-2", balance_due_cents=5_000),
+                ]
+            ),
+            "academy_connected_accounts": _FakeCollection([]),
+            "billing_settings": _FakeCollection(
+                [{"academy_id": "acad", "allow_platform_charge_fallback": True}]
+            ),
+        }
+    )
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"):
+        result = await parent.start_balance_payment_for_parent(
+            parent_id="parent-1",
+            success_url="https://app.example.com/parent/payments?invoice=paid",
+            cancel_url="https://app.example.com/parent/payments?invoice=cancelled",
+        )
+
+    assert result == {"redirect_url": "https://checkout.stripe.test/balance"}
+    assert stripe.invoice_checkout_calls[0]["connected_account_id"] is None
+
+
+@pytest.mark.asyncio
 async def test_parent_balance_payment_provider_failure_returns_unavailable(
     allow_app_origin,
 ) -> None:

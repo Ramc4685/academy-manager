@@ -280,6 +280,77 @@ async def test_start_autopay_setup_fails_closed_without_ready_connected_account(
     assert gateway.setup_created == []
 
 
+class _SettingsRepo:
+    def __init__(self, *, fallback: bool = False, error: bool = False) -> None:
+        self._fallback = fallback
+        self._error = error
+
+    async def get(self):
+        from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+
+        if self._error:
+            raise RuntimeError("settings lookup failed")
+        return BillingSettings(academy_id="acad", allow_platform_charge_fallback=self._fallback)
+
+
+@pytest.mark.asyncio
+async def test_start_autopay_setup_falls_back_to_platform_when_flag_on() -> None:
+    connected_accounts = _ConnectedAccounts(
+        ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_pending")
+    )
+    gateway = _CheckoutGateway()
+    uc = StartSubscriptionCheckout(
+        subscriptions=_SubscriptionRepo(),
+        stripe=gateway,
+        academy_id="acad",
+        connected_accounts=connected_accounts,
+        settings=_SettingsRepo(fallback=True),
+    )
+
+    result = await uc.execute(_checkout_command())
+
+    assert result.redirect_url == "https://checkout.stripe.com/c/setup"
+    assert gateway.setup_created[0]["connected_account_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_start_autopay_setup_still_fails_closed_when_flag_off() -> None:
+    connected_accounts = _ConnectedAccounts(
+        ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_pending")
+    )
+    gateway = _CheckoutGateway()
+    uc = StartSubscriptionCheckout(
+        subscriptions=_SubscriptionRepo(),
+        stripe=gateway,
+        academy_id="acad",
+        connected_accounts=connected_accounts,
+        settings=_SettingsRepo(fallback=False),
+    )
+
+    with pytest.raises(CheckoutCreationFailed, match="connected account"):
+        await uc.execute(_checkout_command())
+    assert gateway.setup_created == []
+
+
+@pytest.mark.asyncio
+async def test_start_autopay_setup_fails_closed_when_settings_lookup_errors() -> None:
+    connected_accounts = _ConnectedAccounts(
+        ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_pending")
+    )
+    gateway = _CheckoutGateway()
+    uc = StartSubscriptionCheckout(
+        subscriptions=_SubscriptionRepo(),
+        stripe=gateway,
+        academy_id="acad",
+        connected_accounts=connected_accounts,
+        settings=_SettingsRepo(error=True),
+    )
+
+    with pytest.raises(CheckoutCreationFailed, match="connected account"):
+        await uc.execute(_checkout_command())
+    assert gateway.setup_created == []
+
+
 @pytest.mark.asyncio
 async def test_start_autopay_creates_setup_checkout_without_subscription_row() -> None:
     repo = _SubscriptionRepo()

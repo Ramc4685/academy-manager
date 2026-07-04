@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -9,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from backend.v2.contexts.billing.application.ports import (
     AutopayConsentRepository,
+    BillingSettingsRepository,
     ConnectedAccountRepository,
     EnrollmentAutopayStateRepository,
     ParentStripeCustomerRepository,
@@ -25,6 +27,8 @@ from backend.v2.contexts.billing.domain.events import (
 from backend.v2.contexts.billing.domain.models import AutopayConsent, Subscription
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
+
+log = logging.getLogger(__name__)
 
 DEFAULT_CONSENT_TEXT_VERSION = "autopay-consent-v1"
 DEFAULT_ACH_MANDATE_VERSION = "ach-mandate-v1"
@@ -398,12 +402,14 @@ class StartSubscriptionCheckout:
         stripe: StripeGateway,
         academy_id: str,
         connected_accounts: ConnectedAccountRepository | None = None,
+        settings: BillingSettingsRepository | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._subscriptions = subscriptions
         self._stripe = stripe
         self._academy_id = academy_id
         self._connected_accounts = connected_accounts
+        self._settings = settings
         self._now = clock
 
     async def execute(
@@ -478,8 +484,28 @@ class StartSubscriptionCheckout:
             return None
         account = await self._connected_accounts.get_for_academy()
         if account is None or not account.is_ready_for_charges():
+            if await self._platform_fallback_enabled():
+                log.warning(
+                    "start_subscription_checkout: connected account not ready — falling back "
+                    "to PLATFORM charge (allow_platform_charge_fallback=on)"
+                )
+                return None
             raise CheckoutCreationFailed("Stripe connected account is not ready for autopay setup.")
         return account.stripe_account_id
+
+    async def _platform_fallback_enabled(self) -> bool:
+        if self._settings is None:
+            return False
+        try:
+            settings = await self._settings.get()
+        except Exception as exc:
+            log.warning(
+                "start_subscription_checkout: billing settings lookup failed; keeping "
+                "fail-closed connected-account requirement err=%s",
+                exc,
+            )
+            return False
+        return settings.allow_platform_charge_fallback
 
 
 class CreateCustomerPortalSessionCommand(BaseModel):

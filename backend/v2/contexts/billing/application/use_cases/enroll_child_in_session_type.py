@@ -9,12 +9,14 @@ cancels the Stripe subscription at period end, and marks the enrollment cancelle
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from pydantic import BaseModel
 
 from backend.v2.contexts.billing.application.ports import (
+    BillingSettingsRepository,
     ConnectedAccountRepository,
     SessionTypeRepository,
     StripeGateway,
@@ -28,6 +30,8 @@ from backend.v2.contexts.billing.domain.errors import (
 )
 from backend.v2.contexts.billing.domain.session_type import StudentBillingEnrollment
 from backend.v2.shared.ids import new_ulid
+
+log = logging.getLogger(__name__)
 
 
 class StudentOwnerLookup(Protocol):
@@ -56,6 +60,7 @@ class EnrollChildInSessionType:
         student_owner_lookup: StudentOwnerLookup,
         academy_id: str,
         connected_accounts: ConnectedAccountRepository | None = None,
+        settings: BillingSettingsRepository | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
@@ -64,6 +69,7 @@ class EnrollChildInSessionType:
         self._owner_lookup = student_owner_lookup
         self._academy_id = academy_id
         self._connected_accounts = connected_accounts
+        self._settings = settings
         self._now = clock
 
     async def execute(self, cmd: EnrollChildCommand) -> dict[str, Any]:
@@ -141,8 +147,28 @@ class EnrollChildInSessionType:
             return None
         account = await self._connected_accounts.get_for_academy()
         if account is None or not account.is_ready_for_charges():
+            if await self._platform_fallback_enabled():
+                log.warning(
+                    "enroll_child_in_session_type: connected account not ready — falling back "
+                    "to PLATFORM charge (allow_platform_charge_fallback=on)"
+                )
+                return None
             raise CheckoutCreationFailed("Stripe connected account is not ready for autopay setup.")
         return account.stripe_account_id
+
+    async def _platform_fallback_enabled(self) -> bool:
+        if self._settings is None:
+            return False
+        try:
+            settings = await self._settings.get()
+        except Exception as exc:
+            log.warning(
+                "enroll_child_in_session_type: billing settings lookup failed; keeping "
+                "fail-closed connected-account requirement err=%s",
+                exc,
+            )
+            return False
+        return settings.allow_platform_charge_fallback
 
 
 class CancelBillingEnrollment:
