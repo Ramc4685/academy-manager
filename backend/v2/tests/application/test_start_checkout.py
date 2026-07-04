@@ -8,6 +8,7 @@ from backend.v2.contexts.billing.application.use_cases.start_checkout import (
     StartCheckout,
     StartCheckoutCommand,
 )
+from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.domain.models import Payment
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
@@ -52,6 +53,19 @@ class _FakeConnectedAccounts:
 
     async def get_for_academy(self):
         return self._account
+
+
+class _FakeBillingSettings:
+    def __init__(self, settings: BillingSettings) -> None:
+        self._settings = settings
+
+    async def get(self) -> BillingSettings:
+        return self._settings
+
+
+class _RaisingBillingSettings:
+    async def get(self) -> BillingSettings:
+        raise RuntimeError("settings store unavailable")
 
 
 @pytest.mark.asyncio
@@ -124,3 +138,93 @@ async def test_start_checkout_creates_payment_and_stripe_session() -> None:
     assert repo.saved[0].amount_cents == 15000
     assert len(stripe.checkouts) == 1
     assert stripe.checkouts[0]["metadata"]["payment_id"] == result.payment_id
+
+
+# ---------------------------------------------------------------------------
+# allow_platform_charge_fallback (temporary Connect-review escape hatch)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_platform_fallback_enabled_creates_checkout_with_platform_charge() -> None:
+    """Flag on + account not ready → checkout created with connected_account_id=None."""
+    stripe = FakeStripeGateway()
+    repo = FakePaymentRepo()
+    uc = StartCheckout(
+        payment_repo=repo,
+        stripe=stripe,
+        academy_id="acad",
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=False)),
+        settings=_FakeBillingSettings(
+            BillingSettings(academy_id="acad", allow_platform_charge_fallback=True)
+        ),
+    )
+    result = await uc.execute(
+        StartCheckoutCommand(
+            parent_id="p1",
+            session_id="s1",
+            amount_cents=15000,
+            success_url="https://app/success",
+            cancel_url="https://app/cancel",
+        )
+    )
+    assert result.payment_id
+    assert stripe.checkouts[0]["connected_account_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_platform_fallback_disabled_still_raises_when_account_not_ready() -> None:
+    """Flag off (default) + account not ready → still raises as today."""
+    from backend.v2.contexts.billing.domain.errors import CheckoutCreationFailed
+
+    stripe = FakeStripeGateway()
+    repo = FakePaymentRepo()
+    uc = StartCheckout(
+        payment_repo=repo,
+        stripe=stripe,
+        academy_id="acad",
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=False)),
+        settings=_FakeBillingSettings(
+            BillingSettings(academy_id="acad", allow_platform_charge_fallback=False)
+        ),
+    )
+    with pytest.raises(CheckoutCreationFailed):
+        await uc.execute(
+            StartCheckoutCommand(
+                parent_id="p1",
+                session_id="s1",
+                amount_cents=15000,
+                success_url="https://app/success",
+                cancel_url="https://app/cancel",
+            )
+        )
+    assert stripe.checkouts == []
+    assert repo.saved == []
+
+
+@pytest.mark.asyncio
+async def test_platform_fallback_settings_lookup_failure_fails_closed() -> None:
+    """Settings lookup raises + account not ready → still raises (fail closed)."""
+    from backend.v2.contexts.billing.domain.errors import CheckoutCreationFailed
+
+    stripe = FakeStripeGateway()
+    repo = FakePaymentRepo()
+    uc = StartCheckout(
+        payment_repo=repo,
+        stripe=stripe,
+        academy_id="acad",
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=False)),
+        settings=_RaisingBillingSettings(),
+    )
+    with pytest.raises(CheckoutCreationFailed):
+        await uc.execute(
+            StartCheckoutCommand(
+                parent_id="p1",
+                session_id="s1",
+                amount_cents=15000,
+                success_url="https://app/success",
+                cancel_url="https://app/cancel",
+            )
+        )
+    assert stripe.checkouts == []
+    assert repo.saved == []

@@ -2867,6 +2867,7 @@ def compose_admin(
             stripe=invoice_stripe,  # type: ignore[arg-type]
             email=_invoice_email_port(),
             connected_accounts=connected_accounts_repo,
+            settings=billing_settings_repo,
             success_url=f"{frontend_url}/parent/payments?invoice=paid",
             cancel_url=f"{frontend_url}/parent/payments?invoice=cancelled",
         ).execute(invoice_id)

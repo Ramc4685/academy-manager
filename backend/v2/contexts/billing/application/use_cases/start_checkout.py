@@ -6,11 +6,13 @@ Checkout Session. Returns the redirect URL the client navigates to.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from pydantic import BaseModel
 
 from backend.v2.contexts.billing.application.ports import (
+    BillingSettingsRepository,
     ConnectedAccountRepository,
     PaymentRepository,
     StripeGateway,
@@ -18,6 +20,8 @@ from backend.v2.contexts.billing.application.ports import (
 from backend.v2.contexts.billing.domain.errors import CheckoutCreationFailed
 from backend.v2.contexts.billing.domain.models import Payment
 from backend.v2.shared.ids import new_ulid
+
+log = logging.getLogger(__name__)
 
 
 class StartCheckoutCommand(BaseModel):
@@ -47,12 +51,14 @@ class StartCheckout:
         stripe: StripeGateway,
         academy_id: str,
         connected_accounts: ConnectedAccountRepository | None = None,
+        settings: BillingSettingsRepository | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._payments = payment_repo
         self._stripe = stripe
         self._academy_id = academy_id
         self._connected_accounts = connected_accounts
+        self._settings = settings
         self._now = clock
 
     async def execute(self, cmd: StartCheckoutCommand) -> StartCheckoutResult:
@@ -105,5 +111,21 @@ class StartCheckout:
             return None
         account = await self._connected_accounts.get_for_academy()
         if account is None or not account.is_ready_for_charges():
+            if self._settings is not None:
+                try:
+                    settings = await self._settings.get()
+                except Exception as exc:
+                    log.warning(
+                        "start_checkout: billing settings lookup failed — "
+                        "failing closed (connected account not ready) err=%s",
+                        exc,
+                    )
+                else:
+                    if settings.allow_platform_charge_fallback:
+                        log.warning(
+                            "start_checkout: connected account not ready — falling back to "
+                            "PLATFORM charge (allow_platform_charge_fallback=on)"
+                        )
+                        return None
             raise CheckoutCreationFailed("Stripe connected account is not ready for checkout.")
         return account.stripe_account_id
