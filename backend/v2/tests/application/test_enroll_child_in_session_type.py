@@ -116,6 +116,7 @@ def _make_use_case(
     stripe: FakeStripeGateway | None = None,
     owned: dict[str, set[str]] | None = None,
     connected_accounts: FakeConnectedAccounts | None = None,
+    settings: object | None = None,
 ) -> EnrollChildInSessionType:
     if enrollments is None:
         enrollments = FakeEnrollmentRepo()
@@ -135,6 +136,7 @@ def _make_use_case(
         student_owner_lookup=ownership,
         academy_id="acad",
         connected_accounts=connected_accounts,
+        settings=settings,
         clock=lambda: _NOW,
     )
 
@@ -250,6 +252,71 @@ async def test_enroll_fails_closed_without_ready_connected_account():
     assert connected_accounts.calls == 1
     assert stripe.autopay_setup_checkouts == []
     assert enrollments.rows == {}
+
+
+class _SettingsRepo:
+    def __init__(self, *, fallback: bool = False, error: bool = False) -> None:
+        self._fallback = fallback
+        self._error = error
+
+    async def get(self):
+        from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+
+        if self._error:
+            raise RuntimeError("settings lookup failed")
+        return BillingSettings(academy_id="acad", allow_platform_charge_fallback=self._fallback)
+
+
+@pytest.mark.asyncio
+async def test_enroll_falls_back_to_platform_when_flag_on():
+    stripe = FakeStripeGateway()
+    connected_accounts = FakeConnectedAccounts(
+        ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_pending")
+    )
+    uc = _make_use_case(
+        session_type=_make_session_type(),
+        stripe=stripe,
+        connected_accounts=connected_accounts,
+        settings=_SettingsRepo(fallback=True),
+    )
+
+    await uc.execute(
+        EnrollChildCommand(
+            parent_id="parent-1",
+            student_id="student-1",
+            session_type_id="st-1",
+            success_url="https://example.com/success",
+            cancel_url="https://example.com/cancel",
+        )
+    )
+
+    assert stripe.autopay_setup_checkouts[0]["connected_account_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_enroll_still_fails_closed_when_settings_lookup_errors():
+    stripe = FakeStripeGateway()
+    connected_accounts = FakeConnectedAccounts(
+        ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_pending")
+    )
+    uc = _make_use_case(
+        session_type=_make_session_type(),
+        stripe=stripe,
+        connected_accounts=connected_accounts,
+        settings=_SettingsRepo(error=True),
+    )
+
+    with pytest.raises(CheckoutCreationFailed, match="connected account"):
+        await uc.execute(
+            EnrollChildCommand(
+                parent_id="parent-1",
+                student_id="student-1",
+                session_type_id="st-1",
+                success_url="https://example.com/success",
+                cancel_url="https://example.com/cancel",
+            )
+        )
+    assert stripe.autopay_setup_checkouts == []
 
 
 @pytest.mark.asyncio

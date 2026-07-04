@@ -1022,10 +1022,30 @@ def compose_parent(
         if invoice_stripe is None:
             raise ValueError("balance payment unavailable")
         # Destination-charge routing (Slice I posture): funds must settle to the
-        # academy's connected account; refuse a platform charge if not ready.
+        # academy's connected account; refuse a platform charge if not ready
+        # unless the temporary allow_platform_charge_fallback escape hatch is on.
         account = await connected_accounts_repo.get_for_academy()
-        if account is None or not account.is_ready_for_charges():
-            raise ValueError("balance payment unavailable")
+        connected_account_stripe_id: str | None = None
+        if account is not None and account.is_ready_for_charges():
+            connected_account_stripe_id = account.stripe_account_id
+        else:
+            fallback_enabled = False
+            try:
+                fallback_enabled = (await billing_settings_repo.get()).allow_platform_charge_fallback
+            except Exception as exc:
+                log.warning(
+                    "start_balance_payment: billing settings lookup failed; keeping "
+                    "fail-closed connected-account requirement parent=%s err=%s",
+                    parent_id,
+                    exc,
+                )
+            if not fallback_enabled:
+                raise ValueError("balance payment unavailable")
+            log.warning(
+                "start_balance_payment: connected account not ready — falling back to "
+                "PLATFORM charge (allow_platform_charge_fallback=on) parent=%s",
+                parent_id,
+            )
         currencies = {inv.currency for inv in payable}
         if len(currencies) != 1:
             raise ValueError("cannot pay invoices with mixed currencies in one checkout")
@@ -1052,7 +1072,7 @@ def compose_parent(
                     "type": "balance_payment",
                 },
                 idempotency_key=f"balance-payment:{fingerprint}",
-                connected_account_id=account.stripe_account_id,
+                connected_account_id=connected_account_stripe_id,
             )
         except Exception as exc:
             log.warning(
@@ -1288,6 +1308,7 @@ def compose_parent(
         student_owner_lookup=_StudentOwnerLookup(),
         academy_id=academy_id,
         connected_accounts=connected_accounts_repo,
+        settings=billing_settings_repo,
     )
     cancel_billing_enrollment_uc = CancelBillingEnrollment(
         enrollments=student_billing_enrollments,
