@@ -370,6 +370,7 @@ def compose_parent(
         stripe=stripe,
         academy_id=academy_id,
         connected_accounts=connected_accounts_repo,
+        settings=billing_settings_repo,
     )
     create_portal = CreateCustomerPortalSession(stripe=stripe)
     issue_refund = IssueRefund(
