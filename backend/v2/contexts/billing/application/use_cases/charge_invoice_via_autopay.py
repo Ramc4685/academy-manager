@@ -242,17 +242,37 @@ class ChargeInvoiceViaAutopay:
 
         connected_account_id = await self._ready_connected_account_id()
         if self._connected_accounts is not None and connected_account_id is None:
-            log.warning(
-                "charge_autopay: refusing to charge invoice=%s — connected account not ready",
-                invoice_id,
-            )
-            return ChargeResult(
-                success=False,
-                invoice_id=invoice_id,
-                status=invoice.status,
-                balance_due_cents=invoice.balance_due_cents,
-                decline_code="connected_account_not_ready",
-            )
+            fallback_enabled = False
+            if self._settings is not None:
+                try:
+                    fallback_settings = await self._settings.get()
+                except Exception as exc:
+                    log.warning(
+                        "charge_autopay: billing settings lookup failed invoice=%s — "
+                        "failing closed (connected account not ready) err=%s",
+                        invoice_id,
+                        exc,
+                    )
+                else:
+                    fallback_enabled = fallback_settings.allow_platform_charge_fallback
+            if fallback_enabled:
+                log.warning(
+                    "charge_autopay: connected account not ready — falling back to PLATFORM "
+                    "charge (allow_platform_charge_fallback=on) invoice=%s",
+                    invoice_id,
+                )
+            else:
+                log.warning(
+                    "charge_autopay: refusing to charge invoice=%s — connected account not ready",
+                    invoice_id,
+                )
+                return ChargeResult(
+                    success=False,
+                    invoice_id=invoice_id,
+                    status=invoice.status,
+                    balance_due_cents=invoice.balance_due_cents,
+                    decline_code="connected_account_not_ready",
+                )
 
         saved = await self._stripe.get_default_payment_method(
             academy_id=invoice.academy_id,

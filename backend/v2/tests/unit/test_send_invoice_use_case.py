@@ -10,6 +10,7 @@ from datetime import UTC, date, datetime
 import pytest
 
 from backend.v2.contexts.billing.application.use_cases.send_invoice import SendInvoice
+from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 
 # ---------------------------------------------------------------------------
@@ -130,6 +131,19 @@ class _FakeConnectedAccounts:
 
     async def get_for_academy(self):
         return self._account
+
+
+class _FakeBillingSettings:
+    def __init__(self, settings: BillingSettings) -> None:
+        self._settings = settings
+
+    async def get(self) -> BillingSettings:
+        return self._settings
+
+
+class _RaisingBillingSettings:
+    async def get(self) -> BillingSettings:
+        raise RuntimeError("settings store unavailable")
 
 
 # ---------------------------------------------------------------------------
@@ -374,3 +388,66 @@ async def test_email_failure_records_delivery_failed_without_sent_at() -> None:
     assert result.invoice.delivery_status == "delivery_failed"
     assert result.invoice.sent_at is None
     assert result.invoice.last_sent_at == NOW
+
+
+# ---------------------------------------------------------------------------
+# allow_platform_charge_fallback (temporary Connect-review escape hatch)
+# ---------------------------------------------------------------------------
+
+
+async def test_platform_fallback_enabled_mints_pay_link_with_platform_charge() -> None:
+    """Flag on + account not ready → pay link minted with connected_account_id=None."""
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=stripe,
+        email=None,
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=False)),  # type: ignore[arg-type]
+        settings=_FakeBillingSettings(
+            BillingSettings(academy_id="acad-1", allow_platform_charge_fallback=True)
+        ),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    result = await uc.execute("inv-1")
+
+    assert result.checkout_url == "https://checkout.stripe.com/pay/test"
+    assert stripe.calls[0]["connected_account_id"] is None
+
+
+async def test_platform_fallback_disabled_still_blocks_when_account_not_ready() -> None:
+    """Flag off (default) + account not ready → still blocked as today."""
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=stripe,
+        email=None,
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=False)),  # type: ignore[arg-type]
+        settings=_FakeBillingSettings(
+            BillingSettings(academy_id="acad-1", allow_platform_charge_fallback=False)
+        ),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    result = await uc.execute("inv-1")
+
+    assert stripe.calls == []
+    assert result.checkout_url is None
+
+
+async def test_platform_fallback_settings_lookup_failure_fails_closed() -> None:
+    """Settings lookup raises + account not ready → still blocked (fail closed)."""
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=stripe,
+        email=None,
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=False)),  # type: ignore[arg-type]
+        settings=_RaisingBillingSettings(),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    result = await uc.execute("inv-1")
+
+    assert stripe.calls == []
+    assert result.checkout_url is None

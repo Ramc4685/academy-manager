@@ -1279,3 +1279,74 @@ async def test_stripe_not_configured_returns_decline() -> None:
     assert result.success is False
     assert result.decline_code == "stripe_not_configured"
     assert result.status == "open"
+
+
+# ---------------------------------------------------------------------------
+# allow_platform_charge_fallback (temporary Connect-review escape hatch)
+# ---------------------------------------------------------------------------
+
+
+async def test_platform_fallback_enabled_charges_via_platform_when_account_not_ready() -> None:
+    """Flag on + connected account not ready → charge proceeds with connected_account_id=None."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = FakeStripeSucceeds()
+    connected_accounts = FakeConnectedAccounts(
+        ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_pending")
+    )
+    settings = FakeBillingSettingsRepo(
+        BillingSettings(academy_id="acad-1", allow_platform_charge_fallback=True)
+    )
+
+    result = await _uc(
+        repo, stripe, settings=settings, connected_accounts=connected_accounts
+    ).execute("inv-1")
+
+    assert result.success is True
+    assert result.decline_code is None
+    assert stripe.create_calls[0]["connected_account_id"] is None
+    assert connected_accounts.calls == 1
+
+
+async def test_platform_fallback_disabled_still_declines_when_account_not_ready() -> None:
+    """Flag off (default) + connected account not ready → still declines as today."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = FakeStripeSucceeds()
+    connected_accounts = FakeConnectedAccounts(
+        ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_pending")
+    )
+    settings = FakeBillingSettingsRepo(
+        BillingSettings(academy_id="acad-1", allow_platform_charge_fallback=False)
+    )
+
+    result = await _uc(
+        repo, stripe, settings=settings, connected_accounts=connected_accounts
+    ).execute("inv-1")
+
+    assert result.success is False
+    assert result.decline_code == "connected_account_not_ready"
+    assert stripe.create_calls == []
+
+
+async def test_platform_fallback_settings_lookup_failure_fails_closed_to_decline() -> None:
+    """Settings lookup raises + account not ready → still declines (fail closed)."""
+
+    class RaisingSettingsRepo:
+        async def get(self) -> BillingSettings:
+            raise RuntimeError("settings store unavailable")
+
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = FakeStripeSucceeds()
+    connected_accounts = FakeConnectedAccounts(
+        ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_pending")
+    )
+
+    result = await _uc(
+        repo,
+        stripe,
+        settings=RaisingSettingsRepo(),  # type: ignore[arg-type]
+        connected_accounts=connected_accounts,
+    ).execute("inv-1")
+
+    assert result.success is False
+    assert result.decline_code == "connected_account_not_ready"
+    assert stripe.create_calls == []

@@ -25,6 +25,7 @@ from typing import Protocol
 from pydantic import BaseModel
 
 from backend.v2.contexts.billing.application.ports import (
+    BillingSettingsRepository,
     ConnectedAccountRepository,
     LedgerRepository,
 )
@@ -104,6 +105,7 @@ class SendInvoice:
         stripe: InvoiceStripeGateway | None = None,
         email: InvoiceEmailPort | None = None,
         connected_accounts: ConnectedAccountRepository | None = None,
+        settings: BillingSettingsRepository | None = None,
         success_url: str = "https://app.example.com/pay/success",
         cancel_url: str = "https://app.example.com/pay/cancel",
         clock=lambda: datetime.now(UTC),
@@ -112,6 +114,7 @@ class SendInvoice:
         self._stripe = stripe
         self._email = email
         self._connected_accounts = connected_accounts
+        self._settings = settings
         self._success_url = success_url
         self._cancel_url = cancel_url
         self._now = clock
@@ -149,11 +152,32 @@ class SendInvoice:
             else:
                 account = await self._connected_accounts.get_for_academy()
                 if account is None or not account.is_ready_for_charges():
-                    log.warning(
-                        "send_invoice: refusing pay link for invoice=%s — connected account not ready",
-                        invoice_id,
-                    )
-                    connected_account_blocked = True
+                    fallback_enabled = False
+                    if self._settings is not None:
+                        try:
+                            fallback_settings = await self._settings.get()
+                        except Exception as exc:
+                            log.warning(
+                                "send_invoice: billing settings lookup failed invoice=%s — "
+                                "failing closed (connected account not ready) err=%s",
+                                invoice_id,
+                                exc,
+                            )
+                        else:
+                            fallback_enabled = fallback_settings.allow_platform_charge_fallback
+                    if fallback_enabled:
+                        log.warning(
+                            "send_invoice: connected account not ready — falling back to "
+                            "PLATFORM charge (allow_platform_charge_fallback=on) invoice=%s",
+                            invoice_id,
+                        )
+                        connected_account_id = None
+                    else:
+                        log.warning(
+                            "send_invoice: refusing pay link for invoice=%s — connected account not ready",
+                            invoice_id,
+                        )
+                        connected_account_blocked = True
                 else:
                     connected_account_id = account.stripe_account_id
         if can_create_checkout and self._stripe is not None and not connected_account_blocked:

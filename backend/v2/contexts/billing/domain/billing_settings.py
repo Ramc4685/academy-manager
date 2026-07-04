@@ -26,6 +26,14 @@ class BillingSettings(BaseModel):
     effective_at: datetime | None = None
     invoice_number_prefix: str = "BLNO"
 
+    # TEMPORARY escape hatch while the platform's Stripe Connect application is
+    # under review: when true, checkout/invoice/autopay may charge the
+    # platform account directly instead of refusing when the academy's
+    # connected account isn't charge-ready. Only safe while academy funds and
+    # platform funds settle to the same Stripe account — remove once Connect
+    # onboarding is fully rolled out.
+    allow_platform_charge_fallback: bool = False
+
     @classmethod
     def default(cls, academy_id: str) -> BillingSettings:
         """Fail-safe defaults: all discounts off."""

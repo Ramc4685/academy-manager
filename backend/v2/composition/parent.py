@@ -363,6 +363,7 @@ def compose_parent(
         stripe=stripe,
         academy_id=academy_id,
         connected_accounts=connected_accounts_repo,
+        settings=billing_settings_repo,
     )
     start_subscription_checkout = StartSubscriptionCheckout(
         subscriptions=subscriptions_repo,
@@ -980,6 +981,7 @@ def compose_parent(
             stripe=invoice_stripe,  # type: ignore[arg-type]
             email=None,
             connected_accounts=connected_accounts_repo,
+            settings=billing_settings_repo,
             success_url=success_url,
             cancel_url=cancel_url,
         ).execute(invoice_id)
