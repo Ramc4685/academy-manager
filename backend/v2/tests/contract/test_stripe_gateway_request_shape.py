@@ -135,7 +135,15 @@ async def test_create_connected_account_uses_accounts_v2_payload_not_legacy_cont
             "capabilities": {
                 "card_payments": {"requested": True},
             }
-        }
+        },
+        # Destination charges require the recipient stripe_transfers capability.
+        "recipient": {
+            "capabilities": {
+                "stripe_balance": {
+                    "stripe_transfers": {"requested": True},
+                }
+            }
+        },
     }
     assert call["defaults"] == {
         "currency": "usd",
@@ -208,6 +216,50 @@ async def test_off_session_payment_intent_without_connected_account_omits_connec
     call = fake_stripe.calls["PaymentIntent.create"]
     assert "on_behalf_of" not in call
     assert "transfer_data" not in call
+    assert "payment_method_types" not in call
+
+
+async def test_session_checkout_has_destination_charge_params_and_no_pmt_types(
+    fake_stripe: _Recorder,
+) -> None:
+    gw = _gateway()
+
+    await gw.create_checkout_session(
+        parent_id="parent-1",
+        session_id="sess-1",
+        amount_cents=15_000,
+        success_url="https://app.test/ok",
+        cancel_url="https://app.test/cancel",
+        metadata={"academy_id": "acad-1", "payment_id": "pay-1"},
+        connected_account_id="acct_v2_123",
+    )
+
+    call = fake_stripe.calls["checkout.Session.create"]
+    pi_data = call["payment_intent_data"]
+    assert pi_data["on_behalf_of"] == "acct_v2_123"
+    assert pi_data["transfer_data"] == {"destination": "acct_v2_123"}
+    assert pi_data.get("application_fee_amount", 0) == 0
+    assert "payment_method_types" not in call
+    assert "stripe_account" not in call
+
+
+async def test_session_checkout_without_connected_account_omits_connect_params(
+    fake_stripe: _Recorder,
+) -> None:
+    gw = _gateway()
+
+    await gw.create_checkout_session(
+        parent_id="parent-1",
+        session_id="sess-1",
+        amount_cents=15_000,
+        success_url="https://app.test/ok",
+        cancel_url="https://app.test/cancel",
+        metadata={"academy_id": "acad-1", "payment_id": "pay-1"},
+        connected_account_id=None,
+    )
+
+    call = fake_stripe.calls["checkout.Session.create"]
+    assert "payment_intent_data" not in call
     assert "payment_method_types" not in call
 
 

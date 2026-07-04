@@ -49,6 +49,7 @@ class FakeStripeGateway(StripeGateway):
         success_url: str,
         cancel_url: str,
         metadata: dict[str, str],
+        connected_account_id: str | None = None,
     ) -> tuple[str, str]:
         checkout_id = f"cs_test_{new_ulid()}"
         record = {
@@ -59,6 +60,7 @@ class FakeStripeGateway(StripeGateway):
             "success_url": success_url,
             "cancel_url": cancel_url,
             "metadata": metadata,
+            "connected_account_id": connected_account_id,
         }
         self.checkouts.append(record)
         return checkout_id, f"https://fake.stripe.com/c/{checkout_id}"

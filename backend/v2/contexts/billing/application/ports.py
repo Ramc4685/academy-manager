@@ -223,8 +223,13 @@ class StripeGateway(Protocol):
         success_url: str,
         cancel_url: str,
         metadata: dict[str, str],
+        connected_account_id: str | None = None,
     ) -> tuple[str, str]:
-        """Returns (checkout_session_id, redirect_url)."""
+        """Returns (checkout_session_id, redirect_url).
+
+        When ``connected_account_id`` is set, the checkout's PaymentIntent is a
+        destination charge to the academy's connected account.
+        """
 
     async def create_subscription_checkout_session(
         self,
