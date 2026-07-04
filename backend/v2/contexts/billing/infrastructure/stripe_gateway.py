@@ -51,11 +51,17 @@ class RealStripeGateway(StripeGateway):
         success_url: str,
         cancel_url: str,
         metadata: dict[str, str],
+        connected_account_id: str | None = None,
     ) -> tuple[str, str]:
+        """When ``connected_account_id`` is set, the checkout's PaymentIntent is a
+        DESTINATION charge (``on_behalf_of`` + ``transfer_data.destination``),
+        matching ``create_invoice_checkout_session`` and the autopay fund flow.
+        """
+
         def _create() -> Any:
-            return self._stripe.checkout.Session.create(
-                mode="payment",
-                line_items=[
+            request: dict[str, Any] = {
+                "mode": "payment",
+                "line_items": [
                     {
                         "price_data": {
                             "currency": "usd",
@@ -65,10 +71,18 @@ class RealStripeGateway(StripeGateway):
                         "quantity": 1,
                     }
                 ],
-                success_url=success_url,
-                cancel_url=cancel_url,
-                metadata=metadata,
-            )
+                "success_url": success_url,
+                "cancel_url": cancel_url,
+                "metadata": metadata,
+            }
+            if connected_account_id:
+                request["payment_intent_data"] = {
+                    "metadata": metadata,
+                    "on_behalf_of": connected_account_id,
+                    "transfer_data": {"destination": connected_account_id},
+                    "application_fee_amount": 0,
+                }
+            return self._stripe.checkout.Session.create(**request)
 
         result = await asyncio.to_thread(_create)
         return str(result.id), str(result.url)
@@ -492,7 +506,18 @@ class RealStripeGateway(StripeGateway):
                     "capabilities": {
                         "card_payments": {"requested": True},
                     }
-                }
+                },
+                # Destination charges transfer funds to the connected account,
+                # which requires the recipient stripe_transfers capability —
+                # without it Stripe rejects checkout/PI creation with
+                # insufficient_capabilities_for_transfer.
+                "recipient": {
+                    "capabilities": {
+                        "stripe_balance": {
+                            "stripe_transfers": {"requested": True},
+                        }
+                    }
+                },
             },
             "defaults": {
                 "currency": "usd",

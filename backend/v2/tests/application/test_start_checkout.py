@@ -37,6 +37,72 @@ class FakePaymentRepo:
         return []
 
 
+class _StubConnectedAccount:
+    def __init__(self, *, ready: bool, stripe_account_id: str = "acct_ready_1") -> None:
+        self._ready = ready
+        self.stripe_account_id = stripe_account_id
+
+    def is_ready_for_charges(self) -> bool:
+        return self._ready
+
+
+class _FakeConnectedAccounts:
+    def __init__(self, account: _StubConnectedAccount | None) -> None:
+        self._account = account
+
+    async def get_for_academy(self):
+        return self._account
+
+
+@pytest.mark.asyncio
+async def test_start_checkout_routes_destination_charge_when_connected_account_ready() -> None:
+    stripe = FakeStripeGateway()
+    repo = FakePaymentRepo()
+    uc = StartCheckout(
+        payment_repo=repo,
+        stripe=stripe,
+        academy_id="acad",
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),
+    )
+    result = await uc.execute(
+        StartCheckoutCommand(
+            parent_id="p1",
+            session_id="s1",
+            amount_cents=15000,
+            success_url="https://app/success",
+            cancel_url="https://app/cancel",
+        )
+    )
+    assert result.payment_id
+    assert stripe.checkouts[0]["connected_account_id"] == "acct_ready_1"
+
+
+@pytest.mark.asyncio
+async def test_start_checkout_refuses_platform_charge_when_connected_account_not_ready() -> None:
+    from backend.v2.contexts.billing.domain.errors import CheckoutCreationFailed
+
+    stripe = FakeStripeGateway()
+    repo = FakePaymentRepo()
+    uc = StartCheckout(
+        payment_repo=repo,
+        stripe=stripe,
+        academy_id="acad",
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=False)),
+    )
+    with pytest.raises(CheckoutCreationFailed):
+        await uc.execute(
+            StartCheckoutCommand(
+                parent_id="p1",
+                session_id="s1",
+                amount_cents=15000,
+                success_url="https://app/success",
+                cancel_url="https://app/cancel",
+            )
+        )
+    assert stripe.checkouts == []
+    assert repo.saved == []
+
+
 @pytest.mark.asyncio
 async def test_start_checkout_creates_payment_and_stripe_session() -> None:
     stripe = FakeStripeGateway()

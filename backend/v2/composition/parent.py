@@ -362,6 +362,7 @@ def compose_parent(
         payment_repo=payments_repo,
         stripe=stripe,
         academy_id=academy_id,
+        connected_accounts=connected_accounts_repo,
     )
     start_subscription_checkout = StartSubscriptionCheckout(
         subscriptions=subscriptions_repo,
