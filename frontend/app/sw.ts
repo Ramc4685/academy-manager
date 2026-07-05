@@ -35,6 +35,30 @@ const COACH_API = /\/api\/v2\/coach\/(today|sessions)/;
 const COACH_WRITE = /\/api\/v2\/coach\/attendance/;
 const STATIC = /\.(?:js|css|woff2?|svg|png|jpg|jpeg|webp|avif|ico)$/;
 const MANIFEST = /manifest\.webmanifest$/;
+const CLOUDFLARE_INSIGHTS_HOST = "static.cloudflareinsights.com";
+
+const networkOnlyQuiet = {
+  async handle({ request }: { request: Request }): Promise<Response> {
+    try {
+      return await fetch(request);
+    } catch {
+      return Response.error();
+    }
+  },
+};
+
+const optionalScriptQuiet = {
+  async handle({ request }: { request: Request }): Promise<Response> {
+    try {
+      return await fetch(request);
+    } catch {
+      return new Response("", {
+        status: 204,
+        headers: { "Content-Type": "application/javascript; charset=utf-8" },
+      });
+    }
+  },
+};
 
 const serwist = new Serwist({
   precacheEntries: self.__SW_MANIFEST,
@@ -43,11 +67,18 @@ const serwist = new Serwist({
   navigationPreload: true,
   runtimeCaching: [
     {
+      matcher: ({ request, url }) =>
+        request.method === "GET" &&
+        url.hostname === CLOUDFLARE_INSIGHTS_HOST &&
+        url.pathname.startsWith("/beacon.min.js"),
+      handler: optionalScriptQuiet,
+    },
+    {
       // Firebase auth helper (proxied via next.config.ts rewrites). A
       // cached/stale response here breaks the OAuth redirect round-trip,
       // and the STATIC rule below would otherwise cache-first its JS.
       matcher: ({ url }) => url.pathname.startsWith("/__/auth"),
-      handler: new NetworkOnly(),
+      handler: networkOnlyQuiet,
     },
     {
       matcher: ({ request, url }) => request.method === "GET" && COACH_API.test(url.pathname),

@@ -21,6 +21,7 @@ from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     StartSubscriptionCheckoutCommand,
 )
 from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
+from backend.v2.contexts.billing.domain.errors import ConnectOnboardingFailed
 from backend.v2.contexts.billing.domain.models import Subscription
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
@@ -49,6 +50,18 @@ class _SubscriptionRepo:
 
 
 _ALLOWED_ORIGINS = ("https://app.test",)
+
+
+class _FailingConnectAccountGateway(FakeStripeGateway):
+    async def create_connected_account(
+        self,
+        *,
+        academy_id: str,
+        display_name: str | None = None,
+        contact_email: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> str:
+        raise ValueError("Stripe account_create_activation_required: sensitive provider detail")
 
 
 async def test_start_onboarding_drives_real_repo_and_is_idempotent(db, acad) -> None:
@@ -108,6 +121,29 @@ async def test_start_onboarding_rejects_disallowed_redirect_origin(db, acad) -> 
         )
     # Nothing was created on the rejected calls.
     assert len(stripe.connected_accounts) == 0
+    assert await repo.collection.count_documents({}) == 0
+
+
+async def test_start_onboarding_maps_stripe_failure_to_sanitized_domain_error(db, acad) -> None:
+    stripe = _FailingConnectAccountGateway()
+    repo = MongoConnectedAccountRepository(db)
+    use_case = StartConnectOnboarding(
+        stripe=stripe,
+        connected_accounts=repo,
+        allowed_redirect_origins=_ALLOWED_ORIGINS,
+        academy_id=acad,
+    )
+
+    with pytest.raises(ConnectOnboardingFailed) as exc_info:
+        await use_case.start(
+            academy_id=acad,
+            refresh_url="https://app.test/refresh",
+            return_url="https://app.test/return",
+        )
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.message == "Stripe Connect onboarding is temporarily unavailable."
+    assert "account_create_activation_required" not in exc_info.value.message
     assert await repo.collection.count_documents({}) == 0
 
 

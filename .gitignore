@@ -107,3 +107,6 @@ graphify-out/
 memory/test_credentials.md
 agenthub/agents/youtube/db
 firebase-emulator/data/
+.omo/
+output/playwright/*-staging-*/
+frontend/.autopay-*.mjs

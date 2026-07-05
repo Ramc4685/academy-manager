@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     PauseRequest,
@@ -82,6 +83,30 @@ def test_admin_dashboard_attention_includes_billing_deferral_risks(admin_client)
     assert item["href"] == "/admin/payments"
     assert item["count"] == 2
     assert item["severity"] == "high"
+
+
+def test_admin_dashboard_attention_degrades_when_one_signal_fails(admin_client):
+    admin_client.seed["pause_requests"].rows["pause-1"] = PauseRequest(
+        pause_request_id="pause-1",
+        enrollment_id="enroll-1",
+        parent_id="parent-1",
+        period="2026-05",
+        resume_on=datetime(2026, 5, 15, tzinfo=UTC).date(),
+        reason="travel",
+        status="pending",
+        created_at=_dt("2026-05-01T10:00:00"),
+    )
+    admin_client.use_cases.list_billing_deferral_warnings = AsyncMock(
+        side_effect=RuntimeError("billing deferral query failed")
+    )
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert [(item["kind"], item["count"]) for item in body["items"]] == [
+        ("pause_requests", 1),
+    ]
 
 
 def test_admin_dashboard_attention_wrong_persona_404(coach_on_admin_client, parent_on_admin_client):
