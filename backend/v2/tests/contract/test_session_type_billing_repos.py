@@ -222,6 +222,84 @@ async def test_mark_autopay_active_from_setup_from_setup_started(db, acad) -> No
     assert await repo.get_autopay_enrollment_status(enrollment_id="e1") == "active"
 
 
+def _legacy_enrollment_doc(
+    enrollment_id: str,
+    *,
+    academy_id: str,
+    status: str = "active",
+) -> dict:
+    now = _now()
+    return {
+        "enrollment_id": enrollment_id,
+        "academy_id": academy_id,
+        "student_id": "student-1",
+        "parent_id": "parent-1",
+        "session_id": "session-1",
+        "status": status,
+        "enrolled_at": now,
+    }
+
+
+@pytest.mark.asyncio
+async def test_mark_autopay_active_from_setup_self_heals_from_legacy_enrollment(db, acad) -> None:
+    """2026-07-04 incident: enrollments created by the legacy flow have no
+    projection doc, so autopay setup completion failed with "enrollment not
+    found". The repo must auto-create the projection from the legacy
+    ``enrollments`` doc and walk it to active."""
+    await db["enrollments"].insert_one(_legacy_enrollment_doc("legacy-1", academy_id=acad))
+    repo = MongoStudentBillingEnrollmentRepository(db)
+
+    ok = await repo.mark_autopay_active_from_setup(enrollment_id="legacy-1")
+
+    assert ok is True
+    stored = await repo.get("legacy-1")
+    assert stored is not None
+    assert stored.autopay_enrollment_status == "active"
+    # Mapping mirrors the manual prod backfill / migration 0145.
+    assert stored.session_type_id == "session-1"
+    assert stored.parent_id == "parent-1"
+    assert stored.student_id == "student-1"
+    assert stored.billing_start_date.replace(tzinfo=UTC) == _now()
+
+
+@pytest.mark.asyncio
+async def test_mark_autopay_active_from_setup_unknown_everywhere_returns_false(db, acad) -> None:
+    repo = MongoStudentBillingEnrollmentRepository(db)
+
+    ok = await repo.mark_autopay_active_from_setup(enrollment_id="ghost")
+
+    assert ok is False
+    assert await repo.get("ghost") is None
+
+
+@pytest.mark.asyncio
+async def test_mark_autopay_active_self_heal_skips_cancelled_legacy_enrollment(db, acad) -> None:
+    """A dead legacy enrollment must not be resurrected into an autopay
+    projection by setup completion."""
+    await db["enrollments"].insert_one(
+        _legacy_enrollment_doc("legacy-cancelled", academy_id=acad, status="cancelled")
+    )
+    repo = MongoStudentBillingEnrollmentRepository(db)
+
+    ok = await repo.mark_autopay_active_from_setup(enrollment_id="legacy-cancelled")
+
+    assert ok is False
+    assert await repo.get("legacy-cancelled") is None
+
+
+@pytest.mark.asyncio
+async def test_mark_autopay_active_self_heal_is_tenant_isolated(db, acad) -> None:
+    await db["enrollments"].insert_one(
+        _legacy_enrollment_doc("legacy-other", academy_id="other-academy")
+    )
+    repo = MongoStudentBillingEnrollmentRepository(db)
+
+    ok = await repo.mark_autopay_active_from_setup(enrollment_id="legacy-other")
+
+    assert ok is False
+    assert await repo.get("legacy-other") is None
+
+
 @pytest.mark.asyncio
 async def test_autopay_status_writes_are_tenant_isolated(db, acad) -> None:
     repo = MongoStudentBillingEnrollmentRepository(db)

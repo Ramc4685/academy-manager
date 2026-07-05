@@ -25,7 +25,10 @@ from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     StartSubscriptionCheckoutCommand,
 )
 from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
-from backend.v2.contexts.billing.domain.errors import CheckoutCreationFailed
+from backend.v2.contexts.billing.domain.errors import (
+    AutopayActivationFailed,
+    CheckoutCreationFailed,
+)
 from backend.v2.contexts.billing.domain.models import Subscription
 
 
@@ -1133,7 +1136,7 @@ async def test_autopay_setup_enrollment_activation_failure_raises_after_projecti
         clock=lambda: now,
     )
 
-    with pytest.raises(RuntimeError, match="autopay enrollment activation failed"):
+    with pytest.raises(AutopayActivationFailed, match="autopay enrollment activation failed"):
         await uc.execute_from_setup_intent(gateway.setup_intents["seti_saved_card"])
 
     assert [consent.setup_intent_id for consent in consents.consents] == ["seti_saved_card"]
