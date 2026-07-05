@@ -131,6 +131,7 @@ def _invoice_doc(
     parent_id: str = "parent-1",
     balance_due_cents: int = 7_000,
     created_at: datetime | None = None,
+    enrollment_id: str | None = None,
 ) -> dict[str, Any]:
     now = created_at or datetime(2026, 7, 3, 10, 0, tzinfo=UTC)
     return LedgerInvoice(
@@ -138,6 +139,7 @@ def _invoice_doc(
         academy_id="acad",
         parent_id=parent_id,
         student_id="student-1",
+        enrollment_id=enrollment_id,
         period="2026-07",
         status="open",
         subtotal_cents=balance_due_cents,
@@ -355,6 +357,135 @@ async def test_parent_balance_payment_routes_checkout_to_ready_connected_account
     assert call["connected_account_id"] == "acct_ready"
     assert call["metadata"]["invoice_ids"] == "inv-earlier,inv-later"
     assert call["metadata"]["type"] == "balance_payment"
+
+
+@pytest.mark.asyncio
+async def test_parent_single_invoice_payment_with_enroll_autopay_forwards_flag(
+    allow_app_origin,
+) -> None:
+    stripe = _InvoiceCheckoutStripe()
+    db = _FakeDb(
+        {
+            "invoices": _FakeCollection(
+                [_invoice_doc(invoice_id="inv-1", enrollment_id="enroll-a")]
+            ),
+            "academy_connected_accounts": _FakeCollection([_connected_account_doc()]),
+        }
+    )
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"):
+        await parent.start_invoice_payment_for_parent(
+            parent_id="parent-1",
+            invoice_id="inv-1",
+            success_url="https://app.example.com/parent/payments?invoice=paid",
+            cancel_url="https://app.example.com/parent/payments?invoice=cancelled",
+            enroll_autopay=True,
+        )
+
+    call = stripe.invoice_checkout_calls[0]
+    assert call["save_payment_method_for_autopay"] is True
+    assert call["autopay_enrollment_ids"] == ["enroll-a"]
+    assert call["connected_account_id"] == "acct_ready"
+
+
+@pytest.mark.asyncio
+async def test_parent_balance_payment_with_enroll_autopay_collects_distinct_enrollment_ids(
+    allow_app_origin,
+) -> None:
+    stripe = _InvoiceCheckoutStripe()
+    db = _FakeDb(
+        {
+            "invoices": _FakeCollection(
+                [
+                    _invoice_doc(invoice_id="inv-1", enrollment_id="enroll-b"),
+                    _invoice_doc(
+                        invoice_id="inv-2",
+                        balance_due_cents=5_000,
+                        enrollment_id="enroll-a",
+                    ),
+                    _invoice_doc(
+                        invoice_id="inv-3",
+                        balance_due_cents=3_000,
+                        enrollment_id="enroll-a",
+                    ),
+                    _invoice_doc(invoice_id="inv-4", balance_due_cents=2_000),
+                ]
+            ),
+            "academy_connected_accounts": _FakeCollection([_connected_account_doc()]),
+        }
+    )
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"):
+        result = await parent.start_balance_payment_for_parent(
+            parent_id="parent-1",
+            success_url="https://app.example.com/parent/payments?invoice=paid",
+            cancel_url="https://app.example.com/parent/payments?invoice=cancelled",
+            enroll_autopay=True,
+        )
+
+    assert result == {"redirect_url": "https://checkout.stripe.test/balance"}
+    call = stripe.invoice_checkout_calls[0]
+    assert call["save_payment_method_for_autopay"] is True
+    # Distinct, deterministic; invoices without an enrollment are excluded.
+    assert call["autopay_enrollment_ids"] == ["enroll-a", "enroll-b"]
+    # A distinct idempotency key so an earlier one-time balance session is not
+    # replayed without the saved-payment-method params.
+    assert str(call["idempotency_key"]).endswith(":autopay-optin")
+
+
+@pytest.mark.asyncio
+async def test_parent_balance_payment_without_flag_omits_autopay_kwargs(
+    allow_app_origin,
+) -> None:
+    stripe = _InvoiceCheckoutStripe()
+    db = _FakeDb(
+        {
+            "invoices": _FakeCollection(
+                [
+                    _invoice_doc(invoice_id="inv-1", enrollment_id="enroll-a"),
+                    _invoice_doc(
+                        invoice_id="inv-2",
+                        balance_due_cents=5_000,
+                        enrollment_id="enroll-b",
+                    ),
+                ]
+            ),
+            "academy_connected_accounts": _FakeCollection([_connected_account_doc()]),
+        }
+    )
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"):
+        await parent.start_balance_payment_for_parent(
+            parent_id="parent-1",
+            success_url="https://app.example.com/parent/payments?invoice=paid",
+            cancel_url="https://app.example.com/parent/payments?invoice=cancelled",
+        )
+
+    call = stripe.invoice_checkout_calls[0]
+    assert "save_payment_method_for_autopay" not in call
+    assert "autopay_enrollment_ids" not in call
+    assert not str(call["idempotency_key"]).endswith(":autopay-optin")
 
 
 @pytest.mark.asyncio

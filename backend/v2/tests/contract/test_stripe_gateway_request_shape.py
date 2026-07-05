@@ -314,6 +314,139 @@ async def test_invoice_checkout_without_connected_account_omits_connect_params(
     assert "payment_method_types" not in call
 
 
+async def test_invoice_checkout_with_autopay_optin_saves_payment_method(
+    fake_stripe: _Recorder,
+) -> None:
+    gw = _gateway()
+
+    await gw.create_invoice_checkout_session(
+        invoice_id="inv-1",
+        amount_cents=4100,
+        currency="usd",
+        success_url="https://app.test/ok",
+        cancel_url="https://app.test/cancel",
+        metadata={"academy_id": "acad-1", "parent_id": "parent-1"},
+        idempotency_key="invoice-checkout:inv-1:4100:autopay-optin",
+        connected_account_id="acct_v2_123",
+        save_payment_method_for_autopay=True,
+        autopay_enrollment_ids=["enr-1", "enr-2", "enr-1"],
+    )
+
+    call = fake_stripe.calls["checkout.Session.create"]
+    pi_data = call["payment_intent_data"]
+    assert pi_data["setup_future_usage"] == "off_session"
+    assert call["customer_creation"] == "always"
+    assert call["metadata"]["autopay_optin"] == "true"
+    # Distinct ids only, original order preserved.
+    assert call["metadata"]["enrollment_ids"] == "enr-1,enr-2"
+    assert pi_data["metadata"]["autopay_optin"] == "true"
+    assert pi_data["metadata"]["enrollment_ids"] == "enr-1,enr-2"
+    # Opt-in composes with destination-charge routing — unchanged.
+    assert pi_data["on_behalf_of"] == "acct_v2_123"
+    assert pi_data["transfer_data"] == {"destination": "acct_v2_123"}
+    assert pi_data.get("application_fee_amount", 0) == 0
+    # Dynamic payment methods: never pin payment_method_types.
+    assert "payment_method_types" not in call
+
+
+async def test_invoice_checkout_autopay_optin_without_enrollment_ids_omits_metadata_key(
+    fake_stripe: _Recorder,
+) -> None:
+    gw = _gateway()
+
+    await gw.create_invoice_checkout_session(
+        invoice_id="inv-1",
+        amount_cents=4100,
+        currency="usd",
+        success_url="https://app.test/ok",
+        cancel_url="https://app.test/cancel",
+        metadata={"academy_id": "acad-1", "parent_id": "parent-1"},
+        connected_account_id=None,
+        save_payment_method_for_autopay=True,
+        autopay_enrollment_ids=[],
+    )
+
+    call = fake_stripe.calls["checkout.Session.create"]
+    assert call["metadata"]["autopay_optin"] == "true"
+    assert "enrollment_ids" not in call["metadata"]
+    assert call["payment_intent_data"]["setup_future_usage"] == "off_session"
+
+
+async def test_invoice_checkout_autopay_metadata_truncates_whole_ids_at_500_chars(
+    fake_stripe: _Recorder,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    gw = _gateway()
+    enrollment_ids = [f"enr-{index:04d}" for index in range(80)]  # joined: 719 chars
+
+    with caplog.at_level("WARNING"):
+        await gw.create_invoice_checkout_session(
+            invoice_id="inv-1",
+            amount_cents=4100,
+            currency="usd",
+            success_url="https://app.test/ok",
+            cancel_url="https://app.test/cancel",
+            metadata={"academy_id": "acad-1", "parent_id": "parent-1"},
+            connected_account_id=None,
+            save_payment_method_for_autopay=True,
+            autopay_enrollment_ids=enrollment_ids,
+        )
+
+    call = fake_stripe.calls["checkout.Session.create"]
+    value = call["metadata"]["enrollment_ids"]
+    assert len(value) <= 500
+    parts = value.split(",")
+    # Whole ids only, prefix order preserved — never a partial id.
+    assert parts == enrollment_ids[: len(parts)]
+    assert len(parts) == 55
+    assert "enrollment_ids" in caplog.text
+
+
+async def test_invoice_checkout_without_autopay_optin_payload_is_byte_identical(
+    fake_stripe: _Recorder,
+) -> None:
+    """When the opt-in flag is absent the Stripe request must be exactly
+    today's shape — no new keys, no altered metadata."""
+    gw = _gateway()
+
+    await gw.create_invoice_checkout_session(
+        invoice_id="inv-1",
+        amount_cents=4100,
+        currency="usd",
+        success_url="https://app.test/ok",
+        cancel_url="https://app.test/cancel",
+        metadata={"academy_id": "acad-1", "parent_id": "parent-1"},
+        idempotency_key="invoice-checkout:inv-1:4100",
+        connected_account_id="acct_v2_123",
+    )
+
+    call = fake_stripe.calls["checkout.Session.create"]
+    assert call == {
+        "mode": "payment",
+        "line_items": [
+            {
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {"name": "Academy invoice inv-1"},
+                    "unit_amount": 4100,
+                },
+                "quantity": 1,
+            }
+        ],
+        "success_url": "https://app.test/ok",
+        "cancel_url": "https://app.test/cancel",
+        "client_reference_id": "parent-1",
+        "metadata": {"academy_id": "acad-1", "parent_id": "parent-1"},
+        "payment_intent_data": {
+            "metadata": {"academy_id": "acad-1", "parent_id": "parent-1"},
+            "on_behalf_of": "acct_v2_123",
+            "transfer_data": {"destination": "acct_v2_123"},
+            "application_fee_amount": 0,
+        },
+        "idempotency_key": "invoice-checkout:inv-1:4100",
+    }
+
+
 async def test_autopay_setup_checkout_has_connect_params_and_no_pmt_types(
     fake_stripe: _Recorder,
 ) -> None:

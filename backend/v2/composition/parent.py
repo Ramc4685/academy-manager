@@ -986,7 +986,7 @@ def compose_parent(
             settings=billing_settings_repo,
             success_url=success_url,
             cancel_url=cancel_url,
-        ).execute(invoice_id)
+        ).execute(invoice_id, enroll_autopay=enroll_autopay)
         if not result.checkout_url:
             raise ValueError("invoice payment link unavailable")
         return {
@@ -1062,6 +1062,20 @@ def compose_parent(
         # invoice set reuse one Stripe Checkout session instead of creating
         # duplicate collection attempts.
         fingerprint = hashlib.sha256(f"{academy_id}:{parent_id}:{invoice_ids}".encode()).hexdigest()
+        # Autopay opt-in kwargs are only passed when requested so the plain
+        # balance-payment gateway call stays byte-identical. The opt-in
+        # idempotency key is distinct: an earlier one-time balance session must
+        # not be replayed without the saved-payment-method params.
+        idempotency_key = f"balance-payment:{fingerprint}"
+        autopay_kwargs: dict[str, Any] = {}
+        if enroll_autopay:
+            idempotency_key = f"{idempotency_key}:autopay-optin"
+            autopay_kwargs = {
+                "save_payment_method_for_autopay": True,
+                "autopay_enrollment_ids": sorted(
+                    {inv.enrollment_id for inv in payable if inv.enrollment_id}
+                ),
+            }
         try:
             _, url = await invoice_stripe.create_invoice_checkout_session(
                 invoice_id=f"balance-{parent_id[:8]}",
@@ -1076,8 +1090,9 @@ def compose_parent(
                     "source": "invoice_balance",
                     "type": "balance_payment",
                 },
-                idempotency_key=f"balance-payment:{fingerprint}",
+                idempotency_key=idempotency_key,
                 connected_account_id=connected_account_stripe_id,
+                **autopay_kwargs,
             )
         except Exception as exc:
             log.warning(

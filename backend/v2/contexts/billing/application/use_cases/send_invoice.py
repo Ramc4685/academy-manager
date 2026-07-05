@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from pydantic import BaseModel
 
@@ -57,6 +57,8 @@ class InvoiceStripeGateway(Protocol):
         metadata: dict[str, str],
         idempotency_key: str | None = None,
         connected_account_id: str | None = None,
+        save_payment_method_for_autopay: bool = False,
+        autopay_enrollment_ids: list[str] | None = None,
     ) -> tuple[str, str]:
         """Returns (checkout_session_id, checkout_url)."""
         ...
@@ -119,7 +121,7 @@ class SendInvoice:
         self._cancel_url = cancel_url
         self._now = clock
 
-    async def execute(self, invoice_id: str) -> SendInvoiceResult:
+    async def execute(self, invoice_id: str, *, enroll_autopay: bool = False) -> SendInvoiceResult:
         now = self._now()
 
         # 1. Load invoice
@@ -181,6 +183,21 @@ class SendInvoice:
                 else:
                     connected_account_id = account.stripe_account_id
         if can_create_checkout and self._stripe is not None and not connected_account_blocked:
+            # Autopay opt-in kwargs are only passed when requested so every
+            # existing caller's gateway call stays byte-identical. The opt-in
+            # idempotency key is distinct: an earlier one-time pay link for
+            # the same balance must not be replayed without the
+            # saved-payment-method params.
+            idempotency_key = f"invoice-checkout:{invoice.invoice_id}:{invoice.balance_due_cents}"
+            autopay_kwargs: dict[str, Any] = {}
+            if enroll_autopay:
+                idempotency_key = f"{idempotency_key}:autopay-optin"
+                autopay_kwargs = {
+                    "save_payment_method_for_autopay": True,
+                    "autopay_enrollment_ids": (
+                        [invoice.enrollment_id] if invoice.enrollment_id else []
+                    ),
+                }
             try:
                 session_id, checkout_url = await self._stripe.create_invoice_checkout_session(
                     invoice_id=invoice_id,
@@ -194,10 +211,9 @@ class SendInvoice:
                         "academy_id": invoice.academy_id,
                         "parent_id": invoice.parent_id,
                     },
-                    idempotency_key=(
-                        f"invoice-checkout:{invoice.invoice_id}:{invoice.balance_due_cents}"
-                    ),
+                    idempotency_key=idempotency_key,
                     connected_account_id=connected_account_id,
+                    **autopay_kwargs,
                 )
                 log.info(
                     "send_invoice: checkout_session created invoice=%s session=%s",
