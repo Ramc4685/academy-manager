@@ -620,6 +620,36 @@ class HandleWebhookEvent:
                 amount_total,
             )
 
+        await self._maybe_activate_autopay_optin(obj)
+
+    async def _maybe_activate_autopay_optin(self, checkout: dict[str, Any]) -> None:
+        """Best-effort autopay activation for an opted-in payment checkout.
+
+        Ledger bookkeeping is the event's contract; the payment already
+        succeeded, so activation errors must never fail or quarantine the
+        event — log and continue (the poll path and later replays retry).
+        """
+        metadata = checkout.get("metadata") or {}
+        if not isinstance(metadata, dict) or str(metadata.get("autopay_optin") or "") != "true":
+            return
+        if self._complete_autopay_setup is None:
+            log.warning(
+                "autopay opt-in activation skipped: dependencies not configured session=%s",
+                checkout.get("id"),
+            )
+            return
+        try:
+            await self._complete_autopay_setup.execute_from_payment_checkout(
+                checkout,
+                consent_context=AutopayConsentCaptureContext(source="stripe_webhook"),
+            )
+        except Exception as exc:
+            log.warning(
+                "autopay opt-in activation failed session=%s err=%s — ledger unaffected",
+                checkout.get("id"),
+                exc,
+            )
+
     async def _handle_balance_checkout_completed(self, event: dict[str, Any]) -> None:
         """Handle checkout.session.completed for a parent balance payment."""
         if self._billing_ledger is None:
@@ -702,6 +732,8 @@ class HandleWebhookEvent:
             payment.payment_id,
             allocated,
         )
+
+        await self._maybe_activate_autopay_optin(obj)
 
     async def _on_checkout_completed(self, event: dict[str, Any]) -> None:
         obj = event["data"]["object"]

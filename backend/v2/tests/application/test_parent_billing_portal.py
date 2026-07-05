@@ -25,7 +25,7 @@ from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     StartSubscriptionCheckoutCommand,
 )
 from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
-from backend.v2.contexts.billing.domain.errors import CheckoutCreationFailed
+from backend.v2.contexts.billing.domain.errors import CheckoutCreationFailed, PaymentNotFound
 from backend.v2.contexts.billing.domain.models import Subscription
 
 
@@ -142,6 +142,7 @@ class _CheckoutGateway:
         self.created: list[dict[str, object]] = []
         self.setup_created: list[dict[str, object]] = []
         self.setup_intents: dict[str, dict[str, object]] = {}
+        self.payment_intents: dict[str, dict[str, object]] = {}
         self.payment_methods: dict[str, dict[str, object]] = {}
         self.default_payment_methods: list[dict[str, object]] = []
         self.retrieved = retrieved
@@ -185,6 +186,9 @@ class _CheckoutGateway:
 
     async def retrieve_setup_intent(self, setup_intent_id: str) -> dict[str, object]:
         return dict(self.setup_intents[setup_intent_id])
+
+    async def retrieve_payment_intent(self, payment_intent_id: str) -> dict[str, object]:
+        return dict(self.payment_intents[payment_intent_id])
 
     async def retrieve_payment_method(self, payment_method_id: str) -> dict[str, object]:
         return dict(self.payment_methods[payment_method_id])
@@ -1278,3 +1282,351 @@ async def test_checkout_status_reconciles_completed_setup_checkout_without_subsc
     ]
     assert enrollment_autopay.setup_completed == ["enr-1"]
     assert enrollment_autopay.synced == []
+
+
+# ---------------------------------------------------------------------------
+# Autopay opt-in at payment time (invoice / balance checkout, mode=payment)
+# ---------------------------------------------------------------------------
+
+
+def _optin_payment_checkout(
+    *,
+    session_id: str = "cs_pay_optin",
+    enrollment_ids: str | None = "enr-1",
+    status: str = "complete",
+    parent_id: str = "p1",
+) -> dict[str, object]:
+    metadata: dict[str, str] = {
+        "academy_id": "acad",
+        "parent_id": parent_id,
+        "invoice_id": "inv-1",
+        "source": "invoice_pay_link",
+        "autopay_optin": "true",
+    }
+    if enrollment_ids:
+        metadata["enrollment_ids"] = enrollment_ids
+    return {
+        "id": session_id,
+        "object": "checkout.session",
+        "mode": "payment",
+        "status": status,
+        "payment_status": "paid" if status == "complete" else "unpaid",
+        "customer": "cus_parent",
+        "payment_intent": "pi_optin",
+        "client_reference_id": parent_id,
+        "metadata": metadata,
+    }
+
+
+def _optin_payment_gateway(
+    checkout: dict[str, object] | None = None,
+    *,
+    default_error: Exception | None = None,
+) -> _CheckoutGateway:
+    gateway = _CheckoutGateway(retrieved=checkout, default_error=default_error)
+    gateway.payment_intents["pi_optin"] = {
+        "id": "pi_optin",
+        "object": "payment_intent",
+        "customer": "cus_parent",
+        "payment_method": "pm_card",
+    }
+    gateway.payment_methods["pm_card"] = {
+        "id": "pm_card",
+        "object": "payment_method",
+        "type": "card",
+        "card": {"brand": "visa", "last4": "4242"},
+    }
+    return gateway
+
+
+def _optin_complete_uc(
+    gateway: _CheckoutGateway,
+    *,
+    customers: _CustomerRepo,
+    consents: _ConsentRepo,
+    outbox: _Outbox,
+    enrollment_autopay: _EnrollmentAutopay,
+    now: datetime,
+) -> CompleteAutopaySetup:
+    return CompleteAutopaySetup(
+        stripe=gateway,
+        parent_customers=customers,
+        enrollment_autopay=enrollment_autopay,
+        consent_repo=consents,
+        outbox=outbox,
+        academy_id="acad",
+        clock=lambda: now,
+    )
+
+
+@pytest.mark.asyncio
+async def test_complete_autopay_optin_payment_activates_single_enrollment() -> None:
+    now = datetime(2026, 7, 5, tzinfo=UTC)
+    customers = _CustomerRepo()
+    consents = _ConsentRepo()
+    outbox = _Outbox()
+    enrollment_autopay = _EnrollmentAutopay()
+    gateway = _optin_payment_gateway()
+    uc = _optin_complete_uc(
+        gateway,
+        customers=customers,
+        consents=consents,
+        outbox=outbox,
+        enrollment_autopay=enrollment_autopay,
+        now=now,
+    )
+
+    activated = await uc.execute_from_payment_checkout(_optin_payment_checkout())
+
+    assert activated == ["enr-1"]
+    assert enrollment_autopay.setup_completed == ["enr-1"]
+    assert gateway.default_payment_methods == [
+        {
+            "stripe_customer_id": "cus_parent",
+            "stripe_payment_method_id": "pm_card",
+            "metadata": {"academy_id": "acad", "parent_id": "p1"},
+        }
+    ]
+    assert len(consents.consents) == 1
+    consent = consents.consents[0]
+    assert consent.enrollment_id == "enr-1"
+    assert consent.source == "invoice_payment_optin"
+    assert consent.method_type == "card"
+    assert consent.checkout_session_id == "cs_pay_optin"
+    assert [event.name for event in outbox.events] == ["Billing.AutopayConsentCaptured"]
+    assert customers.default_methods
+    assert customers.default_methods[-1]["default_payment_method_id"] == "pm_card"
+
+
+@pytest.mark.asyncio
+async def test_complete_autopay_optin_payment_activates_all_metadata_enrollments() -> None:
+    now = datetime(2026, 7, 5, tzinfo=UTC)
+    customers = _CustomerRepo()
+    consents = _ConsentRepo()
+    outbox = _Outbox()
+    enrollment_autopay = _EnrollmentAutopay()
+    gateway = _optin_payment_gateway()
+    uc = _optin_complete_uc(
+        gateway,
+        customers=customers,
+        consents=consents,
+        outbox=outbox,
+        enrollment_autopay=enrollment_autopay,
+        now=now,
+    )
+
+    activated = await uc.execute_from_payment_checkout(
+        _optin_payment_checkout(enrollment_ids="enr-1,enr-2")
+    )
+
+    assert activated == ["enr-1", "enr-2"]
+    assert enrollment_autopay.setup_completed == ["enr-1", "enr-2"]
+    assert sorted(consent.enrollment_id for consent in consents.consents) == ["enr-1", "enr-2"]
+    # One saved payment method for the whole opt-in.
+    assert len(gateway.default_payment_methods) == 1
+
+
+@pytest.mark.asyncio
+async def test_complete_autopay_optin_replay_is_idempotent() -> None:
+    now = datetime(2026, 7, 5, tzinfo=UTC)
+    customers = _CustomerRepo()
+    consents = _ConsentRepo()
+    outbox = _Outbox()
+    enrollment_autopay = _EnrollmentAutopay()
+    gateway = _optin_payment_gateway()
+    uc = _optin_complete_uc(
+        gateway,
+        customers=customers,
+        consents=consents,
+        outbox=outbox,
+        enrollment_autopay=enrollment_autopay,
+        now=now,
+    )
+
+    first = await uc.execute_from_payment_checkout(_optin_payment_checkout())
+    second = await uc.execute_from_payment_checkout(_optin_payment_checkout())
+
+    assert first == ["enr-1"]
+    assert second == ["enr-1"]
+    assert enrollment_autopay.setup_completed == ["enr-1"]
+    # Consent rows and events are not duplicated on webhook/poll replay.
+    assert len(consents.consents) == 1
+    assert [event.name for event in outbox.events] == ["Billing.AutopayConsentCaptured"]
+
+
+@pytest.mark.asyncio
+async def test_complete_autopay_optin_missing_enrollment_doc_logs_and_continues() -> None:
+    """Activation returning False (e.g. missing student_billing_enrollments doc)
+    must not raise past the payment result — log and continue."""
+    now = datetime(2026, 7, 5, tzinfo=UTC)
+    customers = _CustomerRepo()
+    consents = _ConsentRepo()
+    outbox = _Outbox()
+    enrollment_autopay = _EnrollmentAutopay(setup_result=False)
+    gateway = _optin_payment_gateway()
+    uc = _optin_complete_uc(
+        gateway,
+        customers=customers,
+        consents=consents,
+        outbox=outbox,
+        enrollment_autopay=enrollment_autopay,
+        now=now,
+    )
+
+    activated = await uc.execute_from_payment_checkout(
+        _optin_payment_checkout(enrollment_ids="enr-1,enr-2")
+    )
+
+    assert activated == []
+
+
+@pytest.mark.asyncio
+async def test_complete_autopay_optin_rejects_plain_payment_checkout() -> None:
+    now = datetime(2026, 7, 5, tzinfo=UTC)
+    gateway = _optin_payment_gateway()
+    uc = _optin_complete_uc(
+        gateway,
+        customers=_CustomerRepo(),
+        consents=_ConsentRepo(),
+        outbox=_Outbox(),
+        enrollment_autopay=_EnrollmentAutopay(),
+        now=now,
+    )
+    checkout = _optin_payment_checkout()
+    checkout["metadata"] = {"academy_id": "acad", "parent_id": "p1", "invoice_id": "inv-1"}
+
+    with pytest.raises(ValueError, match="autopay opt-in"):
+        await uc.execute_from_payment_checkout(checkout)
+
+
+def _optin_status_uc(
+    gateway: _CheckoutGateway,
+    *,
+    customers: _CustomerRepo,
+    consents: _ConsentRepo,
+    outbox: _Outbox,
+    enrollment_autopay: _EnrollmentAutopay,
+    now: datetime,
+) -> GetCheckoutStatus:
+    return GetCheckoutStatus(
+        payments=_NoPaymentRepo(),
+        stripe=gateway,
+        parent_customers=customers,
+        enrollment_autopay=enrollment_autopay,
+        consent_repo=consents,
+        outbox=outbox,
+        academy_id="acad",
+        clock=lambda: now,
+    )
+
+
+@pytest.mark.asyncio
+async def test_checkout_status_completes_autopay_optin_payment_checkout() -> None:
+    now = datetime(2026, 7, 5, tzinfo=UTC)
+    customers = _CustomerRepo()
+    consents = _ConsentRepo()
+    outbox = _Outbox()
+    enrollment_autopay = _EnrollmentAutopay()
+    gateway = _optin_payment_gateway(_optin_payment_checkout())
+    uc = _optin_status_uc(
+        gateway,
+        customers=customers,
+        consents=consents,
+        outbox=outbox,
+        enrollment_autopay=enrollment_autopay,
+        now=now,
+    )
+
+    result = await uc.execute("cs_pay_optin", parent_id="p1")
+
+    assert result.status == "succeeded"
+    assert result.payment_id is None
+    assert result.parent_id == "p1"
+    assert enrollment_autopay.setup_completed == ["enr-1"]
+    assert len(consents.consents) == 1
+
+
+@pytest.mark.asyncio
+async def test_checkout_status_returns_succeeded_even_when_optin_activation_fails() -> None:
+    """A succeeded payment's status response must NEVER fail because autopay
+    activation errored — log and let the webhook worker retry."""
+    now = datetime(2026, 7, 5, tzinfo=UTC)
+    enrollment_autopay = _EnrollmentAutopay()
+    gateway = _optin_payment_gateway(
+        _optin_payment_checkout(),
+        default_error=RuntimeError("stripe customer update failed"),
+    )
+    uc = _optin_status_uc(
+        gateway,
+        customers=_CustomerRepo(),
+        consents=_ConsentRepo(),
+        outbox=_Outbox(),
+        enrollment_autopay=enrollment_autopay,
+        now=now,
+    )
+
+    result = await uc.execute("cs_pay_optin", parent_id="p1")
+
+    assert result.status == "succeeded"
+    assert enrollment_autopay.setup_completed == []
+
+
+@pytest.mark.asyncio
+async def test_checkout_status_open_optin_payment_checkout_reports_status_without_activation() -> (
+    None
+):
+    now = datetime(2026, 7, 5, tzinfo=UTC)
+    enrollment_autopay = _EnrollmentAutopay()
+    gateway = _optin_payment_gateway(_optin_payment_checkout(status="open"))
+    uc = _optin_status_uc(
+        gateway,
+        customers=_CustomerRepo(),
+        consents=_ConsentRepo(),
+        outbox=_Outbox(),
+        enrollment_autopay=enrollment_autopay,
+        now=now,
+    )
+
+    result = await uc.execute("cs_pay_optin", parent_id="p1")
+
+    assert result.status == "open"
+    assert enrollment_autopay.setup_completed == []
+    assert gateway.default_payment_methods == []
+
+
+@pytest.mark.asyncio
+async def test_checkout_status_optin_payment_checkout_rejects_wrong_parent() -> None:
+    now = datetime(2026, 7, 5, tzinfo=UTC)
+    gateway = _optin_payment_gateway(_optin_payment_checkout())
+    uc = _optin_status_uc(
+        gateway,
+        customers=_CustomerRepo(),
+        consents=_ConsentRepo(),
+        outbox=_Outbox(),
+        enrollment_autopay=_EnrollmentAutopay(),
+        now=now,
+    )
+
+    with pytest.raises(PaymentNotFound):
+        await uc.execute("cs_pay_optin", parent_id="someone-else")
+
+
+@pytest.mark.asyncio
+async def test_checkout_status_plain_payment_checkout_still_raises_payment_not_found() -> None:
+    """A mode=payment session WITHOUT the opt-in metadata takes none of the new
+    branches — unchanged 404 behavior."""
+    now = datetime(2026, 7, 5, tzinfo=UTC)
+    checkout = _optin_payment_checkout()
+    checkout["metadata"] = {"academy_id": "acad", "parent_id": "p1", "invoice_id": "inv-1"}
+    gateway = _optin_payment_gateway(checkout)
+    uc = _optin_status_uc(
+        gateway,
+        customers=_CustomerRepo(),
+        consents=_ConsentRepo(),
+        outbox=_Outbox(),
+        enrollment_autopay=_EnrollmentAutopay(),
+        now=now,
+    )
+
+    with pytest.raises(PaymentNotFound):
+        await uc.execute("cs_pay_optin", parent_id="p1")

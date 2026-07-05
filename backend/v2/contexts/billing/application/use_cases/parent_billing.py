@@ -252,6 +252,126 @@ class CompleteAutopaySetup:
             payment_method_role=payment_method_role,
         )
 
+    async def execute_from_payment_checkout(
+        self,
+        checkout: dict[str, Any],
+        *,
+        expected_parent_id: str | None = None,
+        consent_context: AutopayConsentCaptureContext | None = None,
+    ) -> list[str]:
+        """Activate autopay from an opted-in invoice/balance payment checkout
+        (``mode=payment`` + metadata ``autopay_optin == "true"``).
+
+        Unlike ``execute_from_setup_intent`` this NEVER raises on a
+        per-enrollment activation failure (e.g. a missing
+        ``student_billing_enrollments`` doc) — the payment already succeeded
+        and must not be failed retroactively; failures are logged and the
+        webhook worker retries. Returns the enrollment ids that activated.
+        """
+        metadata = _string_metadata(checkout.get("metadata"))
+        if metadata.get("autopay_optin") != "true":
+            raise ValueError("payment checkout is not an autopay opt-in")
+        academy_id = metadata.get("academy_id")
+        if academy_id != self._academy_id:
+            raise ValueError(
+                f"autopay opt-in academy mismatch: event={academy_id} expected={self._academy_id}"
+            )
+        parent_id = metadata.get("parent_id")
+        if not parent_id:
+            raise ValueError("autopay opt-in missing parent_id")
+        checkout_session_id = _stripe_id(checkout.get("id"))
+        if expected_parent_id is not None and parent_id != expected_parent_id:
+            raise PaymentNotFound(
+                "checkout session not found",
+                checkout_session_id=checkout_session_id,
+            )
+        enrollment_ids = [
+            item.strip()
+            for item in (metadata.get("enrollment_ids") or "").split(",")
+            if item.strip()
+        ]
+        payment_intent_id = _stripe_id(checkout.get("payment_intent"))
+        if not payment_intent_id:
+            raise ValueError("autopay opt-in checkout missing payment_intent")
+        payment_intent = await self._stripe.retrieve_payment_intent(payment_intent_id)
+        stripe_payment_method_id = _stripe_id(payment_intent.get("payment_method"))
+        if not stripe_payment_method_id:
+            raise ValueError("autopay opt-in missing payment method")
+        stripe_customer_id = _stripe_id(payment_intent.get("customer")) or _stripe_id(
+            checkout.get("customer")
+        )
+        if not stripe_customer_id:
+            raise ValueError("autopay opt-in missing Stripe customer")
+        payment_method = await self._stripe.retrieve_payment_method(stripe_payment_method_id)
+        payment_method_type = str(payment_method.get("type") or "unknown")
+        payment_method_label, payment_method_last4 = _payment_method_display_details(payment_method)
+        completed_at = self._now()
+        # The consent record must reflect the payment-time opt-in checkbox,
+        # regardless of which completion path (webhook or status poll) ran.
+        context = (consent_context or AutopayConsentCaptureContext()).model_copy(
+            update={"source": "invoice_payment_optin"}
+        )
+
+        await self._stripe.set_customer_default_payment_method(
+            stripe_customer_id=stripe_customer_id,
+            stripe_payment_method_id=stripe_payment_method_id,
+            metadata={
+                "academy_id": self._academy_id,
+                "parent_id": parent_id,
+            },
+        )
+        activated: list[str] = []
+        for enrollment_id in enrollment_ids:
+            consent = self._build_consent(
+                parent_id=parent_id,
+                enrollment_id=enrollment_id,
+                # Consent rows replay-dedup on setup_intent_id; a payment
+                # opt-in has no setup intent, so key on the payment intent
+                # scoped per enrollment (multi-enrollment pay-all keeps one
+                # consent row per enrollment).
+                setup_intent_id=f"{payment_intent_id}:{enrollment_id}",
+                checkout_session_id=checkout_session_id,
+                stripe_payment_method_id=stripe_payment_method_id,
+                payment_method_type=payment_method_type,
+                metadata=metadata,
+                captured_at=completed_at,
+                context=context,
+            )
+            try:
+                await self._persist_completion(
+                    parent_id=parent_id,
+                    enrollment_id=enrollment_id,
+                    stripe_customer_id=stripe_customer_id,
+                    stripe_payment_method_id=stripe_payment_method_id,
+                    payment_method_type=payment_method_type,
+                    stripe_mandate_id=None,
+                    setup_intent_id=payment_intent_id,
+                    checkout_session_id=checkout_session_id,
+                    completed_at=completed_at,
+                    consent=consent,
+                    payment_method_label=payment_method_label,
+                    payment_method_last4=payment_method_last4,
+                )
+            except Exception as exc:
+                log.warning(
+                    "autopay opt-in activation failed enrollment=%s checkout=%s err=%s "
+                    "— continuing; the webhook worker retries",
+                    enrollment_id,
+                    checkout_session_id,
+                    exc,
+                )
+                continue
+            activated.append(enrollment_id)
+        await self._parent_customers.promote_payment_method_to_default(
+            parent_id=parent_id,
+            stripe_payment_method_id=stripe_payment_method_id,
+            payment_method_type=payment_method_type,
+            stripe_mandate_id=None,
+            payment_method_label=payment_method_label,
+            payment_method_last4=payment_method_last4,
+        )
+        return activated
+
     async def _persist_completion(
         self,
         *,
@@ -597,6 +717,12 @@ class GetCheckoutStatus:
                     expected_parent_id=parent_id,
                     consent_context=consent_context,
                 )
+            if _is_autopay_optin_payment_checkout(checkout):
+                return await self._status_from_autopay_optin_payment_checkout(
+                    checkout,
+                    expected_parent_id=parent_id,
+                    consent_context=consent_context,
+                )
         if subscription is None:
             raise PaymentNotFound(
                 "checkout session not found",
@@ -668,6 +794,70 @@ class GetCheckoutStatus:
             payment_id=None,
             status=result.status,
             parent_id=result.parent_id,
+        )
+
+    async def _status_from_autopay_optin_payment_checkout(
+        self,
+        checkout: dict[str, Any],
+        *,
+        expected_parent_id: str,
+        consent_context: AutopayConsentCaptureContext | None = None,
+    ) -> CheckoutStatusResult:
+        """Status for an opted-in invoice/balance payment checkout, running
+        autopay activation synchronously on completion (parity with the
+        dedicated setup flow's poll path).
+
+        Activation failure must NEVER fail the succeeded payment's status
+        response — log and let the webhook worker retry.
+        """
+        checkout_id = _stripe_id(checkout.get("id")) or ""
+        checkout_parent_id = _checkout_parent_id(checkout)
+        if checkout_parent_id != expected_parent_id:
+            raise PaymentNotFound("checkout session not found", checkout_session_id=checkout_id)
+        status = str(checkout.get("status") or "")
+        if status != "complete":
+            return CheckoutStatusResult(
+                checkout_session_id=checkout_id,
+                payment_id=None,
+                status=status or "pending",
+                parent_id=expected_parent_id,
+            )
+        try:
+            if (
+                self._stripe is None
+                or self._parent_customers is None
+                or self._enrollment_autopay is None
+                or self._academy_id is None
+            ):
+                raise ValueError("autopay opt-in completion dependencies are not configured")
+            await CompleteAutopaySetup(
+                stripe=self._stripe,
+                parent_customers=self._parent_customers,
+                enrollment_autopay=self._enrollment_autopay,
+                consent_repo=self._consent_repo,
+                outbox=self._outbox,
+                transaction_runner=self._transaction_runner,
+                academy_id=self._academy_id,
+                clock=self._now,
+            ).execute_from_payment_checkout(
+                checkout,
+                expected_parent_id=expected_parent_id,
+                consent_context=consent_context,
+            )
+        except PaymentNotFound:
+            raise
+        except Exception as exc:
+            log.warning(
+                "autopay opt-in activation failed checkout=%s err=%s "
+                "— payment status unaffected; the webhook worker retries",
+                checkout_id,
+                exc,
+            )
+        return CheckoutStatusResult(
+            checkout_session_id=checkout_id,
+            payment_id=None,
+            status="succeeded",
+            parent_id=expected_parent_id,
         )
 
     async def _reconcile_subscription_checkout(
@@ -797,6 +987,11 @@ def _last4(value: object) -> str | None:
 def _is_autopay_setup_checkout(checkout: dict[str, Any]) -> bool:
     metadata = _string_metadata(checkout.get("metadata"))
     return str(checkout.get("mode") or "") == "setup" or metadata.get("source") == "autopay_setup"
+
+
+def _is_autopay_optin_payment_checkout(checkout: dict[str, Any]) -> bool:
+    metadata = _string_metadata(checkout.get("metadata"))
+    return str(checkout.get("mode") or "") == "payment" and metadata.get("autopay_optin") == "true"
 
 
 def _checkout_parent_id(checkout: dict[str, Any]) -> str | None:
