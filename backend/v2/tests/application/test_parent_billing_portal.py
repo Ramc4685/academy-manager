@@ -1177,9 +1177,7 @@ async def test_mongo_transaction_runner_falls_back_when_sessions_unavailable() -
 
 
 @pytest.mark.asyncio
-async def test_mongo_transaction_runner_falls_back_when_standalone_mongo_rejects_first_op() -> (
-    None
-):
+async def test_mongo_transaction_runner_falls_back_when_standalone_mongo_rejects_first_op() -> None:
     """Standalone mongod: start_session()/start_transaction() both succeed, but
     the first operation executed inside work(session) raises OperationFailure
     code 20 ("Transaction numbers are only allowed on a replica set member or
