@@ -507,6 +507,7 @@ class BillingSettingsRepository(Protocol):
     """Port for academy-scoped billing configuration (Slice S0/D)."""
 
     async def get(self) -> BillingSettings: ...
+    async def upsert(self, settings: BillingSettings) -> None: ...
 
 
 class ConnectedAccountRepository(Protocol):

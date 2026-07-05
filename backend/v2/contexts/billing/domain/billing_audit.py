@@ -20,6 +20,10 @@ BillingAuditAction = Literal[
     "invoice_voided",
     "discount_set",
     "discount_removed",
+    # Charge-routing config, not money movement: flipping the temporary
+    # platform-charge fallback changes where money settles, so it gets the
+    # same actor/before/after trail.
+    "platform_fallback_toggled",
 ]
 
 

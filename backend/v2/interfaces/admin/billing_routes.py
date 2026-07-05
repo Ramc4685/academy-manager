@@ -15,6 +15,9 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     MarkPaymentPaidCommand,
     UndoPaymentPaidCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.billing_settings_admin import (
+    SetPlatformChargeFallbackCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
     DeleteExpenseCommand,
     EditExpenseCommand,
@@ -82,6 +85,58 @@ def _required_callable(use_case: object | None, name: str) -> object:
     if use_case is None:
         raise HTTPException(status_code=503, detail=f"{name} is not configured")
     return use_case
+
+
+class PlatformChargeFallbackResponse(BaseModel):
+    allow_platform_charge_fallback: bool
+
+
+class SetPlatformChargeFallbackRequest(BaseModel):
+    enabled: bool
+    reason: str | None = None
+
+
+@router.get(
+    "/billing/settings/platform-fallback",
+    response_model=PlatformChargeFallbackResponse,
+    summary="Read the platform-charge fallback escape hatch",
+)
+async def get_platform_charge_fallback(
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> PlatformChargeFallbackResponse:
+    use_case = _required_callable(
+        use_cases.get_platform_charge_fallback, "get_platform_charge_fallback"
+    )
+    result = await use_case.execute()  # type: ignore[attr-defined]
+    return PlatformChargeFallbackResponse(
+        allow_platform_charge_fallback=result.allow_platform_charge_fallback
+    )
+
+
+@router.put(
+    "/billing/settings/platform-fallback",
+    response_model=PlatformChargeFallbackResponse,
+    summary="Toggle the platform-charge fallback escape hatch (audited)",
+)
+async def set_platform_charge_fallback(
+    body: SetPlatformChargeFallbackRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> PlatformChargeFallbackResponse:
+    use_case = _required_callable(
+        use_cases.set_platform_charge_fallback, "set_platform_charge_fallback"
+    )
+    result = await use_case.execute(  # type: ignore[attr-defined]
+        SetPlatformChargeFallbackCommand(
+            enabled=body.enabled,
+            actor_id=claims.user_id,
+            reason=body.reason,
+        )
+    )
+    return PlatformChargeFallbackResponse(
+        allow_platform_charge_fallback=result.allow_platform_charge_fallback
+    )
 
 
 @router.get("/billing/invoices", response_model=InvoicesResponse, response_model_exclude_none=True)
