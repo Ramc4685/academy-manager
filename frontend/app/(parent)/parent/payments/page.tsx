@@ -19,6 +19,12 @@ import {
   startParentInvoicePayment,
 } from "@/lib/api/parent";
 import { toPaymentErrorMessage, toPortalErrorMessage } from "@/lib/api/payment-error";
+import {
+  AUTOPAY_OPTIN_LABEL,
+  resolveEnrollAutopayChecked,
+  showAutopayOptinForBalance,
+  showAutopayOptinForInvoice,
+} from "@/lib/parent-autopay-optin";
 
 const AUTOPAY_START_FAILED =
   "Something went wrong starting autopay. Please try again or contact the academy.";
@@ -166,6 +172,9 @@ export default function ParentPaymentsPage() {
   const [balancePaymentError, setBalancePaymentError] = useState<string | null>(null);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [payingInvoiceId, setPayingInvoiceId] = useState<string | null>(null);
+  // Autopay opt-in checkboxes default to checked; only explicit unchecks are stored.
+  const [invoiceAutopayOptins, setInvoiceAutopayOptins] = useState<Record<string, boolean>>({});
+  const [balanceAutopayOptin, setBalanceAutopayOptin] = useState(true);
   const [startingAutopayEnrollmentId, setStartingAutopayEnrollmentId] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [showPauseRequests, setShowPauseRequests] = useState(false);
@@ -261,12 +270,13 @@ export default function ParentPaymentsPage() {
   });
 
   const invoicePaymentMutation = useMutation({
-    mutationFn: (invoiceId: string) =>
+    mutationFn: ({ invoiceId, enrollAutopay }: { invoiceId: string; enrollAutopay: boolean }) =>
       startParentInvoicePayment(invoiceId, {
         success_url: `${window.location.origin}/parent/payments?invoice=paid`,
         cancel_url: `${window.location.origin}/parent/payments?invoice=cancelled`,
+        enroll_autopay: enrollAutopay,
       }),
-    onMutate: (invoiceId) => {
+    onMutate: ({ invoiceId }) => {
       setPortalError(null);
       setInvoicePaymentError(null);
       setPayingInvoiceId(invoiceId);
@@ -285,10 +295,11 @@ export default function ParentPaymentsPage() {
   });
 
   const balancePaymentMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: ({ enrollAutopay }: { enrollAutopay: boolean }) =>
       startParentBalancePayment({
         success_url: `${window.location.origin}/parent/payments?balance=paid`,
         cancel_url: `${window.location.origin}/parent/payments?balance=cancelled`,
+        enroll_autopay: enrollAutopay,
       }),
     onMutate: () => { setBalancePaymentError(null); },
     onSuccess: (res) => {
@@ -445,13 +456,33 @@ export default function ParentPaymentsPage() {
           </p>
           <button
             type="button"
-            onClick={() => balancePaymentMutation.mutate()}
+            onClick={() =>
+              balancePaymentMutation.mutate({
+                enrollAutopay:
+                  showAutopayOptinForBalance(invoices, enrollments) && balanceAutopayOptin,
+              })
+            }
             disabled={balancePaymentMutation.isPending}
             className="mt-4 w-full rounded-xl py-3 text-sm font-semibold disabled:opacity-60 active:scale-95 transition-transform"
             style={{ background: "linear-gradient(135deg,#facc15,#f59e0b)", color: "#0a0f1c" }}
           >
             {balancePaymentMutation.isPending ? "Starting…" : `Pay balance · ${money(currentBalance)}`}
           </button>
+          {showAutopayOptinForBalance(invoices, enrollments) && (
+            <label
+              data-testid="balance-autopay-optin"
+              className="mt-2.5 flex items-center gap-2 text-xs"
+              style={{ color: "#94a3b8" }}
+            >
+              <input
+                type="checkbox"
+                checked={balanceAutopayOptin}
+                onChange={(e) => setBalanceAutopayOptin(e.target.checked)}
+                className="h-4 w-4 shrink-0 accent-amber-400"
+              />
+              {AUTOPAY_OPTIN_LABEL}
+            </label>
+          )}
         </div>
       )}
 
@@ -487,29 +518,58 @@ export default function ParentPaymentsPage() {
                     </p>
                   </div>
                   {payable && (
-                    <div className="mt-2.5 flex gap-2">
-                      <button
-                        type="button"
-                        disabled={invoicePaymentMutation.isPending}
-                        onClick={() => invoicePaymentMutation.mutate(invoice.invoice_id)}
-                        className="flex-1 rounded-xl border py-2 text-sm font-medium disabled:opacity-60 active:scale-95 transition-transform"
-                        style={{ borderColor: "#facc15", background: "#fffbe9", color: "#854f0b" }}
-                      >
-                        {payingInvoiceId === invoice.invoice_id
-                          ? "Starting…"
-                          : `Pay ${money(invoice.balance_due_cents, invoice.currency.toUpperCase())}`}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setSelectedInvoiceId(selectedInvoiceId === invoice.invoice_id ? null : invoice.invoice_id)
-                        }
-                        className="rounded-xl border px-4 py-2 text-sm"
-                        style={{ borderColor: "#d3d1c7", background: "#fff", color: "#5f5e5a" }}
-                      >
-                        {selectedInvoiceId === invoice.invoice_id ? "Close" : "View"}
-                      </button>
-                    </div>
+                    <>
+                      <div className="mt-2.5 flex gap-2">
+                        <button
+                          type="button"
+                          disabled={invoicePaymentMutation.isPending}
+                          onClick={() =>
+                            invoicePaymentMutation.mutate({
+                              invoiceId: invoice.invoice_id,
+                              enrollAutopay:
+                                showAutopayOptinForInvoice(invoice, enrollments) &&
+                                resolveEnrollAutopayChecked(invoiceAutopayOptins[invoice.invoice_id]),
+                            })
+                          }
+                          className="flex-1 rounded-xl border py-2 text-sm font-medium disabled:opacity-60 active:scale-95 transition-transform"
+                          style={{ borderColor: "#facc15", background: "#fffbe9", color: "#854f0b" }}
+                        >
+                          {payingInvoiceId === invoice.invoice_id
+                            ? "Starting…"
+                            : `Pay ${money(invoice.balance_due_cents, invoice.currency.toUpperCase())}`}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSelectedInvoiceId(selectedInvoiceId === invoice.invoice_id ? null : invoice.invoice_id)
+                          }
+                          className="rounded-xl border px-4 py-2 text-sm"
+                          style={{ borderColor: "#d3d1c7", background: "#fff", color: "#5f5e5a" }}
+                        >
+                          {selectedInvoiceId === invoice.invoice_id ? "Close" : "View"}
+                        </button>
+                      </div>
+                      {showAutopayOptinForInvoice(invoice, enrollments) && (
+                        <label
+                          data-testid={`invoice-autopay-optin-${invoice.invoice_id}`}
+                          className="mt-2 flex items-center gap-2 text-xs"
+                          style={{ color: "#5f5e5a" }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={resolveEnrollAutopayChecked(invoiceAutopayOptins[invoice.invoice_id])}
+                            onChange={(e) =>
+                              setInvoiceAutopayOptins((prev) => ({
+                                ...prev,
+                                [invoice.invoice_id]: e.target.checked,
+                              }))
+                            }
+                            className="h-4 w-4 shrink-0 accent-amber-400"
+                          />
+                          {AUTOPAY_OPTIN_LABEL}
+                        </label>
+                      )}
+                    </>
                   )}
                   {!payable && (
                     <button
