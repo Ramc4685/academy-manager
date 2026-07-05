@@ -108,6 +108,9 @@ class BillingPortalResponse(BaseModel):
 class StartInvoicePaymentRequest(BaseModel):
     success_url: str
     cancel_url: str
+    # Opt into autopay for the covered enrollment(s) as part of this payment.
+    # Defaults False so requests from older clients stay one-time-only.
+    enroll_autopay: bool = False
 
 
 class StartInvoicePaymentResponse(BaseModel):
@@ -118,6 +121,9 @@ class StartInvoicePaymentResponse(BaseModel):
 class StartBalancePaymentRequest(BaseModel):
     success_url: str
     cancel_url: str
+    # Opt into autopay for the covered enrollment(s) as part of this payment.
+    # Defaults False so requests from older clients stay one-time-only.
+    enroll_autopay: bool = False
 
 
 class StartBalancePaymentResponse(BaseModel):
@@ -203,6 +209,9 @@ class ParentInvoiceView(BaseModel):
     due_date: date
     pdf_url: str | None = None
     created_at: datetime
+    # Enrollment covered by this invoice so the UI can decide autopay opt-in
+    # visibility; None for legacy/unlinked invoices.
+    enrollment_id: str | None = None
 
 
 class ParentInvoicesResponse(BaseModel):

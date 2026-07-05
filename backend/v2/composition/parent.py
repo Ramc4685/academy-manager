@@ -969,6 +969,7 @@ def compose_parent(
         invoice_id: str,
         success_url: str,
         cancel_url: str,
+        enroll_autopay: bool = False,
     ):
         _validate_checkout_redirect_urls(success_url, cancel_url)
         invoice = await billing_ledger_repo.get_invoice(invoice_id)
@@ -998,6 +999,7 @@ def compose_parent(
         parent_id: str,
         success_url: str,
         cancel_url: str,
+        enroll_autopay: bool = False,
     ):
         _validate_checkout_redirect_urls(success_url, cancel_url)
         all_invoices = await billing_ledger_repo.list_invoices_for_parent(parent_id)
@@ -1014,6 +1016,7 @@ def compose_parent(
                 invoice_id=payable[0].invoice_id,
                 success_url=success_url,
                 cancel_url=cancel_url,
+                enroll_autopay=enroll_autopay,
             )
             if result is None:
                 raise ValueError("invoice not found")
