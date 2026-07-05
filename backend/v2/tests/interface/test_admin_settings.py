@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from backend.v2.contexts.billing.domain.errors import ConnectOnboardingFailed
 from backend.v2.contexts.identity.application.change_user_role_use_case import (
     ChangeUserRoleCommand,
 )
@@ -232,6 +233,27 @@ def test_start_stripe_connect_returns_onboarding_url(admin_client):
     assert call.await_args.kwargs["academy_id"] == "acad"
     assert "panel=gateway&stripe=connected" in call.await_args.kwargs["return_url"]
     assert "panel=gateway&stripe=error" in call.await_args.kwargs["refresh_url"]
+
+
+def test_start_stripe_connect_returns_clean_provider_error(admin_client):
+    admin_client.use_cases.start_connect_onboarding_use_case = SimpleNamespace(
+        start=AsyncMock(
+            side_effect=ConnectOnboardingFailed(
+                "Stripe Connect onboarding is temporarily unavailable."
+            )
+        )
+    )
+
+    response = admin_client.post("/api/v2/admin/academy/gateway/stripe/connect-link")
+
+    assert response.status_code == 502, response.text
+    assert response.json() == {
+        "error": {
+            "code": "Billing.ConnectOnboardingFailed",
+            "message": "Stripe Connect onboarding is temporarily unavailable.",
+            "details": {},
+        }
+    }
 
 
 def test_patch_user_role_contract(admin_client):

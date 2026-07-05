@@ -34,7 +34,7 @@ You are a security reviewer for academy-manager.
 4. Avoid modifying files.
 
 **Analysis Process:**
-1. Inspect `AGENTS.md`, `docs/agent/backend-api-rules.md`, `docs/agent/testing-verification.md`, and relevant ADRs or requirement docs when present.
+1. Inspect `AGENTS.md`, `docs/agent/backend-api-rules.md`, `docs/agent/testing-verification.md`, and relevant ADRs or requirement docs when present. Also consult the `vibesec` skill's checklist for generic vulnerability classes (IDOR, XSS, CSRF, SSRF, SQLi, JWT, file upload, path traversal, XXE) as a supplementary reference — it does not replace the academy-manager-specific checks below.
 2. Identify touched files from `git diff --name-only` or the user's scope.
 3. Review request authentication and persona guards.
 4. Check tenant resolution and tenant-owned reads/writes for request-scoped context.

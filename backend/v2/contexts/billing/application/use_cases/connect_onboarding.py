@@ -16,7 +16,10 @@ from backend.v2.contexts.billing.application.ports import (
     StripeGateway,
 )
 from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
-from backend.v2.contexts.billing.domain.errors import AcademyMismatchError
+from backend.v2.contexts.billing.domain.errors import (
+    AcademyMismatchError,
+    ConnectOnboardingFailed,
+)
 from backend.v2.shared.security.redirect import validate_redirect_url
 from backend.v2.shared.tenancy import tenant_scope
 
@@ -65,12 +68,17 @@ class StartConnectOnboarding:
         with tenant_scope(academy_id):
             existing = await self._connected_accounts.get_for_academy()
             if existing is None:
-                stripe_account_id = await self._stripe.create_connected_account(
-                    academy_id=academy_id,
-                    display_name=display_name,
-                    contact_email=contact_email,
-                    idempotency_key=f"connect-account:{academy_id}",
-                )
+                try:
+                    stripe_account_id = await self._stripe.create_connected_account(
+                        academy_id=academy_id,
+                        display_name=display_name,
+                        contact_email=contact_email,
+                        idempotency_key=f"connect-account:{academy_id}",
+                    )
+                except ValueError as exc:
+                    raise ConnectOnboardingFailed(
+                        "Stripe Connect onboarding is temporarily unavailable."
+                    ) from exc
                 account = ConnectedAccount.new(
                     academy_id=academy_id,
                     stripe_account_id=stripe_account_id,
@@ -79,11 +87,16 @@ class StartConnectOnboarding:
             else:
                 account = existing
 
-            onboarding_url = await self._stripe.create_account_onboarding_link(
-                stripe_account_id=account.stripe_account_id,
-                refresh_url=refresh_url,
-                return_url=return_url,
-            )
+            try:
+                onboarding_url = await self._stripe.create_account_onboarding_link(
+                    stripe_account_id=account.stripe_account_id,
+                    refresh_url=refresh_url,
+                    return_url=return_url,
+                )
+            except ValueError as exc:
+                raise ConnectOnboardingFailed(
+                    "Stripe Connect onboarding is temporarily unavailable."
+                ) from exc
 
         return {
             "academy_id": academy_id,
