@@ -225,6 +225,40 @@ git clean -fd
 
 ---
 
+## Release Notes
+
+Write this yourself as part of the change, before pushing — do not leave it
+to CI. `.github/workflows/release-notes.yml` auto-generates a stub and
+comments on the PR if `backend/` or `frontend/` changed and no file exists,
+and fails the check if one exists but a section is empty/placeholder — but
+that stub is a backstop, not a substitute for you writing accurate Deploy
+notes and Risk/rollback before review.
+
+Before merging a PR to `main` (or when batching several PRs into one deploy),
+add a file to `docs/release-notes/YYYY-MM-DD-<slug>.md`:
+
+```markdown
+# <slug>
+
+PR: #<number>
+
+## What changed
+<1-3 sentences, user/operator-facing framing>
+
+## Deploy notes
+<migrations to run, env vars, manual steps, or "none">
+
+## Risk / rollback
+<what breaks if this is wrong, how to roll back>
+```
+
+Keep each file terse — this is a deploy log, not a design doc. Link related
+PRs when several land in the same batch. If a PR includes a migration, the
+file must say whether it runs automatically (`run_migrations_on_boot`) or
+needs a manual step, since that isn't tracked anywhere else today.
+
+---
+
 ## Feedback Loop
 
 Use `docs/agent/feedback-loop.md`.
@@ -248,7 +282,8 @@ Final response must include:
 1. What changed.
 2. Files changed.
 3. Verification performed.
-4. Remaining risks or skipped checks.
-5. Next recommended step, if useful.
+4. Release notes added/updated in `docs/release-notes/`, or why not applicable.
+5. Remaining risks or skipped checks.
+6. Next recommended step, if useful.
 
 Keep it short. Do not fake verification.
