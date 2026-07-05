@@ -38,6 +38,7 @@ const PAYMENT_START_FAILED =
 // at ~5 minutes so a never-terminal status can't poll forever.
 const CHECKOUT_POLL_TERMINAL_STATUSES = new Set([
   "active",
+  "succeeded",
   "past_due",
   "cancelled",
   "verification_required",
@@ -272,7 +273,13 @@ export default function ParentPaymentsPage() {
   const invoicePaymentMutation = useMutation({
     mutationFn: ({ invoiceId, enrollAutopay }: { invoiceId: string; enrollAutopay: boolean }) =>
       startParentInvoicePayment(invoiceId, {
-        success_url: `${window.location.origin}/parent/payments?invoice=paid`,
+        // The checkout-status poll (below) only runs when it sees
+        // `autopay=success` + a checkout_session_id, so opted-in payments
+        // must carry that marker to pick up activation on return. Unchecked
+        // payments keep the plain `invoice=paid` redirect, unchanged.
+        success_url: enrollAutopay
+          ? `${window.location.origin}/parent/payments?invoice=paid&autopay=success`
+          : `${window.location.origin}/parent/payments?invoice=paid`,
         cancel_url: `${window.location.origin}/parent/payments?invoice=cancelled`,
         enroll_autopay: enrollAutopay,
       }),
@@ -297,7 +304,9 @@ export default function ParentPaymentsPage() {
   const balancePaymentMutation = useMutation({
     mutationFn: ({ enrollAutopay }: { enrollAutopay: boolean }) =>
       startParentBalancePayment({
-        success_url: `${window.location.origin}/parent/payments?balance=paid`,
+        success_url: enrollAutopay
+          ? `${window.location.origin}/parent/payments?balance=paid&autopay=success`
+          : `${window.location.origin}/parent/payments?balance=paid`,
         cancel_url: `${window.location.origin}/parent/payments?balance=cancelled`,
         enroll_autopay: enrollAutopay,
       }),

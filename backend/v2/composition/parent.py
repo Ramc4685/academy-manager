@@ -35,6 +35,7 @@ from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     GetCheckoutStatus,
     StartSubscriptionCheckout,
     StartSubscriptionCheckoutCommand,
+    _success_url_with_checkout_session_placeholder,
 )
 from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
@@ -224,8 +225,17 @@ class _MongoTransactionRunner:
                 if self._is_transaction_unavailable(exc):
                     return await work(None)
                 raise
-            async with transaction_context:
-                return await work(session)
+            try:
+                async with transaction_context:
+                    return await work(session)
+            except OperationFailure as exc:
+                if self._is_transaction_unavailable(exc):
+                    # The transaction context manager already aborted the
+                    # transaction on exception exit; work(None) must be safe
+                    # to re-invoke since the standalone-Mongo failure occurs
+                    # on the FIRST operation inside work, before any writes.
+                    return await work(None)
+                raise
 
     @staticmethod
     def _is_transaction_unavailable(exc: OperationFailure) -> bool:
@@ -978,13 +988,22 @@ def compose_parent(
         if invoice.status not in {"open", "partially_paid"} or invoice.balance_due_cents <= 0:
             raise ValueError("invoice is not payable")
         invoice_stripe = stripe if hasattr(stripe, "create_invoice_checkout_session") else None
+        # Opted-in payments must return with a checkout_session_id so the
+        # parent app's checkout-status poll can pick up autopay activation
+        # instead of relying solely on the webhook. Unmodified when not
+        # opted in, so the plain one-time-payment redirect is unchanged.
+        redirect_success_url = (
+            _success_url_with_checkout_session_placeholder(success_url)
+            if enroll_autopay
+            else success_url
+        )
         result = await SendInvoice(
             ledger=billing_ledger_repo,
             stripe=invoice_stripe,  # type: ignore[arg-type]
             email=None,
             connected_accounts=connected_accounts_repo,
             settings=billing_settings_repo,
-            success_url=success_url,
+            success_url=redirect_success_url,
             cancel_url=cancel_url,
         ).execute(invoice_id, enroll_autopay=enroll_autopay)
         if not result.checkout_url:
@@ -1076,12 +1095,20 @@ def compose_parent(
                     {inv.enrollment_id for inv in payable if inv.enrollment_id}
                 ),
             }
+        # Same reasoning as the single-invoice path: opted-in payments need a
+        # checkout_session_id on return so the checkout-status poll can pick
+        # up activation instead of relying solely on the webhook.
+        redirect_success_url = (
+            _success_url_with_checkout_session_placeholder(success_url)
+            if enroll_autopay
+            else success_url
+        )
         try:
             _, url = await invoice_stripe.create_invoice_checkout_session(
                 invoice_id=f"balance-{parent_id[:8]}",
                 amount_cents=total_cents,
                 currency=currency,
-                success_url=success_url,
+                success_url=redirect_success_url,
                 cancel_url=cancel_url,
                 metadata={
                     "academy_id": academy_id,

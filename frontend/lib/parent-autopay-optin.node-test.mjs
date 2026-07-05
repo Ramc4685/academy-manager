@@ -117,3 +117,26 @@ test("payments page wires the checkbox state into both pay mutations", () => {
   assert.match(paymentsPage, /useState<Record<string, boolean>>\(\{\}\)/);
   assert.match(paymentsPage, /useState\(true\)/);
 });
+
+test("opted-in invoice/balance redirects carry the autopay=success poll marker", () => {
+  // Codex review finding: without this, the checkout-status poll never fires
+  // after a real Stripe redirect for an opted-in one-time payment, so
+  // activation depended entirely on the webhook. Unchecked payments must
+  // keep the plain redirect (no marker, no polling).
+  assert.match(
+    paymentsPage,
+    /enrollAutopay\s*\?\s*`\$\{window\.location\.origin\}\/parent\/payments\?invoice=paid&autopay=success`\s*:\s*`\$\{window\.location\.origin\}\/parent\/payments\?invoice=paid`/,
+  );
+  assert.match(
+    paymentsPage,
+    /enrollAutopay\s*\?\s*`\$\{window\.location\.origin\}\/parent\/payments\?balance=paid&autopay=success`\s*:\s*`\$\{window\.location\.origin\}\/parent\/payments\?balance=paid`/,
+  );
+});
+
+test("checkout-status poll treats a completed payment opt-in as terminal", () => {
+  // Codex review finding: the opt-in payment-checkout status branch returns
+  // "succeeded", which must be in the terminal set or the poller keeps
+  // hitting the endpoint (and re-running activation) every 3s until the
+  // 5-minute attempt cap instead of stopping once the payment completes.
+  assert.match(paymentsPage, /CHECKOUT_POLL_TERMINAL_STATUSES = new Set\(\[[\s\S]*?"succeeded"/);
+});

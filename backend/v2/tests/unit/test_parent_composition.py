@@ -393,6 +393,13 @@ async def test_parent_single_invoice_payment_with_enroll_autopay_forwards_flag(
     assert call["save_payment_method_for_autopay"] is True
     assert call["autopay_enrollment_ids"] == ["enroll-a"]
     assert call["connected_account_id"] == "acct_ready"
+    # Opted-in redirects must carry a checkout_session_id placeholder so the
+    # parent app's checkout-status poll fires on return (not just the
+    # webhook) — Stripe substitutes {CHECKOUT_SESSION_ID} at redirect time.
+    assert call["success_url"] == (
+        "https://app.example.com/parent/payments?invoice=paid"
+        "&checkout_session_id={CHECKOUT_SESSION_ID}"
+    )
 
 
 @pytest.mark.asyncio
@@ -445,6 +452,13 @@ async def test_parent_balance_payment_with_enroll_autopay_collects_distinct_enro
     # A distinct idempotency key so an earlier one-time balance session is not
     # replayed without the saved-payment-method params.
     assert str(call["idempotency_key"]).endswith(":autopay-optin")
+    # Same checkout_session_id placeholder requirement as the single-invoice
+    # path (see test above) — the balance payment path builds its own Stripe
+    # call directly rather than delegating to SendInvoice.
+    assert call["success_url"] == (
+        "https://app.example.com/parent/payments?invoice=paid"
+        "&checkout_session_id={CHECKOUT_SESSION_ID}"
+    )
 
 
 @pytest.mark.asyncio
@@ -486,6 +500,9 @@ async def test_parent_balance_payment_without_flag_omits_autopay_kwargs(
     assert "save_payment_method_for_autopay" not in call
     assert "autopay_enrollment_ids" not in call
     assert not str(call["idempotency_key"]).endswith(":autopay-optin")
+    # Byte-identical redirect when not opted in — no checkout_session_id
+    # placeholder appended.
+    assert call["success_url"] == "https://app.example.com/parent/payments?invoice=paid"
 
 
 @pytest.mark.asyncio
