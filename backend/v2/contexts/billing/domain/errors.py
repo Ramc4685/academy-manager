@@ -35,6 +35,11 @@ class CheckoutCreationFailed(DomainError):
     status_code = 502
 
 
+class ConnectOnboardingFailed(DomainError):
+    code = "Billing.ConnectOnboardingFailed"
+    status_code = 502
+
+
 class PaymentOperationNotAllowed(DomainError):
     code = "Billing.PaymentOperationNotAllowed"
     status_code = 400
@@ -48,6 +53,17 @@ class SessionTypeNotFound(DomainError):
 class StudentBillingEnrollmentNotFound(DomainError):
     code = "Billing.StudentBillingEnrollmentNotFound"
     status_code = 404
+
+
+class AutopayActivationFailed(DomainError):
+    """Autopay setup completed at Stripe (payment method saved) but the
+    enrollment's autopay state could not be activated — the projection doc is
+    missing and could not be reconstructed from the legacy enrollment. 409 so
+    the checkout-status poll gets a structured, non-5xx error instead of an
+    unhandled RuntimeError (2026-07-04 incident)."""
+
+    code = "Billing.AutopayActivationFailed"
+    status_code = 409
 
 
 class SessionTypeInactive(DomainError):

@@ -19,7 +19,11 @@ from backend.v2.contexts.billing.application.ports import (
     SubscriptionRepository,
     TransactionRunner,
 )
-from backend.v2.contexts.billing.domain.errors import CheckoutCreationFailed, PaymentNotFound
+from backend.v2.contexts.billing.domain.errors import (
+    AutopayActivationFailed,
+    CheckoutCreationFailed,
+    PaymentNotFound,
+)
 from backend.v2.contexts.billing.domain.events import (
     AutopayConsentCaptured,
     AutopayConsentCapturedPayload,
@@ -237,8 +241,9 @@ class CompleteAutopaySetup:
                 enrollment_id=enrollment_id,
             )
             if not activated:
-                raise RuntimeError(
-                    f"autopay enrollment activation failed for enrollment {enrollment_id}"
+                raise AutopayActivationFailed(
+                    f"autopay enrollment activation failed for enrollment {enrollment_id}",
+                    enrollment_id=enrollment_id,
                 )
         return AutopaySetupCompletionResult(
             checkout_session_id=checkout_session_id,
@@ -452,8 +457,9 @@ class CompleteAutopaySetup:
                     session=session,
                 )
                 if not activated:
-                    raise RuntimeError(
-                        f"autopay enrollment activation failed for enrollment {enrollment_id}"
+                    raise AutopayActivationFailed(
+                        f"autopay enrollment activation failed for enrollment {enrollment_id}",
+                        enrollment_id=enrollment_id,
                     )
 
         if self._transaction_runner is not None:

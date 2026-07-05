@@ -309,6 +309,10 @@ class AdminUseCases:
     create_billing_product: object | None = None
     update_billing_product: object | None = None
     deactivate_billing_product: object | None = None
+    # Platform-charge fallback escape hatch (2026-07-04 incident follow-up):
+    # audited admin toggle for billing_settings.allow_platform_charge_fallback.
+    get_platform_charge_fallback: object | None = None  # GetPlatformChargeFallback
+    set_platform_charge_fallback: object | None = None  # SetPlatformChargeFallback
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:
