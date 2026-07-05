@@ -1177,6 +1177,33 @@ async def test_mongo_transaction_runner_falls_back_when_sessions_unavailable() -
 
 
 @pytest.mark.asyncio
+async def test_mongo_transaction_runner_falls_back_when_standalone_mongo_rejects_first_op() -> (
+    None
+):
+    """Standalone mongod: start_session()/start_transaction() both succeed, but
+    the first operation executed inside work(session) raises OperationFailure
+    code 20 ("Transaction numbers are only allowed on a replica set member or
+    mongos"). The runner must catch that failure, let the transaction context
+    abort, and retry with work(None) rather than letting the error escape."""
+    runner = _MongoTransactionRunner(_FakeDb())
+    sessions: list[object | None] = []
+
+    async def work(session):
+        sessions.append(session)
+        if session is not None:
+            raise OperationFailure(
+                "Transaction numbers are only allowed on a replica set member or mongos",
+                code=20,
+            )
+        return "ok"
+
+    assert await runner.run(work) == "ok"
+    assert len(sessions) == 2
+    assert sessions[0] is not None
+    assert sessions[1] is None
+
+
+@pytest.mark.asyncio
 async def test_checkout_status_reconciles_completed_subscription_checkout() -> None:
     now = datetime(2026, 6, 11, tzinfo=UTC)
     repo = _SubscriptionRepo()
