@@ -263,6 +263,27 @@ async def test_mark_autopay_active_from_setup_self_heals_from_legacy_enrollment(
 
 
 @pytest.mark.asyncio
+async def test_mark_autopay_active_self_heal_resolves_parent_from_student(db, acad) -> None:
+    """Older legacy enrollments carry the parent only on the student doc —
+    the self-heal must do the same student lookup as migration 0145."""
+    doc = _legacy_enrollment_doc("legacy-np", academy_id=acad)
+    del doc["parent_id"]
+    await db["enrollments"].insert_one(doc)
+    await db["students"].insert_one(
+        {"academy_id": acad, "student_id": "student-1", "parent_id": "parent-via-student"}
+    )
+    repo = MongoStudentBillingEnrollmentRepository(db)
+
+    ok = await repo.mark_autopay_active_from_setup(enrollment_id="legacy-np")
+
+    assert ok is True
+    stored = await repo.get("legacy-np")
+    assert stored is not None
+    assert stored.parent_id == "parent-via-student"
+    assert stored.autopay_enrollment_status == "active"
+
+
+@pytest.mark.asyncio
 async def test_mark_autopay_active_from_setup_unknown_everywhere_returns_false(db, acad) -> None:
     repo = MongoStudentBillingEnrollmentRepository(db)
 

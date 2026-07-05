@@ -180,6 +180,14 @@ class MongoStudentBillingEnrollmentRepository(TenantScopedRepository):
         parent_id = legacy.get("parent_id") or legacy.get("parent_user_id")
         student_id = legacy.get("student_id")
         session_id = legacy.get("session_id")
+        if not parent_id and student_id:
+            # Same fallback as migration 0145: older legacy enrollments carry
+            # the parent only on the student document.
+            student = await self._find_one_in_collection(
+                "students", {"student_id": str(student_id)}, session=session
+            )
+            if student is not None:
+                parent_id = student.get("parent_id") or student.get("parent_user_id")
         if not (parent_id and student_id and session_id):
             log.warning(
                 "autopay projection self-heal skipped: legacy enrollment missing identity "

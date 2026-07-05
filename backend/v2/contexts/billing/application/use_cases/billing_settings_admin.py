@@ -70,8 +70,10 @@ class SetPlatformChargeFallback:
         current = await self._settings.get()
         if current.allow_platform_charge_fallback == cmd.enabled:
             return PlatformChargeFallbackResult(allow_platform_charge_fallback=cmd.enabled)
-        updated = current.model_copy(update={"allow_platform_charge_fallback": cmd.enabled})
-        await self._settings.upsert(updated)
+        # Audit BEFORE the settings write: the charge-routing flag must never
+        # change unaudited. If the upsert then fails, the entry records intent
+        # for a change that didn't land, and the retry (flag still unchanged)
+        # isn't swallowed by the no-op check above.
         if self._audit is not None:
             await self._audit.append(
                 BillingAuditEntry(
@@ -87,4 +89,6 @@ class SetPlatformChargeFallback:
                     after={"allow_platform_charge_fallback": cmd.enabled},
                 )
             )
+        updated = current.model_copy(update={"allow_platform_charge_fallback": cmd.enabled})
+        await self._settings.upsert(updated)
         return PlatformChargeFallbackResult(allow_platform_charge_fallback=cmd.enabled)

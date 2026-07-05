@@ -93,6 +93,26 @@ async def test_setting_current_value_is_a_noop_without_audit() -> None:
 
 
 @pytest.mark.asyncio
+async def test_audit_failure_blocks_settings_write() -> None:
+    """The flag must never change unaudited: the audit append runs first, so
+    an audit-log failure leaves the settings untouched and a retry is not
+    swallowed by the no-op check."""
+
+    class _FailingAudit:
+        async def append(self, entry: BillingAuditEntry) -> None:
+            raise RuntimeError("audit log unavailable")
+
+    repo = _SettingsRepo(BillingSettings.default("acad-1"))
+    uc = SetPlatformChargeFallback(settings=repo, audit=_FailingAudit(), clock=lambda: NOW)
+
+    with pytest.raises(RuntimeError, match="audit log unavailable"):
+        await uc.execute(SetPlatformChargeFallbackCommand(enabled=True, actor_id="admin-1"))
+
+    assert repo.upserts == []
+    assert (await repo.get()).allow_platform_charge_fallback is False
+
+
+@pytest.mark.asyncio
 async def test_toggle_preserves_other_settings() -> None:
     repo = _SettingsRepo(
         BillingSettings.default("acad-1").model_copy(
