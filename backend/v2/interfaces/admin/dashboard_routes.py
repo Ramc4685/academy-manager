@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from collections.abc import Awaitable, Callable
 from datetime import date
 from typing import Any
 
@@ -17,6 +19,7 @@ from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
 router = APIRouter(tags=["admin.dashboard"])
+log = logging.getLogger(__name__)
 
 
 @router.get("/dashboard/attention", response_model=AdminAttentionList)
@@ -27,6 +30,7 @@ async def dashboard_attention(
     """Aggregate dashboard attention signals from existing admin BFF sources."""
 
     items: list[AdminAttentionItemView] = []
+    today = date.today()
 
     blocked_resume_reader = getattr(use_cases, "list_blocked_scheduled_resume_actions", None)
 
@@ -40,12 +44,20 @@ async def dashboard_attention(
             waiver_report,
             sessions,
         ) = await asyncio.gather(
-            use_cases.list_dues_followup(),  # type: ignore[operator]
-            use_cases.list_admin_pause_requests.execute(),
-            blocked_resume_reader(),
-            use_cases.list_billing_deferral_warnings(today=date.today(), limit=100),
-            use_cases.list_admin_waivers.execute(),
-            use_cases.list_admin_sessions(date.today()),  # type: ignore[operator]
+            _read_attention_source("dues_followup", use_cases.list_dues_followup, []),
+            _read_attention_source(
+                "pause_requests", use_cases.list_admin_pause_requests.execute, []
+            ),
+            _read_attention_source("blocked_scheduled_resumes", blocked_resume_reader, []),
+            _read_attention_source(
+                "billing_deferral_warnings",
+                use_cases.list_billing_deferral_warnings,
+                [],
+                today=today,
+                limit=100,
+            ),
+            _read_attention_source("waivers", use_cases.list_admin_waivers.execute, None),
+            _read_attention_source("sessions", use_cases.list_admin_sessions, [], today),
         )
     else:
         (
@@ -55,11 +67,19 @@ async def dashboard_attention(
             waiver_report,
             sessions,
         ) = await asyncio.gather(
-            use_cases.list_dues_followup(),  # type: ignore[operator]
-            use_cases.list_admin_pause_requests.execute(),
-            use_cases.list_billing_deferral_warnings(today=date.today(), limit=100),
-            use_cases.list_admin_waivers.execute(),
-            use_cases.list_admin_sessions(date.today()),  # type: ignore[operator]
+            _read_attention_source("dues_followup", use_cases.list_dues_followup, []),
+            _read_attention_source(
+                "pause_requests", use_cases.list_admin_pause_requests.execute, []
+            ),
+            _read_attention_source(
+                "billing_deferral_warnings",
+                use_cases.list_billing_deferral_warnings,
+                [],
+                today=today,
+                limit=100,
+            ),
+            _read_attention_source("waivers", use_cases.list_admin_waivers.execute, None),
+            _read_attention_source("sessions", use_cases.list_admin_sessions, [], today),
         )
         blocked_resumes: list[Any] = []
 
@@ -132,7 +152,11 @@ async def dashboard_attention(
             )
         )
 
-    waiver_count = waiver_report.summary.pending_count + waiver_report.summary.outdated_count
+    waiver_count = (
+        waiver_report.summary.pending_count + waiver_report.summary.outdated_count
+        if waiver_report is not None
+        else 0
+    )
     if waiver_count:
         items.append(
             AdminAttentionItemView(
@@ -164,6 +188,20 @@ async def dashboard_attention(
         )
 
     return AdminAttentionList(items=items)
+
+
+async def _read_attention_source(
+    label: str,
+    reader: Callable[..., Awaitable[Any]],
+    default: Any,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    try:
+        return await reader(*args, **kwargs)
+    except Exception:
+        log.warning("admin dashboard attention source unavailable: %s", label, exc_info=True)
+        return default
 
 
 def _field(session: Any, name: str, default: Any = None) -> Any:

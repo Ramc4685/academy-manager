@@ -35,6 +35,11 @@ class CheckoutCreationFailed(DomainError):
     status_code = 502
 
 
+class ConnectOnboardingFailed(DomainError):
+    code = "Billing.ConnectOnboardingFailed"
+    status_code = 502
+
+
 class PaymentOperationNotAllowed(DomainError):
     code = "Billing.PaymentOperationNotAllowed"
     status_code = 400

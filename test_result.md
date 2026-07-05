@@ -63,6 +63,7 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-07-03-stripe-connect-checkout-destination-charges](docs/test-results/active/2026-07-03-stripe-connect-checkout-destination-charges.md)
 - [2026-07-04-staging-platform-charge-fallback-toggle](docs/test-results/active/2026-07-04-staging-platform-charge-fallback-toggle.md)
 - [2026-07-05-autopay-projection-backfill-and-graceful-activation](docs/test-results/active/2026-07-05-autopay-projection-backfill-and-graceful-activation.md)
+- [2026-07-04-console-error-service-worker-and-admin-500-fixes](docs/test-results/active/2026-07-04-console-error-service-worker-and-admin-500-fixes.md)
 - [slice-i-connect](docs/test-results/active/slice-i-connect.md)
 
 ## Required Workflow
