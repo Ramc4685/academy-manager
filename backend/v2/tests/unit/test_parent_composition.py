@@ -849,3 +849,108 @@ async def test_billing_portal_does_not_fall_back_to_global_email_customer_lookup
         ]
     finally:
         get_settings.cache_clear()
+
+
+class _AutopaySetupStripe(_PortalStripe):
+    def __init__(self) -> None:
+        super().__init__()
+        self.autopay_setup_checkouts: list[dict[str, Any]] = []
+
+    async def create_autopay_setup_checkout_session(
+        self,
+        *,
+        parent_id: str,
+        enrollment_id: str,
+        session_id: str,
+        success_url: str,
+        cancel_url: str,
+        metadata: dict[str, str],
+        connected_account_id: str | None = None,
+    ) -> tuple[str, str]:
+        self.autopay_setup_checkouts.append(
+            {
+                "parent_id": parent_id,
+                "enrollment_id": enrollment_id,
+                "session_id": session_id,
+                "connected_account_id": connected_account_id,
+                "metadata": metadata,
+            }
+        )
+        return "cs_setup_test", "https://checkout.stripe.test/autopay"
+
+
+@pytest.mark.asyncio
+async def test_start_autopay_does_not_stamp_dangling_subscription_fields(
+    allow_app_origin,
+) -> None:
+    """Autopay setup stopped writing a subscriptions doc in #266, so the
+    enrollment must not be stamped with a subscription_id pointing at a
+    nonexistent doc, nor a subscription_status that then stays "incomplete"
+    forever. Autopay state lives on
+    student_billing_enrollments.autopay_enrollment_status.
+    """
+    start = datetime(2026, 7, 10, 17, 0, tzinfo=UTC)
+    stripe = _AutopaySetupStripe()
+    db = _FakeDb(
+        {
+            "enrollments": _FakeCollection(
+                [
+                    {
+                        "academy_id": "acad",
+                        "enrollment_id": "enr-1",
+                        "student_id": "student-1",
+                        "session_id": "sess-1",
+                    }
+                ]
+            ),
+            "students": _FakeCollection(
+                [
+                    {
+                        "academy_id": "acad",
+                        "student_id": "student-1",
+                        "parent_id": "parent-1",
+                    }
+                ]
+            ),
+            "sessions": _FakeCollection(
+                [
+                    {
+                        "academy_id": "acad",
+                        "session_id": "sess-1",
+                        "coach_id": "coach-1",
+                        "title": "Monday Squad",
+                        "start_at": start,
+                        "end_at": datetime(2026, 7, 10, 18, 0, tzinfo=UTC),
+                        "amount_cents": 12_000,
+                        "status": "scheduled",
+                    }
+                ]
+            ),
+            "academy_connected_accounts": _FakeCollection([_connected_account_doc()]),
+        }
+    )
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"):
+        result = await parent.start_autopay_for_enrollment(
+            parent_id="parent-1",
+            enrollment_id="enr-1",
+            success_url="https://app.example.com/parent/autopay?status=success",
+            cancel_url="https://app.example.com/parent/autopay?status=cancelled",
+        )
+
+    assert result.redirect_url == "https://checkout.stripe.test/autopay"
+    assert stripe.autopay_setup_checkouts[0]["connected_account_id"] == "acct_ready"
+
+    enrollment_updates = db["enrollments"].updates
+    assert len(enrollment_updates) == 1
+    set_fields = enrollment_updates[0]["update"]["$set"]
+    assert set_fields["payment_mode"] == "monthly"
+    assert "subscription_id" not in set_fields
+    assert "subscription_status" not in set_fields

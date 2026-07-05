@@ -1244,13 +1244,18 @@ def compose_parent(
                 cancel_url=cancel_url,
             )
         )
+        # Do NOT stamp subscription_id / subscription_status here. Autopay setup
+        # no longer writes a `subscriptions` document (removed in #266): the setup
+        # runs in Stripe "setup" mode and completion is tracked on
+        # student_billing_enrollments.autopay_enrollment_status via
+        # CompleteAutopaySetup. Writing result.subscription_id would leave the
+        # enrollment pointing at a nonexistent doc, and "incomplete" would never
+        # be cleared — producing permanent dangling/stuck state on every setup.
         await db["enrollments"].update_one(
             {"academy_id": academy_id, "enrollment_id": enrollment_id},
             {
                 "$set": {
                     "payment_mode": "monthly",
-                    "subscription_status": "incomplete",
-                    "subscription_id": result.subscription_id,
                     "updated_at": datetime.now(UTC),
                 }
             },
