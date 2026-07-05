@@ -1455,9 +1455,11 @@ async def test_complete_autopay_optin_replay_is_idempotent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_complete_autopay_optin_missing_enrollment_doc_logs_and_continues() -> None:
+async def test_complete_autopay_optin_missing_enrollment_doc_attempts_all_then_raises() -> None:
     """Activation returning False (e.g. missing student_billing_enrollments doc)
-    must not raise past the payment result — log and continue."""
+    must attempt EVERY enrollment first, then raise so the webhook worker
+    retries the event. The checkout-status poll path catches the raise, so the
+    payment's parent-facing result stays unaffected."""
     now = datetime(2026, 7, 5, tzinfo=UTC)
     customers = _CustomerRepo()
     consents = _ConsentRepo()
@@ -1473,11 +1475,13 @@ async def test_complete_autopay_optin_missing_enrollment_doc_logs_and_continues(
         now=now,
     )
 
-    activated = await uc.execute_from_payment_checkout(
-        _optin_payment_checkout(enrollment_ids="enr-1,enr-2")
-    )
+    with pytest.raises(RuntimeError, match="enr-1.*enr-2"):
+        await uc.execute_from_payment_checkout(
+            _optin_payment_checkout(enrollment_ids="enr-1,enr-2")
+        )
 
-    assert activated == []
+    # Both enrollments were attempted before the failure surfaced.
+    assert enrollment_autopay.setup_completed == ["enr-1", "enr-2"]
 
 
 @pytest.mark.asyncio

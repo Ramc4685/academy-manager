@@ -4006,9 +4006,12 @@ async def test_balance_checkout_completed_with_autopay_optin_activates_all_enrol
 
 
 @pytest.mark.asyncio
-async def test_invoice_checkout_optin_activation_failure_still_records_payment() -> None:
-    """Activation errors must not crash the webhook route nor undo the ledger
-    bookkeeping for the succeeded payment."""
+async def test_invoice_checkout_optin_transient_activation_failure_retries() -> None:
+    """A transient activation failure (e.g. Stripe retrieval blip) must mark
+    the event failed so the worker retries it — never silently drop the
+    opt-in after marking the event processed. Ledger bookkeeping is
+    idempotent, so the replay both keeps the payment recorded once and
+    completes the activation."""
     ledger = FakeBillingLedger(
         _ledger_invoice(
             invoice_id="inv-optin",
@@ -4018,13 +4021,14 @@ async def test_invoice_checkout_optin_activation_failure_still_records_payment()
         )
     )
     enrollment_autopay = FakeEnrollmentAutopayState()
+    stripe = _optin_stripe(payment_intent_error=RuntimeError("stripe unavailable"))
     uc = _build(
         FakePaymentRepo(),
         billing_ledger=ledger,
         parent_customers=FakeParentStripeCustomers(),
         enrollment_autopay=enrollment_autopay,
         consent_repo=FakeAutopayConsentRepo(),
-        stripe=_optin_stripe(payment_intent_error=RuntimeError("stripe unavailable")),
+        stripe=stripe,
     )
     body = _optin_invoice_checkout_event(
         metadata={
@@ -4038,12 +4042,22 @@ async def test_invoice_checkout_optin_activation_failure_still_records_payment()
     )
 
     await uc.accept(body, "test_signature")
-    res = await uc.process_next(processor_id="worker-1")
+    failed = await uc.process_next(processor_id="worker-1")
 
-    assert res["processed"] is True
+    # Event failed (retryable), ledger bookkeeping intact, no activation yet.
+    assert failed["processed"] is False
+    assert failed["status"] == "failed"
     assert ledger.invoices["inv-optin"].status == "paid"
     assert list(ledger.payments) == ["ledger-pay-cs:cs_optin_invoice"]
     assert enrollment_autopay.setup_completed == []
+
+    # Stripe recovers; the retry replays the event idempotently and activates.
+    stripe._payment_intent_error = None
+    retried = await uc.process_next(processor_id="worker-1")
+
+    assert retried["processed"] is True
+    assert list(ledger.payments) == ["ledger-pay-cs:cs_optin_invoice"]
+    assert enrollment_autopay.setup_completed == ["enr-1"]
 
 
 @pytest.mark.asyncio

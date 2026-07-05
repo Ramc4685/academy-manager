@@ -321,6 +321,7 @@ class CompleteAutopaySetup:
             },
         )
         activated: list[str] = []
+        failed: list[str] = []
         for enrollment_id in enrollment_ids:
             consent = self._build_consent(
                 parent_id=parent_id,
@@ -355,11 +356,12 @@ class CompleteAutopaySetup:
             except Exception as exc:
                 log.warning(
                     "autopay opt-in activation failed enrollment=%s checkout=%s err=%s "
-                    "— continuing; the webhook worker retries",
+                    "— attempting remaining enrollments before surfacing",
                     enrollment_id,
                     checkout_session_id,
                     exc,
                 )
+                failed.append(enrollment_id)
                 continue
             activated.append(enrollment_id)
         await self._parent_customers.promote_payment_method_to_default(
@@ -370,6 +372,16 @@ class CompleteAutopaySetup:
             payment_method_label=payment_method_label,
             payment_method_last4=payment_method_last4,
         )
+        if failed:
+            # Surface AFTER attempting every enrollment so the webhook worker
+            # marks the event failed and retries it (idempotent replay re-runs
+            # only the failures; already-active enrollments no-op). The
+            # checkout-status poll path catches this, keeping the payment's
+            # status response unaffected.
+            raise RuntimeError(
+                f"autopay opt-in activation failed for enrollments {failed} "
+                f"checkout={checkout_session_id}"
+            )
         return activated
 
     async def _persist_completion(
