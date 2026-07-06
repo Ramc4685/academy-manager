@@ -16,6 +16,28 @@ billing context's existing ``AddInvoiceLine`` use case (the real
 production line-append path). This use case never calls Stripe, never
 closes/settles invoices, and never touches refund/credit machinery.
 
+ERROR HANDLING: the enrollment-status CAS write (``mark_cancelled_by_parent``)
+is the source of truth for cancellation and always commits first — the
+parent's enrollment is durably cancelled the moment that write succeeds.
+The subsequent fee-billing call is treated as best-effort, NOT
+transactional with the CAS: if ``record_cancellation_fee`` raises (transient
+Mongo error, ``AddInvoiceLine`` ``ValueError``, etc.), ``execute`` does NOT
+re-raise and does NOT roll back the cancellation (there is no compensating
+"un-cancel" — the enrollment must not flap back to active under a parent
+who no longer wants it). Instead the failure is: (1) logged as a structured
+"self_cancel_fee_billing_failed" warning with enrollment_id/fee_cents/error,
+and (2) stamped onto the enrollment's own
+``cancellation_policy_snapshot.fee_billing_error`` via a small targeted
+writer method (``mark_fee_billing_error``), so ``ListSelfCancellationsForAdmin``
+surfaces the unrecovered fee on the admin audit row without any extra
+plumbing — the row already round-trips the whole snapshot dict. This
+satisfies the project rule "Admin must see unrecovered failures": the
+parent still gets a success response (the cancellation genuinely
+succeeded), but the owed fee is never silently dropped — an admin can see
+it and bill it manually. The already-computed ``fee_cents`` is still
+returned in the result even when billing failed, since it reflects the
+policy decision, not whether billing succeeded.
+
 Idempotency: the fee line's natural key is ``f"{enrollment_id}-self-cancel-fee"``,
 recorded as the ``InvoiceLine.source_id`` (with ``source_type="self_cancel_fee"``)
 by the billing-port implementation, which checks for an existing line with that
@@ -47,6 +69,7 @@ sets ``cancelled_at`` to now.
 from __future__ import annotations
 
 import calendar
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -61,6 +84,8 @@ from backend.v2.contexts.enrollment.domain.self_service import (
     SelfCancelTerms,
     compute_self_cancel_terms,
 )
+
+log = logging.getLogger(__name__)
 
 Clock = Callable[[], datetime]
 
@@ -108,6 +133,8 @@ class SelfCancelEnrollmentWriter(SelfCancelEnrollmentQuery, Protocol):
         cancellation_policy_snapshot: dict[str, Any],
         cancelled_at: datetime,
     ) -> Enrollment | None: ...
+
+    async def mark_fee_billing_error(self, enrollment_id: str, *, error: str) -> None: ...
 
 
 class SelfCancelPolicyRepository(Protocol):
@@ -307,13 +334,38 @@ class SelfCancelEnrollment:
             )
 
         if terms.fee_cents > 0 and self._billing is not None:
-            await self._billing.record_cancellation_fee(
-                enrollment=updated,
-                fee_cents=terms.fee_cents,
-                reason="Cancellation fee",
-                actor_id=cmd.parent_id,
-                idempotency_key=f"{cmd.enrollment_id}-self-cancel-fee",
-            )
+            try:
+                await self._billing.record_cancellation_fee(
+                    enrollment=updated,
+                    fee_cents=terms.fee_cents,
+                    reason="Cancellation fee",
+                    actor_id=cmd.parent_id,
+                    idempotency_key=f"{cmd.enrollment_id}-self-cancel-fee",
+                )
+            except Exception as exc:
+                # Deliberately broad: the CAS already committed, so this must
+                # never propagate (see module docstring ERROR HANDLING). Any
+                # billing-port failure (transient Mongo error, AddInvoiceLine
+                # ValueError, etc.) is caught here.
+                error = str(exc)
+                log.warning(
+                    "self_cancel_fee_billing_failed",
+                    extra={
+                        "enrollment_id": cmd.enrollment_id,
+                        "fee_cents": terms.fee_cents,
+                        "error": error,
+                    },
+                )
+                try:
+                    await self._enrollments.mark_fee_billing_error(cmd.enrollment_id, error=error)
+                except Exception:
+                    # Best-effort audit stamp; never let a *second* failure
+                    # (stamping the error) mask the already-cancelled result
+                    # or crash the request.
+                    log.warning(
+                        "self_cancel_fee_billing_error_stamp_failed",
+                        extra={"enrollment_id": cmd.enrollment_id},
+                    )
 
         return SelfCancelEnrollmentResult(
             enrollment_id=updated.enrollment_id,

@@ -338,6 +338,31 @@ def test_admin_list_self_cancellations_returns_rows() -> None:
     assert row["session_title"] == "Beginner Tennis"
 
 
+def test_admin_cancellation_row_surfaces_fee_billing_error_in_snapshot() -> None:
+    """SelfCancellationAdminRow passes the whole ``cancellation_policy_snapshot``
+    dict straight through, so a stamped ``fee_billing_error`` (from a failed
+    self-cancel fee billing attempt) is already admin-visible without any
+    extra field on the row/route response model — no plumbing needed
+    beyond the use-case-level stamp."""
+    row = _cancellation_row()
+    row = row.model_copy(
+        update={
+            "cancellation_policy_snapshot": {
+                **(row.cancellation_policy_snapshot or {}),
+                "fee_billing_error": "mongo write timed out",
+            }
+        }
+    )
+    use_cases = _AdminUseCases(rows=[row])
+    with _make_admin_client(use_cases=use_cases) as client:
+        response = client.get("/api/v2/admin/self-service/cancellations")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    snapshot = body["cancellations"][0]["cancellation_policy_snapshot"]
+    assert snapshot["fee_billing_error"] == "mongo write timed out"
+
+
 def test_wrong_persona_cannot_list_admin_self_cancellations() -> None:
     with _make_admin_client("parent") as client:
         response = client.get("/api/v2/admin/self-service/cancellations")

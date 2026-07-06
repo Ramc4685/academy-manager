@@ -143,6 +143,7 @@ class _FakeEnrollments:
             e.enrollment_id: e for e in (enrollments or [_enrollment()])
         }
         self.cancelled_calls: list[dict[str, Any]] = []
+        self.fee_billing_error_calls: list[dict[str, Any]] = []
 
     async def get(self, enrollment_id: str) -> Enrollment | None:
         return self._by_id.get(enrollment_id)
@@ -161,7 +162,12 @@ class _FakeEnrollments:
         current = self._by_id.get(enrollment_id)
         if current is None or current.status != "active":
             return None
-        updated = current.model_copy(update={"status": "cancelled"})
+        updated = current.model_copy(
+            update={
+                "status": "cancelled",
+                "cancellation_policy_snapshot": cancellation_policy_snapshot,
+            }
+        )
         self._by_id[enrollment_id] = updated
         self.cancelled_calls.append(
             {
@@ -172,6 +178,21 @@ class _FakeEnrollments:
             }
         )
         return updated
+
+    async def mark_fee_billing_error(self, enrollment_id: str, *, error: str) -> None:
+        """Mirrors ``MongoEnrollmentWriter.mark_fee_billing_error``: a
+        targeted, best-effort stamp of the failure onto the audit
+        snapshot — used so the admin list can surface unrecovered
+        fee-billing failures."""
+        self.fee_billing_error_calls.append({"enrollment_id": enrollment_id, "error": error})
+        current = self._by_id.get(enrollment_id)
+        if current is None:
+            return
+        snapshot = dict(current.cancellation_policy_snapshot or {})
+        snapshot["fee_billing_error"] = error
+        self._by_id[enrollment_id] = current.model_copy(
+            update={"cancellation_policy_snapshot": snapshot}
+        )
 
 
 class _FakeBilling:
@@ -201,6 +222,27 @@ class _FakeBilling:
             }
         )
         return {"line_type": "fee", "amount_cents": fee_cents, "deduped": False}
+
+
+class _FakeBillingThatFails:
+    """Fake billing port that always raises, simulating a transient Mongo
+    error or an ``AddInvoiceLine`` ``ValueError`` in the real adapter."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error or RuntimeError("mongo write timed out")
+        self.calls = 0
+
+    async def record_cancellation_fee(
+        self,
+        *,
+        enrollment: Enrollment,
+        fee_cents: int,
+        reason: str,
+        actor_id: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        self.calls += 1
+        raise self.error
 
 
 def _use_case(
@@ -275,6 +317,60 @@ async def test_insufficient_notice_appends_fee_line_via_billing_port() -> None:
     [fee_call] = billing.fee_calls
     assert fee_call["fee_cents"] == 2500
     assert fee_call["idempotency_key"] == "enr-1-self-cancel-fee"
+
+
+async def test_fee_billing_failure_still_returns_success_and_stamps_admin_visible_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The reviewer finding: the CAS commits the cancellation first, so a
+    subsequent billing-port failure (transient Mongo error, AddInvoiceLine
+    ValueError, etc.) must never propagate as an opaque 500. execute()
+    still returns success, the enrollment stays cancelled, a structured
+    warning is logged, and the failure is stamped onto the audit snapshot
+    so ListSelfCancellationsForAdmin can surface it (project rule: "Admin
+    must see unrecovered failures")."""
+    enrollments = _FakeEnrollments([_enrollment()])
+    billing = _FakeBillingThatFails(RuntimeError("mongo write timed out"))
+    now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
+    uc = _use_case(
+        enrollments=enrollments,
+        policies=_FakePolicies(_policy(minimum_notice_days=7, fee_cents=2500, timing="immediate")),
+        occurrences=_FakeOccurrenceForSession({"session-1": now + timedelta(days=2)}),
+        billing=billing,
+        clock=lambda: now,
+    )
+
+    with caplog.at_level("WARNING"):
+        result = await uc.execute(
+            SelfCancelEnrollmentCommand(
+                enrollment_id="enr-1", parent_id="parent-1", reason="too far"
+            )
+        )
+
+    # 1. execute() still returns success — the CAS is the source of truth.
+    assert result.status == "cancelled"
+    assert result.fee_cents == 2500
+    assert billing.calls == 1
+
+    # 2. Enrollment itself ends cancelled (not rolled back).
+    persisted = await enrollments.get("enr-1")
+    assert persisted is not None
+    assert persisted.status == "cancelled"
+
+    # 3. The failure is stamped into the audit snapshot for admin visibility.
+    [stamp_call] = enrollments.fee_billing_error_calls
+    assert stamp_call["enrollment_id"] == "enr-1"
+    assert "mongo write timed out" in stamp_call["error"]
+    assert persisted.cancellation_policy_snapshot is not None
+    assert "mongo write timed out" in persisted.cancellation_policy_snapshot["fee_billing_error"]
+
+    # 4. A structured log record is emitted.
+    matching = [r for r in caplog.records if r.message == "self_cancel_fee_billing_failed"]
+    assert len(matching) == 1
+    record = matching[0]
+    assert record.enrollment_id == "enr-1"  # type: ignore[attr-defined]
+    assert record.fee_cents == 2500  # type: ignore[attr-defined]
+    assert "mongo write timed out" in record.error  # type: ignore[attr-defined]
 
 
 async def test_immediate_timing_sets_cancelled_at_now() -> None:
