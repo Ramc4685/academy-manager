@@ -80,6 +80,10 @@ from backend.v2.contexts.enrollment.application.use_cases.process_scheduled_resu
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.enrollment.application.use_cases.self_service_policies import (
+    GetSelfServicePolicy,
+    UpdateSelfServicePolicy,
+)
 from backend.v2.contexts.finance.application.ports import PayoutPeriodRepository
 from backend.v2.contexts.finance.application.use_cases.approve_payout_period import (
     ApprovePayoutPeriod,
@@ -309,6 +313,9 @@ class AdminUseCases:
     create_billing_product: object | None = None
     update_billing_product: object | None = None
     deactivate_billing_product: object | None = None
+    # Parent self-service policy (#absence/makeup/cancel Slice 1)
+    self_service_policy: GetSelfServicePolicy | None = None
+    update_self_service_policy: UpdateSelfServicePolicy | None = None
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:

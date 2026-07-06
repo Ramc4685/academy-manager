@@ -108,6 +108,13 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import
 from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
     MongoBillingSettingsRepository,
 )
+from backend.v2.contexts.enrollment.application.use_cases.self_service_policies import (
+    GetSelfServicePolicy,
+    UpdateSelfServicePolicy,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_self_service_policy_repo import (
+    MongoSelfServicePolicyRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
     MongoConnectedAccountRepository,
 )
@@ -2661,6 +2668,9 @@ def compose_admin(
     dunning_state_repo = MongoDunningStateRepository(db)
     billing_counters_repo = MongoBillingCounterRepository(db)
     billing_settings_repo = MongoBillingSettingsRepository(db)
+    self_service_policy_repo = MongoSelfServicePolicyRepository(db)
+    get_self_service_policy = GetSelfServicePolicy(policies=self_service_policy_repo)
+    update_self_service_policy = UpdateSelfServicePolicy(policies=self_service_policy_repo)
     connected_accounts_repo = MongoConnectedAccountRepository(db)
     credits_repo = MongoCreditLedgerRepository(db)
     tuition_discounts_repo = MongoTuitionDiscountRepository(db)
@@ -5419,6 +5429,8 @@ def compose_admin(
         create_billing_product=create_billing_product,
         update_billing_product=update_billing_product,
         deactivate_billing_product=deactivate_billing_product,
+        self_service_policy=get_self_service_policy,
+        update_self_service_policy=update_self_service_policy,
         generate_monthly_payments=generate_monthly_payments,
         mark_payment_paid=mark_payment_paid,
         apply_payment_discount=apply_payment_discount,

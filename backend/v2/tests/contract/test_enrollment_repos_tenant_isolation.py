@@ -13,6 +13,9 @@ import pytest
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
 )
+from backend.v2.contexts.enrollment.infrastructure.mongo_self_service_policy_repo import (
+    MongoSelfServicePolicyRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
 )
@@ -91,3 +94,42 @@ async def test_student_repo_isolates_tenants(db) -> None:
     with tenant_scope("academy-a"):
         rows = await repo.by_ids(["st1"])
     assert [s.full_name for s in rows] == ["Alice-academy-a"]
+
+
+@pytest.mark.asyncio
+async def test_self_service_policy_repo_isolates_tenants(db) -> None:
+    await db["parent_self_service_policies"].insert_many(
+        [
+            {"academy_id": "academy-a", "absence_notice_min_hours": 4},
+            {"academy_id": "academy-b", "absence_notice_min_hours": 8},
+        ]
+    )
+    repo = MongoSelfServicePolicyRepository(db)
+
+    with tenant_scope("academy-a"):
+        policy_a = await repo.get_or_default()
+    assert policy_a.academy_id == "academy-a"
+    assert policy_a.absence_notice_min_hours == 4
+
+    with tenant_scope("academy-b"):
+        policy_b = await repo.get_or_default()
+    assert policy_b.academy_id == "academy-b"
+    assert policy_b.absence_notice_min_hours == 8
+
+
+@pytest.mark.asyncio
+async def test_self_service_policy_repo_save_does_not_leak_across_tenants(db) -> None:
+    repo = MongoSelfServicePolicyRepository(db)
+
+    with tenant_scope("academy-a"):
+        await repo.save(
+            (await repo.get_or_default()).model_copy(update={"absence_notice_min_hours": 99})
+        )
+
+    with tenant_scope("academy-b"):
+        policy_b = await repo.get_or_default()
+    assert policy_b.absence_notice_min_hours == 2  # default, unaffected by academy-a's save
+
+    with tenant_scope("academy-a"):
+        policy_a = await repo.get_or_default()
+    assert policy_a.absence_notice_min_hours == 99
