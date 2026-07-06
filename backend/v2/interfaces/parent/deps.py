@@ -11,6 +11,10 @@ from backend.v2.contexts.billing.application.use_cases.handle_webhook_event impo
     HandleWebhookEvent,
 )
 from backend.v2.contexts.billing.application.use_cases.start_checkout import StartCheckout
+from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
+    ListParentAbsences,
+    SubmitAbsenceNotice,
+)
 from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_sessions import (
     ListParentAvailableSessions,
 )
@@ -50,6 +54,8 @@ class ParentUseCases:
     list_enrollments_for_parent: object  # callable
     request_enrollment_pause: RequestEnrollmentPause
     list_parent_pause_requests: ListParentPauseRequests
+    submit_absence_notice: SubmitAbsenceNotice
+    list_parent_absences: ListParentAbsences
     list_attendance_for_parent: object  # callable
     list_progress_for_parent: object  # callable
     list_invoices_for_parent: object  # callable

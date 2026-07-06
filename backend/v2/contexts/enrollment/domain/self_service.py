@@ -12,6 +12,24 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from backend.v2.shared.http.errors import DomainError
+
+
+class AbsenceWindowClosed(DomainError):
+    """Raised when a parent tries to submit an absence notice for an
+    occurrence that has already started."""
+
+    code = "Enrollment.AbsenceWindowClosed"
+    status_code = 409
+
+
+class DuplicateAbsenceNotice(DomainError):
+    """Raised when a parent submits a second absence notice for the same
+    (occurrence, student) pair."""
+
+    code = "Enrollment.DuplicateAbsenceNotice"
+    status_code = 409
+
 
 class ParentSelfServicePolicy(BaseModel):
     """Academy-scoped policy governing parent self-service actions."""

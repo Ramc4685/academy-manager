@@ -10,6 +10,10 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from backend.v2.contexts.enrollment.application.use_cases.absence_notices import AbsenceNotice
+from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo import (
+    MongoAbsenceNoticeRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
 )
@@ -133,3 +137,49 @@ async def test_self_service_policy_repo_save_does_not_leak_across_tenants(db) ->
     with tenant_scope("academy-a"):
         policy_a = await repo.get_or_default()
     assert policy_a.absence_notice_min_hours == 99
+
+
+@pytest.mark.asyncio
+async def test_absence_notice_repo_isolates_tenants(db) -> None:
+    repo = MongoAbsenceNoticeRepository(db)
+
+    with tenant_scope("academy-a"):
+        await repo.add(
+            AbsenceNotice(
+                notice_id="notice-a",
+                academy_id="academy-a",
+                student_id="student-1",
+                occurrence_id="occ-1",
+                session_id="session-1",
+                submitted_by="parent-1",
+                submitted_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+                notice_window_met=True,
+            )
+        )
+
+    with tenant_scope("academy-b"):
+        await repo.add(
+            AbsenceNotice(
+                notice_id="notice-b",
+                academy_id="academy-b",
+                student_id="student-1",
+                occurrence_id="occ-1",
+                session_id="session-1",
+                submitted_by="parent-1",
+                submitted_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+                notice_window_met=True,
+            )
+        )
+
+    with tenant_scope("academy-a"):
+        rows_a = await repo.list_for_parent("parent-1")
+        found_a = await repo.get_for_occurrence_and_student("occ-1", "student-1")
+
+    assert [r.notice_id for r in rows_a] == ["notice-a"]
+    assert found_a is not None
+    assert found_a.notice_id == "notice-a"
+
+    with tenant_scope("academy-b"):
+        rows_b = await repo.list_for_parent("parent-1")
+
+    assert [r.notice_id for r in rows_b] == ["notice-b"]

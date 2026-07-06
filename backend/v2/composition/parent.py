@@ -85,6 +85,10 @@ from backend.v2.contexts.billing.infrastructure.mongo_student_billing_enrollment
 from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
     MongoSubscriptionRepository,
 )
+from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
+    ListParentAbsences,
+    SubmitAbsenceNotice,
+)
 from backend.v2.contexts.enrollment.application.use_cases.confirm_enrollment import (
     ConfirmEnrollment,
 )
@@ -102,6 +106,9 @@ from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist 
     PromoteFromWaitlist,
 )
 from backend.v2.contexts.enrollment.domain.errors import SessionNotFound
+from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo import (
+    MongoAbsenceNoticeRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_event_repo import (
     MongoEnrollmentEventRepository,
 )
@@ -116,6 +123,9 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import 
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_pause_request_repo import (
     MongoPauseRequestRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_self_service_policy_repo import (
+    MongoSelfServicePolicyRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
@@ -184,6 +194,8 @@ class ParentComposition:
     list_enrollments_for_parent: object
     request_enrollment_pause: RequestEnrollmentPause
     list_parent_pause_requests: ListParentPauseRequests
+    submit_absence_notice: SubmitAbsenceNotice
+    list_parent_absences: ListParentAbsences
     list_attendance_for_parent: object
     list_progress_for_parent: object
     list_invoices_for_parent: object
@@ -478,6 +490,8 @@ def compose_parent(
     occurrences_query = MongoSessionOccurrenceRepository(db)
     waitlist = MongoWaitlistRepository(db)
     pause_requests = MongoPauseRequestRepository(db)
+    absence_notices_repo = MongoAbsenceNoticeRepository(db)
+    self_service_policies_repo = MongoSelfServicePolicyRepository(db)
 
     get_child_schedule_uc = GetChildSchedule(
         enrollments=enrollments_query,
@@ -485,6 +499,14 @@ def compose_parent(
         sessions=sessions_query,
         students=students_query,
     )
+
+    submit_absence_notice = SubmitAbsenceNotice(
+        students=students_query,
+        occurrences=occurrences_query,
+        notices=absence_notices_repo,
+        policies=self_service_policies_repo,
+    )
+    list_parent_absences = ListParentAbsences(notices=absence_notices_repo)
 
     confirm_enrollment = ConfirmEnrollment(
         sessions=sessions_writer,
@@ -1339,6 +1361,8 @@ def compose_parent(
         list_enrollments_for_parent=list_enrollments_for_parent,
         request_enrollment_pause=request_pause,
         list_parent_pause_requests=list_parent_pause_requests,
+        submit_absence_notice=submit_absence_notice,
+        list_parent_absences=list_parent_absences,
         list_attendance_for_parent=list_attendance_for_parent,
         list_progress_for_parent=list_progress_for_parent,
         list_invoices_for_parent=list_invoices_for_parent,
