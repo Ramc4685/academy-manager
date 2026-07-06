@@ -17,6 +17,10 @@ from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import
     ApproveMakeupRequestCommand,
     DenyMakeupRequestCommand,
 )
+from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
+    ApproveTrialRequestCommand,
+    DenyTrialRequestCommand,
+)
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
@@ -63,6 +67,36 @@ class ApproveMakeupRequestBody(BaseModel):
 
 
 class DenyMakeupRequestBody(BaseModel):
+    reason: str
+
+
+class TrialRequestAdminRow(BaseModel):
+    request_id: str
+    student_ref: str
+    student_id: str | None
+    prospective_child_name: str | None
+    prospective_child_dob: str | None
+    requested_session_id: str
+    preferred_start: str
+    preferred_end: str
+    status: str
+    assigned_occurrence_id: str | None
+    linked_application_id: str | None
+    denial_reason: str | None
+    decided_by: str | None
+    decided_at: datetime | None
+    created_at: datetime
+
+
+class TrialRequestsAdminResponse(BaseModel):
+    trials: list[TrialRequestAdminRow]
+
+
+class ApproveTrialRequestBody(BaseModel):
+    occurrence_id: str
+
+
+class DenyTrialRequestBody(BaseModel):
     reason: str
 
 
@@ -133,3 +167,58 @@ async def deny_makeup_request(
         **request.model_dump(exclude={"academy_id", "parent_id"}),
         student_full_name=None,
     )
+
+
+@router.get("/self-service/trials", response_model=TrialRequestsAdminResponse)
+async def list_trials_for_admin(
+    status: str | None = Query(default=None),
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> TrialRequestsAdminResponse:
+    rows = await use_cases.list_trial_requests_for_admin.execute(status)
+    return TrialRequestsAdminResponse(
+        trials=[
+            TrialRequestAdminRow(**row.model_dump(exclude={"academy_id", "parent_user_id"}))
+            for row in rows
+        ]
+    )
+
+
+@router.post(
+    "/self-service/trials/{request_id}/approve",
+    response_model=TrialRequestAdminRow,
+)
+async def approve_trial_request(
+    request_id: str,
+    body: ApproveTrialRequestBody,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> TrialRequestAdminRow:
+    request = await use_cases.approve_trial_request.execute(
+        ApproveTrialRequestCommand(
+            request_id=request_id,
+            actor_id=claims.user_id,
+            occurrence_id=body.occurrence_id,
+        )
+    )
+    return TrialRequestAdminRow(**request.model_dump(exclude={"academy_id", "parent_user_id"}))
+
+
+@router.post(
+    "/self-service/trials/{request_id}/deny",
+    response_model=TrialRequestAdminRow,
+)
+async def deny_trial_request(
+    request_id: str,
+    body: DenyTrialRequestBody,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> TrialRequestAdminRow:
+    request = await use_cases.deny_trial_request.execute(
+        DenyTrialRequestCommand(
+            request_id=request_id,
+            actor_id=claims.user_id,
+            reason=body.reason,
+        )
+    )
+    return TrialRequestAdminRow(**request.model_dump(exclude={"academy_id", "parent_user_id"}))

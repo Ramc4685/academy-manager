@@ -245,6 +245,12 @@ from backend.v2.contexts.enrollment.application.use_cases.self_service_policies 
     GetSelfServicePolicy,
     UpdateSelfServicePolicy,
 )
+from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
+    ApproveTrialRequest,
+    DenyTrialRequest,
+    LinkTrialConversion,
+    ListTrialRequestsForAdmin,
+)
 from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentLifecycleEvent,
     StudentSessionTypeChanged,
@@ -296,6 +302,9 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_student_writer import (
     MongoStudentWriter,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_trial_request_repo import (
+    MongoTrialRequestRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_waitlist_repo import (
     MongoWaitlistRepository,
@@ -2707,6 +2716,17 @@ def compose_admin(
         students=students_r,
     )
     expire_makeup_requests = ExpireMakeupRequests(makeups=makeup_requests_repo)
+    trial_requests_repo = MongoTrialRequestRepository(db)
+    list_trial_requests_for_admin = ListTrialRequestsForAdmin(trials=trial_requests_repo)
+    approve_trial_request = ApproveTrialRequest(
+        trials=trial_requests_repo,
+        occurrences=occurrences_r,
+        enrollments=enrollments_r,
+        sessions=sessions_r,
+        occurrence_roster=occurrence_roster_repo,
+    )
+    deny_trial_request = DenyTrialRequest(trials=trial_requests_repo)
+    link_trial_conversion = LinkTrialConversion(trials=trial_requests_repo)
     connected_accounts_repo = MongoConnectedAccountRepository(db)
     credits_repo = MongoCreditLedgerRepository(db)
     tuition_discounts_repo = MongoTuitionDiscountRepository(db)
@@ -3347,6 +3367,7 @@ def compose_admin(
         waiver_templates=waiver_templates_repo,
         waiver_signatures=MongoParentWaiverRepository(db),
         enrollment_events=enrollment_events,
+        trial_conversion=link_trial_conversion,
         academy_id=academy_id,
     )
     # Identity / Settings
@@ -5472,6 +5493,9 @@ def compose_admin(
         deny_makeup_request=deny_makeup_request,
         list_absences_for_admin=list_absences_for_admin,
         expire_makeup_requests=expire_makeup_requests,
+        list_trial_requests_for_admin=list_trial_requests_for_admin,
+        approve_trial_request=approve_trial_request,
+        deny_trial_request=deny_trial_request,
         generate_monthly_payments=generate_monthly_payments,
         mark_payment_paid=mark_payment_paid,
         apply_payment_discount=apply_payment_discount,

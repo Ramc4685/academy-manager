@@ -27,6 +27,10 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
     ListParentPauseRequests,
     RequestEnrollmentPause,
 )
+from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
+    ListParentTrialRequests,
+    SubmitTrialRequest,
+)
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     GetApplicationStatus,
     PatchApplication,
@@ -77,6 +81,9 @@ class ParentUseCases:
     get_registration_waiver: object = None  # callable -> Waiver | None
     start_invoice_payment_for_parent: object | None = None  # callable
     start_balance_payment_for_parent: object | None = None  # callable
+    # Trial class requests + conversion tracking (R3, Task 7)
+    submit_trial_request: SubmitTrialRequest | None = None
+    list_parent_trial_requests: ListParentTrialRequests | None = None
     # Optional so existing ParentUseCases constructions (and tests) that predate
     # the skill pathway keep working. Real parent composition always sets it;
     # the skill routes are the only consumers.

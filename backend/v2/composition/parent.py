@@ -110,6 +110,10 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
+    ListParentTrialRequests,
+    SubmitTrialRequest,
+)
 from backend.v2.contexts.enrollment.domain.errors import SessionNotFound
 from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo import (
     MongoAbsenceNoticeRepository,
@@ -149,6 +153,9 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_student_writer import (
     MongoStudentWriter,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_trial_request_repo import (
+    MongoTrialRequestRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_waitlist_repo import (
     MongoWaitlistRepository,
@@ -210,6 +217,8 @@ class ParentComposition:
     submit_makeup_request: SubmitMakeupRequest
     list_parent_makeups: ListParentMakeups
     list_eligible_makeup_targets: ListEligibleMakeupTargets
+    submit_trial_request: SubmitTrialRequest
+    list_parent_trial_requests: ListParentTrialRequests
     list_attendance_for_parent: object
     list_progress_for_parent: object
     list_invoices_for_parent: object
@@ -508,6 +517,7 @@ def compose_parent(
     self_service_policies_repo = MongoSelfServicePolicyRepository(db)
     makeup_requests_repo = MongoMakeupRequestRepository(db)
     occurrence_roster_repo = MongoOccurrenceRosterRepository(db)
+    trial_requests_repo = MongoTrialRequestRepository(db)
 
     get_child_schedule_uc = GetChildSchedule(
         enrollments=enrollments_query,
@@ -540,6 +550,12 @@ def compose_parent(
         occurrence_roster=occurrence_roster_repo,
         policies=self_service_policies_repo,
     )
+    submit_trial_request = SubmitTrialRequest(
+        students=students_query,
+        sessions=sessions_query,
+        trials=trial_requests_repo,
+    )
+    list_parent_trial_requests = ListParentTrialRequests(trials=trial_requests_repo)
 
     confirm_enrollment = ConfirmEnrollment(
         sessions=sessions_writer,
@@ -1399,6 +1415,8 @@ def compose_parent(
         submit_makeup_request=submit_makeup_request,
         list_parent_makeups=list_parent_makeups,
         list_eligible_makeup_targets=list_eligible_makeup_targets,
+        submit_trial_request=submit_trial_request,
+        list_parent_trial_requests=list_parent_trial_requests,
         list_attendance_for_parent=list_attendance_for_parent,
         list_progress_for_parent=list_progress_for_parent,
         list_invoices_for_parent=list_invoices_for_parent,

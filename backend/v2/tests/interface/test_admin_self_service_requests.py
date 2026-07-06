@@ -15,11 +15,18 @@ from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import
     DenyMakeupRequestCommand,
     MakeupRequestAdminView,
 )
+from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
+    ApproveTrialRequestCommand,
+    DenyTrialRequestCommand,
+)
 from backend.v2.contexts.enrollment.domain.self_service import (
     MakeupRequest,
     MakeupRequestNotPending,
     MakeupWindowExpired,
     OccurrenceFull,
+    TrialRequest,
+    TrialRequestNotPending,
+    TrialSessionNotAvailable,
 )
 from backend.v2.interfaces.admin.deps import get_admin_use_cases
 from backend.v2.interfaces.admin.router import router as admin_router
@@ -64,6 +71,28 @@ def _makeup_admin_view(**overrides) -> MakeupRequestAdminView:
     )
 
 
+def _trial_request(
+    *,
+    request_id: str = "trial-1",
+    student_ref: str = "existing_student",
+    student_id: str | None = "student-1",
+    status: str = "pending",
+) -> TrialRequest:
+    return TrialRequest(
+        request_id=request_id,
+        academy_id="acad",
+        parent_user_id="parent-1",
+        student_ref=student_ref,  # type: ignore[arg-type]
+        student_id=student_id,
+        prospective_child_name=None if student_ref == "existing_student" else "New Kid",
+        requested_session_id="session-1",
+        preferred_start="2026-07-15",
+        preferred_end="2026-07-22",
+        status=status,  # type: ignore[arg-type]
+        created_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+    )
+
+
 def _absence_admin_view(**overrides) -> AbsenceNoticeAdminView:
     return AbsenceNoticeAdminView(
         notice_id=overrides.get("notice_id", "n1"),
@@ -87,6 +116,11 @@ class _AdminUseCases:
         approve_error: Exception | None = None,
         deny_result: MakeupRequest | None = None,
         deny_error: Exception | None = None,
+        trials_result: list[TrialRequest] | None = None,
+        approve_trial_result: TrialRequest | None = None,
+        approve_trial_error: Exception | None = None,
+        deny_trial_result: TrialRequest | None = None,
+        deny_trial_error: Exception | None = None,
     ) -> None:
         self._makeups_result = (
             makeups_result if makeups_result is not None else [_makeup_admin_view()]
@@ -101,6 +135,14 @@ class _AdminUseCases:
         self.list_makeups_calls: list[str | None] = []
         self.approve_commands: list[ApproveMakeupRequestCommand] = []
         self.deny_commands: list[DenyMakeupRequestCommand] = []
+        self._trials_result = trials_result if trials_result is not None else [_trial_request()]
+        self._approve_trial_result = approve_trial_result or _trial_request(status="approved")
+        self._approve_trial_error = approve_trial_error
+        self._deny_trial_result = deny_trial_result or _trial_request(status="denied")
+        self._deny_trial_error = deny_trial_error
+        self.list_trials_calls: list[str | None] = []
+        self.approve_trial_commands: list[ApproveTrialRequestCommand] = []
+        self.deny_trial_commands: list[DenyTrialRequestCommand] = []
 
     class _ListMakeups:
         def __init__(self, outer: _AdminUseCases) -> None:
@@ -152,6 +194,46 @@ class _AdminUseCases:
     @property
     def deny_makeup_request(self):
         return self._Deny(self)
+
+    class _ListTrials:
+        def __init__(self, outer: _AdminUseCases) -> None:
+            self._outer = outer
+
+        async def execute(self, status: str | None = None) -> list[TrialRequest]:
+            self._outer.list_trials_calls.append(status)
+            return self._outer._trials_result
+
+    class _ApproveTrial:
+        def __init__(self, outer: _AdminUseCases) -> None:
+            self._outer = outer
+
+        async def execute(self, cmd: ApproveTrialRequestCommand) -> TrialRequest:
+            self._outer.approve_trial_commands.append(cmd)
+            if self._outer._approve_trial_error is not None:
+                raise self._outer._approve_trial_error
+            return self._outer._approve_trial_result
+
+    class _DenyTrial:
+        def __init__(self, outer: _AdminUseCases) -> None:
+            self._outer = outer
+
+        async def execute(self, cmd: DenyTrialRequestCommand) -> TrialRequest:
+            self._outer.deny_trial_commands.append(cmd)
+            if self._outer._deny_trial_error is not None:
+                raise self._outer._deny_trial_error
+            return self._outer._deny_trial_result
+
+    @property
+    def list_trial_requests_for_admin(self):
+        return self._ListTrials(self)
+
+    @property
+    def approve_trial_request(self):
+        return self._ApproveTrial(self)
+
+    @property
+    def deny_trial_request(self):
+        return self._DenyTrial(self)
 
 
 @contextmanager
@@ -309,6 +391,128 @@ def test_deny_makeup_request_non_pending_returns_409() -> None:
     assert response.status_code == 409, response.text
 
 
+# --- GET /admin/self-service/trials --------------------------------------------
+
+
+def test_list_trials_returns_rows() -> None:
+    use_cases = _AdminUseCases(trials_result=[_trial_request(request_id="trial-1")])
+    with _make_client(use_cases=use_cases) as client:
+        response = client.get("/api/v2/admin/self-service/trials")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["trials"]) == 1
+    assert body["trials"][0]["request_id"] == "trial-1"
+    assert use_cases.list_trials_calls == [None]
+
+
+def test_list_trials_passes_status_filter() -> None:
+    use_cases = _AdminUseCases()
+    with _make_client(use_cases=use_cases) as client:
+        response = client.get("/api/v2/admin/self-service/trials", params={"status": "pending"})
+
+    assert response.status_code == 200, response.text
+    assert use_cases.list_trials_calls == ["pending"]
+
+
+# --- POST .../trials/{id}/approve ------------------------------------------------
+
+
+def test_approve_trial_request_returns_updated_request() -> None:
+    use_cases = _AdminUseCases(
+        approve_trial_result=_trial_request(request_id="trial-1", status="approved")
+    )
+    with _make_client(use_cases=use_cases) as client:
+        response = client.post(
+            "/api/v2/admin/self-service/trials/trial-1/approve",
+            json={"occurrence_id": "occ-1"},
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "approved"
+    [cmd] = use_cases.approve_trial_commands
+    assert cmd.request_id == "trial-1"
+    assert cmd.actor_id == "admin-1"
+    assert cmd.occurrence_id == "occ-1"
+
+
+def test_approve_trial_request_capacity_full_returns_409() -> None:
+    use_cases = _AdminUseCases(
+        approve_trial_error=OccurrenceFull("no capacity", occurrence_id="occ-1")
+    )
+    with _make_client(use_cases=use_cases) as client:
+        response = client.post(
+            "/api/v2/admin/self-service/trials/trial-1/approve",
+            json={"occurrence_id": "occ-1"},
+        )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "Enrollment.OccurrenceFull"
+
+
+def test_approve_trial_request_session_unavailable_returns_409() -> None:
+    use_cases = _AdminUseCases(
+        approve_trial_error=TrialSessionNotAvailable("not available", occurrence_id="occ-1")
+    )
+    with _make_client(use_cases=use_cases) as client:
+        response = client.post(
+            "/api/v2/admin/self-service/trials/trial-1/approve",
+            json={"occurrence_id": "occ-1"},
+        )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "Enrollment.TrialSessionNotAvailable"
+
+
+def test_approve_trial_request_non_pending_returns_409() -> None:
+    use_cases = _AdminUseCases(
+        approve_trial_error=TrialRequestNotPending("already decided", request_id="trial-1")
+    )
+    with _make_client(use_cases=use_cases) as client:
+        response = client.post(
+            "/api/v2/admin/self-service/trials/trial-1/approve",
+            json={"occurrence_id": "occ-1"},
+        )
+
+    assert response.status_code == 409, response.text
+
+
+# --- POST .../trials/{id}/deny ---------------------------------------------------
+
+
+def test_deny_trial_request_returns_updated_request() -> None:
+    use_cases = _AdminUseCases(
+        deny_trial_result=_trial_request(request_id="trial-1", status="denied")
+    )
+    with _make_client(use_cases=use_cases) as client:
+        response = client.post(
+            "/api/v2/admin/self-service/trials/trial-1/deny",
+            json={"reason": "no capacity"},
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "denied"
+    [cmd] = use_cases.deny_trial_commands
+    assert cmd.request_id == "trial-1"
+    assert cmd.actor_id == "admin-1"
+    assert cmd.reason == "no capacity"
+
+
+def test_deny_trial_request_non_pending_returns_409() -> None:
+    use_cases = _AdminUseCases(
+        deny_trial_error=TrialRequestNotPending("already decided", request_id="trial-1")
+    )
+    with _make_client(use_cases=use_cases) as client:
+        response = client.post(
+            "/api/v2/admin/self-service/trials/trial-1/deny",
+            json={"reason": "too late"},
+        )
+
+    assert response.status_code == 409, response.text
+
+
 # --- wrong persona -> 404 ------------------------------------------------------
 
 
@@ -340,6 +544,33 @@ def test_wrong_persona_cannot_deny_makeup_request() -> None:
     with _make_client("coach") as client:
         response = client.post(
             "/api/v2/admin/self-service/makeups/req-1/deny",
+            json={"reason": "x"},
+        )
+
+    assert response.status_code == 404
+
+
+def test_wrong_persona_cannot_list_trials() -> None:
+    with _make_client("parent") as client:
+        response = client.get("/api/v2/admin/self-service/trials")
+
+    assert response.status_code == 404
+
+
+def test_wrong_persona_cannot_approve_trial_request() -> None:
+    with _make_client("parent") as client:
+        response = client.post(
+            "/api/v2/admin/self-service/trials/trial-1/approve",
+            json={"occurrence_id": "occ-1"},
+        )
+
+    assert response.status_code == 404
+
+
+def test_wrong_persona_cannot_deny_trial_request() -> None:
+    with _make_client("coach") as client:
+        response = client.post(
+            "/api/v2/admin/self-service/trials/trial-1/deny",
             json={"reason": "x"},
         )
 

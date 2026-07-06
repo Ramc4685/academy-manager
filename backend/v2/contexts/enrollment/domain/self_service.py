@@ -73,10 +73,41 @@ class MakeupRequestNotPending(DomainError):
 
 
 class OccurrenceFull(DomainError):
-    """Raised when approving a makeup request would exceed the target
-    occurrence's session capacity."""
+    """Raised when approving a makeup or trial request would exceed the
+    target occurrence's session capacity."""
 
     code = "Enrollment.OccurrenceFull"
+    status_code = 409
+
+
+class DuplicateTrialRequest(DomainError):
+    """Raised when a parent submits a second pending trial request for the
+    same (parent, session) pair."""
+
+    code = "Enrollment.DuplicateTrialRequest"
+    status_code = 409
+
+
+class TrialSessionNotAvailable(DomainError):
+    """Raised when the requested session/occurrence for a trial is missing,
+    not scheduled, or (for approval) not a future scheduled occurrence."""
+
+    code = "Enrollment.TrialSessionNotAvailable"
+    status_code = 409
+
+
+class TrialRequestNotFound(DomainError):
+    """Raised when an admin acts on a trial request id that doesn't exist."""
+
+    code = "Enrollment.TrialRequestNotFound"
+    status_code = 404
+
+
+class TrialRequestNotPending(DomainError):
+    """Raised when an admin tries to approve/deny a trial request that has
+    already been decided (or otherwise isn't pending)."""
+
+    code = "Enrollment.TrialRequestNotPending"
     status_code = 409
 
 
@@ -140,4 +171,46 @@ class MakeupRequest(BaseModel):
     decided_by: str | None = None
     decided_at: datetime | None = None
     approved_target_occurrence_id: str | None = None
+    created_at: datetime
+
+
+TrialRequestStatus = Literal["pending", "approved", "denied", "completed", "converted"]
+
+
+class TrialRequest(BaseModel):
+    """A parent-submitted request to try a session before enrolling (R3).
+
+    Submission (Task 7) always creates a ``pending`` request, for either an
+    existing student (``student_ref="existing_student"``) or a prospective
+    child not yet in the system (``student_ref="prospective"``). Admin
+    review approves (recording ``assigned_occurrence_id``, and — only for
+    existing students — writing a one-time ``OccurrenceRosterEntry``;
+    prospective trials have no ``student_id`` to roster, so staff roster
+    them manually at check-in, a documented v1 limitation) or denies
+    (``denial_reason``). Both decisions stamp ``decided_by``/``decided_at``.
+
+    BILLING SAFETY: approval never accepts a billing dependency — trial fee
+    handling is out of v1 scope; these are no-charge trials only.
+
+    ``linked_application_id`` is set by ``LinkTrialConversion`` when the
+    parent later completes a registration (onboarding ``ApproveRegistration``
+    hook), flipping ``status`` to ``"converted"`` for R3 conversion tracking.
+    """
+
+    request_id: str
+    academy_id: str
+    parent_user_id: str
+    student_ref: Literal["prospective", "existing_student"]
+    student_id: str | None = None
+    prospective_child_name: str | None = None
+    prospective_child_dob: str | None = None
+    requested_session_id: str
+    preferred_start: str
+    preferred_end: str
+    status: TrialRequestStatus = "pending"
+    assigned_occurrence_id: str | None = None
+    linked_application_id: str | None = None
+    denial_reason: str | None = None
+    decided_by: str | None = None
+    decided_at: datetime | None = None
     created_at: datetime
