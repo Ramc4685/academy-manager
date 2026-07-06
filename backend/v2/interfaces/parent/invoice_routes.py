@@ -43,6 +43,7 @@ def _invoice_view(invoice) -> ParentInvoiceView:
         due_date=invoice.due_date,
         pdf_url=_pdf_url(invoice),
         created_at=invoice.created_at,
+        enrollment_id=invoice.enrollment_id,
     )
 
 
@@ -120,6 +121,7 @@ async def start_invoice_payment(
             invoice_id=invoice_id,
             success_url=body.success_url,
             cancel_url=body.cancel_url,
+            enroll_autopay=body.enroll_autopay,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -150,6 +152,7 @@ async def start_balance_payment(
             parent_id=claims.user_id,
             success_url=body.success_url,
             cancel_url=body.cancel_url,
+            enroll_autopay=body.enroll_autopay,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

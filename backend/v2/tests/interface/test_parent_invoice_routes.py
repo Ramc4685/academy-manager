@@ -97,7 +97,8 @@ class _FakeInvoiceRepo:
 class _ParentUseCases:
     def __init__(self, repo: _FakeInvoiceRepo) -> None:
         self._repo = repo
-        self.invoice_payment_calls: list[dict[str, str]] = []
+        self.invoice_payment_calls: list[dict[str, object]] = []
+        self.balance_payment_calls: list[dict[str, object]] = []
 
     async def list_invoices_for_parent(self, parent_id: str):
         return await self._repo.list_invoices_for_parent(parent_id)
@@ -115,6 +116,7 @@ class _ParentUseCases:
         invoice_id: str,
         success_url: str,
         cancel_url: str,
+        enroll_autopay: bool = False,
     ):
         self.invoice_payment_calls.append(
             {
@@ -122,6 +124,7 @@ class _ParentUseCases:
                 "invoice_id": invoice_id,
                 "success_url": success_url,
                 "cancel_url": cancel_url,
+                "enroll_autopay": enroll_autopay,
             }
         )
         invoice = await self._repo.get_invoice(invoice_id)
@@ -131,6 +134,24 @@ class _ParentUseCases:
             "invoice_id": invoice_id,
             "checkout_url": "https://checkout.stripe.test/inv-a1",
         }
+
+    async def start_balance_payment_for_parent(
+        self,
+        *,
+        parent_id: str,
+        success_url: str,
+        cancel_url: str,
+        enroll_autopay: bool = False,
+    ):
+        self.balance_payment_calls.append(
+            {
+                "parent_id": parent_id,
+                "success_url": success_url,
+                "cancel_url": cancel_url,
+                "enroll_autopay": enroll_autopay,
+            }
+        )
+        return {"redirect_url": "https://checkout.stripe.test/balance"}
 
 
 def _seed() -> _FakeInvoiceRepo:
@@ -163,6 +184,20 @@ def _make_client(role: str = "parent", user_id: str = "parent-1") -> Iterator[Te
     app.dependency_overrides[get_parent_use_cases] = lambda: _ParentUseCases(_seed())
     with TestClient(app) as client:
         yield client
+
+
+@contextmanager
+def _make_client_with_use_cases(
+    role: str = "parent", user_id: str = "parent-1"
+) -> Iterator[tuple[TestClient, _ParentUseCases]]:
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(parent_router, prefix="/api/v2")
+    app.dependency_overrides[get_auth_claims] = lambda: _claims(role, user_id)
+    use_cases = _ParentUseCases(_seed())
+    app.dependency_overrides[get_parent_use_cases] = lambda: use_cases
+    with TestClient(app) as client:
+        yield client, use_cases
 
 
 @contextmanager
@@ -264,6 +299,78 @@ def test_wrong_persona_cannot_list_invoices() -> None:
     with _make_client(role="admin") as client:
         response = client.get("/api/v2/parent/invoices/inv-a1")
     assert response.status_code == 404
+
+
+def test_parent_invoice_list_and_detail_expose_enrollment_id() -> None:
+    with _make_client() as client:
+        list_response = client.get("/api/v2/parent/invoices")
+        detail_response = client.get("/api/v2/parent/invoices/inv-a1")
+
+    assert list_response.status_code == 200
+    assert [inv["enrollment_id"] for inv in list_response.json()["invoices"]] == [
+        "enroll-1",
+        "enroll-1",
+    ]
+    assert detail_response.status_code == 200
+    assert detail_response.json()["enrollment_id"] == "enroll-1"
+
+
+def test_pay_body_without_enroll_autopay_defaults_to_false() -> None:
+    with _make_client_with_use_cases() as (client, use_cases):
+        response = client.post(
+            "/api/v2/parent/invoices/inv-a1/pay",
+            json={
+                "success_url": "https://app.example.com/parent/payments?invoice=paid",
+                "cancel_url": "https://app.example.com/parent/payments?invoice=cancelled",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert use_cases.invoice_payment_calls[0]["enroll_autopay"] is False
+
+
+def test_pay_body_with_enroll_autopay_true_forwards_true() -> None:
+    with _make_client_with_use_cases() as (client, use_cases):
+        response = client.post(
+            "/api/v2/parent/invoices/inv-a1/pay",
+            json={
+                "success_url": "https://app.example.com/parent/payments?invoice=paid",
+                "cancel_url": "https://app.example.com/parent/payments?invoice=cancelled",
+                "enroll_autopay": True,
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert use_cases.invoice_payment_calls[0]["enroll_autopay"] is True
+
+
+def test_balance_pay_body_without_enroll_autopay_defaults_to_false() -> None:
+    with _make_client_with_use_cases() as (client, use_cases):
+        response = client.post(
+            "/api/v2/parent/invoices/pay-balance",
+            json={
+                "success_url": "https://app.example.com/parent/payments?invoice=paid",
+                "cancel_url": "https://app.example.com/parent/payments?invoice=cancelled",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert use_cases.balance_payment_calls[0]["enroll_autopay"] is False
+
+
+def test_balance_pay_body_with_enroll_autopay_true_forwards_true() -> None:
+    with _make_client_with_use_cases() as (client, use_cases):
+        response = client.post(
+            "/api/v2/parent/invoices/pay-balance",
+            json={
+                "success_url": "https://app.example.com/parent/payments?invoice=paid",
+                "cancel_url": "https://app.example.com/parent/payments?invoice=cancelled",
+                "enroll_autopay": True,
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert use_cases.balance_payment_calls[0]["enroll_autopay"] is True
 
 
 def test_anonymous_gets_401() -> None:

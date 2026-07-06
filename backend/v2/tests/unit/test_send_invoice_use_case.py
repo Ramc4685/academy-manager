@@ -29,6 +29,7 @@ def _invoice(
     delivery_status: str = "not_sent",
     sent_at: datetime | None = None,
     last_sent_at: datetime | None = None,
+    enrollment_id: str | None = None,
 ) -> LedgerInvoice:
     total = 10_000
     return LedgerInvoice(
@@ -36,6 +37,7 @@ def _invoice(
         academy_id="acad-1",
         parent_id="parent-1",
         student_id="s-1",
+        enrollment_id=enrollment_id,
         period="2026-06",
         status=status,  # type: ignore[arg-type]
         subtotal_cents=total,
@@ -378,6 +380,70 @@ async def test_checkout_refused_when_connected_account_missing() -> None:
 
     assert stripe.calls == []
     assert result.checkout_url is None
+
+
+async def test_execute_with_enroll_autopay_requests_saved_payment_method() -> None:
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(
+        invoices=[_invoice(status="open", balance_due_cents=10_000, enrollment_id="enroll-1")]
+    )
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=stripe,
+        email=None,
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    result = await uc.execute("inv-1", enroll_autopay=True)
+
+    assert result.checkout_url == "https://checkout.stripe.com/pay/test"
+    call = stripe.calls[0]
+    assert call["save_payment_method_for_autopay"] is True
+    assert call["autopay_enrollment_ids"] == ["enroll-1"]
+    # A distinct idempotency key: an earlier one-time pay link for the same
+    # balance must not be replayed without the saved-payment-method params.
+    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000:autopay-optin"
+    # Destination-charge routing is unchanged by the opt-in flag.
+    assert call["connected_account_id"] == "acct_ready_1"
+
+
+async def test_execute_with_enroll_autopay_and_no_enrollment_id_sends_empty_ids() -> None:
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=stripe,
+        email=None,
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    await uc.execute("inv-1", enroll_autopay=True)
+
+    call = stripe.calls[0]
+    assert call["save_payment_method_for_autopay"] is True
+    assert call["autopay_enrollment_ids"] == []
+
+
+async def test_execute_default_keeps_gateway_call_unchanged() -> None:
+    """Without enroll_autopay the gateway call carries none of the new kwargs
+    and the historical idempotency key — SendInvoice email flow stays as-is."""
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(
+        invoices=[_invoice(status="open", balance_due_cents=10_000, enrollment_id="enroll-1")]
+    )
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=stripe,
+        email=None,
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    await uc.execute("inv-1")
+
+    call = stripe.calls[0]
+    assert "save_payment_method_for_autopay" not in call
+    assert "autopay_enrollment_ids" not in call
+    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000"
 
 
 async def test_email_failure_records_delivery_failed_without_sent_at() -> None:

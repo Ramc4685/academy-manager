@@ -7,6 +7,7 @@ Tests fake this entirely via the StripeGateway Protocol.
 from __future__ import annotations
 
 import asyncio
+import logging
 import urllib.parse
 from datetime import datetime
 from typing import Any, Literal
@@ -15,6 +16,39 @@ from backend.v2.contexts.billing.application.ports import (
     StripeGateway,
     StripeResourceNotFound,
 )
+
+log = logging.getLogger(__name__)
+
+# Stripe caps each metadata value at 500 characters.
+_STRIPE_METADATA_VALUE_LIMIT = 500
+
+
+def _autopay_enrollment_ids_value(enrollment_ids: list[str] | None) -> str:
+    """Comma-join distinct enrollment ids for Stripe metadata.
+
+    Respects Stripe's 500-char metadata value cap by dropping WHOLE trailing
+    ids (never truncating one mid-id) and logging a warning — the webhook
+    worker can still activate the ids that fit.
+    """
+    distinct: list[str] = []
+    for enrollment_id in enrollment_ids or []:
+        if enrollment_id and enrollment_id not in distinct:
+            distinct.append(enrollment_id)
+    joined = ",".join(distinct)
+    dropped = 0
+    while distinct and len(joined) > _STRIPE_METADATA_VALUE_LIMIT:
+        distinct.pop()
+        dropped += 1
+        joined = ",".join(distinct)
+    if dropped:
+        log.warning(
+            "autopay opt-in enrollment_ids metadata exceeded %d chars — "
+            "dropped %d trailing enrollment id(s), kept %d",
+            _STRIPE_METADATA_VALUE_LIMIT,
+            dropped,
+            len(distinct),
+        )
+    return joined
 
 
 class RealStripeGateway(StripeGateway):
@@ -174,6 +208,8 @@ class RealStripeGateway(StripeGateway):
         metadata: dict[str, str],
         idempotency_key: str | None = None,
         connected_account_id: str | None = None,
+        save_payment_method_for_autopay: bool = False,
+        autopay_enrollment_ids: list[str] | None = None,
     ) -> tuple[str, str]:
         """When ``connected_account_id`` is set, the checkout's PaymentIntent is a
         DESTINATION charge: the connected academy account is the merchant of
@@ -181,10 +217,26 @@ class RealStripeGateway(StripeGateway):
         (``transfer_data.destination``) — same fund flow as
         ``create_off_session_payment_intent``. The platform accepts liability,
         so ``application_fee_amount`` stays 0.
+
+        When ``save_payment_method_for_autopay`` is set, the payment doubles as
+        an autopay enrollment: the payment method is saved for off-session use
+        (``setup_future_usage``) against an always-created customer, and the
+        session carries ``autopay_optin``/``enrollment_ids`` metadata for the
+        completion handlers. Default False keeps the request byte-identical to
+        the plain one-time payment.
         """
+        session_metadata = metadata
+        if save_payment_method_for_autopay:
+            session_metadata = dict(metadata)
+            session_metadata["autopay_optin"] = "true"
+            enrollment_ids_value = _autopay_enrollment_ids_value(autopay_enrollment_ids)
+            if enrollment_ids_value:
+                session_metadata["enrollment_ids"] = enrollment_ids_value
 
         def _create() -> Any:
-            payment_intent_data: dict[str, Any] = {"metadata": metadata}
+            payment_intent_data: dict[str, Any] = {"metadata": session_metadata}
+            if save_payment_method_for_autopay:
+                payment_intent_data["setup_future_usage"] = "off_session"
             if connected_account_id:
                 payment_intent_data["on_behalf_of"] = connected_account_id
                 payment_intent_data["transfer_data"] = {"destination": connected_account_id}
@@ -204,9 +256,12 @@ class RealStripeGateway(StripeGateway):
                 "success_url": success_url,
                 "cancel_url": cancel_url,
                 "client_reference_id": metadata.get("parent_id"),
-                "metadata": metadata,
+                "metadata": session_metadata,
                 "payment_intent_data": payment_intent_data,
             }
+            if save_payment_method_for_autopay:
+                # The saved payment method must attach to a customer.
+                request["customer_creation"] = "always"
             if idempotency_key:
                 request["idempotency_key"] = idempotency_key
             return self._stripe.checkout.Session.create(**request)
