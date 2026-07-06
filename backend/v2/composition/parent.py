@@ -20,6 +20,10 @@ from backend.v2.composition.pathway import (
     compose_student_progress,
 )
 from backend.v2.contexts.billing.application.ports import StripeGateway
+from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
+    AddInvoiceLine,
+    AddInvoiceLineCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.enroll_child_in_session_type import (
     CancelBillingEnrollment,
     EnrollChildInSessionType,
@@ -109,6 +113,11 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
 )
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
+)
+from backend.v2.contexts.enrollment.application.use_cases.self_cancel import (
+    PreviewSelfCancel,
+    SelfCancelBillingPort,
+    SelfCancelEnrollment,
 )
 from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
     ListParentTrialRequests,
@@ -219,6 +228,8 @@ class ParentComposition:
     list_eligible_makeup_targets: ListEligibleMakeupTargets
     submit_trial_request: SubmitTrialRequest
     list_parent_trial_requests: ListParentTrialRequests
+    preview_self_cancel: PreviewSelfCancel
+    self_cancel_enrollment: SelfCancelEnrollment
     list_attendance_for_parent: object
     list_progress_for_parent: object
     list_invoices_for_parent: object
@@ -556,6 +567,88 @@ def compose_parent(
         trials=trial_requests_repo,
     )
     list_parent_trial_requests = ListParentTrialRequests(trials=trial_requests_repo)
+
+    class _SelfCancelFeeBillingPort(SelfCancelBillingPort):
+        """Adapts self-cancel (R4) to the billing context's REAL production
+        line-append path (``AddInvoiceLine`` -> ``LedgerRepository.save_line``)
+        — never Stripe, never invoice close/settle. Idempotent: before
+        appending, checks the resolved invoice's existing lines for one
+        already carrying this ``idempotency_key`` as ``source_id`` (with
+        ``source_type="self_cancel_fee"``) — a retried cancel call can't
+        double-bill even though ``AddInvoiceLine`` itself has no dedupe.
+        """
+
+        async def record_cancellation_fee(
+            self,
+            *,
+            enrollment: Any,
+            fee_cents: int,
+            reason: str,
+            actor_id: str,
+            idempotency_key: str,
+        ) -> dict[str, Any]:
+            student = await students_query.by_ids([enrollment.student_id])
+            if not student:
+                logging.getLogger(__name__).warning(
+                    "self-cancel fee skipped: no student found for student_id=%s",
+                    enrollment.student_id,
+                )
+                return {"skipped": True, "reason": "student_not_found"}
+            parent_id = student[0].parent_id
+            period = datetime.now(UTC).strftime("%Y-%m")
+
+            existing_invoice = await billing_ledger_repo.get_open_invoice_for_student(
+                enrollment.student_id, period
+            )
+            if existing_invoice is not None:
+                existing_lines = await billing_ledger_repo.get_lines_for_invoice(
+                    existing_invoice.invoice_id
+                )
+                for line in existing_lines:
+                    if line.source_type == "self_cancel_fee" and line.source_id == idempotency_key:
+                        return {
+                            "line_id": line.line_id,
+                            "invoice_id": line.invoice_id,
+                            "deduped": True,
+                        }
+
+            result = await AddInvoiceLine(
+                ledger=billing_ledger_repo,
+                counters=billing_counters_repo,
+                settings=billing_settings_repo,
+            ).execute(
+                AddInvoiceLineCommand(
+                    student_id=enrollment.student_id,
+                    period=period,
+                    description=reason,
+                    line_type="fee",
+                    quantity=1,
+                    unit_amount_cents=fee_cents,
+                    source_type="self_cancel_fee",
+                    source_id=idempotency_key,
+                    academy_id=academy_id,
+                    parent_id=parent_id,
+                )
+            )
+            return {
+                "line_id": result.line.line_id,
+                "invoice_id": result.invoice.invoice_id,
+                "deduped": False,
+            }
+
+    preview_self_cancel = PreviewSelfCancel(
+        enrollments=enrollments_writer,
+        students=students_query,
+        policies=self_service_policies_repo,
+        occurrences=occurrences_query,
+    )
+    self_cancel_enrollment = SelfCancelEnrollment(
+        enrollments=enrollments_writer,
+        students=students_query,
+        policies=self_service_policies_repo,
+        occurrences=occurrences_query,
+        billing=_SelfCancelFeeBillingPort(),
+    )
 
     confirm_enrollment = ConfirmEnrollment(
         sessions=sessions_writer,
@@ -1417,6 +1510,8 @@ def compose_parent(
         list_eligible_makeup_targets=list_eligible_makeup_targets,
         submit_trial_request=submit_trial_request,
         list_parent_trial_requests=list_parent_trial_requests,
+        preview_self_cancel=preview_self_cancel,
+        self_cancel_enrollment=self_cancel_enrollment,
         list_attendance_for_parent=list_attendance_for_parent,
         list_progress_for_parent=list_progress_for_parent,
         list_invoices_for_parent=list_invoices_for_parent,

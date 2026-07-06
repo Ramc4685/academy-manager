@@ -87,6 +87,9 @@ from backend.v2.contexts.enrollment.application.use_cases.process_scheduled_resu
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.enrollment.application.use_cases.self_cancel import (
+    ListSelfCancellationsForAdmin,
+)
 from backend.v2.contexts.enrollment.application.use_cases.self_service_policies import (
     GetSelfServicePolicy,
     UpdateSelfServicePolicy,
@@ -339,6 +342,8 @@ class AdminUseCases:
     list_trial_requests_for_admin: ListTrialRequestsForAdmin | None = None
     approve_trial_request: ApproveTrialRequest | None = None
     deny_trial_request: DenyTrialRequest | None = None
+    # Self-cancel audit list (R4, Task 8)
+    list_self_cancellations_for_admin: ListSelfCancellationsForAdmin | None = None
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:

@@ -27,6 +27,10 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
     ListParentPauseRequests,
     RequestEnrollmentPause,
 )
+from backend.v2.contexts.enrollment.application.use_cases.self_cancel import (
+    PreviewSelfCancel,
+    SelfCancelEnrollment,
+)
 from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
     ListParentTrialRequests,
     SubmitTrialRequest,
@@ -81,6 +85,9 @@ class ParentUseCases:
     # Trial class requests + conversion tracking (R3, Task 7)
     submit_trial_request: SubmitTrialRequest
     list_parent_trial_requests: ListParentTrialRequests
+    # Self-cancel enrollment (R4, Task 8)
+    preview_self_cancel: PreviewSelfCancel | None = None
+    self_cancel_enrollment: SelfCancelEnrollment | None = None
     get_registration_waiver: object = None  # callable -> Waiver | None
     start_invoice_payment_for_parent: object | None = None  # callable
     start_balance_payment_for_parent: object | None = None  # callable

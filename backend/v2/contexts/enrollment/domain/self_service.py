@@ -8,7 +8,7 @@ sane defaults an academy can tune from the admin BFF.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel
@@ -111,6 +111,15 @@ class TrialRequestNotPending(DomainError):
     status_code = 409
 
 
+class EnrollmentNotCancellable(DomainError):
+    """Raised when a parent tries to self-cancel an enrollment that isn't
+    ``active`` (already cancelled/paused/withdrawn), or when a double-submit
+    loses the atomic active->cancelled CAS (R4)."""
+
+    code = "Enrollment.NotCancellable"
+    status_code = 409
+
+
 def open_slots(*, capacity: int, active_count: int, roster_count: int) -> int:
     """Pure capacity arithmetic shared by makeup/trial self-service flows.
 
@@ -121,6 +130,39 @@ def open_slots(*, capacity: int, active_count: int, roster_count: int) -> int:
     """
 
     return capacity - active_count - roster_count
+
+
+class SelfCancelTerms(BaseModel):
+    """Result of applying the academy's cancellation policy to a single
+    enrollment at a point in time. Pure — no I/O. Shared by both the preview
+    endpoint and the actual cancel use case so they can never disagree
+    (single source of truth, R4)."""
+
+    model_config = {"frozen": True}
+
+    notice_met: bool
+    fee_cents: int
+
+
+def compute_self_cancel_terms(
+    policy: ParentSelfServicePolicy,
+    next_occurrence_start: datetime | None,
+    now: datetime,
+) -> SelfCancelTerms:
+    """Apply the academy's R4 cancellation policy.
+
+    ``notice_met`` is True when there is no upcoming occurrence to give notice
+    for, or when the time remaining until it starts is at least the policy's
+    minimum notice window (the boundary itself counts as met). ``fee_cents``
+    is the policy's flat cancellation fee when notice was not met, else 0 —
+    a policy configured with a zero fee never charges, even without notice.
+    """
+
+    notice_met = next_occurrence_start is None or (
+        next_occurrence_start - now >= timedelta(days=policy.cancellation_minimum_notice_days)
+    )
+    fee_cents = 0 if notice_met else policy.cancellation_fee_cents
+    return SelfCancelTerms(notice_met=notice_met, fee_cents=fee_cents)
 
 
 class ParentSelfServicePolicy(BaseModel):

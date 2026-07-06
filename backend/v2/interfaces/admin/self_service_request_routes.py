@@ -9,6 +9,7 @@ already paid for the missed session; see the use case docstring in
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -98,6 +99,21 @@ class ApproveTrialRequestBody(BaseModel):
 
 class DenyTrialRequestBody(BaseModel):
     reason: str
+
+
+class SelfCancellationAdminRow(BaseModel):
+    enrollment_id: str
+    student_id: str
+    session_id: str
+    cancellation_reason: str | None
+    cancellation_policy_snapshot: dict[str, Any] | None
+    cancelled_at: datetime | None
+    student_full_name: str | None
+    session_title: str | None
+
+
+class SelfCancellationsAdminResponse(BaseModel):
+    cancellations: list[SelfCancellationAdminRow]
 
 
 @router.get("/self-service/absences", response_model=AbsencesAdminResponse)
@@ -222,3 +238,14 @@ async def deny_trial_request(
         )
     )
     return TrialRequestAdminRow(**request.model_dump(exclude={"academy_id", "parent_user_id"}))
+
+
+@router.get("/self-service/cancellations", response_model=SelfCancellationsAdminResponse)
+async def list_self_cancellations_for_admin(
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> SelfCancellationsAdminResponse:
+    rows = await use_cases.list_self_cancellations_for_admin.execute()
+    return SelfCancellationsAdminResponse(
+        cancellations=[SelfCancellationAdminRow(**row.model_dump()) for row in rows]
+    )

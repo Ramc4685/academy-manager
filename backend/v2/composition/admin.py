@@ -241,6 +241,9 @@ from backend.v2.contexts.enrollment.application.use_cases.process_scheduled_resu
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.enrollment.application.use_cases.self_cancel import (
+    ListSelfCancellationsForAdmin,
+)
 from backend.v2.contexts.enrollment.application.use_cases.self_service_policies import (
     GetSelfServicePolicy,
     UpdateSelfServicePolicy,
@@ -2711,6 +2714,11 @@ def compose_admin(
         occurrence_roster=occurrence_roster_repo,
     )
     deny_makeup_request = DenyMakeupRequest(makeups=makeup_requests_repo)
+    list_self_cancellations_for_admin = ListSelfCancellationsForAdmin(
+        enrollments=enrollments_w,
+        students=students_r,
+        sessions=sessions_r,
+    )
     list_absences_for_admin = ListAbsencesForAdmin(
         notices=absence_notices_repo,
         students=students_r,
@@ -5496,6 +5504,7 @@ def compose_admin(
         list_trial_requests_for_admin=list_trial_requests_for_admin,
         approve_trial_request=approve_trial_request,
         deny_trial_request=deny_trial_request,
+        list_self_cancellations_for_admin=list_self_cancellations_for_admin,
         generate_monthly_payments=generate_monthly_payments,
         mark_payment_paid=mark_payment_paid,
         apply_payment_discount=apply_payment_discount,
