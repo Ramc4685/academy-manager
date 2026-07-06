@@ -140,6 +140,9 @@ def _make_use_cases(
         list_parent_pause_requests=None,  # type: ignore[arg-type]
         submit_absence_notice=None,  # type: ignore[arg-type]
         list_parent_absences=None,  # type: ignore[arg-type]
+        submit_makeup_request=None,  # type: ignore[arg-type]
+        list_parent_makeups=None,  # type: ignore[arg-type]
+        list_eligible_makeup_targets=None,  # type: ignore[arg-type]
         list_attendance_for_parent=None,
         list_progress_for_parent=None,
         list_invoices_for_parent=None,

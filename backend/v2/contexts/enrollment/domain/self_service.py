@@ -32,6 +32,31 @@ class DuplicateAbsenceNotice(DomainError):
     status_code = 409
 
 
+class MakeupNotEligible(DomainError):
+    """Raised when a makeup request is submitted without a window-met
+    absence notice, when the academy's policy requires one."""
+
+    code = "Enrollment.MakeupNotEligible"
+    status_code = 409
+
+
+class MakeupWindowExpired(DomainError):
+    """Raised when a makeup request is submitted after the policy's
+    makeup-expiry window (relative to the missed occurrence's start) has
+    passed."""
+
+    code = "Enrollment.MakeupWindowExpired"
+    status_code = 409
+
+
+class DuplicateMakeupRequest(DomainError):
+    """Raised when a parent submits a second non-denied makeup request for
+    the same (missed occurrence, student) pair."""
+
+    code = "Enrollment.DuplicateMakeupRequest"
+    status_code = 409
+
+
 class ParentSelfServicePolicy(BaseModel):
     """Academy-scoped policy governing parent self-service actions."""
 
@@ -65,4 +90,31 @@ class OccurrenceRosterEntry(BaseModel):
     student_id: str
     source: Literal["makeup", "trial"]
     origin_request_id: str
+    created_at: datetime
+
+
+MakeupRequestStatus = Literal["pending", "approved", "denied", "expired", "completed"]
+
+
+class MakeupRequest(BaseModel):
+    """A parent-submitted request to make up a missed occurrence (R2).
+
+    Submission (Task 4) always creates a ``pending`` request. Admin review
+    (Task 5) decides it — approving stamps ``approved_target_occurrence_id``
+    and writes an ``OccurrenceRosterEntry``; denying sets
+    ``denial_reason``. Both decisions stamp ``decided_by``/``decided_at``.
+    """
+
+    request_id: str
+    academy_id: str
+    student_id: str
+    parent_id: str
+    missed_occurrence_id: str
+    requested_target_occurrence_id: str | None = None
+    status: MakeupRequestStatus = "pending"
+    expires_at: datetime
+    denial_reason: str | None = None
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    approved_target_occurrence_id: str | None = None
     created_at: datetime

@@ -111,6 +111,24 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
         )
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def list_upcoming_scheduled_between(
+        self,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+    ) -> list[SessionOccurrence]:
+        """Scheduled occurrences starting in [start_at, end_at] — used by
+        makeup-eligibility (Task 4) to find candidate targets within the
+        policy's expiry window."""
+        cursor = self._find_many(
+            {
+                "status": "scheduled",
+                "start_at": {"$gte": start_at, "$lte": end_at},
+            },
+            sort=[("start_at", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def save_many(self, occurrences: list[SessionOccurrence]) -> None:
         for occurrence in occurrences:
             try:

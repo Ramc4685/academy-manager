@@ -98,6 +98,11 @@ from backend.v2.contexts.enrollment.application.use_cases.get_child_schedule imp
 from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_sessions import (
     ListParentAvailableSessions,
 )
+from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
+    ListEligibleMakeupTargets,
+    ListParentMakeups,
+    SubmitMakeupRequest,
+)
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     ListParentPauseRequests,
     RequestEnrollmentPause,
@@ -118,8 +123,14 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import 
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_writer import (
     MongoEnrollmentWriter,
 )
+from backend.v2.contexts.enrollment.infrastructure.mongo_makeup_request_repo import (
+    MongoMakeupRequestRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import (
     MongoSessionOccurrenceRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_roster_repo import (
+    MongoOccurrenceRosterRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_pause_request_repo import (
     MongoPauseRequestRepository,
@@ -196,6 +207,9 @@ class ParentComposition:
     list_parent_pause_requests: ListParentPauseRequests
     submit_absence_notice: SubmitAbsenceNotice
     list_parent_absences: ListParentAbsences
+    submit_makeup_request: SubmitMakeupRequest
+    list_parent_makeups: ListParentMakeups
+    list_eligible_makeup_targets: ListEligibleMakeupTargets
     list_attendance_for_parent: object
     list_progress_for_parent: object
     list_invoices_for_parent: object
@@ -492,6 +506,8 @@ def compose_parent(
     pause_requests = MongoPauseRequestRepository(db)
     absence_notices_repo = MongoAbsenceNoticeRepository(db)
     self_service_policies_repo = MongoSelfServicePolicyRepository(db)
+    makeup_requests_repo = MongoMakeupRequestRepository(db)
+    occurrence_roster_repo = MongoOccurrenceRosterRepository(db)
 
     get_child_schedule_uc = GetChildSchedule(
         enrollments=enrollments_query,
@@ -507,6 +523,23 @@ def compose_parent(
         policies=self_service_policies_repo,
     )
     list_parent_absences = ListParentAbsences(notices=absence_notices_repo)
+
+    submit_makeup_request = SubmitMakeupRequest(
+        students=students_query,
+        occurrences=occurrences_query,
+        notices=absence_notices_repo,
+        makeups=makeup_requests_repo,
+        policies=self_service_policies_repo,
+    )
+    list_parent_makeups = ListParentMakeups(makeups=makeup_requests_repo)
+    list_eligible_makeup_targets = ListEligibleMakeupTargets(
+        students=students_query,
+        occurrences=occurrences_query,
+        sessions=sessions_query,
+        enrollments=enrollments_query,
+        occurrence_roster=occurrence_roster_repo,
+        policies=self_service_policies_repo,
+    )
 
     confirm_enrollment = ConfirmEnrollment(
         sessions=sessions_writer,
@@ -1363,6 +1396,9 @@ def compose_parent(
         list_parent_pause_requests=list_parent_pause_requests,
         submit_absence_notice=submit_absence_notice,
         list_parent_absences=list_parent_absences,
+        submit_makeup_request=submit_makeup_request,
+        list_parent_makeups=list_parent_makeups,
+        list_eligible_makeup_targets=list_eligible_makeup_targets,
         list_attendance_for_parent=list_attendance_for_parent,
         list_progress_for_parent=list_progress_for_parent,
         list_invoices_for_parent=list_invoices_for_parent,

@@ -11,12 +11,15 @@ from datetime import UTC, date, datetime
 import pytest
 
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import AbsenceNotice
-from backend.v2.contexts.enrollment.domain.self_service import OccurrenceRosterEntry
+from backend.v2.contexts.enrollment.domain.self_service import MakeupRequest, OccurrenceRosterEntry
 from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo import (
     MongoAbsenceNoticeRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_makeup_request_repo import (
+    MongoMakeupRequestRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_roster_repo import (
     MongoOccurrenceRosterRepository,
@@ -235,3 +238,54 @@ async def test_occurrence_roster_repo_isolates_tenants(db) -> None:
         exists_c = await repo.exists("occ-1", "student-1")
 
     assert exists_c is False
+
+
+@pytest.mark.asyncio
+async def test_makeup_request_repo_isolates_tenants(db) -> None:
+    repo = MongoMakeupRequestRepository(db)
+
+    with tenant_scope("academy-a"):
+        await repo.add(
+            MakeupRequest(
+                request_id="req-a",
+                academy_id="academy-a",
+                student_id="student-1",
+                parent_id="parent-1",
+                missed_occurrence_id="occ-1",
+                status="pending",
+                expires_at=datetime(2026, 8, 1, tzinfo=UTC),
+                created_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+            )
+        )
+
+    with tenant_scope("academy-b"):
+        await repo.add(
+            MakeupRequest(
+                request_id="req-b",
+                academy_id="academy-b",
+                student_id="student-1",
+                parent_id="parent-1",
+                missed_occurrence_id="occ-1",
+                status="pending",
+                expires_at=datetime(2026, 8, 1, tzinfo=UTC),
+                created_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+            )
+        )
+
+    with tenant_scope("academy-a"):
+        rows_a = await repo.list_for_parent("parent-1")
+        active_a = await repo.find_active_for_missed_occurrence("occ-1", "student-1")
+
+    assert [r.request_id for r in rows_a] == ["req-a"]
+    assert active_a is not None
+    assert active_a.request_id == "req-a"
+
+    with tenant_scope("academy-b"):
+        rows_b = await repo.list_for_parent("parent-1")
+
+    assert [r.request_id for r in rows_b] == ["req-b"]
+
+    with tenant_scope("academy-c"):
+        active_c = await repo.find_active_for_missed_occurrence("occ-1", "student-1")
+
+    assert active_c is None

@@ -1,0 +1,262 @@
+"""Parent-submitted makeup requests (R2).
+
+Parents request to make up a missed occurrence, optionally proposing a
+target occurrence to attend instead; admin (Task 5) approves or denies. This
+module also exposes ``ListEligibleMakeupTargets``, which lists upcoming
+occurrences the parent could propose — respecting the academy's expiry
+window, the student's existing active enrollments, and available capacity.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from typing import Protocol
+
+from pydantic import BaseModel
+
+from backend.v2.contexts.enrollment.domain.errors import StudentNotFound
+from backend.v2.contexts.enrollment.domain.models import (
+    Enrollment,
+    Session,
+    SessionOccurrence,
+    Student,
+)
+from backend.v2.contexts.enrollment.domain.self_service import (
+    DuplicateMakeupRequest,
+    MakeupNotEligible,
+    MakeupRequest,
+    MakeupWindowExpired,
+    OccurrenceRosterEntry,
+    ParentSelfServicePolicy,
+)
+from backend.v2.shared.ids import new_ulid
+
+
+class SubmitMakeupRequestCommand(BaseModel):
+    model_config = {"frozen": True}
+
+    parent_id: str
+    student_id: str
+    missed_occurrence_id: str
+    requested_target_occurrence_id: str | None = None
+
+
+class MakeupTargetView(BaseModel):
+    model_config = {"frozen": True}
+
+    occurrence_id: str
+    session_id: str
+    title: str
+    start_at: datetime
+    end_at: datetime
+    open_slots: int
+
+
+class StudentQuery(Protocol):
+    async def get_for_parent(self, parent_id: str, student_id: str) -> Student | None: ...
+
+
+class SessionOccurrenceRepository(Protocol):
+    async def get(self, occurrence_id: str) -> SessionOccurrence | None: ...
+
+
+class AbsenceNoticeQuery(Protocol):
+    async def get_for_occurrence_and_student(
+        self, occurrence_id: str, student_id: str
+    ) -> object | None: ...
+
+
+class SelfServicePolicyRepository(Protocol):
+    async def get_or_default(self) -> ParentSelfServicePolicy: ...
+
+
+class MakeupRequestRepository(Protocol):
+    async def add(self, request: MakeupRequest) -> None: ...
+
+    async def find_active_for_missed_occurrence(
+        self, missed_occurrence_id: str, student_id: str
+    ) -> MakeupRequest | None: ...
+
+    async def list_for_parent(self, parent_id: str) -> list[MakeupRequest]: ...
+
+
+class SubmitMakeupRequest:
+    def __init__(
+        self,
+        *,
+        students: StudentQuery,
+        occurrences: SessionOccurrenceRepository,
+        notices: AbsenceNoticeQuery,
+        makeups: MakeupRequestRepository,
+        policies: SelfServicePolicyRepository,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._students = students
+        self._occurrences = occurrences
+        self._notices = notices
+        self._makeups = makeups
+        self._policies = policies
+        self._now = clock
+
+    async def execute(self, cmd: SubmitMakeupRequestCommand) -> MakeupRequest:
+        student = await self._students.get_for_parent(cmd.parent_id, cmd.student_id)
+        if student is None:
+            raise StudentNotFound("student not found for parent", student_id=cmd.student_id)
+
+        missed = await self._occurrences.get(cmd.missed_occurrence_id)
+        now = self._now()
+        if missed is None or missed.start_at >= now:
+            raise MakeupWindowExpired(
+                "cannot request a makeup for an occurrence that hasn't happened yet",
+                occurrence_id=cmd.missed_occurrence_id,
+            )
+
+        policy = await self._policies.get_or_default()
+
+        if policy.makeup_requires_notice:
+            notice = await self._notices.get_for_occurrence_and_student(
+                cmd.missed_occurrence_id, cmd.student_id
+            )
+            if notice is None or not getattr(notice, "notice_window_met", False):
+                raise MakeupNotEligible(
+                    "a window-met absence notice is required before requesting a makeup",
+                    occurrence_id=cmd.missed_occurrence_id,
+                    student_id=cmd.student_id,
+                )
+
+        expires_at = missed.start_at + timedelta(days=policy.makeup_expiry_days)
+        if now > expires_at:
+            raise MakeupWindowExpired(
+                "makeup request window has expired",
+                occurrence_id=cmd.missed_occurrence_id,
+            )
+
+        existing = await self._makeups.find_active_for_missed_occurrence(
+            cmd.missed_occurrence_id, cmd.student_id
+        )
+        if existing is not None:
+            raise DuplicateMakeupRequest(
+                "a non-denied makeup request already exists for this occurrence",
+                occurrence_id=cmd.missed_occurrence_id,
+                student_id=cmd.student_id,
+            )
+
+        request = MakeupRequest(
+            request_id=str(new_ulid()),
+            academy_id=missed.academy_id,
+            student_id=cmd.student_id,
+            parent_id=cmd.parent_id,
+            missed_occurrence_id=cmd.missed_occurrence_id,
+            requested_target_occurrence_id=cmd.requested_target_occurrence_id,
+            status="pending",
+            expires_at=expires_at,
+            created_at=now,
+        )
+        await self._makeups.add(request)
+        return request
+
+
+class ListParentMakeups:
+    def __init__(self, *, makeups: MakeupRequestRepository) -> None:
+        self._makeups = makeups
+
+    async def execute(self, parent_id: str) -> list[MakeupRequest]:
+        return await self._makeups.list_for_parent(parent_id)
+
+
+class SessionRepository(Protocol):
+    async def get(self, session_id: str) -> Session | None: ...
+
+    async def get_many(self, session_ids: list[str]) -> list[Session]: ...
+
+
+class EnrollmentRepository(Protocol):
+    async def active_for_session(self, session_id: str) -> list[Enrollment]: ...
+
+    async def is_active(self, session_id: str, student_id: str) -> bool: ...
+
+
+class OccurrenceRosterRepository(Protocol):
+    async def list_for_occurrence(self, occurrence_id: str) -> list[OccurrenceRosterEntry]: ...
+
+
+class UpcomingOccurrenceRepository(SessionOccurrenceRepository, Protocol):
+    async def list_upcoming_scheduled_between(
+        self, *, start_at: datetime, end_at: datetime
+    ) -> list[SessionOccurrence]: ...
+
+
+class ListEligibleMakeupTargets:
+    def __init__(
+        self,
+        *,
+        students: StudentQuery,
+        occurrences: UpcomingOccurrenceRepository,
+        sessions: SessionRepository,
+        enrollments: EnrollmentRepository,
+        occurrence_roster: OccurrenceRosterRepository,
+        policies: SelfServicePolicyRepository,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._students = students
+        self._occurrences = occurrences
+        self._sessions = sessions
+        self._enrollments = enrollments
+        self._occurrence_roster = occurrence_roster
+        self._policies = policies
+        self._now = clock
+
+    async def execute(
+        self, *, parent_id: str, student_id: str, missed_occurrence_id: str
+    ) -> list[MakeupTargetView]:
+        student = await self._students.get_for_parent(parent_id, student_id)
+        if student is None:
+            raise StudentNotFound("student not found for parent", student_id=student_id)
+
+        missed = await self._occurrences.get(missed_occurrence_id)
+        if missed is None:
+            return []
+
+        policy = await self._policies.get_or_default()
+        now = self._now()
+        window_end = missed.start_at + timedelta(days=policy.makeup_expiry_days)
+
+        candidates = await self._occurrences.list_upcoming_scheduled_between(
+            start_at=now,
+            end_at=window_end,
+        )
+        if not candidates:
+            return []
+
+        session_ids = list({c.session_id for c in candidates})
+        sessions_by_id = {s.session_id: s for s in await self._sessions.get_many(session_ids)}
+
+        views: list[MakeupTargetView] = []
+        for occurrence in candidates:
+            session = sessions_by_id.get(occurrence.session_id)
+            if session is None:
+                continue
+            if await self._enrollments.is_active(occurrence.session_id, student_id):
+                continue
+
+            active_count = len(await self._enrollments.active_for_session(occurrence.session_id))
+            roster_count = len(
+                await self._occurrence_roster.list_for_occurrence(occurrence.occurrence_id)
+            )
+            open_slots = session.capacity - active_count - roster_count
+            if open_slots <= 0:
+                continue
+
+            views.append(
+                MakeupTargetView(
+                    occurrence_id=occurrence.occurrence_id,
+                    session_id=occurrence.session_id,
+                    title=session.title,
+                    start_at=occurrence.start_at,
+                    end_at=occurrence.end_at,
+                    open_slots=open_slots,
+                )
+            )
+
+        return views

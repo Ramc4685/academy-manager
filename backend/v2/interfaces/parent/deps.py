@@ -18,6 +18,11 @@ from backend.v2.contexts.enrollment.application.use_cases.absence_notices import
 from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_sessions import (
     ListParentAvailableSessions,
 )
+from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
+    ListEligibleMakeupTargets,
+    ListParentMakeups,
+    SubmitMakeupRequest,
+)
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     ListParentPauseRequests,
     RequestEnrollmentPause,
@@ -56,6 +61,9 @@ class ParentUseCases:
     list_parent_pause_requests: ListParentPauseRequests
     submit_absence_notice: SubmitAbsenceNotice
     list_parent_absences: ListParentAbsences
+    submit_makeup_request: SubmitMakeupRequest
+    list_parent_makeups: ListParentMakeups
+    list_eligible_makeup_targets: ListEligibleMakeupTargets
     list_attendance_for_parent: object  # callable
     list_progress_for_parent: object  # callable
     list_invoices_for_parent: object  # callable
