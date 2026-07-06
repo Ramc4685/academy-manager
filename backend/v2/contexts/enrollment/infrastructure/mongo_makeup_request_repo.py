@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from backend.v2.contexts.enrollment.domain.self_service import MakeupRequest
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
@@ -78,6 +80,18 @@ class MongoMakeupRequestRepository(TenantScopedRepository):
             {"request_id": request.request_id},
             {"$set": self._to_doc(request)},
         )
+
+    async def expire_pending_before(self, now: datetime) -> int:
+        """Bulk-flip pending requests whose window has lapsed to ``expired``.
+
+        Returns the number of requests updated. Only ``pending`` requests are
+        touched — approved/denied/completed requests are left alone.
+        """
+        result = await self.collection.update_many(
+            self._scoped({"status": "pending", "expires_at": {"$lt": now}}),
+            {"$set": {"status": "expired"}},
+        )
+        return int(result.modified_count)
 
 
 def _optional_str(value: object | None) -> str | None:

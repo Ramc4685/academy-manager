@@ -108,13 +108,6 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import
 from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
     MongoBillingSettingsRepository,
 )
-from backend.v2.contexts.enrollment.application.use_cases.self_service_policies import (
-    GetSelfServicePolicy,
-    UpdateSelfServicePolicy,
-)
-from backend.v2.contexts.enrollment.infrastructure.mongo_self_service_policy_repo import (
-    MongoSelfServicePolicyRepository,
-)
 from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
     MongoConnectedAccountRepository,
 )
@@ -230,6 +223,13 @@ from backend.v2.contexts.enrollment.application.use_cases.get_session_roster imp
 from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences_for_date import (
     ListCoachOccurrencesForDate,
 )
+from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
+    ApproveMakeupRequest,
+    DenyMakeupRequest,
+    ExpireMakeupRequests,
+    ListAbsencesForAdmin,
+    ListMakeupRequestsForAdmin,
+)
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     ApprovePauseRequest,
     DeclinePauseRequest,
@@ -241,10 +241,17 @@ from backend.v2.contexts.enrollment.application.use_cases.process_scheduled_resu
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.enrollment.application.use_cases.self_service_policies import (
+    GetSelfServicePolicy,
+    UpdateSelfServicePolicy,
+)
 from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentLifecycleEvent,
     StudentSessionTypeChanged,
     StudentSessionTypeChangedPayload,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo import (
+    MongoAbsenceNoticeRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_billing_deferral_repo import (
     MongoBillingDeferralRepository,
@@ -258,14 +265,23 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import 
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_writer import (
     MongoEnrollmentWriter,
 )
+from backend.v2.contexts.enrollment.infrastructure.mongo_makeup_request_repo import (
+    MongoMakeupRequestRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import (
     MongoSessionOccurrenceRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_roster_repo import (
+    MongoOccurrenceRosterRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_pause_request_repo import (
     MongoPauseRequestRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_scheduled_action_repo import (
     MongoScheduledEnrollmentActionRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_self_service_policy_repo import (
+    MongoSelfServicePolicyRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
@@ -2671,6 +2687,26 @@ def compose_admin(
     self_service_policy_repo = MongoSelfServicePolicyRepository(db)
     get_self_service_policy = GetSelfServicePolicy(policies=self_service_policy_repo)
     update_self_service_policy = UpdateSelfServicePolicy(policies=self_service_policy_repo)
+    makeup_requests_repo = MongoMakeupRequestRepository(db)
+    absence_notices_repo = MongoAbsenceNoticeRepository(db)
+    occurrence_roster_repo = MongoOccurrenceRosterRepository(db)
+    list_makeup_requests_for_admin = ListMakeupRequestsForAdmin(
+        makeups=makeup_requests_repo,
+        students=students_r,
+    )
+    approve_makeup_request = ApproveMakeupRequest(
+        makeups=makeup_requests_repo,
+        occurrences=occurrences_r,
+        enrollments=enrollments_r,
+        sessions=sessions_r,
+        occurrence_roster=occurrence_roster_repo,
+    )
+    deny_makeup_request = DenyMakeupRequest(makeups=makeup_requests_repo)
+    list_absences_for_admin = ListAbsencesForAdmin(
+        notices=absence_notices_repo,
+        students=students_r,
+    )
+    expire_makeup_requests = ExpireMakeupRequests(makeups=makeup_requests_repo)
     connected_accounts_repo = MongoConnectedAccountRepository(db)
     credits_repo = MongoCreditLedgerRepository(db)
     tuition_discounts_repo = MongoTuitionDiscountRepository(db)
@@ -5431,6 +5467,11 @@ def compose_admin(
         deactivate_billing_product=deactivate_billing_product,
         self_service_policy=get_self_service_policy,
         update_self_service_policy=update_self_service_policy,
+        list_makeup_requests_for_admin=list_makeup_requests_for_admin,
+        approve_makeup_request=approve_makeup_request,
+        deny_makeup_request=deny_makeup_request,
+        list_absences_for_admin=list_absences_for_admin,
+        expire_makeup_requests=expire_makeup_requests,
         generate_monthly_payments=generate_monthly_payments,
         mark_payment_paid=mark_payment_paid,
         apply_payment_discount=apply_payment_discount,

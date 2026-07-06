@@ -57,6 +57,29 @@ class DuplicateMakeupRequest(DomainError):
     status_code = 409
 
 
+class MakeupRequestNotFound(DomainError):
+    """Raised when an admin acts on a makeup request id that doesn't exist."""
+
+    code = "Enrollment.MakeupRequestNotFound"
+    status_code = 404
+
+
+class MakeupRequestNotPending(DomainError):
+    """Raised when an admin tries to approve/deny a request that has
+    already been decided (or otherwise isn't pending)."""
+
+    code = "Enrollment.MakeupRequestNotPending"
+    status_code = 409
+
+
+class OccurrenceFull(DomainError):
+    """Raised when approving a makeup request would exceed the target
+    occurrence's session capacity."""
+
+    code = "Enrollment.OccurrenceFull"
+    status_code = 409
+
+
 class ParentSelfServicePolicy(BaseModel):
     """Academy-scoped policy governing parent self-service actions."""
 

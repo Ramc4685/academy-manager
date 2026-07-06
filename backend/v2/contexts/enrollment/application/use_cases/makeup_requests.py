@@ -5,6 +5,15 @@ target occurrence to attend instead; admin (Task 5) approves or denies. This
 module also exposes ``ListEligibleMakeupTargets``, which lists upcoming
 occurrences the parent could propose — respecting the academy's expiry
 window, the student's existing active enrollments, and available capacity.
+
+Task 5 adds the admin-side review use cases (``ListMakeupRequestsForAdmin``,
+``ApproveMakeupRequest``, ``DenyMakeupRequest``, ``ListAbsencesForAdmin``).
+BILLING SAFETY: approving a makeup request only writes a one-time
+``OccurrenceRosterEntry`` — the student already paid for the missed session,
+so ``ApproveMakeupRequest`` must never accept a billing dependency.
+
+Task 6 adds ``ExpireMakeupRequests``, a scheduler-driven job that flips
+lapsed ``pending`` requests to ``expired`` so they never linger silently.
 """
 
 from __future__ import annotations
@@ -26,7 +35,10 @@ from backend.v2.contexts.enrollment.domain.self_service import (
     DuplicateMakeupRequest,
     MakeupNotEligible,
     MakeupRequest,
+    MakeupRequestNotFound,
+    MakeupRequestNotPending,
     MakeupWindowExpired,
+    OccurrenceFull,
     OccurrenceRosterEntry,
     ParentSelfServicePolicy,
 )
@@ -260,3 +272,285 @@ class ListEligibleMakeupTargets:
             )
 
         return views
+
+
+# ============================================================================
+# Task 5: Admin review — approve/deny makeup requests, admin absence queue
+# ============================================================================
+
+
+class AdminMakeupRequestRepository(Protocol):
+    async def get(self, request_id: str) -> MakeupRequest | None: ...
+
+    async def update(self, request: MakeupRequest) -> None: ...
+
+    async def list_by_status(self, status: str | None) -> list[MakeupRequest]: ...
+
+
+class AdminStudentQuery(Protocol):
+    async def by_ids(self, student_ids: list[str]) -> list[Student]: ...
+
+
+class AdminAbsenceNoticeQuery(Protocol):
+    async def list_all(self) -> list: ...
+
+
+class AdminOccurrenceRosterRepository(Protocol):
+    async def add(self, entry: OccurrenceRosterEntry) -> None: ...
+
+    async def list_for_occurrence(self, occurrence_id: str) -> list[OccurrenceRosterEntry]: ...
+
+
+class MakeupRequestAdminView(BaseModel):
+    model_config = {"frozen": True}
+
+    request_id: str
+    student_id: str
+    missed_occurrence_id: str
+    requested_target_occurrence_id: str | None = None
+    status: str
+    expires_at: datetime
+    denial_reason: str | None = None
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    approved_target_occurrence_id: str | None = None
+    created_at: datetime
+    student_full_name: str | None = None
+
+
+class AbsenceNoticeAdminView(BaseModel):
+    model_config = {"frozen": True}
+
+    notice_id: str
+    student_id: str
+    occurrence_id: str
+    session_id: str
+    submitted_by: str
+    submitted_at: datetime
+    notice_window_met: bool
+    student_full_name: str | None = None
+
+
+def _student_names(students: list[Student]) -> dict[str, str]:
+    return {s.student_id: s.full_name for s in students}
+
+
+class ListMakeupRequestsForAdmin:
+    """Lists makeup requests for admin review, newest first, optionally
+    filtered by status. Enriches each row with the student's full name."""
+
+    def __init__(
+        self,
+        *,
+        makeups: AdminMakeupRequestRepository,
+        students: AdminStudentQuery,
+    ) -> None:
+        self._makeups = makeups
+        self._students = students
+
+    async def execute(self, status: str | None = None) -> list[MakeupRequestAdminView]:
+        requests = await self._makeups.list_by_status(status)
+        student_ids = list({r.student_id for r in requests})
+        names = _student_names(await self._students.by_ids(student_ids))
+        return [
+            MakeupRequestAdminView(
+                **r.model_dump(exclude={"academy_id", "parent_id"}),
+                student_full_name=names.get(r.student_id),
+            )
+            for r in requests
+        ]
+
+
+class ListAbsencesForAdmin:
+    """Lists absence notices for admin visibility, newest first, enriched
+    with the student's full name."""
+
+    def __init__(
+        self,
+        *,
+        notices: AdminAbsenceNoticeQuery,
+        students: AdminStudentQuery,
+    ) -> None:
+        self._notices = notices
+        self._students = students
+
+    async def execute(self) -> list[AbsenceNoticeAdminView]:
+        notices = await self._notices.list_all()
+        student_ids = list({n.student_id for n in notices})
+        names = _student_names(await self._students.by_ids(student_ids))
+        return [
+            AbsenceNoticeAdminView(
+                notice_id=n.notice_id,
+                student_id=n.student_id,
+                occurrence_id=n.occurrence_id,
+                session_id=n.session_id,
+                submitted_by=n.submitted_by,
+                submitted_at=n.submitted_at,
+                notice_window_met=n.notice_window_met,
+                student_full_name=names.get(n.student_id),
+            )
+            for n in notices
+        ]
+
+
+class ApproveMakeupRequestCommand(BaseModel):
+    model_config = {"frozen": True}
+
+    request_id: str
+    actor_id: str
+    target_occurrence_id: str
+
+
+class ApproveMakeupRequest:
+    """Approves a pending makeup request, writing a one-time occurrence
+    roster entry for the target occurrence.
+
+    BILLING SAFETY (R2): the student already paid for the missed session, so
+    this use case must NEVER accept a billing dependency. Do not add one.
+    """
+
+    def __init__(
+        self,
+        *,
+        makeups: AdminMakeupRequestRepository,
+        occurrences: SessionOccurrenceRepository,
+        enrollments: EnrollmentRepository,
+        sessions: SessionRepository,
+        occurrence_roster: AdminOccurrenceRosterRepository,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._makeups = makeups
+        self._occurrences = occurrences
+        self._enrollments = enrollments
+        self._sessions = sessions
+        self._occurrence_roster = occurrence_roster
+        self._now = clock
+
+    async def execute(self, cmd: ApproveMakeupRequestCommand) -> MakeupRequest:
+        request = await self._makeups.get(cmd.request_id)
+        if request is None:
+            raise MakeupRequestNotFound("makeup request not found", request_id=cmd.request_id)
+        if request.status != "pending":
+            raise MakeupRequestNotPending(
+                "only pending makeup requests can be approved", request_id=cmd.request_id
+            )
+
+        now = self._now()
+        if now > request.expires_at:
+            raise MakeupWindowExpired(
+                "makeup request window has expired", request_id=cmd.request_id
+            )
+
+        target = await self._occurrences.get(cmd.target_occurrence_id)
+        if target is None or target.status != "scheduled" or target.start_at <= now:
+            raise MakeupWindowExpired(
+                "target occurrence is not a valid future scheduled occurrence",
+                occurrence_id=cmd.target_occurrence_id,
+            )
+
+        session = await self._sessions.get(target.session_id)
+        if session is None:
+            raise MakeupWindowExpired(
+                "target occurrence's session no longer exists",
+                occurrence_id=cmd.target_occurrence_id,
+            )
+
+        active_count = len(await self._enrollments.active_for_session(target.session_id))
+        roster_count = len(
+            await self._occurrence_roster.list_for_occurrence(cmd.target_occurrence_id)
+        )
+        if active_count + roster_count >= session.capacity:
+            raise OccurrenceFull(
+                "target occurrence has no remaining capacity",
+                occurrence_id=cmd.target_occurrence_id,
+            )
+
+        entry = OccurrenceRosterEntry(
+            entry_id=str(new_ulid()),
+            academy_id=request.academy_id,
+            occurrence_id=cmd.target_occurrence_id,
+            student_id=request.student_id,
+            source="makeup",
+            origin_request_id=request.request_id,
+            created_at=now,
+        )
+        await self._occurrence_roster.add(entry)
+
+        updated = request.model_copy(
+            update={
+                "status": "approved",
+                "approved_target_occurrence_id": cmd.target_occurrence_id,
+                "decided_by": cmd.actor_id,
+                "decided_at": now,
+            }
+        )
+        await self._makeups.update(updated)
+        return updated
+
+
+class DenyMakeupRequestCommand(BaseModel):
+    model_config = {"frozen": True}
+
+    request_id: str
+    actor_id: str
+    reason: str
+
+
+class DenyMakeupRequest:
+    """Denies a pending makeup request, recording the reason and decision."""
+
+    def __init__(
+        self,
+        *,
+        makeups: AdminMakeupRequestRepository,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._makeups = makeups
+        self._now = clock
+
+    async def execute(self, cmd: DenyMakeupRequestCommand) -> MakeupRequest:
+        request = await self._makeups.get(cmd.request_id)
+        if request is None:
+            raise MakeupRequestNotFound("makeup request not found", request_id=cmd.request_id)
+        if request.status != "pending":
+            raise MakeupRequestNotPending(
+                "only pending makeup requests can be denied", request_id=cmd.request_id
+            )
+
+        updated = request.model_copy(
+            update={
+                "status": "denied",
+                "denial_reason": cmd.reason,
+                "decided_by": cmd.actor_id,
+                "decided_at": self._now(),
+            }
+        )
+        await self._makeups.update(updated)
+        return updated
+
+
+# ============================================================================
+# Task 6: Makeup expiry job — pending requests past their window -> expired
+# ============================================================================
+
+
+class ExpirableMakeupRequestRepository(Protocol):
+    async def expire_pending_before(self, now: datetime) -> int: ...
+
+
+class ExpireMakeupRequests:
+    """Scheduler-driven job: flips pending makeup requests whose window has
+    lapsed to ``expired``. Approved/denied/completed requests are untouched.
+    """
+
+    def __init__(
+        self,
+        *,
+        makeups: ExpirableMakeupRequestRepository,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._makeups = makeups
+        self._now = clock
+
+    async def execute(self) -> int:
+        return await self._makeups.expire_pending_before(self._now())

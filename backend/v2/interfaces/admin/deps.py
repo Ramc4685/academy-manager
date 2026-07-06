@@ -69,6 +69,13 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     TransferEnrollment,
     WithdrawEnrollment,
 )
+from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
+    ApproveMakeupRequest,
+    DenyMakeupRequest,
+    ExpireMakeupRequests,
+    ListAbsencesForAdmin,
+    ListMakeupRequestsForAdmin,
+)
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     ApprovePauseRequest,
     DeclinePauseRequest,
@@ -316,6 +323,13 @@ class AdminUseCases:
     # Parent self-service policy (#absence/makeup/cancel Slice 1)
     self_service_policy: GetSelfServicePolicy | None = None
     update_self_service_policy: UpdateSelfServicePolicy | None = None
+    # Admin makeup review + absence queue (R2, Task 5)
+    list_makeup_requests_for_admin: ListMakeupRequestsForAdmin | None = None
+    approve_makeup_request: ApproveMakeupRequest | None = None
+    deny_makeup_request: DenyMakeupRequest | None = None
+    list_absences_for_admin: ListAbsencesForAdmin | None = None
+    # Makeup expiry job (R2, Task 6)
+    expire_makeup_requests: ExpireMakeupRequests | None = None
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:

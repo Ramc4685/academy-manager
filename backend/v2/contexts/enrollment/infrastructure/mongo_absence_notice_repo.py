@@ -55,3 +55,7 @@ class MongoAbsenceNoticeRepository(TenantScopedRepository):
     async def list_for_student(self, student_id: str) -> list[AbsenceNotice]:
         cursor = self._find_many({"student_id": student_id}, sort=[("submitted_at", -1)])
         return [self._to_domain(doc) async for doc in cursor]
+
+    async def list_all(self) -> list[AbsenceNotice]:
+        cursor = self._find_many({}, sort=[("submitted_at", -1)])
+        return [self._to_domain(doc) async for doc in cursor]
