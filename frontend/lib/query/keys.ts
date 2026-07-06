@@ -81,10 +81,12 @@ export const queryKeys = {
       ["admin", "billing", "legacy-match-queue"] as const,
     selfServicePolicy: () => ["admin", "self-service", "policy"] as const,
     selfServiceAbsences: () => ["admin", "self-service", "absences"] as const,
+    selfServiceMakeupsAll: () => ["admin", "self-service", "makeups"] as const,
     selfServiceMakeups: (status?: string) =>
-      ["admin", "self-service", "makeups", status ?? "all"] as const,
+      [...queryKeys.admin.selfServiceMakeupsAll(), status ?? "all"] as const,
+    selfServiceTrialsAll: () => ["admin", "self-service", "trials"] as const,
     selfServiceTrials: (status?: string) =>
-      ["admin", "self-service", "trials", status ?? "all"] as const,
+      [...queryKeys.admin.selfServiceTrialsAll(), status ?? "all"] as const,
     selfServiceCancellations: () =>
       ["admin", "self-service", "cancellations"] as const,
   },

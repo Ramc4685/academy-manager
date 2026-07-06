@@ -143,14 +143,14 @@ function MakeupsTab() {
       approveMakeup(requestId, { target_occurrence_id: targetOccurrenceId }),
     onSuccess: () => {
       setApproveTarget(null);
-      void queryClient.invalidateQueries({ queryKey: ["admin", "self-service", "makeups"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.selfServiceMakeupsAll() });
     },
   });
   const denyMutation = useMutation({
     mutationFn: ({ requestId, reason }: { requestId: string; reason: string }) => denyMakeup(requestId, { reason }),
     onSuccess: () => {
       setDenyTarget(null);
-      void queryClient.invalidateQueries({ queryKey: ["admin", "self-service", "makeups"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.selfServiceMakeupsAll() });
     },
   });
 
@@ -326,14 +326,14 @@ function TrialsTab() {
       approveTrial(requestId, { occurrence_id: occurrenceId }),
     onSuccess: () => {
       setApproveTarget(null);
-      void queryClient.invalidateQueries({ queryKey: ["admin", "self-service", "trials"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.selfServiceTrialsAll() });
     },
   });
   const denyMutation = useMutation({
     mutationFn: ({ requestId, reason }: { requestId: string; reason: string }) => denyTrial(requestId, { reason }),
     onSuccess: () => {
       setDenyTarget(null);
-      void queryClient.invalidateQueries({ queryKey: ["admin", "self-service", "trials"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.selfServiceTrialsAll() });
     },
   });
 
