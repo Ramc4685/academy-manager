@@ -80,6 +80,16 @@ export const queryKeys = {
     legacyMatchQueue: () =>
       ["admin", "billing", "legacy-match-queue"] as const,
   },
+  parent: {
+    all: ["parent"] as const,
+    absences: () => ["parent", "absences"] as const,
+    makeups: () => ["parent", "makeups"] as const,
+    makeupTargets: (studentId: string, missedOccurrenceId: string) =>
+      ["parent", "makeups", "targets", studentId, missedOccurrenceId] as const,
+    trials: () => ["parent", "trials"] as const,
+    cancellationPreview: (enrollmentId: string) =>
+      ["parent", "enrollments", enrollmentId, "cancellation-preview"] as const,
+  },
 } as const;
 
 type QueryKeyFactory = (...args: never[]) => readonly unknown[];
@@ -87,4 +97,5 @@ type QueryKeyFrom<T> = T extends QueryKeyFactory ? ReturnType<T> : never;
 
 export type QueryKey =
   | QueryKeyFrom<(typeof queryKeys.coach)[keyof typeof queryKeys.coach]>
-  | QueryKeyFrom<(typeof queryKeys.admin)[keyof typeof queryKeys.admin]>;
+  | QueryKeyFrom<(typeof queryKeys.admin)[keyof typeof queryKeys.admin]>
+  | QueryKeyFrom<(typeof queryKeys.parent)[keyof typeof queryKeys.parent]>;
