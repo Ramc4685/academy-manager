@@ -286,6 +286,10 @@ class AdminMakeupRequestRepository(Protocol):
 
     async def list_by_status(self, status: str | None) -> list[MakeupRequest]: ...
 
+    async def transition_from_pending(
+        self, request_id: str, updates: dict[str, object]
+    ) -> MakeupRequest | None: ...
+
 
 class AdminStudentQuery(Protocol):
     async def by_ids(self, student_ids: list[str]) -> list[Student]: ...
@@ -299,6 +303,8 @@ class AdminOccurrenceRosterRepository(Protocol):
     async def add(self, entry: OccurrenceRosterEntry) -> None: ...
 
     async def list_for_occurrence(self, occurrence_id: str) -> list[OccurrenceRosterEntry]: ...
+
+    async def exists(self, occurrence_id: str, student_id: str) -> bool: ...
 
 
 class MakeupRequestAdminView(BaseModel):
@@ -465,27 +471,43 @@ class ApproveMakeupRequest:
                 occurrence_id=cmd.target_occurrence_id,
             )
 
-        entry = OccurrenceRosterEntry(
-            entry_id=str(new_ulid()),
-            academy_id=request.academy_id,
-            occurrence_id=cmd.target_occurrence_id,
-            student_id=request.student_id,
-            source="makeup",
-            origin_request_id=request.request_id,
-            created_at=now,
-        )
-        await self._occurrence_roster.add(entry)
-
-        updated = request.model_copy(
-            update={
+        # Atomic compare-and-swap: only one concurrent approve/deny call for
+        # this SAME request can win the pending -> approved transition. The
+        # second caller (double-click / two tabs) gets MakeupRequestNotPending
+        # instead of racing past the check above and writing a duplicate
+        # roster entry / silently over-filling capacity.
+        updated_doc = await self._makeups.transition_from_pending(
+            request.request_id,
+            {
                 "status": "approved",
                 "approved_target_occurrence_id": cmd.target_occurrence_id,
                 "decided_by": cmd.actor_id,
                 "decided_at": now,
-            }
+            },
         )
-        await self._makeups.update(updated)
-        return updated
+        if updated_doc is None:
+            raise MakeupRequestNotPending(
+                "only pending makeup requests can be approved", request_id=cmd.request_id
+            )
+
+        # Belt-and-braces: should be unreachable after a successful CAS (the
+        # CAS is keyed on request_id, so it can only ever fire once per
+        # request), but cheap to guard against a duplicate roster entry. A
+        # DB-level unique index on (academy_id, occurrence_id, student_id)
+        # arrives in a later migration.
+        if not await self._occurrence_roster.exists(cmd.target_occurrence_id, request.student_id):
+            entry = OccurrenceRosterEntry(
+                entry_id=str(new_ulid()),
+                academy_id=request.academy_id,
+                occurrence_id=cmd.target_occurrence_id,
+                student_id=request.student_id,
+                source="makeup",
+                origin_request_id=request.request_id,
+                created_at=now,
+            )
+            await self._occurrence_roster.add(entry)
+
+        return updated_doc
 
 
 class DenyMakeupRequestCommand(BaseModel):
@@ -517,16 +539,24 @@ class DenyMakeupRequest:
                 "only pending makeup requests can be denied", request_id=cmd.request_id
             )
 
-        updated = request.model_copy(
-            update={
+        # Atomic compare-and-swap guards the same double-submit race as
+        # ApproveMakeupRequest: a second concurrent deny (or a deny racing an
+        # approve) for this request gets MakeupRequestNotPending instead of
+        # silently overwriting the decision.
+        updated_doc = await self._makeups.transition_from_pending(
+            request.request_id,
+            {
                 "status": "denied",
                 "denial_reason": cmd.reason,
                 "decided_by": cmd.actor_id,
                 "decided_at": self._now(),
-            }
+            },
         )
-        await self._makeups.update(updated)
-        return updated
+        if updated_doc is None:
+            raise MakeupRequestNotPending(
+                "only pending makeup requests can be denied", request_id=cmd.request_id
+            )
+        return updated_doc
 
 
 # ============================================================================

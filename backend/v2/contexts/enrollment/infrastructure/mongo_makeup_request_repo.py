@@ -81,6 +81,25 @@ class MongoMakeupRequestRepository(TenantScopedRepository):
             {"$set": self._to_doc(request)},
         )
 
+    async def transition_from_pending(
+        self, request_id: str, updates: dict[str, object]
+    ) -> MakeupRequest | None:
+        """Atomically move a request out of ``pending`` iff it is still
+        ``pending``, applying ``updates`` in the same ``$set``.
+
+        Uses ``find_one_and_update`` filtered on ``{request_id, status:
+        "pending"}`` so two concurrent approve/deny calls for the SAME
+        request can't both succeed (TOCTOU guard). Returns the updated
+        document as a domain object, or ``None`` if the request was not
+        found or was no longer pending (the caller should treat that as
+        ``MakeupRequestNotPending``).
+        """
+        doc = await self._find_one_and_update(
+            {"request_id": request_id, "status": "pending"},
+            {"$set": updates},
+        )
+        return self._to_domain(doc) if doc else None
+
     async def expire_pending_before(self, now: datetime) -> int:
         """Bulk-flip pending requests whose window has lapsed to ``expired``.
 

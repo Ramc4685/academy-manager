@@ -120,6 +120,27 @@ class TenantScopedRepository:
             self._scoped(filter_), update, upsert=upsert, session=session
         )
 
+    async def _find_one_and_update(
+        self,
+        filter_: Mapping[str, Any],
+        update: Mapping[str, Any],
+        *,
+        upsert: bool = False,
+        return_document_after: bool = True,
+        session: AsyncIOMotorClientSession | None = None,
+    ) -> dict[str, Any] | None:
+        from pymongo import ReturnDocument
+
+        return await self.collection.find_one_and_update(
+            self._scoped(filter_),
+            update,
+            upsert=upsert,
+            return_document=(
+                ReturnDocument.AFTER if return_document_after else ReturnDocument.BEFORE
+            ),
+            session=session,
+        )
+
     async def _delete_one(
         self,
         filter_: Mapping[str, Any],

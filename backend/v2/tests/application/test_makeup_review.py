@@ -81,6 +81,7 @@ class _FakeMakeups:
     def __init__(self, requests: list[MakeupRequest] | None = None) -> None:
         self.rows: dict[str, MakeupRequest] = {r.request_id: r for r in (requests or [])}
         self.updated: list[MakeupRequest] = []
+        self.transition_calls: list[str] = []
 
     async def get(self, request_id: str) -> MakeupRequest | None:
         return self.rows.get(request_id)
@@ -94,6 +95,21 @@ class _FakeMakeups:
         if status is not None:
             rows = [r for r in rows if r.status == status]
         return sorted(rows, key=lambda r: r.created_at, reverse=True)
+
+    async def transition_from_pending(
+        self, request_id: str, updates: dict[str, object]
+    ) -> MakeupRequest | None:
+        """Fake CAS: mirrors the Mongo repo's find_one_and_update filtered on
+        {request_id, status: "pending"} — only transitions (and returns) when
+        the row is still pending; otherwise returns None."""
+        self.transition_calls.append(request_id)
+        current = self.rows.get(request_id)
+        if current is None or current.status != "pending":
+            return None
+        updated = current.model_copy(update=updates)
+        self.rows[request_id] = updated
+        self.updated.append(updated)
+        return updated
 
 
 class _FakeOccurrences:
@@ -513,3 +529,130 @@ async def test_approve_makeup_request_rejects_unknown_request() -> None:
                 request_id="req-missing", actor_id="admin-1", target_occurrence_id="occ-target"
             )
         )
+
+
+# --- Approve/deny double-submit race (TOCTOU CAS guard) ----------------------
+
+
+@pytest.mark.asyncio
+async def test_approve_makeup_request_double_submit_second_call_raises_not_pending() -> None:
+    """Simulates two concurrent approvals of the SAME request (double-click /
+    two tabs): the initial read-based checks pass for both, but the atomic
+    CAS in transition_from_pending can only let one of them through. The
+    second call must raise MakeupRequestNotPending and must NOT write a
+    second roster entry."""
+    makeups = _FakeMakeups([_pending_request()])
+    use_case, _, roster = _build_approve(makeups=makeups)
+
+    cmd = ApproveMakeupRequestCommand(
+        request_id="req-1", actor_id="admin-1", target_occurrence_id="occ-target"
+    )
+
+    result = await use_case.execute(cmd)
+    assert result.status == "approved"
+    assert len(roster.entries) == 1
+
+    with pytest.raises(MakeupRequestNotPending):
+        await use_case.execute(cmd)
+
+    # No duplicate roster entry from the second (losing) call.
+    assert len(roster.entries) == 1
+    assert len(makeups.updated) == 1
+
+
+@pytest.mark.asyncio
+async def test_deny_makeup_request_double_submit_second_call_raises_not_pending() -> None:
+    makeups = _FakeMakeups([_pending_request()])
+    use_case = DenyMakeupRequest(makeups=makeups, clock=_now)
+
+    cmd = DenyMakeupRequestCommand(request_id="req-1", actor_id="admin-1", reason="no capacity")
+
+    result = await use_case.execute(cmd)
+    assert result.status == "denied"
+
+    with pytest.raises(MakeupRequestNotPending):
+        await use_case.execute(cmd)
+
+    assert len(makeups.updated) == 1
+
+
+# --- Repo-level CAS behavior (exercised against the real Mongo repo via mongomock) --
+
+
+@pytest.mark.asyncio
+async def test_repo_transition_from_pending_wins_once_then_returns_none() -> None:
+    """Proves the atomic find_one_and_update CAS: the first call transitions
+    the still-pending request and returns it; a second call for the same
+    request_id (now no longer pending) returns None instead of re-applying
+    the update."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+
+    from backend.v2.contexts.enrollment.domain.self_service import MakeupRequest
+    from backend.v2.contexts.enrollment.infrastructure.mongo_makeup_request_repo import (
+        MongoMakeupRequestRepository,
+    )
+    from backend.v2.shared.tenancy import tenant_scope
+
+    client = mongomock_motor.AsyncMongoMockClient()
+    db = client["test"]
+    repo = MongoMakeupRequestRepository(db)
+
+    with tenant_scope("acad"):
+        request = MakeupRequest(
+            request_id="req-cas",
+            academy_id="acad",
+            student_id="student-1",
+            parent_id="parent-1",
+            missed_occurrence_id="occ-1",
+            status="pending",
+            expires_at=_now() + timedelta(days=5),
+            created_at=_now() - timedelta(days=1),
+        )
+        await repo.add(request)
+
+        first = await repo.transition_from_pending(
+            "req-cas",
+            {
+                "status": "approved",
+                "approved_target_occurrence_id": "occ-target",
+                "decided_by": "admin-1",
+                "decided_at": _now(),
+            },
+        )
+        assert first is not None
+        assert first.status == "approved"
+        assert first.approved_target_occurrence_id == "occ-target"
+
+        second = await repo.transition_from_pending(
+            "req-cas",
+            {
+                "status": "approved",
+                "approved_target_occurrence_id": "occ-target",
+                "decided_by": "admin-2",
+                "decided_at": _now(),
+            },
+        )
+        assert second is None
+
+        # The row reflects the winner's update only.
+        final = await repo.get("req-cas")
+        assert final.decided_by == "admin-1"
+
+
+@pytest.mark.asyncio
+async def test_repo_transition_from_pending_returns_none_for_unknown_request() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+
+    from backend.v2.contexts.enrollment.infrastructure.mongo_makeup_request_repo import (
+        MongoMakeupRequestRepository,
+    )
+    from backend.v2.shared.tenancy import tenant_scope
+
+    client = mongomock_motor.AsyncMongoMockClient()
+    db = client["test"]
+    repo = MongoMakeupRequestRepository(db)
+
+    with tenant_scope("acad"):
+        result = await repo.transition_from_pending("req-missing", {"status": "approved"})
+
+    assert result is None
