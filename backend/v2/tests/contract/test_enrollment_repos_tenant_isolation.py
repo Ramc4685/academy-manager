@@ -11,11 +11,15 @@ from datetime import UTC, date, datetime
 import pytest
 
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import AbsenceNotice
+from backend.v2.contexts.enrollment.domain.self_service import OccurrenceRosterEntry
 from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo import (
     MongoAbsenceNoticeRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_roster_repo import (
+    MongoOccurrenceRosterRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_self_service_policy_repo import (
     MongoSelfServicePolicyRepository,
@@ -183,3 +187,51 @@ async def test_absence_notice_repo_isolates_tenants(db) -> None:
         rows_b = await repo.list_for_parent("parent-1")
 
     assert [r.notice_id for r in rows_b] == ["notice-b"]
+
+
+@pytest.mark.asyncio
+async def test_occurrence_roster_repo_isolates_tenants(db) -> None:
+    repo = MongoOccurrenceRosterRepository(db)
+
+    with tenant_scope("academy-a"):
+        await repo.add(
+            OccurrenceRosterEntry(
+                entry_id="entry-a",
+                academy_id="academy-a",
+                occurrence_id="occ-1",
+                student_id="student-1",
+                source="makeup",
+                origin_request_id="req-a",
+                created_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+            )
+        )
+
+    with tenant_scope("academy-b"):
+        await repo.add(
+            OccurrenceRosterEntry(
+                entry_id="entry-b",
+                academy_id="academy-b",
+                occurrence_id="occ-1",
+                student_id="student-1",
+                source="trial",
+                origin_request_id="req-b",
+                created_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+            )
+        )
+
+    with tenant_scope("academy-a"):
+        rows_a = await repo.list_for_occurrence("occ-1")
+        exists_a = await repo.exists("occ-1", "student-1")
+
+    assert [r.entry_id for r in rows_a] == ["entry-a"]
+    assert exists_a is True
+
+    with tenant_scope("academy-b"):
+        rows_b = await repo.list_for_occurrence("occ-1")
+
+    assert [r.entry_id for r in rows_b] == ["entry-b"]
+
+    with tenant_scope("academy-c"):
+        exists_c = await repo.exists("occ-1", "student-1")
+
+    assert exists_c is False

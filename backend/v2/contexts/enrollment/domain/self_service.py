@@ -8,6 +8,7 @@ sane defaults an academy can tune from the admin BFF.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel
@@ -45,3 +46,23 @@ class ParentSelfServicePolicy(BaseModel):
     @staticmethod
     def default(academy_id: str) -> ParentSelfServicePolicy:
         return ParentSelfServicePolicy(academy_id=academy_id)
+
+
+class OccurrenceRosterEntry(BaseModel):
+    """A one-time roster addition for a single occurrence.
+
+    Written when a makeup (Task 5) or trial (Task 7) request is approved —
+    the student attends exactly this occurrence without a standing
+    enrollment. Task 3 only defines the repository/model; Tasks 5/7 write
+    to it via ``origin_request_id`` (the approved request's id).
+    """
+
+    model_config = {"frozen": True}
+
+    entry_id: str
+    academy_id: str
+    occurrence_id: str
+    student_id: str
+    source: Literal["makeup", "trial"]
+    origin_request_id: str
+    created_at: datetime

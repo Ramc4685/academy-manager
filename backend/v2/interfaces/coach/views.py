@@ -36,10 +36,16 @@ class CoachSessionTeachingPlanResponse(BaseModel):
 class CoachRosterEntry(BaseModel):
     student_id: str
     full_name: str
-    enrollment_status: Literal["active", "paused", "cancelled"]
+    enrollment_status: Literal["active", "paused", "cancelled"] | None = None
     # Already-recorded mark for this occurrence, so the client can hydrate
     # attendance state after a reload instead of treating everyone as unmarked.
     attendance_status: Literal["present", "absent", "late"] | None = None
+    # True when a parent submitted an AbsenceNotice (R1) for this student on
+    # this occurrence.
+    expected_absence: bool = False
+    # "enrollment" for regular roster rows; "makeup" / "trial" for one-time
+    # entries (Tasks 5/7) added just for this occurrence.
+    entry_source: Literal["enrollment", "makeup", "trial"] = "enrollment"
 
 
 class CoachSession(BaseModel):
