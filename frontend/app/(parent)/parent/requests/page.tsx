@@ -125,7 +125,7 @@ function AbsencesPanel() {
   const children = childrenQuery.data?.children ?? [];
   const academyTimezone = academyQuery.data?.timezone ?? null;
   const occurrences = scheduleQuery.data?.entries ?? [];
-  const notices = absencesQuery.data?.absences ?? [];
+  const notices = absencesQuery.data?.notices ?? [];
 
   return (
     <div className="space-y-4">
@@ -300,7 +300,7 @@ function MakeupsPanel() {
   });
 
   const academyTimezone = academyQuery.data?.timezone ?? null;
-  const absences = absencesQuery.data?.absences ?? [];
+  const absences = absencesQuery.data?.notices ?? [];
   const makeups = makeupsQuery.data?.makeups ?? [];
   const targets = targetsQuery.data?.targets ?? [];
 
@@ -355,7 +355,7 @@ function MakeupsPanel() {
                 <option value="">Select a missed class</option>
                 {eligibleAbsences.map((a) => (
                   <option key={a.occurrence_id} value={a.occurrence_id}>
-                    Missed {formatAcademyDate(a.submitted_at, academyTimezone)} ({a.session_id})
+                    Reported {formatAcademyDate(a.submitted_at, academyTimezone)} ({a.session_id})
                   </option>
                 ))}
               </select>

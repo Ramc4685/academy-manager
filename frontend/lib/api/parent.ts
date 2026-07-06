@@ -481,7 +481,7 @@ export interface AbsenceNoticeView {
   notice_window_met: boolean;
 }
 
-export function listParentAbsences(): Promise<{ absences: AbsenceNoticeView[] }> {
+export function listParentAbsences(): Promise<{ notices: AbsenceNoticeView[] }> {
   return apiFetch("/parent/absences", { method: "GET" });
 }
 
