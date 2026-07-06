@@ -40,6 +40,7 @@ from backend.v2.contexts.enrollment.domain.self_service import (
     TrialRequestNotFound,
     TrialRequestNotPending,
     TrialSessionNotAvailable,
+    open_slots,
 )
 from backend.v2.shared.ids import new_ulid
 
@@ -262,7 +263,10 @@ class ApproveTrialRequest:
 
         active_count = len(await self._enrollments.active_for_session(occurrence.session_id))
         roster_count = len(await self._occurrence_roster.list_for_occurrence(cmd.occurrence_id))
-        if active_count + roster_count >= session.capacity:
+        remaining = open_slots(
+            capacity=session.capacity, active_count=active_count, roster_count=roster_count
+        )
+        if remaining <= 0:
             raise OccurrenceFull(
                 "occurrence has no remaining capacity", occurrence_id=cmd.occurrence_id
             )

@@ -41,6 +41,7 @@ from backend.v2.contexts.enrollment.domain.self_service import (
     OccurrenceFull,
     OccurrenceRosterEntry,
     ParentSelfServicePolicy,
+    open_slots,
 )
 from backend.v2.shared.ids import new_ulid
 
@@ -256,8 +257,10 @@ class ListEligibleMakeupTargets:
             roster_count = len(
                 await self._occurrence_roster.list_for_occurrence(occurrence.occurrence_id)
             )
-            open_slots = session.capacity - active_count - roster_count
-            if open_slots <= 0:
+            remaining = open_slots(
+                capacity=session.capacity, active_count=active_count, roster_count=roster_count
+            )
+            if remaining <= 0:
                 continue
 
             views.append(
@@ -267,7 +270,7 @@ class ListEligibleMakeupTargets:
                     title=session.title,
                     start_at=occurrence.start_at,
                     end_at=occurrence.end_at,
-                    open_slots=open_slots,
+                    open_slots=remaining,
                 )
             )
 
@@ -465,7 +468,10 @@ class ApproveMakeupRequest:
         roster_count = len(
             await self._occurrence_roster.list_for_occurrence(cmd.target_occurrence_id)
         )
-        if active_count + roster_count >= session.capacity:
+        remaining = open_slots(
+            capacity=session.capacity, active_count=active_count, roster_count=roster_count
+        )
+        if remaining <= 0:
             raise OccurrenceFull(
                 "target occurrence has no remaining capacity",
                 occurrence_id=cmd.target_occurrence_id,

@@ -153,6 +153,8 @@ def _make_use_cases(
         get_parent_waiver_requirement=None,  # type: ignore[arg-type]
         accept_parent_waiver=None,  # type: ignore[arg-type]
         get_academy_info=None,
+        submit_trial_request=None,  # type: ignore[arg-type]
+        list_parent_trial_requests=None,  # type: ignore[arg-type]
     )
 
 

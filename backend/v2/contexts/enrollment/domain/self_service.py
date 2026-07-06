@@ -111,6 +111,18 @@ class TrialRequestNotPending(DomainError):
     status_code = 409
 
 
+def open_slots(*, capacity: int, active_count: int, roster_count: int) -> int:
+    """Pure capacity arithmetic shared by makeup/trial self-service flows.
+
+    Returns the number of remaining slots for an occurrence's session
+    (may be zero or negative). Callers decide what to do with the result
+    (e.g. raise ``OccurrenceFull`` when it is not positive) — this
+    function only computes.
+    """
+
+    return capacity - active_count - roster_count
+
+
 class ParentSelfServicePolicy(BaseModel):
     """Academy-scoped policy governing parent self-service actions."""
 
