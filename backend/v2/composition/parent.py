@@ -193,7 +193,7 @@ from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.security.redirect import validate_redirect_url
-from backend.v2.shared.tenancy import tenant_scope
+from backend.v2.shared.tenancy import current_academy_id, tenant_scope
 
 from .event_handlers import HandlerDeps, install_handlers
 
@@ -540,6 +540,7 @@ def compose_parent(
     submit_absence_notice = SubmitAbsenceNotice(
         students=students_query,
         occurrences=occurrences_query,
+        enrollments=enrollments_query,
         notices=absence_notices_repo,
         policies=self_service_policies_repo,
     )
@@ -548,6 +549,7 @@ def compose_parent(
     submit_makeup_request = SubmitMakeupRequest(
         students=students_query,
         occurrences=occurrences_query,
+        enrollments=enrollments_query,
         notices=absence_notices_repo,
         makeups=makeup_requests_repo,
         policies=self_service_policies_repo,
@@ -626,7 +628,11 @@ def compose_parent(
                     unit_amount_cents=fee_cents,
                     source_type="self_cancel_fee",
                     source_id=idempotency_key,
-                    academy_id=academy_id,
+                    # Request-time tenant, not the composition-time closure:
+                    # every repo in this flow scopes by the ContextVar, and a
+                    # multi-tenant process would otherwise write the fee line
+                    # to the boot academy while cancelling in another.
+                    academy_id=current_academy_id(),
                     parent_id=parent_id,
                 )
             )

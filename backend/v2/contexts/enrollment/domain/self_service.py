@@ -32,6 +32,17 @@ class DuplicateAbsenceNotice(DomainError):
     status_code = 409
 
 
+class StudentNotEnrolledInSession(DomainError):
+    """Raised when a parent submits an absence notice or makeup request for
+    an occurrence whose session the student has no active or paused
+    enrollment in — otherwise a parent could file an absence against a
+    session the student never paid for and parlay it into a free makeup
+    class."""
+
+    code = "Enrollment.StudentNotEnrolledInSession"
+    status_code = 409
+
+
 class MakeupNotEligible(DomainError):
     """Raised when a makeup request is submitted without a window-met
     absence notice, when the academy's policy requires one."""

@@ -27,6 +27,7 @@ from backend.v2.contexts.enrollment.domain.self_service import (
     MakeupWindowExpired,
     OccurrenceRosterEntry,
     ParentSelfServicePolicy,
+    StudentNotEnrolledInSession,
 )
 
 
@@ -102,6 +103,21 @@ class _FakeNotices:
         return None
 
 
+def _enrollment(
+    *,
+    session_id: str = "session-1",
+    student_id: str = "student-1",
+    status: str = "active",
+) -> Enrollment:
+    return Enrollment(
+        enrollment_id=f"enr-{session_id}-{student_id}",
+        academy_id="acad",
+        session_id=session_id,
+        student_id=student_id,
+        status=status,  # type: ignore[arg-type]
+    )
+
+
 class _FakeMakeups:
     def __init__(self) -> None:
         self.added: list[MakeupRequest] = []
@@ -152,6 +168,7 @@ def _make_use_case(
     occurrences: _FakeOccurrences | None = None,
     notices: _FakeNotices | None = None,
     makeups: _FakeMakeups | None = None,
+    enrollments: list[Enrollment] | None = None,
     policy: ParentSelfServicePolicy | None = None,
     clock=_now,
 ) -> tuple[SubmitMakeupRequest, _FakeMakeups]:
@@ -159,6 +176,7 @@ def _make_use_case(
     use_case = SubmitMakeupRequest(
         students=_FakeStudents(),
         occurrences=occurrences or _FakeOccurrences(),
+        enrollments=_FakeEnrollments(enrollments if enrollments is not None else [_enrollment()]),
         notices=notices or _FakeNotices([_absence_notice()]),
         makeups=makeups,
         policies=_FakePolicies(policy),
@@ -212,6 +230,7 @@ async def test_submit_makeup_request_rejects_other_parents_student() -> None:
     use_case = SubmitMakeupRequest(
         students=_FakeStudents([_student(parent_id="parent-2")]),
         occurrences=_FakeOccurrences(),
+        enrollments=_FakeEnrollments([_enrollment()]),
         notices=_FakeNotices([_absence_notice()]),
         makeups=_FakeMakeups(),
         policies=_FakePolicies(),
@@ -354,6 +373,52 @@ async def test_submit_makeup_request_denied_request_does_not_block_new_one() -> 
     assert len(makeups.added) == 2
 
 
+@pytest.mark.asyncio
+async def test_submit_makeup_request_rejects_student_not_enrolled_in_session() -> None:
+    # Student belongs to the parent but has no enrollment in the missed
+    # occurrence's session -> 409 StudentNotEnrolledInSession (a parent must
+    # not earn a free class for a session the student never paid for).
+    use_case, _ = _make_use_case(enrollments=[])
+
+    with pytest.raises(StudentNotEnrolledInSession):
+        await use_case.execute(
+            SubmitMakeupRequestCommand(
+                parent_id="parent-1",
+                student_id="student-1",
+                missed_occurrence_id="occ-missed",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_submit_makeup_request_allows_paused_enrollment() -> None:
+    use_case, _ = _make_use_case(enrollments=[_enrollment(status="paused")])
+
+    result = await use_case.execute(
+        SubmitMakeupRequestCommand(
+            parent_id="parent-1",
+            student_id="student-1",
+            missed_occurrence_id="occ-missed",
+        )
+    )
+
+    assert result.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_submit_makeup_request_rejects_cancelled_enrollment() -> None:
+    use_case, _ = _make_use_case(enrollments=[_enrollment(status="cancelled")])
+
+    with pytest.raises(StudentNotEnrolledInSession):
+        await use_case.execute(
+            SubmitMakeupRequestCommand(
+                parent_id="parent-1",
+                student_id="student-1",
+                missed_occurrence_id="occ-missed",
+            )
+        )
+
+
 # --- ListParentMakeups -----------------------------------------------------
 
 
@@ -434,6 +499,14 @@ class _FakeEnrollments:
     async def is_active(self, session_id: str, student_id: str) -> bool:
         return any(
             e.session_id == session_id and e.student_id == student_id for e in self._enrollments
+        )
+
+    async def is_active_or_paused(self, session_id: str, student_id: str) -> bool:
+        return any(
+            e.session_id == session_id
+            and e.student_id == student_id
+            and e.status in ("active", "paused")
+            for e in self._enrollments
         )
 
 

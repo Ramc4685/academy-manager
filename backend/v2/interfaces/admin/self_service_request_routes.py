@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
     ApproveMakeupRequestCommand,
@@ -64,11 +64,11 @@ class AbsencesAdminResponse(BaseModel):
 
 
 class ApproveMakeupRequestBody(BaseModel):
-    target_occurrence_id: str
+    target_occurrence_id: str = Field(min_length=1, max_length=64)
 
 
 class DenyMakeupRequestBody(BaseModel):
-    reason: str
+    reason: str = Field(min_length=1, max_length=1000)
 
 
 class TrialRequestAdminRow(BaseModel):
@@ -94,11 +94,11 @@ class TrialRequestsAdminResponse(BaseModel):
 
 
 class ApproveTrialRequestBody(BaseModel):
-    occurrence_id: str
+    occurrence_id: str = Field(min_length=1, max_length=64)
 
 
 class DenyTrialRequestBody(BaseModel):
-    reason: str
+    reason: str = Field(min_length=1, max_length=1000)
 
 
 class SelfCancellationAdminRow(BaseModel):

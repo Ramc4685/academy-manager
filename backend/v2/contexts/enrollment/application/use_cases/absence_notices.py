@@ -21,6 +21,7 @@ from backend.v2.contexts.enrollment.domain.self_service import (
     AbsenceWindowClosed,
     DuplicateAbsenceNotice,
     ParentSelfServicePolicy,
+    StudentNotEnrolledInSession,
 )
 from backend.v2.shared.ids import new_ulid
 
@@ -54,6 +55,10 @@ class SessionOccurrenceRepository(Protocol):
     async def get(self, occurrence_id: str) -> SessionOccurrence | None: ...
 
 
+class EnrollmentQuery(Protocol):
+    async def is_active_or_paused(self, session_id: str, student_id: str) -> bool: ...
+
+
 class SelfServicePolicyRepository(Protocol):
     async def get_or_default(self) -> ParentSelfServicePolicy: ...
 
@@ -78,12 +83,14 @@ class SubmitAbsenceNotice:
         *,
         students: StudentQuery,
         occurrences: SessionOccurrenceRepository,
+        enrollments: EnrollmentQuery,
         notices: AbsenceNoticeRepository,
         policies: SelfServicePolicyRepository,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._students = students
         self._occurrences = occurrences
+        self._enrollments = enrollments
         self._notices = notices
         self._policies = policies
         self._now = clock
@@ -99,6 +106,13 @@ class SubmitAbsenceNotice:
             raise AbsenceWindowClosed(
                 "occurrence has already started or is not open for notice",
                 occurrence_id=cmd.occurrence_id,
+            )
+
+        if not await self._enrollments.is_active_or_paused(occurrence.session_id, cmd.student_id):
+            raise StudentNotEnrolledInSession(
+                "student has no active or paused enrollment in this occurrence's session",
+                session_id=occurrence.session_id,
+                student_id=cmd.student_id,
             )
 
         existing = await self._notices.get_for_occurrence_and_student(

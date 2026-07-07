@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from pymongo.errors import DuplicateKeyError
+
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import AbsenceNotice
+from backend.v2.contexts.enrollment.domain.self_service import DuplicateAbsenceNotice
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
 
@@ -36,7 +39,18 @@ class MongoAbsenceNoticeRepository(TenantScopedRepository):
         }
 
     async def add(self, notice: AbsenceNotice) -> None:
-        await self._insert_one(self._to_doc(notice))
+        try:
+            await self._insert_one(self._to_doc(notice))
+        except DuplicateKeyError as exc:
+            # The use case's check-then-insert can race a concurrent
+            # double-submit; the unique (academy_id, occurrence_id,
+            # student_id) index from migration 0145 wins that race here —
+            # translate to the same 409 the pre-check raises.
+            raise DuplicateAbsenceNotice(
+                "an absence notice already exists for this occurrence and student",
+                occurrence_id=notice.occurrence_id,
+                student_id=notice.student_id,
+            ) from exc
 
     async def get_for_occurrence_and_student(
         self, occurrence_id: str, student_id: str

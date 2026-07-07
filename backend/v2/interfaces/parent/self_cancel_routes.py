@@ -39,7 +39,7 @@ class CancellationPreviewResponse(BaseModel):
 
 
 class SelfCancelRequest(BaseModel):
-    reason: str = Field(min_length=1)
+    reason: str = Field(min_length=1, max_length=1000)
 
 
 class SelfCancelResponse(BaseModel):

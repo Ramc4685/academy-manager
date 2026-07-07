@@ -10,9 +10,10 @@ v1 scope (no-charge trials only).
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
     SubmitTrialRequestCommand,
@@ -25,13 +26,15 @@ router = APIRouter(tags=["parent.trial_requests"])
 
 
 class CreateTrialRequestRequest(BaseModel):
-    student_ref: str
+    # Literal (not str) so an unknown student_ref is a 422 at the interface
+    # instead of a ValueError -> 500 inside the use-case command validator.
+    student_ref: Literal["prospective", "existing_student"]
     requested_session_id: str
-    preferred_start: str
-    preferred_end: str
+    preferred_start: str = Field(max_length=32)
+    preferred_end: str = Field(max_length=32)
     student_id: str | None = None
-    prospective_child_name: str | None = None
-    prospective_child_dob: str | None = None
+    prospective_child_name: str | None = Field(default=None, max_length=200)
+    prospective_child_dob: str | None = Field(default=None, max_length=32)
 
 
 class TrialRequestView(BaseModel):

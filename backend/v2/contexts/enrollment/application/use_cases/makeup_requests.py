@@ -41,6 +41,7 @@ from backend.v2.contexts.enrollment.domain.self_service import (
     OccurrenceFull,
     OccurrenceRosterEntry,
     ParentSelfServicePolicy,
+    StudentNotEnrolledInSession,
     open_slots,
 )
 from backend.v2.shared.ids import new_ulid
@@ -74,6 +75,10 @@ class SessionOccurrenceRepository(Protocol):
     async def get(self, occurrence_id: str) -> SessionOccurrence | None: ...
 
 
+class SubmitterEnrollmentQuery(Protocol):
+    async def is_active_or_paused(self, session_id: str, student_id: str) -> bool: ...
+
+
 class AbsenceNoticeQuery(Protocol):
     async def get_for_occurrence_and_student(
         self, occurrence_id: str, student_id: str
@@ -100,6 +105,7 @@ class SubmitMakeupRequest:
         *,
         students: StudentQuery,
         occurrences: SessionOccurrenceRepository,
+        enrollments: SubmitterEnrollmentQuery,
         notices: AbsenceNoticeQuery,
         makeups: MakeupRequestRepository,
         policies: SelfServicePolicyRepository,
@@ -107,6 +113,7 @@ class SubmitMakeupRequest:
     ) -> None:
         self._students = students
         self._occurrences = occurrences
+        self._enrollments = enrollments
         self._notices = notices
         self._makeups = makeups
         self._policies = policies
@@ -123,6 +130,13 @@ class SubmitMakeupRequest:
             raise MakeupWindowExpired(
                 "cannot request a makeup for an occurrence that hasn't happened yet",
                 occurrence_id=cmd.missed_occurrence_id,
+            )
+
+        if not await self._enrollments.is_active_or_paused(missed.session_id, cmd.student_id):
+            raise StudentNotEnrolledInSession(
+                "student has no active or paused enrollment in the missed occurrence's session",
+                session_id=missed.session_id,
+                student_id=cmd.student_id,
             )
 
         policy = await self._policies.get_or_default()
