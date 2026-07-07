@@ -215,6 +215,15 @@ All changes to `main` must go through a pull request. Do not push directly to
 `main`, and do not merge a feature branch locally into `main`; open a PR, wait
 for required checks/review, then merge through GitHub.
 
+### Required: code review before every push
+
+Before every `git push`, run the `/code-review` skill against the diff and
+address the findings — fix them, or explicitly state why a finding is a false
+positive. The Codex CLI (`codex exec review`) is no longer required here; it
+was prone to long/stalled runs. Push only after the review is clean or every
+finding is dispositioned. This is in addition to
+`scripts/dev/pre-push-checks.sh` (run automatically by the pre-push hook).
+
 Never run without explicit approval:
 
 ```bash

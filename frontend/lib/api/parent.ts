@@ -128,6 +128,8 @@ export interface ParentInvoice {
   due_date: string;
   pdf_url: string | null;
   created_at: string;
+  /** Enrollment covered by this invoice; null/absent for legacy or non-enrollment invoices. */
+  enrollment_id?: string | null;
 }
 
 export interface ParentInvoiceLine {
@@ -330,6 +332,8 @@ export function startParentInvoicePayment(
   payload: {
     success_url: string;
     cancel_url: string;
+    /** When true, the payment also saves the method and enrolls the covered enrollment in autopay. */
+    enroll_autopay: boolean;
   },
 ): Promise<{ invoice_id: string; redirect_url: string }> {
   return apiFetch(`/parent/invoices/${encodeURIComponent(invoiceId)}/pay`, {
@@ -341,6 +345,8 @@ export function startParentInvoicePayment(
 export function startParentBalancePayment(payload: {
   success_url: string;
   cancel_url: string;
+  /** When true, the payment also saves the method and enrolls all covered enrollments in autopay. */
+  enroll_autopay: boolean;
 }): Promise<{ redirect_url: string }> {
   return apiFetch("/parent/invoices/pay-balance", {
     method: "POST",

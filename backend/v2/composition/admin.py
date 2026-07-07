@@ -37,6 +37,10 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     SendDuesReminders,
     UndoPaymentPaid,
 )
+from backend.v2.contexts.billing.application.use_cases.billing_settings_admin import (
+    GetPlatformChargeFallback,
+    SetPlatformChargeFallback,
+)
 from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopay import (
     ChargeInvoiceViaAutopay,
 )
@@ -2820,6 +2824,11 @@ def compose_admin(
         audit=payout_audit_log,
     )
     list_payout_audit_entries = ListPayoutAuditEntries(audit=payout_audit_log)
+    get_platform_charge_fallback = GetPlatformChargeFallback(settings=billing_settings_repo)
+    set_platform_charge_fallback = SetPlatformChargeFallback(
+        settings=billing_settings_repo,
+        audit=billing_audit_log,
+    )
 
     async def _describe_payout_occurrences(
         occurrence_ids: list[str],
@@ -5505,6 +5514,8 @@ def compose_admin(
         approve_trial_request=approve_trial_request,
         deny_trial_request=deny_trial_request,
         list_self_cancellations_for_admin=list_self_cancellations_for_admin,
+        get_platform_charge_fallback=get_platform_charge_fallback,
+        set_platform_charge_fallback=set_platform_charge_fallback,
         generate_monthly_payments=generate_monthly_payments,
         mark_payment_paid=mark_payment_paid,
         apply_payment_discount=apply_payment_discount,

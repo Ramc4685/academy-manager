@@ -620,6 +620,34 @@ class HandleWebhookEvent:
                 amount_total,
             )
 
+        await self._maybe_activate_autopay_optin(obj)
+
+    async def _maybe_activate_autopay_optin(self, checkout: dict[str, Any]) -> None:
+        """Autopay activation for an opted-in payment checkout.
+
+        Runs after the ledger bookkeeping, whose writes are idempotent, so it
+        is safe for a failure here to fail the whole event: the worker retries
+        the event with backoff and the replay re-runs only what didn't stick.
+        Permanent metadata problems quarantine instead — retrying can't fix a
+        malformed opt-in, but it should stay visible for manual replay.
+        """
+        metadata = checkout.get("metadata") or {}
+        if not isinstance(metadata, dict) or str(metadata.get("autopay_optin") or "") != "true":
+            return
+        if self._complete_autopay_setup is None:
+            log.warning(
+                "autopay opt-in activation skipped: dependencies not configured session=%s",
+                checkout.get("id"),
+            )
+            return
+        try:
+            await self._complete_autopay_setup.execute_from_payment_checkout(
+                checkout,
+                consent_context=AutopayConsentCaptureContext(source="stripe_webhook"),
+            )
+        except (PaymentNotFound, ValueError) as exc:
+            raise _QuarantineStripeEvent(str(exc)) from exc
+
     async def _handle_balance_checkout_completed(self, event: dict[str, Any]) -> None:
         """Handle checkout.session.completed for a parent balance payment."""
         if self._billing_ledger is None:
@@ -702,6 +730,8 @@ class HandleWebhookEvent:
             payment.payment_id,
             allocated,
         )
+
+        await self._maybe_activate_autopay_optin(obj)
 
     async def _on_checkout_completed(self, event: dict[str, Any]) -> None:
         obj = event["data"]["object"]

@@ -39,6 +39,7 @@ from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     GetCheckoutStatus,
     StartSubscriptionCheckout,
     StartSubscriptionCheckoutCommand,
+    _success_url_with_checkout_session_placeholder,
 )
 from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
@@ -270,8 +271,17 @@ class _MongoTransactionRunner:
                 if self._is_transaction_unavailable(exc):
                     return await work(None)
                 raise
-            async with transaction_context:
-                return await work(session)
+            try:
+                async with transaction_context:
+                    return await work(session)
+            except OperationFailure as exc:
+                if self._is_transaction_unavailable(exc):
+                    # The transaction context manager already aborted the
+                    # transaction on exception exit; work(None) must be safe
+                    # to re-invoke since the standalone-Mongo failure occurs
+                    # on the FIRST operation inside work, before any writes.
+                    return await work(None)
+                raise
 
     @staticmethod
     def _is_transaction_unavailable(exc: OperationFailure) -> bool:
@@ -1139,6 +1149,7 @@ def compose_parent(
         invoice_id: str,
         success_url: str,
         cancel_url: str,
+        enroll_autopay: bool = False,
     ):
         _validate_checkout_redirect_urls(success_url, cancel_url)
         invoice = await billing_ledger_repo.get_invoice(invoice_id)
@@ -1147,15 +1158,24 @@ def compose_parent(
         if invoice.status not in {"open", "partially_paid"} or invoice.balance_due_cents <= 0:
             raise ValueError("invoice is not payable")
         invoice_stripe = stripe if hasattr(stripe, "create_invoice_checkout_session") else None
+        # Opted-in payments must return with a checkout_session_id so the
+        # parent app's checkout-status poll can pick up autopay activation
+        # instead of relying solely on the webhook. Unmodified when not
+        # opted in, so the plain one-time-payment redirect is unchanged.
+        redirect_success_url = (
+            _success_url_with_checkout_session_placeholder(success_url)
+            if enroll_autopay
+            else success_url
+        )
         result = await SendInvoice(
             ledger=billing_ledger_repo,
             stripe=invoice_stripe,  # type: ignore[arg-type]
             email=None,
             connected_accounts=connected_accounts_repo,
             settings=billing_settings_repo,
-            success_url=success_url,
+            success_url=redirect_success_url,
             cancel_url=cancel_url,
-        ).execute(invoice_id)
+        ).execute(invoice_id, enroll_autopay=enroll_autopay)
         if not result.checkout_url:
             raise ValueError("invoice payment link unavailable")
         return {
@@ -1168,6 +1188,7 @@ def compose_parent(
         parent_id: str,
         success_url: str,
         cancel_url: str,
+        enroll_autopay: bool = False,
     ):
         _validate_checkout_redirect_urls(success_url, cancel_url)
         all_invoices = await billing_ledger_repo.list_invoices_for_parent(parent_id)
@@ -1184,6 +1205,7 @@ def compose_parent(
                 invoice_id=payable[0].invoice_id,
                 success_url=success_url,
                 cancel_url=cancel_url,
+                enroll_autopay=enroll_autopay,
             )
             if result is None:
                 raise ValueError("invoice not found")
@@ -1229,12 +1251,34 @@ def compose_parent(
         # invoice set reuse one Stripe Checkout session instead of creating
         # duplicate collection attempts.
         fingerprint = hashlib.sha256(f"{academy_id}:{parent_id}:{invoice_ids}".encode()).hexdigest()
+        # Autopay opt-in kwargs are only passed when requested so the plain
+        # balance-payment gateway call stays byte-identical. The opt-in
+        # idempotency key is distinct: an earlier one-time balance session must
+        # not be replayed without the saved-payment-method params.
+        idempotency_key = f"balance-payment:{fingerprint}"
+        autopay_kwargs: dict[str, Any] = {}
+        if enroll_autopay:
+            idempotency_key = f"{idempotency_key}:autopay-optin"
+            autopay_kwargs = {
+                "save_payment_method_for_autopay": True,
+                "autopay_enrollment_ids": sorted(
+                    {inv.enrollment_id for inv in payable if inv.enrollment_id}
+                ),
+            }
+        # Same reasoning as the single-invoice path: opted-in payments need a
+        # checkout_session_id on return so the checkout-status poll can pick
+        # up activation instead of relying solely on the webhook.
+        redirect_success_url = (
+            _success_url_with_checkout_session_placeholder(success_url)
+            if enroll_autopay
+            else success_url
+        )
         try:
             _, url = await invoice_stripe.create_invoice_checkout_session(
                 invoice_id=f"balance-{parent_id[:8]}",
                 amount_cents=total_cents,
                 currency=currency,
-                success_url=success_url,
+                success_url=redirect_success_url,
                 cancel_url=cancel_url,
                 metadata={
                     "academy_id": academy_id,
@@ -1243,8 +1287,9 @@ def compose_parent(
                     "source": "invoice_balance",
                     "type": "balance_payment",
                 },
-                idempotency_key=f"balance-payment:{fingerprint}",
+                idempotency_key=idempotency_key,
                 connected_account_id=connected_account_stripe_id,
+                **autopay_kwargs,
             )
         except Exception as exc:
             log.warning(
@@ -1369,13 +1414,18 @@ def compose_parent(
                 cancel_url=cancel_url,
             )
         )
+        # Do NOT stamp subscription_id / subscription_status here. Autopay setup
+        # no longer writes a `subscriptions` document (removed in #266): the setup
+        # runs in Stripe "setup" mode and completion is tracked on
+        # student_billing_enrollments.autopay_enrollment_status via
+        # CompleteAutopaySetup. Writing result.subscription_id would leave the
+        # enrollment pointing at a nonexistent doc, and "incomplete" would never
+        # be cleared — producing permanent dangling/stuck state on every setup.
         await db["enrollments"].update_one(
             {"academy_id": academy_id, "enrollment_id": enrollment_id},
             {
                 "$set": {
                     "payment_mode": "monthly",
-                    "subscription_status": "incomplete",
-                    "subscription_id": result.subscription_id,
                     "updated_at": datetime.now(UTC),
                 }
             },

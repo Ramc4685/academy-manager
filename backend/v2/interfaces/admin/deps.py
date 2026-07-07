@@ -344,6 +344,10 @@ class AdminUseCases:
     deny_trial_request: DenyTrialRequest | None = None
     # Self-cancel audit list (R4, Task 8)
     list_self_cancellations_for_admin: ListSelfCancellationsForAdmin | None = None
+    # Platform-charge fallback escape hatch (2026-07-04 incident follow-up):
+    # audited admin toggle for billing_settings.allow_platform_charge_fallback.
+    get_platform_charge_fallback: object | None = None  # GetPlatformChargeFallback
+    set_platform_charge_fallback: object | None = None  # SetPlatformChargeFallback
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:

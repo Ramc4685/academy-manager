@@ -3846,3 +3846,255 @@ async def test_unknown_event_type_is_ignored() -> None:
     ).encode()
     res = await uc.execute(body, "test_signature")
     assert res["received"] is True
+
+
+# ---------------------------------------------------------------------------
+# Autopay opt-in at payment time (checkout.session.completed, mode=payment)
+# ---------------------------------------------------------------------------
+
+
+class _OptinFakeStripeGateway(FakeStripeGateway):
+    """FakeStripeGateway with resolvable PaymentIntents for opt-in payments."""
+
+    def __init__(self, *, payment_intent_error: Exception | None = None) -> None:
+        super().__init__()
+        self.payment_intent_objects: dict[str, dict[str, Any]] = {}
+        self._payment_intent_error = payment_intent_error
+
+    async def retrieve_payment_intent(self, stripe_payment_intent_id: str) -> dict[str, Any]:
+        if self._payment_intent_error is not None:
+            raise self._payment_intent_error
+        stored = self.payment_intent_objects.get(stripe_payment_intent_id)
+        if stored is not None:
+            return dict(stored)
+        return await super().retrieve_payment_intent(stripe_payment_intent_id)
+
+
+def _optin_stripe(*, payment_intent_error: Exception | None = None) -> _OptinFakeStripeGateway:
+    stripe = _OptinFakeStripeGateway(payment_intent_error=payment_intent_error)
+    stripe.payment_intent_objects["pi_optin"] = {
+        "id": "pi_optin",
+        "object": "payment_intent",
+        "customer": "cus_optin_parent",
+        "payment_method": "pm_optin",
+    }
+    stripe.payment_methods["pm_optin"] = {
+        "id": "pm_optin",
+        "object": "payment_method",
+        "type": "card",
+        "card": {"brand": "visa", "last4": "4242"},
+    }
+    return stripe
+
+
+def _optin_invoice_checkout_event(
+    *,
+    event_id: str = "evt_optin_invoice",
+    session_id: str = "cs_optin_invoice",
+    metadata: dict[str, str],
+) -> bytes:
+    return json.dumps(
+        {
+            "id": event_id,
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": session_id,
+                    "mode": "payment",
+                    "payment_intent": "pi_optin",
+                    "amount_total": 10_000,
+                    "currency": "usd",
+                    "customer": "cus_optin_parent",
+                    "metadata": metadata,
+                }
+            },
+        }
+    ).encode()
+
+
+@pytest.mark.asyncio
+async def test_invoice_checkout_completed_with_autopay_optin_activates_enrollment() -> None:
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-optin",
+            parent_id="parent-optin",
+            balance_due_cents=10_000,
+            enrollment_id="enr-1",
+        )
+    )
+    parent_customers = FakeParentStripeCustomers()
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    consent_repo = FakeAutopayConsentRepo()
+    uc = _build(
+        FakePaymentRepo(),
+        billing_ledger=ledger,
+        parent_customers=parent_customers,
+        enrollment_autopay=enrollment_autopay,
+        consent_repo=consent_repo,
+        stripe=_optin_stripe(),
+    )
+    body = _optin_invoice_checkout_event(
+        metadata={
+            "academy_id": "acad",
+            "parent_id": "parent-optin",
+            "invoice_id": "inv-optin",
+            "source": "invoice_pay_link",
+            "autopay_optin": "true",
+            "enrollment_ids": "enr-1",
+        },
+    )
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="worker-1")
+
+    assert res["processed"] is True
+    # Ledger bookkeeping unchanged.
+    assert ledger.invoices["inv-optin"].status == "paid"
+    assert list(ledger.payments) == ["ledger-pay-cs:cs_optin_invoice"]
+    # Autopay activated from the payment checkout.
+    assert enrollment_autopay.setup_completed == ["enr-1"]
+    assert len(consent_repo.consents) == 1
+    assert consent_repo.consents[0].source == "invoice_payment_optin"
+    assert parent_customers.default_methods
+
+
+@pytest.mark.asyncio
+async def test_balance_checkout_completed_with_autopay_optin_activates_all_enrollments() -> None:
+    first = _ledger_invoice(
+        invoice_id="inv-optin-1",
+        parent_id="parent-optin",
+        balance_due_cents=4_000,
+        enrollment_id="enr-1",
+    )
+    second = _ledger_invoice(
+        invoice_id="inv-optin-2",
+        parent_id="parent-optin",
+        balance_due_cents=6_000,
+        enrollment_id="enr-2",
+    )
+    ledger = FakeBillingLedger(first)
+    ledger.invoices[second.invoice_id] = second
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    uc = _build(
+        FakePaymentRepo(),
+        billing_ledger=ledger,
+        parent_customers=FakeParentStripeCustomers(),
+        enrollment_autopay=enrollment_autopay,
+        consent_repo=FakeAutopayConsentRepo(),
+        stripe=_optin_stripe(),
+    )
+    body = _optin_invoice_checkout_event(
+        event_id="evt_optin_balance",
+        session_id="cs_optin_balance",
+        metadata={
+            "academy_id": "acad",
+            "parent_id": "parent-optin",
+            "invoice_ids": "inv-optin-1,inv-optin-2",
+            "type": "balance_payment",
+            "autopay_optin": "true",
+            "enrollment_ids": "enr-1,enr-2",
+        },
+    )
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="worker-1")
+
+    assert res["processed"] is True
+    assert ledger.invoices["inv-optin-1"].status == "paid"
+    assert ledger.invoices["inv-optin-2"].status == "paid"
+    assert enrollment_autopay.setup_completed == ["enr-1", "enr-2"]
+
+
+@pytest.mark.asyncio
+async def test_invoice_checkout_optin_transient_activation_failure_retries() -> None:
+    """A transient activation failure (e.g. Stripe retrieval blip) must mark
+    the event failed so the worker retries it — never silently drop the
+    opt-in after marking the event processed. Ledger bookkeeping is
+    idempotent, so the replay both keeps the payment recorded once and
+    completes the activation."""
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-optin",
+            parent_id="parent-optin",
+            balance_due_cents=10_000,
+            enrollment_id="enr-1",
+        )
+    )
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    stripe = _optin_stripe(payment_intent_error=RuntimeError("stripe unavailable"))
+    uc = _build(
+        FakePaymentRepo(),
+        billing_ledger=ledger,
+        parent_customers=FakeParentStripeCustomers(),
+        enrollment_autopay=enrollment_autopay,
+        consent_repo=FakeAutopayConsentRepo(),
+        stripe=stripe,
+    )
+    body = _optin_invoice_checkout_event(
+        metadata={
+            "academy_id": "acad",
+            "parent_id": "parent-optin",
+            "invoice_id": "inv-optin",
+            "source": "invoice_pay_link",
+            "autopay_optin": "true",
+            "enrollment_ids": "enr-1",
+        },
+    )
+
+    await uc.accept(body, "test_signature")
+    failed = await uc.process_next(processor_id="worker-1")
+
+    # Event failed (retryable), ledger bookkeeping intact, no activation yet.
+    assert failed["processed"] is False
+    assert failed["status"] == "failed"
+    assert ledger.invoices["inv-optin"].status == "paid"
+    assert list(ledger.payments) == ["ledger-pay-cs:cs_optin_invoice"]
+    assert enrollment_autopay.setup_completed == []
+
+    # Stripe recovers; the retry replays the event idempotently and activates.
+    stripe._payment_intent_error = None
+    retried = await uc.process_next(processor_id="worker-1")
+
+    assert retried["processed"] is True
+    assert list(ledger.payments) == ["ledger-pay-cs:cs_optin_invoice"]
+    assert enrollment_autopay.setup_completed == ["enr-1"]
+
+
+@pytest.mark.asyncio
+async def test_invoice_checkout_completed_without_optin_does_not_touch_autopay() -> None:
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-optin",
+            parent_id="parent-optin",
+            balance_due_cents=10_000,
+            enrollment_id="enr-1",
+        )
+    )
+    parent_customers = FakeParentStripeCustomers()
+    enrollment_autopay = FakeEnrollmentAutopayState()
+    consent_repo = FakeAutopayConsentRepo()
+    uc = _build(
+        FakePaymentRepo(),
+        billing_ledger=ledger,
+        parent_customers=parent_customers,
+        enrollment_autopay=enrollment_autopay,
+        consent_repo=consent_repo,
+        stripe=_optin_stripe(),
+    )
+    body = _optin_invoice_checkout_event(
+        metadata={
+            "academy_id": "acad",
+            "parent_id": "parent-optin",
+            "invoice_id": "inv-optin",
+            "source": "invoice_pay_link",
+        },
+    )
+
+    await uc.accept(body, "test_signature")
+    res = await uc.process_next(processor_id="worker-1")
+
+    assert res["processed"] is True
+    assert ledger.invoices["inv-optin"].status == "paid"
+    assert enrollment_autopay.setup_completed == []
+    assert consent_repo.consents == []
+    assert parent_customers.default_methods == []

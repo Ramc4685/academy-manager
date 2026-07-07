@@ -146,6 +146,83 @@ class MongoStudentBillingEnrollmentRepository(TenantScopedRepository):
             )
         return applied
 
+    # Legacy enrollments in these statuses have a live billing relationship and
+    # may self-heal into a projection doc; cancelled/withdrawn ones must not.
+    _LEGACY_BACKFILLABLE_STATUSES = frozenset({"active", "paused"})
+
+    async def _create_projection_from_legacy_enrollment(
+        self, *, enrollment_id: str, session: Any | None = None
+    ) -> bool:
+        """Self-heal for enrollments created by the legacy flow (``enrollments``
+        collection), which never wrote a ``student_billing_enrollments``
+        projection (2026-07-04 prod incident: autopay setup completion failed
+        with "enrollment not found" and stuck the checkout-status poll).
+
+        Insert-only (``$setOnInsert``): an existing projection is never
+        modified. Mirrors migration 0145's mapping — ``session_type_id`` from
+        the legacy ``session_id``, ``billing_start_date`` from ``enrolled_at``,
+        autopay status starts at ``offered``.
+        """
+        legacy = await self._find_one_in_collection(
+            "enrollments", {"enrollment_id": enrollment_id}, session=session
+        )
+        if legacy is None:
+            return False
+        status = str(legacy.get("status") or "active")
+        if legacy.get("is_deleted") is True or status not in self._LEGACY_BACKFILLABLE_STATUSES:
+            log.warning(
+                "autopay projection self-heal skipped: legacy enrollment not billable "
+                "enrollment_id=%s status=%s",
+                enrollment_id,
+                status,
+            )
+            return False
+        parent_id = legacy.get("parent_id") or legacy.get("parent_user_id")
+        student_id = legacy.get("student_id")
+        session_id = legacy.get("session_id")
+        if not parent_id and student_id:
+            # Same fallback as migration 0145: older legacy enrollments carry
+            # the parent only on the student document.
+            student = await self._find_one_in_collection(
+                "students", {"student_id": str(student_id)}, session=session
+            )
+            if student is not None:
+                parent_id = student.get("parent_id") or student.get("parent_user_id")
+        if not (parent_id and student_id and session_id):
+            log.warning(
+                "autopay projection self-heal skipped: legacy enrollment missing identity "
+                "enrollment_id=%s parent=%s student=%s session=%s",
+                enrollment_id,
+                bool(parent_id),
+                bool(student_id),
+                bool(session_id),
+            )
+            return False
+        now = datetime.now(UTC)
+        enrolled_at = legacy.get("enrolled_at") or legacy.get("created_at") or now
+        await self._update_one(
+            {"enrollment_id": enrollment_id},
+            {
+                "$setOnInsert": {
+                    "student_id": str(student_id),
+                    "parent_id": str(parent_id),
+                    "session_type_id": str(session_id),
+                    "billing_start_date": enrolled_at,
+                    "status": status,
+                    "autopay_enrollment_status": "offered",
+                    "enrolled_at": enrolled_at,
+                    "updated_at": now,
+                }
+            },
+            upsert=True,
+            session=session,
+        )
+        log.info(
+            "autopay projection self-healed from legacy enrollment enrollment_id=%s",
+            enrollment_id,
+        )
+        return True
+
     async def mark_autopay_active_from_setup(
         self, *, enrollment_id: str, session: Any | None = None
     ) -> bool:
@@ -160,8 +237,13 @@ class MongoStudentBillingEnrollmentRepository(TenantScopedRepository):
         the guarded path so the invariant is never bypassed. Idempotent: an
         already-``active`` enrollment is a no-op that returns True.
 
+        When no projection doc exists (enrollment predates the projection —
+        created by the legacy flow), it is auto-created from the legacy
+        ``enrollments`` doc before walking, so setup completion degrades
+        gracefully instead of failing.
+
         Returns True if the enrollment ends up ``active``, False if it could
-        not be resolved (e.g. enrollment not found).
+        not be resolved (e.g. enrollment not found anywhere).
         """
         walk_to_active: dict[str, list[AutopayEnrollmentStatus]] = {
             "not_offered": ["offered", "setup_started", "active"],
@@ -172,6 +254,12 @@ class MongoStudentBillingEnrollmentRepository(TenantScopedRepository):
             "active": [],
         }
         existing = await self._find_one({"enrollment_id": enrollment_id}, session=session)
+        if existing is None:
+            created = await self._create_projection_from_legacy_enrollment(
+                enrollment_id=enrollment_id, session=session
+            )
+            if created:
+                existing = await self._find_one({"enrollment_id": enrollment_id}, session=session)
         if existing is None:
             log.warning(
                 "autopay setup completion skipped: enrollment not found enrollment_id=%s",

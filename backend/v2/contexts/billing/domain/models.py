@@ -31,6 +31,7 @@ AutopayConsentSource = Literal[
     "parent_checkout_status",
     "stripe_webhook",
     "setup_intent_webhook",
+    "invoice_payment_optin",
     "unknown",
 ]
 
