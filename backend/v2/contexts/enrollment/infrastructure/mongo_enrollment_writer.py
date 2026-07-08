@@ -71,6 +71,15 @@ class MongoEnrollmentWriter(TenantScopedRepository):
             }
         await self._update_one({"enrollment_id": enrollment_id}, update)
 
+    async def add_skip_period(self, enrollment_id: str, period: str) -> None:
+        await self._update_one(
+            {"enrollment_id": enrollment_id},
+            {
+                "$addToSet": {"skip_periods": period},
+                "$set": {"updated_at": datetime.now(UTC)},
+            },
+        )
+
     @staticmethod
     def _to_domain(doc: dict[str, object]) -> Enrollment:
         return Enrollment(

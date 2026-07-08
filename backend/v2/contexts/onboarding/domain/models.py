@@ -76,6 +76,8 @@ class Application(BaseModel):
     decision_reason: str | None = None
     decided_by: str | None = None
     decided_at: datetime | None = None
+    # "YYYY-MM" billed $0 at checkout; see admin_registration_review
+    zero_quote_period: str | None = None
     expires_at: datetime  # 7d TTL after creation
     created_at: datetime
     updated_at: datetime

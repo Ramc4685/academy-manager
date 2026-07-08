@@ -1030,3 +1030,4 @@ async def test_zero_amount_checkout_skips_stripe_and_moves_to_pending_approval(
     assert result.redirect_url == success_url
     app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
     assert app_doc["status"] == "PENDING_APPROVAL"
+    assert app_doc["zero_quote_period"] == now.strftime("%Y-%m")

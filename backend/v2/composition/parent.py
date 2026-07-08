@@ -1192,6 +1192,14 @@ def compose_parent(
             # charge — Stripe rejects zero-amount Checkout Sessions. Skip
             # payment and move the application straight to admin review;
             # regular monthly billing starts next month.
+            #
+            # Persist which period was quoted $0 so admin approval can stamp
+            # skip_periods on the enrollment — otherwise the monthly billing
+            # generator has no proration signal at all (enrollment docs never
+            # carry billing_start_at/created_at) and would charge full tuition
+            # for this period once the enrollment exists.
+            zero_quote_period = datetime.now(UTC).strftime("%Y-%m")
+            await apps_repo.save(app.model_copy(update={"zero_quote_period": zero_quote_period}))
             if quote.snapshot_id:
                 await payments_repo.consume_quote_snapshot(quote.snapshot_id)
             await transition.execute(app.application_id, "CHECKOUT_PENDING")
