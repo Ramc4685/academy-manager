@@ -10,8 +10,11 @@ from fastapi.responses import Response
 
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
+    AdminDepositSlipResponse,
     AdminProjectedIncomeResponse,
+    AdminRefundsReportResponse,
     AdminReportsDashboardResponse,
+    AdminRevenueByCategoryResponse,
     AdminSessionEconomicsResponse,
     AttendanceTrendsResponse,
     CoachUtilizationResponse,
@@ -22,7 +25,17 @@ from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
 _PERIOD_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
-_EXPORT_REPORTS = frozenset({"pending-payments", "revenue", "attendance"})
+_EXPORT_REPORTS = frozenset(
+    {
+        "pending-payments",
+        "revenue",
+        "attendance",
+        "refunds",
+        "revenue-by-category",
+        "deposit-slip",
+        "quickbooks",
+    }
+)
 
 router = APIRouter(tags=["admin.reports"])
 
@@ -115,17 +128,68 @@ async def get_coach_utilization(
     return CoachUtilizationResponse(**result.model_dump())
 
 
+def _validated_month(period: str) -> str:
+    year = int(period[0:4])
+    month = int(period[5:7])
+    if year < 1 or month < 1 or month > 12:
+        raise HTTPException(status_code=422, detail="period must be YYYY-MM")
+    return period
+
+
+@router.get("/reports/refunds", response_model=AdminRefundsReportResponse)
+async def get_refunds_report(
+    period: Annotated[str, Query(pattern=r"^\d{4}-\d{2}$")],
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminRefundsReportResponse:
+    _validated_month(period)
+    if use_cases.get_refunds_report is None:
+        raise HTTPException(status_code=503, detail="refunds report is unavailable")
+    result = await use_cases.get_refunds_report(period)  # type: ignore[operator]
+    return AdminRefundsReportResponse(**result)
+
+
+@router.get("/reports/revenue-by-category", response_model=AdminRevenueByCategoryResponse)
+async def get_revenue_by_category_report(
+    period: Annotated[str, Query(pattern=r"^\d{4}-\d{2}$")],
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminRevenueByCategoryResponse:
+    _validated_month(period)
+    if use_cases.get_revenue_by_category_report is None:
+        raise HTTPException(status_code=503, detail="revenue by category report is unavailable")
+    result = await use_cases.get_revenue_by_category_report(period)  # type: ignore[operator]
+    return AdminRevenueByCategoryResponse(**result)
+
+
+@router.get("/reports/deposit-slip", response_model=AdminDepositSlipResponse)
+async def get_deposit_slip_report(
+    period: Annotated[str, Query(pattern=r"^\d{4}-\d{2}$")],
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminDepositSlipResponse:
+    _validated_month(period)
+    if use_cases.get_deposit_slip_report is None:
+        raise HTTPException(status_code=503, detail="deposit slip report is unavailable")
+    result = await use_cases.get_deposit_slip_report(period)  # type: ignore[operator]
+    return AdminDepositSlipResponse(**result)
+
+
 @router.get("/reports/{report_name}.csv")
 async def export_report_csv(
     report_name: str,
+    period: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}$")] = None,
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> Response:
     if report_name not in _EXPORT_REPORTS:
         raise HTTPException(status_code=404, detail="Report export not found")
-    csv_text = await use_cases.export_report_csv(report_name)  # type: ignore[operator]
+    if period is not None:
+        _validated_month(period)
+    csv_text = await use_cases.export_report_csv(report_name, period)  # type: ignore[operator]
+    filename = f"{report_name}-{period}.csv" if period else f"{report_name}.csv"
     return Response(
         content=csv_text,
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{report_name}.csv"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

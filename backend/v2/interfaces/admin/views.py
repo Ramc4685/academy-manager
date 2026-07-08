@@ -1559,6 +1559,74 @@ class ReportsKpiResponse(BaseModel):
     pending_waivers: int = 0
 
 
+class AdminRefundRow(BaseModel):
+    refund_at: str | None = None
+    invoice_id: str | None = None
+    invoice_number: str | None = None
+    payment_id: str | None = None
+    parent_id: str | None = None
+    student_id: str | None = None
+    amount_cents: int = 0
+    reason: str | None = None
+    actor_id: str | None = None
+
+
+class AdminCreditRow(BaseModel):
+    credit_id: str
+    created_at: str | None = None
+    parent_id: str | None = None
+    student_id: str | None = None
+    invoice_id: str | None = None
+    type: str | None = None
+    status: str | None = None
+    amount_cents: int = 0
+    remaining_amount_cents: int = 0
+    reason: str | None = None
+
+
+class AdminRefundsReportResponse(BaseModel):
+    period: str
+    total_refunded_cents: int = 0
+    refund_count: int = 0
+    refunds: list[AdminRefundRow] = Field(default_factory=list)
+    total_credit_cents: int = 0
+    credit_count: int = 0
+    credits: list[AdminCreditRow] = Field(default_factory=list)
+
+
+class AdminRevenueCategoryRow(BaseModel):
+    category: str
+    category_label: str | None = None
+    amount_cents: int = 0
+
+
+class AdminRevenueByCategoryResponse(BaseModel):
+    period: str
+    total_allocated_cents: int = 0
+    unapplied_cents: int = 0
+    rows: list[AdminRevenueCategoryRow] = Field(default_factory=list)
+
+
+class AdminDepositSlipMethodRow(BaseModel):
+    method: str
+    amount_cents: int = 0
+    count: int = 0
+
+
+class AdminDepositSlipDayRow(BaseModel):
+    date: str
+    total_cents: int = 0
+    count: int = 0
+    methods: list[AdminDepositSlipMethodRow] = Field(default_factory=list)
+
+
+class AdminDepositSlipResponse(BaseModel):
+    period: str
+    total_cents: int = 0
+    count: int = 0
+    days: list[AdminDepositSlipDayRow] = Field(default_factory=list)
+
+
 class AdminReportsAttendanceSummary(BaseModel):
     present_count: int = 0
     recorded_count: int = 0

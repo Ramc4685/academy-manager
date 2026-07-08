@@ -2050,6 +2050,506 @@ def _make_projected_income_report(db: AsyncIOMotorDatabase[Any]) -> object:
     return get_projected_income
 
 
+def _report_iso(value: Any) -> str | None:
+    parsed = _coerce_report_datetime(value)
+    return parsed.isoformat() if parsed is not None else None
+
+
+_LEDGER_SUCCESS_STATUSES = ["succeeded", "paid", "partially_refunded", "refunded"]
+
+
+def _make_refunds_report(db: AsyncIOMotorDatabase[Any]) -> object:
+    """Cash-basis refunds & credits issued in a month, from the append-only audit trail.
+
+    ``billing_audit_log`` (action=refund_issued) is the only per-event refund record
+    with a timestamp; ``refunded_cents`` on invoices/payments is a cumulative total.
+    Credits come from ``account_credit_ledger``.
+    """
+    from backend.v2.shared.tenancy import current_academy_id
+
+    async def get_refunds_report(period: str) -> dict[str, Any]:
+        academy_id = current_academy_id()
+        start, end = _month_bounds(period)
+
+        refunds: list[dict[str, Any]] = []
+        total_refunded_cents = 0
+        invoice_ids: set[str] = set()
+        audit_cursor = (
+            db["billing_audit_log"]
+            .find(
+                {
+                    "academy_id": academy_id,
+                    "action": "refund_issued",
+                    "at": {"$gte": start, "$lt": end},
+                }
+            )
+            .sort([("at", -1)])
+        )
+        async for entry in audit_cursor:
+            before = entry.get("before") or {}
+            after = entry.get("after") or {}
+            amount_cents = max(
+                int(after.get("refunded_cents") or 0) - int(before.get("refunded_cents") or 0),
+                0,
+            )
+            invoice_id = str(entry.get("invoice_id") or "") or None
+            if invoice_id:
+                invoice_ids.add(invoice_id)
+            total_refunded_cents += amount_cents
+            refunds.append(
+                {
+                    "refund_at": _report_iso(entry.get("at")),
+                    "invoice_id": invoice_id,
+                    "invoice_number": None,
+                    "payment_id": str(entry.get("payment_id") or "") or None,
+                    "parent_id": None,
+                    "student_id": None,
+                    "amount_cents": amount_cents,
+                    "reason": entry.get("reason"),
+                    "actor_id": str(entry.get("actor_id") or "") or None,
+                }
+            )
+
+        if invoice_ids:
+            invoice_meta: dict[str, dict[str, Any]] = {}
+            invoice_cursor = db["invoices"].find(
+                {"academy_id": academy_id, "invoice_id": {"$in": sorted(invoice_ids)}},
+                {"invoice_id": 1, "invoice_number": 1, "parent_id": 1, "student_id": 1},
+            )
+            async for invoice in invoice_cursor:
+                invoice_meta[str(invoice.get("invoice_id"))] = {
+                    "invoice_number": invoice.get("invoice_number"),
+                    "parent_id": str(invoice.get("parent_id") or "") or None,
+                    "student_id": str(invoice.get("student_id") or "") or None,
+                }
+            for row in refunds:
+                meta = invoice_meta.get(row["invoice_id"] or "")
+                if meta:
+                    row.update(meta)
+
+        credits: list[dict[str, Any]] = []
+        total_credit_cents = 0
+        credit_cursor = (
+            db["account_credit_ledger"]
+            .find(
+                {
+                    "academy_id": academy_id,
+                    "created_at": {"$gte": start, "$lt": end},
+                }
+            )
+            .sort([("created_at", -1)])
+        )
+        async for credit in credit_cursor:
+            amount_cents = int(credit.get("amount_cents") or 0)
+            total_credit_cents += amount_cents
+            credits.append(
+                {
+                    "credit_id": str(credit.get("credit_id") or credit.get("_id")),
+                    "created_at": _report_iso(credit.get("created_at")),
+                    "parent_id": str(credit.get("parent_id") or "") or None,
+                    "student_id": str(credit.get("student_id") or "") or None,
+                    "invoice_id": str(credit.get("invoice_id") or "") or None,
+                    "type": str(credit.get("type") or "") or None,
+                    "status": str(credit.get("status") or "") or None,
+                    "amount_cents": amount_cents,
+                    "remaining_amount_cents": int(credit.get("remaining_amount_cents") or 0),
+                    "reason": credit.get("reason"),
+                }
+            )
+
+        return {
+            "period": period,
+            "total_refunded_cents": total_refunded_cents,
+            "refund_count": len(refunds),
+            "refunds": refunds,
+            "total_credit_cents": total_credit_cents,
+            "credit_count": len(credits),
+            "credits": credits,
+        }
+
+    return get_refunds_report
+
+
+def _make_revenue_by_category_report(db: AsyncIOMotorDatabase[Any]) -> object:
+    """Cash-basis revenue by invoice-line category.
+
+    Each ``payment_allocations`` row created in the month is prorated across the
+    target invoice's positive lines by line amount, so category totals sum exactly
+    to the money applied to invoices that month. Money received but not yet
+    applied to any invoice is reported separately as ``unapplied_cents``.
+    """
+    from backend.v2.shared.tenancy import current_academy_id
+
+    async def get_revenue_by_category_report(period: str) -> dict[str, Any]:
+        academy_id = current_academy_id()
+        start, end = _month_bounds(period)
+
+        allocated_by_invoice: dict[str, int] = {}
+        allocation_cursor = db["payment_allocations"].find(
+            {
+                "academy_id": academy_id,
+                "created_at": {"$gte": start, "$lt": end},
+            },
+            {"invoice_id": 1, "amount_cents": 1},
+        )
+        async for allocation in allocation_cursor:
+            invoice_id = str(allocation.get("invoice_id") or "")
+            amount_cents = int(allocation.get("amount_cents") or 0)
+            if invoice_id and amount_cents > 0:
+                allocated_by_invoice[invoice_id] = (
+                    allocated_by_invoice.get(invoice_id, 0) + amount_cents
+                )
+
+        totals: dict[str, int] = {}
+        labels: dict[str, str | None] = {}
+
+        def _add(category: str, label: str | None, cents: int) -> None:
+            if cents <= 0:
+                return
+            totals[category] = totals.get(category, 0) + cents
+            if label and not labels.get(category):
+                labels[category] = label
+
+        invoice_ids = sorted(allocated_by_invoice)
+        for index in range(0, len(invoice_ids), 500):
+            batch = invoice_ids[index : index + 500]
+            lines_by_invoice: dict[str, list[dict[str, Any]]] = {}
+            line_cursor = db["invoice_lines"].find(
+                {"academy_id": academy_id, "invoice_id": {"$in": batch}},
+                {
+                    "invoice_id": 1,
+                    "line_type": 1,
+                    "category": 1,
+                    "category_label": 1,
+                    "amount_cents": 1,
+                },
+            )
+            async for line in line_cursor:
+                lines_by_invoice.setdefault(str(line.get("invoice_id") or ""), []).append(line)
+            for invoice_id in batch:
+                allocated = allocated_by_invoice[invoice_id]
+                lines = [
+                    line
+                    for line in lines_by_invoice.get(invoice_id, [])
+                    if int(line.get("amount_cents") or 0) > 0
+                ]
+                positive_total = sum(int(line.get("amount_cents") or 0) for line in lines)
+                if not lines or positive_total <= 0:
+                    _add("uncategorized", None, allocated)
+                    continue
+                assigned = 0
+                largest_category = ""
+                largest_share = -1
+                for line in lines:
+                    line_cents = int(line.get("amount_cents") or 0)
+                    share = allocated * line_cents // positive_total
+                    category = str(line.get("category") or line.get("line_type") or "other")
+                    label = line.get("category_label")
+                    _add(category, str(label) if label else None, share)
+                    assigned += share
+                    if share > largest_share:
+                        largest_share = share
+                        largest_category = category
+                remainder = allocated - assigned
+                if remainder > 0 and largest_category:
+                    _add(largest_category, None, remainder)
+
+        unapplied_cents = 0
+        unapplied_cursor = db["ledger_payments"].find(
+            {
+                "academy_id": academy_id,
+                **_ledger_payment_effective_window_query(start, end),
+                "status": {"$in": _LEDGER_SUCCESS_STATUSES},
+            },
+            {"unapplied_amount_cents": 1, "paid_at": 1, "created_at": 1},
+        )
+        async for payment in unapplied_cursor:
+            if _ledger_payment_effective_month(payment) != period:
+                continue
+            unapplied_cents += max(int(payment.get("unapplied_amount_cents") or 0), 0)
+
+        rows = [
+            {
+                "category": category,
+                "category_label": labels.get(category),
+                "amount_cents": cents,
+            }
+            for category, cents in sorted(totals.items(), key=lambda item: (-item[1], item[0]))
+        ]
+        return {
+            "period": period,
+            "total_allocated_cents": sum(totals.values()),
+            "unapplied_cents": unapplied_cents,
+            "rows": rows,
+        }
+
+    return get_revenue_by_category_report
+
+
+def _make_deposit_slip_report(db: AsyncIOMotorDatabase[Any]) -> object:
+    """Payments received grouped by day and payment method, for bank reconciliation.
+
+    Gross money received per day (UTC, on ``paid_at`` falling back to ``created_at``);
+    refunds are intentionally NOT netted out — a later refund does not change what
+    was deposited on the day the payment arrived.
+    """
+    from backend.v2.shared.tenancy import current_academy_id
+
+    async def get_deposit_slip_report(period: str) -> dict[str, Any]:
+        academy_id = current_academy_id()
+        start, end = _month_bounds(period)
+
+        day_totals: dict[str, dict[str, dict[str, int]]] = {}
+        payment_cursor = db["ledger_payments"].find(
+            {
+                "academy_id": academy_id,
+                **_ledger_payment_effective_window_query(start, end),
+                "status": {"$in": _LEDGER_SUCCESS_STATUSES},
+            },
+            {"amount_cents": 1, "payment_method": 1, "paid_at": 1, "created_at": 1},
+        )
+        async for payment in payment_cursor:
+            if _ledger_payment_effective_month(payment) != period:
+                continue
+            effective_at = _ledger_payment_effective_at(payment)
+            if effective_at is None:
+                continue
+            day = effective_at.date().isoformat()
+            method = str(payment.get("payment_method") or "unknown")
+            amount_cents = max(int(payment.get("amount_cents") or 0), 0)
+            bucket = day_totals.setdefault(day, {}).setdefault(
+                method, {"amount_cents": 0, "count": 0}
+            )
+            bucket["amount_cents"] += amount_cents
+            bucket["count"] += 1
+
+        days = []
+        total_cents = 0
+        total_count = 0
+        for day in sorted(day_totals):
+            methods = [
+                {"method": method, "amount_cents": stats["amount_cents"], "count": stats["count"]}
+                for method, stats in sorted(
+                    day_totals[day].items(),
+                    key=lambda item: (-item[1]["amount_cents"], item[0]),
+                )
+            ]
+            day_cents = sum(m["amount_cents"] for m in methods)
+            day_count = sum(m["count"] for m in methods)
+            total_cents += day_cents
+            total_count += day_count
+            days.append(
+                {"date": day, "total_cents": day_cents, "count": day_count, "methods": methods}
+            )
+
+        return {
+            "period": period,
+            "total_cents": total_cents,
+            "count": total_count,
+            "days": days,
+        }
+
+    return get_deposit_slip_report
+
+
+def _cents_to_dollars(cents: int) -> str:
+    return f"{cents / 100:.2f}"
+
+
+def _csv_safe(value: Any) -> Any:
+    """Neutralise spreadsheet formula injection in free-text CSV cells.
+
+    Values starting with =, +, -, or @ execute as formulas when the export is
+    opened in Excel/Sheets (or imported into QuickBooks); prefix with a quote.
+    """
+    if isinstance(value, str) and value[:1] in ("=", "+", "-", "@"):
+        return f"'{value}"
+    return value
+
+
+def _make_financial_report_csv(db: AsyncIOMotorDatabase[Any]) -> object:
+    """CSV renderers for the phase-3 financial reports.
+
+    Returns an async callable ``(report_name, period) -> str | None``; ``None`` means
+    the name is not a financial report and the caller should fall through to the
+    legacy export branches.
+    """
+    get_refunds_report = _make_refunds_report(db)
+    get_revenue_by_category_report = _make_revenue_by_category_report(db)
+    get_deposit_slip_report = _make_deposit_slip_report(db)
+
+    async def financial_report_csv(report_name: str, period: str | None = None) -> str | None:
+        if report_name not in {"refunds", "revenue-by-category", "deposit-slip", "quickbooks"}:
+            return None
+        effective_period = period or datetime.now(UTC).strftime("%Y-%m")
+        out = io.StringIO()
+        writer = csv.writer(out)
+        if report_name == "refunds":
+            report = await get_refunds_report(effective_period)
+            writer.writerow(
+                [
+                    "type",
+                    "date",
+                    "invoice_id",
+                    "invoice_number",
+                    "payment_id",
+                    "parent_id",
+                    "student_id",
+                    "amount_cents",
+                    "reason",
+                ]
+            )
+            for row in report["refunds"]:
+                writer.writerow(
+                    [
+                        "refund",
+                        row["refund_at"],
+                        row["invoice_id"],
+                        row["invoice_number"],
+                        row["payment_id"],
+                        row["parent_id"],
+                        row["student_id"],
+                        row["amount_cents"],
+                        _csv_safe(row["reason"]),
+                    ]
+                )
+            for row in report["credits"]:
+                writer.writerow(
+                    [
+                        "credit",
+                        row["created_at"],
+                        row["invoice_id"],
+                        None,
+                        None,
+                        row["parent_id"],
+                        row["student_id"],
+                        row["amount_cents"],
+                        _csv_safe(row["reason"]),
+                    ]
+                )
+        elif report_name == "revenue-by-category":
+            report = await get_revenue_by_category_report(effective_period)
+            writer.writerow(["period", "category", "category_label", "amount_cents"])
+            for row in report["rows"]:
+                writer.writerow(
+                    [
+                        effective_period,
+                        _csv_safe(row["category"]),
+                        _csv_safe(row["category_label"]),
+                        row["amount_cents"],
+                    ]
+                )
+            if report["unapplied_cents"]:
+                writer.writerow(
+                    [
+                        effective_period,
+                        "unapplied",
+                        "Unapplied payments",
+                        report["unapplied_cents"],
+                    ]
+                )
+        elif report_name == "deposit-slip":
+            report = await get_deposit_slip_report(effective_period)
+            writer.writerow(["date", "method", "count", "amount_cents"])
+            for day in report["days"]:
+                for method_row in day["methods"]:
+                    writer.writerow(
+                        [
+                            day["date"],
+                            _csv_safe(method_row["method"]),
+                            method_row["count"],
+                            method_row["amount_cents"],
+                        ]
+                    )
+        else:
+            # Monthly summary journal entries in the QuickBooks Online CSV import
+            # format. JE 1: cash received (debit Undeposited Funds, credit income by
+            # category, balanced by an unapplied-payments line). JE 2: refunds given.
+            revenue = await get_revenue_by_category_report(effective_period)
+            deposits = await get_deposit_slip_report(effective_period)
+            refunds = await get_refunds_report(effective_period)
+            _, month_end = _month_bounds(effective_period)
+            journal_date = (month_end - timedelta(days=1)).strftime("%m/%d/%Y")
+            writer.writerow(["JournalNo", "JournalDate", "Memo", "Account", "Debits", "Credits"])
+            collected_cents = deposits["total_cents"]
+            allocated_cents = revenue["total_allocated_cents"]
+            if collected_cents or allocated_cents:
+                memo = f"{effective_period} payments received"
+                journal_no = f"{effective_period}-REV"
+                writer.writerow(
+                    [
+                        journal_no,
+                        journal_date,
+                        memo,
+                        "Undeposited Funds",
+                        _cents_to_dollars(collected_cents),
+                        "",
+                    ]
+                )
+                for row in revenue["rows"]:
+                    account = _csv_safe(f"Income:{row['category_label'] or row['category']}")
+                    writer.writerow(
+                        [
+                            journal_no,
+                            journal_date,
+                            memo,
+                            account,
+                            "",
+                            _cents_to_dollars(row["amount_cents"]),
+                        ]
+                    )
+                balance_cents = collected_cents - allocated_cents
+                if balance_cents > 0:
+                    writer.writerow(
+                        [
+                            journal_no,
+                            journal_date,
+                            memo,
+                            "Unapplied Customer Payments",
+                            "",
+                            _cents_to_dollars(balance_cents),
+                        ]
+                    )
+                elif balance_cents < 0:
+                    writer.writerow(
+                        [
+                            journal_no,
+                            journal_date,
+                            memo,
+                            "Unapplied Customer Payments",
+                            _cents_to_dollars(-balance_cents),
+                            "",
+                        ]
+                    )
+            refunded_cents = refunds["total_refunded_cents"]
+            if refunded_cents:
+                memo = f"{effective_period} refunds issued"
+                journal_no = f"{effective_period}-REF"
+                writer.writerow(
+                    [
+                        journal_no,
+                        journal_date,
+                        memo,
+                        "Refunds Given",
+                        _cents_to_dollars(refunded_cents),
+                        "",
+                    ]
+                )
+                writer.writerow(
+                    [
+                        journal_no,
+                        journal_date,
+                        memo,
+                        "Undeposited Funds",
+                        "",
+                        _cents_to_dollars(refunded_cents),
+                    ]
+                )
+        return out.getvalue()
+
+    return financial_report_csv
+
+
 def _make_session_economics_report(db: AsyncIOMotorDatabase[Any]) -> object:
     """Returns an async callable for monthly session-level economics."""
     from backend.v2.shared.tenancy import current_academy_id
@@ -5676,8 +6176,17 @@ def compose_admin(
             "reason": f"Local/test safety block: {len(rows)} reminder(s) were not sent.",
         }
 
-    async def export_report_csv(report_name: str):
+    get_refunds_report = _make_refunds_report(db)
+    get_revenue_by_category_report = _make_revenue_by_category_report(db)
+    get_deposit_slip_report = _make_deposit_slip_report(db)
+    financial_report_csv = _make_financial_report_csv(db)
+
+    async def export_report_csv(report_name: str, period: str | None = None):
         from backend.v2.shared.tenancy import current_academy_id
+
+        financial_csv = await financial_report_csv(report_name, period)
+        if financial_csv is not None:
+            return financial_csv
 
         request_academy_id = current_academy_id()
         out = io.StringIO()
@@ -5847,6 +6356,9 @@ def compose_admin(
         list_billing_deferral_warnings=billing_deferrals.list_admin_warnings,
         send_dues_reminders=send_dues_reminders,
         export_report_csv=export_report_csv,
+        get_refunds_report=get_refunds_report,
+        get_revenue_by_category_report=get_revenue_by_category_report,
+        get_deposit_slip_report=get_deposit_slip_report,
         get_reports_kpis=_make_reports_kpis(db),
         get_session_economics=_make_session_economics_report(db),
         get_projected_income=_make_projected_income_report(db),
