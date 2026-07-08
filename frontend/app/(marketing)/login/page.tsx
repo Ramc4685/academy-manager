@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import {
@@ -25,6 +25,7 @@ const HERO_IMAGE =
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -38,6 +39,12 @@ export default function LoginPage() {
     setHydrated(true);
     let cancelled = false;
     clearBffIdentityCookie();
+
+    const prefillEmail = searchParams.get("email");
+    if (prefillEmail) {
+      setEmail(prefillEmail);
+      setNotice("An account already exists for this email. Sign in to continue.");
+    }
 
     completeGoogleRedirectSignIn()
       .then((user) => {

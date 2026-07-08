@@ -35,6 +35,10 @@ const CODE_MESSAGES: Record<string, string> = {
   "auth/operation-not-allowed": "This sign-in method is not available right now. Try another option.",
 };
 
+export function isEmailAlreadyInUseError(err: unknown): boolean {
+  return errorCode(err) === "auth/email-already-in-use";
+}
+
 function errorCode(err: unknown): string | undefined {
   if (err && typeof err === "object" && "code" in err) {
     const code = (err as { code?: unknown }).code;

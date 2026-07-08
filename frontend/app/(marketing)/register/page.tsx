@@ -14,7 +14,7 @@ import {
   signOutCurrent,
 } from "@/lib/auth/firebase";
 import type { User } from "@/lib/auth/firebase";
-import { toAuthErrorMessage } from "@/lib/auth/auth-error";
+import { isEmailAlreadyInUseError, toAuthErrorMessage } from "@/lib/auth/auth-error";
 import { brand } from "@/lib/brand";
 
 const HERO_IMAGE =
@@ -83,13 +83,17 @@ export default function RegisterPage() {
     setError(null);
     setNotice(null);
     setPendingVerificationUser(null);
+    const trimmedEmail = email.trim();
     try {
-      const trimmedEmail = email.trim();
       const user = await registerWithEmail(trimmedEmail, password);
       rememberPendingParentRegistration(trimmedEmail);
       setPassword("");
       await sendVerificationAndSignOut(user);
     } catch (err) {
+      if (isEmailAlreadyInUseError(err)) {
+        router.push(`/login?email=${encodeURIComponent(trimmedEmail)}`);
+        return;
+      }
       setError(toAuthErrorMessage(err, "Registration failed. Please try again."));
     } finally {
       setLoading(false);
