@@ -111,6 +111,50 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
         )
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def next_upcoming_start_for_session(
+        self,
+        session_id: str,
+        *,
+        now: datetime,
+    ) -> datetime | None:
+        """The start time of the next scheduled occurrence for this session
+        at/after ``now``, or ``None`` if there isn't one. Used by self-cancel
+        (R4) to judge notice met/not-met against the policy's minimum notice
+        window."""
+        doc = await self._find_one_in_collection(
+            self.collection_name,
+            {
+                "$or": [
+                    {"session_id": session_id},
+                    {"template_session_id": session_id},
+                ],
+                "status": "scheduled",
+                "start_at": {"$gte": now},
+            },
+            sort=[("start_at", 1)],
+        )
+        if doc is None:
+            return None
+        return doc["start_at"]  # type: ignore[return-value]
+
+    async def list_upcoming_scheduled_between(
+        self,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+    ) -> list[SessionOccurrence]:
+        """Scheduled occurrences starting in [start_at, end_at] — used by
+        makeup-eligibility (Task 4) to find candidate targets within the
+        policy's expiry window."""
+        cursor = self._find_many(
+            {
+                "status": "scheduled",
+                "start_at": {"$gte": start_at, "$lte": end_at},
+            },
+            sort=[("start_at", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def save_many(self, occurrences: list[SessionOccurrence]) -> None:
         for occurrence in occurrences:
             try:

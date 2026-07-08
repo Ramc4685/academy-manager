@@ -35,6 +35,7 @@ class MongoApplicationRepository(TenantScopedRepository):
             decision_reason=doc.get("decision_reason"),  # type: ignore[arg-type]
             decided_by=doc.get("decided_by"),  # type: ignore[arg-type]
             decided_at=doc.get("decided_at"),  # type: ignore[arg-type]
+            zero_quote_period=doc.get("zero_quote_period"),  # type: ignore[arg-type]
             expires_at=doc["expires_at"],  # type: ignore[arg-type]
             created_at=doc["created_at"],  # type: ignore[arg-type]
             updated_at=doc["updated_at"],  # type: ignore[arg-type]

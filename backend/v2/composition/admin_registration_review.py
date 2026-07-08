@@ -43,6 +43,18 @@ class RegistrationWaiverSignatureWriter(Protocol):
     async def save_signature(self, signature: WaiverSignature) -> None: ...
 
 
+class TrialConversionLinker(Protocol):
+    """Port for the enrollment context's ``LinkTrialConversion`` use case
+    (R3, Task 7). Declared here (rather than imported directly) so this
+    composition module documents the cross-context dependency as a narrow
+    port instead of depending on the concrete use case class — even though
+    ``backend/v2/composition/`` already imports both the enrollment and
+    onboarding contexts directly and is exempt from the no-cross-context-
+    imports rule (that rule only scans ``backend/v2/contexts/**``)."""
+
+    async def execute(self, *, parent_user_id: str, application_id: str) -> None: ...
+
+
 class AdminRegistrationRow(BaseModel):
     model_config = {"frozen": True}
 
@@ -113,6 +125,7 @@ class AdminRegistrationReview:
         waiver_templates: RegistrationWaiverTemplateQuery | None = None,
         waiver_signatures: RegistrationWaiverSignatureWriter | None = None,
         enrollment_events: EnrollmentEventRepository | None = None,
+        trial_conversion: TrialConversionLinker | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._apps = apps
@@ -124,6 +137,7 @@ class AdminRegistrationReview:
         self._waiver_templates = waiver_templates
         self._waiver_signatures = waiver_signatures
         self._enrollment_events = enrollment_events
+        self._trial_conversion = trial_conversion
         self._now = clock
 
     async def list_pending(self) -> list[AdminRegistrationRow]:
@@ -175,6 +189,11 @@ class AdminRegistrationReview:
             await self._enrollments.create(enrollment)
         else:
             enrollment = existing
+        if app.zero_quote_period:
+            # Checkout skipped Stripe because the quote was $0 for this period;
+            # enrollment docs carry no billing_start_at/created_at, so without
+            # this the monthly generator would charge full tuition for it.
+            await self._enrollments.add_skip_period(enrollment.enrollment_id, app.zero_quote_period)
         effective_at = command.effective_at or now
         await self._record_event(
             event_type="created",
@@ -199,6 +218,7 @@ class AdminRegistrationReview:
             }
         )
         await self._apps.save(decided)
+        await self._link_trial_conversion(decided)
         return await self._detail(decided)
 
     async def waitlist(self, command: WaitlistRegistrationCommand) -> AdminRegistrationDetail:
@@ -286,6 +306,20 @@ class AdminRegistrationReview:
         if app is None:
             raise ApplicationNotFound("registration application not found")
         return app
+
+    async def _link_trial_conversion(self, app: Application) -> None:
+        """R3 conversion tracking hook: after a successful registration
+        approval, tell the enrollment context so it can link the newest
+        convertible trial request (if any) for this parent to this
+        application. No-op if no ``trial_conversion`` port was wired
+        (e.g. in tests that don't care about R3), matching
+        ``LinkTrialConversion``'s own silent-no-op-on-no-match design."""
+        if self._trial_conversion is None:
+            return
+        await self._trial_conversion.execute(
+            parent_user_id=app.parent_user_id,
+            application_id=app.application_id,
+        )
 
     @staticmethod
     def _assert_reviewable(app: Application) -> None:

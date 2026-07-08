@@ -138,6 +138,11 @@ def _make_use_cases(
         list_enrollments_for_parent=None,
         request_enrollment_pause=None,  # type: ignore[arg-type]
         list_parent_pause_requests=None,  # type: ignore[arg-type]
+        submit_absence_notice=None,  # type: ignore[arg-type]
+        list_parent_absences=None,  # type: ignore[arg-type]
+        submit_makeup_request=None,  # type: ignore[arg-type]
+        list_parent_makeups=None,  # type: ignore[arg-type]
+        list_eligible_makeup_targets=None,  # type: ignore[arg-type]
         list_attendance_for_parent=None,
         list_progress_for_parent=None,
         list_invoices_for_parent=None,
@@ -148,6 +153,8 @@ def _make_use_cases(
         get_parent_waiver_requirement=None,  # type: ignore[arg-type]
         accept_parent_waiver=None,  # type: ignore[arg-type]
         get_academy_info=None,
+        submit_trial_request=None,  # type: ignore[arg-type]
+        list_parent_trial_requests=None,  # type: ignore[arg-type]
     )
 
 
