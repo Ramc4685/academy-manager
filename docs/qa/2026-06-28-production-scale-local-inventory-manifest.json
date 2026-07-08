@@ -1205,6 +1205,105 @@
       ]
     },
     {
+      "route": "/admin/reports/refunds",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/reports/refunds/page.tsx",
+      "workflows": [
+        "Review monthly refunds and account credits",
+        "Export refunds CSV"
+      ],
+      "controls": {
+        "buttons": [
+          "Export CSV"
+        ],
+        "inputs": [
+          "Month"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "load error",
+        "export error"
+      ],
+      "risk_edges": [
+        "Tenant data leakage in refunds report"
+      ],
+      "acceptance": [
+        "Refund and credit rows are tenant-scoped and match the billing audit trail",
+        "Workflow evidence: \"Review monthly refunds and account credits\" completes for the admin route /admin/reports/refunds with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Export refunds CSV\" completes for the admin route /admin/reports/refunds with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Tenant data leakage in refunds report\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/reports/revenue-by-category",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/reports/revenue-by-category/page.tsx",
+      "workflows": [
+        "Review collected revenue by category",
+        "Export revenue-by-category CSV"
+      ],
+      "controls": {
+        "buttons": [
+          "Export CSV"
+        ],
+        "inputs": [
+          "Month"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "load error",
+        "export error"
+      ],
+      "risk_edges": [
+        "Tenant data leakage in revenue report"
+      ],
+      "acceptance": [
+        "Category totals are tenant-scoped and sum to the money applied to invoices in the month",
+        "Workflow evidence: \"Review collected revenue by category\" completes for the admin route /admin/reports/revenue-by-category with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Export revenue-by-category CSV\" completes for the admin route /admin/reports/revenue-by-category with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Tenant data leakage in revenue report\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/reports/deposit-slip",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/reports/deposit-slip/page.tsx",
+      "workflows": [
+        "Reconcile daily deposits by payment method",
+        "Export deposit-slip CSV"
+      ],
+      "controls": {
+        "buttons": [
+          "Export CSV"
+        ],
+        "inputs": [
+          "Month"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "load error",
+        "export error"
+      ],
+      "risk_edges": [
+        "Tenant data leakage in deposit slip"
+      ],
+      "acceptance": [
+        "Daily totals are tenant-scoped gross receipts grouped by payment method",
+        "Workflow evidence: \"Reconcile daily deposits by payment method\" completes for the admin route /admin/reports/deposit-slip with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Export deposit-slip CSV\" completes for the admin route /admin/reports/deposit-slip with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Tenant data leakage in deposit slip\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/admin/coach-payslip",
       "role": "admin",
       "source": "frontend/app/(admin)/admin/coach-payslip/page.tsx",

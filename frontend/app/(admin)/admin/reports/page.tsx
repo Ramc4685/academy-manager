@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { exportAdminReportCsv, getAdminReportsDashboard, getRevenue } from "@/lib/api/admin";
@@ -27,6 +28,24 @@ const REPORTS = [
   },
 ] as const;
 
+const FINANCIAL_REPORTS = [
+  {
+    href: "/admin/reports/refunds",
+    title: "Refunds & credits",
+    description: "Money returned to families and account credits issued, by month.",
+  },
+  {
+    href: "/admin/reports/revenue-by-category",
+    title: "Revenue by category",
+    description: "Collected revenue split by program and fee category.",
+  },
+  {
+    href: "/admin/reports/deposit-slip",
+    title: "Deposit slip",
+    description: "Payments received by day and method for bank reconciliation.",
+  },
+] as const;
+
 export default function AdminReportsPage() {
   const [preview, setPreview] = useState<{ title: string; csv: string } | null>(null);
   const [period, setPeriod] = useState(() => currentPeriod());
@@ -49,6 +68,11 @@ export default function AdminReportsPage() {
     onSuccess: (data) => {
       setPreview(data);
     },
+  });
+
+  const quickbooksMutation = useMutation({
+    mutationFn: () => exportAdminReportCsv("quickbooks", period),
+    onSuccess: (csv) => downloadCsv(`quickbooks-${period}`, csv),
   });
 
   const revenueByMonth = revenueQuery.data?.by_month ?? {};
@@ -290,6 +314,48 @@ export default function AdminReportsPage() {
             <DashboardTerm label="Latest month" value={latestMonth ? formatMonth(latestMonth) : "Not available"} />
           </dl>
         </Card>
+      </div>
+
+      <div className="space-y-3">
+        <div>
+          <Overline>Financial reports</Overline>
+          <p className="mt-1 text-sm text-neutral-500">
+            Monthly reports over the billing ledger, with CSV export on each page.
+          </p>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-3">
+          {FINANCIAL_REPORTS.map((report) => (
+            <Link key={report.href} href={report.href} className="block">
+              <Card p={20} className="flex h-full flex-col transition-colors hover:border-rally-accent">
+                <h2 className="font-semibold text-lg">{report.title}</h2>
+                <p className="mt-1 min-h-[3rem] text-sm text-neutral-500 flex-1">{report.description}</p>
+                <span className="mt-4 text-sm font-medium text-rally-accent">Open report</span>
+              </Card>
+            </Link>
+          ))}
+          <Card p={20} className="flex flex-col">
+            <h2 className="font-semibold text-lg">QuickBooks export</h2>
+            <p className="mt-1 min-h-[3rem] text-sm text-neutral-500 flex-1">
+              Monthly summary journal entries for {formatMonth(period)}, ready to import into
+              QuickBooks Online.
+            </p>
+            <div className="mt-4">
+              <Button
+                variant="secondary"
+                onClick={() => quickbooksMutation.mutate()}
+                disabled={quickbooksMutation.isPending}
+                full
+              >
+                {quickbooksMutation.isPending ? "Exporting..." : "Export journal CSV"}
+              </Button>
+            </div>
+          </Card>
+        </div>
+        {quickbooksMutation.isError && (
+          <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+            Could not export the QuickBooks journal.
+          </p>
+        )}
       </div>
 
       <div className="space-y-3">

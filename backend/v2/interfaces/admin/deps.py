@@ -270,6 +270,10 @@ class AdminUseCases:
         None  # async (periods: list[str]) -> CoachUtilizationResult
     )
     get_session_economics: object | None = None  # async (period: str) -> dict[str, Any]
+    # financial reports (payment visibility phase 3)
+    get_refunds_report: object | None = None  # async (period: str) -> dict[str, Any]
+    get_revenue_by_category_report: object | None = None  # async (period: str) -> dict[str, Any]
+    get_deposit_slip_report: object | None = None  # async (period: str) -> dict[str, Any]
     curriculum: CurriculumComposition | None = None
     student_progress: StudentProgressComposition | None = None
     generate_daily_teaching_plan: GenerateDailyTeachingPlan | None = None
