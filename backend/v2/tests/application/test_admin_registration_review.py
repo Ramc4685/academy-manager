@@ -289,3 +289,87 @@ async def test_waitlist_requires_existing_session_before_writes() -> None:
     assert students.upserts == []
     assert waitlist.entries == []
     assert apps.saved == []
+
+
+# --- R3 conversion tracking hook (Task 7) -------------------------------------
+
+
+class _FakeTrialConversion:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def execute(self, *, parent_user_id: str, application_id: str) -> None:
+        self.calls.append((parent_user_id, application_id))
+
+
+@pytest.mark.asyncio
+async def test_approve_calls_trial_conversion_hook_with_parent_and_application() -> None:
+    app = _application(student_id="student-1")
+    apps = InMemoryApplications(app)
+    sessions = InMemorySessions([_session()])
+    trial_conversion = _FakeTrialConversion()
+
+    review = AdminRegistrationReview(
+        apps=apps,
+        sessions=sessions,
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        trial_conversion=trial_conversion,
+        clock=lambda: NOW,
+    )
+
+    await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    assert trial_conversion.calls == [("parent-1", "app-1")]
+
+
+@pytest.mark.asyncio
+async def test_approve_without_trial_conversion_wired_does_not_raise() -> None:
+    app = _application(student_id="student-1")
+    apps = InMemoryApplications(app)
+    sessions = InMemorySessions([_session()])
+
+    review = AdminRegistrationReview(
+        apps=apps,
+        sessions=sessions,
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    detail = await review.approve(
+        ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1")
+    )
+
+    assert detail.status == "APPROVED"
+
+
+@pytest.mark.asyncio
+async def test_approve_idempotent_replay_does_not_call_trial_conversion_again() -> None:
+    app = _application(student_id="student-1")
+    apps = InMemoryApplications(app)
+    sessions = InMemorySessions([_session()])
+    trial_conversion = _FakeTrialConversion()
+
+    review = AdminRegistrationReview(
+        apps=apps,
+        sessions=sessions,
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        trial_conversion=trial_conversion,
+        clock=lambda: NOW,
+    )
+
+    await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+    # Replaying approve() on an already-APPROVED application with an
+    # enrollment_id hits the idempotency early-return, which must NOT
+    # re-trigger conversion linking.
+    await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    assert trial_conversion.calls == [("parent-1", "app-1")]

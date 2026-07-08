@@ -281,6 +281,22 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if totals["processed"]:
             log.info("scheduled_resume_actions_processed", extra=totals)
 
+    async def _expire_makeup_requests() -> None:
+        totals = {"academy_count": 0, "expired": 0}
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            runtime_academy_id,
+        ):
+            with tenant_scope(academy_id):
+                worker = getattr(app.state.admin, "expire_makeup_requests", None)
+                if worker is None:
+                    continue
+                expired = await worker.execute()
+            totals["academy_count"] += 1
+            totals["expired"] += expired
+        if totals["expired"]:
+            log.info("makeup_requests_expired", extra=totals)
+
     async def _process_stripe_webhook_events() -> None:
         totals = {"processed": 0, "failed": 0}
         for academy_id in await _scheduler_academy_ids(
@@ -449,6 +465,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Parity with the other jobs: prevent a slow run from overlapping the
         # next tick within this process. (Cross-machine exclusivity still
         # depends on a single Fly machine — see deferred leader-election note.)
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _expire_makeup_requests,
+        "cron",
+        hour=2,
+        minute=30,
+        id="expire_makeup_requests",
+        replace_existing=True,
         max_instances=1,
     )
     scheduler.add_job(

@@ -9,6 +9,7 @@ import {
   BookOpen,
   CalendarDays,
   ChevronRight,
+  ClipboardList,
   CreditCard,
   FileSignature,
   Mail,
@@ -150,6 +151,8 @@ export default function ParentDashboardPage() {
           <RecentActivityCard activity={model.recentActivity} academyTimezone={academyQuery.data?.timezone ?? null} />
         </>
       )}
+
+      <RequestsCard />
 
       <AcademyContact academy={academyQuery.data} />
     </section>
@@ -521,6 +524,32 @@ function InfoCard({
       <p className="mt-2 text-[11px] font-semibold" style={{ color: "var(--rally-subtle)" }}>
         {meta}
       </p>
+    </Link>
+  );
+}
+
+function RequestsCard() {
+  return (
+    <Link
+      href="/parent/requests"
+      className="flex items-center gap-3 rounded-xl border bg-white p-4 animate-fade-in-up transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]"
+      style={{ borderColor: "var(--rally-line)" }}
+    >
+      <div
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+        style={{ background: "#eef2ff", color: "#4338ca" }}
+      >
+        <ClipboardList size={18} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-bold" style={{ color: "var(--rally-ink)" }}>
+          Requests
+        </p>
+        <p className="mt-0.5 line-clamp-2 text-xs" style={{ color: "var(--rally-muted)" }}>
+          Report an absence, request a makeup, or ask for a trial class
+        </p>
+      </div>
+      <ChevronRight className="shrink-0" size={18} style={{ color: "var(--rally-muted)" }} />
     </Link>
   );
 }

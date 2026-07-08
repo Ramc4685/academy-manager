@@ -474,3 +474,158 @@ export function acceptParentWaiver(payload: {
     body: JSON.stringify(payload),
   });
 }
+
+// --- Self-service requests (absences, makeups, trials, self-cancel) ---
+
+export interface AbsenceNoticeView {
+  notice_id: string;
+  student_id: string;
+  occurrence_id: string;
+  session_id: string;
+  submitted_by: string;
+  submitted_at: string;
+  notice_window_met: boolean;
+}
+
+export function listParentAbsences(): Promise<{ notices: AbsenceNoticeView[] }> {
+  return apiFetch("/parent/absences", { method: "GET" });
+}
+
+export function submitAbsenceNotice(payload: {
+  student_id: string;
+  occurrence_id: string;
+}): Promise<AbsenceNoticeView> {
+  return apiFetch("/parent/absences", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface MakeupRequestView {
+  request_id: string;
+  student_id: string;
+  missed_occurrence_id: string;
+  requested_target_occurrence_id: string | null;
+  status: string;
+  expires_at: string;
+  denial_reason: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  approved_target_occurrence_id: string | null;
+  created_at: string;
+}
+
+export function listParentMakeups(): Promise<{ makeups: MakeupRequestView[] }> {
+  return apiFetch("/parent/makeups", { method: "GET" });
+}
+
+export function submitMakeupRequest(payload: {
+  student_id: string;
+  missed_occurrence_id: string;
+  requested_target_occurrence_id?: string | null;
+}): Promise<MakeupRequestView> {
+  return apiFetch("/parent/makeups", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface MakeupTargetView {
+  occurrence_id: string;
+  session_id: string;
+  title: string;
+  start_at: string;
+  end_at: string;
+  open_slots: number;
+}
+
+export function listEligibleMakeupTargets(params: {
+  student_id: string;
+  missed_occurrence_id: string;
+}): Promise<{ targets: MakeupTargetView[] }> {
+  const query = new URLSearchParams({
+    student_id: params.student_id,
+    missed_occurrence_id: params.missed_occurrence_id,
+  });
+  return apiFetch(`/parent/makeups/eligible-targets?${query.toString()}`, {
+    method: "GET",
+  });
+}
+
+export type TrialRequestStudentRef = "prospective" | "existing_student";
+
+export interface TrialRequestView {
+  request_id: string;
+  student_ref: string;
+  student_id: string | null;
+  prospective_child_name: string | null;
+  prospective_child_dob: string | null;
+  requested_session_id: string;
+  preferred_start: string;
+  preferred_end: string;
+  status: string;
+  assigned_occurrence_id: string | null;
+  linked_application_id: string | null;
+  denial_reason: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  created_at: string;
+}
+
+export function listParentTrialRequests(): Promise<{ trials: TrialRequestView[] }> {
+  return apiFetch("/parent/trial-requests", { method: "GET" });
+}
+
+export function submitTrialRequest(payload: {
+  student_ref: TrialRequestStudentRef;
+  requested_session_id: string;
+  preferred_start: string;
+  preferred_end: string;
+  student_id?: string | null;
+  prospective_child_name?: string | null;
+  prospective_child_dob?: string | null;
+}): Promise<TrialRequestView> {
+  return apiFetch("/parent/trial-requests", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface CancellationPreview {
+  allowed: boolean;
+  notice_met: boolean;
+  fee_cents: number;
+  effective_timing: string;
+  policy: Record<string, unknown>;
+  blocked_reason: string | null;
+}
+
+export function getCancellationPreview(
+  enrollmentId: string,
+): Promise<CancellationPreview> {
+  return apiFetch(
+    `/parent/enrollments/${encodeURIComponent(enrollmentId)}/cancellation-preview`,
+    { method: "GET" },
+  );
+}
+
+export interface SelfCancelResult {
+  enrollment_id: string;
+  status: string;
+  fee_cents: number;
+  effective_timing: string;
+  cancelled_at: string;
+}
+
+export function selfCancelEnrollment(
+  enrollmentId: string,
+  payload: { reason: string },
+): Promise<SelfCancelResult> {
+  return apiFetch(
+    `/parent/enrollments/${encodeURIComponent(enrollmentId)}/self-cancel`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}

@@ -11,12 +11,29 @@ from backend.v2.contexts.billing.application.use_cases.handle_webhook_event impo
     HandleWebhookEvent,
 )
 from backend.v2.contexts.billing.application.use_cases.start_checkout import StartCheckout
+from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
+    ListParentAbsences,
+    SubmitAbsenceNotice,
+)
 from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_sessions import (
     ListParentAvailableSessions,
+)
+from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
+    ListEligibleMakeupTargets,
+    ListParentMakeups,
+    SubmitMakeupRequest,
 )
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     ListParentPauseRequests,
     RequestEnrollmentPause,
+)
+from backend.v2.contexts.enrollment.application.use_cases.self_cancel import (
+    PreviewSelfCancel,
+    SelfCancelEnrollment,
+)
+from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
+    ListParentTrialRequests,
+    SubmitTrialRequest,
 )
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     GetApplicationStatus,
@@ -50,6 +67,11 @@ class ParentUseCases:
     list_enrollments_for_parent: object  # callable
     request_enrollment_pause: RequestEnrollmentPause
     list_parent_pause_requests: ListParentPauseRequests
+    submit_absence_notice: SubmitAbsenceNotice
+    list_parent_absences: ListParentAbsences
+    submit_makeup_request: SubmitMakeupRequest
+    list_parent_makeups: ListParentMakeups
+    list_eligible_makeup_targets: ListEligibleMakeupTargets
     list_attendance_for_parent: object  # callable
     list_progress_for_parent: object  # callable
     list_invoices_for_parent: object  # callable
@@ -60,6 +82,12 @@ class ParentUseCases:
     get_parent_waiver_requirement: GetParentWaiverRequirement
     accept_parent_waiver: AcceptParentWaiver
     get_academy_info: object  # callable accepting academy_id
+    # Trial class requests + conversion tracking (R3, Task 7)
+    submit_trial_request: SubmitTrialRequest
+    list_parent_trial_requests: ListParentTrialRequests
+    # Self-cancel enrollment (R4, Task 8)
+    preview_self_cancel: PreviewSelfCancel | None = None
+    self_cancel_enrollment: SelfCancelEnrollment | None = None
     get_registration_waiver: object = None  # callable -> Waiver | None
     start_invoice_payment_for_parent: object | None = None  # callable
     start_balance_payment_for_parent: object | None = None  # callable

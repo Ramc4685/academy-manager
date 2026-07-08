@@ -2199,6 +2199,187 @@ export function declinePauseRequest(pauseRequestId: string): Promise<AdminPauseR
   });
 }
 
+// ---------------------------------------------------------------------------
+// Self-service policy + request queues (absences, makeups, trials, cancellations)
+// ---------------------------------------------------------------------------
+
+export interface SelfServicePolicyView {
+  absence_notice_min_hours: number;
+  makeup_expiry_days: number;
+  makeup_requires_notice: boolean;
+  cancellation_minimum_notice_days: number;
+  cancellation_fee_cents: number;
+  cancellation_effective_timing: "immediate" | "end_of_period";
+}
+
+export type UpdateSelfServicePolicyRequest = SelfServicePolicyView;
+
+export interface AbsenceNoticeAdminRow {
+  notice_id: string;
+  student_id: string;
+  occurrence_id: string;
+  session_id: string;
+  submitted_by: string;
+  submitted_at: string;
+  notice_window_met: boolean;
+  student_full_name: string | null;
+}
+
+export interface AbsencesAdminResponse {
+  absences: AbsenceNoticeAdminRow[];
+}
+
+export type SelfServiceRequestStatus = "pending" | "approved" | "denied" | "expired" | "converted";
+
+export interface MakeupRequestAdminRow {
+  request_id: string;
+  student_id: string;
+  missed_occurrence_id: string;
+  requested_target_occurrence_id: string | null;
+  status: string;
+  expires_at: string;
+  denial_reason: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  approved_target_occurrence_id: string | null;
+  created_at: string;
+  student_full_name: string | null;
+}
+
+export interface MakeupRequestsAdminResponse {
+  makeups: MakeupRequestAdminRow[];
+}
+
+export interface ApproveMakeupRequestBody {
+  target_occurrence_id: string;
+}
+
+export interface DenyMakeupRequestBody {
+  reason: string;
+}
+
+export interface TrialRequestAdminRow {
+  request_id: string;
+  student_ref: string;
+  student_id: string | null;
+  prospective_child_name: string | null;
+  prospective_child_dob: string | null;
+  requested_session_id: string;
+  preferred_start: string;
+  preferred_end: string;
+  status: string;
+  assigned_occurrence_id: string | null;
+  linked_application_id: string | null;
+  denial_reason: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  created_at: string;
+}
+
+export interface TrialRequestsAdminResponse {
+  trials: TrialRequestAdminRow[];
+}
+
+export interface ApproveTrialRequestBody {
+  occurrence_id: string;
+}
+
+export interface DenyTrialRequestBody {
+  reason: string;
+}
+
+export interface SelfCancellationAdminRow {
+  enrollment_id: string;
+  student_id: string;
+  session_id: string;
+  cancellation_reason: string | null;
+  cancellation_policy_snapshot: Record<string, unknown> | null;
+  cancelled_at: string | null;
+  student_full_name: string | null;
+  session_title: string | null;
+}
+
+export interface SelfCancellationsAdminResponse {
+  cancellations: SelfCancellationAdminRow[];
+}
+
+export function getSelfServicePolicy(): Promise<SelfServicePolicyView> {
+  return apiFetch<SelfServicePolicyView>("/admin/self-service/policy", { method: "GET" });
+}
+
+export function updateSelfServicePolicy(
+  payload: UpdateSelfServicePolicyRequest,
+): Promise<SelfServicePolicyView> {
+  return apiFetch<SelfServicePolicyView>("/admin/self-service/policy", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listAdminAbsences(): Promise<AbsencesAdminResponse> {
+  return apiFetch<AbsencesAdminResponse>("/admin/self-service/absences", { method: "GET" });
+}
+
+export function listAdminMakeups(status?: string): Promise<MakeupRequestsAdminResponse> {
+  const q = status ? `?status=${encodeURIComponent(status)}` : "";
+  return apiFetch<MakeupRequestsAdminResponse>(`/admin/self-service/makeups${q}`, {
+    method: "GET",
+  });
+}
+
+export function approveMakeup(
+  requestId: string,
+  payload: ApproveMakeupRequestBody,
+): Promise<MakeupRequestAdminRow> {
+  return apiFetch<MakeupRequestAdminRow>(
+    `/admin/self-service/makeups/${encodeURIComponent(requestId)}/approve`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export function denyMakeup(
+  requestId: string,
+  payload: DenyMakeupRequestBody,
+): Promise<MakeupRequestAdminRow> {
+  return apiFetch<MakeupRequestAdminRow>(
+    `/admin/self-service/makeups/${encodeURIComponent(requestId)}/deny`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export function listAdminTrials(status?: string): Promise<TrialRequestsAdminResponse> {
+  const q = status ? `?status=${encodeURIComponent(status)}` : "";
+  return apiFetch<TrialRequestsAdminResponse>(`/admin/self-service/trials${q}`, {
+    method: "GET",
+  });
+}
+
+export function approveTrial(
+  requestId: string,
+  payload: ApproveTrialRequestBody,
+): Promise<TrialRequestAdminRow> {
+  return apiFetch<TrialRequestAdminRow>(
+    `/admin/self-service/trials/${encodeURIComponent(requestId)}/approve`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export function denyTrial(
+  requestId: string,
+  payload: DenyTrialRequestBody,
+): Promise<TrialRequestAdminRow> {
+  return apiFetch<TrialRequestAdminRow>(
+    `/admin/self-service/trials/${encodeURIComponent(requestId)}/deny`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export function listAdminCancellations(): Promise<SelfCancellationsAdminResponse> {
+  return apiFetch<SelfCancellationsAdminResponse>("/admin/self-service/cancellations", {
+    method: "GET",
+  });
+}
+
 export function listAuditLogs(): Promise<AdminAuditLogList> {
   return apiFetch<AdminAuditLogList>("/admin/audit-logs", { method: "GET" });
 }

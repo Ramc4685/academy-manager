@@ -7,7 +7,7 @@ roster, waitlist promotion) lands in Wave 2/3.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -86,6 +86,15 @@ class Enrollment(BaseModel):
     session_id: str
     student_id: str
     status: EnrollmentStatus = "active"
+    # Self-cancel audit trail (R4). Always written together by
+    # ``SelfCancelEnrollment`` — never a silent state change. ``cancelled_by``
+    # distinguishes parent self-cancel from admin-initiated cancellation (the
+    # existing ``CancelEnrollment``/``WithdrawEnrollment`` admin paths leave
+    # these unset).
+    cancelled_by: Literal["admin", "parent"] | None = None
+    cancellation_reason: str | None = None
+    cancellation_policy_snapshot: dict[str, Any] | None = None
+    cancelled_at: datetime | None = None
 
 
 class RosterEntry(BaseModel):

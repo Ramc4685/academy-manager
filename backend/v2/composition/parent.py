@@ -20,6 +20,10 @@ from backend.v2.composition.pathway import (
     compose_student_progress,
 )
 from backend.v2.contexts.billing.application.ports import StripeGateway
+from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
+    AddInvoiceLine,
+    AddInvoiceLineCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.enroll_child_in_session_type import (
     CancelBillingEnrollment,
     EnrollChildInSessionType,
@@ -86,6 +90,10 @@ from backend.v2.contexts.billing.infrastructure.mongo_student_billing_enrollment
 from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
     MongoSubscriptionRepository,
 )
+from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
+    ListParentAbsences,
+    SubmitAbsenceNotice,
+)
 from backend.v2.contexts.enrollment.application.use_cases.confirm_enrollment import (
     ConfirmEnrollment,
 )
@@ -95,6 +103,11 @@ from backend.v2.contexts.enrollment.application.use_cases.get_child_schedule imp
 from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_sessions import (
     ListParentAvailableSessions,
 )
+from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
+    ListEligibleMakeupTargets,
+    ListParentMakeups,
+    SubmitMakeupRequest,
+)
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     ListParentPauseRequests,
     RequestEnrollmentPause,
@@ -102,7 +115,19 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.enrollment.application.use_cases.self_cancel import (
+    PreviewSelfCancel,
+    SelfCancelBillingPort,
+    SelfCancelEnrollment,
+)
+from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
+    ListParentTrialRequests,
+    SubmitTrialRequest,
+)
 from backend.v2.contexts.enrollment.domain.errors import SessionNotFound
+from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo import (
+    MongoAbsenceNoticeRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_event_repo import (
     MongoEnrollmentEventRepository,
 )
@@ -112,11 +137,20 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import 
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_writer import (
     MongoEnrollmentWriter,
 )
+from backend.v2.contexts.enrollment.infrastructure.mongo_makeup_request_repo import (
+    MongoMakeupRequestRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import (
     MongoSessionOccurrenceRepository,
 )
+from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_roster_repo import (
+    MongoOccurrenceRosterRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_pause_request_repo import (
     MongoPauseRequestRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_self_service_policy_repo import (
+    MongoSelfServicePolicyRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
@@ -129,6 +163,9 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_student_writer import (
     MongoStudentWriter,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_trial_request_repo import (
+    MongoTrialRequestRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_waitlist_repo import (
     MongoWaitlistRepository,
@@ -157,7 +194,7 @@ from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.security.redirect import validate_redirect_url
-from backend.v2.shared.tenancy import tenant_scope
+from backend.v2.shared.tenancy import current_academy_id, tenant_scope
 
 from .event_handlers import HandlerDeps, install_handlers
 
@@ -185,6 +222,15 @@ class ParentComposition:
     list_enrollments_for_parent: object
     request_enrollment_pause: RequestEnrollmentPause
     list_parent_pause_requests: ListParentPauseRequests
+    submit_absence_notice: SubmitAbsenceNotice
+    list_parent_absences: ListParentAbsences
+    submit_makeup_request: SubmitMakeupRequest
+    list_parent_makeups: ListParentMakeups
+    list_eligible_makeup_targets: ListEligibleMakeupTargets
+    submit_trial_request: SubmitTrialRequest
+    list_parent_trial_requests: ListParentTrialRequests
+    preview_self_cancel: PreviewSelfCancel
+    self_cancel_enrollment: SelfCancelEnrollment
     list_attendance_for_parent: object
     list_progress_for_parent: object
     list_invoices_for_parent: object
@@ -488,12 +534,136 @@ def compose_parent(
     occurrences_query = MongoSessionOccurrenceRepository(db)
     waitlist = MongoWaitlistRepository(db)
     pause_requests = MongoPauseRequestRepository(db)
+    absence_notices_repo = MongoAbsenceNoticeRepository(db)
+    self_service_policies_repo = MongoSelfServicePolicyRepository(db)
+    makeup_requests_repo = MongoMakeupRequestRepository(db)
+    occurrence_roster_repo = MongoOccurrenceRosterRepository(db)
+    trial_requests_repo = MongoTrialRequestRepository(db)
 
     get_child_schedule_uc = GetChildSchedule(
         enrollments=enrollments_query,
         occurrences=occurrences_query,
         sessions=sessions_query,
         students=students_query,
+    )
+
+    submit_absence_notice = SubmitAbsenceNotice(
+        students=students_query,
+        occurrences=occurrences_query,
+        enrollments=enrollments_query,
+        notices=absence_notices_repo,
+        policies=self_service_policies_repo,
+    )
+    list_parent_absences = ListParentAbsences(notices=absence_notices_repo)
+
+    submit_makeup_request = SubmitMakeupRequest(
+        students=students_query,
+        occurrences=occurrences_query,
+        enrollments=enrollments_query,
+        notices=absence_notices_repo,
+        makeups=makeup_requests_repo,
+        policies=self_service_policies_repo,
+    )
+    list_parent_makeups = ListParentMakeups(makeups=makeup_requests_repo)
+    list_eligible_makeup_targets = ListEligibleMakeupTargets(
+        students=students_query,
+        occurrences=occurrences_query,
+        sessions=sessions_query,
+        enrollments=enrollments_query,
+        occurrence_roster=occurrence_roster_repo,
+        policies=self_service_policies_repo,
+    )
+    submit_trial_request = SubmitTrialRequest(
+        students=students_query,
+        sessions=sessions_query,
+        trials=trial_requests_repo,
+    )
+    list_parent_trial_requests = ListParentTrialRequests(trials=trial_requests_repo)
+
+    class _SelfCancelFeeBillingPort(SelfCancelBillingPort):
+        """Adapts self-cancel (R4) to the billing context's REAL production
+        line-append path (``AddInvoiceLine`` -> ``LedgerRepository.save_line``)
+        — never Stripe, never invoice close/settle. Idempotent: before
+        appending, checks the resolved invoice's existing lines for one
+        already carrying this ``idempotency_key`` as ``source_id`` (with
+        ``source_type="self_cancel_fee"``) — a retried cancel call can't
+        double-bill even though ``AddInvoiceLine`` itself has no dedupe.
+        """
+
+        async def record_cancellation_fee(
+            self,
+            *,
+            enrollment: Any,
+            fee_cents: int,
+            reason: str,
+            actor_id: str,
+            idempotency_key: str,
+        ) -> dict[str, Any]:
+            student = await students_query.by_ids([enrollment.student_id])
+            if not student:
+                logging.getLogger(__name__).warning(
+                    "self-cancel fee skipped: no student found for student_id=%s",
+                    enrollment.student_id,
+                )
+                return {"skipped": True, "reason": "student_not_found"}
+            parent_id = student[0].parent_id
+            period = datetime.now(UTC).strftime("%Y-%m")
+
+            existing_invoice = await billing_ledger_repo.get_open_invoice_for_student(
+                enrollment.student_id, period
+            )
+            if existing_invoice is not None:
+                existing_lines = await billing_ledger_repo.get_lines_for_invoice(
+                    existing_invoice.invoice_id
+                )
+                for line in existing_lines:
+                    if line.source_type == "self_cancel_fee" and line.source_id == idempotency_key:
+                        return {
+                            "line_id": line.line_id,
+                            "invoice_id": line.invoice_id,
+                            "deduped": True,
+                        }
+
+            result = await AddInvoiceLine(
+                ledger=billing_ledger_repo,
+                counters=billing_counters_repo,
+                settings=billing_settings_repo,
+            ).execute(
+                AddInvoiceLineCommand(
+                    student_id=enrollment.student_id,
+                    period=period,
+                    description=reason,
+                    line_type="fee",
+                    quantity=1,
+                    unit_amount_cents=fee_cents,
+                    source_type="self_cancel_fee",
+                    source_id=idempotency_key,
+                    # Request-time tenant, not the composition-time closure:
+                    # every repo in this flow scopes by the ContextVar, and a
+                    # multi-tenant process would otherwise write the fee line
+                    # to the boot academy while cancelling in another.
+                    academy_id=current_academy_id(),
+                    parent_id=parent_id,
+                )
+            )
+            return {
+                "line_id": result.line.line_id,
+                "invoice_id": result.invoice.invoice_id,
+                "deduped": False,
+            }
+
+    preview_self_cancel = PreviewSelfCancel(
+        enrollments=enrollments_writer,
+        students=students_query,
+        policies=self_service_policies_repo,
+        occurrences=occurrences_query,
+    )
+    self_cancel_enrollment = SelfCancelEnrollment(
+        enrollments=enrollments_writer,
+        students=students_query,
+        policies=self_service_policies_repo,
+        occurrences=occurrences_query,
+        billing=_SelfCancelFeeBillingPort(),
     )
 
     confirm_enrollment = ConfirmEnrollment(
@@ -1389,6 +1559,15 @@ def compose_parent(
         list_enrollments_for_parent=list_enrollments_for_parent,
         request_enrollment_pause=request_pause,
         list_parent_pause_requests=list_parent_pause_requests,
+        submit_absence_notice=submit_absence_notice,
+        list_parent_absences=list_parent_absences,
+        submit_makeup_request=submit_makeup_request,
+        list_parent_makeups=list_parent_makeups,
+        list_eligible_makeup_targets=list_eligible_makeup_targets,
+        submit_trial_request=submit_trial_request,
+        list_parent_trial_requests=list_parent_trial_requests,
+        preview_self_cancel=preview_self_cancel,
+        self_cancel_enrollment=self_cancel_enrollment,
         list_attendance_for_parent=list_attendance_for_parent,
         list_progress_for_parent=list_progress_for_parent,
         list_invoices_for_parent=list_invoices_for_parent,
