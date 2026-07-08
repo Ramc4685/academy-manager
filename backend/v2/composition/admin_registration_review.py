@@ -189,6 +189,11 @@ class AdminRegistrationReview:
             await self._enrollments.create(enrollment)
         else:
             enrollment = existing
+        if app.zero_quote_period:
+            # Checkout skipped Stripe because the quote was $0 for this period;
+            # enrollment docs carry no billing_start_at/created_at, so without
+            # this the monthly generator would charge full tuition for it.
+            await self._enrollments.add_skip_period(enrollment.enrollment_id, app.zero_quote_period)
         effective_at = command.effective_at or now
         await self._record_event(
             event_type="created",

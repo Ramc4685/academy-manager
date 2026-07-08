@@ -49,6 +49,7 @@ from backend.v2.contexts.billing.application.use_cases.send_invoice import SendI
 from backend.v2.contexts.billing.application.use_cases.start_checkout import (
     StartCheckout,
     StartCheckoutCommand,
+    StartCheckoutResult,
 )
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine
 from backend.v2.contexts.billing.infrastructure.mongo_autopay_consent_repo import (
@@ -1356,6 +1357,28 @@ def compose_parent(
                 parent_id=parent_id,
             )
         )
+        if quote.final_amount_cents <= 0:
+            # No billable classes remain this month, so there is nothing to
+            # charge — Stripe rejects zero-amount Checkout Sessions. Skip
+            # payment and move the application straight to admin review;
+            # regular monthly billing starts next month.
+            #
+            # Persist which period was quoted $0 so admin approval can stamp
+            # skip_periods on the enrollment — otherwise the monthly billing
+            # generator has no proration signal at all (enrollment docs never
+            # carry billing_start_at/created_at) and would charge full tuition
+            # for this period once the enrollment exists.
+            zero_quote_period = datetime.now(UTC).strftime("%Y-%m")
+            await apps_repo.save(app.model_copy(update={"zero_quote_period": zero_quote_period}))
+            if quote.snapshot_id:
+                await payments_repo.consume_quote_snapshot(quote.snapshot_id)
+            await transition.execute(app.application_id, "CHECKOUT_PENDING")
+            await transition.execute(app.application_id, "PENDING_APPROVAL")
+            return StartCheckoutResult(
+                payment_id="",
+                checkout_session_id="",
+                redirect_url=success_url,
+            )
         result = await start_checkout.execute(
             StartCheckoutCommand(
                 parent_id=parent_id,

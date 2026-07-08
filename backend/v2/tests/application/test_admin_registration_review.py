@@ -102,6 +102,7 @@ class InMemoryEnrollments:
             (enrollment.session_id, enrollment.student_id): enrollment
             for enrollment in existing or []
         }
+        self.skip_periods: dict[str, list[str]] = {}
 
     async def create(self, enrollment: Enrollment) -> None:
         self.created.append(enrollment)
@@ -112,6 +113,9 @@ class InMemoryEnrollments:
 
     async def update_session(self, enrollment_id: str, session_id: str) -> None:
         return None
+
+    async def add_skip_period(self, enrollment_id: str, period: str) -> None:
+        self.skip_periods.setdefault(enrollment_id, []).append(period)
 
     async def get(self, enrollment_id: str) -> Enrollment | None:
         return next(
@@ -221,6 +225,50 @@ async def test_approve_reuses_existing_enrollment_without_reserving_seat() -> No
     assert enrollments.created == []
     assert detail.enrollment_id == "enroll-existing"
     assert apps.saved[-1].enrollment_id == "enroll-existing"
+
+
+@pytest.mark.asyncio
+async def test_approve_stamps_skip_period_for_zero_quote_application() -> None:
+    app = _application(student_id="student-1").model_copy(update={"zero_quote_period": "2026-07"})
+    apps = InMemoryApplications(app)
+    enrollments = InMemoryEnrollments()
+
+    review = AdminRegistrationReview(
+        apps=apps,
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=enrollments,
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    detail = await review.approve(
+        ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1")
+    )
+
+    assert enrollments.skip_periods[detail.enrollment_id] == ["2026-07"]
+
+
+@pytest.mark.asyncio
+async def test_approve_does_not_stamp_skip_period_for_normal_application() -> None:
+    app = _application(student_id="student-1")
+    apps = InMemoryApplications(app)
+    enrollments = InMemoryEnrollments()
+
+    review = AdminRegistrationReview(
+        apps=apps,
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=enrollments,
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    assert enrollments.skip_periods == {}
 
 
 @pytest.mark.asyncio
