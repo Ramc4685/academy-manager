@@ -44,6 +44,9 @@ from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes im
     CoachAddStudentToRoster,
     CoachRemoveStudentFromRoster,
 )
+from backend.v2.contexts.enrollment.application.use_cases.get_occurrence_roster import (
+    GetOccurrenceRoster,
+)
 from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
     GetSessionRoster,
 )
@@ -57,6 +60,7 @@ from backend.v2.contexts.enrollment.domain.models import (
     SessionOccurrence,
     Student,
 )
+from backend.v2.contexts.enrollment.domain.self_service import OccurrenceRosterEntry
 from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
@@ -327,6 +331,31 @@ class FakeCoachStudentWriter:
         self._students[student.student_id] = student
 
 
+class FakeAbsenceNoticeQuery:
+    """In-memory AbsenceNotice reads for coach-today's expected_absence flag."""
+
+    def __init__(self, notices: list | None = None) -> None:
+        self._notices = notices or []
+
+    async def list_for_occurrence(self, occurrence_id: str):
+        return [n for n in self._notices if n.occurrence_id == occurrence_id]
+
+
+class FakeOccurrenceRosterQuery:
+    """In-memory one-time (makeup/trial) occurrence roster entries."""
+
+    def __init__(self, entries: list[OccurrenceRosterEntry] | None = None) -> None:
+        self._entries = entries or []
+
+    async def list_for_occurrence(self, occurrence_id: str) -> list[OccurrenceRosterEntry]:
+        return [e for e in self._entries if e.occurrence_id == occurrence_id]
+
+    async def exists(self, occurrence_id: str, student_id: str) -> bool:
+        return any(
+            e.occurrence_id == occurrence_id and e.student_id == student_id for e in self._entries
+        )
+
+
 # --- seed data ---
 
 
@@ -432,6 +461,11 @@ def seed():
         "enrollments": enrollments,
         "students": students,
         "occurrences": occurrences,
+        # Populated only by tests exercising expected-absence flags / one-time
+        # roster entries (Task 3); empty by default so existing scenarios
+        # (including the coach-today golden master) are unaffected.
+        "absence_notices": [],
+        "occurrence_roster_entries": [],
     }
 
 
@@ -471,6 +505,8 @@ def _build_use_cases(seed_data) -> CoachUseCases:
     enrollments = FakeEnrollmentQuery(seed_data["enrollments"])
     students = FakeStudentQuery(seed_data["students"])
     occurrences = FakeOccurrenceQuery(seed_data["occurrences"])
+    absence_notices = FakeAbsenceNoticeQuery(seed_data.get("absence_notices"))
+    occurrence_roster = FakeOccurrenceRosterQuery(seed_data.get("occurrence_roster_entries"))
 
     # Adapters wiring coach lookups to enrollment queries.
     class _SL:
@@ -587,9 +623,17 @@ def _build_use_cases(seed_data) -> CoachUseCases:
         event_sink=_StubEventSink(),
     )
 
+    _get_roster = GetSessionRoster(enrollments=enrollments, students=students)
+
     return CoachUseCases(
         list_today=ListCoachOccurrencesForDate(occurrences=occurrences, sessions=sessions),
-        get_roster=GetSessionRoster(enrollments=enrollments, students=students),
+        get_roster=_get_roster,
+        get_occurrence_roster=GetOccurrenceRoster(
+            get_roster=_get_roster,
+            absence_notices=absence_notices,
+            occurrence_roster=occurrence_roster,
+            students=students,
+        ),
         mark_attendance=MarkAttendance(
             attendance_repo=_attendance_repo,
             occurrence_lookup=_occurrence_lookup,

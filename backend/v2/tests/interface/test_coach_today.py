@@ -6,6 +6,15 @@ unauthenticated 401.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
+from fastapi.testclient import TestClient
+
+from backend.v2.contexts.enrollment.application.use_cases.absence_notices import AbsenceNotice
+from backend.v2.contexts.enrollment.domain.models import Student
+from backend.v2.contexts.enrollment.domain.self_service import OccurrenceRosterEntry
+from backend.v2.tests.interface.conftest import _build_use_cases, _coach_claims, _make_app
+
 
 def test_coach_today_happy_path(coach_client):
     r = coach_client.get("/api/v2/coach/today?date=2026-05-16")
@@ -95,3 +104,72 @@ def test_coach_today_admin_persona_returns_404(admin_client):
 def test_coach_today_unauthenticated_returns_401(anon_client):
     r = anon_client.get("/api/v2/coach/today")
     assert r.status_code == 401
+
+
+# ---------- expected-absence flags + one-time roster entries (Task 3) ----------
+
+
+def test_coach_today_flags_expected_absence_for_student_with_notice(seed):
+    """Occurrence occ-today-1 (session s-today-1) has students st1/st2. An
+    absence notice for st1 on that occurrence flags expected_absence=True;
+    st2 (no notice) stays False."""
+    seed["absence_notices"] = [
+        AbsenceNotice(
+            notice_id="notice-1",
+            academy_id="test-academy",
+            student_id="st1",
+            occurrence_id="occ-today-1",
+            session_id="s-today-1",
+            submitted_by="p1",
+            submitted_at=datetime(2026, 5, 15, 8, 0, tzinfo=UTC),
+            notice_window_met=True,
+        )
+    ]
+    use_cases = _build_use_cases(seed)
+    app = _make_app(_coach_claims(), use_cases)
+    with TestClient(app) as client:
+        r = client.get("/api/v2/coach/today?date=2026-05-16")
+    assert r.status_code == 200, r.text
+    first = r.json()["sessions"][0]
+    by_id = {entry["student_id"]: entry for entry in first["roster"]}
+    assert by_id["st1"]["expected_absence"] is True
+    assert by_id["st1"]["entry_source"] == "enrollment"
+    assert by_id["st2"]["expected_absence"] is False
+
+
+def test_coach_today_appends_one_time_makeup_entry_with_entry_source(seed):
+    """A student with an OccurrenceRosterEntry(source="makeup") for
+    occ-today-1 appears in the roster with entry_source="makeup", alongside
+    the regular enrollment-backed students."""
+    seed["students"] = [
+        *seed["students"],
+        Student(
+            student_id="st-makeup",
+            academy_id="test-academy",
+            parent_id="p3",
+            full_name="Charlie",
+        ),
+    ]
+    seed["occurrence_roster_entries"] = [
+        OccurrenceRosterEntry(
+            entry_id="ore-1",
+            academy_id="test-academy",
+            occurrence_id="occ-today-1",
+            student_id="st-makeup",
+            source="makeup",
+            origin_request_id="req-1",
+            created_at=datetime(2026, 5, 15, 8, 0, tzinfo=UTC),
+        )
+    ]
+    use_cases = _build_use_cases(seed)
+    app = _make_app(_coach_claims(), use_cases)
+    with TestClient(app) as client:
+        r = client.get("/api/v2/coach/today?date=2026-05-16")
+    assert r.status_code == 200, r.text
+    first = r.json()["sessions"][0]
+    by_id = {entry["student_id"]: entry for entry in first["roster"]}
+    assert set(by_id) == {"st1", "st2", "st-makeup"}
+    assert by_id["st-makeup"]["entry_source"] == "makeup"
+    assert by_id["st-makeup"]["full_name"] == "Charlie"
+    assert by_id["st-makeup"]["enrollment_status"] is None
+    assert by_id["st1"]["entry_source"] == "enrollment"

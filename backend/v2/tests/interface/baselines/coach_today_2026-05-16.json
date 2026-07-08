@@ -14,13 +14,17 @@
           "student_id": "st1",
           "full_name": "Alice",
           "enrollment_status": "active",
-          "attendance_status": null
+          "attendance_status": null,
+          "expected_absence": false,
+          "entry_source": "enrollment"
         },
         {
           "student_id": "st2",
           "full_name": "Bob",
           "enrollment_status": "active",
-          "attendance_status": null
+          "attendance_status": null,
+          "expected_absence": false,
+          "entry_source": "enrollment"
         }
       ]
     },

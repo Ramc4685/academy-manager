@@ -22,6 +22,10 @@ export interface CoachRosterEntry {
   enrollment_status: EnrollmentStatus;
   /** Mark already recorded for this occurrence (hydrates state on reload). */
   attendance_status?: AttendanceStatus | null;
+  /** True when a parent submitted an absence notice for this occurrence. */
+  expected_absence?: boolean;
+  /** "enrollment" for regular roster rows; "makeup"/"trial" for one-time entries. */
+  entry_source?: "enrollment" | "makeup" | "trial";
 }
 
 export interface CoachSession {
