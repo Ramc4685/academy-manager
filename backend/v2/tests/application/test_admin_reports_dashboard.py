@@ -246,18 +246,14 @@ async def test_reports_dashboard_composes_monthly_finance_attendance_and_capacit
                 "label": "1-30",
                 "amount_cents": 6_000,
                 "family_count": 1,
-                "families": [
-                    {"family_id": "parent-1", "family_name": None, "amount_cents": 6_000}
-                ],
+                "families": [{"family_id": "parent-1", "family_name": None, "amount_cents": 6_000}],
             },
             {"label": "31-60", "amount_cents": 0, "family_count": 0, "families": []},
             {
                 "label": "60+",
                 "amount_cents": 3_000,
                 "family_count": 1,
-                "families": [
-                    {"family_id": "parent-2", "family_name": None, "amount_cents": 3_000}
-                ],
+                "families": [{"family_id": "parent-2", "family_name": None, "amount_cents": 3_000}],
             },
         ],
     }

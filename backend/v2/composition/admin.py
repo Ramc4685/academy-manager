@@ -1469,9 +1469,7 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 if isinstance(family_ids, set) and family_id:
                     family_ids.add(family_id)
                     family_amounts = bucket["family_amounts"]
-                    family_amounts[family_id] = (
-                        int(family_amounts.get(family_id, 0)) + outstanding
-                    )
+                    family_amounts[family_id] = int(family_amounts.get(family_id, 0)) + outstanding
 
         ledger_payments_cursor = db["ledger_payments"].find(
             {
@@ -1654,9 +1652,7 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 if isinstance(family_ids, set) and family_id:
                     family_ids.add(family_id)
                     family_amounts = bucket["family_amounts"]
-                    family_amounts[family_id] = (
-                        int(family_amounts.get(family_id, 0)) + outstanding
-                    )
+                    family_amounts[family_id] = int(family_amounts.get(family_id, 0)) + outstanding
 
         present_count = 0
         recorded_count = 0
@@ -1821,7 +1817,13 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 or_filter.append({"_id": {"$in": oid_ids}})
             users_cursor = db["users"].find(
                 {"academy_id": academy_id, "$or": or_filter},
-                {"user_id": 1, "firebase_uid": 1, "display_name": 1, "first_name": 1, "last_name": 1},
+                {
+                    "user_id": 1,
+                    "firebase_uid": 1,
+                    "display_name": 1,
+                    "first_name": 1,
+                    "last_name": 1,
+                },
             )
             async for user in users_cursor:
                 display = str(
