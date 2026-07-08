@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 
 import {
   completeGoogleRedirectSignIn,
@@ -23,7 +23,7 @@ import { brand } from "@/lib/brand";
 const HERO_IMAGE =
   "https://static.prod-images.emergentagent.com/jobs/c735a2b3-2fb1-4fa5-a75c-2007226ca62e/images/1d1cfafe28a9d8df9f22f211189ef097f1bb5d348846857bdee5ba711ec35327.png";
 
-export default function LoginPage() {
+function LoginPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
@@ -260,6 +260,14 @@ export default function LoginPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginPageContent />
+    </Suspense>
   );
 }
 
