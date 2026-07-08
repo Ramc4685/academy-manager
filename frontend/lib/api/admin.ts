@@ -764,10 +764,17 @@ export interface AdminReportsExpensesSummary {
   by_category: AdminReportsExpenseCategory[];
 }
 
+export interface AdminReportsAgingFamily {
+  family_id: string;
+  family_name: string | null;
+  amount_cents: number;
+}
+
 export interface AdminReportsCollectionsAgingBucket {
   label: string;
   amount_cents: number;
   family_count: number;
+  families: AdminReportsAgingFamily[];
 }
 
 export interface AdminReportsCollectionsRisk {
@@ -798,6 +805,8 @@ export interface AdminReportsPayrollSummary {
 export interface AdminReportsDashboardResponse {
   period: string;
   cash_collected_cents: number;
+  billed_cents: number;
+  collection_rate: number | null;
   outstanding_dues_cents: number;
   attendance: AdminReportsAttendanceSummary;
   sessions: AdminReportsSessionsSummary;
@@ -2018,6 +2027,33 @@ export function getRevenue(): Promise<AdminRevenueResponse> {
 
 export function getAdminReportKpis(): Promise<AdminReportsKpiResponse> {
   return apiFetch<AdminReportsKpiResponse>("/admin/reports/kpis", { method: "GET" });
+}
+
+export interface AdminProjectedIncomeSessionRow {
+  session_id: string;
+  title: string;
+  monthly_fee_cents: number;
+  enrollment_count: number;
+  expected_cents: number;
+}
+
+export interface AdminProjectedIncomeResponse {
+  period: string;
+  total_cents: number;
+  autopay_cents: number;
+  manual_cents: number;
+  enrollment_count: number;
+  autopay_enrollment_count: number;
+  manual_enrollment_count: number;
+  by_session: AdminProjectedIncomeSessionRow[];
+  empty: boolean;
+}
+
+export function getAdminProjectedIncome(period: string): Promise<AdminProjectedIncomeResponse> {
+  return apiFetch<AdminProjectedIncomeResponse>(
+    `/admin/reports/projected-income?period=${encodeURIComponent(period)}`,
+    { method: "GET" },
+  );
 }
 
 export function getAdminReportsDashboard(period: string): Promise<AdminReportsDashboardResponse> {

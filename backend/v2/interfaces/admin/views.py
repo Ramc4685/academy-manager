@@ -1555,10 +1555,17 @@ class AdminReportsExpensesSummary(BaseModel):
     by_category: list[AdminReportsExpenseCategory] = []
 
 
+class AdminReportsAgingFamily(BaseModel):
+    family_id: str
+    family_name: str | None = None
+    amount_cents: int
+
+
 class AdminReportsCollectionsAgingBucket(BaseModel):
     label: str
     amount_cents: int
     family_count: int
+    families: list[AdminReportsAgingFamily] = []
 
 
 class AdminReportsCollectionsRisk(BaseModel):
@@ -1589,6 +1596,8 @@ class AdminReportsPayrollSummary(BaseModel):
 class AdminReportsDashboardResponse(BaseModel):
     period: str
     cash_collected_cents: int = 0
+    billed_cents: int = 0
+    collection_rate: float | None = None
     outstanding_dues_cents: int = 0
     attendance: AdminReportsAttendanceSummary = Field(default_factory=AdminReportsAttendanceSummary)
     sessions: AdminReportsSessionsSummary = Field(default_factory=AdminReportsSessionsSummary)
@@ -1599,6 +1608,26 @@ class AdminReportsDashboardResponse(BaseModel):
     profit_and_loss: AdminReportsProfitAndLoss = Field(default_factory=AdminReportsProfitAndLoss)
     payroll: AdminReportsPayrollSummary = Field(default_factory=AdminReportsPayrollSummary)
     empty_states: list[str] = []
+
+
+class AdminProjectedIncomeSessionRow(BaseModel):
+    session_id: str
+    title: str = ""
+    monthly_fee_cents: int = 0
+    enrollment_count: int = 0
+    expected_cents: int = 0
+
+
+class AdminProjectedIncomeResponse(BaseModel):
+    period: str
+    total_cents: int = 0
+    autopay_cents: int = 0
+    manual_cents: int = 0
+    enrollment_count: int = 0
+    autopay_enrollment_count: int = 0
+    manual_enrollment_count: int = 0
+    by_session: list[AdminProjectedIncomeSessionRow] = []
+    empty: bool = True
 
 
 class AdminSessionEconomicsSummary(BaseModel):

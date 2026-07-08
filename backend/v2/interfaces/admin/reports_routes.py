@@ -10,6 +10,7 @@ from fastapi.responses import Response
 
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
+    AdminProjectedIncomeResponse,
     AdminReportsDashboardResponse,
     AdminSessionEconomicsResponse,
     AttendanceTrendsResponse,
@@ -52,6 +53,21 @@ async def get_session_economics(
         raise HTTPException(status_code=503, detail="session economics report is unavailable")
     result = await use_cases.get_session_economics(period)  # type: ignore[operator]
     return AdminSessionEconomicsResponse(**result)
+
+
+@router.get("/reports/projected-income", response_model=AdminProjectedIncomeResponse)
+async def get_projected_income(
+    period: Annotated[str, Query(pattern=r"^\d{4}-\d{2}$")],
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminProjectedIncomeResponse:
+    month = int(period[5:7])
+    if month < 1 or month > 12:
+        raise HTTPException(status_code=422, detail="period must be YYYY-MM")
+    if use_cases.get_projected_income is None:
+        raise HTTPException(status_code=503, detail="projected income report is unavailable")
+    result = await use_cases.get_projected_income(period)  # type: ignore[operator]
+    return AdminProjectedIncomeResponse(**result)
 
 
 @router.get("/reports/kpis", response_model=ReportsKpiResponse)

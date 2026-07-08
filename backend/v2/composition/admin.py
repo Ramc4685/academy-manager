@@ -1422,12 +1422,13 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         start, end = _month_bounds(period)
 
         cash_collected_cents = 0
+        billed_cents = 0
         outstanding_dues_cents = 0
         failed_payment_count = 0
         partial_payment_count = 0
         collection_family_ids: set[str] = set()
         aging_totals: dict[str, dict[str, Any]] = {
-            label: {"amount_cents": 0, "family_ids": set()}
+            label: {"amount_cents": 0, "family_ids": set(), "family_amounts": {}}
             for label in ("Current", "1-30", "31-60", "60+")
         }
         invoice_keys: set[str] = set()
@@ -1448,6 +1449,7 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 partial_payment_count += 1
             outstanding = _invoice_outstanding_cents(invoice)
             outstanding_dues_cents += outstanding
+            billed_cents += _invoice_paid_cents(invoice) + outstanding
             if outstanding:
                 family_id = str(
                     invoice.get("parent_id")
@@ -1466,6 +1468,10 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 family_ids = bucket["family_ids"]
                 if isinstance(family_ids, set) and family_id:
                     family_ids.add(family_id)
+                    family_amounts = bucket["family_amounts"]
+                    family_amounts[family_id] = (
+                        int(family_amounts.get(family_id, 0)) + outstanding
+                    )
 
         ledger_payments_cursor = db["ledger_payments"].find(
             {
@@ -1628,6 +1634,7 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 partial_payment_count += 1
             outstanding = _payment_outstanding_cents(payment)
             outstanding_dues_cents += outstanding
+            billed_cents += _payment_collected_cents(payment) + outstanding
             if outstanding:
                 family_id = str(
                     payment.get("parent_id")
@@ -1646,6 +1653,10 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 family_ids = bucket["family_ids"]
                 if isinstance(family_ids, set) and family_id:
                     family_ids.add(family_id)
+                    family_amounts = bucket["family_amounts"]
+                    family_amounts[family_id] = (
+                        int(family_amounts.get(family_id, 0)) + outstanding
+                    )
 
         present_count = 0
         recorded_count = 0
@@ -1790,18 +1801,73 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         if payout_period_rows == 0:
             empty_states.append("No payout periods generated for this month.")
 
+        # Resolve display names for aging drill-down. parent_id may be a
+        # user_id, a firebase uid, or a raw ObjectId depending on the writer,
+        # so match all three (same lookup the billing/finance paths use).
+        all_family_ids = {
+            family_id
+            for label in aging_totals
+            for family_id in aging_totals[label]["family_amounts"]
+        }
+        family_names: dict[str, str] = {}
+        if all_family_ids:
+            id_list = sorted(all_family_ids)
+            oid_ids = [BsonObjectId(p) for p in id_list if BsonObjectId.is_valid(p)]
+            or_filter: list[dict[str, Any]] = [
+                {"user_id": {"$in": id_list}},
+                {"firebase_uid": {"$in": id_list}},
+            ]
+            if oid_ids:
+                or_filter.append({"_id": {"$in": oid_ids}})
+            users_cursor = db["users"].find(
+                {"academy_id": academy_id, "$or": or_filter},
+                {"user_id": 1, "firebase_uid": 1, "display_name": 1, "first_name": 1, "last_name": 1},
+            )
+            async for user in users_cursor:
+                display = str(
+                    user.get("display_name")
+                    or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+                    or ""
+                )
+                if not display:
+                    continue
+                for key in (
+                    str(user.get("user_id") or ""),
+                    str(user.get("firebase_uid") or ""),
+                    str(user["_id"]),
+                ):
+                    if key and key in all_family_ids:
+                        family_names[key] = display
+
         aging_buckets = [
             {
                 "label": label,
                 "amount_cents": int(aging_totals[label]["amount_cents"]),
                 "family_count": len(aging_totals[label]["family_ids"]),
+                "families": [
+                    {
+                        "family_id": family_id,
+                        "family_name": family_names.get(family_id),
+                        "amount_cents": amount,
+                    }
+                    for family_id, amount in sorted(
+                        aging_totals[label]["family_amounts"].items(),
+                        key=lambda item: (-item[1], item[0]),
+                    )
+                ],
             }
             for label in ("Current", "1-30", "31-60", "60+")
         ]
 
+        collection_rate = (
+            round(min(cash_collected_cents / billed_cents, 1.0), 4) if billed_cents > 0 else None
+        )
+
         return {
             "period": period,
             "cash_collected_cents": cash_collected_cents,
+            "billed_cents": billed_cents,
+            "collection_rate": collection_rate,
             "outstanding_dues_cents": outstanding_dues_cents,
             "attendance": {
                 "present_count": present_count,
@@ -1851,6 +1917,135 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         }
 
     return get_reports_dashboard
+
+
+def _make_projected_income_report(db: AsyncIOMotorDatabase[Any]) -> object:
+    """Returns an async callable projecting next-month expected tuition.
+
+    Projection = active session enrollments x the session's monthly fee
+    (per-student ``override_price_cents`` wins when present), split by whether
+    the enrollment is on autopay (``student_billing_enrollments`` with
+    ``autopay_enrollment_status == "active"``). Cash actually collected is
+    reported by the dashboard; this is the forward-looking counterpart.
+    """
+    from backend.v2.shared.tenancy import current_academy_id
+
+    async def get_projected_income(period: str) -> dict[str, Any]:
+        academy_id = current_academy_id()
+
+        enrollment_rows: list[dict[str, Any]] = []
+        session_ids: set[str] = set()
+        enrollments_cursor = db["enrollments"].find(
+            {
+                "academy_id": academy_id,
+                "status": "active",
+                "is_deleted": {"$ne": True},
+            },
+            {"enrollment_id": 1, "session_id": 1, "parent_id": 1, "student_id": 1},
+        )
+        async for enrollment in enrollments_cursor:
+            session_id = str(enrollment.get("session_id") or "")
+            if not session_id:
+                continue
+            session_ids.add(session_id)
+            enrollment_rows.append(
+                {
+                    "enrollment_id": str(enrollment.get("enrollment_id") or ""),
+                    "session_id": session_id,
+                }
+            )
+
+        sessions_by_id: dict[str, dict[str, Any]] = {}
+        if session_ids:
+            sessions_cursor = db["sessions"].find(
+                {
+                    "academy_id": academy_id,
+                    "session_id": {"$in": sorted(session_ids)},
+                    "is_deleted": {"$ne": True},
+                },
+                {"session_id": 1, "title": 1, "name": 1, "amount_cents": 1},
+            )
+            async for session in sessions_cursor:
+                sessions_by_id[str(session.get("session_id") or session.get("_id"))] = session
+
+        # Autopay status + price override are keyed by the same enrollment_id
+        # on the billing aggregate (student_billing_enrollments).
+        autopay_by_enrollment: dict[str, str] = {}
+        override_by_enrollment: dict[str, int | None] = {}
+        enrollment_ids = sorted(
+            {row["enrollment_id"] for row in enrollment_rows if row["enrollment_id"]}
+        )
+        for index in range(0, len(enrollment_ids), 500):
+            batch = enrollment_ids[index : index + 500]
+            billing_cursor = db["student_billing_enrollments"].find(
+                {"academy_id": academy_id, "enrollment_id": {"$in": batch}},
+                {"enrollment_id": 1, "autopay_enrollment_status": 1, "override_price_cents": 1},
+            )
+            async for billing in billing_cursor:
+                enrollment_id = str(billing.get("enrollment_id") or "")
+                if not enrollment_id:
+                    continue
+                autopay_by_enrollment[enrollment_id] = str(
+                    billing.get("autopay_enrollment_status") or "not_offered"
+                )
+                override = billing.get("override_price_cents")
+                override_by_enrollment[enrollment_id] = (
+                    int(override) if override is not None else None
+                )
+
+        total_cents = 0
+        autopay_cents = 0
+        manual_cents = 0
+        autopay_count = 0
+        manual_count = 0
+        by_session: dict[str, dict[str, Any]] = {}
+        for row in enrollment_rows:
+            session = sessions_by_id.get(row["session_id"])
+            if session is None:
+                continue
+            monthly_fee = int(session.get("amount_cents") or 0)
+            override = override_by_enrollment.get(row["enrollment_id"])
+            expected = override if override is not None else monthly_fee
+            if expected <= 0:
+                continue
+            is_autopay = autopay_by_enrollment.get(row["enrollment_id"]) == "active"
+            total_cents += expected
+            if is_autopay:
+                autopay_cents += expected
+                autopay_count += 1
+            else:
+                manual_cents += expected
+                manual_count += 1
+            session_row = by_session.setdefault(
+                row["session_id"],
+                {
+                    "session_id": row["session_id"],
+                    "title": str(session.get("title") or session.get("name") or ""),
+                    "monthly_fee_cents": monthly_fee,
+                    "enrollment_count": 0,
+                    "expected_cents": 0,
+                },
+            )
+            session_row["enrollment_count"] += 1
+            session_row["expected_cents"] += expected
+
+        rows = sorted(
+            by_session.values(),
+            key=lambda item: (-int(item["expected_cents"]), str(item["title"])),
+        )
+        return {
+            "period": period,
+            "total_cents": total_cents,
+            "autopay_cents": autopay_cents,
+            "manual_cents": manual_cents,
+            "enrollment_count": autopay_count + manual_count,
+            "autopay_enrollment_count": autopay_count,
+            "manual_enrollment_count": manual_count,
+            "by_session": rows,
+            "empty": not rows,
+        }
+
+    return get_projected_income
 
 
 def _make_session_economics_report(db: AsyncIOMotorDatabase[Any]) -> object:
@@ -5493,6 +5688,7 @@ def compose_admin(
         export_report_csv=export_report_csv,
         get_reports_kpis=_make_reports_kpis(db),
         get_session_economics=_make_session_economics_report(db),
+        get_projected_income=_make_projected_income_report(db),
         list_enrollment_events=_make_list_enrollment_events(db),
         comms=comms,
         send_campaign=send_campaign,

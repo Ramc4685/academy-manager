@@ -241,10 +241,24 @@ async def test_reports_dashboard_composes_monthly_finance_attendance_and_capacit
         "failed_payment_count": 1,
         "partial_payment_count": 1,
         "aging_buckets": [
-            {"label": "Current", "amount_cents": 0, "family_count": 0},
-            {"label": "1-30", "amount_cents": 6_000, "family_count": 1},
-            {"label": "31-60", "amount_cents": 0, "family_count": 0},
-            {"label": "60+", "amount_cents": 3_000, "family_count": 1},
+            {"label": "Current", "amount_cents": 0, "family_count": 0, "families": []},
+            {
+                "label": "1-30",
+                "amount_cents": 6_000,
+                "family_count": 1,
+                "families": [
+                    {"family_id": "parent-1", "family_name": None, "amount_cents": 6_000}
+                ],
+            },
+            {"label": "31-60", "amount_cents": 0, "family_count": 0, "families": []},
+            {
+                "label": "60+",
+                "amount_cents": 3_000,
+                "family_count": 1,
+                "families": [
+                    {"family_id": "parent-2", "family_name": None, "amount_cents": 3_000}
+                ],
+            },
         ],
     }
     assert dashboard["profit_and_loss"] == {
@@ -356,10 +370,24 @@ async def test_reports_dashboard_uses_ledger_invoices_and_payments_without_legac
     assert dashboard["collections_risk"]["partial_payment_count"] == 1
     assert dashboard["collections_risk"]["overdue_family_count"] == 2
     assert dashboard["collections_risk"]["aging_buckets"] == [
-        {"label": "Current", "amount_cents": 0, "family_count": 0},
-        {"label": "1-30", "amount_cents": 6_000, "family_count": 1},
-        {"label": "31-60", "amount_cents": 0, "family_count": 0},
-        {"label": "60+", "amount_cents": 3_000, "family_count": 1},
+        {"label": "Current", "amount_cents": 0, "family_count": 0, "families": []},
+        {
+            "label": "1-30",
+            "amount_cents": 6_000,
+            "family_count": 1,
+            "families": [
+                {"family_id": "parent-partial", "family_name": None, "amount_cents": 6_000}
+            ],
+        },
+        {"label": "31-60", "amount_cents": 0, "family_count": 0, "families": []},
+        {
+            "label": "60+",
+            "amount_cents": 3_000,
+            "family_count": 1,
+            "families": [
+                {"family_id": "parent-failed", "family_name": None, "amount_cents": 3_000}
+            ],
+        },
     ]
 
 
@@ -599,10 +627,32 @@ async def test_reports_dashboard_uses_legacy_effective_payment_date_before_perio
     assert may_dashboard["collections_risk"]["overdue_family_count"] == 2
     assert may_dashboard["collections_risk"]["overdue_cents"] == 8_000
     assert may_dashboard["collections_risk"]["aging_buckets"] == [
-        {"label": "Current", "amount_cents": 0, "family_count": 0},
-        {"label": "1-30", "amount_cents": 5_000, "family_count": 1},
-        {"label": "31-60", "amount_cents": 0, "family_count": 0},
-        {"label": "60+", "amount_cents": 3_000, "family_count": 1},
+        {"label": "Current", "amount_cents": 0, "family_count": 0, "families": []},
+        {
+            "label": "1-30",
+            "amount_cents": 5_000,
+            "family_count": 1,
+            "families": [
+                {
+                    "family_id": "parent-partial-may",
+                    "family_name": None,
+                    "amount_cents": 5_000,
+                }
+            ],
+        },
+        {"label": "31-60", "amount_cents": 0, "family_count": 0, "families": []},
+        {
+            "label": "60+",
+            "amount_cents": 3_000,
+            "family_count": 1,
+            "families": [
+                {
+                    "family_id": "parent-failed-may",
+                    "family_name": None,
+                    "amount_cents": 3_000,
+                }
+            ],
+        },
     ]
     assert june_dashboard["cash_collected_cents"] == 21_000
     assert june_dashboard["collections_risk"]["failed_payment_count"] == 0
@@ -623,6 +673,8 @@ async def test_reports_dashboard_returns_meaningful_empty_states() -> None:
     assert dashboard == {
         "period": "2026-05",
         "cash_collected_cents": 0,
+        "billed_cents": 0,
+        "collection_rate": None,
         "outstanding_dues_cents": 0,
         "attendance": {
             "present_count": 0,
@@ -647,10 +699,10 @@ async def test_reports_dashboard_returns_meaningful_empty_states() -> None:
             "failed_payment_count": 0,
             "partial_payment_count": 0,
             "aging_buckets": [
-                {"label": "Current", "amount_cents": 0, "family_count": 0},
-                {"label": "1-30", "amount_cents": 0, "family_count": 0},
-                {"label": "31-60", "amount_cents": 0, "family_count": 0},
-                {"label": "60+", "amount_cents": 0, "family_count": 0},
+                {"label": "Current", "amount_cents": 0, "family_count": 0, "families": []},
+                {"label": "1-30", "amount_cents": 0, "family_count": 0, "families": []},
+                {"label": "31-60", "amount_cents": 0, "family_count": 0, "families": []},
+                {"label": "60+", "amount_cents": 0, "family_count": 0, "families": []},
             ],
         },
         "profit_and_loss": {
@@ -818,3 +870,207 @@ async def test_session_economics_prorates_monthly_fee_and_allocates_costs() -> N
         }
     ]
     assert report["empty_states"] == []
+
+
+@pytest.mark.asyncio
+async def test_reports_dashboard_reports_billed_collection_rate_and_family_names() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    client = mongomock_motor.AsyncMongoMockClient()
+    db = client["test_db"]
+    await db["invoices"].insert_many(
+        [
+            {
+                "invoice_id": "inv-paid",
+                "academy_id": "acad",
+                "parent_id": "parent-paid",
+                "period": "2026-05",
+                "status": "paid",
+                "total_cents": 10_000,
+                "balance_due_cents": 0,
+                "currency": "usd",
+                "created_at": datetime(2026, 5, 3, tzinfo=UTC),
+                "due_date": datetime(2026, 5, 15, tzinfo=UTC),
+            },
+            {
+                "invoice_id": "inv-open",
+                "academy_id": "acad",
+                "parent_id": "parent-open",
+                "period": "2026-05",
+                "status": "open",
+                "total_cents": 5_000,
+                "balance_due_cents": 5_000,
+                "currency": "usd",
+                "created_at": datetime(2026, 5, 5, tzinfo=UTC),
+                "due_date": datetime(2026, 5, 20, tzinfo=UTC),
+            },
+        ]
+    )
+    await db["ledger_payments"].insert_one(
+        {
+            "payment_id": "lp-paid",
+            "academy_id": "acad",
+            "parent_id": "parent-paid",
+            "amount_cents": 10_000,
+            "currency": "usd",
+            "status": "succeeded",
+            "created_at": datetime(2026, 5, 4, tzinfo=UTC),
+        }
+    )
+    await db["users"].insert_many(
+        [
+            {
+                "user_id": "parent-open",
+                "academy_id": "acad",
+                "display_name": "Open Family",
+            },
+            {
+                # Same user_id under another tenant must never win the lookup.
+                "user_id": "parent-open",
+                "academy_id": "other",
+                "display_name": "Wrong Tenant Family",
+            },
+        ]
+    )
+
+    with tenant_scope("acad"):
+        dashboard = await admin_composition._make_reports_dashboard(db)("2026-05")
+
+    assert dashboard["billed_cents"] == 15_000
+    assert dashboard["cash_collected_cents"] == 10_000
+    assert dashboard["collection_rate"] == 0.6667
+    one_to_thirty = dashboard["collections_risk"]["aging_buckets"][1]
+    assert one_to_thirty["label"] == "1-30"
+    assert one_to_thirty["families"] == [
+        {"family_id": "parent-open", "family_name": "Open Family", "amount_cents": 5_000}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_projected_income_splits_autopay_vs_manual_with_overrides() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    client = mongomock_motor.AsyncMongoMockClient()
+    db = client["test_db"]
+    await db["sessions"].insert_many(
+        [
+            {
+                "session_id": "sess-a",
+                "academy_id": "acad",
+                "title": "Monday Advanced",
+                "amount_cents": 20_000,
+            },
+            {
+                "session_id": "sess-b",
+                "academy_id": "acad",
+                "title": "Friday Beginner",
+                "amount_cents": 15_000,
+            },
+            {
+                "session_id": "sess-free",
+                "academy_id": "acad",
+                "title": "Free Clinic",
+                "amount_cents": 0,
+            },
+        ]
+    )
+    await db["enrollments"].insert_many(
+        [
+            {
+                "enrollment_id": "enr-1",
+                "academy_id": "acad",
+                "session_id": "sess-a",
+                "status": "active",
+            },
+            {
+                "enrollment_id": "enr-2",
+                "academy_id": "acad",
+                "session_id": "sess-a",
+                "status": "active",
+            },
+            {
+                "enrollment_id": "enr-3",
+                "academy_id": "acad",
+                "session_id": "sess-b",
+                "status": "active",
+            },
+            {
+                "enrollment_id": "enr-free",
+                "academy_id": "acad",
+                "session_id": "sess-free",
+                "status": "active",
+            },
+            {
+                "enrollment_id": "enr-paused",
+                "academy_id": "acad",
+                "session_id": "sess-a",
+                "status": "paused",
+            },
+            {
+                "enrollment_id": "enr-other-tenant",
+                "academy_id": "other",
+                "session_id": "sess-a",
+                "status": "active",
+            },
+        ]
+    )
+    await db["student_billing_enrollments"].insert_many(
+        [
+            {
+                "enrollment_id": "enr-1",
+                "academy_id": "acad",
+                "autopay_enrollment_status": "active",
+            },
+            {
+                "enrollment_id": "enr-2",
+                "academy_id": "acad",
+                "autopay_enrollment_status": "paused",
+            },
+            {
+                "enrollment_id": "enr-3",
+                "academy_id": "acad",
+                "autopay_enrollment_status": "active",
+                "override_price_cents": 12_000,
+            },
+        ]
+    )
+
+    with tenant_scope("acad"):
+        projection = await admin_composition._make_projected_income_report(db)("2026-08")
+
+    assert projection["period"] == "2026-08"
+    assert projection["total_cents"] == 52_000
+    assert projection["autopay_cents"] == 32_000
+    assert projection["manual_cents"] == 20_000
+    assert projection["enrollment_count"] == 3
+    assert projection["autopay_enrollment_count"] == 2
+    assert projection["manual_enrollment_count"] == 1
+    assert projection["by_session"] == [
+        {
+            "session_id": "sess-a",
+            "title": "Monday Advanced",
+            "monthly_fee_cents": 20_000,
+            "enrollment_count": 2,
+            "expected_cents": 40_000,
+        },
+        {
+            "session_id": "sess-b",
+            "title": "Friday Beginner",
+            "monthly_fee_cents": 15_000,
+            "enrollment_count": 1,
+            "expected_cents": 12_000,
+        },
+    ]
+    assert projection["empty"] is False
+
+
+@pytest.mark.asyncio
+async def test_projected_income_empty_when_no_active_enrollments() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    client = mongomock_motor.AsyncMongoMockClient()
+    db = client["test_db"]
+
+    with tenant_scope("acad"):
+        projection = await admin_composition._make_projected_income_report(db)("2026-08")
+
+    assert projection["total_cents"] == 0
+    assert projection["by_session"] == []
+    assert projection["empty"] is True
