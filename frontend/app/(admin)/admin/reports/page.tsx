@@ -3,7 +3,14 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
-import { exportAdminReportCsv, getAdminReportsDashboard, getRevenue } from "@/lib/api/admin";
+import Link from "next/link";
+
+import {
+  exportAdminReportCsv,
+  getAdminPaymentFeed,
+  getAdminReportsDashboard,
+  getRevenue,
+} from "@/lib/api/admin";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 import { MiniBars } from "@/components/ds/charts";
@@ -39,6 +46,11 @@ export default function AdminReportsPage() {
   const dashboardQuery = useQuery({
     queryKey: ["admin", "reports", "dashboard", period],
     queryFn: () => getAdminReportsDashboard(period),
+  });
+
+  const paymentFeedQuery = useQuery({
+    queryKey: ["admin", "payments", "feed"],
+    queryFn: () => getAdminPaymentFeed(10),
   });
 
   const exportMutation = useMutation({
@@ -139,6 +151,55 @@ export default function AdminReportsPage() {
             </ul>
           </Card>
         ) : null}
+
+        <Card p={24} data-testid="recent-payments-card">
+          <div className="flex items-center justify-between gap-3">
+            <Overline>Recent payments</Overline>
+            <Link
+              href="/admin/payments"
+              className="text-sm font-medium text-rally-accent hover:underline"
+            >
+              View all payments
+            </Link>
+          </div>
+          {paymentFeedQuery.isError ? (
+            <p className="mt-3 text-sm text-red-700">Could not load recent payments.</p>
+          ) : paymentFeedQuery.isLoading ? (
+            <p className="mt-3 text-sm text-rally-subtle">Loading…</p>
+          ) : (paymentFeedQuery.data?.payments.length ?? 0) === 0 ? (
+            <p className="mt-3 text-sm text-rally-subtle">No payments received yet.</p>
+          ) : (
+            <div className="mt-4 divide-y divide-rally-line">
+              {paymentFeedQuery.data?.payments.map((item) => (
+                <div
+                  key={item.payment_id}
+                  className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm"
+                >
+                  <div>
+                    <span className="font-medium text-rally-ink">
+                      {item.parent_name || "Family on file"}
+                    </span>
+                    <span className="ml-2 text-xs text-rally-subtle">
+                      {item.payment_method || "—"}
+                      {item.refunded_cents > 0 ? " · partially refunded" : ""}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono font-semibold tabular-nums text-rally-ink">
+                      {formatCurrency(item.amount_cents)}
+                    </span>
+                    <span className="text-xs text-rally-subtle">
+                      {new Date(item.paid_at).toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
 
         <Card p={24} className="flex flex-col gap-6">
           <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">

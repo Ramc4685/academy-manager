@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, StringConstraints
 
 from backend.v2.contexts.billing.application.ports import StripeResourceNotFound
@@ -40,6 +40,10 @@ from backend.v2.interfaces.admin.views import (
     AdminEnrollmentQuoteResponse,
     AdminExpenseList,
     AdminExpenseView,
+    AdminFamilyLastPaymentRow,
+    AdminFamilyLastPaymentsResponse,
+    AdminPaymentFeedItem,
+    AdminPaymentFeedResponse,
     AdminPaymentList,
     AdminPaymentView,
     AdminPayoutList,
@@ -354,11 +358,58 @@ async def approve_withdrawal_credit(
 
 @router.get("/payments", response_model=AdminPaymentList)
 async def list_payments(
+    date_from: datetime | None = Query(default=None),
+    date_to: datetime | None = Query(default=None),
+    payment_status: str | None = Query(default=None, alias="status", max_length=40),
+    method: str | None = Query(default=None, max_length=40),
+    q: str | None = Query(default=None, max_length=100),
+    limit: int = Query(default=200, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPaymentList:
+    list_filtered = use_cases.list_payments_filtered
+    if callable(list_filtered):
+        result = await list_filtered(
+            date_from=date_from,
+            date_to=date_to,
+            status=payment_status,
+            method=method,
+            q=q,
+            limit=limit,
+            offset=offset,
+        )
+        return AdminPaymentList(
+            payments=[_payment_view(p) for p in result["payments"]],
+            total=result["total"],
+            limit=result["limit"],
+            offset=result["offset"],
+        )
     rows = await use_cases.list_payments_recent()  # type: ignore[operator]
     return AdminPaymentList(payments=[_payment_view(p) for p in rows])
+
+
+@router.get("/payments/feed", response_model=AdminPaymentFeedResponse)
+async def payment_feed(
+    limit: int = Query(default=20, ge=1, le=100),
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminPaymentFeedResponse:
+    feed = _required_callable(use_cases.list_payment_feed, "payment feed")
+    rows = await feed(limit=limit)  # type: ignore[operator]
+    return AdminPaymentFeedResponse(payments=[AdminPaymentFeedItem(**row) for row in rows])
+
+
+@router.get("/payments/last-by-family", response_model=AdminFamilyLastPaymentsResponse)
+async def last_payment_by_family(
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminFamilyLastPaymentsResponse:
+    last_by_family = _required_callable(
+        use_cases.list_last_payment_by_family, "last payment by family"
+    )
+    rows = await last_by_family()  # type: ignore[operator]
+    return AdminFamilyLastPaymentsResponse(rows=[AdminFamilyLastPaymentRow(**row) for row in rows])
 
 
 @router.post("/payments/refund", summary="Issue a refund")
@@ -1101,6 +1152,7 @@ def _payment_view(row: object) -> AdminPaymentView:
         status=row.status,
         refunded_cents=row.refunded_cents,
         created_at=row.created_at,
+        paid_at=getattr(row, "paid_at", None),
     )
 
 
