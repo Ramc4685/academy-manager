@@ -4481,9 +4481,10 @@ def compose_admin(
             )
         return rows
 
-    async def list_payments_recent():
+    async def list_payments_recent(fetch_cap: int = 200):
         from backend.v2.shared.tenancy import current_academy_id
 
+        fetch_cap = max(1, min(int(fetch_cap), 1000))
         request_academy_id = current_academy_id()
         invoice_rows: list[dict[str, Any]] = []
         invoice_keys: set[str] = set()
@@ -4495,7 +4496,7 @@ def compose_admin(
                 "is_deleted": {"$ne": True},
             },
             sort=[("created_at", -1), ("invoice_id", 1)],
-            limit=200,
+            limit=fetch_cap,
         ):
             invoice_docs.append(doc)
         # Batch-sum APPROVED overpayment credits per invoice (one query, avoids N+1).
@@ -4543,7 +4544,7 @@ def compose_admin(
                 if isinstance(student_id, str) and student_id in student_names:
                     row["student_name"] = student_names[student_id]
 
-        legacy = await payments_repo.list_recent_admin(limit=200)
+        legacy = await payments_repo.list_recent_admin(limit=fetch_cap)
         legacy_payment_ids = {
             str(row.get("payment_id") or "") for row in legacy if row.get("payment_id")
         }
@@ -4582,7 +4583,7 @@ def compose_admin(
         async for doc in db["ledger_payments"].find(
             {"academy_id": request_academy_id},
             sort=[("created_at", -1)],
-            limit=200,
+            limit=fetch_cap,
         ):
             stripe_payment_intent_id = doc.get("stripe_payment_intent_id")
             stripe_invoice_id = doc.get("stripe_invoice_id")
@@ -4633,7 +4634,7 @@ def compose_admin(
         async for doc in db["payment_attempts"].find(
             {"academy_id": request_academy_id, "status": {"$in": ["failed"]}},
             sort=[("created_at", -1)],
-            limit=200,
+            limit=fetch_cap,
         ):
             stripe_payment_intent_id = doc.get("stripe_payment_intent_id")
             stripe_checkout_session_id = doc.get("stripe_checkout_session_id")
@@ -4677,7 +4678,162 @@ def compose_admin(
             or datetime.min.replace(tzinfo=UTC),
             reverse=True,
         )
-        return combined[:200]
+        return combined[:fetch_cap]
+
+    _PAID_ROW_STATUSES = ("succeeded", "paid", "partially_refunded", "refunded")
+
+    def _effective_paid_at(row: dict[str, Any]) -> datetime | None:
+        for key in ("paid_at", "payment_date"):
+            value = _coerce_report_datetime(row.get(key))
+            if value is not None:
+                return value
+        return None
+
+    def _payment_activity_sort_key(row: dict[str, Any]) -> datetime:
+        return (
+            _effective_paid_at(row)
+            or _coerce_report_datetime(row.get("created_at"))
+            or datetime.min.replace(tzinfo=UTC)
+        )
+
+    def _ensure_utc(value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value
+
+    async def list_payments_filtered(
+        *,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        status: str | None = None,
+        method: str | None = None,
+        q: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        date_from = _ensure_utc(date_from)
+        date_to = _ensure_utc(date_to)
+        rows = await list_payments_recent(fetch_cap=1000)
+        rows = await _enrich_parent_names(rows)
+        for row in rows:
+            row["paid_at"] = _effective_paid_at(row)
+        if status:
+            rows = [r for r in rows if str(r.get("status") or "") == status]
+        if method:
+            rows = [r for r in rows if str(r.get("payment_method") or "") == method]
+        if date_from or date_to:
+            windowed: list[dict[str, Any]] = []
+            for row in rows:
+                effective = row.get("paid_at") or _coerce_report_datetime(row.get("created_at"))
+                if effective is None:
+                    continue
+                if date_from and effective < date_from:
+                    continue
+                if date_to and effective > date_to:
+                    continue
+                windowed.append(row)
+            rows = windowed
+        if q:
+            needle = q.strip().lower()
+            if needle:
+                rows = [
+                    r
+                    for r in rows
+                    if needle in str(r.get("parent_name") or "").lower()
+                    or needle in str(r.get("student_name") or "").lower()
+                    or needle in str(r.get("invoice_number") or "").lower()
+                ]
+        rows.sort(key=_payment_activity_sort_key, reverse=True)
+        total = len(rows)
+        limit = max(1, min(int(limit), 200))
+        offset = max(0, int(offset))
+        return {
+            "payments": rows[offset : offset + limit],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    async def list_payment_feed(limit: int = 20) -> list[dict[str, Any]]:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        request_academy_id = current_academy_id()
+        limit = max(1, min(int(limit), 100))
+
+        def _feed_row(doc: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "payment_id": str(doc.get("payment_id") or doc.get("_id") or ""),
+                "parent_id": str(doc.get("parent_id") or ""),
+                "amount_cents": int(doc.get("amount_cents") or 0),
+                "refunded_cents": int(doc.get("refunded_cents") or 0),
+                "currency": str(doc.get("currency") or "usd"),
+                "status": str(doc.get("status") or ""),
+                "payment_method": doc.get("payment_method"),
+                "paid_at": _coerce_report_datetime(
+                    doc.get("paid_at") or doc.get("payment_date") or doc.get("created_at")
+                ),
+            }
+
+        rows: list[dict[str, Any]] = []
+        seen_keys: set[str] = set()
+        async for doc in db["ledger_payments"].find(
+            {"academy_id": request_academy_id, "status": {"$in": list(_PAID_ROW_STATUSES)}},
+            sort=[("paid_at", -1), ("created_at", -1)],
+            limit=limit * 2,
+        ):
+            seen_keys.update(_payment_provider_keys(doc))
+            rows.append(_feed_row(doc))
+        async for doc in db["payments"].find(
+            {
+                "academy_id": request_academy_id,
+                "status": {"$in": list(_PAID_ROW_STATUSES)},
+                "is_deleted": {"$ne": True},
+            },
+            sort=[("paid_at", -1), ("created_at", -1)],
+            limit=limit * 2,
+        ):
+            if _payment_provider_keys(doc) & seen_keys:
+                continue
+            rows.append(_feed_row(doc))
+        rows = [r for r in rows if r.get("paid_at") is not None]
+        rows.sort(key=lambda r: r["paid_at"], reverse=True)
+        return await _enrich_parent_names(rows[:limit])
+
+    async def list_last_payment_by_family() -> list[dict[str, Any]]:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        request_academy_id = current_academy_id()
+        latest: dict[str, dict[str, Any]] = {}
+
+        def _consider(doc: dict[str, Any]) -> None:
+            parent_id = str(doc.get("parent_id") or "")
+            if not parent_id:
+                return
+            paid_at = _coerce_report_datetime(
+                doc.get("paid_at") or doc.get("payment_date") or doc.get("created_at")
+            )
+            if paid_at is None:
+                return
+            current = latest.get(parent_id)
+            if current is None or paid_at > current["last_paid_at"]:
+                latest[parent_id] = {
+                    "parent_id": parent_id,
+                    "last_paid_at": paid_at,
+                    "amount_cents": int(doc.get("amount_cents") or 0),
+                    "payment_method": doc.get("payment_method"),
+                    "status": str(doc.get("status") or ""),
+                }
+
+        paid_query = {
+            "academy_id": request_academy_id,
+            "status": {"$in": list(_PAID_ROW_STATUSES)},
+        }
+        async for doc in db["ledger_payments"].find(paid_query):
+            _consider(doc)
+        async for doc in db["payments"].find({**paid_query, "is_deleted": {"$ne": True}}):
+            _consider(doc)
+        rows = sorted(latest.values(), key=lambda r: r["last_paid_at"], reverse=True)
+        return await _enrich_parent_names(rows)
 
     async def list_billing_webhook_events(*, status: str | None = None, limit: int = 50):
         from backend.v2.shared.tenancy import current_academy_id
@@ -5593,6 +5749,9 @@ def compose_admin(
         preview_withdrawal_credit=preview_withdrawal_credit,
         approve_withdrawal_credit=approve_withdrawal_credit,
         list_payments_recent=list_payments_recent,
+        list_payments_filtered=list_payments_filtered,
+        list_payment_feed=list_payment_feed,
+        list_last_payment_by_family=list_last_payment_by_family,
         list_billing_invoices=billing_ledger_repo.list_invoices_for_academy,
         get_billing_invoice_detail=get_billing_invoice_detail,
         generate_billing_invoice_artifact=generate_billing_invoice_artifact,

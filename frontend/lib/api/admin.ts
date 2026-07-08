@@ -275,10 +275,53 @@ export interface AdminPaymentView {
   stripe_payment_intent_id?: string | null;
   reconciliation_status?: string | null;
   created_at: string;
+  paid_at?: string | null;
 }
 
 export interface AdminPaymentList {
   payments: AdminPaymentView[];
+  total?: number | null;
+  limit?: number | null;
+  offset?: number | null;
+}
+
+export interface AdminPaymentListFilters {
+  date_from?: string;
+  date_to?: string;
+  status?: string;
+  method?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface AdminPaymentFeedItem {
+  payment_id: string;
+  parent_id: string;
+  parent_name: string | null;
+  amount_cents: number;
+  refunded_cents: number;
+  currency: string;
+  status: string;
+  payment_method: string | null;
+  paid_at: string;
+}
+
+export interface AdminPaymentFeedResponse {
+  payments: AdminPaymentFeedItem[];
+}
+
+export interface AdminFamilyLastPaymentRow {
+  parent_id: string;
+  parent_name: string | null;
+  last_paid_at: string;
+  amount_cents: number;
+  payment_method: string | null;
+  status: string;
+}
+
+export interface AdminFamilyLastPaymentsResponse {
+  rows: AdminFamilyLastPaymentRow[];
 }
 
 export interface RefundRequest {
@@ -1569,8 +1612,31 @@ export function deleteWaitlistEntry(waitlistId: string): Promise<void> {
 // Payments
 // ---------------------------------------------------------------------------
 
-export function listAdminPayments(): Promise<AdminPaymentList> {
-  return apiFetch<AdminPaymentList>("/admin/payments", { method: "GET" });
+export function listAdminPayments(filters?: AdminPaymentListFilters): Promise<AdminPaymentList> {
+  const params = new URLSearchParams();
+  if (filters) {
+    for (const [key, value] of Object.entries(filters)) {
+      if (value !== undefined && value !== null && `${value}` !== "") {
+        params.set(key, `${value}`);
+      }
+    }
+  }
+  const query = params.toString();
+  return apiFetch<AdminPaymentList>(`/admin/payments${query ? `?${query}` : ""}`, {
+    method: "GET",
+  });
+}
+
+export function getAdminPaymentFeed(limit = 20): Promise<AdminPaymentFeedResponse> {
+  return apiFetch<AdminPaymentFeedResponse>(`/admin/payments/feed?limit=${limit}`, {
+    method: "GET",
+  });
+}
+
+export function getAdminLastPaymentByFamily(): Promise<AdminFamilyLastPaymentsResponse> {
+  return apiFetch<AdminFamilyLastPaymentsResponse>("/admin/payments/last-by-family", {
+    method: "GET",
+  });
 }
 
 export function refundPayment(payload: RefundRequest): Promise<RefundResponse> {

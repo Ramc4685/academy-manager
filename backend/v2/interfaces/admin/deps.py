@@ -299,6 +299,10 @@ class AdminUseCases:
     # Legacy invoice ↔ Stripe charge review queue (#242 WI-3).
     list_legacy_match_queue: object | None = None  # async () -> list[dict]
     confirm_legacy_match: object | None = None  # async (**kwargs) -> dict
+    # Payment visibility (Phase 1): filtered list, money-received feed, last payment per family.
+    list_payments_filtered: object | None = None  # async (**filters) -> dict
+    list_payment_feed: object | None = None  # async (limit: int) -> list[dict]
+    list_last_payment_by_family: object | None = None  # async () -> list[dict]
     add_invoice_line: object | None = None
     remove_invoice_line: object | None = None
     void_billing_invoice: object | None = None

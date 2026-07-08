@@ -576,10 +576,43 @@ class AdminPaymentView(BaseModel):
     stripe_payment_intent_id: str | None = None
     reconciliation_status: str | None = None
     created_at: datetime
+    paid_at: datetime | None = None
 
 
 class AdminPaymentList(BaseModel):
     payments: list[AdminPaymentView]
+    total: int | None = None
+    limit: int | None = None
+    offset: int | None = None
+
+
+class AdminPaymentFeedItem(BaseModel):
+    payment_id: str
+    parent_id: str
+    parent_name: str | None = None
+    amount_cents: int
+    refunded_cents: int = 0
+    currency: str = "usd"
+    status: str
+    payment_method: str | None = None
+    paid_at: datetime
+
+
+class AdminPaymentFeedResponse(BaseModel):
+    payments: list[AdminPaymentFeedItem]
+
+
+class AdminFamilyLastPaymentRow(BaseModel):
+    parent_id: str
+    parent_name: str | None = None
+    last_paid_at: datetime
+    amount_cents: int
+    payment_method: str | None = None
+    status: str
+
+
+class AdminFamilyLastPaymentsResponse(BaseModel):
+    rows: list[AdminFamilyLastPaymentRow]
 
 
 class IssueRefundRequest(BaseModel):

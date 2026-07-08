@@ -27,6 +27,7 @@ import {
   refundAdminInvoice,
   refundPayment,
   undoPaymentPaid,
+  type AdminPaymentListFilters,
   type AdminPaymentStatus,
   type AdminPaymentView,
   type BillingReconciliationReport,
@@ -148,6 +149,20 @@ function sessionFilterLabel(value: string): string {
   return value === "__none__" ? "No session" : value;
 }
 
+const PAGE_SIZE = 50;
+
+const STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
+  { value: "pending", label: "Pending" },
+  { value: "partially_paid", label: "Partially paid" },
+  { value: "paid", label: "Paid" },
+  { value: "succeeded", label: "Succeeded" },
+  { value: "failed", label: "Failed" },
+  { value: "refunded", label: "Refunded" },
+  { value: "partially_refunded", label: "Partially refunded" },
+  { value: "expired", label: "Expired" },
+  { value: "waived", label: "Waived" },
+];
+
 export default function AdminPaymentsPage() {
   const [refundTarget, setRefundTarget] = useState<AdminPaymentView | null>(null);
   const [paidTarget, setPaidTarget] = useState<AdminPaymentView | null>(null);
@@ -158,11 +173,39 @@ export default function AdminPaymentsPage() {
   const [generateOpen, setGenerateOpen] = useState(false);
   const [periodFilter, setPeriodFilter] = useState("all");
   const [sessionFilter, setSessionFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [methodFilter, setMethodFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [offset, setOffset] = useState(0);
   const queryClient = useQueryClient();
 
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setSearch(searchInput.trim());
+      setOffset(0);
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [searchInput]);
+
+  const serverFilters = useMemo<AdminPaymentListFilters>(
+    () => ({
+      date_from: dateFrom ? `${dateFrom}T00:00:00Z` : undefined,
+      date_to: dateTo ? `${dateTo}T23:59:59Z` : undefined,
+      status: statusFilter !== "all" ? statusFilter : undefined,
+      method: methodFilter !== "all" ? methodFilter : undefined,
+      q: search || undefined,
+      limit: PAGE_SIZE,
+      offset,
+    }),
+    [dateFrom, dateTo, statusFilter, methodFilter, search, offset],
+  );
+
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: queryKeys.admin.payments(),
-    queryFn: () => listAdminPayments(),
+    queryKey: [...queryKeys.admin.payments(), serverFilters],
+    queryFn: () => listAdminPayments(serverFilters),
   });
   const webhookQueueQuery = useQuery({
     queryKey: ["admin", "billing-webhooks", "failed-quarantined"],
@@ -175,6 +218,19 @@ export default function AdminPaymentsPage() {
   });
 
   const payments = useMemo(() => data?.payments ?? [], [data?.payments]);
+  const totalCount = data?.total ?? null;
+  const methodOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          payments
+            .map((payment) => payment.payment_method)
+            .filter((method): method is string => Boolean(method))
+            .concat(methodFilter !== "all" ? [methodFilter] : []),
+        ),
+      ).sort(),
+    [payments, methodFilter],
+  );
   const periodOptions = useMemo(
     () =>
       Array.from(new Set(payments.map((payment) => payment.period).filter(Boolean)))
@@ -281,7 +337,73 @@ export default function AdminPaymentsPage() {
       <ReconciliationReportPanel />
 
       <Card p={16}>
-        <div className="grid gap-3 md:grid-cols-[minmax(180px,240px)_minmax(180px,280px)_1fr_auto] md:items-end">
+        <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-4">
+          <Field label="Search family or student">
+            <input
+              type="search"
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+              placeholder="Name or invoice #"
+              className={inputClass}
+              data-testid="payments-search"
+            />
+          </Field>
+          <Field label="Paid from">
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(event) => {
+                setDateFrom(event.target.value);
+                setOffset(0);
+              }}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Paid to">
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(event) => {
+                setDateTo(event.target.value);
+                setOffset(0);
+              }}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Status">
+            <select
+              value={statusFilter}
+              onChange={(event) => {
+                setStatusFilter(event.target.value);
+                setOffset(0);
+              }}
+              className={inputClass}
+            >
+              <option value="all">All statuses</option>
+              {STATUS_FILTER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Method">
+            <select
+              value={methodFilter}
+              onChange={(event) => {
+                setMethodFilter(event.target.value);
+                setOffset(0);
+              }}
+              className={inputClass}
+            >
+              <option value="all">All methods</option>
+              {methodOptions.map((method) => (
+                <option key={method} value={method}>
+                  {method}
+                </option>
+              ))}
+            </select>
+          </Field>
           <Field label="Month">
             <select
               value={periodFilter}
@@ -310,20 +432,38 @@ export default function AdminPaymentsPage() {
               ))}
             </select>
           </Field>
-          <div className="text-sm text-rally-subtle md:pb-2">
-            Showing {filteredPayments.length} of {payments.length} records
+          <div className="flex items-end justify-between gap-2">
+            <div className="text-sm text-rally-subtle md:pb-2" data-testid="payments-showing">
+              {totalCount === null
+                ? `Showing ${filteredPayments.length} of ${payments.length} records`
+                : `Showing ${totalCount === 0 ? 0 : offset + 1}–${offset + payments.length} of ${totalCount}`}
+            </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setPeriodFilter("all");
+                setSessionFilter("all");
+                setStatusFilter("all");
+                setMethodFilter("all");
+                setDateFrom("");
+                setDateTo("");
+                setSearchInput("");
+                setOffset(0);
+              }}
+              disabled={
+                periodFilter === "all" &&
+                sessionFilter === "all" &&
+                statusFilter === "all" &&
+                methodFilter === "all" &&
+                !dateFrom &&
+                !dateTo &&
+                !searchInput
+              }
+            >
+              Reset
+            </Button>
           </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              setPeriodFilter("all");
-              setSessionFilter("all");
-            }}
-            disabled={periodFilter === "all" && sessionFilter === "all"}
-          >
-            Reset
-          </Button>
         </div>
       </Card>
 
@@ -362,6 +502,7 @@ export default function AdminPaymentsPage() {
                   <Th align="right">Amount paid</Th>
                   <Th>Status</Th>
                   <Th>Method</Th>
+                  <Th>Paid on</Th>
                   <Th><span className="sr-only">Actions</span></Th>
                 </tr>
               </thead>
@@ -405,7 +546,7 @@ export default function AdminPaymentsPage() {
                           {p.student_name || "Unassigned"}
                         </div>
                         <div className="mt-0.5 text-xs text-rally-subtle">
-                          Parent on file
+                          {p.parent_name || "Parent on file"}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-rally-muted">{p.period || "—"}</td>
@@ -421,6 +562,9 @@ export default function AdminPaymentsPage() {
                       </td>
                       <td className="px-4 py-3">
                         {method ? <Chip variant={method.variant} label={method.label} /> : <span className="text-rally-subtle">—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-rally-muted">
+                        {p.paid_at ? new Date(p.paid_at).toLocaleDateString() : "—"}
                       </td>
                       <td className="px-4 py-3">
                         <PaymentActions
@@ -442,6 +586,29 @@ export default function AdminPaymentsPage() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+        {totalCount !== null && totalCount > PAGE_SIZE && (
+          <div className="flex items-center justify-between border-t border-rally-line px-4 py-3">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+              disabled={offset === 0 || isLoading}
+            >
+              Previous
+            </Button>
+            <span className="text-sm text-rally-subtle">
+              Page {Math.floor(offset / PAGE_SIZE) + 1} of {Math.max(1, Math.ceil(totalCount / PAGE_SIZE))}
+            </span>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setOffset(offset + PAGE_SIZE)}
+              disabled={offset + PAGE_SIZE >= totalCount || isLoading}
+            >
+              Next
+            </Button>
           </div>
         )}
       </Card>
