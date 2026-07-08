@@ -954,3 +954,79 @@ async def test_start_autopay_does_not_stamp_dangling_subscription_fields(
     assert set_fields["payment_mode"] == "monthly"
     assert "subscription_id" not in set_fields
     assert "subscription_status" not in set_fields
+
+
+@pytest.mark.asyncio
+async def test_zero_amount_checkout_skips_stripe_and_moves_to_pending_approval(
+    allow_app_origin,
+) -> None:
+    """A $0 first-month quote (0 billable classes left this month) must not
+    reach Stripe — zero-amount Checkout Sessions are rejected and used to
+    surface as a 500 to the parent. The application skips payment and goes
+    straight to admin review."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["zero-amount-checkout"]
+
+    now = datetime.now(UTC)
+    from datetime import timedelta
+
+    await db["onboarding_applications"].insert_one(
+        {
+            "application_id": "app-1",
+            "academy_id": "acad",
+            "parent_user_id": "parent-1",
+            "parent_email": "parent@example.com",
+            "status": "DRAFT",
+            "selected_session_id": "sess-1",
+            "expires_at": now + timedelta(days=7),
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    # A bookable one-off session whose only class starts inside the 2-hour
+    # same-day cutoff: still listed in the parent catalog (start_at is in the
+    # future) but the proration policy bills 0 of 1 classes → $0 first month.
+    await db["sessions"].insert_one(
+        {
+            "session_id": "sess-1",
+            "academy_id": "acad",
+            "status": "scheduled",
+            "title": "Beginner",
+            "start_at": now + timedelta(minutes=10),
+            "end_at": now + timedelta(minutes=70),
+            "capacity": 8,
+            "amount_cents": 6_000,
+        }
+    )
+
+    class _RefusingStripe:
+        def __init__(self) -> None:
+            self.checkout_calls: list[dict[str, Any]] = []
+
+        async def create_checkout_session(self, **kwargs: Any) -> tuple[str, str]:
+            self.checkout_calls.append(kwargs)
+            return "cs_should_not_exist", "https://checkout.stripe.test/should-not-exist"
+
+    stripe = _RefusingStripe()
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    success_url = "https://app.example.com/parent/checkout/return?application_id=app-1"
+    with tenant_scope("acad"):
+        result = await parent.start_checkout_for_application(
+            parent_id="parent-1",
+            application_id="app-1",
+            success_url=success_url,
+            cancel_url="https://app.example.com/parent/onboarding",
+        )
+
+    assert stripe.checkout_calls == []
+    assert result.payment_id == ""
+    assert result.redirect_url == success_url
+    app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
+    assert app_doc["status"] == "PENDING_APPROVAL"

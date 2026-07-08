@@ -45,6 +45,7 @@ from backend.v2.contexts.billing.application.use_cases.send_invoice import SendI
 from backend.v2.contexts.billing.application.use_cases.start_checkout import (
     StartCheckout,
     StartCheckoutCommand,
+    StartCheckoutResult,
 )
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine
 from backend.v2.contexts.billing.infrastructure.mongo_autopay_consent_repo import (
@@ -1186,6 +1187,20 @@ def compose_parent(
                 parent_id=parent_id,
             )
         )
+        if quote.final_amount_cents <= 0:
+            # No billable classes remain this month, so there is nothing to
+            # charge — Stripe rejects zero-amount Checkout Sessions. Skip
+            # payment and move the application straight to admin review;
+            # regular monthly billing starts next month.
+            if quote.snapshot_id:
+                await payments_repo.consume_quote_snapshot(quote.snapshot_id)
+            await transition.execute(app.application_id, "CHECKOUT_PENDING")
+            await transition.execute(app.application_id, "PENDING_APPROVAL")
+            return StartCheckoutResult(
+                payment_id="",
+                checkout_session_id="",
+                redirect_url=success_url,
+            )
         result = await start_checkout.execute(
             StartCheckoutCommand(
                 parent_id=parent_id,
