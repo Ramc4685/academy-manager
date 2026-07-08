@@ -39,6 +39,22 @@ export function isEmailAlreadyInUseError(err: unknown): boolean {
   return errorCode(err) === "auth/email-already-in-use";
 }
 
+/**
+ * When a Google sign-in collides with an existing account for the same email
+ * (registered with a different method), Firebase throws
+ * `auth/account-exists-with-different-credential` and carries the conflicting
+ * email on `error.customData.email`. Returns that email (empty string when
+ * the error matches but no email is attached), or null for any other error.
+ */
+export function existingAccountEmailFromCredentialConflict(err: unknown): string | null {
+  if (errorCode(err) !== "auth/account-exists-with-different-credential") return null;
+  if (err && typeof err === "object" && "customData" in err) {
+    const data = (err as { customData?: { email?: unknown } }).customData;
+    if (data && typeof data.email === "string" && data.email) return data.email;
+  }
+  return "";
+}
+
 function errorCode(err: unknown): string | undefined {
   if (err && typeof err === "object" && "code" in err) {
     const code = (err as { code?: unknown }).code;

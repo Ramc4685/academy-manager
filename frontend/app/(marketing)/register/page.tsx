@@ -14,7 +14,11 @@ import {
   signOutCurrent,
 } from "@/lib/auth/firebase";
 import type { User } from "@/lib/auth/firebase";
-import { isEmailAlreadyInUseError, toAuthErrorMessage } from "@/lib/auth/auth-error";
+import {
+  existingAccountEmailFromCredentialConflict,
+  isEmailAlreadyInUseError,
+  toAuthErrorMessage,
+} from "@/lib/auth/auth-error";
 import { brand } from "@/lib/brand";
 
 const HERO_IMAGE =
@@ -47,7 +51,7 @@ export default function RegisterPage() {
         }
       })
       .catch((err) => {
-        if (!cancelled) {
+        if (!cancelled && !redirectToLoginOnGoogleConflict(err)) {
           setError(toAuthErrorMessage(err, "Google registration failed."));
         }
       });
@@ -55,11 +59,25 @@ export default function RegisterPage() {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   async function finishParentRegistration() {
     await registerPublicParent();
     router.push("/parent/onboarding");
+  }
+
+  /**
+   * A Google attempt on an email that already has a password account throws
+   * `auth/account-exists-with-different-credential`. Send the parent to
+   * sign-in (email prefilled when Firebase provides it) instead of leaving
+   * them stuck on the register form.
+   */
+  function redirectToLoginOnGoogleConflict(err: unknown): boolean {
+    const existingEmail = existingAccountEmailFromCredentialConflict(err);
+    if (existingEmail === null) return false;
+    router.push(existingEmail ? `/login?email=${encodeURIComponent(existingEmail)}` : "/login");
+    return true;
   }
 
   async function handleGoogle() {
@@ -71,6 +89,7 @@ export default function RegisterPage() {
       const user = await signInWithGoogle();
       if (user) await finishParentRegistration();
     } catch (err) {
+      if (redirectToLoginOnGoogleConflict(err)) return;
       setError(toAuthErrorMessage(err, "Google registration failed."));
     } finally {
       setGoogleLoading(false);
