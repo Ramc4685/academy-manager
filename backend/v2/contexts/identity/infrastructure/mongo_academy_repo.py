@@ -16,6 +16,13 @@ class MongoAcademyRepository:
             return None
         return doc
 
+    async def get_academy_name(self, academy_id: str) -> str | None:
+        doc = await self.find_by_id(academy_id)
+        if doc is None:
+            return None
+        name = doc.get("display_name") or doc.get("name")
+        return str(name) if name else None
+
     async def list_ids(self) -> list[str]:
         academy_ids: list[str] = []
         async for doc in self.collection.find({}, {"academy_id": 1}):
