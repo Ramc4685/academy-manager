@@ -43,11 +43,14 @@ work unchanged and show only sessions where that user is the assigned coach.
 
 ### Frontend
 
-- Persona switcher shown only when the current user's roles include both `admin` and `coach`
-  (from `/me`):
-  - Admin layout header (near the academy/tenant switcher): "Coach view" → `/coach/today`.
-  - Coach layout: "Admin view" → `/admin`.
-- Post-login landing unchanged (`homeForRoles`: admin → `/admin`).
+- Persona switcher shown whenever the current user holds **two or more** roles (from `/me`),
+  listing exactly the personas they hold — it is a general role switcher, not admin↔coach only.
+  A coach who is also a parent sees "Coach view / Parent view"; an admin-coach sees
+  "Admin view / Coach view".
+  - Persona homes: admin → `/admin`, coach → `/coach/today`, parent → `/parent/payments`.
+  - Rendered in each persona layout's header (admin: near the academy/tenant switcher;
+    coach and parent: in their app-shell headers).
+- Post-login landing unchanged (`homeForRoles`: highest-privilege persona wins).
 - Users with a single role never see the switcher.
 
 ### Rejected alternative
