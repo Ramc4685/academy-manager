@@ -535,8 +535,12 @@ class MongoUserRepository:
         reason: str,
     ) -> AdminUserDetail | None:
         return await self._modify_roles(
-            user_id, role, adding=True,
-            academy_id=academy_id, actor_id=actor_id, reason=reason,
+            user_id,
+            role,
+            adding=True,
+            academy_id=academy_id,
+            actor_id=actor_id,
+            reason=reason,
         )
 
     async def remove_role(
@@ -549,8 +553,12 @@ class MongoUserRepository:
         reason: str,
     ) -> AdminUserDetail | None:
         return await self._modify_roles(
-            user_id, role, adding=False,
-            academy_id=academy_id, actor_id=actor_id, reason=reason,
+            user_id,
+            role,
+            adding=False,
+            academy_id=academy_id,
+            actor_id=actor_id,
+            reason=reason,
         )
 
     async def _modify_roles(

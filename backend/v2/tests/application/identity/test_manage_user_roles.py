@@ -1,7 +1,6 @@
 from unittest.mock import AsyncMock
 
 import pytest
-
 from backend.v2.contexts.identity.application.errors import UserNotFound
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserDetail,
@@ -40,7 +39,11 @@ async def test_add_role_delegates_to_repo():
 
     assert set(result.roles) == {"admin", "coach"}
     repo.add_role.assert_awaited_once_with(
-        "user-1", "coach", academy_id="acad", actor_id="admin-1", reason="Also coaches",
+        "user-1",
+        "coach",
+        academy_id="acad",
+        actor_id="admin-1",
+        reason="Also coaches",
     )
 
 
@@ -69,7 +72,11 @@ async def test_remove_role_delegates_to_repo():
 
     assert result.roles == ("admin",)
     repo.remove_role.assert_awaited_once_with(
-        "user-1", "coach", academy_id="acad", actor_id="admin-1", reason="No longer coaches",
+        "user-1",
+        "coach",
+        academy_id="acad",
+        actor_id="admin-1",
+        reason="No longer coaches",
     )
 
 
