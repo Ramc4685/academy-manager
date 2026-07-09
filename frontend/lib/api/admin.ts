@@ -1052,6 +1052,7 @@ export interface AdminUserDetail extends AdminUserView {
   roles: AdminUserRole[];
   linked_student_count: number;
   session_count: number;
+  login_invite_sent_at?: string | null;
 }
 
 export interface AdminUserList {
@@ -1323,6 +1324,13 @@ export function updateAdminUserRole(
     method: "PATCH",
     body: JSON.stringify({ role, reason }),
   });
+}
+
+export function sendLoginInvite(userId: string): Promise<{ sent_at: string }> {
+  return apiFetch<{ sent_at: string }>(
+    `/admin/users/${encodeURIComponent(userId)}/login-invite`,
+    { method: "POST" },
+  );
 }
 
 // ---------------------------------------------------------------------------
