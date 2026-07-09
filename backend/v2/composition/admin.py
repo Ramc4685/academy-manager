@@ -348,6 +348,10 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     ListAdminUsers,
     UpdateAdminUser,
 )
+from backend.v2.contexts.identity.application.use_cases.manage_user_roles import (
+    AddUserRole,
+    RemoveUserRole,
+)
 from backend.v2.contexts.identity.application.use_cases.stripe_connect import (
     CompleteStripeConnectUseCase,
     DisconnectStripeUseCase,
@@ -3359,6 +3363,8 @@ def compose_admin(
     get_admin_user = GetAdminUser(users_r)
     update_admin_user = UpdateAdminUser(users_r)
     create_admin_user = CreateAdminUser(users_r)
+    add_user_role = AddUserRole(users_r)
+    remove_user_role = RemoveUserRole(users_r)
     list_admin_students = ListAdminStudents(students_r)
     get_admin_student = GetAdminStudent(students_r)
     update_admin_student = UpdateAdminStudent(students_r)
@@ -5516,6 +5522,8 @@ def compose_admin(
         get_admin_user=get_admin_user,
         update_admin_user=update_admin_user,
         create_admin_user=create_admin_user,
+        add_user_role=add_user_role,
+        remove_user_role=remove_user_role,
         get_admin_student=get_admin_student,
         update_admin_student=update_admin_student,
         change_admin_student_parent=change_admin_student_parent,
