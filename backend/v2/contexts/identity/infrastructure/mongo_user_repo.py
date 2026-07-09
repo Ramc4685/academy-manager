@@ -598,9 +598,26 @@ class MongoUserRepository:
             {"$addToSet": {"roles": role}} if adding else {"$pull": {"roles": role}}
         )
         membership_update["$set"] = {"updated_at": now}
+
+        # When adding a role, upsert the membership row if it doesn't exist
+        # (e.g., legacy parent accounts with no membership record).
+        upsert_kwargs = {"upsert": True} if adding else {}
+        if adding:
+            membership_update["$setOnInsert"] = {
+                "membership_id": str(new_ulid()),
+                "academy_id": academy_id,
+                "user_id": resolved_user_id,
+                "invited_by": actor_id,
+                "invited_at": now,
+                "accepted_at": now,
+                "created_at": now,
+                "status": "active",
+            }
+
         await self._db["academy_memberships"].update_one(
             {"academy_id": academy_id, "user_id": resolved_user_id},
             membership_update,
+            **upsert_kwargs,
         )
 
         await self._write_audit(
