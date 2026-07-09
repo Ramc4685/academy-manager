@@ -1314,17 +1314,6 @@ export function changeAdminStudentParent(
   );
 }
 
-export function updateAdminUserRole(
-  userId: string,
-  role: AdminUserRole,
-  reason = "Admin role change",
-): Promise<AdminUserView> {
-  return apiFetch<AdminUserView>(`/admin/users/${encodeURIComponent(userId)}/role`, {
-    method: "PATCH",
-    body: JSON.stringify({ role, reason }),
-  });
-}
-
 export function addAdminUserRole(
   userId: string,
   role: AdminUserRole,

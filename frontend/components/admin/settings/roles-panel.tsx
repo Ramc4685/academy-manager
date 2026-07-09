@@ -1,10 +1,13 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  addAdminUserRole,
+  getAdminUser,
   listAdminUsers,
-  updateAdminUserRole,
+  removeAdminUserRole,
   type AdminUserRole,
   type AdminUserView,
 } from "@/lib/api/admin";
@@ -21,26 +24,13 @@ const ROLE_OPTIONS: AdminUserRole[] = ["admin", "coach", "parent"];
 export function RolesPanel() {
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: queryKeys.admin.users(), queryFn: () => listAdminUsers() });
-  const mutation = useMutation({
-    mutationFn: ({ userId, role }: { userId: string; role: AdminUserRole }) =>
-      updateAdminUserRole(userId, role),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.users() });
-    },
-  });
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const users = query.data?.users ?? [];
 
   return (
     <section data-testid="admin-settings-roles" className="space-y-4">
       <Card p={24}>
-        <div className="flex items-center justify-between gap-4">
-          <Overline>Roles</Overline>
-          {mutation.isError && (
-            <p role="alert" className="text-sm font-medium text-red-700">
-              {mutation.error.message}
-            </p>
-          )}
-        </div>
+        <Overline>Roles</Overline>
         {query.isLoading ? (
           <div className="mt-5 space-y-2">
             {[0, 1, 2].map((i) => (
@@ -61,7 +51,7 @@ export function RolesPanel() {
                     Current role
                   </th>
                   <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
-                    Change role
+                    Roles
                   </th>
                 </tr>
               </thead>
@@ -70,8 +60,16 @@ export function RolesPanel() {
                   <RoleRow
                     key={user.user_id}
                     user={user}
-                    pending={mutation.isPending && mutation.variables?.userId === user.user_id}
-                    onChange={(role) => mutation.mutate({ userId: user.user_id, role })}
+                    editing={editingUserId === user.user_id}
+                    onToggleEdit={() =>
+                      setEditingUserId((current) =>
+                        current === user.user_id ? null : user.user_id,
+                      )
+                    }
+                    onSaved={() => {
+                      setEditingUserId(null);
+                      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.users() });
+                    }}
                   />
                 ))}
               </tbody>
@@ -89,43 +87,146 @@ export function RolesPanel() {
 
 function RoleRow({
   user,
-  pending,
-  onChange,
+  editing,
+  onToggleEdit,
+  onSaved,
 }: {
   user: AdminUserView;
-  pending: boolean;
-  onChange: (role: AdminUserRole) => void;
+  editing: boolean;
+  onToggleEdit: () => void;
+  onSaved: () => void;
 }) {
   return (
-    <tr className="border-b border-rally-line last:border-0">
-      <td className="px-2 py-3">
-        <div className="flex items-center gap-3">
-          <Avatar name={user.display_name || user.email} size={32} />
-          <div>
-            <div className="font-medium text-rally-ink">{user.display_name || user.email}</div>
-            <div className="font-mono text-[10px] text-rally-muted">{user.email}</div>
+    <>
+      <tr className="border-b border-rally-line last:border-0">
+        <td className="px-2 py-3">
+          <div className="flex items-center gap-3">
+            <Avatar name={user.display_name || user.email} size={32} />
+            <div>
+              <div className="font-medium text-rally-ink">{user.display_name || user.email}</div>
+              <div className="font-mono text-[10px] text-rally-muted">{user.email}</div>
+            </div>
           </div>
-        </div>
-      </td>
-      <td className="px-2 py-3">
-        <Chip variant={roleVariant(user.role)} label={user.role.toUpperCase()} />
-      </td>
-      <td className="px-2 py-3">
-        <div className="flex flex-wrap gap-2">
-          {ROLE_OPTIONS.map((role) => (
-            <Button
-              key={role}
-              size="sm"
-              variant={role === user.role ? "secondary" : "ghost"}
-              disabled={pending || role === user.role}
-              onClick={() => onChange(role)}
-            >
-              {role}
-            </Button>
-          ))}
-        </div>
-      </td>
-    </tr>
+        </td>
+        <td className="px-2 py-3">
+          <Chip variant={roleVariant(user.role)} label={user.role.toUpperCase()} />
+        </td>
+        <td className="px-2 py-3">
+          <Button size="sm" variant="ghost" onClick={onToggleEdit}>
+            {editing ? "Cancel" : "Edit roles"}
+          </Button>
+        </td>
+      </tr>
+      {editing && (
+        <tr className="border-b border-rally-line last:border-0">
+          <td colSpan={3} className="bg-rally-paper px-2 py-4">
+            <RoleEditor user={user} onSaved={onSaved} />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function RoleEditor({ user, onSaved }: { user: AdminUserView; onSaved: () => void }) {
+  const detailQuery = useQuery({
+    queryKey: queryKeys.admin.userDetail(user.user_id),
+    queryFn: () => getAdminUser(user.user_id),
+  });
+  const currentRoles = detailQuery.data?.roles?.length ? detailQuery.data.roles : [user.role];
+
+  const [selected, setSelected] = useState<AdminUserRole[]>(currentRoles);
+  const [reason, setReason] = useState("Admin role change");
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (detailQuery.data) {
+      setSelected(detailQuery.data.roles.length > 0 ? detailQuery.data.roles : [user.role]);
+    }
+  }, [detailQuery.data, user.role]);
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const current = new Set(currentRoles);
+      const next = new Set(selected);
+      for (const role of ROLE_OPTIONS) {
+        if (next.has(role) && !current.has(role)) {
+          await addAdminUserRole(user.user_id, role, reason);
+        }
+      }
+      for (const role of ROLE_OPTIONS) {
+        if (current.has(role) && !next.has(role)) {
+          await removeAdminUserRole(user.user_id, role, reason);
+        }
+      }
+    },
+    onSuccess: () => {
+      setSubmitError(null);
+      onSaved();
+    },
+    onError: (err: unknown) => {
+      setSubmitError(err instanceof Error ? err.message : "Could not update roles.");
+    },
+  });
+
+  const toggle = (role: AdminUserRole) => {
+    setSelected((prev) => (prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]));
+  };
+
+  if (detailQuery.isLoading) {
+    return <div className="h-10 animate-pulse rounded-md bg-neutral-100" />;
+  }
+
+  return (
+    <form
+      className="space-y-3"
+      data-testid={`admin-settings-role-form-${user.user_id}`}
+      onSubmit={(event) => {
+        event.preventDefault();
+        setSubmitError(null);
+        if (selected.length === 0) {
+          setSubmitError("User must keep at least one role.");
+          return;
+        }
+        mutation.mutate();
+      }}
+    >
+      <p className="text-xs text-rally-muted">
+        A user can hold multiple roles — e.g. an admin who also coaches, or a coach who is also a
+        parent.
+      </p>
+      <div className="flex flex-wrap gap-3">
+        {ROLE_OPTIONS.map((role) => (
+          <label key={role} className="inline-flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={selected.includes(role)}
+              onChange={() => toggle(role)}
+              data-testid={`admin-settings-role-checkbox-${user.user_id}-${role}`}
+            />
+            <span className="capitalize">{role}</span>
+          </label>
+        ))}
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          className="h-9 w-64 rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+          required
+          maxLength={500}
+          aria-label="Reason"
+        />
+        <Button type="submit" size="sm" variant="primary" disabled={mutation.isPending}>
+          {mutation.isPending ? "Saving..." : "Save roles"}
+        </Button>
+      </div>
+      {submitError && (
+        <p role="alert" className="text-sm font-medium text-red-700">
+          {submitError}
+        </p>
+      )}
+    </form>
   );
 }
 
