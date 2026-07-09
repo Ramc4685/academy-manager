@@ -349,6 +349,7 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     UpdateAdminUser,
 )
 from backend.v2.contexts.identity.application.use_cases.send_login_invite import (
+    InviteEmailOutcome,
     SendLoginInvite,
 )
 from backend.v2.contexts.identity.application.use_cases.stripe_connect import (
@@ -398,6 +399,38 @@ from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import tenant_scope
+
+
+class _LoginInviteEmailAdapter:
+    """Bridges identity's `InviteEmailPort` to communications' `EmailSendPort`.
+
+    Composition may import both contexts; the identity context itself must
+    not import communications, so this adapter lives here rather than in
+    `send_login_invite.py`.
+    """
+
+    def __init__(self, *, sender: EmailSendPort) -> None:
+        self._sender = sender
+
+    async def send_invite_email(
+        self,
+        *,
+        user_id: str,
+        email: str,
+        display_name: str,
+        subject: str,
+        body: str,
+    ) -> InviteEmailOutcome:
+        outcome = await self._sender.send(
+            recipient=ResolvedRecipient(
+                user_id=user_id,
+                email=email,
+                display_name=display_name,
+            ),
+            subject=subject,
+            body=body,
+        )
+        return InviteEmailOutcome(ok=outcome.ok, failed_reason=outcome.failed_reason)
 
 
 class _InvoiceEmailAdapter:
@@ -3368,7 +3401,7 @@ def compose_admin(
     send_login_invite = SendLoginInvite(
         users=users_r,
         links=get_firebase_admin_adapter(),
-        sender=_email_sender,
+        sender=_LoginInviteEmailAdapter(sender=_email_sender),
         academies=academy_repo,
     )
     list_admin_students = ListAdminStudents(students_r)

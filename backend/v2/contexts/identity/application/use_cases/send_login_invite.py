@@ -14,10 +14,6 @@ from typing import Protocol
 
 from pydantic import BaseModel
 
-from backend.v2.contexts.communications.application.ports import (
-    EmailSendPort,
-    ResolvedRecipient,
-)
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserDetail,
 )
@@ -29,6 +25,33 @@ from backend.v2.contexts.identity.domain.errors import (
 
 class PasswordResetLinkPort(Protocol):
     async def generate_password_reset_link(self, email: str) -> str: ...
+
+
+class InviteEmailOutcome(BaseModel):
+    """Outcome of a single login-invite email send attempt.
+
+    Identity-local mirror of the communications context's `SendOutcome`,
+    kept separate so this context does not import another bounded context.
+    """
+
+    model_config = {"frozen": True}
+
+    ok: bool
+    failed_reason: str | None = None
+
+
+class InviteEmailPort(Protocol):
+    """Outbound email port for login invites, owned by the identity context."""
+
+    async def send_invite_email(
+        self,
+        *,
+        user_id: str,
+        email: str,
+        display_name: str,
+        subject: str,
+        body: str,
+    ) -> InviteEmailOutcome: ...
 
 
 class LoginInviteRecorder(Protocol):
@@ -76,7 +99,7 @@ class SendLoginInvite:
         *,
         users: LoginInviteRecorder,
         links: PasswordResetLinkPort,
-        sender: EmailSendPort,
+        sender: InviteEmailPort,
         academies: AcademyNameLookup,
     ) -> None:
         self._users = users
@@ -92,12 +115,10 @@ class SendLoginInvite:
         reset_link = await self._links.generate_password_reset_link(str(user.email))
         academy_name = await self._academies.get_academy_name(academy_id) or "your academy"
 
-        outcome = await self._sender.send(
-            recipient=ResolvedRecipient(
-                user_id=user.user_id,
-                email=str(user.email),
-                display_name=user.display_name,
-            ),
+        outcome = await self._sender.send_invite_email(
+            user_id=user.user_id,
+            email=str(user.email),
+            display_name=user.display_name,
             subject=f"Set your password for {academy_name}",
             body=_invite_body(
                 display_name=user.display_name,
