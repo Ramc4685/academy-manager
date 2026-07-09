@@ -69,6 +69,7 @@ export function RolesPanel() {
                     onSaved={() => {
                       setEditingUserId(null);
                       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.users() });
+                      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.userDetail(user.user_id) });
                     }}
                   />
                 ))}

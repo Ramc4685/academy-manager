@@ -43,11 +43,8 @@ Backend + frontend, both covered by the standard CI deploy pipeline.
 
 ## Verification
 - Backend: `ruff format --check .`, `ruff check .`, and
-  `pytest v2/tests -q` — 2140 passed, 13 pre-existing failures in
-  `test_coach_skill_routes.py`/`test_parent_progress_routes.py`
-  unrelated to this change (Python 3.14 `asyncio.get_event_loop()`
-  incompatibility in unrelated test setup code, not touched here).
-  The identity/admin-directory suites relevant to this feature
+  `pytest v2/tests -q` — 2153 passed, 0 failures. Full backend suite
+  green. The identity/admin-directory suites relevant to this feature
   (`test_admin_directory.py`, `application/identity/`) pass cleanly
   (32/32).
 - Frontend: `npm run typecheck` and `npm run lint` clean (only
