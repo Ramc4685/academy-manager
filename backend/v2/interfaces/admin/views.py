@@ -213,6 +213,10 @@ class BulkInviteResponse(BaseModel):
     results: list[BulkInviteResultItem]
 
 
+class LoginInviteResponse(BaseModel):
+    sent_at: datetime
+
+
 # --- Session Type Billing ---
 
 

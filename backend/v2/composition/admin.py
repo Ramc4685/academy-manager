@@ -348,10 +348,16 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     ListAdminUsers,
     UpdateAdminUser,
 )
+from backend.v2.contexts.identity.application.use_cases.send_login_invite import (
+    SendLoginInvite,
+)
 from backend.v2.contexts.identity.application.use_cases.stripe_connect import (
     CompleteStripeConnectUseCase,
     DisconnectStripeUseCase,
     StartStripeConnectUseCase,
+)
+from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
+    get_firebase_admin_adapter,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
 from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
@@ -3359,6 +3365,12 @@ def compose_admin(
     get_admin_user = GetAdminUser(users_r)
     update_admin_user = UpdateAdminUser(users_r)
     create_admin_user = CreateAdminUser(users_r)
+    send_login_invite = SendLoginInvite(
+        users=users_r,
+        links=get_firebase_admin_adapter(),
+        sender=_email_sender,
+        academies=academy_repo,
+    )
     list_admin_students = ListAdminStudents(students_r)
     get_admin_student = GetAdminStudent(students_r)
     update_admin_student = UpdateAdminStudent(students_r)
@@ -5516,6 +5528,7 @@ def compose_admin(
         get_admin_user=get_admin_user,
         update_admin_user=update_admin_user,
         create_admin_user=create_admin_user,
+        send_login_invite=send_login_invite,
         get_admin_student=get_admin_student,
         update_admin_student=update_admin_student,
         change_admin_student_parent=change_admin_student_parent,
