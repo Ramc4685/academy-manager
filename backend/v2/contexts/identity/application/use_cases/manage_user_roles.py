@@ -9,10 +9,10 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field
 
-from backend.v2.contexts.identity.application.errors import UserNotFound
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserDetail,
 )
+from backend.v2.contexts.identity.domain.errors import UserNotFound
 from backend.v2.contexts.identity.domain.models import Role
 
 
