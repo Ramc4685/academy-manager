@@ -22,6 +22,7 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     UpdateAdminUserCommand,
 )
 from backend.v2.contexts.identity.domain.errors import (
+    CannotRemoveLastRole,
     UserCreateFailed,
     UserEmailAlreadyExists,
     UserEmailUpdateFailed,
@@ -523,3 +524,93 @@ class MongoUserRepository:
                 "created_at": datetime.now(UTC),
             }
         )
+
+    async def add_role(
+        self,
+        user_id: str,
+        role: Role,
+        *,
+        academy_id: str,
+        actor_id: str,
+        reason: str,
+    ) -> AdminUserDetail | None:
+        return await self._modify_roles(
+            user_id, role, adding=True,
+            academy_id=academy_id, actor_id=actor_id, reason=reason,
+        )
+
+    async def remove_role(
+        self,
+        user_id: str,
+        role: Role,
+        *,
+        academy_id: str,
+        actor_id: str,
+        reason: str,
+    ) -> AdminUserDetail | None:
+        return await self._modify_roles(
+            user_id, role, adding=False,
+            academy_id=academy_id, actor_id=actor_id, reason=reason,
+        )
+
+    async def _modify_roles(
+        self,
+        user_id: str,
+        role: Role,
+        *,
+        adding: bool,
+        academy_id: str,
+        actor_id: str,
+        reason: str,
+    ) -> AdminUserDetail | None:
+        now = datetime.now(UTC)
+        before = await self.collection.find_one(
+            {"academy_id": academy_id, **self._id_filter(user_id)}
+        )
+        if before is None:
+            return None
+
+        current = list(before.get("roles") or ([before["role"]] if before.get("role") else []))
+        if adding:
+            new_roles = current if role in current else [*current, role]
+        else:
+            new_roles = [r for r in current if r != role]
+            if not new_roles:
+                raise CannotRemoveLastRole(user_id)
+        # Keep the legacy single `role` field meaningful: preserve it unless
+        # it was the role being removed, in which case fall back to the first
+        # remaining role.
+        primary = before.get("role")
+        if primary not in new_roles:
+            primary = new_roles[0]
+
+        doc = await self.collection.find_one_and_update(
+            {"academy_id": academy_id, **self._id_filter(user_id)},
+            {"$set": {"role": primary, "roles": new_roles, "updated_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if doc is None:
+            return None
+
+        resolved_user_id = self._to_domain(doc).user_id
+        # Mirror into the SaaS source of truth (claims are built from this).
+        membership_update: dict[str, Any] = (
+            {"$addToSet": {"roles": role}} if adding else {"$pull": {"roles": role}}
+        )
+        membership_update["$set"] = {"updated_at": now}
+        await self._db["academy_memberships"].update_one(
+            {"academy_id": academy_id, "user_id": resolved_user_id},
+            membership_update,
+        )
+
+        await self._write_audit(
+            academy_id=academy_id,
+            actor_id=actor_id,
+            action="user.role_added" if adding else "user.role_removed",
+            entity_id=resolved_user_id,
+            reason=reason,
+            changed_keys=["role", "roles"],
+            before=before,
+            after=doc,
+        )
+        return await self.get_admin_user(resolved_user_id, academy_id=academy_id)
