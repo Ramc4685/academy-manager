@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePersonaAuth } from "@/lib/auth/use-persona-auth";
 import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
+import { PersonaSwitcher } from "@/components/persona/persona-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
 
@@ -50,6 +51,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
           <span className="font-semibold text-white text-[15px] tracking-tight">Academy</span>
         </Link>
         <div className="flex items-center gap-2">
+          <PersonaSwitcher current="parent" variant="dark" />
           {!online && (
             <span className="rounded-full px-2.5 py-0.5 text-xs font-medium text-amber-300 border border-amber-400/30" style={{ background: "rgba(251,191,36,0.1)" }}>
               Offline

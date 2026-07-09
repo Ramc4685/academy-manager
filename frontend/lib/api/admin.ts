@@ -1325,6 +1325,28 @@ export function updateAdminUserRole(
   });
 }
 
+export function addAdminUserRole(
+  userId: string,
+  role: AdminUserRole,
+  reason = "Admin role change",
+): Promise<AdminUserDetail> {
+  return apiFetch<AdminUserDetail>(
+    `/admin/users/${encodeURIComponent(userId)}/roles`,
+    { method: "POST", body: JSON.stringify({ role, reason }) },
+  );
+}
+
+export function removeAdminUserRole(
+  userId: string,
+  role: AdminUserRole,
+  reason = "Admin role change",
+): Promise<AdminUserDetail> {
+  return apiFetch<AdminUserDetail>(
+    `/admin/users/${encodeURIComponent(userId)}/roles/${role}?reason=${encodeURIComponent(reason)}`,
+    { method: "DELETE" },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Sessions
 // ---------------------------------------------------------------------------
