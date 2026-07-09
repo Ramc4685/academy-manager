@@ -696,6 +696,43 @@
       ]
     },
     {
+      "route": "/admin/users/new",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/users/new/page.tsx",
+      "workflows": [
+        "Create user",
+        "Auto-send parent login invite"
+      ],
+      "controls": {
+        "buttons": [
+          "Create user"
+        ],
+        "inputs": [
+          "Full name",
+          "Email",
+          "Phone (optional)",
+          "Role"
+        ],
+        "modals": []
+      },
+      "states": [
+        "idle form",
+        "submitting",
+        "validation error",
+        "create failed (email exists)",
+        "created → redirect to user detail"
+      ],
+      "risk_edges": [
+        "duplicate email → creation fails, surfaced inline",
+        "parent auto-invite send failure is best-effort (user created, invite re-sendable)"
+      ],
+      "acceptance": [
+        "admin can create parent/coach/admin with name+email",
+        "parent creation auto-sends set-password invite",
+        "successful create navigates to /admin/users/[userId]"
+      ]
+    },
+    {
       "route": "/admin/users/[userId]",
       "role": "admin",
       "source": "frontend/app/(admin)/admin/users/[userId]/page.tsx",
