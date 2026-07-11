@@ -96,7 +96,7 @@ export function PersonaSwitcher({
                 data-testid={`persona-switcher-option-${role}`}
                 onClick={() => {
                   setOpen(false);
-                  if (role !== current) router.push(PERSONA_HOME[role]);
+                  if (role !== current) router.push(PERSONA_HOME[role] as any);
                 }}
                 className={`w-full px-3 py-2 text-left text-[13px] hover:bg-neutral-50 ${
                   role === current ? "font-semibold text-rally-ink" : "text-slate-600"
