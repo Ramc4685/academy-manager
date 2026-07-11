@@ -594,6 +594,24 @@ class MongoStudentRepository(TenantScopedRepository):
         )
         docs = [doc async for doc in cursor]
 
+        # New one-off checkout payments are ledger-native (Phase 5 freeze):
+        # they live in ledger_payments with payment_origin="legacy_payment"
+        # instead of the legacy payments collection. Union them in.
+        seen_payment_ids = {str(doc.get("payment_id") or doc.get("_id") or "") for doc in docs}
+        ledger_shape_cursor = self._db["ledger_payments"].find(
+            {
+                "academy_id": academy_id,
+                "payment_origin": "legacy_payment",
+                "$or": payment_owner_filters,
+                "is_deleted": {"$ne": True},
+            },
+            sort=[("created_at", -1)],
+            limit=200,
+        )
+        async for doc in ledger_shape_cursor:
+            if str(doc.get("payment_id") or "") not in seen_payment_ids:
+                docs.append(doc)
+
         # Billing-ledger invoices (autopay / Stripe subscription) live in a
         # separate collection. Include enrollment-owned invoices and prefer the
         # ledger shim over a matching transition-only legacy Payment projection.

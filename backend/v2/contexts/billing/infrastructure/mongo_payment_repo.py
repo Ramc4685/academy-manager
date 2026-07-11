@@ -260,20 +260,41 @@ class MongoPaymentRepository(TenantScopedRepository):
 
     async def save(self, payment: Payment) -> None:
         doc = payment.model_dump(mode="python")
+        academy_id = current_academy_id()
         ledger_existing = await self._db["ledger_payments"].find_one(
-            {"academy_id": current_academy_id(), "payment_id": payment.payment_id},
+            {"academy_id": academy_id, "payment_id": payment.payment_id},
             {"_id": 1},
         )
         if ledger_existing is not None:
+            # Ledger-resident payment: mirror the full field set (webhook
+            # lifecycle stamps stripe ids / paid_at through this branch), but
+            # never clobber ledger-owned fields (unapplied_amount_cents,
+            # metadata) or identity/creation stamps.
             await self._db["ledger_payments"].update_one(
-                {"academy_id": current_academy_id(), "payment_id": payment.payment_id},
+                {"academy_id": academy_id, "payment_id": payment.payment_id},
                 {
                     "$set": {
-                        "status": payment.status,
-                        "refunded_cents": payment.refunded_cents,
-                        "updated_at": payment.updated_at,
+                        k: v
+                        for k, v in doc.items()
+                        if k not in ("academy_id", "payment_id", "created_at")
                     }
                 },
+            )
+            return
+        legacy_existing = await self._find_one({"payment_id": payment.payment_id})
+        if legacy_existing is None:
+            # Phase 5 freeze: brand-new payments are ledger-native. The legacy
+            # `payments` collection no longer receives inserts — only in-place
+            # updates of historical docs. The marker keeps these docs visible
+            # to legacy lookups without leaking ledger-native payments
+            # (autopay / pay-link) into them.
+            await self._db["ledger_payments"].insert_one(
+                {
+                    **{k: v for k, v in doc.items() if k != "academy_id"},
+                    "academy_id": academy_id,
+                    "unapplied_amount_cents": 0,
+                    "payment_origin": "legacy_payment",
+                }
             )
             return
         await self._update_one(
@@ -281,6 +302,27 @@ class MongoPaymentRepository(TenantScopedRepository):
             {"$set": {k: v for k, v in doc.items() if k != "academy_id"}},
             upsert=True,
         )
+
+    def _ledger_legacy_shape_query(self, query: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **query,
+            "academy_id": current_academy_id(),
+            "payment_origin": "legacy_payment",
+        }
+
+    async def _ledger_legacy_shape_docs(
+        self,
+        query: dict[str, Any],
+        *,
+        sort: list[tuple[str, int]] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        cursor = self._db["ledger_payments"].find(self._ledger_legacy_shape_query(query))
+        if sort:
+            cursor = cursor.sort(sort)
+        if limit:
+            cursor = cursor.limit(limit)
+        return [doc async for doc in cursor]
 
     async def get(self, payment_id: str) -> Payment | None:
         doc = await self._find_one(_payment_lookup(payment_id))
@@ -291,13 +333,21 @@ class MongoPaymentRepository(TenantScopedRepository):
         return self._to_domain(doc) if doc else None
 
     async def get_by_stripe_pi(self, stripe_pi: str) -> Payment | None:
-        doc = await self._find_one(
-            {"$or": [{"stripe_payment_intent_id": stripe_pi}, {"stripe_payment_intent": stripe_pi}]}
-        )
+        pi_query: dict[str, Any] = {
+            "$or": [{"stripe_payment_intent_id": stripe_pi}, {"stripe_payment_intent": stripe_pi}]
+        }
+        doc = await self._find_one(pi_query)
+        if doc is None:
+            docs = await self._ledger_legacy_shape_docs(pi_query, limit=1)
+            doc = docs[0] if docs else None
         return self._to_domain(doc) if doc else None
 
     async def get_by_checkout_session(self, checkout_session_id: str) -> Payment | None:
-        doc = await self._find_one({"stripe_checkout_session_id": checkout_session_id})
+        session_query = {"stripe_checkout_session_id": checkout_session_id}
+        doc = await self._find_one(session_query)
+        if doc is None:
+            docs = await self._ledger_legacy_shape_docs(session_query, limit=1)
+            doc = docs[0] if docs else None
         return self._to_domain(doc) if doc else None
 
     async def latest_paid_payment_for_enrollment(self, enrollment_id: str) -> Payment | None:
@@ -313,7 +363,19 @@ class MongoPaymentRepository(TenantScopedRepository):
             limit=1,
         )
         docs = [doc async for doc in cursor]
+        docs.extend(
+            await self._ledger_legacy_shape_docs(
+                {
+                    "enrollment_id": enrollment_id,
+                    "status": {"$in": ["succeeded", "paid", "partially_refunded"]},
+                    "calculation_snapshot_id": {"$exists": True, "$ne": None},
+                },
+                sort=[("paid_at", -1), ("updated_at", -1), ("created_at", -1)],
+                limit=1,
+            )
+        )
         if docs:
+            docs.sort(key=_doc_created_at_utc, reverse=True)
             return self._to_domain(docs[0])
         # Fallback: legacy onboarding payments may have been written before
         # enrollment_id backfill was in place. Look them up via the enrollment's
@@ -352,18 +414,32 @@ class MongoPaymentRepository(TenantScopedRepository):
         return BillingCalculationSnapshot(**doc) if doc else None
 
     async def list_for_parent(self, parent_id: str) -> list[Payment]:
-        cursor = self._find_many(
-            {"$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}]},
-            sort=[("created_at", -1)],
+        parent_query: dict[str, Any] = {
+            "$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}]
+        }
+        cursor = self._find_many(parent_query, sort=[("created_at", -1)])
+        legacy = [self._to_domain(doc) async for doc in cursor]
+        return self._merged_with_ledger_shape(
+            legacy, await self._ledger_legacy_shape_docs(parent_query)
         )
-        return [self._to_domain(doc) async for doc in cursor]
 
     async def list_all(self) -> list[Payment]:
-        cursor = self._find_many(
-            {"is_deleted": {"$ne": True}},
-            sort=[("created_at", -1)],
+        alive_query: dict[str, Any] = {"is_deleted": {"$ne": True}}
+        cursor = self._find_many(alive_query, sort=[("created_at", -1)])
+        legacy = [self._to_domain(doc) async for doc in cursor]
+        return self._merged_with_ledger_shape(
+            legacy, await self._ledger_legacy_shape_docs(alive_query)
         )
-        return [self._to_domain(doc) async for doc in cursor]
+
+    def _merged_with_ledger_shape(
+        self, legacy: list[Payment], ledger_docs: list[dict[str, Any]]
+    ) -> list[Payment]:
+        seen = {p.payment_id for p in legacy}
+        merged = legacy + [
+            self._to_domain(doc) for doc in ledger_docs if self._payment_id(doc) not in seen
+        ]
+        merged.sort(key=lambda p: p.created_at, reverse=True)
+        return merged
 
     async def list_recent_admin(self, limit: int = 200) -> list[dict[str, object]]:
         cursor = self._find_many(
@@ -372,6 +448,15 @@ class MongoPaymentRepository(TenantScopedRepository):
             limit=limit,
         )
         docs = [doc async for doc in cursor]
+        seen_ids = {self._payment_id(doc) for doc in docs}
+        ledger_docs = await self._ledger_legacy_shape_docs(
+            {"is_deleted": {"$ne": True}},
+            sort=[("created_at", -1)],
+            limit=limit,
+        )
+        docs.extend(doc for doc in ledger_docs if self._payment_id(doc) not in seen_ids)
+        docs.sort(key=_doc_created_at_utc, reverse=True)
+        docs = docs[:limit]
         student_ids = sorted(
             {str(doc.get("student_id")) for doc in docs if doc.get("student_id") is not None}
         )
@@ -1348,6 +1433,15 @@ class MongoPaymentRepository(TenantScopedRepository):
         if doc is None:
             raise PaymentNotFound("no such payment", payment_id=payment_id)
         return doc
+
+
+def _doc_created_at_utc(doc: dict[str, object]) -> datetime:
+    value = doc.get("created_at") or doc.get("invoice_created_at")
+    if not isinstance(value, datetime):
+        return datetime.min.replace(tzinfo=UTC)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value
 
 
 def _payment_lookup(payment_id: str) -> dict[str, Any]:
