@@ -142,6 +142,10 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     ListAdminUsers,
     UpdateAdminUser,
 )
+from backend.v2.contexts.identity.application.use_cases.manage_user_roles import (
+    AddUserRole,
+    RemoveUserRole,
+)
 from backend.v2.contexts.identity.application.use_cases.stripe_connect import (
     CompleteStripeConnectUseCase,
     DisconnectStripeUseCase,
@@ -246,6 +250,8 @@ class AdminUseCases:
     get_admin_user: GetAdminUser | None = None
     update_admin_user: UpdateAdminUser | None = None
     create_admin_user: CreateAdminUser | None = None
+    add_user_role: AddUserRole | None = None
+    remove_user_role: RemoveUserRole | None = None
     get_admin_student: GetAdminStudent | None = None
     update_admin_student: UpdateAdminStudent | None = None
     change_admin_student_parent: ChangeAdminStudentParent | None = None

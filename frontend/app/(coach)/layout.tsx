@@ -9,6 +9,7 @@ import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
 import { startAutoSync } from "@/lib/offline/sync";
 import { CoachInstallCard } from "@/components/coach/install-card";
+import { PersonaSwitcher } from "@/components/persona/persona-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
 
@@ -52,6 +53,7 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
           <span className="font-semibold text-white text-[15px] tracking-tight">Academy</span>
         </Link>
         <div className="flex items-center gap-2">
+          <PersonaSwitcher current="coach" variant="dark" />
           {!online && (
             <span className="rounded-full px-2 py-0.5 text-xs font-medium text-amber-300" style={{ background: "rgba(251,191,36,0.15)" }}>
               Offline

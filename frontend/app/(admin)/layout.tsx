@@ -26,6 +26,7 @@ import {
   AdminActionSlotProvider,
 } from "@/components/admin/admin-action-slot";
 import { TenantSwitcher } from "@/components/admin/tenant-switcher";
+import { PersonaSwitcher } from "@/components/persona/persona-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
 
@@ -388,6 +389,7 @@ function RallyTopbar({
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <PersonaSwitcher current="admin" />
           <TenantSwitcher />
           <AdminActionSlotOutlet />
           {!online && (

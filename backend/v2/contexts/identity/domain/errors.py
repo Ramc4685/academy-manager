@@ -45,3 +45,10 @@ class MembershipNotFound(DomainError):
 
     code = "Identity.MembershipNotFound"
     status_code = 403
+
+
+class CannotRemoveLastRole(DomainError):
+    """Raised when removing a role would leave the user with no roles."""
+
+    code = "Identity.CannotRemoveLastRole"
+    status_code = 409
