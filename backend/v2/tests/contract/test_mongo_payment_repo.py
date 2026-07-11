@@ -1425,3 +1425,50 @@ async def test_ledger_native_payments_do_not_leak_into_legacy_lookups(db, acad) 
 
     assert await repo.get_by_stripe_pi("pi_native") is None
     assert await repo.get_by_checkout_session("cs_native") is None
+
+
+@pytest.mark.asyncio
+async def test_admin_ops_work_on_ledger_resident_payment(db, acad) -> None:
+    """Phase 5b: admin manual ops (mark paid / discount) must operate on
+    ledger-native payments (payment_origin marker), since new payments are no
+    longer inserted into the legacy collection."""
+    now = datetime.now(UTC)
+    repo = MongoPaymentRepository(db)
+    await repo.save(
+        Payment(
+            payment_id="pay-cash-1",
+            academy_id=acad,
+            parent_id="parent-1",
+            session_id="sess-1",
+            stripe_checkout_session_id="cs_cash_1",
+            amount_cents=6_000,
+            status="pending",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    assert await db["payments"].count_documents({"academy_id": acad}) == 0
+
+    await repo.apply_payment_discount("pay-cash-1", 1_000, reason="sibling")
+    doc = await db["ledger_payments"].find_one({"academy_id": acad, "payment_id": "pay-cash-1"})
+    assert doc is not None and doc["discount_cents"] == 1_000
+
+    await repo.mark_payment_paid(
+        "pay-cash-1",
+        payment_method="cash",
+        notes="paid at front desk",
+        amount_received_cents=5_000,
+        reference_number=None,
+    )
+    doc = await db["ledger_payments"].find_one({"academy_id": acad, "payment_id": "pay-cash-1"})
+    assert doc is not None
+    assert doc["status"] == "succeeded"
+    assert doc["paid_amount_cents"] == 5_000
+    assert await db["payments"].count_documents({"academy_id": acad}) == 0
+
+    # The doc must still round-trip through the ledger domain parser.
+    from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
+        MongoBillingLedgerRepository,
+    )
+
+    assert MongoBillingLedgerRepository._payment_from_doc(doc).status == "succeeded"
