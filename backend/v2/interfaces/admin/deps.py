@@ -69,6 +69,13 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     TransferEnrollment,
     WithdrawEnrollment,
 )
+from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
+    ApproveMakeupRequest,
+    DenyMakeupRequest,
+    ExpireMakeupRequests,
+    ListAbsencesForAdmin,
+    ListMakeupRequestsForAdmin,
+)
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     ApprovePauseRequest,
     DeclinePauseRequest,
@@ -79,6 +86,18 @@ from backend.v2.contexts.enrollment.application.use_cases.process_scheduled_resu
 )
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
+)
+from backend.v2.contexts.enrollment.application.use_cases.self_cancel import (
+    ListSelfCancellationsForAdmin,
+)
+from backend.v2.contexts.enrollment.application.use_cases.self_service_policies import (
+    GetSelfServicePolicy,
+    UpdateSelfServicePolicy,
+)
+from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
+    ApproveTrialRequest,
+    DenyTrialRequest,
+    ListTrialRequestsForAdmin,
 )
 from backend.v2.contexts.finance.application.ports import PayoutPeriodRepository
 from backend.v2.contexts.finance.application.use_cases.approve_payout_period import (
@@ -122,6 +141,10 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     GetAdminUser,
     ListAdminUsers,
     UpdateAdminUser,
+)
+from backend.v2.contexts.identity.application.use_cases.manage_user_roles import (
+    AddUserRole,
+    RemoveUserRole,
 )
 from backend.v2.contexts.identity.application.use_cases.send_login_invite import (
     SendLoginInvite,
@@ -231,6 +254,8 @@ class AdminUseCases:
     update_admin_user: UpdateAdminUser | None = None
     create_admin_user: CreateAdminUser | None = None
     send_login_invite: SendLoginInvite | None = None
+    add_user_role: AddUserRole | None = None
+    remove_user_role: RemoveUserRole | None = None
     get_admin_student: GetAdminStudent | None = None
     update_admin_student: UpdateAdminStudent | None = None
     change_admin_student_parent: ChangeAdminStudentParent | None = None
@@ -313,6 +338,22 @@ class AdminUseCases:
     create_billing_product: object | None = None
     update_billing_product: object | None = None
     deactivate_billing_product: object | None = None
+    # Parent self-service policy (#absence/makeup/cancel Slice 1)
+    self_service_policy: GetSelfServicePolicy | None = None
+    update_self_service_policy: UpdateSelfServicePolicy | None = None
+    # Admin makeup review + absence queue (R2, Task 5)
+    list_makeup_requests_for_admin: ListMakeupRequestsForAdmin | None = None
+    approve_makeup_request: ApproveMakeupRequest | None = None
+    deny_makeup_request: DenyMakeupRequest | None = None
+    list_absences_for_admin: ListAbsencesForAdmin | None = None
+    # Makeup expiry job (R2, Task 6)
+    expire_makeup_requests: ExpireMakeupRequests | None = None
+    # Trial requests + conversion tracking (R3, Task 7)
+    list_trial_requests_for_admin: ListTrialRequestsForAdmin | None = None
+    approve_trial_request: ApproveTrialRequest | None = None
+    deny_trial_request: DenyTrialRequest | None = None
+    # Self-cancel audit list (R4, Task 8)
+    list_self_cancellations_for_admin: ListSelfCancellationsForAdmin | None = None
     # Platform-charge fallback escape hatch (2026-07-04 incident follow-up):
     # audited admin toggle for billing_settings.allow_platform_charge_fallback.
     get_platform_charge_fallback: object | None = None  # GetPlatformChargeFallback

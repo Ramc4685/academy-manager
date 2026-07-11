@@ -33,6 +33,11 @@ class AdminUserList(BaseModel):
     users: list[AdminUserView]
 
 
+class ModifyUserRoleRequest(BaseModel):
+    role: Literal["admin", "coach", "parent"]
+    reason: str = Field(default="Admin role change", min_length=1, max_length=500)
+
+
 class AdminStudentView(BaseModel):
     student_id: str
     full_name: str

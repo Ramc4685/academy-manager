@@ -79,6 +79,26 @@ export const queryKeys = {
       ["admin", "billing", "invoice-attempts", invoiceId] as const,
     legacyMatchQueue: () =>
       ["admin", "billing", "legacy-match-queue"] as const,
+    selfServicePolicy: () => ["admin", "self-service", "policy"] as const,
+    selfServiceAbsences: () => ["admin", "self-service", "absences"] as const,
+    selfServiceMakeupsAll: () => ["admin", "self-service", "makeups"] as const,
+    selfServiceMakeups: (status?: string) =>
+      [...queryKeys.admin.selfServiceMakeupsAll(), status ?? "all"] as const,
+    selfServiceTrialsAll: () => ["admin", "self-service", "trials"] as const,
+    selfServiceTrials: (status?: string) =>
+      [...queryKeys.admin.selfServiceTrialsAll(), status ?? "all"] as const,
+    selfServiceCancellations: () =>
+      ["admin", "self-service", "cancellations"] as const,
+  },
+  parent: {
+    all: ["parent"] as const,
+    absences: () => ["parent", "absences"] as const,
+    makeups: () => ["parent", "makeups"] as const,
+    makeupTargets: (studentId: string, missedOccurrenceId: string) =>
+      ["parent", "makeups", "targets", studentId, missedOccurrenceId] as const,
+    trials: () => ["parent", "trials"] as const,
+    cancellationPreview: (enrollmentId: string) =>
+      ["parent", "enrollments", enrollmentId, "cancellation-preview"] as const,
   },
 } as const;
 
@@ -87,4 +107,5 @@ type QueryKeyFrom<T> = T extends QueryKeyFactory ? ReturnType<T> : never;
 
 export type QueryKey =
   | QueryKeyFrom<(typeof queryKeys.coach)[keyof typeof queryKeys.coach]>
-  | QueryKeyFrom<(typeof queryKeys.admin)[keyof typeof queryKeys.admin]>;
+  | QueryKeyFrom<(typeof queryKeys.admin)[keyof typeof queryKeys.admin]>
+  | QueryKeyFrom<(typeof queryKeys.parent)[keyof typeof queryKeys.parent]>;

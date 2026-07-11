@@ -73,6 +73,9 @@ from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes im
     CoachAddStudentToRoster,
     CoachRemoveStudentFromRoster,
 )
+from backend.v2.contexts.enrollment.application.use_cases.get_occurrence_roster import (
+    GetOccurrenceRoster,
+)
 from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
     GetSessionRoster,
 )
@@ -84,11 +87,17 @@ from backend.v2.contexts.enrollment.domain.events import (
     StudentSessionTypeChanged,
     StudentSessionTypeChangedPayload,
 )
+from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo import (
+    MongoAbsenceNoticeRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import (
     MongoSessionOccurrenceRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_roster_repo import (
+    MongoOccurrenceRosterRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
@@ -153,6 +162,9 @@ class CoachComposition:
     # one occurrence, so /coach/today can hydrate attendance state on reload.
     # Optional default keeps hand-built test compositions working.
     list_attendance_for_occurrence: object = None
+    # Occurrence-scoped roster (expected-absence flags + one-time makeup/
+    # trial entries) for /coach/today.
+    get_occurrence_roster: GetOccurrenceRoster | None = None
 
 
 class CoachAssignedSessionLookup:
@@ -215,6 +227,8 @@ def compose_coach(
     notes_repo = MongoCoachingNotesRepository(db)
     feedback_repo = MongoSessionFeedbackRepository(db)
     assigned_sessions = CoachAssignedSessionLookup(sessions_repo)
+    absence_notice_repo = MongoAbsenceNoticeRepository(db)
+    occurrence_roster_repo = MongoOccurrenceRosterRepository(db)
     # Billing repos for session-type move surface
     session_type_repo = MongoSessionTypeRepository(db)
     billing_enrollment_repo = MongoStudentBillingEnrollmentRepository(db)
@@ -314,11 +328,19 @@ def compose_coach(
         criteria=MongoCriterionRepository(db),
     )
 
+    get_roster = GetSessionRoster(enrollments=enrollments_repo, students=students_repo)
+
     return CoachComposition(
         list_today=ListCoachOccurrencesForDate(
             occurrences=occurrences_repo, sessions=sessions_repo
         ),
-        get_roster=GetSessionRoster(enrollments=enrollments_repo, students=students_repo),
+        get_roster=get_roster,
+        get_occurrence_roster=GetOccurrenceRoster(
+            get_roster=get_roster,
+            absence_notices=absence_notice_repo,
+            occurrence_roster=occurrence_roster_repo,
+            students=students_repo,
+        ),
         mark_attendance=MarkAttendance(
             attendance_repo=attendance_repo,
             occurrence_lookup=EnrollmentOccurrenceLookup(occurrences_repo),

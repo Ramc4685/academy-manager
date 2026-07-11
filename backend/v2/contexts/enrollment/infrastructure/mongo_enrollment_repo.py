@@ -32,6 +32,16 @@ class MongoEnrollmentRepository(TenantScopedRepository):
         )
         return doc is not None
 
+    async def is_active_or_paused(self, session_id: str, student_id: str) -> bool:
+        doc = await self._find_one(
+            {
+                "session_id": session_id,
+                "student_id": student_id,
+                "status": {"$in": ["active", "paused"]},
+            }
+        )
+        return doc is not None
+
     async def active_for_student(self, student_id: str) -> list[Enrollment]:
         cursor = self._find_many(
             {"student_id": student_id, "status": "active"},
