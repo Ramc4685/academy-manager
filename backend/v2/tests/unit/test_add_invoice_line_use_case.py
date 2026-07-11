@@ -52,6 +52,7 @@ class FakeLedgerRepository:
             {inv.invoice_id: inv for inv in invoices} if invoices else {}
         )
         self._lines: dict[str, InvoiceLine] = {}
+        self.allocations: list[dict] = []
 
     # --- LedgerRepository protocol methods ---
 
@@ -92,6 +93,9 @@ class FakeLedgerRepository:
         for ln in lines:
             self._lines[ln.line_id] = ln
         return invoice
+
+    async def sum_allocations_for_invoice(self, invoice_id: str) -> int:
+        return sum(a["amount_cents"] for a in self.allocations if a["invoice_id"] == invoice_id)
 
 
 class FakeBillingCounterRepository:
@@ -375,6 +379,47 @@ async def test_save_line_upsert_does_not_duplicate() -> None:
 # ---------------------------------------------------------------------------
 # Command validation
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_add_line_derives_balance_from_real_allocations() -> None:
+    """The recomputed balance must come from summed payment_allocations, not
+    from the fetched invoice's possibly-stale total/balance projection."""
+    # Stale projection: totals say nothing was allocated (total==balance==5000),
+    # but the allocation records show 4_000 was actually paid against it.
+    invoice = _open_invoice().model_copy(
+        update={
+            "subtotal_cents": 5_000,
+            "total_cents": 5_000,
+            "balance_due_cents": 5_000,
+            "status": "open",
+        }
+    )
+    repo = FakeLedgerRepository([invoice])
+    await repo.save_line(
+        InvoiceLine(
+            line_id="line-existing",
+            academy_id="acad-1",
+            invoice_id="inv-1",
+            line_type="tuition",
+            description="June tuition",
+            quantity=1,
+            unit_amount_cents=5_000,
+            amount_cents=5_000,
+            created_at=NOW,
+        )
+    )
+    repo.allocations.append({"invoice_id": "inv-1", "amount_cents": 4_000})
+    uc = _use_case(repo)
+
+    result = await uc.execute(
+        AddInvoiceLineCommand(invoice_id="inv-1", **_line_cmd(unit_amount_cents=2_000))
+    )
+
+    # 5_000 existing + 2_000 new = 7_000 total; 4_000 allocated → 3_000 due.
+    assert result.invoice.total_cents == 7_000
+    assert result.invoice.balance_due_cents == 3_000
+    assert result.invoice.status == "partially_paid"
 
 
 def test_command_raises_when_neither_mode_provided() -> None:

@@ -265,19 +265,11 @@ class MongoPaymentRepository(TenantScopedRepository):
             {"_id": 1},
         )
         if ledger_existing is not None:
-            # The ledger domain (LedgerPayment) only accepts pending/succeeded/
-            # failed/refunded. A partial refund leaves Payment.status at
-            # "partially_refunded", which would break later reads through
-            # _payment_from_doc; the partial amount is already tracked in
-            # refunded_cents, so persist the payment as "succeeded".
-            ledger_status = (
-                "succeeded" if payment.status == "partially_refunded" else payment.status
-            )
             await self._db["ledger_payments"].update_one(
                 {"academy_id": current_academy_id(), "payment_id": payment.payment_id},
                 {
                     "$set": {
-                        "status": ledger_status,
+                        "status": payment.status,
                         "refunded_cents": payment.refunded_cents,
                         "updated_at": payment.updated_at,
                     }
@@ -1325,6 +1317,17 @@ class MongoPaymentRepository(TenantScopedRepository):
         if str(doc.get("status") or "") != "succeeded":
             raise PaymentOperationNotAllowed("only paid payments can be undone")
         if self._is_stripe_linked(doc):
+            raise PaymentOperationNotAllowed("Stripe-linked payments must be refunded")
+        # A legacy row can front a Stripe-backed ledger payment (same payment_id,
+        # see save()/get() shadow-read above) whose Stripe linkage lives only on
+        # the ledger doc — check it too before allowing the undo.
+        ledger_doc = await self._db["ledger_payments"].find_one(
+            {
+                "academy_id": current_academy_id(),
+                "payment_id": self._payment_id(doc),
+            }
+        )
+        if ledger_doc is not None and self._is_stripe_linked(ledger_doc):
             raise PaymentOperationNotAllowed("Stripe-linked payments must be refunded")
         await self._update_one(
             _payment_lookup(payment_id),

@@ -128,6 +128,9 @@ class _FakeLedger:
     async def get_lines_for_invoice(self, invoice_id: str) -> list[InvoiceLine]:
         return [line for line in self.lines.values() if line.invoice_id == invoice_id]
 
+    async def sum_allocations_for_invoice(self, invoice_id: str) -> int:
+        return 0
+
     async def save_invoice(self, invoice: LedgerInvoice) -> LedgerInvoice:
         self.invoices[invoice.invoice_id] = invoice
         self.saved_invoices.append(invoice)

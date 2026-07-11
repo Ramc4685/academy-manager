@@ -1419,8 +1419,10 @@ class HandleWebhookEvent:
         checkouts write a ``LedgerPayment`` (no legacy ``payments`` row), so the
         legacy lookup in ``_on_charge_refunded`` misses them. Mirrors the legacy
         refund semantics: cumulative-amount idempotency, partial vs full status,
-        and a ``PaymentRefunded`` event. (Invoice allocations are intentionally
-        not reversed here — same as the legacy path.)
+        and a ``PaymentRefunded`` event. Allocations are not reversed (the
+        payment did happen — unlike an ACH return), but the refund IS
+        propagated to the allocated invoices' ``refunded_cents`` so invoice
+        reporting matches the admin-initiated refund path.
         """
         if self._billing_ledger is None:
             return
@@ -1443,6 +1445,13 @@ class HandleWebhookEvent:
                     return_code=return_code,
                 )
                 return
+        # Invoice-level sync runs FIRST: if it fails, the payment row is still
+        # unmarked (delta > 0), so Stripe's redelivery retries the whole thing.
+        # It is idempotent (cumulative targets, shortfall-only writes), so a
+        # redelivery after success applies nothing.
+        await self._sync_invoice_refunds_for_ledger_payment(
+            pi_id=pi_id, payment=payment, total_refunded_cents=total_refunded
+        )
         if total_refunded == payment.refunded_cents:
             return
         delta = max(0, total_refunded - payment.refunded_cents)
@@ -1465,6 +1474,62 @@ class HandleWebhookEvent:
                 ),
             )
         )
+
+    async def _sync_invoice_refunds_for_ledger_payment(
+        self,
+        *,
+        pi_id: str,
+        payment: LedgerPayment,
+        total_refunded_cents: int,
+    ) -> None:
+        """Bring allocated invoices' ``refunded_cents`` up to this payment's
+        cumulative refund.
+
+        The cumulative total is distributed across the payment's allocations in
+        allocation order, capped per invoice by the amount THIS payment actually
+        allocated to it — refunding a payment must never attribute another
+        payment's funding as refunded. Only the shortfall versus the invoice's
+        current ``refunded_cents`` is written, so the sync is idempotent across
+        webhook re-deliveries. If an invoice already carries refunds from other
+        payments, the shortfall shrinks — under-reporting is acceptable (and
+        logged); over-refunding an invoice is not.
+        """
+        if total_refunded_cents <= 0:
+            return
+        allocations = await self._billing_ledger.list_allocations_for_payment(payment.payment_id)
+        per_invoice: dict[str, int] = {}
+        for allocation in allocations:
+            invoice_id = str(_alloc_field(allocation, "invoice_id") or "")
+            amount = int(_alloc_field(allocation, "amount_cents") or 0)
+            if invoice_id and amount > 0:
+                per_invoice[invoice_id] = per_invoice.get(invoice_id, 0) + amount
+        if not per_invoice:
+            fallback = await self._invoice_for_autopay_payment(pi_id=pi_id, payment=payment)
+            if fallback is not None:
+                per_invoice[fallback.invoice_id] = payment.amount_cents
+        remaining = total_refunded_cents
+        for invoice_id, allocated in per_invoice.items():
+            if remaining <= 0:
+                break
+            target = min(remaining, allocated)
+            remaining -= target
+            invoice = await self._billing_ledger.get_invoice(invoice_id)
+            if invoice is None:
+                continue
+            shortfall = min(target, invoice.total_cents) - invoice.refunded_cents
+            if shortfall <= 0:
+                continue
+            await self._billing_ledger.apply_invoice_refund(
+                invoice_id=invoice_id, amount_cents=shortfall
+            )
+        if remaining > 0:
+            log.warning(
+                "charge_refunded_ledger: %d cents of refund for payment %s (pi=%s) "
+                "not attributable to any invoice (no allocation covers it)",
+                remaining,
+                payment.payment_id,
+                pi_id,
+            )
 
     async def _invoice_for_autopay_payment(
         self,
@@ -2168,6 +2233,12 @@ def _autopay_discount_metadata_from_pi(metadata: dict[str, Any]) -> dict[str, st
         for key, value in metadata.items()
         if key in allowed_keys and value is not None and str(value) != ""
     }
+
+
+def _alloc_field(allocation: Any, key: str) -> Any:
+    if isinstance(allocation, dict):
+        return allocation.get(key)
+    return getattr(allocation, key, None)
 
 
 def _ledger_payment_is_ach(payment: LedgerPayment) -> bool:
