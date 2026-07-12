@@ -383,10 +383,21 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     ListAdminUsers,
     UpdateAdminUser,
 )
+from backend.v2.contexts.identity.application.use_cases.manage_user_roles import (
+    AddUserRole,
+    RemoveUserRole,
+)
+from backend.v2.contexts.identity.application.use_cases.send_login_invite import (
+    InviteEmailOutcome,
+    SendLoginInvite,
+)
 from backend.v2.contexts.identity.application.use_cases.stripe_connect import (
     CompleteStripeConnectUseCase,
     DisconnectStripeUseCase,
     StartStripeConnectUseCase,
+)
+from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
+    get_firebase_admin_adapter,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
 from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
@@ -427,6 +438,38 @@ from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import tenant_scope
+
+
+class _LoginInviteEmailAdapter:
+    """Bridges identity's `InviteEmailPort` to communications' `EmailSendPort`.
+
+    Composition may import both contexts; the identity context itself must
+    not import communications, so this adapter lives here rather than in
+    `send_login_invite.py`.
+    """
+
+    def __init__(self, *, sender: EmailSendPort) -> None:
+        self._sender = sender
+
+    async def send_invite_email(
+        self,
+        *,
+        user_id: str,
+        email: str,
+        display_name: str,
+        subject: str,
+        body: str,
+    ) -> InviteEmailOutcome:
+        outcome = await self._sender.send(
+            recipient=ResolvedRecipient(
+                user_id=user_id,
+                email=email,
+                display_name=display_name,
+            ),
+            subject=subject,
+            body=body,
+        )
+        return InviteEmailOutcome(ok=outcome.ok, failed_reason=outcome.failed_reason)
 
 
 class _InvoiceEmailAdapter:
@@ -4131,6 +4174,14 @@ def compose_admin(
     get_admin_user = GetAdminUser(users_r)
     update_admin_user = UpdateAdminUser(users_r)
     create_admin_user = CreateAdminUser(users_r)
+    send_login_invite = SendLoginInvite(
+        users=users_r,
+        links=get_firebase_admin_adapter(),
+        sender=_LoginInviteEmailAdapter(sender=_email_sender),
+        academies=academy_repo,
+    )
+    add_user_role = AddUserRole(users_r)
+    remove_user_role = RemoveUserRole(users_r)
     list_admin_students = ListAdminStudents(students_r)
     get_admin_student = GetAdminStudent(students_r)
     update_admin_student = UpdateAdminStudent(students_r)
@@ -6471,6 +6522,9 @@ def compose_admin(
         get_admin_user=get_admin_user,
         update_admin_user=update_admin_user,
         create_admin_user=create_admin_user,
+        send_login_invite=send_login_invite,
+        add_user_role=add_user_role,
+        remove_user_role=remove_user_role,
         get_admin_student=get_admin_student,
         update_admin_student=update_admin_student,
         change_admin_student_parent=change_admin_student_parent,

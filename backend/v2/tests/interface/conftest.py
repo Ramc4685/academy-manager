@@ -829,7 +829,12 @@ from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist 
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+    AdminUserDetail,
     AdminUserSummary,
+)
+from backend.v2.contexts.identity.application.use_cases.manage_user_roles import (
+    AddUserRole,
+    RemoveUserRole,
 )
 from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
     AdminWaiverReport,
@@ -1601,6 +1606,25 @@ def admin_seed():
     }
 
 
+class _FakeLoginInviteSender:
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+        self.known = {"coach-1", "u-admin", "p-1"}
+
+    async def execute(self, user_id, *, academy_id):
+        from datetime import UTC, datetime
+
+        from backend.v2.contexts.identity.application.errors import UserNotFound
+        from backend.v2.contexts.identity.application.use_cases.send_login_invite import (
+            LoginInviteResult,
+        )
+
+        if user_id not in self.known:
+            raise UserNotFound(user_id)
+        self.sent.append(user_id)
+        return LoginInviteResult(sent_at=datetime.now(UTC))
+
+
 def _build_admin_use_cases(seed) -> AdminUseCases:
     sessions = seed["sessions"]
     occurrences = seed["occurrences"]
@@ -1945,8 +1969,52 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                 next_cursor=next_cursor,
             )
 
+    class _FakeRoleModifier:
+        def __init__(self) -> None:
+            self.roles: dict[str, list[str]] = {
+                "coach-1": ["coach"],
+                "u-admin": ["admin"],
+            }
+
+        def _detail(self, user_id: str) -> AdminUserDetail:
+            roles = self.roles[user_id]
+            return AdminUserDetail(
+                user_id=user_id,
+                email=f"{user_id}@example.com",
+                display_name=user_id,
+                role=roles[0],
+                status="active",
+                phone=None,
+                roles=roles,
+                linked_student_count=0,
+                session_count=0,
+            )
+
+        async def add_role(self, user_id, role, *, academy_id, actor_id, reason):
+            if user_id not in self.roles:
+                return None
+            if role not in self.roles[user_id]:
+                self.roles[user_id].append(role)
+            return self._detail(user_id)
+
+        async def remove_role(self, user_id, role, *, academy_id, actor_id, reason):
+            from backend.v2.contexts.identity.application.errors import (
+                CannotRemoveLastRole,
+            )
+
+            if user_id not in self.roles:
+                return None
+            remaining = [r for r in self.roles[user_id] if r != role]
+            if not remaining:
+                raise CannotRemoveLastRole(user_id)
+            self.roles[user_id] = remaining
+            return self._detail(user_id)
+
+    _role_modifier = _FakeRoleModifier()
+
     return AdminUseCases(
         list_admin_users=_ListAdminUsers(),  # type: ignore[arg-type]
+        send_login_invite=_FakeLoginInviteSender(),  # type: ignore[arg-type]
         list_admin_students=_ListAdminStudents(),  # type: ignore[arg-type]
         create_session=create_session,
         edit_session=edit_session,
@@ -2014,6 +2082,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         update_academy_notifications_use_case=AsyncMock(),
         get_academy_gateway_use_case=AsyncMock(),
         change_user_role=AsyncMock(),
+        add_user_role=AddUserRole(_role_modifier),  # type: ignore[arg-type]
+        remove_user_role=RemoveUserRole(_role_modifier),  # type: ignore[arg-type]
         set_tuition_discount=set_tuition_discount,
         remove_tuition_discount=remove_tuition_discount,
         tuition_discounts=tuition_discounts,

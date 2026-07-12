@@ -26,10 +26,16 @@ class AdminUserDetailView(AdminUserView):
     roles: list[Literal["admin", "coach", "parent"]] = []
     linked_student_count: int = 0
     session_count: int = 0
+    login_invite_sent_at: datetime | None = None
 
 
 class AdminUserList(BaseModel):
     users: list[AdminUserView]
+
+
+class ModifyUserRoleRequest(BaseModel):
+    role: Literal["admin", "coach", "parent"]
+    reason: str = Field(default="Admin role change", min_length=1, max_length=500)
 
 
 class AdminStudentView(BaseModel):
@@ -210,6 +216,10 @@ class BulkInviteResponse(BaseModel):
     skipped: int
     failed: int
     results: list[BulkInviteResultItem]
+
+
+class LoginInviteResponse(BaseModel):
+    sent_at: datetime
 
 
 # --- Session Type Billing ---

@@ -34,21 +34,31 @@ export default function AdminUsersPage() {
 
   return (
     <section data-testid="admin-users" className="space-y-6">
-      <div className="flex gap-2">
-        {roles.map((r) => (
-          <button
-            key={r.label}
-            type="button"
-            onClick={() => setRole(r.value)}
-            className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-              role === r.value
-                ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-                : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-700"
-            }`}
-          >
-            {r.label}
-          </button>
-        ))}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex gap-2">
+          {roles.map((r) => (
+            <button
+              key={r.label}
+              type="button"
+              onClick={() => setRole(r.value)}
+              className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                role === r.value
+                  ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
+                  : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-700"
+              }`}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+        <Link
+          href="/admin/users/new"
+          className="rounded-md px-3 py-1.5 text-sm font-medium text-white"
+          style={{ background: "var(--rally-cobalt)" }}
+          data-testid="add-user-link"
+        >
+          Add user
+        </Link>
       </div>
 
       {isError ? (

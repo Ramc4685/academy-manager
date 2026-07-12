@@ -35,6 +35,13 @@ class InvalidToken(DomainError):
     status_code = 401
 
 
+class LoginInviteSendFailed(DomainError):
+    """Raised when the set-password invite email could not be sent."""
+
+    code = "Identity.LoginInviteSendFailed"
+    status_code = 502
+
+
 class MembershipNotFound(DomainError):
     """No active `academy_memberships` row for this (user, academy) pair.
 
@@ -45,3 +52,10 @@ class MembershipNotFound(DomainError):
 
     code = "Identity.MembershipNotFound"
     status_code = 403
+
+
+class CannotRemoveLastRole(DomainError):
+    """Raised when removing a role would leave the user with no roles."""
+
+    code = "Identity.CannotRemoveLastRole"
+    status_code = 409

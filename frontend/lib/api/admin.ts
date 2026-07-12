@@ -1104,6 +1104,7 @@ export interface AdminUserDetail extends AdminUserView {
   roles: AdminUserRole[];
   linked_student_count: number;
   session_count: number;
+  login_invite_sent_at?: string | null;
 }
 
 export interface AdminUserList {
@@ -1366,15 +1367,33 @@ export function changeAdminStudentParent(
   );
 }
 
-export function updateAdminUserRole(
+export function addAdminUserRole(
   userId: string,
   role: AdminUserRole,
   reason = "Admin role change",
-): Promise<AdminUserView> {
-  return apiFetch<AdminUserView>(`/admin/users/${encodeURIComponent(userId)}/role`, {
-    method: "PATCH",
-    body: JSON.stringify({ role, reason }),
-  });
+): Promise<AdminUserDetail> {
+  return apiFetch<AdminUserDetail>(
+    `/admin/users/${encodeURIComponent(userId)}/roles`,
+    { method: "POST", body: JSON.stringify({ role, reason }) },
+  );
+}
+
+export function removeAdminUserRole(
+  userId: string,
+  role: AdminUserRole,
+  reason = "Admin role change",
+): Promise<AdminUserDetail> {
+  return apiFetch<AdminUserDetail>(
+    `/admin/users/${encodeURIComponent(userId)}/roles/${role}?reason=${encodeURIComponent(reason)}`,
+    { method: "DELETE" },
+  );
+}
+
+export function sendLoginInvite(userId: string): Promise<{ sent_at: string }> {
+  return apiFetch<{ sent_at: string }>(
+    `/admin/users/${encodeURIComponent(userId)}/login-invite`,
+    { method: "POST" },
+  );
 }
 
 // ---------------------------------------------------------------------------
