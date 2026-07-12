@@ -413,6 +413,102 @@ def test_list_payments_wrong_persona_404(coach_on_admin_client):
     assert r.status_code == 404
 
 
+def test_list_payments_uses_filtered_use_case_when_wired(admin_client):
+    captured: dict[str, object] = {}
+
+    async def list_payments_filtered(**kwargs):
+        captured.update(kwargs)
+        return {
+            "payments": [
+                {
+                    "payment_id": "lp-1",
+                    "parent_id": "parent-1",
+                    "parent_name": "Asha Rao",
+                    "session_id": None,
+                    "amount_cents": 5000,
+                    "final_amount_cents": 5000,
+                    "currency": "usd",
+                    "status": "succeeded",
+                    "refunded_cents": 0,
+                    "payment_method": "card",
+                    "created_at": NOW,
+                    "paid_at": NOW,
+                }
+            ],
+            "total": 7,
+            "limit": 1,
+            "offset": 2,
+        }
+
+    admin_client.use_cases.list_payments_filtered = list_payments_filtered
+    r = admin_client.get(
+        "/api/v2/admin/payments",
+        params={"q": "asha", "status": "succeeded", "limit": 1, "offset": 2},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["total"] == 7
+    assert body["limit"] == 1
+    assert body["offset"] == 2
+    assert body["payments"][0]["parent_name"] == "Asha Rao"
+    assert body["payments"][0]["paid_at"] is not None
+    assert captured["q"] == "asha"
+    assert captured["status"] == "succeeded"
+    assert captured["limit"] == 1
+    assert captured["offset"] == 2
+
+
+def test_payment_feed_returns_rows(admin_client):
+    async def list_payment_feed(limit: int = 20):
+        assert limit == 5
+        return [
+            {
+                "payment_id": "lp-1",
+                "parent_id": "parent-1",
+                "parent_name": "Asha Rao",
+                "amount_cents": 5000,
+                "refunded_cents": 0,
+                "currency": "usd",
+                "status": "succeeded",
+                "payment_method": "card",
+                "paid_at": NOW,
+            }
+        ]
+
+    admin_client.use_cases.list_payment_feed = list_payment_feed
+    r = admin_client.get("/api/v2/admin/payments/feed", params={"limit": 5})
+    assert r.status_code == 200, r.text
+    rows = r.json()["payments"]
+    assert rows[0]["parent_name"] == "Asha Rao"
+    assert rows[0]["amount_cents"] == 5000
+
+
+def test_payment_feed_wrong_persona_404(coach_on_admin_client):
+    r = coach_on_admin_client.get("/api/v2/admin/payments/feed")
+    assert r.status_code == 404
+
+
+def test_last_payment_by_family_returns_rows(admin_client):
+    async def list_last_payment_by_family():
+        return [
+            {
+                "parent_id": "parent-2",
+                "parent_name": "Ben Ortiz",
+                "last_paid_at": NOW,
+                "amount_cents": 2500,
+                "payment_method": "card",
+                "status": "succeeded",
+            }
+        ]
+
+    admin_client.use_cases.list_last_payment_by_family = list_last_payment_by_family
+    r = admin_client.get("/api/v2/admin/payments/last-by-family")
+    assert r.status_code == 200, r.text
+    rows = r.json()["rows"]
+    assert rows[0]["parent_id"] == "parent-2"
+    assert rows[0]["parent_name"] == "Ben Ortiz"
+
+
 def test_issue_refund_happy_path(admin_client):
     _seed_payment(admin_client.seed, "pay-1", 15000)
     r = admin_client.post(

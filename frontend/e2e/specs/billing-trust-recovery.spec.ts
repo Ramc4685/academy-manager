@@ -168,7 +168,7 @@ test.describe("billing trust and recovery surfaces", () => {
     ]);
     await stubAcademy(page, ACADEMY_A);
 
-    await page.route("**/api/v2/admin/payments", (route) => {
+    await page.route("**/api/v2/admin/payments*", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, {
         payments: [

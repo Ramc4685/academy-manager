@@ -586,10 +586,43 @@ class AdminPaymentView(BaseModel):
     stripe_payment_intent_id: str | None = None
     reconciliation_status: str | None = None
     created_at: datetime
+    paid_at: datetime | None = None
 
 
 class AdminPaymentList(BaseModel):
     payments: list[AdminPaymentView]
+    total: int | None = None
+    limit: int | None = None
+    offset: int | None = None
+
+
+class AdminPaymentFeedItem(BaseModel):
+    payment_id: str
+    parent_id: str
+    parent_name: str | None = None
+    amount_cents: int
+    refunded_cents: int = 0
+    currency: str = "usd"
+    status: str
+    payment_method: str | None = None
+    paid_at: datetime
+
+
+class AdminPaymentFeedResponse(BaseModel):
+    payments: list[AdminPaymentFeedItem]
+
+
+class AdminFamilyLastPaymentRow(BaseModel):
+    parent_id: str
+    parent_name: str | None = None
+    last_paid_at: datetime
+    amount_cents: int
+    payment_method: str | None = None
+    status: str
+
+
+class AdminFamilyLastPaymentsResponse(BaseModel):
+    rows: list[AdminFamilyLastPaymentRow]
 
 
 class IssueRefundRequest(BaseModel):
@@ -1536,6 +1569,74 @@ class ReportsKpiResponse(BaseModel):
     pending_waivers: int = 0
 
 
+class AdminRefundRow(BaseModel):
+    refund_at: str | None = None
+    invoice_id: str | None = None
+    invoice_number: str | None = None
+    payment_id: str | None = None
+    parent_id: str | None = None
+    student_id: str | None = None
+    amount_cents: int = 0
+    reason: str | None = None
+    actor_id: str | None = None
+
+
+class AdminCreditRow(BaseModel):
+    credit_id: str
+    created_at: str | None = None
+    parent_id: str | None = None
+    student_id: str | None = None
+    invoice_id: str | None = None
+    type: str | None = None
+    status: str | None = None
+    amount_cents: int = 0
+    remaining_amount_cents: int = 0
+    reason: str | None = None
+
+
+class AdminRefundsReportResponse(BaseModel):
+    period: str
+    total_refunded_cents: int = 0
+    refund_count: int = 0
+    refunds: list[AdminRefundRow] = Field(default_factory=list)
+    total_credit_cents: int = 0
+    credit_count: int = 0
+    credits: list[AdminCreditRow] = Field(default_factory=list)
+
+
+class AdminRevenueCategoryRow(BaseModel):
+    category: str
+    category_label: str | None = None
+    amount_cents: int = 0
+
+
+class AdminRevenueByCategoryResponse(BaseModel):
+    period: str
+    total_allocated_cents: int = 0
+    unapplied_cents: int = 0
+    rows: list[AdminRevenueCategoryRow] = Field(default_factory=list)
+
+
+class AdminDepositSlipMethodRow(BaseModel):
+    method: str
+    amount_cents: int = 0
+    count: int = 0
+
+
+class AdminDepositSlipDayRow(BaseModel):
+    date: str
+    total_cents: int = 0
+    count: int = 0
+    methods: list[AdminDepositSlipMethodRow] = Field(default_factory=list)
+
+
+class AdminDepositSlipResponse(BaseModel):
+    period: str
+    total_cents: int = 0
+    count: int = 0
+    days: list[AdminDepositSlipDayRow] = Field(default_factory=list)
+
+
 class AdminReportsAttendanceSummary(BaseModel):
     present_count: int = 0
     recorded_count: int = 0
@@ -1565,10 +1666,17 @@ class AdminReportsExpensesSummary(BaseModel):
     by_category: list[AdminReportsExpenseCategory] = []
 
 
+class AdminReportsAgingFamily(BaseModel):
+    family_id: str
+    family_name: str | None = None
+    amount_cents: int
+
+
 class AdminReportsCollectionsAgingBucket(BaseModel):
     label: str
     amount_cents: int
     family_count: int
+    families: list[AdminReportsAgingFamily] = []
 
 
 class AdminReportsCollectionsRisk(BaseModel):
@@ -1599,6 +1707,8 @@ class AdminReportsPayrollSummary(BaseModel):
 class AdminReportsDashboardResponse(BaseModel):
     period: str
     cash_collected_cents: int = 0
+    billed_cents: int = 0
+    collection_rate: float | None = None
     outstanding_dues_cents: int = 0
     attendance: AdminReportsAttendanceSummary = Field(default_factory=AdminReportsAttendanceSummary)
     sessions: AdminReportsSessionsSummary = Field(default_factory=AdminReportsSessionsSummary)
@@ -1609,6 +1719,26 @@ class AdminReportsDashboardResponse(BaseModel):
     profit_and_loss: AdminReportsProfitAndLoss = Field(default_factory=AdminReportsProfitAndLoss)
     payroll: AdminReportsPayrollSummary = Field(default_factory=AdminReportsPayrollSummary)
     empty_states: list[str] = []
+
+
+class AdminProjectedIncomeSessionRow(BaseModel):
+    session_id: str
+    title: str = ""
+    monthly_fee_cents: int = 0
+    enrollment_count: int = 0
+    expected_cents: int = 0
+
+
+class AdminProjectedIncomeResponse(BaseModel):
+    period: str
+    total_cents: int = 0
+    autopay_cents: int = 0
+    manual_cents: int = 0
+    enrollment_count: int = 0
+    autopay_enrollment_count: int = 0
+    manual_enrollment_count: int = 0
+    by_session: list[AdminProjectedIncomeSessionRow] = []
+    empty: bool = True
 
 
 class AdminSessionEconomicsSummary(BaseModel):

@@ -1,0 +1,250 @@
+"""Phase 1 payment-visibility composition tests: filtered list, feed, last-by-family."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any
+
+import pytest
+
+from backend.v2.composition.admin import compose_admin
+from backend.v2.shared.config.settings import get_settings
+from backend.v2.shared.tenancy.context import tenant_scope
+
+ACADEMY = "acad-1"
+OTHER_ACADEMY = "acad-2"
+
+
+class _NoopStripe:
+    pass
+
+
+def _admin_use_cases(db: Any):
+    return compose_admin(
+        db,
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=_NoopStripe(),  # type: ignore[arg-type]
+    )
+
+
+@pytest.fixture
+def mongo_db(monkeypatch):
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    monkeypatch.delenv("V2_DEFAULT_ACADEMY_ID", raising=False)
+    monkeypatch.delenv("DEFAULT_ACADEMY_ID", raising=False)
+    get_settings.cache_clear()
+    try:
+        client = mongomock_motor.AsyncMongoMockClient()
+        yield client["test_db"]
+    finally:
+        get_settings.cache_clear()
+
+
+def _ledger_payment(
+    payment_id: str,
+    *,
+    parent_id: str,
+    amount_cents: int,
+    paid_at: datetime,
+    status: str = "succeeded",
+    academy_id: str = ACADEMY,
+    stripe_payment_intent_id: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "payment_id": payment_id,
+        "academy_id": academy_id,
+        "parent_id": parent_id,
+        "amount_cents": amount_cents,
+        "refunded_cents": 0,
+        "currency": "usd",
+        "status": status,
+        "payment_method": "card",
+        "stripe_payment_intent_id": stripe_payment_intent_id,
+        "paid_at": paid_at,
+        "created_at": paid_at,
+    }
+
+
+async def _seed_parents(db: Any) -> None:
+    await db["users"].insert_many(
+        [
+            {"academy_id": ACADEMY, "user_id": "parent-1", "display_name": "Asha Rao"},
+            {"academy_id": ACADEMY, "user_id": "parent-2", "display_name": "Ben Ortiz"},
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_payments_filtered_sorts_by_paid_at_and_paginates(mongo_db) -> None:
+    await _seed_parents(mongo_db)
+    await mongo_db["ledger_payments"].insert_many(
+        [
+            _ledger_payment(
+                "lp-old",
+                parent_id="parent-1",
+                amount_cents=5000,
+                paid_at=datetime(2026, 7, 1, 10, tzinfo=UTC),
+            ),
+            _ledger_payment(
+                "lp-new",
+                parent_id="parent-2",
+                amount_cents=7500,
+                paid_at=datetime(2026, 7, 6, 9, tzinfo=UTC),
+            ),
+        ]
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        result = await admin.list_payments_filtered(limit=1, offset=0)
+
+    assert result["total"] == 2
+    assert [row["payment_id"] for row in result["payments"]] == ["lp-new"]
+    assert result["payments"][0]["parent_name"] == "Ben Ortiz"
+    assert result["payments"][0]["paid_at"] == datetime(2026, 7, 6, 9, tzinfo=UTC)
+
+    with tenant_scope(ACADEMY):
+        page_two = await admin.list_payments_filtered(limit=1, offset=1)
+    assert [row["payment_id"] for row in page_two["payments"]] == ["lp-old"]
+
+
+@pytest.mark.asyncio
+async def test_list_payments_filtered_applies_filters_and_search(mongo_db) -> None:
+    await _seed_parents(mongo_db)
+    await mongo_db["ledger_payments"].insert_many(
+        [
+            _ledger_payment(
+                "lp-asha",
+                parent_id="parent-1",
+                amount_cents=5000,
+                paid_at=datetime(2026, 7, 2, tzinfo=UTC),
+            ),
+            _ledger_payment(
+                "lp-ben",
+                parent_id="parent-2",
+                amount_cents=7500,
+                paid_at=datetime(2026, 6, 20, tzinfo=UTC),
+            ),
+            _ledger_payment(
+                "lp-other-acad",
+                parent_id="parent-9",
+                amount_cents=100,
+                paid_at=datetime(2026, 7, 3, tzinfo=UTC),
+                academy_id=OTHER_ACADEMY,
+            ),
+        ]
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        by_name = await admin.list_payments_filtered(q="asha")
+        by_window = await admin.list_payments_filtered(
+            date_from=datetime(2026, 7, 1, tzinfo=UTC),
+            date_to=datetime(2026, 7, 31, tzinfo=UTC),
+        )
+        by_status = await admin.list_payments_filtered(status="succeeded")
+
+    assert [row["payment_id"] for row in by_name["payments"]] == ["lp-asha"]
+    assert [row["payment_id"] for row in by_window["payments"]] == ["lp-asha"]
+    assert {row["payment_id"] for row in by_status["payments"]} == {"lp-asha", "lp-ben"}
+
+
+@pytest.mark.asyncio
+async def test_payment_feed_returns_money_received_with_names(mongo_db) -> None:
+    await _seed_parents(mongo_db)
+    await mongo_db["ledger_payments"].insert_many(
+        [
+            _ledger_payment(
+                "lp-1",
+                parent_id="parent-1",
+                amount_cents=5000,
+                paid_at=datetime(2026, 7, 5, tzinfo=UTC),
+                stripe_payment_intent_id="pi_shared",
+            ),
+        ]
+    )
+    await mongo_db["payments"].insert_many(
+        [
+            # Duplicate of the ledger payment via shared payment intent — must be deduped.
+            {
+                "payment_id": "legacy-dup",
+                "academy_id": ACADEMY,
+                "parent_id": "parent-1",
+                "amount_cents": 5000,
+                "refunded_cents": 0,
+                "currency": "usd",
+                "status": "succeeded",
+                "stripe_payment_intent_id": "pi_shared",
+                "paid_at": datetime(2026, 7, 5, tzinfo=UTC),
+                "created_at": datetime(2026, 7, 5, tzinfo=UTC),
+            },
+            {
+                "payment_id": "legacy-only",
+                "academy_id": ACADEMY,
+                "parent_id": "parent-2",
+                "amount_cents": 2500,
+                "refunded_cents": 0,
+                "currency": "usd",
+                "status": "succeeded",
+                "paid_at": datetime(2026, 7, 7, tzinfo=UTC),
+                "created_at": datetime(2026, 7, 7, tzinfo=UTC),
+            },
+            {
+                "payment_id": "legacy-pending",
+                "academy_id": ACADEMY,
+                "parent_id": "parent-2",
+                "amount_cents": 999,
+                "refunded_cents": 0,
+                "currency": "usd",
+                "status": "pending",
+                "created_at": datetime(2026, 7, 7, tzinfo=UTC),
+            },
+        ]
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        rows = await admin.list_payment_feed(limit=10)
+
+    assert [row["payment_id"] for row in rows] == ["legacy-only", "lp-1"]
+    assert rows[0]["parent_name"] == "Ben Ortiz"
+    assert rows[1]["parent_name"] == "Asha Rao"
+
+
+@pytest.mark.asyncio
+async def test_last_payment_by_family_keeps_latest_per_parent(mongo_db) -> None:
+    await _seed_parents(mongo_db)
+    await mongo_db["ledger_payments"].insert_many(
+        [
+            _ledger_payment(
+                "lp-1a",
+                parent_id="parent-1",
+                amount_cents=5000,
+                paid_at=datetime(2026, 6, 5, tzinfo=UTC),
+            ),
+            _ledger_payment(
+                "lp-1b",
+                parent_id="parent-1",
+                amount_cents=6000,
+                paid_at=datetime(2026, 7, 5, tzinfo=UTC),
+            ),
+            _ledger_payment(
+                "lp-2",
+                parent_id="parent-2",
+                amount_cents=2500,
+                paid_at=datetime(2026, 7, 6, tzinfo=UTC),
+            ),
+        ]
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        rows = await admin.list_last_payment_by_family()
+
+    assert [(row["parent_id"], row["amount_cents"]) for row in rows] == [
+        ("parent-2", 2500),
+        ("parent-1", 6000),
+    ]
+    assert rows[0]["last_paid_at"] == datetime(2026, 7, 6, tzinfo=UTC)
+    assert rows[1]["parent_name"] == "Asha Rao"

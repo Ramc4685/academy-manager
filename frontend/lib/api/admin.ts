@@ -275,10 +275,53 @@ export interface AdminPaymentView {
   stripe_payment_intent_id?: string | null;
   reconciliation_status?: string | null;
   created_at: string;
+  paid_at?: string | null;
 }
 
 export interface AdminPaymentList {
   payments: AdminPaymentView[];
+  total?: number | null;
+  limit?: number | null;
+  offset?: number | null;
+}
+
+export interface AdminPaymentListFilters {
+  date_from?: string;
+  date_to?: string;
+  status?: string;
+  method?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface AdminPaymentFeedItem {
+  payment_id: string;
+  parent_id: string;
+  parent_name: string | null;
+  amount_cents: number;
+  refunded_cents: number;
+  currency: string;
+  status: string;
+  payment_method: string | null;
+  paid_at: string;
+}
+
+export interface AdminPaymentFeedResponse {
+  payments: AdminPaymentFeedItem[];
+}
+
+export interface AdminFamilyLastPaymentRow {
+  parent_id: string;
+  parent_name: string | null;
+  last_paid_at: string;
+  amount_cents: number;
+  payment_method: string | null;
+  status: string;
+}
+
+export interface AdminFamilyLastPaymentsResponse {
+  rows: AdminFamilyLastPaymentRow[];
 }
 
 export interface RefundRequest {
@@ -764,10 +807,17 @@ export interface AdminReportsExpensesSummary {
   by_category: AdminReportsExpenseCategory[];
 }
 
+export interface AdminReportsAgingFamily {
+  family_id: string;
+  family_name: string | null;
+  amount_cents: number;
+}
+
 export interface AdminReportsCollectionsAgingBucket {
   label: string;
   amount_cents: number;
   family_count: number;
+  families: AdminReportsAgingFamily[];
 }
 
 export interface AdminReportsCollectionsRisk {
@@ -798,6 +848,8 @@ export interface AdminReportsPayrollSummary {
 export interface AdminReportsDashboardResponse {
   period: string;
   cash_collected_cents: number;
+  billed_cents: number;
+  collection_rate: number | null;
   outstanding_dues_cents: number;
   attendance: AdminReportsAttendanceSummary;
   sessions: AdminReportsSessionsSummary;
@@ -1579,8 +1631,31 @@ export function deleteWaitlistEntry(waitlistId: string): Promise<void> {
 // Payments
 // ---------------------------------------------------------------------------
 
-export function listAdminPayments(): Promise<AdminPaymentList> {
-  return apiFetch<AdminPaymentList>("/admin/payments", { method: "GET" });
+export function listAdminPayments(filters?: AdminPaymentListFilters): Promise<AdminPaymentList> {
+  const params = new URLSearchParams();
+  if (filters) {
+    for (const [key, value] of Object.entries(filters)) {
+      if (value !== undefined && value !== null && `${value}` !== "") {
+        params.set(key, `${value}`);
+      }
+    }
+  }
+  const query = params.toString();
+  return apiFetch<AdminPaymentList>(`/admin/payments${query ? `?${query}` : ""}`, {
+    method: "GET",
+  });
+}
+
+export function getAdminPaymentFeed(limit = 20): Promise<AdminPaymentFeedResponse> {
+  return apiFetch<AdminPaymentFeedResponse>(`/admin/payments/feed?limit=${limit}`, {
+    method: "GET",
+  });
+}
+
+export function getAdminLastPaymentByFamily(): Promise<AdminFamilyLastPaymentsResponse> {
+  return apiFetch<AdminFamilyLastPaymentsResponse>("/admin/payments/last-by-family", {
+    method: "GET",
+  });
 }
 
 export function refundPayment(payload: RefundRequest): Promise<RefundResponse> {
@@ -2039,6 +2114,33 @@ export function getAdminReportKpis(): Promise<AdminReportsKpiResponse> {
   return apiFetch<AdminReportsKpiResponse>("/admin/reports/kpis", { method: "GET" });
 }
 
+export interface AdminProjectedIncomeSessionRow {
+  session_id: string;
+  title: string;
+  monthly_fee_cents: number;
+  enrollment_count: number;
+  expected_cents: number;
+}
+
+export interface AdminProjectedIncomeResponse {
+  period: string;
+  total_cents: number;
+  autopay_cents: number;
+  manual_cents: number;
+  enrollment_count: number;
+  autopay_enrollment_count: number;
+  manual_enrollment_count: number;
+  by_session: AdminProjectedIncomeSessionRow[];
+  empty: boolean;
+}
+
+export function getAdminProjectedIncome(period: string): Promise<AdminProjectedIncomeResponse> {
+  return apiFetch<AdminProjectedIncomeResponse>(
+    `/admin/reports/projected-income?period=${encodeURIComponent(period)}`,
+    { method: "GET" },
+  );
+}
+
 export function getAdminReportsDashboard(period: string): Promise<AdminReportsDashboardResponse> {
   return apiFetch<AdminReportsDashboardResponse>(
     `/admin/reports/dashboard?period=${encodeURIComponent(period)}`,
@@ -2414,10 +2516,102 @@ export function sendDuesReminders(payload: { parent_ids?: string[] } = {}): Prom
   });
 }
 
-export function exportAdminReportCsv(reportName: string): Promise<string> {
-  return apiFetch<string>(`/admin/reports/${encodeURIComponent(reportName)}.csv`, {
+export function exportAdminReportCsv(reportName: string, period?: string): Promise<string> {
+  const query = period ? `?period=${encodeURIComponent(period)}` : "";
+  return apiFetch<string>(`/admin/reports/${encodeURIComponent(reportName)}.csv${query}`, {
     method: "GET",
   });
+}
+
+export interface AdminRefundRow {
+  refund_at: string | null;
+  invoice_id: string | null;
+  invoice_number: string | null;
+  payment_id: string | null;
+  parent_id: string | null;
+  student_id: string | null;
+  amount_cents: number;
+  reason: string | null;
+  actor_id: string | null;
+}
+
+export interface AdminCreditRow {
+  credit_id: string;
+  created_at: string | null;
+  parent_id: string | null;
+  student_id: string | null;
+  invoice_id: string | null;
+  type: string | null;
+  status: string | null;
+  amount_cents: number;
+  remaining_amount_cents: number;
+  reason: string | null;
+}
+
+export interface AdminRefundsReportResponse {
+  period: string;
+  total_refunded_cents: number;
+  refund_count: number;
+  refunds: AdminRefundRow[];
+  total_credit_cents: number;
+  credit_count: number;
+  credits: AdminCreditRow[];
+}
+
+export interface AdminRevenueCategoryRow {
+  category: string;
+  category_label: string | null;
+  amount_cents: number;
+}
+
+export interface AdminRevenueByCategoryResponse {
+  period: string;
+  total_allocated_cents: number;
+  unapplied_cents: number;
+  rows: AdminRevenueCategoryRow[];
+}
+
+export interface AdminDepositSlipMethodRow {
+  method: string;
+  amount_cents: number;
+  count: number;
+}
+
+export interface AdminDepositSlipDayRow {
+  date: string;
+  total_cents: number;
+  count: number;
+  methods: AdminDepositSlipMethodRow[];
+}
+
+export interface AdminDepositSlipResponse {
+  period: string;
+  total_cents: number;
+  count: number;
+  days: AdminDepositSlipDayRow[];
+}
+
+export function getAdminRefundsReport(period: string): Promise<AdminRefundsReportResponse> {
+  return apiFetch<AdminRefundsReportResponse>(
+    `/admin/reports/refunds?period=${encodeURIComponent(period)}`,
+    { method: "GET" },
+  );
+}
+
+export function getAdminRevenueByCategory(
+  period: string,
+): Promise<AdminRevenueByCategoryResponse> {
+  return apiFetch<AdminRevenueByCategoryResponse>(
+    `/admin/reports/revenue-by-category?period=${encodeURIComponent(period)}`,
+    { method: "GET" },
+  );
+}
+
+export function getAdminDepositSlip(period: string): Promise<AdminDepositSlipResponse> {
+  return apiFetch<AdminDepositSlipResponse>(
+    `/admin/reports/deposit-slip?period=${encodeURIComponent(period)}`,
+    { method: "GET" },
+  );
 }
 
 // ---------------------------------------------------------------------------
