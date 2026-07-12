@@ -1606,6 +1606,25 @@ def admin_seed():
     }
 
 
+class _FakeLoginInviteSender:
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+        self.known = {"coach-1", "u-admin", "p-1"}
+
+    async def execute(self, user_id, *, academy_id):
+        from datetime import UTC, datetime
+
+        from backend.v2.contexts.identity.application.errors import UserNotFound
+        from backend.v2.contexts.identity.application.use_cases.send_login_invite import (
+            LoginInviteResult,
+        )
+
+        if user_id not in self.known:
+            raise UserNotFound(user_id)
+        self.sent.append(user_id)
+        return LoginInviteResult(sent_at=datetime.now(UTC))
+
+
 def _build_admin_use_cases(seed) -> AdminUseCases:
     sessions = seed["sessions"]
     occurrences = seed["occurrences"]
@@ -1995,6 +2014,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
 
     return AdminUseCases(
         list_admin_users=_ListAdminUsers(),  # type: ignore[arg-type]
+        send_login_invite=_FakeLoginInviteSender(),  # type: ignore[arg-type]
         list_admin_students=_ListAdminStudents(),  # type: ignore[arg-type]
         create_session=create_session,
         edit_session=edit_session,

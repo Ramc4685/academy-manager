@@ -98,6 +98,22 @@ def test_directory_wrong_persona_404(coach_on_admin_client):
     assert coach_on_admin_client.get("/api/v2/admin/students").status_code == 404
 
 
+def test_admin_resends_login_invite(admin_client):
+    r = admin_client.post("/api/v2/admin/users/coach-1/login-invite")
+    assert r.status_code == 200, r.text
+    assert r.json()["sent_at"] is not None
+
+
+def test_login_invite_unknown_user_404(admin_client):
+    r = admin_client.post("/api/v2/admin/users/nope/login-invite")
+    assert r.status_code == 404
+
+
+def test_login_invite_wrong_persona_404(coach_on_admin_client):
+    r = coach_on_admin_client.post("/api/v2/admin/users/coach-1/login-invite")
+    assert r.status_code == 404
+
+
 def test_admin_adds_role_to_user(admin_client):
     r = admin_client.post(
         "/api/v2/admin/users/coach-1/roles",

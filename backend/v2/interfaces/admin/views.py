@@ -26,6 +26,7 @@ class AdminUserDetailView(AdminUserView):
     roles: list[Literal["admin", "coach", "parent"]] = []
     linked_student_count: int = 0
     session_count: int = 0
+    login_invite_sent_at: datetime | None = None
 
 
 class AdminUserList(BaseModel):
@@ -215,6 +216,10 @@ class BulkInviteResponse(BaseModel):
     skipped: int
     failed: int
     results: list[BulkInviteResultItem]
+
+
+class LoginInviteResponse(BaseModel):
+    sent_at: datetime
 
 
 # --- Session Type Billing ---

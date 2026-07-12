@@ -14,6 +14,7 @@ import {
   listCoachPayRates,
   removeAdminUserRole,
   repairCoachPayRateWindow,
+  sendLoginInvite,
   setCoachPayRate,
   updateAdminSession,
   updateAdminUser,
@@ -91,6 +92,7 @@ export default function AdminUserDetailPage() {
           <RolesPanel user={user} onSaved={invalidate} />
         </Card>
       </div>
+      <LoginInvitePanel user={user} onSaved={invalidate} />
       {isCoach && <CoachPayRatePanel coachId={user.user_id} />}
       {isCoach && <CoachSessionsPanel user={user} onAssigned={invalidate} />}
     </section>
@@ -718,6 +720,60 @@ function RolesPanel({
         {mutation.isPending ? "Saving..." : "Save roles"}
       </Button>
     </form>
+  );
+}
+
+function LoginInvitePanel({
+  user,
+  onSaved,
+}: {
+  user: AdminUserDetail;
+  onSaved: () => void;
+}) {
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitOk, setSubmitOk] = useState(false);
+
+  const mutation = useMutation({
+    mutationFn: () => sendLoginInvite(user.user_id),
+    onSuccess: () => {
+      setSubmitError(null);
+      setSubmitOk(true);
+      onSaved();
+    },
+    onError: (err: unknown) => {
+      setSubmitOk(false);
+      setSubmitError(err instanceof Error ? err.message : "Could not send invite.");
+    },
+  });
+
+  return (
+    <section className="space-y-3 rounded-lg border border-rally-line bg-white p-4">
+      <h2 className="text-sm font-semibold text-rally-ink">Login invite</h2>
+      <p className="text-xs text-slate-500">
+        Sends a &ldquo;set your password&rdquo; email so this user can log in
+        with email + password (works with any email provider).
+      </p>
+      <p className="text-sm text-slate-600" data-testid="invite-sent-at">
+        {user.login_invite_sent_at
+          ? `Invite sent ${new Date(user.login_invite_sent_at).toLocaleDateString()}`
+          : "No invite sent yet"}
+      </p>
+      <MutationMessages error={submitError} ok={submitOk} />
+      <Button
+        type="button"
+        size="sm"
+        variant="secondary"
+        disabled={mutation.isPending}
+        onClick={() => mutation.mutate()}
+        data-testid="send-login-invite"
+      >
+        {mutation.isPending
+          ? "Sending…"
+          : user.login_invite_sent_at
+            ? "Re-send invite"
+            : "Send login invite"}
+      </Button>
+    </section>
   );
 }
 

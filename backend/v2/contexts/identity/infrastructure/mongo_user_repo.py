@@ -194,6 +194,7 @@ class MongoUserRepository:
             roles=user.roles,
             linked_student_count=linked_student_count,
             session_count=session_count,
+            login_invite_sent_at=doc.get("login_invite_sent_at"),
         )
 
     @staticmethod
@@ -250,6 +251,14 @@ class MongoUserRepository:
         )
         return self._to_admin_detail(
             doc, linked_student_count=linked_student_count, session_count=session_count
+        )
+
+    async def record_login_invite(
+        self, user_id: str, *, academy_id: str, sent_at: datetime
+    ) -> None:
+        await self.collection.update_one(
+            {"academy_id": academy_id, **self._id_filter(user_id)},
+            {"$set": {"login_invite_sent_at": sent_at, "updated_at": sent_at}},
         )
 
     async def create_admin_user(

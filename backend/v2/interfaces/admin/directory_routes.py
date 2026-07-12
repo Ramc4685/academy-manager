@@ -18,7 +18,10 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
 from backend.v2.contexts.identity.application.change_user_role_use_case import (
     ChangeUserRoleCommand,
 )
-from backend.v2.contexts.identity.application.errors import CannotRemoveLastRole
+from backend.v2.contexts.identity.application.errors import (
+    CannotRemoveLastRole,
+    LoginInviteSendFailed,
+)
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     CreateAdminUserCommand,
     UpdateAdminUserCommand,
@@ -40,6 +43,7 @@ from backend.v2.interfaces.admin.views import (
     BulkInviteResultItem,
     ChangeAdminStudentParentRequest,
     CreateAdminUserRequest,
+    LoginInviteResponse,
     ModifyUserRoleRequest,
     UpdateAdminStudentRequest,
     UpdateAdminUserRequest,
@@ -105,6 +109,12 @@ async def create_user(
         ),
         academy_id=claims.academy_id,
     )
+    invite = use_cases.send_login_invite
+    if invite is not None and payload.role == "parent":
+        try:
+            await invite.execute(user.user_id, academy_id=claims.academy_id)
+        except Exception:
+            logger.exception("login invite failed for %s", user.user_id)
     return AdminUserDetailView(**user.model_dump())
 
 
@@ -139,6 +149,12 @@ async def bulk_invite_parents(
                 BulkInviteResultItem(status="created", email=item.email, user_id=user.user_id)
             )
             created += 1
+            invite = use_cases.send_login_invite
+            if invite is not None:
+                try:
+                    await invite.execute(user.user_id, academy_id=claims.academy_id)
+                except Exception:
+                    logger.exception("login invite failed for %s", item.email)
         except UserEmailAlreadyExists:
             results.append(
                 BulkInviteResultItem(
@@ -250,6 +266,22 @@ async def update_user_role(
         academy_id=claims.academy_id,
     )
     return AdminUserView(**user.model_dump())
+
+
+@router.post("/users/{user_id}/login-invite", response_model=LoginInviteResponse)
+async def send_login_invite(
+    user_id: str,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> LoginInviteResponse:
+    use_case = use_cases.send_login_invite
+    if use_case is None:
+        raise HTTPException(status_code=503, detail="Login invites are not configured")
+    try:
+        result = await use_case.execute(user_id, academy_id=claims.academy_id)
+    except LoginInviteSendFailed as exc:
+        raise HTTPException(status_code=502, detail="Could not send the invite email") from exc
+    return LoginInviteResponse(sent_at=result.sent_at)
 
 
 @router.get("/students", response_model=AdminStudentList)

@@ -191,6 +191,13 @@ class FirebaseAdminAdapter:
         )
         return str(user.uid)
 
+    async def generate_password_reset_link(self, email: str) -> str:
+        if firebase_admin_auth is None:
+            raise RuntimeError("firebase-admin is required for Firebase auth")
+        _ensure_firebase_app()
+        link = await asyncio.to_thread(firebase_admin_auth.generate_password_reset_link, email)
+        return str(link)
+
     async def update_user_email(self, uid: str, email: str) -> None:
         if firebase_admin_auth is None:
             raise RuntimeError("firebase-admin is required for Firebase auth")
