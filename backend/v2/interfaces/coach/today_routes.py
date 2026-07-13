@@ -47,10 +47,24 @@ async def get_today(
     target_date = _parse_date(on_date)
     sessions = await use_cases.list_today.execute(claims.user_id, target_date)
 
-    # Fan-out roster fetches concurrently.
-    rosters = await asyncio.gather(
-        *[use_cases.get_roster.execute(s.roster_session_id) for s in sessions]
-    )
+    # Fan-out roster fetches concurrently. Prefer the occurrence-scoped
+    # roster (expected-absence flags + one-time makeup/trial entries) when
+    # composed; fall back to the plain session roster for test fixtures
+    # that predate it.
+    get_occurrence_roster = getattr(use_cases, "get_occurrence_roster", None)
+    if get_occurrence_roster is not None:
+        rosters = await asyncio.gather(
+            *[
+                get_occurrence_roster.execute(
+                    session_id=s.roster_session_id, occurrence_id=s.occurrence_id
+                )
+                for s in sessions
+            ]
+        )
+    else:
+        rosters = await asyncio.gather(
+            *[use_cases.get_roster.execute(s.roster_session_id) for s in sessions]
+        )
 
     # Existing marks per occurrence, so a reload doesn't present a marked
     # class as unmarked (and "Mark all present" doesn't re-send marked rows,
@@ -81,6 +95,8 @@ async def get_today(
                     attendance_status=marks_by_occurrence.get(s.occurrence_id, {}).get(
                         r.student_id
                     ),
+                    expected_absence=getattr(r, "expected_absence", False),
+                    entry_source=getattr(r, "entry_source", "enrollment"),
                 )
                 for r in roster
             ],

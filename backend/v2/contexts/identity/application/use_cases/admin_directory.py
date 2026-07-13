@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, EmailStr, Field
@@ -26,6 +27,7 @@ class AdminUserDetail(AdminUserSummary):
     roles: tuple[Role, ...] = ()
     linked_student_count: int = 0
     session_count: int = 0
+    login_invite_sent_at: datetime | None = None
 
 
 class CreateAdminUserCommand(BaseModel):

@@ -7,7 +7,8 @@ export type ChipVariant =
   | "waived" | "nocharge" | "autopayOn" | "autopayPend" | "manual"
   | "waitlist" | "offered" | "expired" | "enrolled" | "approval"
   | "paused" | "transferred" | "present" | "absent" | "late"
-  | "excused" | "makeup" | "full" | "open" | "closing" | "approved" | "draft";
+  | "excused" | "makeup" | "full" | "open" | "closing" | "approved" | "draft"
+  | "denied" | "converted";
 
 interface ChipSpec {
   bg: string;
@@ -45,6 +46,8 @@ export const CHIP_VARIANTS: Record<ChipVariant, ChipSpec> = {
   closing:     { bg: "#fffbeb", fg: "#92400e", dot: "#f59e0b", label: "CLOSING" },
   approved:    { bg: "#ecfdf5", fg: "#065f46", dot: "#10b981", label: "APPROVED" },
   draft:       { bg: "#f1f5f9", fg: "#475569", dot: "#94a3b8", label: "DRAFT" },
+  denied:      { bg: "#fef2f2", fg: "#991b1b", dot: "#ef4444", label: "DENIED" },
+  converted:   { bg: "#ecfdf5", fg: "#065f46", dot: "#10b981", label: "CONVERTED" },
 };
 
 interface ChipProps {

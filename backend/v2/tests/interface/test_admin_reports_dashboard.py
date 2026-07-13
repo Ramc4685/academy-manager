@@ -21,6 +21,7 @@ def reports_admin_client() -> Iterator[TestClient]:
     use_cases = SimpleNamespace(
         get_reports_dashboard=AsyncMock(),
         get_session_economics=AsyncMock(),
+        get_projected_income=AsyncMock(),
     )
     app = FastAPI()
     register_exception_handlers(app)
@@ -100,6 +101,8 @@ def test_admin_reports_dashboard_returns_owner_finance_and_ops_shape(
     assert response.json() == {
         "period": "2026-05",
         "cash_collected_cents": 18500,
+        "billed_cents": 0,
+        "collection_rate": None,
         "outstanding_dues_cents": 6500,
         "attendance": {
             "present_count": 7,
@@ -127,8 +130,8 @@ def test_admin_reports_dashboard_returns_owner_finance_and_ops_shape(
             "failed_payment_count": 1,
             "partial_payment_count": 1,
             "aging_buckets": [
-                {"label": "Current", "amount_cents": 0, "family_count": 0},
-                {"label": "1-30", "amount_cents": 6500, "family_count": 2},
+                {"label": "Current", "amount_cents": 0, "family_count": 0, "families": []},
+                {"label": "1-30", "amount_cents": 6500, "family_count": 2, "families": []},
             ],
         },
         "profit_and_loss": {
@@ -287,3 +290,74 @@ def test_admin_session_economics_rejects_invalid_period(reports_admin_client) ->
     response = reports_admin_client.get("/api/v2/admin/reports/session-economics?period=April-2026")
 
     assert response.status_code == 422
+
+
+def test_admin_projected_income_returns_autopay_manual_split(reports_admin_client) -> None:
+    reports_admin_client.use_cases.get_projected_income = AsyncMock(  # type: ignore[attr-defined]
+        return_value={
+            "period": "2026-08",
+            "total_cents": 120_000,
+            "autopay_cents": 90_000,
+            "manual_cents": 30_000,
+            "enrollment_count": 4,
+            "autopay_enrollment_count": 3,
+            "manual_enrollment_count": 1,
+            "by_session": [
+                {
+                    "session_id": "sess-beginner",
+                    "title": "Wednesday Beginner",
+                    "monthly_fee_cents": 30_000,
+                    "enrollment_count": 4,
+                    "expected_cents": 120_000,
+                }
+            ],
+            "empty": False,
+        }
+    )
+
+    response = reports_admin_client.get("/api/v2/admin/reports/projected-income?period=2026-08")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total_cents"] == 120000
+    assert body["autopay_cents"] == 90000
+    assert body["manual_cents"] == 30000
+    assert body["by_session"][0]["session_id"] == "sess-beginner"
+    assert body["empty"] is False
+    reports_admin_client.use_cases.get_projected_income.assert_awaited_once_with(  # type: ignore[attr-defined]
+        "2026-08"
+    )
+
+
+def test_admin_projected_income_rejects_invalid_period(reports_admin_client) -> None:
+    response = reports_admin_client.get("/api/v2/admin/reports/projected-income?period=Aug-2026")
+
+    assert response.status_code == 422
+
+
+def test_admin_projected_income_unavailable_returns_503(reports_admin_client) -> None:
+    reports_admin_client.use_cases.get_projected_income = None  # type: ignore[attr-defined]
+
+    response = reports_admin_client.get("/api/v2/admin/reports/projected-income?period=2026-08")
+
+    assert response.status_code == 503
+
+
+def test_admin_projected_income_rejects_non_admin_persona() -> None:
+    use_cases = SimpleNamespace(get_projected_income=AsyncMock())
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(admin_router, prefix="/api/v2")
+    app.dependency_overrides[get_auth_claims] = lambda: AuthClaims(
+        user_id="parent-1",
+        email="parent@example.com",
+        academy_id="acad",
+        roles=("parent",),
+    )
+    app.dependency_overrides[get_admin_use_cases] = lambda: use_cases
+    with TestClient(app) as client:
+        response = client.get("/api/v2/admin/reports/projected-income?period=2026-08")
+
+    # require_persona deliberately answers 404 (not 403) to avoid leaking route existence.
+    assert response.status_code == 404
+    use_cases.get_projected_income.assert_not_awaited()

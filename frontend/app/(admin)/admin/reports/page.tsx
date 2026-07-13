@@ -1,19 +1,32 @@
 "use client";
 
-import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 import Link from "next/link";
 
 import {
+  chargeAdminInvoiceAutopay,
   exportAdminReportCsv,
+  fetchFailedPaymentAttempts,
   getAdminPaymentFeed,
+  getAdminProjectedIncome,
   getAdminReportsDashboard,
   getRevenue,
+  sendDuesReminders,
 } from "@/lib/api/admin";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
-import { MiniBars } from "@/components/ds/charts";
 import { BigNum, Overline } from "@/components/ds/typography";
 
 const REPORTS = [
@@ -34,9 +47,32 @@ const REPORTS = [
   },
 ] as const;
 
+const FINANCIAL_REPORTS = [
+  {
+    href: "/admin/reports/refunds",
+    title: "Refunds & credits",
+    description: "Money returned to families and account credits issued, by month.",
+  },
+  {
+    href: "/admin/reports/revenue-by-category",
+    title: "Revenue by category",
+    description: "Collected revenue split by program and fee category.",
+  },
+  {
+    href: "/admin/reports/deposit-slip",
+    title: "Deposit slip",
+    description: "Payments received by day and method for bank reconciliation.",
+  },
+] as const;
+
 export default function AdminReportsPage() {
+  const queryClient = useQueryClient();
   const [preview, setPreview] = useState<{ title: string; csv: string } | null>(null);
   const [period, setPeriod] = useState(() => currentPeriod());
+  const [expandedBucket, setExpandedBucket] = useState<string | null>(null);
+  const [actionNote, setActionNote] = useState<{ key: string; text: string; ok: boolean } | null>(
+    null,
+  );
 
   const revenueQuery = useQuery({
     queryKey: ["admin", "revenue"],
@@ -53,6 +89,57 @@ export default function AdminReportsPage() {
     queryFn: () => getAdminPaymentFeed(10),
   });
 
+  const failedPaymentsQuery = useQuery({
+    queryKey: ["admin", "billing", "failed-payment-attempts"],
+    queryFn: fetchFailedPaymentAttempts,
+  });
+
+  const projectionPeriod = nextPeriod(period);
+  const projectedIncomeQuery = useQuery({
+    queryKey: ["admin", "reports", "projected-income", projectionPeriod],
+    queryFn: () => getAdminProjectedIncome(projectionPeriod),
+  });
+
+  const retryMutation = useMutation({
+    mutationFn: (invoiceId: string) => chargeAdminInvoiceAutopay(invoiceId),
+    onSuccess: (result, invoiceId) => {
+      setActionNote({
+        key: `retry:${invoiceId}`,
+        text: result.success
+          ? "Charge succeeded."
+          : result.requires_action
+            ? "Charge needs parent action (3DS)."
+            : `Charge declined${result.decline_code ? ` (${result.decline_code})` : ""}.`,
+        ok: Boolean(result.success),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["admin", "billing", "failed-payment-attempts"],
+      });
+      void queryClient.invalidateQueries({ queryKey: ["admin", "reports", "dashboard"] });
+    },
+    onError: (_error, invoiceId) => {
+      setActionNote({ key: `retry:${invoiceId}`, text: "Retry failed. Try again.", ok: false });
+    },
+  });
+
+  const notifyMutation = useMutation({
+    mutationFn: (parentId: string) => sendDuesReminders({ parent_ids: [parentId] }),
+    onSuccess: (result, parentId) => {
+      setActionNote({
+        key: `notify:${parentId}`,
+        text: result.blocked
+          ? `Reminder blocked${result.reason ? `: ${result.reason}` : "."}`
+          : result.sent > 0
+            ? "Reminder sent."
+            : "No reminder sent — family has no open dues on file.",
+        ok: !result.blocked && result.sent > 0,
+      });
+    },
+    onError: (_error, parentId) => {
+      setActionNote({ key: `notify:${parentId}`, text: "Could not send reminder.", ok: false });
+    },
+  });
+
   const exportMutation = useMutation({
     mutationFn: async (report: (typeof REPORTS)[number]) => {
       const csv = await exportAdminReportCsv(report.name);
@@ -63,14 +150,20 @@ export default function AdminReportsPage() {
     },
   });
 
-  const revenueByMonth = revenueQuery.data?.by_month ?? {};
-  const sortedMonths = Object.keys(revenueByMonth).sort();
-  const last6Months = sortedMonths.slice(-6);
-  const chartValues = last6Months.map((month) => revenueByMonth[month]);
-  const latestMonth = last6Months.at(-1);
-  const latestRevenue = latestMonth ? revenueByMonth[latestMonth] : null;
-  const sixMonthRevenue = chartValues.reduce((total, value) => total + value, 0);
+  const quickbooksMutation = useMutation({
+    mutationFn: () => exportAdminReportCsv("quickbooks", period),
+    onSuccess: (csv) => downloadCsv(`quickbooks-${period}`, csv),
+  });
+
+  const revenueData = revenueQuery.data;
+  const trendData = useMemo(
+    () => buildRevenueTrend(revenueData?.by_month ?? {}, Number(period.slice(0, 4))),
+    [revenueData, period],
+  );
   const dashboard = dashboardQuery.data;
+  const failedRows = failedPaymentsQuery.data?.rows ?? [];
+  const failedTotalCents = failedRows.reduce((total, row) => total + row.balance_due_cents, 0);
+  const projected = projectedIncomeQuery.data;
 
   return (
     <section data-testid="admin-reports" className="space-y-5">
@@ -92,17 +185,100 @@ export default function AdminReportsPage() {
             />
           </label>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div data-testid="reports-money-tiles" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <KpiCard
-            label="Cash collected"
-            value={dashboard ? formatCurrency(dashboard.cash_collected_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
-            description="Recorded payments net of refunds for this period."
+            label="Billed this month"
+            value={dashboard ? formatCurrency(dashboard.billed_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            description="Tuition and fees invoiced for the selected month."
           />
           <KpiCard
-            label="Outstanding dues"
+            label="Collected"
+            value={dashboard ? formatCurrency(dashboard.cash_collected_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            description="Cash received this month, net of refunds."
+          />
+          <KpiCard
+            label="Outstanding"
             value={dashboard ? formatCurrency(dashboard.outstanding_dues_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
             description="Open or partially paid dues still requiring follow-up."
           />
+          <KpiCard
+            label="Collection rate"
+            value={dashboard ? formatNullablePercent(dashboard.collection_rate) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            description="Collected as a share of what was billed this month."
+          />
+        </div>
+
+        {failedRows.length > 0 && (
+          <Card
+            p={24}
+            data-testid="failed-autopay-alert"
+            className="border-2 border-red-300 bg-red-50/60 dark:border-red-900 dark:bg-red-950/30"
+          >
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <Overline>Failed autopay — action needed</Overline>
+                <div className="mt-1">
+                  <BigNum size={28}>
+                    {formatInteger(failedRows.length)} {failedRows.length === 1 ? "payment" : "payments"} · {formatCurrency(failedTotalCents)}
+                  </BigNum>
+                </div>
+                <p className="mt-1 text-sm text-red-700 dark:text-red-300">
+                  These charges declined and the invoices are still unpaid.
+                </p>
+              </div>
+            </div>
+            <ul className="mt-4 divide-y divide-red-200 dark:divide-red-900">
+              {failedRows.map((row) => (
+                <li
+                  key={row.invoice_id}
+                  className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div>
+                    <p className="text-sm font-semibold text-rally-ink">
+                      {row.parent_name || row.parent_id}
+                    </p>
+                    <p className="text-xs text-rally-muted">
+                      {formatCurrency(row.balance_due_cents)} due · {row.period}
+                      {row.latest_decline_code ? ` · ${row.latest_decline_code}` : ""}
+                      {row.attempt_count ? ` · ${row.attempt_count} attempts` : ""}
+                    </p>
+                    {actionNote &&
+                    (actionNote.key === `retry:${row.invoice_id}` ||
+                      actionNote.key === `notify:${row.parent_id}`) ? (
+                      <p
+                        className={`mt-1 text-xs ${actionNote.ok ? "text-emerald-700" : "text-red-700"}`}
+                      >
+                        {actionNote.text}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <Button
+                      variant="secondary"
+                      onClick={() => retryMutation.mutate(row.invoice_id)}
+                      disabled={retryMutation.isPending}
+                    >
+                      {retryMutation.isPending && retryMutation.variables === row.invoice_id
+                        ? "Retrying..."
+                        : "Retry charge"}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => notifyMutation.mutate(row.parent_id)}
+                      disabled={notifyMutation.isPending}
+                    >
+                      {notifyMutation.isPending && notifyMutation.variables === row.parent_id
+                        ? "Sending..."
+                        : "Notify parent"}
+                    </Button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
+
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <KpiCard
             label="Attendance rate"
             value={dashboard ? formatNullablePercent(dashboard.attendance.attendance_rate) : dashboardQuery.isLoading ? "Loading" : "No data"}
@@ -251,25 +427,67 @@ export default function AdminReportsPage() {
               <DashboardTerm label="Partial payments" value={dashboard ? formatInteger(dashboard.collections_risk.partial_payment_count) : "No data"} />
             </dl>
             {dashboard?.collections_risk.aging_buckets.length ? (
-              <div className="mt-5 overflow-x-auto">
-                <table className="w-full min-w-[360px] text-left text-sm">
-                  <thead className="text-xs uppercase text-rally-muted">
-                    <tr>
-                      <th className="px-2 py-2">Age</th>
-                      <th className="px-2 py-2">Amount</th>
-                      <th className="px-2 py-2">Families</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-rally-line">
-                    {dashboard.collections_risk.aging_buckets.map((bucket) => (
-                      <tr key={bucket.label}>
-                        <td className="px-2 py-2 font-medium text-rally-ink">{bucket.label}</td>
-                        <td className="px-2 py-2 text-rally-muted">{formatCurrency(bucket.amount_cents)}</td>
-                        <td className="px-2 py-2 text-rally-muted">{formatInteger(bucket.family_count)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="mt-5 space-y-2" data-testid="ar-aging-widget">
+                {dashboard.collections_risk.aging_buckets.map((bucket) => (
+                  <div key={bucket.label} className="rounded-md border border-rally-line">
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-rally-line/20 disabled:cursor-default"
+                      onClick={() =>
+                        setExpandedBucket(expandedBucket === bucket.label ? null : bucket.label)
+                      }
+                      disabled={bucket.family_count === 0}
+                      aria-expanded={expandedBucket === bucket.label}
+                    >
+                      <span className="font-medium text-rally-ink">{bucket.label}</span>
+                      <span className="text-rally-muted">
+                        {formatCurrency(bucket.amount_cents)} · {formatInteger(bucket.family_count)}{" "}
+                        {bucket.family_count === 1 ? "family" : "families"}
+                        {bucket.family_count > 0 ? (
+                          <span className="ml-2 text-xs">
+                            {expandedBucket === bucket.label ? "Hide" : "View"}
+                          </span>
+                        ) : null}
+                      </span>
+                    </button>
+                    {expandedBucket === bucket.label && bucket.families.length > 0 ? (
+                      <ul className="divide-y divide-rally-line border-t border-rally-line">
+                        {bucket.families.map((family) => (
+                          <li
+                            key={family.family_id}
+                            className="flex items-center justify-between gap-2 px-3 py-2 text-sm"
+                          >
+                            <div>
+                              <span className="font-medium text-rally-ink">
+                                {family.family_name || family.family_id}
+                              </span>
+                              <span className="ml-2 text-rally-muted">
+                                {formatCurrency(family.amount_cents)}
+                              </span>
+                              {actionNote && actionNote.key === `notify:${family.family_id}` ? (
+                                <p
+                                  className={`mt-1 text-xs ${actionNote.ok ? "text-emerald-700" : "text-red-700"}`}
+                                >
+                                  {actionNote.text}
+                                </p>
+                              ) : null}
+                            </div>
+                            <Button
+                              variant="secondary"
+                              onClick={() => notifyMutation.mutate(family.family_id)}
+                              disabled={notifyMutation.isPending}
+                            >
+                              {notifyMutation.isPending &&
+                              notifyMutation.variables === family.family_id
+                                ? "Sending..."
+                                : "Send reminder"}
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                ))}
               </div>
             ) : null}
           </Card>
@@ -320,37 +538,171 @@ export default function AdminReportsPage() {
           </Card>
         </div>
 
-        <Card p={24} className="flex flex-col gap-6">
-          <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <Overline>Revenue trend</Overline>
-              <div className="mt-2">
-                <BigNum size={32}>
-                  {latestRevenue == null ? "No data" : formatCurrency(latestRevenue)}
-                </BigNum>
-              </div>
-              <p className="text-sm text-neutral-500 mt-1">
-                {latestMonth ? `${formatMonth(latestMonth)} collected revenue` : "No monthly revenue rows returned yet."}
-              </p>
-            </div>
-            {revenueQuery.isLoading ? (
-              <div className="h-20 w-60 animate-pulse rounded-md bg-neutral-100 dark:bg-neutral-800" />
-            ) : chartValues.length > 0 ? (
-              <div className="shrink-0" aria-label="Revenue by month">
-                <MiniBars values={chartValues} w={240} h={80} highlight={chartValues.length - 1} />
-              </div>
-            ) : (
-              <div className="rounded-md border border-dashed border-rally-line px-4 py-5 text-sm text-rally-subtle">
-                Revenue will appear here after collected payment rows are available.
-              </div>
-            )}
+        <Card p={24} data-testid="projected-income-widget">
+          <Overline>Projected income — {formatMonth(projectionPeriod)}</Overline>
+          <div className="mt-2">
+            <BigNum size={32}>
+              {projected
+                ? formatCurrency(projected.total_cents)
+                : projectedIncomeQuery.isLoading
+                  ? "Loading"
+                  : "No data"}
+            </BigNum>
           </div>
-          <dl className="grid gap-3 border-t border-neutral-100 pt-4 sm:grid-cols-3">
-            <DashboardTerm label="Months shown" value={String(last6Months.length)} />
-            <DashboardTerm label="Six-month total" value={formatCurrency(sixMonthRevenue)} />
-            <DashboardTerm label="Latest month" value={latestMonth ? formatMonth(latestMonth) : "Not available"} />
-          </dl>
+          <p className="mt-1 text-sm text-rally-subtle">
+            Expected tuition from active enrollments at each session&apos;s monthly fee.
+          </p>
+          {projected && !projected.empty ? (
+            <div className="mt-4 space-y-4">
+              <div>
+                <div className="flex h-3 w-full overflow-hidden rounded-full bg-rally-line/40">
+                  {projected.total_cents > 0 ? (
+                    <>
+                      <div
+                        className="bg-emerald-500"
+                        style={{
+                          width: `${(projected.autopay_cents / projected.total_cents) * 100}%`,
+                        }}
+                      />
+                      <div
+                        className="bg-amber-400"
+                        style={{
+                          width: `${(projected.manual_cents / projected.total_cents) * 100}%`,
+                        }}
+                      />
+                    </>
+                  ) : null}
+                </div>
+                <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <DashboardTerm
+                    label={`Autopay (${formatInteger(projected.autopay_enrollment_count)})`}
+                    value={formatCurrency(projected.autopay_cents)}
+                  />
+                  <DashboardTerm
+                    label={`Manual (${formatInteger(projected.manual_enrollment_count)})`}
+                    value={formatCurrency(projected.manual_cents)}
+                  />
+                </dl>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[360px] text-left text-sm">
+                  <thead className="text-xs uppercase text-rally-muted">
+                    <tr>
+                      <th className="px-2 py-2">Session</th>
+                      <th className="px-2 py-2">Students</th>
+                      <th className="px-2 py-2">Monthly fee</th>
+                      <th className="px-2 py-2">Expected</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-rally-line">
+                    {projected.by_session.map((row) => (
+                      <tr key={row.session_id}>
+                        <td className="px-2 py-2 font-medium text-rally-ink">{row.title || row.session_id}</td>
+                        <td className="px-2 py-2 text-rally-muted">{formatInteger(row.enrollment_count)}</td>
+                        <td className="px-2 py-2 text-rally-muted">{formatCurrency(row.monthly_fee_cents)}</td>
+                        <td className="px-2 py-2 text-rally-muted">{formatCurrency(row.expected_cents)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : projectedIncomeQuery.isLoading ? (
+            <div className="mt-4 h-20 animate-pulse rounded-md bg-neutral-100 dark:bg-neutral-800" />
+          ) : (
+            <p className="mt-4 rounded-md border border-dashed border-rally-line px-3 py-2 text-sm text-rally-subtle">
+              No active enrollments with a monthly fee yet.
+            </p>
+          )}
         </Card>
+
+        <Card p={24} data-testid="revenue-trend-chart">
+          <Overline>Revenue trend — {period.slice(0, 4)} vs {Number(period.slice(0, 4)) - 1}</Overline>
+          <p className="mt-1 text-sm text-rally-subtle">
+            Monthly collected revenue (cash basis, net of refunds).
+          </p>
+          {revenueQuery.isLoading ? (
+            <div className="mt-4 h-64 animate-pulse rounded-md bg-neutral-100 dark:bg-neutral-800" />
+          ) : trendData.some((row) => row.current > 0 || row.prior > 0) ? (
+            <div className="mt-4 h-64 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={trendData} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                  <XAxis dataKey="month" tickLine={false} axisLine={false} fontSize={12} />
+                  <YAxis
+                    tickFormatter={(value: number) => formatCompactCurrency(value)}
+                    tickLine={false}
+                    axisLine={false}
+                    fontSize={12}
+                    width={56}
+                  />
+                  <Tooltip
+                    formatter={(value) => formatCurrency(Number(value ?? 0) * 100)}
+                  />
+                  <Legend />
+                  <Bar
+                    dataKey="prior"
+                    name={String(Number(period.slice(0, 4)) - 1)}
+                    fill="#cbd5e1"
+                    radius={[3, 3, 0, 0]}
+                  />
+                  <Bar
+                    dataKey="current"
+                    name={period.slice(0, 4)}
+                    fill="#2563eb"
+                    radius={[3, 3, 0, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <p className="mt-4 rounded-md border border-dashed border-rally-line px-3 py-2 text-sm text-rally-subtle">
+              Revenue will appear here after collected payment rows are available.
+            </p>
+          )}
+        </Card>
+      </div>
+
+      <div className="space-y-3">
+        <div>
+          <Overline>Financial reports</Overline>
+          <p className="mt-1 text-sm text-neutral-500">
+            Monthly reports over the billing ledger, with CSV export on each page.
+          </p>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-3">
+          {FINANCIAL_REPORTS.map((report) => (
+            <Link key={report.href} href={report.href} className="block">
+              <Card p={20} className="flex h-full flex-col transition-colors hover:border-rally-accent">
+                <h2 className="font-semibold text-lg">{report.title}</h2>
+                <p className="mt-1 min-h-[3rem] text-sm text-neutral-500 flex-1">{report.description}</p>
+                <span className="mt-4 text-sm font-medium text-rally-accent">Open report</span>
+              </Card>
+            </Link>
+          ))}
+          <Card p={20} className="flex flex-col">
+            <h2 className="font-semibold text-lg">QuickBooks export</h2>
+            <p className="mt-1 min-h-[3rem] text-sm text-neutral-500 flex-1">
+              Monthly summary journal entries for {formatMonth(period)}, ready to import into
+              QuickBooks Online.
+            </p>
+            <div className="mt-4">
+              <Button
+                variant="secondary"
+                onClick={() => quickbooksMutation.mutate()}
+                disabled={quickbooksMutation.isPending}
+                full
+              >
+                {quickbooksMutation.isPending ? "Exporting..." : "Export journal CSV"}
+              </Button>
+            </div>
+          </Card>
+        </div>
+        {quickbooksMutation.isError && (
+          <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+            Could not export the QuickBooks journal.
+          </p>
+        )}
       </div>
 
       <div className="space-y-3">
@@ -471,6 +823,52 @@ function formatMonth(value: string) {
 function currentPeriod() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function nextPeriod(period: string) {
+  const [year, month] = period.split("-").map(Number);
+  if (!year || !month) return period;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+  return `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
+}
+
+const MONTH_LABELS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+function buildRevenueTrend(
+  byMonth: Record<string, number>,
+  year: number,
+): Array<{ month: string; current: number; prior: number }> {
+  return MONTH_LABELS.map((label, index) => {
+    const key = `${String(index + 1).padStart(2, "0")}`;
+    return {
+      month: label,
+      current: (byMonth[`${year}-${key}`] ?? 0) / 100,
+      prior: (byMonth[`${year - 1}-${key}`] ?? 0) / 100,
+    };
+  });
+}
+
+function formatCompactCurrency(dollars: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(dollars);
 }
 
 function downloadCsv(title: string, csv: string) {

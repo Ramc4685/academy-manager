@@ -120,6 +120,43 @@ write_pid() {
   printf '%s\n' "$2" > "${PID_DIR}/$1.pid"
 }
 
+collect_tree() {
+  # Print pid plus all live descendants, depth-first. Must run BEFORE any kill:
+  # once a parent dies its children reparent and pgrep -P can no longer find them.
+  pid_to_walk="$1"
+  for child in $(pgrep -P "${pid_to_walk}" 2>/dev/null || true); do
+    collect_tree "${child}"
+  done
+  printf '%s\n' "${pid_to_walk}"
+}
+
+kill_tree() {
+  root_pid="$1"
+  tree_pids="$(collect_tree "${root_pid}")"
+  # Services are spawned as process-group leaders (set -m), so -PGID reaches
+  # children even if the tree walk missed them. Stacks started before this
+  # change have no dedicated group; the per-pid kills cover those.
+  kill -TERM -- "-${root_pid}" 2>/dev/null || true
+  # shellcheck disable=SC2086
+  kill -TERM ${tree_pids} 2>/dev/null || true
+  deadline="$(( $(date +%s) + 8 ))"
+  while [ "$(date +%s)" -lt "${deadline}" ]; do
+    survivors=""
+    for p in ${tree_pids}; do
+      if kill -0 "${p}" 2>/dev/null; then
+        survivors="${survivors} ${p}"
+      fi
+    done
+    if [ -z "${survivors}" ]; then
+      return 0
+    fi
+    sleep 1
+  done
+  kill -KILL -- "-${root_pid}" 2>/dev/null || true
+  # shellcheck disable=SC2086
+  kill -KILL ${tree_pids} 2>/dev/null || true
+}
+
 read_frontend_env() {
   key="$1"
   for file in "${ROOT_DIR}/frontend/.env.local" "${ROOT_DIR}/frontend/.env" "${ROOT_DIR}/frontend/.env.example"; do
@@ -199,6 +236,8 @@ start_mongo() {
   mkdir -p "${MONGO_DBPATH}"
   # Watchdog subshell: restarts mongod if it exits unexpectedly.
   # SIGTERM (sent by stop_started) kills the mongod child and exits the loop cleanly.
+  # set -m puts the job in its own process group so stop can kill -- -PGID.
+  set -m
   (
     _mongod_pid=""
     trap 'kill "${_mongod_pid:-}" 2>/dev/null; exit 0' TERM INT
@@ -213,6 +252,7 @@ start_mongo() {
     done
   ) &
   write_pid mongo "$!"
+  set +m
   wait_for_port "MongoDB" "${MONGO_PORT}" 30 || { tail -n 80 "${LOG_DIR}/mongo.log" >&2 || true; exit 1; }
 }
 
@@ -227,8 +267,10 @@ start_firebase() {
 {"emulators":{"auth":{"host":"${FIREBASE_AUTH_HOST}","port":${FIREBASE_AUTH_PORT}},"ui":{"enabled":true,"host":"127.0.0.1","port":${FIREBASE_UI_PORT}},"singleProjectMode":true}}
 EOF
   log "Starting Firebase Auth emulator for ${FIREBASE_PROJECT_ID}"
+  set -m
   (cd "${ROOT_DIR}" && nohup firebase emulators:start --config "${firebase_config}" --only auth --project "${FIREBASE_PROJECT_ID}") >"${LOG_DIR}/firebase.log" 2>&1 &
   write_pid firebase "$!"
+  set +m
   wait_for_port "Firebase Auth emulator" "${FIREBASE_AUTH_PORT}" 45 || { tail -n 120 "${LOG_DIR}/firebase.log" >&2 || true; exit 1; }
 }
 
@@ -239,6 +281,7 @@ start_backend() {
   fi
   [ -x "${ROOT_DIR}/backend/.venv/bin/python" ] || die "backend/.venv is missing"
   log "Starting backend on ${BACKEND_URL}"
+  set -m
   (
     cd "${ROOT_DIR}/backend"
     # shellcheck disable=SC1091
@@ -246,6 +289,7 @@ start_backend() {
     nohup env APP_ENV=development EMAIL_DELIVERY_MODE=disabled MONGO_URL="${MONGO_URL}" DB_NAME="${DB_NAME}" FIREBASE_AUTH_ENABLED=true FIREBASE_PROJECT_ID="${FIREBASE_PROJECT_ID}" FIREBASE_AUTH_EMULATOR_HOST="${FIREBASE_AUTH_EMULATOR_HOST}" FRONTEND_URL="${FRONTEND_URL}" CORS_ORIGINS="${FRONTEND_URL},http://127.0.0.1:${FRONTEND_PORT}" COOKIE_SECURE=false V2_ALLOWED_INTERNAL_TENANT_HEADER=x-academy-id V2_DEFAULT_ACADEMY_ID=blno PYTHONPATH="${ROOT_DIR}" uvicorn backend.v2.main:app --host "${BACKEND_HOST}" --port "${BACKEND_PORT}" --reload
   ) >"${LOG_DIR}/backend.log" 2>&1 &
   write_pid backend "$!"
+  set +m
   wait_for_url "Backend health" "${BACKEND_URL}/api/v2/healthz" 60 || { tail -n 120 "${LOG_DIR}/backend.log" >&2 || true; exit 1; }
 }
 
@@ -268,8 +312,10 @@ start_frontend() {
       write_pid frontend "${screen_pid}"
     fi
   else
+    set -m
     nohup bash -lc "${frontend_cmd}" >/dev/null 2>&1 &
     write_pid frontend "$!"
+    set +m
   fi
   wait_for_url "Frontend BFF proxy" "${FRONTEND_URL}/api/v2/healthz" 90 || { tail -n 120 "${LOG_DIR}/frontend.log" >&2 || true; exit 1; }
 }
@@ -351,21 +397,57 @@ logs() {
 
 stop_started() {
   log "Stopping processes started by this script"
+  stopped_any=0
   for name in frontend backend firebase mongo; do
     pid_file="${PID_DIR}/${name}.pid"
+    if [ "${name}" = "frontend" ] && command -v screen >/dev/null 2>&1; then
+      # Frontend may run inside a screen session; quitting it kills the whole session tree.
+      screen -S academy-frontend -X quit >/dev/null 2>&1 || true
+    fi
     if [ ! -f "${pid_file}" ]; then
       printf '%-10s no pid file\n' "${name}"
       continue
     fi
     pid="$(cat "${pid_file}")"
     if kill -0 "${pid}" >/dev/null 2>&1; then
-      kill "${pid}" >/dev/null 2>&1 || true
-      printf '%-10s stopped pid=%s\n' "${name}" "${pid}"
+      kill_tree "${pid}"
+      stopped_any=1
+      printf '%-10s stopped pid=%s (and descendants)\n' "${name}" "${pid}"
     else
+      # Leader already gone, but orphaned children may still hold its process group.
+      if kill -TERM -- "-${pid}" 2>/dev/null; then
+        stopped_any=1
+      fi
       printf '%-10s pid not running (%s)\n' "${name}" "${pid}"
     fi
     rm -f "${pid_file}"
   done
+  verify_ports_free "${stopped_any}"
+}
+
+verify_ports_free() {
+  # Grace period only matters if we actually signalled something.
+  grace="$([ "${1:-0}" -eq 1 ] && echo 5 || echo 0)"
+  log "Verifying stack ports are free"
+  leftover=0
+  for spec in "MongoDB:${MONGO_PORT}" "Firebase Auth:${FIREBASE_AUTH_PORT}" "Backend API:${BACKEND_PORT}" "Frontend:${FRONTEND_PORT}"; do
+    label="${spec%%:*}"
+    port="${spec##*:}"
+    if [ "${grace}" -gt 0 ]; then
+      wait_for_port_free "${label}" "${port}" "${grace}" 2>/dev/null
+    fi
+    if has_listener "${port}"; then
+      leftover=1
+      printf 'WARN: %s port %s still has listeners:\n' "${label}" "${port}" >&2
+      lsof -nP -iTCP:"${port}" -sTCP:LISTEN >&2 2>/dev/null || true
+    else
+      printf '%-24s port %s free\n' "${label}" "${port}"
+    fi
+  done
+  if [ "${leftover}" -ne 0 ]; then
+    printf '\nWARN: some ports are still in use. If a Docker stack owns them this is expected;\n' >&2
+    printf 'otherwise stray local processes may shadow other stacks — kill the PIDs above.\n' >&2
+  fi
 }
 
 case "${1:-all}" in

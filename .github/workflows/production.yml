@@ -110,7 +110,10 @@ jobs:
 
       - name: Dependency vulnerability scan
         working-directory: backend
-        run: pip-audit -r requirements.txt
+        # PYSEC-2026-1325: ecdsa's known side-channel timing issue has no fixed
+        # release (0.19.2 is latest on PyPI); the maintainers won't patch it.
+        # Re-evaluate if a fixed version ships.
+        run: pip-audit -r requirements.txt --ignore-vuln PYSEC-2026-1325
 
       - name: Compile backend
         working-directory: backend

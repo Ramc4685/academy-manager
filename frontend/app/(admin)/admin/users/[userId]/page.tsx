@@ -7,15 +7,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, RefreshCw } from "lucide-react";
 
 import {
+  addAdminUserRole,
   getAdminUser,
   listAdminSessions,
   listAdminSessionsByCoach,
   listCoachPayRates,
+  removeAdminUserRole,
   repairCoachPayRateWindow,
+  sendLoginInvite,
   setCoachPayRate,
   updateAdminSession,
   updateAdminUser,
-  updateAdminUserRole,
   type AdminSessionView,
   type AdminUserDetail,
   type AdminUserRole,
@@ -87,9 +89,10 @@ export default function AdminUserDetailPage() {
         </Card>
         <Card p={20}>
           <Overline>Access</Overline>
-          <RoleChangePanel user={user} onSaved={invalidate} />
+          <RolesPanel user={user} onSaved={invalidate} />
         </Card>
       </div>
+      <LoginInvitePanel user={user} onSaved={invalidate} />
       {isCoach && <CoachPayRatePanel coachId={user.user_id} />}
       {isCoach && <CoachSessionsPanel user={user} onAssigned={invalidate} />}
     </section>
@@ -606,24 +609,38 @@ function UserEditForm({
   );
 }
 
-function RoleChangePanel({
+function RolesPanel({
   user,
   onSaved,
 }: {
   user: AdminUserDetail;
   onSaved: () => void;
 }) {
-  const [role, setRole] = useState<AdminUserRole>(user.role);
+  const initialRoles = user.roles.length > 0 ? user.roles : [user.role];
+  const [selected, setSelected] = useState<AdminUserRole[]>(initialRoles);
   const [reason, setReason] = useState("Admin role change");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitOk, setSubmitOk] = useState(false);
 
   useEffect(() => {
-    setRole(user.role);
-  }, [user.role]);
+    setSelected(user.roles.length > 0 ? user.roles : [user.role]);
+  }, [user.roles, user.role]);
 
   const mutation = useMutation({
-    mutationFn: () => updateAdminUserRole(user.user_id, role, reason),
+    mutationFn: async () => {
+      const current = new Set(initialRoles);
+      const next = new Set(selected);
+      for (const role of academyRoles) {
+        if (next.has(role) && !current.has(role)) {
+          await addAdminUserRole(user.user_id, role, reason);
+        }
+      }
+      for (const role of academyRoles) {
+        if (current.has(role) && !next.has(role)) {
+          await removeAdminUserRole(user.user_id, role, reason);
+        }
+      }
+    },
     onSuccess: () => {
       setSubmitError(null);
       setSubmitOk(true);
@@ -631,54 +648,52 @@ function RoleChangePanel({
     },
     onError: (err: unknown) => {
       setSubmitOk(false);
-      setSubmitError(
-        err instanceof Error ? err.message : "Could not change role.",
-      );
+      setSubmitError(err instanceof Error ? err.message : "Could not update roles.");
     },
   });
 
-  const isCoach = user.role === "coach";
+  const toggle = (role: AdminUserRole) => {
+    setSubmitOk(false);
+    setSelected((prev) =>
+      prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role],
+    );
+  };
 
   return (
     <form
       className="mt-3 space-y-4"
       data-testid="admin-user-role-form"
-      onSubmit={(event) => {
-        event.preventDefault();
+      onSubmit={(e) => {
+        e.preventDefault();
         setSubmitOk(false);
         setSubmitError(null);
+        if (selected.length === 0) {
+          setSubmitError("User must keep at least one role.");
+          return;
+        }
         mutation.mutate();
       }}
     >
-      <DetailList
-        rows={[
-          isCoach
-            ? { label: "Active sessions", value: String(user.session_count) }
-            : {
-                label: "Linked students",
-                value: String(user.linked_student_count),
-              },
-          { label: "Current role", value: user.role.toUpperCase() },
-        ]}
-      />
+      <p className="text-xs text-rally-muted">
+        A user can hold multiple roles — e.g. an admin who also coaches, or a
+        coach who is also a parent. Users with more than one role get a view
+        switcher in the app header.
+      </p>
+      <div className="flex flex-wrap gap-3">
+        {academyRoles.map((role) => (
+          <label key={role} className="inline-flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={selected.includes(role)}
+              onChange={() => toggle(role)}
+              data-testid={`role-checkbox-${role}`}
+            />
+            <span className="capitalize">{role}</span>
+          </label>
+        ))}
+      </div>
 
-      <Field label="Academy role" htmlFor="user-role">
-        <select
-          id="user-role"
-          value={role}
-          onChange={(event) => setRole(event.target.value as AdminUserRole)}
-          className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-        >
-          {academyRoles.map((value) => (
-            <option key={value} value={value}>
-              {value[0].toUpperCase()}
-              {value.slice(1)}
-            </option>
-          ))}
-        </select>
-      </Field>
-
-      <Field label="Role change reason" htmlFor="user-role-reason">
+      <Field label="Reason" htmlFor="user-role-reason">
         <input
           id="user-role-reason"
           value={reason}
@@ -695,16 +710,70 @@ function RoleChangePanel({
         type="submit"
         variant="primary"
         size="sm"
-        disabled={role === user.role || mutation.isPending}
+        disabled={mutation.isPending}
         icon={
           mutation.isPending ? (
             <RefreshCw className="size-3.5 animate-spin" />
           ) : undefined
         }
       >
-        {mutation.isPending ? "Saving..." : "Change role"}
+        {mutation.isPending ? "Saving..." : "Save roles"}
       </Button>
     </form>
+  );
+}
+
+function LoginInvitePanel({
+  user,
+  onSaved,
+}: {
+  user: AdminUserDetail;
+  onSaved: () => void;
+}) {
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitOk, setSubmitOk] = useState(false);
+
+  const mutation = useMutation({
+    mutationFn: () => sendLoginInvite(user.user_id),
+    onSuccess: () => {
+      setSubmitError(null);
+      setSubmitOk(true);
+      onSaved();
+    },
+    onError: (err: unknown) => {
+      setSubmitOk(false);
+      setSubmitError(err instanceof Error ? err.message : "Could not send invite.");
+    },
+  });
+
+  return (
+    <section className="space-y-3 rounded-lg border border-rally-line bg-white p-4">
+      <h2 className="text-sm font-semibold text-rally-ink">Login invite</h2>
+      <p className="text-xs text-slate-500">
+        Sends a &ldquo;set your password&rdquo; email so this user can log in
+        with email + password (works with any email provider).
+      </p>
+      <p className="text-sm text-slate-600" data-testid="invite-sent-at">
+        {user.login_invite_sent_at
+          ? `Invite sent ${new Date(user.login_invite_sent_at).toLocaleDateString()}`
+          : "No invite sent yet"}
+      </p>
+      <MutationMessages error={submitError} ok={submitOk} />
+      <Button
+        type="button"
+        size="sm"
+        variant="secondary"
+        disabled={mutation.isPending}
+        onClick={() => mutation.mutate()}
+        data-testid="send-login-invite"
+      >
+        {mutation.isPending
+          ? "Sending…"
+          : user.login_invite_sent_at
+            ? "Re-send invite"
+            : "Send login invite"}
+      </Button>
+    </section>
   );
 }
 
@@ -891,23 +960,6 @@ function SessionRow({
         </Link>
       </div>
     </li>
-  );
-}
-
-function DetailList({
-  rows,
-}: {
-  rows: Array<{ label: string; value: string }>;
-}) {
-  return (
-    <dl className="grid grid-cols-1 gap-3 text-sm">
-      {rows.map((row) => (
-        <div key={row.label} className="flex items-center justify-between">
-          <dt className="text-rally-muted">{row.label}</dt>
-          <dd className="font-mono text-rally-ink tabular-nums">{row.value}</dd>
-        </div>
-      ))}
-    </dl>
   );
 }
 

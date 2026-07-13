@@ -696,6 +696,43 @@
       ]
     },
     {
+      "route": "/admin/users/new",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/users/new/page.tsx",
+      "workflows": [
+        "Create user",
+        "Auto-send parent login invite"
+      ],
+      "controls": {
+        "buttons": [
+          "Create user"
+        ],
+        "inputs": [
+          "Full name",
+          "Email",
+          "Phone (optional)",
+          "Role"
+        ],
+        "modals": []
+      },
+      "states": [
+        "idle form",
+        "submitting",
+        "validation error",
+        "create failed (email exists)",
+        "created → redirect to user detail"
+      ],
+      "risk_edges": [
+        "duplicate email → creation fails, surfaced inline",
+        "parent auto-invite send failure is best-effort (user created, invite re-sendable)"
+      ],
+      "acceptance": [
+        "admin can create parent/coach/admin with name+email",
+        "parent creation auto-sends set-password invite",
+        "successful create navigates to /admin/users/[userId]"
+      ]
+    },
+    {
       "route": "/admin/users/[userId]",
       "role": "admin",
       "source": "frontend/app/(admin)/admin/users/[userId]/page.tsx",
@@ -1202,6 +1239,105 @@
         "Workflow evidence: \"Review finance/attendance reports\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Export\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Tenant data leakage in export\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/reports/refunds",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/reports/refunds/page.tsx",
+      "workflows": [
+        "Review monthly refunds and account credits",
+        "Export refunds CSV"
+      ],
+      "controls": {
+        "buttons": [
+          "Export CSV"
+        ],
+        "inputs": [
+          "Month"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "load error",
+        "export error"
+      ],
+      "risk_edges": [
+        "Tenant data leakage in refunds report"
+      ],
+      "acceptance": [
+        "Refund and credit rows are tenant-scoped and match the billing audit trail",
+        "Workflow evidence: \"Review monthly refunds and account credits\" completes for the admin route /admin/reports/refunds with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Export refunds CSV\" completes for the admin route /admin/reports/refunds with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Tenant data leakage in refunds report\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/reports/revenue-by-category",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/reports/revenue-by-category/page.tsx",
+      "workflows": [
+        "Review collected revenue by category",
+        "Export revenue-by-category CSV"
+      ],
+      "controls": {
+        "buttons": [
+          "Export CSV"
+        ],
+        "inputs": [
+          "Month"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "load error",
+        "export error"
+      ],
+      "risk_edges": [
+        "Tenant data leakage in revenue report"
+      ],
+      "acceptance": [
+        "Category totals are tenant-scoped and sum to the money applied to invoices in the month",
+        "Workflow evidence: \"Review collected revenue by category\" completes for the admin route /admin/reports/revenue-by-category with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Export revenue-by-category CSV\" completes for the admin route /admin/reports/revenue-by-category with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Tenant data leakage in revenue report\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/reports/deposit-slip",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/reports/deposit-slip/page.tsx",
+      "workflows": [
+        "Reconcile daily deposits by payment method",
+        "Export deposit-slip CSV"
+      ],
+      "controls": {
+        "buttons": [
+          "Export CSV"
+        ],
+        "inputs": [
+          "Month"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "load error",
+        "export error"
+      ],
+      "risk_edges": [
+        "Tenant data leakage in deposit slip"
+      ],
+      "acceptance": [
+        "Daily totals are tenant-scoped gross receipts grouped by payment method",
+        "Workflow evidence: \"Reconcile daily deposits by payment method\" completes for the admin route /admin/reports/deposit-slip with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Export deposit-slip CSV\" completes for the admin route /admin/reports/deposit-slip with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Tenant data leakage in deposit slip\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -2354,10 +2490,16 @@
       "controls": {
         "buttons": [
           "Open child",
-          "Add child"
+          "Add child",
+          "Report absence",
+          "Cancel enrollment"
         ],
-        "inputs": [],
-        "modals": []
+        "inputs": [
+          "Reason"
+        ],
+        "modals": [
+          "Cancel enrollment confirmation"
+        ]
       },
       "states": [
         "loading",
@@ -2543,6 +2685,132 @@
         "Risk evidence: \"Auth header dropped\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Upstream redirect mishandled\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Binary headers lost\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/parent/requests",
+      "role": "parent",
+      "source": "frontend/app/(parent)/parent/requests/page.tsx",
+      "workflows": [
+        "Submit absence notice",
+        "Request makeup",
+        "Request trial class"
+      ],
+      "controls": {
+        "buttons": [
+          "Submit notice",
+          "Request makeup",
+          "Submit trial request"
+        ],
+        "inputs": [
+          "Child selection",
+          "Occurrence selection",
+          "Target occurrence",
+          "Prospective child name",
+          "Preferred dates"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "error state",
+        "late-notice warning"
+      ],
+      "risk_edges": [
+        "Late notice submitted inside window",
+        "Expired makeup visibility"
+      ],
+      "acceptance": [
+        "Parent request submissions never bypass backend policy rules",
+        "Workflow evidence: \"Submit absence notice\" completes for the parent route /parent/requests with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Request makeup\" completes for the parent route /parent/requests with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Request trial class\" completes for the parent route /parent/requests with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Late notice submitted inside window\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Expired makeup visibility\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/requests",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/requests/page.tsx",
+      "workflows": [
+        "Approve makeup",
+        "Deny makeup",
+        "Approve trial",
+        "Deny trial",
+        "Review cancellations"
+      ],
+      "controls": {
+        "buttons": [
+          "Approve",
+          "Deny"
+        ],
+        "inputs": [
+          "Target occurrence id",
+          "Reason"
+        ],
+        "modals": [
+          "Approve makeup",
+          "Deny makeup",
+          "Approve trial",
+          "Deny trial"
+        ]
+      },
+      "states": [
+        "loading",
+        "empty",
+        "mutation error",
+        "status filters"
+      ],
+      "risk_edges": [
+        "Approve into full occurrence",
+        "Fee billing failure visibility"
+      ],
+      "acceptance": [
+        "Admin decisions surface backend capacity and billing errors as recoverable states",
+        "Workflow evidence: \"Approve makeup\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Deny makeup\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Approve trial\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Deny trial\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Review cancellations\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Approve into full occurrence\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Fee billing failure visibility\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/settings/self-service",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/settings/self-service/page.tsx",
+      "workflows": [
+        "Update self-service policy"
+      ],
+      "controls": {
+        "buttons": [
+          "Save"
+        ],
+        "inputs": [
+          "Notice hours",
+          "Makeup expiry days",
+          "Cancellation notice days",
+          "Cancellation fee",
+          "Effective timing"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "saving",
+        "save error",
+        "saved confirmation"
+      ],
+      "risk_edges": [
+        "Policy change mid-request lifecycle"
+      ],
+      "acceptance": [
+        "Policy edits persist and reload with server-validated values",
+        "Workflow evidence: \"Update self-service policy\" completes for the admin route /admin/settings/self-service with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Policy change mid-request lifecycle\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     }
   ],

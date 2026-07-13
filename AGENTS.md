@@ -66,6 +66,13 @@ ledger in `test_result.md`.
 
 ---
 
+## Project Context Docs
+
+- **PROJECT.md** (repo root) — architecture, data flow, design decisions, critical paths. Read before structural changes.
+- **GAPS.md** (repo root) — known weaknesses ordered by severity, each with a scoped fix. Check before "discovering" a bug.
+
+---
+
 ## Task Routing
 
 | Task type | Read |
@@ -157,14 +164,75 @@ For ticketed work, map the plan to the ticket ID and acceptance criteria.
 
 ## Architecture Rules
 
-- Legacy backend routers live under `backend/routers/`.
+- **The ONLY backend is `backend.v2.main:app`** (FastAPI, all routes `/api/v2/*`). The legacy backend was deleted (commit `7228e5de`); `backend/routers/` and `backend/services/` contain only orphaned `.pyc` — never read them as source.
 - v2 DDD contexts live under `backend/v2/contexts/`.
 - v2 BFF routes live under `backend/v2/interfaces/<persona>/`.
-- Frontend route groups live under `frontend/app/`.
+- Frontend route groups live under `frontend/app/`; the frontend is a Next.js app on a Cloudflare Worker via OpenNext, calling same-origin `/api/v2/*` proxied by `frontend/app/api/v2/[...path]/route.ts`.
 - Application use cases own workflow orchestration.
 - Domain owns business rules.
 - Infrastructure owns MongoDB, Firebase, Stripe, Resend, and external adapters.
 - Interfaces/BFF own HTTP, persona shaping, auth dependencies, and DTOs.
+- Production runs single-academy mode (BLNO); the code is SaaS-shaped. Two tenancy regimes coexist — see PROJECT.md §3.3.
+
+---
+
+## Commands
+
+```bash
+# Local dev stack (bare-metal: Mongo + Firebase emulator + backend :8001 + frontend :3001)
+scripts/local_test_stack.sh fresh        # full reset + seed + smoke
+scripts/local_test_stack.sh test         # backend pytest + frontend typecheck
+
+# Docker SaaS staging (frontend :3000, api :8001, firebase :4000, mongo :27017)
+make up            # saas-up + seed + status   (wraps scripts/dev/saas_staging.sh)
+make saas-down / saas-reset / saas-nuke
+
+# Backend
+cd backend && pytest v2/tests -n auto -q            # the test suite (~2280 tests)
+cd backend && ruff check v2 && ruff format --check v2
+cd backend && lint-imports --config pyproject.toml   # DDD boundary contracts (CI-blocking)
+cd backend && mypy --config-file pyproject.toml v2   # advisory only
+
+# Frontend (pnpm, from frontend/)
+pnpm dev           # port 3001
+pnpm typecheck && pnpm lint && pnpm build
+pnpm e2e           # Playwright mobile projects, auth-bypassed
+pnpm e2e:local-auth  # real-auth suite (separate config, not in CI)
+
+# Deploy (via CI only — .github/workflows/production.yml with manual approval gate)
+# backend: flyctl deploy --remote-only --app courtmastr-academy-api
+# frontend: pnpm deploy:cloudflare
+```
+
+Run backend commands from `backend/` (or repo root with `PYTHONPATH=.`); modules are addressed `backend.v2.*`.
+
+---
+
+## Conventions This Codebase Actually Follows
+
+- **DDD layering** in `backend/v2`: `contexts/<name>/{domain,application,infrastructure}`; Protocols in `application/ports.py`; one class per use case in `application/use_cases/`. Enforced by import-linter + structural pytest tests — if `lint-imports` or `tests/structural/` fails, fix your layering, don't loosen the contract.
+- **BFF routes are persona-shaped** (`interfaces/{admin,coach,parent,platform}`), never generic CRUD. Routes call use cases from `request.app.state.*`; they never touch Mongo. Wrong-persona access returns **404, not 403** (deliberate; see `docs/security-matrix.md`).
+- **Tenancy:** every tenant-owned repo extends `TenantScopedRepository` (`backend/v2/shared/tenancy/repository.py`); application code never sees `academy_id`. Read tenant at execution time via `current_academy_id()` / `tenant_scope(...)` — **never capture academy_id in a composition-time closure** (past prod-bug class) and never use `default_academy_id` in SaaS request paths.
+- **Migrations** (`backend/v2/migrations/NNNN_*.py`, `version` + `async up(db)`) are the only way to create indexes/validators; they run on production boot. New migration = next unused 4-digit prefix, version string must equal the filename stem.
+- **New/changed v2 routes must be registered** in the audit inventory manifest (see `backend/v2/tests/unit/test_audit_inventory_manifest.py`) or tests fail.
+- **Frontend:** everything is effectively client components + TanStack Query v5 (query keys centralized in `frontend/lib/query/keys.ts`); all API calls go through `lib/api/client.ts` `apiFetch`; forms are plain controlled state; styling should use Tailwind `rally-*` tokens (inline hex styles exist but are debt — don't add more).
+- **Money is integer cents** (`amount_cents`); ids are string ULIDs (`backend/v2/shared/ids.py`); scheduler timezone `America/Chicago`.
+- Errors: domain errors subclass per-context error types; HTTP mapping happens in interfaces; the frontend `ApiError` handles both `{error:{code,message}}` and FastAPI `{detail}` shapes.
+
+---
+
+## Gotchas
+
+- "Legacy" means three different things: the deleted pre-v2 app (history only), single-tenant compat adapters inside v2 (`_LegacyUserMembershipAdapter`), and the legacy `Payment` billing model mid-retirement. Check which one your doc/comment means.
+- Env config is two-tier: `V2_FOO` falls back to plain `FOO` (`backend/v2/shared/config/settings.py`). Grep both before declaring a variable unused.
+- The Stripe webhook route lives on the **parent** router (`/api/v2/parent/webhooks/stripe`), signature-as-auth; events are accepted fast and **processed by a 60s scheduler job**, not in-request. Local Stripe testing: `scripts/dev/saas_staging.sh stripe-listen` (must forward `account.updated` and `capability.*` Connect events too).
+- Bearer tokens are accepted from three headers: `Authorization`, `x-courtmastr-auth`, `x-courtmastr-identity` (the frontend proxy bridge translates the latter).
+- Migration `0128` is imported via `importlib` by string name (digit-leading module) — not greppable as a normal import.
+- E2E runs with `NEXT_PUBLIC_E2E_AUTH_BYPASS=1` (fake Firebase user) — passing e2e does NOT prove auth works; use the local-auth config for that.
+- CI coverage gate only covers `v2/shared` (70%); mypy is advisory; `backend/scripts/` is excluded from ruff/mypy entirely. Green CI ≠ typed/covered.
+- Scheduler, outbox dispatcher, and rate limiting assume a **single Fly machine**. Do not scale out without adding distributed locking.
+- Seeding is idempotent-by-count (skips if `academies` non-empty) — a partially seeded DB silently stays partial; use `saas-reset`.
+- `.worktrees/` and `.claude/worktrees/` are parallel in-flight branches — not canonical source.
 
 ---
 
@@ -177,6 +245,10 @@ For ticketed work, map the plan to the ticket ID and acceptance criteria.
 - Do not perform destructive MongoDB operations without explicit user approval.
 - Do not rewrite legacy flows into v2 unless the ticket or user asks for that workflow migration.
 - Do not mark a phase or wave complete until its exit checklist is actually verified.
+- **Never weaken:** `backend/v2/shared/tenancy/*`, `shared/auth/middleware.py`, `load_auth_claims.py`, `contexts/billing/domain/ledger.py`, webhook handling/dedup, the import-linter contracts, the structural tests, `docs/security-matrix.md` semantics (404-on-wrong-persona), CORS wildcard rejection in `main.py`.
+- **Migrations are append-only** once merged; never renumber or edit an applied migration — write a new one.
+- **`backend/scripts/archive_legacy_payments.py` is destructive and manual** — never run or automate without the runbook (`docs/runbooks/legacy-payments-retirement.md`).
+- Generated/derived files — don't hand-edit: `frontend/lib/api/generated/`, `graphify-out/`, `.open-next/`, `docs/architecture/generated/`, release notes (CI-generated).
 
 ---
 

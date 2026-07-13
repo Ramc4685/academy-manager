@@ -96,3 +96,60 @@ def test_admin_students_rejects_malformed_cursor(admin_client):
 def test_directory_wrong_persona_404(coach_on_admin_client):
     assert coach_on_admin_client.get("/api/v2/admin/users").status_code == 404
     assert coach_on_admin_client.get("/api/v2/admin/students").status_code == 404
+
+
+def test_admin_resends_login_invite(admin_client):
+    r = admin_client.post("/api/v2/admin/users/coach-1/login-invite")
+    assert r.status_code == 200, r.text
+    assert r.json()["sent_at"] is not None
+
+
+def test_login_invite_unknown_user_404(admin_client):
+    r = admin_client.post("/api/v2/admin/users/nope/login-invite")
+    assert r.status_code == 404
+
+
+def test_login_invite_wrong_persona_404(coach_on_admin_client):
+    r = coach_on_admin_client.post("/api/v2/admin/users/coach-1/login-invite")
+    assert r.status_code == 404
+
+
+def test_admin_adds_role_to_user(admin_client):
+    r = admin_client.post(
+        "/api/v2/admin/users/coach-1/roles",
+        json={"role": "parent", "reason": "Coach is also a parent"},
+    )
+    assert r.status_code == 200, r.text
+    assert set(r.json()["roles"]) == {"coach", "parent"}
+
+
+def test_admin_removes_role_from_user(admin_client):
+    admin_client.post(
+        "/api/v2/admin/users/coach-1/roles",
+        json={"role": "parent", "reason": "setup"},
+    )
+    r = admin_client.delete(
+        "/api/v2/admin/users/coach-1/roles/parent?reason=No%20longer%20a%20parent"
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["roles"] == ["coach"]
+
+
+def test_admin_cannot_remove_own_admin_role(admin_client):
+    # admin_client's claims user_id — see conftest _claims(): f"u-admin"
+    r = admin_client.delete("/api/v2/admin/users/u-admin/roles/admin?reason=x")
+    assert r.status_code == 409
+
+
+def test_cannot_remove_last_role(admin_client):
+    r = admin_client.delete("/api/v2/admin/users/coach-1/roles/coach?reason=x")
+    assert r.status_code == 409
+
+
+def test_role_endpoints_wrong_persona_404(coach_on_admin_client):
+    assert (
+        coach_on_admin_client.post(
+            "/api/v2/admin/users/coach-1/roles", json={"role": "parent", "reason": "x"}
+        ).status_code
+        == 404
+    )

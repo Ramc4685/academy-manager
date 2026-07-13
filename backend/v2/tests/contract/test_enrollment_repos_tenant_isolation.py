@@ -10,8 +10,22 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from backend.v2.contexts.enrollment.application.use_cases.absence_notices import AbsenceNotice
+from backend.v2.contexts.enrollment.domain.self_service import MakeupRequest, OccurrenceRosterEntry
+from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo import (
+    MongoAbsenceNoticeRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_makeup_request_repo import (
+    MongoMakeupRequestRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_roster_repo import (
+    MongoOccurrenceRosterRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_self_service_policy_repo import (
+    MongoSelfServicePolicyRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
@@ -91,3 +105,187 @@ async def test_student_repo_isolates_tenants(db) -> None:
     with tenant_scope("academy-a"):
         rows = await repo.by_ids(["st1"])
     assert [s.full_name for s in rows] == ["Alice-academy-a"]
+
+
+@pytest.mark.asyncio
+async def test_self_service_policy_repo_isolates_tenants(db) -> None:
+    await db["parent_self_service_policies"].insert_many(
+        [
+            {"academy_id": "academy-a", "absence_notice_min_hours": 4},
+            {"academy_id": "academy-b", "absence_notice_min_hours": 8},
+        ]
+    )
+    repo = MongoSelfServicePolicyRepository(db)
+
+    with tenant_scope("academy-a"):
+        policy_a = await repo.get_or_default()
+    assert policy_a.academy_id == "academy-a"
+    assert policy_a.absence_notice_min_hours == 4
+
+    with tenant_scope("academy-b"):
+        policy_b = await repo.get_or_default()
+    assert policy_b.academy_id == "academy-b"
+    assert policy_b.absence_notice_min_hours == 8
+
+
+@pytest.mark.asyncio
+async def test_self_service_policy_repo_save_does_not_leak_across_tenants(db) -> None:
+    repo = MongoSelfServicePolicyRepository(db)
+
+    with tenant_scope("academy-a"):
+        await repo.save(
+            (await repo.get_or_default()).model_copy(update={"absence_notice_min_hours": 99})
+        )
+
+    with tenant_scope("academy-b"):
+        policy_b = await repo.get_or_default()
+    assert policy_b.absence_notice_min_hours == 2  # default, unaffected by academy-a's save
+
+    with tenant_scope("academy-a"):
+        policy_a = await repo.get_or_default()
+    assert policy_a.absence_notice_min_hours == 99
+
+
+@pytest.mark.asyncio
+async def test_absence_notice_repo_isolates_tenants(db) -> None:
+    repo = MongoAbsenceNoticeRepository(db)
+
+    with tenant_scope("academy-a"):
+        await repo.add(
+            AbsenceNotice(
+                notice_id="notice-a",
+                academy_id="academy-a",
+                student_id="student-1",
+                occurrence_id="occ-1",
+                session_id="session-1",
+                submitted_by="parent-1",
+                submitted_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+                notice_window_met=True,
+            )
+        )
+
+    with tenant_scope("academy-b"):
+        await repo.add(
+            AbsenceNotice(
+                notice_id="notice-b",
+                academy_id="academy-b",
+                student_id="student-1",
+                occurrence_id="occ-1",
+                session_id="session-1",
+                submitted_by="parent-1",
+                submitted_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+                notice_window_met=True,
+            )
+        )
+
+    with tenant_scope("academy-a"):
+        rows_a = await repo.list_for_parent("parent-1")
+        found_a = await repo.get_for_occurrence_and_student("occ-1", "student-1")
+
+    assert [r.notice_id for r in rows_a] == ["notice-a"]
+    assert found_a is not None
+    assert found_a.notice_id == "notice-a"
+
+    with tenant_scope("academy-b"):
+        rows_b = await repo.list_for_parent("parent-1")
+
+    assert [r.notice_id for r in rows_b] == ["notice-b"]
+
+
+@pytest.mark.asyncio
+async def test_occurrence_roster_repo_isolates_tenants(db) -> None:
+    repo = MongoOccurrenceRosterRepository(db)
+
+    with tenant_scope("academy-a"):
+        await repo.add(
+            OccurrenceRosterEntry(
+                entry_id="entry-a",
+                academy_id="academy-a",
+                occurrence_id="occ-1",
+                student_id="student-1",
+                source="makeup",
+                origin_request_id="req-a",
+                created_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+            )
+        )
+
+    with tenant_scope("academy-b"):
+        await repo.add(
+            OccurrenceRosterEntry(
+                entry_id="entry-b",
+                academy_id="academy-b",
+                occurrence_id="occ-1",
+                student_id="student-1",
+                source="trial",
+                origin_request_id="req-b",
+                created_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+            )
+        )
+
+    with tenant_scope("academy-a"):
+        rows_a = await repo.list_for_occurrence("occ-1")
+        exists_a = await repo.exists("occ-1", "student-1")
+
+    assert [r.entry_id for r in rows_a] == ["entry-a"]
+    assert exists_a is True
+
+    with tenant_scope("academy-b"):
+        rows_b = await repo.list_for_occurrence("occ-1")
+
+    assert [r.entry_id for r in rows_b] == ["entry-b"]
+
+    with tenant_scope("academy-c"):
+        exists_c = await repo.exists("occ-1", "student-1")
+
+    assert exists_c is False
+
+
+@pytest.mark.asyncio
+async def test_makeup_request_repo_isolates_tenants(db) -> None:
+    repo = MongoMakeupRequestRepository(db)
+
+    with tenant_scope("academy-a"):
+        await repo.add(
+            MakeupRequest(
+                request_id="req-a",
+                academy_id="academy-a",
+                student_id="student-1",
+                parent_id="parent-1",
+                missed_occurrence_id="occ-1",
+                status="pending",
+                expires_at=datetime(2026, 8, 1, tzinfo=UTC),
+                created_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+            )
+        )
+
+    with tenant_scope("academy-b"):
+        await repo.add(
+            MakeupRequest(
+                request_id="req-b",
+                academy_id="academy-b",
+                student_id="student-1",
+                parent_id="parent-1",
+                missed_occurrence_id="occ-1",
+                status="pending",
+                expires_at=datetime(2026, 8, 1, tzinfo=UTC),
+                created_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+            )
+        )
+
+    with tenant_scope("academy-a"):
+        rows_a = await repo.list_for_parent("parent-1")
+        active_a = await repo.find_active_for_missed_occurrence("occ-1", "student-1")
+
+    assert [r.request_id for r in rows_a] == ["req-a"]
+    assert active_a is not None
+    assert active_a.request_id == "req-a"
+
+    with tenant_scope("academy-b"):
+        rows_b = await repo.list_for_parent("parent-1")
+
+    assert [r.request_id for r in rows_b] == ["req-b"]
+
+    with tenant_scope("academy-c"):
+        active_c = await repo.find_active_for_missed_occurrence("occ-1", "student-1")
+
+    assert active_c is None

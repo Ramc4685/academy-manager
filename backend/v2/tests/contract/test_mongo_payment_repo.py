@@ -426,6 +426,127 @@ async def test_generate_monthly_legacy_skip_period_returns_needs_review_detail(d
     assert detail.needs_review is True
 
 
+async def _seed_enrollment_without_billing_start(
+    db,
+    acad: str,
+    *,
+    enrollment_id: str,
+    session_id: str,
+    student_id: str,
+    parent_id: str,
+    extra_enrollment: dict | None = None,
+) -> None:
+    """Mirror the real shape of an admin-approved enrollment doc.
+
+    Neither admin_registration_review.py nor confirm_enrollment.py ever stamp
+    billing_start_at/enrolled_at/created_at onto the enrollment document, so
+    _resolve_charge_for_enrollment's billing_start is always None for these —
+    it never takes the first-month-proration branch, only the full-tuition
+    one. skip_periods is therefore the only signal that can prevent a $0-quote
+    period from being billed at full price once the enrollment exists.
+    """
+    await db["sessions"].insert_one(
+        {
+            "academy_id": acad,
+            "session_id": session_id,
+            "name": "Junior Badminton",
+            "title": "Junior Badminton",
+            "coach_id": "coach-1",
+            "location": "Court 1",
+            "start_date": "2026-06-01",
+            "end_date": "2026-06-30",
+            "days_of_week": ["Mon", "Wed"],
+            "start_time": "18:00",
+            "end_time": "19:00",
+            "monthly_price_cents": 10_000,
+            "capacity": 8,
+            "status": "active",
+        }
+    )
+    await db["students"].insert_one(
+        {
+            "academy_id": acad,
+            "student_id": student_id,
+            "parent_id": parent_id,
+            "full_name": "A Student",
+        }
+    )
+    enrollment = {
+        "academy_id": acad,
+        "enrollment_id": enrollment_id,
+        "session_id": session_id,
+        "student_id": student_id,
+        "parent_id": parent_id,
+        "status": "active",
+        "billing_type": "standard",
+    }
+    enrollment.update(extra_enrollment or {})
+    await db["enrollments"].insert_one(enrollment)
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_skips_zero_quote_period_via_skip_periods(db, acad) -> None:
+    """Regression for the zero-amount-checkout billing gap (PR #292).
+
+    A checkout quoted $0 for 2026-06 and admin approval stamped skip_periods
+    on the enrollment; generating 2026-06 must create no payment/invoice.
+    """
+    ledger_repo = MongoBillingLedgerRepository(db)
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 22, 12, 0, tzinfo=UTC),
+        ledger_repo=ledger_repo,
+    )
+    await _seed_enrollment_without_billing_start(
+        db,
+        acad,
+        enrollment_id="enroll-zero-quote",
+        session_id="sess-zero-quote",
+        student_id="student-zero-quote",
+        parent_id="parent-zero-quote",
+        extra_enrollment={"skip_periods": ["2026-06"]},
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.created == 0
+    assert result.skipped_paused == 1
+    invoice = await db["invoices"].find_one(
+        {"academy_id": acad, "enrollment_id": "enroll-zero-quote"}
+    )
+    assert invoice is None
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_without_skip_periods_charges_full_tuition(db, acad) -> None:
+    """Characterizes the bug this fix prevents: absent skip_periods, an
+    enrollment with no billing_start_at is billed the FULL monthly price
+    (not prorated, not $0) because _resolve_charge_for_enrollment has no
+    proration signal at all for these documents.
+    """
+    ledger_repo = MongoBillingLedgerRepository(db)
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 22, 12, 0, tzinfo=UTC),
+        ledger_repo=ledger_repo,
+    )
+    await _seed_enrollment_without_billing_start(
+        db,
+        acad,
+        enrollment_id="enroll-no-skip",
+        session_id="sess-no-skip",
+        student_id="student-no-skip",
+        parent_id="parent-no-skip",
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.created == 1
+    invoice = await db["invoices"].find_one({"academy_id": acad, "enrollment_id": "enroll-no-skip"})
+    assert invoice is not None
+    assert invoice["total_cents"] == 10_000
+
+
 @pytest.mark.asyncio
 async def test_generate_monthly_autopay_invoice_is_idempotent_per_enrollment_period(
     db, acad

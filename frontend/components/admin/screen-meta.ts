@@ -53,6 +53,7 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
       { href: "/admin/registrations", label: "Registrations", icon: "check", match: startsWith("/admin/registrations") },
       { href: "/admin/waitlist", label: "Waitlist", icon: "list", match: startsWith("/admin/waitlist") },
       { href: "/admin/pause-requests", label: "Pause requests", icon: "check", match: startsWith("/admin/pause-requests") },
+      { href: "/admin/requests", label: "Requests", icon: "check", match: startsWith("/admin/requests") },
     ],
   },
   {
@@ -84,6 +85,7 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
       { href: "/admin/messages", label: "Messages", icon: "msg", match: startsWith("/admin/messages") },
       { href: "/admin/waivers", label: "Waivers", icon: "check", match: startsWith("/admin/waivers") },
       { href: "/admin/settings", label: "Settings", icon: "cog", match: startsWith("/admin/settings") },
+      { href: "/admin/settings/self-service", label: "Self-service", icon: "cog", match: startsWith("/admin/settings/self-service") },
       { href: "/admin/audit-logs", label: "Audit logs", icon: "filter", match: startsWith("/admin/audit-logs") },
     ],
   },
@@ -112,6 +114,7 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin/registrations": { title: "Registrations", subtitle: "Parent applications", breadcrumbs: ["Admin", "Registrations"] },
   "/admin/waitlist": { title: "Waitlist", subtitle: "Pending offers and queues", breadcrumbs: ["Admin", "Waitlist"] },
   "/admin/pause-requests": { title: "Pause requests", subtitle: "Pending parent requests", breadcrumbs: ["Admin", "Pause requests"] },
+  "/admin/requests": { title: "Requests", subtitle: "Makeups, trials, absences, cancellations", breadcrumbs: ["Admin", "Requests"] },
   "/admin/payments": { title: "Payments", subtitle: "Transactions and refunds", breadcrumbs: ["Admin", "Money", "Payments"] },
   "/admin/billing-health": { title: "Billing Health", subtitle: "Reconciliation, failed payments, webhook recovery", breadcrumbs: ["Admin", "Money", "Billing Health"] },
   "/admin/dues": { title: "Dues follow-up", subtitle: "Outstanding balances", breadcrumbs: ["Admin", "Money", "Dues"] },
@@ -120,9 +123,13 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin/coach-payslip": { title: "Coach payslip", subtitle: "Derived earnings", breadcrumbs: ["Admin", "Money", "Coach payslip"] },
   "/admin/session-economics": { title: "Session economics", subtitle: "Revenue, cost, and profit by session", breadcrumbs: ["Admin", "Money", "Session economics"] },
   "/admin/reports": { title: "Reports", subtitle: "Exports and summaries", breadcrumbs: ["Admin", "Money", "Reports"] },
+  "/admin/reports/refunds": { title: "Refunds & credits", subtitle: "Money returned and account credits by month", breadcrumbs: ["Admin", "Money", "Reports", "Refunds & credits"] },
+  "/admin/reports/revenue-by-category": { title: "Revenue by category", subtitle: "Collected revenue split by program and fee category", breadcrumbs: ["Admin", "Money", "Reports", "Revenue by category"] },
+  "/admin/reports/deposit-slip": { title: "Deposit slip", subtitle: "Payments received by day and method for bank reconciliation", breadcrumbs: ["Admin", "Money", "Reports", "Deposit slip"] },
   "/admin/messages": { title: "Messages", subtitle: "Inbox and broadcasts", breadcrumbs: ["Admin", "Comms", "Messages"] },
   "/admin/waivers": { title: "Waivers", subtitle: "Student signatures and expiry", breadcrumbs: ["Admin", "Comms", "Waivers"] },
   "/admin/settings": { title: "Settings", subtitle: "Academy preferences", breadcrumbs: ["Admin", "Settings"] },
+  "/admin/settings/self-service": { title: "Self-service policy", subtitle: "Absence, makeup, and cancellation rules", breadcrumbs: ["Admin", "Settings", "Self-service"] },
   "/admin/audit-logs": { title: "Audit logs", subtitle: "Recent admin actions", breadcrumbs: ["Admin", "Audit logs"] },
 };
 

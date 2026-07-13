@@ -126,7 +126,7 @@ def test_admin_report_export_allows_known_reports() -> None:
     assert resp.status_code == 200, resp.text
     assert resp.headers["content-type"] == "text/csv; charset=utf-8"
     assert resp.text == "header\nvalue\n"
-    export.assert_awaited_once_with("attendance")
+    export.assert_awaited_once_with("attendance", None)
 
 
 def test_admin_report_export_rejects_unknown_report_without_calling_use_case() -> None:

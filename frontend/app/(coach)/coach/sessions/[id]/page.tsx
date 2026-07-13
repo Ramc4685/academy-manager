@@ -13,6 +13,7 @@ import {
   type AttendanceStatus,
   type CoachRosterEntry,
 } from "@/lib/api/coach";
+import { Chip } from "@/components/ds/chip";
 import { queryKeys } from "@/lib/query/keys";
 import { useOnline } from "@/lib/pwa/online";
 import { formatSessionTimeRange } from "@/lib/time/session-time";
@@ -387,12 +388,14 @@ function RosterRow({
       style={{ borderColor: "var(--rally-line)" }}
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p
-          className="min-w-0 flex-1 text-sm font-medium"
-          style={{ color: "var(--rally-ink)" }}
-        >
-          {student.full_name}
-        </p>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+          <p className="text-sm font-medium" style={{ color: "var(--rally-ink)" }}>
+            {student.full_name}
+          </p>
+          {student.expected_absence && <Chip variant="pending" label="EXPECTED ABSENCE" />}
+          {student.entry_source === "makeup" && <Chip variant="makeup" label="MAKE-UP" />}
+          {student.entry_source === "trial" && <Chip variant="waitlist" label="TRIAL" />}
+        </div>
         <div className="grid grid-cols-2 gap-1 min-[360px]:grid-cols-4 sm:flex sm:shrink-0 sm:flex-wrap sm:justify-end" role="group">
           <Link
             href={passportHref as Parameters<typeof Link>[0]["href"]}
