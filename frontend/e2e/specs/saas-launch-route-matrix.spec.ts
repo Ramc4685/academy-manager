@@ -245,6 +245,11 @@ async function stubParentLaunchBff(page: Page): Promise<void> {
 test.describe("Wave 12 SaaS launch route matrix scaffold", () => {
   for (const route of ADMIN_ROUTE_MATRIX) {
     test(`admin route mounts: ${route.label}`, async ({ page }) => {
+      // Quarantined: flaky when run deep in this suite (passes in isolation,
+      // times out ~45-50s only after ~165+ preceding tests in the same
+      // worker session — see #300). Not reproducible standalone; not a
+      // known bug in the reports page itself.
+      test.fixme(route.label === "reports", "Flaky under sustained suite load — tracked in #300");
       test.slow();
       const guard = installTenantGuard(page);
       const errors = collectConsoleErrors(page);
