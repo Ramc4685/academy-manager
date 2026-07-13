@@ -1,15 +1,15 @@
-# test-e2e-fix-flaky-admin-reports-route-matrix
+# Fix flaky admin reports route matrix
 
 PR: #301
 
 ## What changed
-- add typed empty responses for the reports page payment feed, failed-payment attempts, and projected-income requests
-- wait for representative async empty states so the route test cannot pass before a malformed fixture crashes the page
-- record the sustained-suite reproduction and verification evidence
+
+Corrected the network-stubbed admin reports E2E coverage so asynchronous report feeds use their real response shapes and cannot crash after the initial mount assertion passes.
 
 ## Deploy notes
-No migration detected in the diff. Confirm no manual env var or manual step is needed before merge.
+
+none
 
 ## Risk / rollback
-_Auto-generated stub — author: fill in what breaks if this is wrong and how
-to roll back before merge._ Revert the merge commit if this regresses.
+
+Test-only change. If CI behavior regresses, revert PR #301 to restore the previous route-matrix fixture and assertions.
