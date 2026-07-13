@@ -142,6 +142,12 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
   await page.route("**/api/v2/admin/payments*", (route) =>
     fulfillJson(route, { payments: [] })
   );
+  await page.route("**/api/v2/admin/payments/feed*", (route) =>
+    fulfillJson(route, { payments: [] })
+  );
+  await page.route("**/api/v2/admin/billing/failed-payment-attempts", (route) =>
+    fulfillJson(route, { rows: [] })
+  );
   await page.route("**/api/v2/admin/billing/webhooks*", (route) =>
     fulfillJson(route, { events: [] })
   );
@@ -159,6 +165,19 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
   );
   await page.route("**/api/v2/admin/reports/dashboard*", (route) =>
     fulfillJson(route, REPORTS_DASHBOARD_EMPTY)
+  );
+  await page.route("**/api/v2/admin/reports/projected-income*", (route) =>
+    fulfillJson(route, {
+      period: "2026-06",
+      total_cents: 0,
+      autopay_cents: 0,
+      manual_cents: 0,
+      enrollment_count: 0,
+      autopay_enrollment_count: 0,
+      manual_enrollment_count: 0,
+      by_session: [],
+      empty: true,
+    })
   );
   await page.route("**/api/v2/admin/messages*", (route) =>
     fulfillJson(route, { messages: [] })
@@ -253,6 +272,14 @@ test.describe("Wave 12 SaaS launch route matrix scaffold", () => {
       await page.goto(route.href, { waitUntil: "commit" });
 
       await expect(page.getByTestId(route.testId)).toBeVisible({ timeout: 45_000 });
+      if (route.label === "reports") {
+        // Wait for the async report feeds as well as the initial page shell so
+        // malformed stubs cannot crash just after the mount assertion passes.
+        await expect(page.getByText("No payments received yet.")).toBeVisible();
+        await expect(
+          page.getByText("No active enrollments with a monthly fee yet.")
+        ).toBeVisible();
+      }
       expect(guard.v2Requests.length).toBeGreaterThan(0);
       guard.assertNoLegacyApiCalls();
       expect(errors, `Console errors on ${route.href}: ${errors.join("\n")}`).toEqual([]);
