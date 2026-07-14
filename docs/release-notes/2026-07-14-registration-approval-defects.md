@@ -1,6 +1,6 @@
 # Registration approval defects
 
-PR: pending
+PR: #302
 
 ## What changed
 
