@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from pymongo.errors import DuplicateKeyError
+
 from backend.v2.contexts.enrollment.domain.models import Enrollment
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -14,6 +16,23 @@ class MongoEnrollmentWriter(TenantScopedRepository):
     async def create(self, enrollment: Enrollment) -> None:
         doc = enrollment.model_dump(mode="python")
         await self._insert_one({k: v for k, v in doc.items() if k != "academy_id"})
+
+    async def create_if_absent(self, enrollment: Enrollment) -> bool:
+        """Atomically create a deterministic enrollment once.
+
+        Registration approval can be submitted concurrently. The caller uses
+        the boolean to release any duplicate seat reservation.
+        """
+        doc = enrollment.model_dump(mode="python")
+        try:
+            result = await self._update_one(
+                {"enrollment_id": enrollment.enrollment_id},
+                {"$setOnInsert": {k: v for k, v in doc.items() if k != "academy_id"}},
+                upsert=True,
+            )
+        except DuplicateKeyError:
+            return False
+        return result.upserted_id is not None
 
     async def update_status(self, enrollment_id: str, status: str) -> None:
         await self._update_one({"enrollment_id": enrollment_id}, {"$set": {"status": status}})
@@ -129,6 +148,15 @@ class MongoEnrollmentWriter(TenantScopedRepository):
             },
         )
 
+    async def set_enrolled_at_if_missing(self, enrollment_id: str, enrolled_at: datetime) -> None:
+        await self._update_one(
+            {
+                "enrollment_id": enrollment_id,
+                "$or": [{"enrolled_at": {"$exists": False}}, {"enrolled_at": None}],
+            },
+            {"$set": {"enrolled_at": enrolled_at, "updated_at": datetime.now(UTC)}},
+        )
+
     @staticmethod
     def _to_domain(doc: dict[str, object]) -> Enrollment:
         return Enrollment(
@@ -137,6 +165,10 @@ class MongoEnrollmentWriter(TenantScopedRepository):
             session_id=str(doc["session_id"]),
             student_id=str(doc["student_id"]),
             status=doc.get("status", "active"),  # type: ignore[arg-type]
+            enrolled_at=doc.get("enrolled_at"),  # type: ignore[arg-type]
+            created_at=doc.get("created_at"),  # type: ignore[arg-type]
+            registration_application_id=doc.get("registration_application_id"),  # type: ignore[arg-type]
+            registration_student_lock=doc.get("registration_student_lock"),  # type: ignore[arg-type]
             cancelled_by=doc.get("cancelled_by"),  # type: ignore[arg-type]
             cancellation_reason=doc.get("cancellation_reason"),  # type: ignore[arg-type]
             cancellation_policy_snapshot=doc.get("cancellation_policy_snapshot"),  # type: ignore[arg-type]

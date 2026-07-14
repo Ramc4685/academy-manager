@@ -54,6 +54,34 @@ async function stubParentPayments(page: Parameters<typeof stubMe>[0]) {
 }
 
 test.describe("QA defect regressions", () => {
+  test("child registration confirmation does not claim payment was received", async ({
+    page,
+  }) => {
+    await stubParentShell(page);
+    await page.route(
+      "**/api/v2/parent/onboarding/app-qa-child/status",
+      (route) =>
+        fulfillJson(route, {
+          ...draftApplication,
+          application_id: "app-qa-child",
+          status: "PENDING_APPROVAL",
+          child_profile: {
+            ...draftApplication.child_profile,
+            first_name: "Kavan",
+            last_name: "Chandran",
+          },
+        }),
+    );
+
+    await page.goto("/parent/checkout/return?application_id=app-qa-child");
+
+    await expect(page.getByRole("heading", { name: "Child added" })).toBeVisible();
+    await expect(page.getByTestId("status-text")).toHaveText(
+      "Kavan has been added. An admin will confirm the enrollment shortly.",
+    );
+    await expect(page.getByText("Payment received", { exact: true })).toHaveCount(0);
+  });
+
   test("parent onboarding child step uses stable date and skill controls", async ({
     page,
   }) => {
@@ -410,7 +438,7 @@ test.describe("QA defect regressions", () => {
     const meResponse = page.waitForResponse((response) =>
       response.url().endsWith("/api/v2/me") && response.status() === 200,
     );
-    await page.goto("/admin");
+    await page.goto("/admin", { waitUntil: "domcontentloaded" });
     await meResponse;
 
     await expect(page).toHaveURL(/\/parent\/payments\?access_denied=admin/);
@@ -429,7 +457,7 @@ test.describe("QA defect regressions", () => {
     const meResponse = page.waitForResponse((response) =>
       response.url().endsWith("/api/v2/me") && response.status() === 200,
     );
-    await page.goto("/coach/sessions");
+    await page.goto("/coach/sessions", { waitUntil: "domcontentloaded" });
     await meResponse;
 
     await expect(page).toHaveURL(/\/parent\/payments\?access_denied=coach/, {

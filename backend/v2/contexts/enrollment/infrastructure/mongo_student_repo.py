@@ -43,7 +43,151 @@ class MongoStudentRepository(TenantScopedRepository):
             academy_id=str(doc["academy_id"]),
             parent_id=str(doc["parent_id"]),
             full_name=str(doc["full_name"]),
+            date_of_birth=(str(doc["date_of_birth"]) if doc.get("date_of_birth") else None),
         )
+
+    @staticmethod
+    def _registration_name(value: object) -> str:
+        return " ".join(str(value).casefold().split())
+
+    async def find_registration_student(
+        self,
+        *,
+        parent_id: str,
+        full_name: str,
+        date_of_birth: str | None,
+    ) -> str | None:
+        """Resolve a unique child without trusting a client-supplied id."""
+        candidates = await self._registration_candidates(parent_id=parent_id, full_name=full_name)
+        exact = [
+            doc
+            for doc in candidates
+            if str(doc.get("date_of_birth") or "").strip() == (date_of_birth or "")
+        ]
+        if date_of_birth:
+            return self._summary_id(exact[0]) if len(exact) == 1 else None
+        # Missing DOB is safe only when one same-name legacy record also lacks
+        # DOB. Multiple siblings or a dated record require manual review.
+        undated = [doc for doc in candidates if not doc.get("date_of_birth")]
+        return self._summary_id(undated[0]) if len(candidates) == len(undated) == 1 else None
+
+    async def has_ambiguous_registration_match(
+        self,
+        *,
+        parent_id: str,
+        full_name: str,
+        date_of_birth: str | None,
+    ) -> bool:
+        candidates = await self._registration_candidates(parent_id=parent_id, full_name=full_name)
+        if not candidates:
+            return False
+        if date_of_birth:
+            exact = [
+                doc
+                for doc in candidates
+                if str(doc.get("date_of_birth") or "").strip() == date_of_birth
+            ]
+            # A unique exact DOB is safe. With no exact match, fully dated
+            # candidates are known to be different children; undated legacy
+            # candidates remain ambiguous because they cannot be disproved.
+            return len(exact) > 1 or any(not doc.get("date_of_birth") for doc in candidates)
+        return len(candidates) != 1 or any(doc.get("date_of_birth") for doc in candidates)
+
+    async def _registration_candidates(
+        self, *, parent_id: str, full_name: str
+    ) -> list[dict[str, object]]:
+        expected_name = self._registration_name(full_name)
+        cursor = self._find_many({"$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}]})
+        candidates: list[dict[str, object]] = []
+        async for doc in cursor:
+            stored_name = doc.get("full_name") or " ".join(
+                str(doc.get(key) or "") for key in ("first_name", "last_name")
+            )
+            if self._registration_name(stored_name) != expected_name:
+                continue
+            candidates.append(doc)
+        return candidates
+
+    async def claim_registration(
+        self,
+        student_id: str,
+        application_id: str,
+        *,
+        claim_token: str,
+        claimed_at: datetime,
+        stale_before: datetime,
+    ) -> bool:
+        doc = await self._find_one_and_update(
+            {
+                "$and": [
+                    self._id_filter(student_id),
+                    {
+                        "$or": [
+                            {"registration_application_id": {"$exists": False}},
+                            {"registration_application_id": None},
+                            {
+                                "registration_application_id": application_id,
+                                "registration_claim_token": claim_token,
+                            },
+                            {"registration_claimed_at": {"$lte": stale_before}},
+                            {"registration_claimed_at": {"$exists": False}},
+                        ]
+                    },
+                ],
+            },
+            {
+                "$set": {
+                    "registration_application_id": application_id,
+                    "registration_claim_token": claim_token,
+                    "registration_claimed_at": claimed_at,
+                }
+            },
+        )
+        return doc is not None
+
+    async def release_registration(
+        self,
+        student_id: str,
+        application_id: str,
+        *,
+        claim_token: str,
+    ) -> None:
+        await self._update_one(
+            {
+                "$and": [
+                    self._id_filter(student_id),
+                    {
+                        "registration_application_id": application_id,
+                        "registration_claim_token": claim_token,
+                    },
+                ]
+            },
+            {
+                "$unset": {
+                    "registration_application_id": "",
+                    "registration_claimed_at": "",
+                    "registration_claim_token": "",
+                }
+            },
+        )
+
+    async def has_active_enrollment(
+        self,
+        student_id: str,
+        *,
+        exclude_enrollment_id: str | None = None,
+    ) -> bool:
+        filter_: dict[str, object] = {
+            "student_id": student_id,
+            "status": {"$in": ["active", "paused"]},
+        }
+        if exclude_enrollment_id is not None:
+            filter_["enrollment_id"] = {"$ne": exclude_enrollment_id}
+        enrollment = await self._find_one_in_collection(
+            "enrollments",
+            filter_,
+        )
+        return enrollment is not None
 
     async def by_ids(self, student_ids: list[str]) -> list[Student]:
         if not student_ids:

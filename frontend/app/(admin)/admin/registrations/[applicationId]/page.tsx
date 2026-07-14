@@ -35,8 +35,10 @@ export default function AdminRegistrationDetailPage() {
     if (detail) {
       queryClient.setQueryData(queryKeys.admin.registrationDetail(applicationId), detail);
     }
-    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.registrations() });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.registrationDetail(applicationId) });
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.admin.registrations(),
+      exact: true,
+    });
   };
 
   const approveMutation = useMutation({
@@ -84,6 +86,15 @@ export default function AdminRegistrationDetailPage() {
           <LaneHeader index="01" title="Application review" />
           <RegistrationSummary registration={query.data} />
 
+          {query.data.status === "MANUAL_REVIEW" && (
+            <Card p={20} style={{ borderColor: "#facc15", background: "#fefce8" }}>
+              <p role="alert" className="text-sm font-semibold text-amber-900">
+                This child matches more than one legacy record. Resolve the child record with the
+                parent before approving, waitlisting, or rejecting this application.
+              </p>
+            </Card>
+          )}
+
           <LaneHeader index="02" title="Decision" />
           <Card p={20}>
             <div className="grid gap-4 lg:grid-cols-3">
@@ -94,7 +105,10 @@ export default function AdminRegistrationDetailPage() {
                 textareaValue={overrideReason}
                 onTextareaChange={setOverrideReason}
                 buttonLabel={approveMutation.isPending ? "Approving..." : "Approve"}
-                disabled={approveMutation.isPending || query.data.status !== "PENDING_APPROVAL"}
+                disabled={
+                  approveMutation.isPending ||
+                  !["PENDING_APPROVAL", "APPROVING"].includes(query.data.status)
+                }
                 onClick={() => {
                   setError(null);
                   approveMutation.mutate();
@@ -107,7 +121,10 @@ export default function AdminRegistrationDetailPage() {
                 textareaValue={waitlistReason}
                 onTextareaChange={setWaitlistReason}
                 buttonLabel={waitlistMutation.isPending ? "Saving..." : "Waitlist"}
-                disabled={waitlistMutation.isPending || query.data.status !== "PENDING_APPROVAL"}
+                disabled={
+                  waitlistMutation.isPending ||
+                  !["PENDING_APPROVAL", "WAITLISTING"].includes(query.data.status)
+                }
                 onClick={() => {
                   setError(null);
                   waitlistMutation.mutate();
@@ -120,7 +137,10 @@ export default function AdminRegistrationDetailPage() {
                 textareaValue={rejectReason}
                 onTextareaChange={setRejectReason}
                 buttonLabel={rejectMutation.isPending ? "Rejecting..." : "Reject"}
-                disabled={rejectMutation.isPending || query.data.status !== "PENDING_APPROVAL"}
+                disabled={
+                  rejectMutation.isPending ||
+                  !["PENDING_APPROVAL", "DECLINING"].includes(query.data.status)
+                }
                 onClick={() => {
                   setError(null);
                   rejectMutation.mutate();

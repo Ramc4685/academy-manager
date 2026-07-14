@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from backend.v2.contexts.onboarding.domain.models import (
     Application,
     ChildProfile,
@@ -35,6 +37,8 @@ class MongoApplicationRepository(TenantScopedRepository):
             decision_reason=doc.get("decision_reason"),  # type: ignore[arg-type]
             decided_by=doc.get("decided_by"),  # type: ignore[arg-type]
             decided_at=doc.get("decided_at"),  # type: ignore[arg-type]
+            review_claimed_at=doc.get("review_claimed_at"),  # type: ignore[arg-type]
+            review_claim_token=doc.get("review_claim_token"),  # type: ignore[arg-type]
             zero_quote_period=doc.get("zero_quote_period"),  # type: ignore[arg-type]
             expires_at=doc["expires_at"],  # type: ignore[arg-type]
             created_at=doc["created_at"],  # type: ignore[arg-type]
@@ -73,3 +77,88 @@ class MongoApplicationRepository(TenantScopedRepository):
             sort=[("updated_at", -1), ("created_at", -1)],
         )
         return [self._to_domain(doc) async for doc in cursor]
+
+    async def claim_for_review(
+        self,
+        application_id: str,
+        processing_status: str,
+        *,
+        claim_token: str,
+        updated_at: datetime,
+        stale_before: datetime,
+    ) -> Application | None:
+        """Atomically grant one admin decision worker ownership of an application."""
+        doc = await self._find_one_and_update(
+            {
+                "application_id": application_id,
+                "$or": [
+                    {"status": "PENDING_APPROVAL"},
+                    {
+                        "status": processing_status,
+                        "$or": [
+                            {"review_claimed_at": {"$lte": stale_before}},
+                            {"review_claimed_at": {"$exists": False}},
+                            {"review_claimed_at": None},
+                        ],
+                    },
+                ],
+            },
+            {
+                "$set": {
+                    "status": processing_status,
+                    "review_claimed_at": updated_at,
+                    "review_claim_token": claim_token,
+                    "updated_at": updated_at,
+                }
+            },
+        )
+        return self._to_domain(doc) if doc else None
+
+    async def release_review(
+        self,
+        application_id: str,
+        processing_status: str,
+        *,
+        claim_token: str,
+        updated_at: datetime,
+    ) -> None:
+        await self._update_one(
+            {
+                "application_id": application_id,
+                "status": processing_status,
+                "review_claim_token": claim_token,
+            },
+            {
+                "$set": {"status": "PENDING_APPROVAL", "updated_at": updated_at},
+                "$unset": {"review_claimed_at": "", "review_claim_token": ""},
+            },
+        )
+
+    async def renew_review_claim(
+        self, application_id: str, claim_token: str, *, claimed_at: datetime
+    ) -> bool:
+        result = await self._update_one(
+            {
+                "application_id": application_id,
+                "status": {"$in": ["APPROVING", "WAITLISTING", "DECLINING"]},
+                "review_claim_token": claim_token,
+            },
+            {"$set": {"review_claimed_at": claimed_at, "updated_at": claimed_at}},
+        )
+        return result.matched_count == 1
+
+    async def complete_review(self, app: Application, *, claim_token: str) -> bool:
+        doc = app.model_dump(mode="python")
+        values = {
+            key: value
+            for key, value in doc.items()
+            if key not in {"academy_id", "review_claim_token", "review_claimed_at"}
+        }
+        result = await self._update_one(
+            {"application_id": app.application_id, "review_claim_token": claim_token},
+            {
+                "$set": values,
+                "$unset": {"review_claim_token": "", "review_claimed_at": ""},
+            },
+        )
+        return result.matched_count == 1

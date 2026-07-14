@@ -6,7 +6,7 @@ nothing when documents exist only under another.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -105,6 +105,199 @@ async def test_student_repo_isolates_tenants(db) -> None:
     with tenant_scope("academy-a"):
         rows = await repo.by_ids(["st1"])
     assert [s.full_name for s in rows] == ["Alice-academy-a"]
+
+
+@pytest.mark.asyncio
+async def test_registration_conflict_lookup_isolates_tenants(db) -> None:
+    await db["students"].insert_many(
+        [
+            {
+                "student_id": "student-a",
+                "academy_id": "academy-a",
+                "parent_id": "parent-1",
+                "full_name": "Sam Student",
+                "date_of_birth": "2015-05-10",
+            },
+            {
+                "student_id": "student-b",
+                "academy_id": "academy-b",
+                "parent_id": "parent-1",
+                "full_name": "Sam Student",
+                "date_of_birth": "2015-05-10",
+            },
+        ]
+    )
+    await db["enrollments"].insert_many(
+        [
+            {
+                "enrollment_id": "enrollment-a",
+                "academy_id": "academy-a",
+                "session_id": "session-a",
+                "student_id": "student-a",
+                "status": "active",
+            },
+            {
+                "enrollment_id": "enrollment-b",
+                "academy_id": "academy-b",
+                "session_id": "session-b",
+                "student_id": "student-b",
+                "status": "active",
+            },
+        ]
+    )
+    repo = MongoStudentRepository(db)
+
+    with tenant_scope("academy-a"):
+        student_id = await repo.find_registration_student(
+            parent_id="parent-1",
+            full_name=" sam   student ",
+            date_of_birth="2015-05-10",
+        )
+        active = await repo.has_active_enrollment(student_id or "")
+
+    assert student_id == "student-a"
+    assert active is True
+
+
+@pytest.mark.asyncio
+async def test_registration_lookup_does_not_guess_between_legacy_same_name_children(db) -> None:
+    await db["students"].insert_many(
+        [
+            {
+                "student_id": student_id,
+                "academy_id": "academy-a",
+                "parent_id": "parent-1",
+                "full_name": "Sam Student",
+            }
+            for student_id in ("student-1", "student-2")
+        ]
+    )
+    repo = MongoStudentRepository(db)
+
+    with tenant_scope("academy-a"):
+        student_id = await repo.find_registration_student(
+            parent_id="parent-1", full_name="Sam Student", date_of_birth=None
+        )
+        ambiguous = await repo.has_ambiguous_registration_match(
+            parent_id="parent-1", full_name="Sam Student", date_of_birth=None
+        )
+
+    assert student_id is None
+    assert ambiguous is True
+
+
+@pytest.mark.asyncio
+async def test_registration_lookup_allows_new_child_when_known_dobs_differ(db) -> None:
+    await db["students"].insert_one(
+        {
+            "student_id": "student-1",
+            "academy_id": "academy-a",
+            "parent_id": "parent-1",
+            "full_name": "Sam Student",
+            "date_of_birth": "2014-01-02",
+        }
+    )
+    repo = MongoStudentRepository(db)
+
+    with tenant_scope("academy-a"):
+        student_id = await repo.find_registration_student(
+            parent_id="parent-1",
+            full_name="Sam Student",
+            date_of_birth="2016-03-04",
+        )
+        ambiguous = await repo.has_ambiguous_registration_match(
+            parent_id="parent-1",
+            full_name="Sam Student",
+            date_of_birth="2016-03-04",
+        )
+
+    assert student_id is None
+    assert ambiguous is False
+
+
+@pytest.mark.asyncio
+async def test_registration_claim_is_atomic_and_tenant_scoped(db) -> None:
+    await db["students"].insert_many(
+        [
+            {
+                "student_id": "student-1",
+                "academy_id": academy_id,
+                "parent_id": "parent-1",
+                "full_name": "Sam Student",
+            }
+            for academy_id in ("academy-a", "academy-b")
+        ]
+    )
+    repo = MongoStudentRepository(db)
+
+    with tenant_scope("academy-a"):
+        first = await repo.claim_registration(
+            "student-1",
+            "app-a",
+            claim_token="token-a",
+            claimed_at=datetime(2026, 7, 14, tzinfo=UTC),
+            stale_before=datetime(2026, 7, 13, tzinfo=UTC),
+        )
+        second = await repo.claim_registration(
+            "student-1",
+            "app-b",
+            claim_token="token-b",
+            claimed_at=datetime(2026, 7, 14, tzinfo=UTC),
+            stale_before=datetime(2026, 7, 13, tzinfo=UTC),
+        )
+    with tenant_scope("academy-b"):
+        other_tenant = await repo.claim_registration(
+            "student-1",
+            "app-b",
+            claim_token="token-b",
+            claimed_at=datetime(2026, 7, 14, tzinfo=UTC),
+            stale_before=datetime(2026, 7, 13, tzinfo=UTC),
+        )
+
+    assert first is True
+    assert second is False
+    assert other_tenant is True
+
+
+@pytest.mark.asyncio
+async def test_stale_student_registration_claim_can_be_recovered(db, acad) -> None:
+    old = datetime(2026, 7, 14, 8, 0, tzinfo=UTC)
+    now = datetime(2026, 7, 14, 9, 0, tzinfo=UTC)
+    await db["students"].insert_one(
+        {
+            "student_id": "student-stale",
+            "academy_id": acad,
+            "parent_id": "parent-1",
+            "full_name": "Sam Student",
+            "registration_application_id": "abandoned-app",
+            "registration_claimed_at": old,
+            "registration_claim_token": "expired-token",
+        }
+    )
+    repo = MongoStudentRepository(db)
+
+    recovered = await repo.claim_registration(
+        "student-stale",
+        "retry-app",
+        claim_token="retry-token",
+        claimed_at=now,
+        stale_before=now - timedelta(minutes=15),
+    )
+
+    assert recovered is True
+    stored = await db["students"].find_one({"academy_id": acad, "student_id": "student-stale"})
+    assert stored is not None
+    assert stored["registration_application_id"] == "retry-app"
+    await repo.release_registration(
+        "student-stale",
+        "abandoned-app",
+        claim_token="expired-token",
+    )
+    stored_after_stale_release = await db["students"].find_one(
+        {"academy_id": acad, "student_id": "student-stale"}
+    )
+    assert stored_after_stale_release is not None
+    assert stored_after_stale_release["registration_application_id"] == "retry-app"
 
 
 @pytest.mark.asyncio

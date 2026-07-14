@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from pydantic import BaseModel, Field
@@ -32,7 +33,11 @@ from backend.v2.contexts.onboarding.domain.errors import (
     WaiverNotAccepted,
 )
 from backend.v2.contexts.onboarding.domain.models import Application, WaiverSignature
-from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.ids import new_ulid, stable_ulid
+from backend.v2.shared.tenancy import current_academy_id
+
+logger = logging.getLogger(__name__)
+REVIEW_CLAIM_TTL = timedelta(minutes=15)
 
 
 class RegistrationWaiverTemplateQuery(Protocol):
@@ -41,6 +46,45 @@ class RegistrationWaiverTemplateQuery(Protocol):
 
 class RegistrationWaiverSignatureWriter(Protocol):
     async def save_signature(self, signature: WaiverSignature) -> None: ...
+
+
+class StudentRegistrationQuery(Protocol):
+    async def find_registration_student(
+        self,
+        *,
+        parent_id: str,
+        full_name: str,
+        date_of_birth: str | None,
+    ) -> str | None: ...
+
+    async def has_ambiguous_registration_match(
+        self,
+        *,
+        parent_id: str,
+        full_name: str,
+        date_of_birth: str | None,
+    ) -> bool: ...
+
+    async def has_active_enrollment(
+        self,
+        student_id: str,
+        *,
+        exclude_enrollment_id: str | None = None,
+    ) -> bool: ...
+
+    async def claim_registration(
+        self,
+        student_id: str,
+        application_id: str,
+        *,
+        claim_token: str,
+        claimed_at: datetime,
+        stale_before: datetime,
+    ) -> bool: ...
+
+    async def release_registration(
+        self, student_id: str, application_id: str, *, claim_token: str
+    ) -> None: ...
 
 
 class TrialConversionLinker(Protocol):
@@ -121,11 +165,12 @@ class AdminRegistrationReview:
         students: StudentWriter,
         enrollments: EnrollmentWriter,
         waitlist: WaitlistRepository,
-        academy_id: str,
+        academy_id: str | None,
         waiver_templates: RegistrationWaiverTemplateQuery | None = None,
         waiver_signatures: RegistrationWaiverSignatureWriter | None = None,
         enrollment_events: EnrollmentEventRepository | None = None,
         trial_conversion: TrialConversionLinker | None = None,
+        student_registrations: StudentRegistrationQuery | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._apps = apps
@@ -138,11 +183,27 @@ class AdminRegistrationReview:
         self._waiver_signatures = waiver_signatures
         self._enrollment_events = enrollment_events
         self._trial_conversion = trial_conversion
+        self._student_registrations = student_registrations
         self._now = clock
 
     async def list_pending(self) -> list[AdminRegistrationRow]:
-        apps = await self._apps.list_by_status(["PENDING_APPROVAL"])
-        return [await self._row(app) for app in apps]
+        apps = await self._apps.list_by_status(
+            ["PENDING_APPROVAL", "APPROVING", "WAITLISTING", "DECLINING"]
+        )
+        rows: list[AdminRegistrationRow] = []
+        for app in apps:
+            if app.status != "PENDING_APPROVAL" and not self._review_claim_is_stale(app):
+                continue
+            try:
+                existing_student_id = await self._active_existing_student_id(app)
+            except ApplicationNotEditable:
+                # Keep ambiguous legacy identities visible to academy staff
+                # without guessing which child record should be changed.
+                rows.append((await self._row(app)).model_copy(update={"status": "MANUAL_REVIEW"}))
+                continue
+            if existing_student_id is None:
+                rows.append(await self._row(app))
+        return rows
 
     async def detail(self, application_id: str) -> AdminRegistrationDetail:
         app = await self._get(application_id)
@@ -152,80 +213,147 @@ class AdminRegistrationReview:
         app = await self._get(command.application_id)
         if app.status == "APPROVED" and app.enrollment_id:
             return await self._detail(app)
-        self._assert_reviewable(app)
+        self._assert_reviewable(app, "APPROVING")
         session_id = command.session_id or app.selected_session_id
         if not session_id:
             raise IncompleteApplication("Registration approval requires a session target")
+        if command.session_id and command.session_id != app.selected_session_id:
+            raise ApplicationNotEditable(
+                "Registration session changed; update the parent application before approval"
+            )
         await self._assert_waiver_ready(app, command.waiver_override_reason)
 
         now = self._now()
-        student_id = app.student_id or str(new_ulid())
-        existing = await self._enrollments.find_for_session_student(session_id, student_id)
-        session = await self._sessions.get(session_id)
-        if session is None:
-            raise IncompleteApplication("Selected session is not available")
-        if existing is None:
-            reserved = await self._sessions.try_reserve_seat(session_id)
-            if not reserved:
-                raise ApplicationNotEditable("Selected session is full; waitlist instead")
-
-        full_name = self._student_name(app)
-        await self._students.upsert(
-            Student(
-                student_id=student_id,
-                academy_id=self._academy_id,
-                parent_id=app.parent_user_id,
-                full_name=full_name,
+        app = await self._claim_review(app, "APPROVING", now)
+        student_id: str | None = None
+        try:
+            student_id = await self._available_student_id(
+                app,
+                session_id=session_id,
+                allow_current_enrollment=True,
             )
-        )
-        enrollment = Enrollment(
-            enrollment_id=app.enrollment_id or str(new_ulid()),
-            academy_id=self._academy_id,
-            session_id=session_id,
-            student_id=student_id,
-            status="active",
-        )
-        if existing is None:
-            await self._enrollments.create(enrollment)
-        else:
-            enrollment = existing
-        if app.zero_quote_period:
-            # Checkout skipped Stripe because the quote was $0 for this period;
-            # enrollment docs carry no billing_start_at/created_at, so without
-            # this the monthly generator would charge full tuition for it.
-            await self._enrollments.add_skip_period(enrollment.enrollment_id, app.zero_quote_period)
-        effective_at = command.effective_at or now
-        await self._record_event(
-            event_type="created",
-            actor_id=command.actor_id,
-            enrollment_id=enrollment.enrollment_id,
-            session_id=session_id,
-            student_id=student_id,
-            reason=command.waiver_override_reason or "registration_approved",
-            effective_at=effective_at,
-        )
-        await self._record_registration_waiver_signature(app, student_id)
-        decided = app.model_copy(
-            update={
-                "status": "APPROVED",
-                "selected_session_id": session_id,
-                "student_id": student_id,
-                "enrollment_id": enrollment.enrollment_id,
-                "decision_reason": command.waiver_override_reason,
-                "decided_by": command.actor_id,
-                "decided_at": now,
-                "updated_at": now,
-            }
-        )
-        await self._apps.save(decided)
-        await self._link_trial_conversion(decided)
-        return await self._detail(decided)
+            session = await self._sessions.get(session_id)
+            if session is None:
+                raise IncompleteApplication("Selected session is not available")
+
+            full_name = self._student_name(app)
+            await self._students.upsert(
+                Student(
+                    student_id=student_id,
+                    academy_id=self._request_academy_id(),
+                    parent_id=app.parent_user_id,
+                    full_name=full_name,
+                    date_of_birth=app.child_profile.date_of_birth or None,
+                )
+            )
+            await self._claim_student_registration(student_id, app)
+            await self._renew_review_claim(app)
+            expected_enrollment_id = app.enrollment_id or self._registration_enrollment_id(
+                app.application_id, student_id, session_id
+            )
+            await self._assert_no_other_active_enrollment(student_id, expected_enrollment_id)
+            existing = await self._enrollments.find_for_session_student(session_id, student_id)
+            if existing is not None and (
+                existing.enrollment_id != expected_enrollment_id
+                or existing.registration_application_id != app.application_id
+            ):
+                raise ApplicationNotEditable(
+                    "This child is already enrolled. Manage their existing classes instead."
+                )
+            if existing is None:
+                reserved = await self._sessions.try_reserve_seat(session_id)
+                if not reserved:
+                    raise ApplicationNotEditable("Selected session is full; waitlist instead")
+            enrollment = Enrollment(
+                enrollment_id=expected_enrollment_id,
+                academy_id=self._request_academy_id(),
+                session_id=session_id,
+                student_id=student_id,
+                status="active",
+                enrolled_at=app.created_at,
+                created_at=now,
+                registration_application_id=app.application_id,
+                registration_student_lock=student_id,
+            )
+            if existing is None:
+                try:
+                    created = await self._enrollments.create_if_absent(enrollment)
+                except Exception:
+                    await self._sessions.release_seat(session_id)
+                    raise
+                if not created:
+                    await self._sessions.release_seat(session_id)
+                    existing = await self._enrollments.get(expected_enrollment_id)
+                    if (
+                        existing is None
+                        or existing.registration_application_id != app.application_id
+                    ):
+                        raise ApplicationNotEditable(
+                            "Registration approval conflicted; refresh and try again"
+                        )
+                    enrollment = existing
+            else:
+                enrollment = existing
+            if enrollment.enrolled_at is None:
+                await self._enrollments.set_enrolled_at_if_missing(
+                    enrollment.enrollment_id, app.created_at
+                )
+                enrollment = enrollment.model_copy(update={"enrolled_at": app.created_at})
+            if app.zero_quote_period:
+                await self._enrollments.add_skip_period(
+                    enrollment.enrollment_id, app.zero_quote_period
+                )
+            effective_at = command.effective_at or now
+            await self._record_event(
+                event_id=stable_ulid("registration-approved-event", app.application_id),
+                event_type="created",
+                actor_id=command.actor_id,
+                enrollment_id=enrollment.enrollment_id,
+                session_id=session_id,
+                student_id=student_id,
+                reason=command.waiver_override_reason or "registration_approved",
+                effective_at=effective_at,
+            )
+            await self._record_registration_waiver_signature(app, student_id)
+            await self._release_student_registration(student_id, app)
+            decided = app.model_copy(
+                update={
+                    "status": "APPROVED",
+                    "selected_session_id": session_id,
+                    "student_id": student_id,
+                    "enrollment_id": enrollment.enrollment_id,
+                    "decision_reason": command.waiver_override_reason,
+                    "decided_by": command.actor_id,
+                    "decided_at": now,
+                    "review_claimed_at": None,
+                    "updated_at": now,
+                }
+            )
+            await self._complete_review(decided, app)
+            try:
+                await self._link_trial_conversion(decided)
+            except Exception:
+                logger.exception(
+                    "Registration %s was approved, but trial conversion linking failed",
+                    decided.application_id,
+                )
+            return await self._detail(decided)
+        except Exception:
+            if student_id is not None:
+                await self._release_student_registration(student_id, app)
+            await self._apps.release_review(
+                app.application_id,
+                "APPROVING",
+                claim_token=self._claim_token(app),
+                updated_at=self._now(),
+            )
+            raise
 
     async def waitlist(self, command: WaitlistRegistrationCommand) -> AdminRegistrationDetail:
         app = await self._get(command.application_id)
         if app.status == "WAITLISTED" and app.waitlist_id:
             return await self._detail(app)
-        self._assert_reviewable(app)
+        self._assert_reviewable(app, "WAITLISTING")
         session_id = command.session_id or app.selected_session_id
         if not session_id:
             raise IncompleteApplication("Waitlisting requires a session target")
@@ -234,71 +362,102 @@ class AdminRegistrationReview:
             raise IncompleteApplication("Selected session is not available")
 
         now = self._now()
-        student_id = app.student_id or str(new_ulid())
-        await self._students.upsert(
-            Student(
-                student_id=student_id,
-                academy_id=self._academy_id,
-                parent_id=app.parent_user_id,
-                full_name=self._student_name(app),
+        app = await self._claim_review(app, "WAITLISTING", now)
+        student_id: str | None = None
+        try:
+            student_id = await self._available_student_id(app)
+            await self._students.upsert(
+                Student(
+                    student_id=student_id,
+                    academy_id=self._request_academy_id(),
+                    parent_id=app.parent_user_id,
+                    full_name=self._student_name(app),
+                    date_of_birth=app.child_profile.date_of_birth or None,
+                )
             )
-        )
-        existing = await self._waitlist.find_waiting_for_session_student(session_id, student_id)
-        if existing is None:
-            entry = WaitlistEntry(
-                waitlist_id=str(new_ulid()),
-                academy_id=self._academy_id,
+            await self._claim_student_registration(student_id, app)
+            await self._renew_review_claim(app)
+            existing = await self._waitlist.find_waiting_for_session_student(session_id, student_id)
+            if existing is None:
+                entry = WaitlistEntry(
+                    waitlist_id=str(new_ulid()),
+                    academy_id=self._request_academy_id(),
+                    session_id=session_id,
+                    student_id=student_id,
+                    parent_id=app.parent_user_id,
+                    joined_at=now,
+                    status="waiting",
+                )
+                await self._waitlist.add(entry)
+                waitlist_id = entry.waitlist_id
+            else:
+                waitlist_id = existing.waitlist_id
+            await self._record_event(
+                event_id=stable_ulid("registration-waitlisted-event", app.application_id),
+                event_type="waitlisted",
+                actor_id=command.actor_id,
+                waitlist_id=waitlist_id,
                 session_id=session_id,
                 student_id=student_id,
-                parent_id=app.parent_user_id,
-                joined_at=now,
-                status="waiting",
+                reason=command.reason or "registration_waitlisted",
+                effective_at=now,
             )
-            await self._waitlist.add(entry)
-            waitlist_id = entry.waitlist_id
-        else:
-            waitlist_id = existing.waitlist_id
-        await self._record_event(
-            event_type="waitlisted",
-            actor_id=command.actor_id,
-            waitlist_id=waitlist_id,
-            session_id=session_id,
-            student_id=student_id,
-            reason=command.reason or "registration_waitlisted",
-            effective_at=now,
-        )
-        await self._record_registration_waiver_signature(app, student_id)
-        decided = app.model_copy(
-            update={
-                "status": "WAITLISTED",
-                "selected_session_id": session_id,
-                "student_id": student_id,
-                "waitlist_id": waitlist_id,
-                "decision_reason": command.reason,
-                "decided_by": command.actor_id,
-                "decided_at": now,
-                "updated_at": now,
-            }
-        )
-        await self._apps.save(decided)
-        return await self._detail(decided)
+            await self._record_registration_waiver_signature(app, student_id)
+            await self._release_student_registration(student_id, app)
+            decided = app.model_copy(
+                update={
+                    "status": "WAITLISTED",
+                    "selected_session_id": session_id,
+                    "student_id": student_id,
+                    "waitlist_id": waitlist_id,
+                    "decision_reason": command.reason,
+                    "decided_by": command.actor_id,
+                    "decided_at": now,
+                    "review_claimed_at": None,
+                    "updated_at": now,
+                }
+            )
+            await self._complete_review(decided, app)
+            return await self._detail(decided)
+        except Exception:
+            if student_id is not None:
+                await self._release_student_registration(student_id, app)
+            await self._apps.release_review(
+                app.application_id,
+                "WAITLISTING",
+                claim_token=self._claim_token(app),
+                updated_at=self._now(),
+            )
+            raise
 
     async def reject(self, command: RejectRegistrationCommand) -> AdminRegistrationDetail:
         app = await self._get(command.application_id)
         if app.status == "DECLINED":
             return await self._detail(app)
-        self._assert_reviewable(app)
+        self._assert_reviewable(app, "DECLINING")
         now = self._now()
+        app = await self._claim_review(app, "DECLINING", now)
+        await self._renew_review_claim(app)
         decided = app.model_copy(
             update={
                 "status": "DECLINED",
                 "decision_reason": command.reason,
                 "decided_by": command.actor_id,
                 "decided_at": now,
+                "review_claimed_at": None,
                 "updated_at": now,
             }
         )
-        await self._apps.save(decided)
+        try:
+            await self._complete_review(decided, app)
+        except Exception:
+            await self._apps.release_review(
+                app.application_id,
+                "DECLINING",
+                claim_token=self._claim_token(app),
+                updated_at=self._now(),
+            )
+            raise
         return await self._detail(decided)
 
     async def _get(self, application_id: str) -> Application:
@@ -321,8 +480,11 @@ class AdminRegistrationReview:
             application_id=app.application_id,
         )
 
-    @staticmethod
-    def _assert_reviewable(app: Application) -> None:
+    def _assert_reviewable(self, app: Application, processing_status: str) -> None:
+        if app.status == "PENDING_APPROVAL":
+            return
+        if app.status == processing_status and self._review_claim_is_stale(app):
+            return
         if app.status != "PENDING_APPROVAL":
             raise ApplicationNotEditable("registration is not pending admin approval")
 
@@ -358,7 +520,7 @@ class AdminRegistrationReview:
                     "ws_registration_"
                     f"{app.application_id}_{student_id}_{acceptance.waiver_template_id}"
                 ),
-                academy_id=self._academy_id,
+                academy_id=self._request_academy_id(),
                 waiver_template_id=acceptance.waiver_template_id,
                 student_id=student_id,
                 parent_user_id=app.parent_user_id,
@@ -384,7 +546,13 @@ class AdminRegistrationReview:
         )
 
     async def _detail(self, app: Application) -> AdminRegistrationDetail:
-        row = await self._row(app)
+        display_app = app
+        if app.status == "PENDING_APPROVAL" and self._student_registrations is not None:
+            try:
+                await self._registration_student_id(app)
+            except ApplicationNotEditable:
+                display_app = app.model_copy(update={"status": "MANUAL_REVIEW"})  # type: ignore[arg-type]
+        row = await self._row(display_app)
         template = await self._registration_template()
         session: Session | None = None
         if app.selected_session_id:
@@ -414,9 +582,184 @@ class AdminRegistrationReview:
     def _student_name(app: Application) -> str:
         return f"{app.child_profile.first_name} {app.child_profile.last_name}".strip()
 
+    def _request_academy_id(self) -> str:
+        if self._academy_id is not None:
+            return self._academy_id
+        return current_academy_id()
+
+    async def _registration_student_id(self, app: Application) -> str | None:
+        if self._student_registrations is None:
+            return app.student_id
+        if await self._student_registrations.has_ambiguous_registration_match(
+            parent_id=app.parent_user_id,
+            full_name=self._student_name(app),
+            date_of_birth=app.child_profile.date_of_birth or None,
+        ):
+            raise ApplicationNotEditable(
+                "We found more than one possible child record. Contact the academy to continue."
+            )
+        resolved = await self._student_registrations.find_registration_student(
+            parent_id=app.parent_user_id,
+            full_name=self._student_name(app),
+            date_of_birth=app.child_profile.date_of_birth or None,
+        )
+        if resolved is not None:
+            return resolved
+        # Only retain a non-matching stored binding for replay recovery after
+        # this application already owns an enrollment artifact.
+        return app.student_id if app.enrollment_id else None
+
+    async def _active_existing_student_id(self, app: Application) -> str | None:
+        student_id = await self._registration_student_id(app)
+        if student_id is None or self._student_registrations is None:
+            return None
+        expected_enrollment_id = app.enrollment_id or (
+            self._registration_enrollment_id(
+                app.application_id, student_id, app.selected_session_id
+            )
+            if app.selected_session_id
+            else None
+        )
+        if await self._student_registrations.has_active_enrollment(
+            student_id,
+            exclude_enrollment_id=expected_enrollment_id,
+        ):
+            return student_id
+        return None
+
+    async def _available_student_id(
+        self,
+        app: Application,
+        *,
+        session_id: str | None = None,
+        allow_current_enrollment: bool = False,
+    ) -> str:
+        existing_student_id = await self._registration_student_id(app)
+        if (
+            existing_student_id is not None
+            and self._student_registrations is not None
+            and await self._student_registrations.has_active_enrollment(
+                existing_student_id,
+                exclude_enrollment_id=(
+                    app.enrollment_id
+                    or self._registration_enrollment_id(
+                        app.application_id, existing_student_id, session_id
+                    )
+                    if allow_current_enrollment and session_id
+                    else None
+                ),
+            )
+        ):
+            raise ApplicationNotEditable(
+                "This child is already enrolled. Manage their existing classes instead."
+            )
+        return (
+            existing_student_id
+            or (app.student_id if self._student_registrations is None else None)
+            or stable_ulid(
+                "registration-student",
+                self._request_academy_id(),
+                app.parent_user_id,
+                " ".join(self._student_name(app).casefold().split()),
+                app.child_profile.date_of_birth,
+            )
+        )
+
+    @staticmethod
+    def _registration_enrollment_id(application_id: str, student_id: str, session_id: str) -> str:
+        return stable_ulid("registration-enrollment", application_id, student_id, session_id)
+
+    async def _claim_review(
+        self,
+        app: Application,
+        processing_status: str,
+        now: datetime,
+    ) -> Application:
+        claimed = await self._apps.claim_for_review(
+            app.application_id,
+            processing_status,
+            claim_token=str(new_ulid()),
+            updated_at=now,
+            stale_before=now - REVIEW_CLAIM_TTL,
+        )
+        if claimed is not None:
+            return claimed
+        raise ApplicationNotEditable(
+            "Registration is already being reviewed; refresh and try again"
+        )
+
+    async def _claim_student_registration(self, student_id: str, app: Application) -> None:
+        if self._student_registrations is None:
+            return
+        now = self._now()
+        if not await self._student_registrations.claim_registration(
+            student_id,
+            app.application_id,
+            claim_token=self._claim_token(app),
+            claimed_at=now,
+            stale_before=now - REVIEW_CLAIM_TTL,
+        ):
+            raise ApplicationNotEditable(
+                "Another registration for this child is already being reviewed"
+            )
+
+    async def _release_student_registration(self, student_id: str, app: Application) -> None:
+        if self._student_registrations is not None:
+            await self._student_registrations.release_registration(
+                student_id,
+                app.application_id,
+                claim_token=self._claim_token(app),
+            )
+
+    async def _assert_no_other_active_enrollment(
+        self, student_id: str, expected_enrollment_id: str
+    ) -> None:
+        if self._student_registrations is None:
+            return
+        if await self._student_registrations.has_active_enrollment(
+            student_id, exclude_enrollment_id=expected_enrollment_id
+        ):
+            raise ApplicationNotEditable(
+                "This child is already enrolled. Manage their existing classes instead."
+            )
+
+    async def _renew_review_claim(self, app: Application) -> None:
+        if not await self._apps.renew_review_claim(
+            app.application_id,
+            self._claim_token(app),
+            claimed_at=self._now(),
+        ):
+            raise ApplicationNotEditable(
+                "Registration review ownership changed; refresh and try again"
+            )
+
+    async def _complete_review(self, decided: Application, claimed: Application) -> None:
+        if not await self._apps.complete_review(decided, claim_token=self._claim_token(claimed)):
+            raise ApplicationNotEditable(
+                "Registration review ownership changed; refresh and try again"
+            )
+
+    @staticmethod
+    def _claim_token(app: Application) -> str:
+        if not app.review_claim_token:
+            raise ApplicationNotEditable("Registration review claim is missing")
+        return app.review_claim_token
+
+    def _review_claim_is_stale(self, app: Application) -> bool:
+        if app.review_claimed_at is None:
+            return True
+        claimed_at = app.review_claimed_at
+        if claimed_at.tzinfo is None:
+            claimed_at = claimed_at.replace(tzinfo=UTC)
+        now = self._now()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
+        return claimed_at <= (now - REVIEW_CLAIM_TTL)
+
     async def _record_event(
         self,
         *,
+        event_id: str | None = None,
         event_type: EnrollmentLifecycleEventType,
         actor_id: str,
         session_id: str,
@@ -430,8 +773,8 @@ class AdminRegistrationReview:
             return
         await self._enrollment_events.record(
             EnrollmentLifecycleEvent(
-                event_id=str(new_ulid()),
-                academy_id=self._academy_id,
+                event_id=event_id or str(new_ulid()),
+                academy_id=self._request_academy_id(),
                 event_type=event_type,
                 enrollment_id=enrollment_id,
                 waitlist_id=waitlist_id,

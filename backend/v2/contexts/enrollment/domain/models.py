@@ -74,6 +74,7 @@ class Student(BaseModel):
     academy_id: str
     parent_id: str
     full_name: str
+    date_of_birth: str | None = None
 
 
 class Enrollment(BaseModel):
@@ -86,6 +87,12 @@ class Enrollment(BaseModel):
     session_id: str
     student_id: str
     status: EnrollmentStatus = "active"
+    enrolled_at: datetime | None = None
+    created_at: datetime | None = None
+    # Registration approvals bind their generated artifact to one onboarding
+    # application so a different pending application can never recover it.
+    registration_application_id: str | None = None
+    registration_student_lock: str | None = None
     # Self-cancel audit trail (R4). Always written together by
     # ``SelfCancelEnrollment`` — never a silent state change. ``cancelled_by``
     # distinguishes parent self-cancel from admin-initiated cancellation (the

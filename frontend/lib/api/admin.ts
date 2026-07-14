@@ -129,7 +129,7 @@ export interface AdminEnrollmentView {
   parent_id: string;
   full_name: string;
   status: EnrollmentStatus;
-  enrolled_at: string;
+  enrolled_at: string | null;
   level?: string | null;
   pathway_program_id?: string | null;
   pathway_level_id?: string | null;

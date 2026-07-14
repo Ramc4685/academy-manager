@@ -693,9 +693,16 @@ def compose_parent(
     get_waiver_req = GetParentWaiverRequirement(waivers=parent_waivers_repo)
     accept_waiver = AcceptParentWaiver(waivers=parent_waivers_repo, academy_id=academy_id)
     start_app = StartApplication(apps=apps_repo, academy_id=academy_id)
-    patch_app = PatchApplication(apps=apps_repo, waivers=waivers_repo)
+    patch_app = PatchApplication(
+        apps=apps_repo,
+        waivers=waivers_repo,
+        student_registrations=students_query,
+    )
     get_status = GetApplicationStatus(apps=apps_repo)
-    transition = TransitionApplication(apps=apps_repo)
+    transition = TransitionApplication(
+        apps=apps_repo,
+        student_registrations=students_query,
+    )
     list_available_sessions = ListParentAvailableSessions(sessions=sessions_query)
     request_pause = RequestEnrollmentPause(pause_requests=pause_requests)
     list_parent_pause_requests = ListParentPauseRequests(pause_requests=pause_requests)

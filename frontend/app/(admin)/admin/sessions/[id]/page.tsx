@@ -1140,7 +1140,7 @@ function RosterTable({
                   <DuesChip status={e.dues_status ?? "current"} />
                 </td>
                 <td className="px-4 py-3 font-mono text-rally-muted">
-                  {new Date(e.enrolled_at).toLocaleDateString()}
+                  {formatEnrollmentDate(e.enrolled_at)}
                   <EnrollmentHistory enrollmentId={e.enrollment_id} />
                 </td>
                 <td className={`${actionCellClass} ${rowToneClass}`}>
@@ -2162,6 +2162,12 @@ function formatDateOnly(value: string): string {
     day: "numeric",
     year: "numeric",
   });
+}
+
+function formatEnrollmentDate(value: string | null | undefined): string {
+  if (!value) return "Not recorded";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "Not recorded" : parsed.toLocaleDateString();
 }
 
 function formatLifecycleType(value: string): string {
