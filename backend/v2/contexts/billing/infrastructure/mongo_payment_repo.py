@@ -2,36 +2,28 @@
 
 from __future__ import annotations
 
-import logging
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from bson import ObjectId as BsonObjectId
 from pymongo import ReturnDocument
-from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     GenerateMonthlyPaymentsResult,
-    MonthlyGenerationSkippedDetail,
 )
 from backend.v2.contexts.billing.domain.errors import (
     PaymentNotFound,
     PaymentOperationNotAllowed,
 )
-from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment
 from backend.v2.contexts.billing.domain.proration import (
     BillingCalculationSnapshot,
     BillingPeriod,
     ClassOccurrence,
-    FirstMonthProrationPolicy,
-    schedule_signature,
 )
-from backend.v2.contexts.billing.domain.tuition_discount import (
-    TuitionDiscount,
-    display_label,
-    monthly_discount_cents,
+from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import (
+    MongoMonthlyBillingGenerator,
+    _session_occurrences,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo import (
     MongoTuitionDiscountRepository,
@@ -40,9 +32,10 @@ from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
 # ---------------------------------------------------------------------------
-# NOTE: This module imports FirstMonthProrationPolicy and schedule_signature
-# only for the monthly-generation path (generate_monthly_payments).  The
-# proration invocations that used to live in create_initial_quote,
+# NOTE: The monthly-generation machinery (generate_monthly_payments and its
+# proration/invoice-key/ledger dual-write helpers) lives in
+# mongo_monthly_billing.MongoMonthlyBillingGenerator; this repo only delegates.
+# The proration invocations that used to live in create_initial_quote,
 # _amount_for_invoice, and _store_monthly_snapshot have been moved to the
 # QuoteEnrollment use case and its _resolve_monthly_charge helper.
 # MongoPaymentRepository now implements SessionLoader, OccurrenceCatalog, and
@@ -69,118 +62,8 @@ class MongoPaymentRepository(TenantScopedRepository):
         self._ledger_repo = ledger_repo  # MongoBillingLedgerRepository | None — Phase 2A dual-write
 
     @staticmethod
-    def _monthly_invoice_id(enrollment_id: str, period: str) -> str:
-        return f"inv-monthly-{enrollment_id}-{period}"
-
-    @staticmethod
-    def _monthly_invoice_line_id(enrollment_id: str, period: str) -> str:
-        return f"line-monthly-{enrollment_id}-{period}"
-
-    @staticmethod
     def _payment_id(doc: dict[str, object]) -> str:
         return str(doc.get("payment_id") or doc.get("_id"))
-
-    @staticmethod
-    def _date_str(value: object) -> str | None:
-        if value is None:
-            return None
-        if isinstance(value, datetime):
-            return value.date().isoformat()
-        if isinstance(value, date):
-            return value.isoformat()
-        if isinstance(value, str) and value:
-            return value[:10]
-        return None
-
-    async def _active_billing_deferral_detail(
-        self,
-        *,
-        academy_id: str,
-        enrollment: dict[str, object],
-        student_doc: dict[str, object] | None,
-        period: str,
-        today: date,
-    ) -> MonthlyGenerationSkippedDetail | None:
-        enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
-        cursor = self._db["enrollment_billing_deferrals"].find(
-            {
-                "academy_id": academy_id,
-                "enrollment_id": enrollment_id,
-                "status": "active",
-                "billing_period": period,
-            },
-            sort=[("created_at", -1)],
-            limit=10,
-        )
-        today_text = today.isoformat()
-        async for doc in cursor:
-            resume_on = self._date_str(doc.get("resume_on"))
-            if resume_on is not None and resume_on <= today_text:
-                continue
-            review_on = self._date_str(doc.get("review_on"))
-            if review_on is not None and review_on <= today_text:
-                continue
-            expires_on = self._date_str(doc.get("expires_on"))
-            if expires_on is not None and expires_on < today_text:
-                continue
-            return self._skipped_detail_from_deferral(
-                enrollment=enrollment,
-                student_doc=student_doc,
-                period=period,
-                deferral=doc,
-            )
-        return None
-
-    def _skipped_detail_from_deferral(
-        self,
-        *,
-        enrollment: dict[str, object],
-        student_doc: dict[str, object] | None,
-        period: str,
-        deferral: dict[str, object],
-    ) -> MonthlyGenerationSkippedDetail:
-        review_on = self._date_str(deferral.get("review_on"))
-        today = self._clock().date()
-        return MonthlyGenerationSkippedDetail(
-            enrollment_id=str(enrollment.get("enrollment_id") or enrollment.get("_id")),
-            student_id=str(enrollment.get("student_id") or deferral.get("student_id") or ""),
-            student_name=str((student_doc or {}).get("full_name") or "") or None,
-            reason_code=str(deferral.get("deferral_type") or "manual_skip"),
-            source=str(deferral.get("source") or "enrollment_billing_deferrals"),
-            billing_period=period,
-            resume_on=self._date_str(deferral.get("resume_on")),
-            review_on=review_on,
-            expires_on=self._date_str(deferral.get("expires_on")),
-            needs_review=bool(review_on is not None and review_on <= today.isoformat()),
-            metadata={
-                str(k): str(v)
-                for k, v in (deferral.get("metadata") or {}).items()
-                if k is not None and v is not None
-            }
-            | (
-                {"deferral_id": str(deferral.get("deferral_id"))}
-                if deferral.get("deferral_id") is not None
-                else {}
-            ),
-        )
-
-    def _legacy_skip_period_detail(
-        self,
-        *,
-        enrollment: dict[str, object],
-        student_doc: dict[str, object] | None,
-        period: str,
-    ) -> MonthlyGenerationSkippedDetail:
-        return MonthlyGenerationSkippedDetail(
-            enrollment_id=str(enrollment.get("enrollment_id") or enrollment.get("_id")),
-            student_id=str(enrollment.get("student_id") or ""),
-            student_name=str((student_doc or {}).get("full_name") or "") or None,
-            reason_code="legacy_skip_period",
-            source="enrollment.skip_periods",
-            billing_period=period,
-            needs_review=True,
-            metadata={"compatibility": "missing deferral metadata"},
-        )
 
     @staticmethod
     def _money_to_cents(value: object | None) -> int:
@@ -260,28 +143,41 @@ class MongoPaymentRepository(TenantScopedRepository):
 
     async def save(self, payment: Payment) -> None:
         doc = payment.model_dump(mode="python")
+        academy_id = current_academy_id()
         ledger_existing = await self._db["ledger_payments"].find_one(
-            {"academy_id": current_academy_id(), "payment_id": payment.payment_id},
+            {"academy_id": academy_id, "payment_id": payment.payment_id},
             {"_id": 1},
         )
         if ledger_existing is not None:
-            # The ledger domain (LedgerPayment) only accepts pending/succeeded/
-            # failed/refunded. A partial refund leaves Payment.status at
-            # "partially_refunded", which would break later reads through
-            # _payment_from_doc; the partial amount is already tracked in
-            # refunded_cents, so persist the payment as "succeeded".
-            ledger_status = (
-                "succeeded" if payment.status == "partially_refunded" else payment.status
-            )
+            # Ledger-resident payment: mirror the full field set (webhook
+            # lifecycle stamps stripe ids / paid_at through this branch), but
+            # never clobber ledger-owned fields (unapplied_amount_cents,
+            # metadata) or identity/creation stamps.
             await self._db["ledger_payments"].update_one(
-                {"academy_id": current_academy_id(), "payment_id": payment.payment_id},
+                {"academy_id": academy_id, "payment_id": payment.payment_id},
                 {
                     "$set": {
-                        "status": ledger_status,
-                        "refunded_cents": payment.refunded_cents,
-                        "updated_at": payment.updated_at,
+                        k: v
+                        for k, v in doc.items()
+                        if k not in ("academy_id", "payment_id", "created_at")
                     }
                 },
+            )
+            return
+        legacy_existing = await self._find_one({"payment_id": payment.payment_id})
+        if legacy_existing is None:
+            # Phase 5 freeze: brand-new payments are ledger-native. The legacy
+            # `payments` collection no longer receives inserts — only in-place
+            # updates of historical docs. The marker keeps these docs visible
+            # to legacy lookups without leaking ledger-native payments
+            # (autopay / pay-link) into them.
+            await self._db["ledger_payments"].insert_one(
+                {
+                    **{k: v for k, v in doc.items() if k != "academy_id"},
+                    "academy_id": academy_id,
+                    "unapplied_amount_cents": 0,
+                    "payment_origin": "legacy_payment",
+                }
             )
             return
         await self._update_one(
@@ -289,6 +185,27 @@ class MongoPaymentRepository(TenantScopedRepository):
             {"$set": {k: v for k, v in doc.items() if k != "academy_id"}},
             upsert=True,
         )
+
+    def _ledger_legacy_shape_query(self, query: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **query,
+            "academy_id": current_academy_id(),
+            "payment_origin": "legacy_payment",
+        }
+
+    async def _ledger_legacy_shape_docs(
+        self,
+        query: dict[str, Any],
+        *,
+        sort: list[tuple[str, int]] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        cursor = self._db["ledger_payments"].find(self._ledger_legacy_shape_query(query))
+        if sort:
+            cursor = cursor.sort(sort)
+        if limit:
+            cursor = cursor.limit(limit)
+        return [doc async for doc in cursor]
 
     async def get(self, payment_id: str) -> Payment | None:
         doc = await self._find_one(_payment_lookup(payment_id))
@@ -299,13 +216,21 @@ class MongoPaymentRepository(TenantScopedRepository):
         return self._to_domain(doc) if doc else None
 
     async def get_by_stripe_pi(self, stripe_pi: str) -> Payment | None:
-        doc = await self._find_one(
-            {"$or": [{"stripe_payment_intent_id": stripe_pi}, {"stripe_payment_intent": stripe_pi}]}
-        )
+        pi_query: dict[str, Any] = {
+            "$or": [{"stripe_payment_intent_id": stripe_pi}, {"stripe_payment_intent": stripe_pi}]
+        }
+        doc = await self._find_one(pi_query)
+        if doc is None:
+            docs = await self._ledger_legacy_shape_docs(pi_query, limit=1)
+            doc = docs[0] if docs else None
         return self._to_domain(doc) if doc else None
 
     async def get_by_checkout_session(self, checkout_session_id: str) -> Payment | None:
-        doc = await self._find_one({"stripe_checkout_session_id": checkout_session_id})
+        session_query = {"stripe_checkout_session_id": checkout_session_id}
+        doc = await self._find_one(session_query)
+        if doc is None:
+            docs = await self._ledger_legacy_shape_docs(session_query, limit=1)
+            doc = docs[0] if docs else None
         return self._to_domain(doc) if doc else None
 
     async def latest_paid_payment_for_enrollment(self, enrollment_id: str) -> Payment | None:
@@ -321,7 +246,19 @@ class MongoPaymentRepository(TenantScopedRepository):
             limit=1,
         )
         docs = [doc async for doc in cursor]
+        docs.extend(
+            await self._ledger_legacy_shape_docs(
+                {
+                    "enrollment_id": enrollment_id,
+                    "status": {"$in": ["succeeded", "paid", "partially_refunded"]},
+                    "calculation_snapshot_id": {"$exists": True, "$ne": None},
+                },
+                sort=[("paid_at", -1), ("updated_at", -1), ("created_at", -1)],
+                limit=1,
+            )
+        )
         if docs:
+            docs.sort(key=_doc_created_at_utc, reverse=True)
             return self._to_domain(docs[0])
         # Fallback: legacy onboarding payments may have been written before
         # enrollment_id backfill was in place. Look them up via the enrollment's
@@ -360,18 +297,32 @@ class MongoPaymentRepository(TenantScopedRepository):
         return BillingCalculationSnapshot(**doc) if doc else None
 
     async def list_for_parent(self, parent_id: str) -> list[Payment]:
-        cursor = self._find_many(
-            {"$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}]},
-            sort=[("created_at", -1)],
+        parent_query: dict[str, Any] = {
+            "$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}]
+        }
+        cursor = self._find_many(parent_query, sort=[("created_at", -1)])
+        legacy = [self._to_domain(doc) async for doc in cursor]
+        return self._merged_with_ledger_shape(
+            legacy, await self._ledger_legacy_shape_docs(parent_query)
         )
-        return [self._to_domain(doc) async for doc in cursor]
 
     async def list_all(self) -> list[Payment]:
-        cursor = self._find_many(
-            {"is_deleted": {"$ne": True}},
-            sort=[("created_at", -1)],
+        alive_query: dict[str, Any] = {"is_deleted": {"$ne": True}}
+        cursor = self._find_many(alive_query, sort=[("created_at", -1)])
+        legacy = [self._to_domain(doc) async for doc in cursor]
+        return self._merged_with_ledger_shape(
+            legacy, await self._ledger_legacy_shape_docs(alive_query)
         )
-        return [self._to_domain(doc) async for doc in cursor]
+
+    def _merged_with_ledger_shape(
+        self, legacy: list[Payment], ledger_docs: list[dict[str, Any]]
+    ) -> list[Payment]:
+        seen = {p.payment_id for p in legacy}
+        merged = legacy + [
+            self._to_domain(doc) for doc in ledger_docs if self._payment_id(doc) not in seen
+        ]
+        merged.sort(key=lambda p: p.created_at, reverse=True)
+        return merged
 
     async def list_recent_admin(self, limit: int = 200) -> list[dict[str, object]]:
         cursor = self._find_many(
@@ -380,6 +331,15 @@ class MongoPaymentRepository(TenantScopedRepository):
             limit=limit,
         )
         docs = [doc async for doc in cursor]
+        seen_ids = {self._payment_id(doc) for doc in docs}
+        ledger_docs = await self._ledger_legacy_shape_docs(
+            {"is_deleted": {"$ne": True}},
+            sort=[("created_at", -1)],
+            limit=limit,
+        )
+        docs.extend(doc for doc in ledger_docs if self._payment_id(doc) not in seen_ids)
+        docs.sort(key=_doc_created_at_utc, reverse=True)
+        docs = docs[:limit]
         student_ids = sorted(
             {str(doc.get("student_id")) for doc in docs if doc.get("student_id") is not None}
         )
@@ -503,562 +463,8 @@ class MongoPaymentRepository(TenantScopedRepository):
             return "stripe_synced"
         return None
 
-    async def _dual_write_ledger_invoice(
-        self,
-        *,
-        ledger_repo: Any,
-        payment_id: str,
-        enrollment_id: str,
-        parent_id: str,
-        student_id: str,
-        period: str,
-        gross_cents: int,
-        discount_cents: int = 0,
-        total_cents: int | None = None,
-        discount_policy: TuitionDiscount | None = None,
-        now: datetime,
-    ) -> None:
-        """Write a LedgerInvoice for a monthly-generated enrollment charge.
-
-        Uses a deterministic invoice_id for idempotency so re-runs are safe.
-        """
-        _log = logging.getLogger(__name__)
-        invoice_id = self._monthly_invoice_id(enrollment_id, period)
-        idempotency_key = f"monthly-ledger-{enrollment_id}-{period}"
-        academy_id = current_academy_id()
-
-        # Compute due_date as last day of the period month
-        year, month = int(period[:4]), int(period[5:7])
-        if month == 12:
-            due_date = date(year + 1, 1, 1) - timedelta(days=1)
-        else:
-            due_date = date(year, month + 1, 1) - timedelta(days=1)
-
-        invoice = LedgerInvoice(
-            invoice_id=invoice_id,
-            academy_id=academy_id,
-            parent_id=parent_id,
-            student_id=student_id or None,
-            enrollment_id=enrollment_id,
-            period=period,
-            status="open",
-            subtotal_cents=gross_cents,
-            discount_cents=discount_cents,
-            total_cents=total_cents
-            if total_cents is not None
-            else max(gross_cents - discount_cents, 0),
-            balance_due_cents=total_cents
-            if total_cents is not None
-            else max(gross_cents - discount_cents, 0),
-            currency="usd",
-            due_date=due_date,
-            created_at=now,
-            updated_at=now,
-        )
-        line = InvoiceLine(
-            line_id=self._monthly_invoice_line_id(enrollment_id, period),
-            academy_id=academy_id,
-            invoice_id=invoice_id,
-            line_type="tuition",
-            description=f"Monthly tuition {period}",
-            quantity=1,
-            unit_amount_cents=gross_cents,
-            amount_cents=gross_cents,
-            source_type="payment",
-            source_id=payment_id,
-            created_at=now,
-        )
-        lines = [line]
-        if discount_policy is not None and discount_cents > 0:
-            label = display_label(discount_policy)
-            description = label if label.lower().endswith("discount") else f"{label} discount"
-            lines.append(
-                InvoiceLine(
-                    line_id=f"{self._monthly_invoice_line_id(enrollment_id, period)}-discount",
-                    academy_id=academy_id,
-                    invoice_id=invoice_id,
-                    line_type="discount",
-                    description=description,
-                    quantity=1,
-                    unit_amount_cents=-discount_cents,
-                    amount_cents=-discount_cents,
-                    source_type="tuition_discount",
-                    source_id=discount_policy.discount_id,
-                    category=discount_policy.category,
-                    category_label=discount_policy.category_label,
-                    discount_kind=discount_policy.kind,
-                    gross_cents=gross_cents,
-                    net_cents=max(gross_cents - discount_cents, 0),
-                    created_at=now,
-                )
-            )
-        await ledger_repo.create_invoice(invoice, lines=lines, idempotency_key=idempotency_key)
-
-    async def _mark_monthly_invoice_key(
-        self,
-        *,
-        enrollment_id: str,
-        period: str,
-        status: str,
-        now: datetime,
-        repair_error: str | None = None,
-    ) -> None:
-        update: dict[str, object] = {
-            "status": status,
-            "updated_at": now,
-        }
-        if repair_error is not None:
-            update["repair_error"] = repair_error
-        elif status == "complete":
-            update["repair_error"] = None
-        await self._db["billing_invoice_keys"].update_one(
-            {
-                "academy_id": current_academy_id(),
-                "enrollment_id": enrollment_id,
-                "period": period,
-            },
-            {"$set": update},
-        )
-
-    async def _monthly_invoice_is_complete(
-        self,
-        *,
-        enrollment_id: str,
-        period: str,
-        amount_cents: int,
-    ) -> bool:
-        academy_id = current_academy_id()
-        invoice_id = self._monthly_invoice_id(enrollment_id, period)
-        line_id = self._monthly_invoice_line_id(enrollment_id, period)
-        invoice_doc = await self._db["invoices"].find_one(
-            {"academy_id": academy_id, "invoice_id": invoice_id}
-        )
-        if invoice_doc is None:
-            return False
-        line_doc = await self._db["invoice_lines"].find_one(
-            {"academy_id": academy_id, "invoice_id": invoice_id, "line_id": line_id}
-        )
-        if line_doc is None or int(line_doc.get("amount_cents", -1)) != amount_cents:
-            return False
-        total_cents = int(invoice_doc.get("total_cents", -1))
-        balance_due_cents = int(invoice_doc.get("balance_due_cents", -1))
-        discount_cents = int(invoice_doc.get("discount_cents", 0))
-        return (
-            int(invoice_doc.get("subtotal_cents", -1)) == amount_cents
-            and total_cents == max(amount_cents - discount_cents, 0)
-            and 0 <= balance_due_cents <= total_cents
-        )
-
-    async def _invoice_has_consistent_lines(
-        self,
-        *,
-        invoice_id: str,
-        amount_cents: int | None = None,
-    ) -> bool:
-        academy_id = current_academy_id()
-        invoice_doc = await self._db["invoices"].find_one(
-            {
-                "academy_id": academy_id,
-                "invoice_id": invoice_id,
-                "is_deleted": {"$ne": True},
-                "status": {"$ne": "void"},
-            }
-        )
-        if invoice_doc is None:
-            return False
-
-        subtotal_line_cents = 0
-        discount_line_cents = 0
-        line_count = 0
-        async for line_doc in self._db["invoice_lines"].find(
-            {
-                "academy_id": academy_id,
-                "invoice_id": invoice_id,
-            }
-        ):
-            line_count += 1
-            amount = int(line_doc.get("amount_cents", 0))
-            if line_doc.get("source_type") == "tuition_discount":
-                discount_line_cents += abs(amount)
-            else:
-                subtotal_line_cents += amount
-        if line_count == 0:
-            return False
-
-        subtotal_cents = int(invoice_doc.get("subtotal_cents", -1))
-        discount_cents = int(invoice_doc.get("discount_cents", 0))
-        total_cents = int(invoice_doc.get("total_cents", -1))
-        balance_due_cents = int(invoice_doc.get("balance_due_cents", -1))
-        return (
-            (amount_cents is None or subtotal_line_cents == amount_cents)
-            and subtotal_cents == subtotal_line_cents
-            and discount_cents == discount_line_cents
-            and total_cents == max(subtotal_cents - discount_cents, 0)
-            and 0 <= balance_due_cents <= total_cents
-        )
-
-    async def _find_existing_invoice_for_enrollment_period(
-        self,
-        *,
-        enrollment_id: str,
-        period: str,
-    ) -> str | None:
-        invoice_doc = await self._db["invoices"].find_one(
-            {
-                "academy_id": current_academy_id(),
-                "enrollment_id": enrollment_id,
-                "period": period,
-                "is_deleted": {"$ne": True},
-                "status": {"$ne": "void"},
-            },
-            sort=[("created_at", -1), ("invoice_id", -1)],
-        )
-        if invoice_doc is None:
-            return None
-        return str(invoice_doc.get("invoice_id") or "")
-
-    async def _upsert_complete_monthly_invoice_key(
-        self,
-        *,
-        enrollment_id: str,
-        period: str,
-        now: datetime,
-    ) -> None:
-        await self._db["billing_invoice_keys"].update_one(
-            {
-                "academy_id": current_academy_id(),
-                "enrollment_id": enrollment_id,
-                "period": period,
-            },
-            {
-                "$set": {
-                    "status": "complete",
-                    "updated_at": now,
-                    "repair_error": None,
-                },
-                "$setOnInsert": {
-                    "invoice_key_id": str(new_ulid()),
-                    "created_at": now,
-                },
-            },
-            upsert=True,
-        )
-
-    async def _recover_orphan_monthly_invoice(
-        self,
-        *,
-        enrollment_id: str,
-        parent_id: str,
-        student_id: str,
-        period: str,
-        gross_amount_cents: int,
-        invoice_key: dict[str, object] | None,
-        now: datetime,
-    ) -> str:
-        if self._ledger_repo is None or invoice_key is None:
-            return "failed"
-        invoice_id = self._monthly_invoice_id(enrollment_id, period)
-        existing_invoice = await self._ledger_repo.get_invoice(invoice_id)
-        existing_invoice_id = invoice_id if existing_invoice is not None else None
-
-        payment_id = str(invoice_key.get("payment_id") or "")
-        applied_credit_cents = await self._applied_credit_cents(payment_id) if payment_id else 0
-        amount_cents = max(gross_amount_cents - applied_credit_cents, 0)
-        if existing_invoice_id is None:
-            existing_invoice_id = await self._find_existing_invoice_for_enrollment_period(
-                enrollment_id=enrollment_id,
-                period=period,
-            )
-        if (
-            existing_invoice_id == invoice_id
-            and await self._monthly_invoice_is_complete(
-                enrollment_id=enrollment_id,
-                period=period,
-                amount_cents=amount_cents,
-            )
-        ) or (
-            existing_invoice_id is not None
-            and existing_invoice_id != invoice_id
-            and await self._invoice_has_consistent_lines(invoice_id=existing_invoice_id)
-        ):
-            await self._mark_monthly_invoice_key(
-                enrollment_id=enrollment_id,
-                period=period,
-                status="complete",
-                now=now,
-            )
-            return "already_complete"
-
-        if not payment_id:
-            return "failed"
-        if applied_credit_cents == 0 and self._credit_ledger is not None:
-            applied_credit_cents = await self._credit_ledger.apply_available_credits(
-                parent_id=parent_id,
-                invoice_id=payment_id,
-                amount_due_cents=gross_amount_cents,
-            )
-            amount_cents = max(gross_amount_cents - applied_credit_cents, 0)
-        if existing_invoice_id and existing_invoice_id != invoice_id:
-            await self._mark_monthly_invoice_key(
-                enrollment_id=enrollment_id,
-                period=period,
-                status="repair_failed",
-                now=now,
-                repair_error="existing period invoice is not complete and cannot be repaired by monthly generator",
-            )
-            return "failed"
-
-        await self._dual_write_ledger_invoice(
-            ledger_repo=self._ledger_repo,
-            payment_id=payment_id,
-            enrollment_id=enrollment_id,
-            parent_id=parent_id,
-            student_id=student_id,
-            period=period,
-            gross_cents=amount_cents,
-            total_cents=amount_cents,
-            now=now,
-        )
-        if await self._monthly_invoice_is_complete(
-            enrollment_id=enrollment_id,
-            period=period,
-            amount_cents=amount_cents,
-        ):
-            await self._mark_monthly_invoice_key(
-                enrollment_id=enrollment_id,
-                period=period,
-                status="complete",
-                now=now,
-            )
-            return "repaired_partial" if existing_invoice is not None else "repaired_orphan"
-        await self._mark_monthly_invoice_key(
-            enrollment_id=enrollment_id,
-            period=period,
-            status="repair_failed",
-            now=now,
-            repair_error="monthly invoice did not contain expected header and line after repair",
-        )
-        return "failed"
-
-    async def _applied_credit_cents(self, invoice_id: str) -> int:
-        total = 0
-        async for doc in self._db["credit_applications"].find(
-            {"academy_id": current_academy_id(), "invoice_id": invoice_id}
-        ):
-            total += int(doc.get("amount_cents", 0))
-        source_total = 0
-        async for doc in self._db["account_credit_ledger"].find(
-            {
-                "academy_id": current_academy_id(),
-                "invoice_id": invoice_id,
-                "type": "CREDIT_APPLIED",
-                "status": "APPLIED",
-            }
-        ):
-            source_total += int(doc.get("amount_cents", 0))
-        return max(total, source_total)
-
     async def generate_monthly_payments(self, period: str) -> GenerateMonthlyPaymentsResult:
-        academy_id = current_academy_id()
-        cursor = self._db["enrollments"].find(
-            {
-                "academy_id": academy_id,
-                "status": {"$in": ["active", "paused"]},
-            },
-            sort=[("created_at", 1), ("enrollment_id", 1)],
-        )
-        now = self._clock()
-        created = 0
-        skipped_existing = 0
-        skipped_no_charge = 0
-        skipped_autopay = 0
-        skipped_paused = 0
-        skipped_details: list[MonthlyGenerationSkippedDetail] = []
-        repaired_orphan_keys = 0
-        repaired_partial_invoices = 0
-        failed_repair = 0
-        async for enrollment in cursor:
-            enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
-            session_id = str(enrollment.get("session_id") or "")
-            student_id = str(enrollment.get("student_id") or "")
-            student_doc = await self._db["students"].find_one(
-                {"academy_id": academy_id, "student_id": student_id}
-            )
-            deferral_detail = await self._active_billing_deferral_detail(
-                academy_id=academy_id,
-                enrollment=enrollment,
-                student_doc=student_doc,
-                period=period,
-                today=now.date(),
-            )
-            if deferral_detail is not None:
-                skipped_paused += 1
-                skipped_details.append(deferral_detail)
-                continue
-            if period in set(enrollment.get("skip_periods") or []):
-                skipped_paused += 1
-                skipped_details.append(
-                    self._legacy_skip_period_detail(
-                        enrollment=enrollment,
-                        student_doc=student_doc,
-                        period=period,
-                    )
-                )
-                continue
-            billing_type = str(enrollment.get("billing_type") or "standard").lower()
-            if billing_type not in {"", "standard", "monthly", "manual"}:
-                skipped_no_charge += 1
-                continue
-            existing = await self._find_one(
-                {
-                    "enrollment_id": enrollment_id,
-                    "period": period,
-                    "is_deleted": {"$ne": True},
-                }
-            )
-            if existing is not None:
-                skipped_existing += 1
-                continue
-            session_doc = await self._db["sessions"].find_one(
-                {"academy_id": academy_id, "session_id": session_id}
-            )
-            (
-                gross_amount_cents,
-                discount_cents,
-                net_amount_cents,
-                snapshot_id,
-                discount_policy,
-            ) = await _resolve_charge_for_enrollment(
-                repo=self,
-                enrollment=enrollment,
-                session_doc=session_doc or {},
-                period=period,
-                now=now,
-            )
-            if gross_amount_cents <= 0:
-                skipped_no_charge += 1
-                continue
-            parent_id = str(
-                enrollment.get("parent_id")
-                or enrollment.get("parent_user_id")
-                or (student_doc or {}).get("parent_id")
-                or (student_doc or {}).get("parent_user_id")
-                or ""
-            )
-            if not parent_id:
-                skipped_no_charge += 1
-                continue
-            existing_invoice_id = await self._find_existing_invoice_for_enrollment_period(
-                enrollment_id=enrollment_id,
-                period=period,
-            )
-            monthly_invoice_id = self._monthly_invoice_id(enrollment_id, period)
-            existing_invoice_complete = (
-                existing_invoice_id == monthly_invoice_id
-                and await self._monthly_invoice_is_complete(
-                    enrollment_id=enrollment_id,
-                    period=period,
-                    amount_cents=gross_amount_cents,
-                )
-            ) or (
-                existing_invoice_id is not None
-                and existing_invoice_id != monthly_invoice_id
-                and await self._invoice_has_consistent_lines(invoice_id=existing_invoice_id)
-            )
-            if existing_invoice_complete:
-                await self._upsert_complete_monthly_invoice_key(
-                    enrollment_id=enrollment_id,
-                    period=period,
-                    now=now,
-                )
-                skipped_existing += 1
-                continue
-            payment_id = str(new_ulid())
-            invoice_key_id = str(new_ulid())
-            try:
-                await self._db["billing_invoice_keys"].insert_one(
-                    {
-                        "academy_id": academy_id,
-                        "invoice_key_id": invoice_key_id,
-                        "payment_id": payment_id,
-                        "enrollment_id": enrollment_id,
-                        "period": period,
-                        "status": "claimed",
-                        "created_at": now,
-                        "updated_at": now,
-                    }
-                )
-            except DuplicateKeyError:
-                invoice_key = await self._db["billing_invoice_keys"].find_one(
-                    {
-                        "academy_id": academy_id,
-                        "enrollment_id": enrollment_id,
-                        "period": period,
-                    }
-                )
-                recovered = await self._recover_orphan_monthly_invoice(
-                    enrollment_id=enrollment_id,
-                    parent_id=parent_id,
-                    student_id=student_id,
-                    period=period,
-                    gross_amount_cents=gross_amount_cents,
-                    invoice_key=invoice_key,
-                    now=now,
-                )
-                if recovered == "repaired_orphan":
-                    created += 1
-                    repaired_orphan_keys += 1
-                elif recovered == "repaired_partial":
-                    repaired_partial_invoices += 1
-                elif recovered == "already_complete":
-                    skipped_existing += 1
-                else:
-                    failed_repair += 1
-                continue
-            applied_credit_cents = 0
-            if self._credit_ledger is not None:
-                applied_credit_cents = await self._credit_ledger.apply_available_credits(
-                    parent_id=parent_id,
-                    invoice_id=payment_id,
-                    amount_due_cents=net_amount_cents,
-                )
-            # Recurring tuition discount (#244) is applied to the net charge before
-            # the ledger write, so the generated invoice reflects the discounted amount.
-            # Phase 2A complete: write only to the ledger (legacy Payment write removed).
-            # Phase 5 will delete MongoPaymentRepository once the prod backfill is confirmed.
-            amount_cents = max(net_amount_cents - applied_credit_cents, 0)
-            if self._ledger_repo is not None:
-                await self._dual_write_ledger_invoice(
-                    ledger_repo=self._ledger_repo,
-                    payment_id=payment_id,
-                    enrollment_id=enrollment_id,
-                    parent_id=parent_id,
-                    student_id=student_id,
-                    period=period,
-                    gross_cents=gross_amount_cents,
-                    discount_cents=discount_cents,
-                    total_cents=amount_cents,
-                    discount_policy=discount_policy,
-                    now=now,
-                )
-                await self._mark_monthly_invoice_key(
-                    enrollment_id=enrollment_id,
-                    period=period,
-                    status="complete",
-                    now=now,
-                )
-            created += 1
-        return GenerateMonthlyPaymentsResult(
-            created=created,
-            skipped_existing=skipped_existing,
-            skipped_no_charge=skipped_no_charge,
-            skipped_autopay=skipped_autopay,
-            skipped_paused=skipped_paused,
-            repaired_orphan_keys=repaired_orphan_keys,
-            repaired_partial_invoices=repaired_partial_invoices,
-            failed_repair=failed_repair,
-            skipped_details=skipped_details,
-        )
+        return await MongoMonthlyBillingGenerator(self).generate_monthly_payments(period)
 
     # ------------------------------------------------------------------
     # SessionLoader port implementation
@@ -1216,6 +622,37 @@ class MongoPaymentRepository(TenantScopedRepository):
             )
         return out
 
+    async def _admin_payment_doc_with_source(
+        self, payment_id: str
+    ) -> tuple[dict[str, object], str]:
+        doc = await self._find_one(_payment_lookup(payment_id))
+        if doc is not None:
+            return doc, "legacy"
+        ledger_doc = await self._db["ledger_payments"].find_one(
+            self._ledger_legacy_shape_query({"payment_id": payment_id})
+        )
+        if ledger_doc is not None:
+            return ledger_doc, "ledger"
+        raise PaymentNotFound("no such payment", payment_id=payment_id)
+
+    async def _admin_payment_update(
+        self, payment_id: str, source: str, update: dict[str, Any]
+    ) -> None:
+        if source == "ledger":
+            set_fields = dict(update.get("$set") or {})
+            if "status" in set_fields:
+                # LedgerPaymentStatus has no "partially_paid"; keep the doc
+                # parseable — partial detail lives in the amount fields.
+                set_fields["status"] = {"partially_paid": "pending", "paid": "succeeded"}.get(
+                    str(set_fields["status"]), set_fields["status"]
+                )
+            await self._db["ledger_payments"].update_one(
+                self._ledger_legacy_shape_query({"payment_id": payment_id}),
+                {**update, "$set": set_fields} if set_fields else update,
+            )
+            return
+        await self._update_one(_payment_lookup(payment_id), update)
+
     async def mark_payment_paid(
         self,
         payment_id: str,
@@ -1227,7 +664,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         recorded_by: str | None = None,
         payment_date: date | None = None,
     ) -> None:
-        doc = await self._get_admin_payment_doc(payment_id)
+        doc, source = await self._admin_payment_doc_with_source(payment_id)
         if str(doc.get("status") or "pending") not in {"pending", "failed", "partially_paid"}:
             raise PaymentOperationNotAllowed("only open payments can receive manual payments")
         amount_due_cents = max(self._amount_cents(doc) - self._discount_cents(doc), 0)
@@ -1250,8 +687,9 @@ class MongoPaymentRepository(TenantScopedRepository):
             if payment_date is not None
             else now
         )
-        await self._update_one(
-            _payment_lookup(payment_id),
+        await self._admin_payment_update(
+            payment_id,
+            source,
             {
                 "$set": {
                     "status": status,
@@ -1302,13 +740,14 @@ class MongoPaymentRepository(TenantScopedRepository):
     async def apply_payment_discount(
         self, payment_id: str, discount_cents: int, *, reason: str
     ) -> None:
-        doc = await self._get_admin_payment_doc(payment_id)
+        doc, source = await self._admin_payment_doc_with_source(payment_id)
         if str(doc.get("status") or "pending") != "pending":
             raise PaymentOperationNotAllowed("only pending payments can be discounted")
         if discount_cents > self._amount_cents(doc):
             raise PaymentOperationNotAllowed("discount cannot exceed payment amount")
-        await self._update_one(
-            _payment_lookup(payment_id),
+        await self._admin_payment_update(
+            payment_id,
+            source,
             {
                 "$set": {
                     "discount_cents": discount_cents,
@@ -1321,13 +760,26 @@ class MongoPaymentRepository(TenantScopedRepository):
         )
 
     async def undo_payment_paid(self, payment_id: str) -> None:
-        doc = await self._get_admin_payment_doc(payment_id)
+        doc, source = await self._admin_payment_doc_with_source(payment_id)
         if str(doc.get("status") or "") != "succeeded":
             raise PaymentOperationNotAllowed("only paid payments can be undone")
         if self._is_stripe_linked(doc):
             raise PaymentOperationNotAllowed("Stripe-linked payments must be refunded")
-        await self._update_one(
-            _payment_lookup(payment_id),
+        # A legacy row can front a Stripe-backed ledger payment (same payment_id,
+        # see save()/get() shadow-read above) whose Stripe linkage lives only on
+        # the ledger doc — check it too before allowing the undo.
+        if source == "legacy":
+            ledger_doc = await self._db["ledger_payments"].find_one(
+                {
+                    "academy_id": current_academy_id(),
+                    "payment_id": self._payment_id(doc),
+                }
+            )
+            if ledger_doc is not None and self._is_stripe_linked(ledger_doc):
+                raise PaymentOperationNotAllowed("Stripe-linked payments must be refunded")
+        await self._admin_payment_update(
+            payment_id,
+            source,
             {
                 "$set": {"status": "pending", "updated_at": datetime.now(UTC)},
                 "$unset": {
@@ -1340,11 +792,14 @@ class MongoPaymentRepository(TenantScopedRepository):
             },
         )
 
-    async def _get_admin_payment_doc(self, payment_id: str) -> dict[str, object]:
-        doc = await self._find_one(_payment_lookup(payment_id))
-        if doc is None:
-            raise PaymentNotFound("no such payment", payment_id=payment_id)
-        return doc
+
+def _doc_created_at_utc(doc: dict[str, object]) -> datetime:
+    value = doc.get("created_at") or doc.get("invoice_created_at")
+    if not isinstance(value, datetime):
+        return datetime.min.replace(tzinfo=UTC)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value
 
 
 def _payment_lookup(payment_id: str) -> dict[str, Any]:
@@ -1355,285 +810,3 @@ def _safe_object_lookup(value: str) -> dict[str, Any]:
     if BsonObjectId.is_valid(value):
         return {"_id": BsonObjectId(value)}
     return {"_id": value}
-
-
-def _session_amount_cents(doc: dict[str, object]) -> int:
-    if doc.get("amount_cents") is not None:
-        return int(doc["amount_cents"])  # type: ignore[arg-type]
-    if doc.get("monthly_price_cents") is not None:
-        return int(doc["monthly_price_cents"])  # type: ignore[arg-type]
-    if doc.get("monthly_price") is not None:
-        return round(float(doc["monthly_price"]) * 100)  # type: ignore[arg-type]
-    return 0
-
-
-def _coerce_datetime(value: object | None) -> datetime | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=UTC)
-    if isinstance(value, str):
-        try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-    return None
-
-
-def _session_occurrences(
-    doc: dict[str, object],
-    period: BillingPeriod,
-) -> list[ClassOccurrence]:
-    timezone_name = str(doc.get("timezone") or period.timezone or "America/Chicago")
-    tz = ZoneInfo(timezone_name)
-    session_id = str(doc.get("session_id") or doc.get("_id") or "")
-    if doc.get("start_date") and doc.get("end_date") and doc.get("days_of_week"):
-        start_date = date.fromisoformat(str(doc["start_date"]))
-        end_date = date.fromisoformat(str(doc["end_date"]))
-        days = {str(day)[:3].title() for day in (doc.get("days_of_week") or [])}
-        start_time = time.fromisoformat(str(doc.get("start_time") or "00:00"))
-        end_time = time.fromisoformat(str(doc.get("end_time") or doc.get("start_time") or "00:00"))
-        current = max(start_date, period.start_at.date())
-        period_last_day = date.fromordinal(period.end_at.date().toordinal() - 1)
-        final = min(end_date, period_last_day)
-        rows: list[ClassOccurrence] = []
-        while current <= final:
-            if current.strftime("%a") in days:
-                local_start = datetime.combine(current, start_time, tzinfo=tz)
-                local_end = datetime.combine(current, end_time, tzinfo=tz)
-                rows.append(
-                    ClassOccurrence(
-                        occurrence_id=f"{session_id}:{current.isoformat()}:{start_time.strftime('%H:%M')}",
-                        session_id=session_id,
-                        start_at=local_start.astimezone(UTC),
-                        end_at=local_end.astimezone(UTC),
-                        status="scheduled",
-                        is_billable=True,
-                        timezone=timezone_name,
-                    )
-                )
-            current = date.fromordinal(current.toordinal() + 1)
-        return rows
-
-    start_at = _coerce_datetime(doc.get("start_at"))
-    end_at = _coerce_datetime(doc.get("end_at"))
-    if start_at is None or end_at is None:
-        return []
-    local_start = start_at.astimezone(tz)
-    if not (period.start_at <= local_start < period.end_at):
-        return []
-    return [
-        ClassOccurrence(
-            occurrence_id=f"{session_id}:{local_start.date().isoformat()}:{local_start.strftime('%H:%M')}",
-            session_id=session_id,
-            start_at=start_at,
-            end_at=end_at,
-            status="scheduled"
-            if str(doc.get("status") or "scheduled") == "active"
-            else str(doc.get("status") or "scheduled"),  # type: ignore[arg-type]
-            is_billable=True,
-            timezone=timezone_name,
-        )
-    ]
-
-
-# ---------------------------------------------------------------------------
-# Module-level proration helpers for generate_monthly_payments.
-#
-# These are free functions (NOT repo class methods) that apply
-# FirstMonthProrationPolicy.  The MongoPaymentRepository class itself no
-# longer performs any tuition calculation; it delegates to these functions,
-# which live here purely because generate_monthly_payments is bound to the
-# repo for now.  Future work can extract generate_monthly_payments into a
-# proper application use case and delete these from the infra module.
-# ---------------------------------------------------------------------------
-
-
-async def _resolve_charge_for_enrollment(
-    *,
-    repo: MongoPaymentRepository,
-    enrollment: dict[str, object],
-    session_doc: dict[str, object],
-    period: str,
-    now: datetime,
-) -> tuple[int, int, int, str | None, TuitionDiscount | None]:
-    """Return charge tuple for a monthly row, including the applied discount policy.
-
-    This function owns all proration decisions; the repo class is a pure
-    storage delegate here. A recurring tuition discount (issue #244), if active and
-    effective for the period, is applied at monthly scale and threaded through the
-    existing proration policy so discounted invoices stay consistent with proration.
-    """
-    amount_cents = _session_amount_cents(session_doc)
-    billing_start = _coerce_datetime(
-        enrollment.get("billing_start_at")
-        or enrollment.get("enrolled_at")
-        or enrollment.get("created_at")
-    )
-    enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
-    timezone_name = str(session_doc.get("timezone") or "America/Chicago")
-    billing_period = BillingPeriod.from_label(period, timezone_name=timezone_name)
-    occurrences = await repo._occurrences_for_session(session_doc, billing_period)
-
-    policy = await repo._discounts.get_active(enrollment_id)
-    mdc = (
-        monthly_discount_cents(policy, monthly_price_cents=amount_cents)
-        if policy is not None and _policy_applies(policy, billing_period)
-        else 0
-    )
-
-    # Not a first-month enrollment → full monthly tuition
-    if billing_start is None or billing_start.strftime("%Y-%m") != period:
-        net = max(amount_cents - mdc, 0)
-        discount = amount_cents - net
-        snapshot = _build_monthly_tuition_snapshot(
-            occurrences=occurrences,
-            billing_period=billing_period,
-            monthly_price_cents=amount_cents,
-            discount_cents=discount,
-            now=now,
-        )
-        snapshot_id = await repo.persist_monthly_tuition(
-            snapshot=snapshot,
-            enrollment_id=enrollment_id,
-            session_id=str(enrollment.get("session_id") or session_doc.get("session_id") or ""),
-            student_id=str(enrollment.get("student_id") or ""),
-        )
-        return amount_cents, discount, net, snapshot_id, policy if mdc > 0 else None
-
-    # Check if already prorated in a prior run
-    academy_id = current_academy_id()
-    prior_consumed = await repo._db["billing_calculation_snapshots"].find_one(
-        {
-            "academy_id": academy_id,
-            "enrollment_id": enrollment_id,
-            "billing_period_label": period,
-            "status": "CONSUMED",
-            "calculation_type": "FIRST_MONTH_PRORATION",
-        }
-    )
-    if prior_consumed is not None:
-        return 0, 0, 0, str(prior_consumed.get("snapshot_id")), None
-
-    # First-month proration. Net is prorated AFTER the discount (the proration
-    # policy already subtracts discount_cents before prorating); gross is the same
-    # proration with no discount, so discount = gross_prorated - net_prorated exactly.
-    snapshot = _build_proration_snapshot_for_first_month(
-        occurrences=occurrences,
-        billing_period=billing_period,
-        billing_start=billing_start,
-        amount_cents=amount_cents,
-        discount_cents=mdc,
-        now=now,
-        enrollment_id=enrollment_id,
-    )
-    net_prorated = snapshot.final_amount_cents
-    gross_prorated = _prorated_gross(
-        occurrences=occurrences,
-        billing_period=billing_period,
-        billing_start=billing_start,
-        amount_cents=amount_cents,
-        now=now,
-    )
-    discount = max(gross_prorated - net_prorated, 0)
-    snapshot_id = await repo.persist_consumed_first_month(
-        snapshot=snapshot,
-        enrollment_id=enrollment_id,
-        session_id=str(enrollment.get("session_id") or ""),
-        student_id=str(enrollment.get("student_id") or ""),
-        now=now,
-    )
-    return gross_prorated, discount, net_prorated, snapshot_id, policy if mdc > 0 else None
-
-
-def _policy_applies(policy: TuitionDiscount, billing_period: BillingPeriod) -> bool:
-    """True when the policy's effective window overlaps the billing period."""
-    p_start = billing_period.start_at.date()
-    p_end = billing_period.end_at.date()
-    return policy.effective_start <= p_end and (
-        policy.effective_end is None or policy.effective_end >= p_start
-    )
-
-
-def _prorated_gross(
-    *,
-    occurrences: list[ClassOccurrence],
-    billing_period: BillingPeriod,
-    billing_start: datetime,
-    amount_cents: int,
-    now: datetime,
-) -> int:
-    """Prorated tuition with NO discount (the gross side of a discounted month)."""
-    raw = FirstMonthProrationPolicy().quote(
-        monthly_price_cents=amount_cents,
-        discount_cents=0,
-        period=billing_period,
-        occurrences=occurrences,
-        billing_start_at=billing_start,
-        calculated_at=now,
-        calculated_by="SYSTEM",
-    )
-    return raw.final_amount_cents
-
-
-def _build_proration_snapshot_for_first_month(
-    *,
-    occurrences: list[ClassOccurrence],
-    billing_period: BillingPeriod,
-    billing_start: datetime,
-    amount_cents: int,
-    discount_cents: int,
-    now: datetime,
-    enrollment_id: str,
-) -> BillingCalculationSnapshot:
-    """Compute a CONSUMED first-month proration snapshot (no I/O)."""
-    snapshot_id = str(new_ulid())
-    raw = FirstMonthProrationPolicy().quote(
-        monthly_price_cents=amount_cents,
-        discount_cents=discount_cents,
-        period=billing_period,
-        occurrences=occurrences,
-        billing_start_at=billing_start,
-        calculated_at=now,
-        calculated_by="SYSTEM",
-    )
-    return raw.model_copy(update={"snapshot_id": snapshot_id, "status": "CONSUMED"})
-
-
-def _build_monthly_tuition_snapshot(
-    *,
-    occurrences: list[ClassOccurrence],
-    billing_period: BillingPeriod,
-    monthly_price_cents: int,
-    discount_cents: int,
-    now: datetime,
-) -> BillingCalculationSnapshot:
-    """Build a CONSUMED monthly-tuition snapshot (no proration, full amount)."""
-    eligible = [
-        occ
-        for occ in sorted(occurrences, key=lambda o: o.occurrence_id)
-        if FirstMonthProrationPolicy._is_eligible(occ, billing_period)
-    ]
-    snapshot_id = str(new_ulid())
-    included = [occ.occurrence_id for occ in eligible]
-    return BillingCalculationSnapshot(
-        snapshot_id=snapshot_id,
-        status="CONSUMED",
-        calculation_type="MONTHLY_TUITION",
-        monthly_price_cents=monthly_price_cents,
-        discount_cents=discount_cents,
-        billing_period_start=billing_period.start_at,
-        billing_period_end=billing_period.end_at,
-        billing_period_label=billing_period.label,
-        timezone=billing_period.timezone,
-        total_eligible_classes=len(eligible),
-        billable_remaining_classes=len(eligible),
-        proration_ratio=f"{len(eligible)}/{len(eligible)}" if eligible else "0/0",
-        final_amount_cents=max(monthly_price_cents - discount_cents, 0),
-        included_occurrence_ids=included,
-        excluded_occurrences={},
-        schedule_signature=schedule_signature(eligible, timezone_name=billing_period.timezone),
-        calculated_at=now,
-        calculated_by="SYSTEM",
-    )

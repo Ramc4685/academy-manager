@@ -390,6 +390,7 @@ class FakeBillingLedger:
         self.allocation_keys: set[str] = set()
         self.payment_attempts: dict[str, dict[str, Any]] = {}
         self.fail_allocate = False
+        self.fail_next_invoice_refund = False
 
     async def create_invoice(
         self,
@@ -585,6 +586,27 @@ class FakeBillingLedger:
             }
         )
         self.payments[payment_id] = updated
+        return updated
+
+    async def list_allocations_for_payment(self, payment_id: str) -> list[dict[str, Any]]:
+        return [a for a in self.allocations if a["payment_id"] == payment_id]
+
+    async def apply_invoice_refund(self, *, invoice_id: str, amount_cents: int) -> LedgerInvoice:
+        if self.fail_next_invoice_refund:
+            self.fail_next_invoice_refund = False
+            raise ValueError("invoice changed during save (stale version); retry")
+        if amount_cents <= 0:
+            raise ValueError("refund amount must be positive")
+        invoice = self.invoices[invoice_id]
+        if invoice.refunded_cents + amount_cents > invoice.total_cents:
+            raise ValueError("refund would exceed invoice total")
+        updated = invoice.model_copy(
+            update={
+                "refunded_cents": invoice.refunded_cents + amount_cents,
+                "updated_at": datetime.now(UTC),
+            }
+        )
+        self.invoices[invoice_id] = updated
         return updated
 
     async def reverse_payment_allocation(
@@ -3598,6 +3620,142 @@ async def test_charge_refunded_ledger_partial_then_idempotent() -> None:
     )
     assert ledger.payments["ledger-pay-1"].refunded_cents == 4_000
     assert len(outbox.events) == events_after_first
+
+
+@pytest.mark.asyncio
+async def test_charge_refunded_ledger_updates_invoice_refunded_cents() -> None:
+    """A Stripe-originated refund of a ledger-only payment must propagate to
+    the allocated invoice's refunded_cents — not just the payment row —
+    otherwise the invoice keeps reporting itself fully paid."""
+    repo = FakePaymentRepo()
+    invoice = _ledger_invoice(invoice_id="inv-refund", balance_due_cents=0, status="paid")
+    ledger = FakeBillingLedger(invoice=invoice)
+    _seed_ledger_payment(ledger, pi="pi_led_inv", amount_cents=10_000)
+    ledger.allocations.append(
+        {
+            "allocation_id": "alloc-1",
+            "payment_id": "ledger-pay-1",
+            "invoice_id": "inv-refund",
+            "amount_cents": 10_000,
+            "idempotency_key": "autopay-alloc:pi_led_inv",
+        }
+    )
+    outbox = FakeOutbox()
+    uc = _build(repo, outbox=outbox, billing_ledger=ledger)
+
+    await uc.execute(_charge_refunded_body("evt_led_inv", "pi_led_inv", 4_000), "test_signature")
+
+    assert ledger.payments["ledger-pay-1"].refunded_cents == 4_000
+    assert ledger.invoices["inv-refund"].refunded_cents == 4_000
+
+    # Cumulative re-delivery is idempotent at the invoice level too.
+    await uc.execute(_charge_refunded_body("evt_led_inv2", "pi_led_inv", 4_000), "test_signature")
+    assert ledger.invoices["inv-refund"].refunded_cents == 4_000
+
+
+@pytest.mark.asyncio
+async def test_charge_refunded_ledger_clamps_invoice_refund_to_invoice_total() -> None:
+    """Overpayment case: payment larger than the invoice allocation. A full
+    payment refund must clamp the invoice-level refund at the invoice total
+    (the overpaid remainder lives in the credit ledger, not the invoice)."""
+    repo = FakePaymentRepo()
+    invoice = _ledger_invoice(invoice_id="inv-clamp", balance_due_cents=0, status="paid")
+    ledger = FakeBillingLedger(invoice=invoice)
+    _seed_ledger_payment(ledger, pi="pi_led_clamp", amount_cents=12_000)
+    ledger.allocations.append(
+        {
+            "allocation_id": "alloc-2",
+            "payment_id": "ledger-pay-1",
+            "invoice_id": "inv-clamp",
+            "amount_cents": 10_000,
+            "idempotency_key": "autopay-alloc:pi_led_clamp",
+        }
+    )
+    outbox = FakeOutbox()
+    uc = _build(repo, outbox=outbox, billing_ledger=ledger)
+
+    await uc.execute(
+        _charge_refunded_body("evt_led_clamp", "pi_led_clamp", 12_000), "test_signature"
+    )
+
+    assert ledger.payments["ledger-pay-1"].status == "refunded"
+    # invoice total is 10_000 — the 12_000 refund must not push refunded_cents past it
+    assert ledger.invoices["inv-clamp"].refunded_cents == 10_000
+
+
+@pytest.mark.asyncio
+async def test_charge_refunded_ledger_attributes_refund_per_allocation() -> None:
+    """A payment split across invoices must refund each invoice only up to
+    what THIS payment allocated to it — not soak the whole refund into the
+    first invoice (which would misattribute another payment's funding)."""
+    repo = FakePaymentRepo()
+    inv_a = _ledger_invoice(invoice_id="inv-a", balance_due_cents=0, status="paid")
+    ledger = FakeBillingLedger(invoice=inv_a)
+    # inv-a total 10_000: funded 6_000 by THIS payment + 4_000 by another payment.
+    inv_b = _ledger_invoice(invoice_id="inv-b", balance_due_cents=0, status="paid").model_copy(
+        update={"subtotal_cents": 4_000, "total_cents": 4_000}
+    )
+    ledger.invoices["inv-b"] = inv_b
+    _seed_ledger_payment(ledger, pi="pi_split", amount_cents=10_000)
+    ledger.allocations.append(
+        {
+            "allocation_id": "alloc-a",
+            "payment_id": "ledger-pay-1",
+            "invoice_id": "inv-a",
+            "amount_cents": 6_000,
+            "idempotency_key": "checkout-alloc:pi_split:inv-a",
+        }
+    )
+    ledger.allocations.append(
+        {
+            "allocation_id": "alloc-b",
+            "payment_id": "ledger-pay-1",
+            "invoice_id": "inv-b",
+            "amount_cents": 4_000,
+            "idempotency_key": "checkout-alloc:pi_split:inv-b",
+        }
+    )
+    uc = _build(repo, outbox=FakeOutbox(), billing_ledger=ledger)
+
+    await uc.execute(_charge_refunded_body("evt_split", "pi_split", 10_000), "test_signature")
+
+    assert ledger.invoices["inv-a"].refunded_cents == 6_000
+    assert ledger.invoices["inv-b"].refunded_cents == 4_000
+
+
+@pytest.mark.asyncio
+async def test_charge_refunded_ledger_invoice_sync_self_heals_on_retry() -> None:
+    """If the invoice-level refund write fails transiently, the webhook must
+    fail WITHOUT having marked the payment refunded, so Stripe's redelivery
+    retries the whole thing — otherwise the invoice stays stale forever."""
+    repo = FakePaymentRepo()
+    invoice = _ledger_invoice(invoice_id="inv-retry", balance_due_cents=0, status="paid")
+    ledger = FakeBillingLedger(invoice=invoice)
+    _seed_ledger_payment(ledger, pi="pi_retry", amount_cents=10_000)
+    ledger.allocations.append(
+        {
+            "allocation_id": "alloc-r",
+            "payment_id": "ledger-pay-1",
+            "invoice_id": "inv-retry",
+            "amount_cents": 10_000,
+            "idempotency_key": "autopay-alloc:pi_retry",
+        }
+    )
+    uc = _build(repo, outbox=FakeOutbox(), billing_ledger=ledger)
+
+    ledger.fail_next_invoice_refund = True
+    with pytest.raises(ValueError):
+        await uc.execute(_charge_refunded_body("evt_retry_1", "pi_retry", 10_000), "test_signature")
+    # Crucially: the payment must NOT have been marked refunded yet, or the
+    # redelivery would short-circuit on delta == 0 and never repair the invoice.
+    assert ledger.payments["ledger-pay-1"].refunded_cents == 0
+    assert ledger.invoices["inv-retry"].refunded_cents == 0
+
+    # Stripe redelivers → everything applies.
+    await uc.execute(_charge_refunded_body("evt_retry_2", "pi_retry", 10_000), "test_signature")
+    assert ledger.payments["ledger-pay-1"].refunded_cents == 10_000
+    assert ledger.payments["ledger-pay-1"].status == "refunded"
+    assert ledger.invoices["inv-retry"].refunded_cents == 10_000
 
 
 def _seed_incomplete_subscription(

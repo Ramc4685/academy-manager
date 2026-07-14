@@ -48,9 +48,11 @@ class RemoveInvoiceLine:
             raise LookupError(f"line {cmd.line_id} not found")
 
         remaining_lines = await self._ledger.get_lines_for_invoice(cmd.invoice_id)
+        allocated_cents = await self._ledger.sum_allocations_for_invoice(cmd.invoice_id)
         updated_invoice = recompute_totals(
             invoice.model_copy(update={"updated_at": self._clock()}),
             remaining_lines,
+            allocated_cents=allocated_cents,
         )
         saved_invoice = await self._ledger.save_invoice(updated_invoice)
         return RemoveInvoiceLineResult(invoice=saved_invoice)

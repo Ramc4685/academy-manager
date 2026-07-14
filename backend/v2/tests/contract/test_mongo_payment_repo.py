@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from backend.v2.contexts.billing.domain.errors import PaymentOperationNotAllowed
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
@@ -132,10 +133,10 @@ async def test_get_and_save_ledger_payment_without_recreating_legacy_payment(db,
         {"academy_id": acad, "payment_id": "lp-refundable"}
     )
     assert ledger_payment is not None
-    # LedgerPayment only accepts pending/succeeded/failed/refunded, so a
-    # partial refund must be normalized to "succeeded" with the refunded
-    # amount tracked separately; otherwise later ledger reads fail to parse.
-    assert ledger_payment["status"] == "succeeded"
+    # LedgerPaymentStatus includes "partially_refunded" (domain/ledger.py), so
+    # the bridge must persist the real status — downgrading to "succeeded"
+    # hides partially-refunded payments from any status-filtered query.
+    assert ledger_payment["status"] == "partially_refunded"
     assert ledger_payment["refunded_cents"] == 4_000
     assert await db["payments"].count_documents({"academy_id": acad}) == 0
 
@@ -146,7 +147,7 @@ async def test_get_and_save_ledger_payment_without_recreating_legacy_payment(db,
     )
 
     parsed = MongoBillingLedgerRepository._payment_from_doc(ledger_payment)
-    assert parsed.status == "succeeded"
+    assert parsed.status == "partially_refunded"
 
 
 @pytest.mark.asyncio
@@ -1422,3 +1423,173 @@ async def test_list_all_tolerates_legacy_waived_payments(db, acad) -> None:
 
     assert [payment.payment_id for payment in payments] == ["waived-pay-1"]
     assert payments[0].status == "waived"
+
+
+@pytest.mark.asyncio
+async def test_undo_payment_paid_refuses_when_shadowing_ledger_payment_is_stripe_linked(
+    db, acad
+) -> None:
+    """The Stripe-linkage guard must consider the shadowing ledger_payments doc:
+    a legacy row without Stripe fields can front a real Stripe-backed ledger
+    payment, and "undoing" that would silently diverge from Stripe truth."""
+    now = datetime.now(UTC)
+    await db["payments"].insert_one(
+        {
+            "academy_id": acad,
+            "payment_id": "pay-shadowed",
+            "parent_id": "parent-1",
+            "amount_cents": 10_000,
+            "status": "succeeded",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    await db["ledger_payments"].insert_one(
+        {
+            "academy_id": acad,
+            "payment_id": "pay-shadowed",
+            "parent_id": "parent-1",
+            "amount_cents": 10_000,
+            "unapplied_amount_cents": 0,
+            "currency": "usd",
+            "status": "succeeded",
+            "stripe_payment_intent_id": "pi_shadowed",
+            "refunded_cents": 0,
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    repo = MongoPaymentRepository(db)
+
+    with pytest.raises(PaymentOperationNotAllowed):
+        await repo.undo_payment_paid("pay-shadowed")
+
+    legacy_doc = await db["payments"].find_one({"academy_id": acad, "payment_id": "pay-shadowed"})
+    assert legacy_doc is not None and legacy_doc["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_new_payment_save_is_ledger_native_and_lifecycle_works(db, acad) -> None:
+    """Phase 5 freeze: brand-new payments are inserted into ledger_payments
+    (marked payment_origin="legacy_payment"), never into the legacy payments
+    collection — and the whole checkout lifecycle (lookup by checkout session,
+    webhook status flip, lookup by PI, parent listing) keeps working."""
+    now = datetime.now(UTC)
+    repo = MongoPaymentRepository(db)
+    await repo.save(
+        Payment(
+            payment_id="pay-new-1",
+            academy_id=acad,
+            parent_id="parent-1",
+            enrollment_id="enr-1",
+            session_id="sess-1",
+            stripe_checkout_session_id="cs_new_1",
+            amount_cents=5_000,
+            status="pending",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    assert await db["payments"].count_documents({"academy_id": acad}) == 0
+    doc = await db["ledger_payments"].find_one({"academy_id": acad, "payment_id": "pay-new-1"})
+    assert doc is not None
+    assert doc["payment_origin"] == "legacy_payment"
+    assert doc["unapplied_amount_cents"] == 0
+
+    got = await repo.get_by_checkout_session("cs_new_1")
+    assert got is not None and got.status == "pending"
+
+    # Webhook completion path: stamp PI + succeeded through save() (bridge branch).
+    await repo.save(
+        got.model_copy(
+            update={
+                "status": "succeeded",
+                "stripe_payment_intent_id": "pi_new_1",
+                "updated_at": now,
+            }
+        )
+    )
+    by_pi = await repo.get_by_stripe_pi("pi_new_1")
+    assert by_pi is not None
+    assert by_pi.status == "succeeded"
+    assert by_pi.payment_id == "pay-new-1"
+
+    rows = await repo.list_for_parent("parent-1")
+    assert [r.payment_id for r in rows] == ["pay-new-1"]
+    assert [r.payment_id for r in await repo.list_all()] == ["pay-new-1"]
+
+
+@pytest.mark.asyncio
+async def test_ledger_native_payments_do_not_leak_into_legacy_lookups(db, acad) -> None:
+    """Ledger-native payments (autopay / pay-link — no payment_origin marker)
+    must stay invisible to legacy PI/checkout lookups, or charge.refunded
+    webhooks would take the legacy branch and skip invoice refund sync."""
+    now = datetime.now(UTC)
+    await db["ledger_payments"].insert_one(
+        {
+            "academy_id": acad,
+            "payment_id": "lp-native",
+            "parent_id": "parent-1",
+            "amount_cents": 8_000,
+            "unapplied_amount_cents": 0,
+            "currency": "usd",
+            "status": "succeeded",
+            "stripe_payment_intent_id": "pi_native",
+            "stripe_checkout_session_id": "cs_native",
+            "refunded_cents": 0,
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    repo = MongoPaymentRepository(db)
+
+    assert await repo.get_by_stripe_pi("pi_native") is None
+    assert await repo.get_by_checkout_session("cs_native") is None
+
+
+@pytest.mark.asyncio
+async def test_admin_ops_work_on_ledger_resident_payment(db, acad) -> None:
+    """Phase 5b: admin manual ops (mark paid / discount) must operate on
+    ledger-native payments (payment_origin marker), since new payments are no
+    longer inserted into the legacy collection."""
+    now = datetime.now(UTC)
+    repo = MongoPaymentRepository(db)
+    await repo.save(
+        Payment(
+            payment_id="pay-cash-1",
+            academy_id=acad,
+            parent_id="parent-1",
+            session_id="sess-1",
+            stripe_checkout_session_id="cs_cash_1",
+            amount_cents=6_000,
+            status="pending",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    assert await db["payments"].count_documents({"academy_id": acad}) == 0
+
+    await repo.apply_payment_discount("pay-cash-1", 1_000, reason="sibling")
+    doc = await db["ledger_payments"].find_one({"academy_id": acad, "payment_id": "pay-cash-1"})
+    assert doc is not None and doc["discount_cents"] == 1_000
+
+    await repo.mark_payment_paid(
+        "pay-cash-1",
+        payment_method="cash",
+        notes="paid at front desk",
+        amount_received_cents=5_000,
+        reference_number=None,
+    )
+    doc = await db["ledger_payments"].find_one({"academy_id": acad, "payment_id": "pay-cash-1"})
+    assert doc is not None
+    assert doc["status"] == "succeeded"
+    assert doc["paid_amount_cents"] == 5_000
+    assert await db["payments"].count_documents({"academy_id": acad}) == 0
+
+    # The doc must still round-trip through the ledger domain parser.
+    from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
+        MongoBillingLedgerRepository,
+    )
+
+    assert MongoBillingLedgerRepository._payment_from_doc(doc).status == "succeeded"

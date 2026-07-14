@@ -129,6 +129,28 @@ forbidden_modules = [
 ]
 allow_indirect_imports = "true"
 
+# Rule 4b: The invoicing core (ledger/payments/credits/dunning domain) must
+# stay independent of academy-pricing policy (proration, session types,
+# tuition discounts). This is the standalone-extraction seam: the core is the
+# portable invoicing product; pricing is the academy plugin that feeds it
+# generic invoice lines. See docs/architecture/invoicing-standalone-extraction.md.
+[[tool.importlinter.contracts]]
+name = "invoicing-core-independent-of-academy-pricing"
+type = "forbidden"
+source_modules = [
+    "backend.v2.contexts.billing.domain.ledger",
+    "backend.v2.contexts.billing.domain.models",
+    "backend.v2.contexts.billing.domain.credits",
+    "backend.v2.contexts.billing.domain.dunning",
+    "backend.v2.contexts.billing.domain.fees",
+]
+forbidden_modules = [
+    "backend.v2.contexts.billing.domain.proration",
+    "backend.v2.contexts.billing.domain.session_type",
+    "backend.v2.contexts.billing.domain.session_type_proration",
+    "backend.v2.contexts.billing.domain.tuition_discount",
+]
+
 # Rule 5: No cross-context imports. Each context is self-contained.
 # (Enforced by the structural test for now; import-linter "independence"
 # contracts will be added per wave as contexts land.)

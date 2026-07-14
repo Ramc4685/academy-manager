@@ -5843,7 +5843,8 @@ def compose_admin(
         mismatch_state: str | None = None
         if payment_status == "paid" and checkout_status == "complete":
             amount_total = int(checkout.get("amount_total") or 0)
-            payment = await db["payments"].find_one(
+            payment_collection = db["payments"]
+            payment = await payment_collection.find_one(
                 {
                     "academy_id": academy_id,
                     "enrollment_id": enrollment_id,
@@ -5852,6 +5853,20 @@ def compose_admin(
                 },
                 sort=[("created_at", -1), ("payment_id", 1)],
             )
+            if payment is None:
+                # Phase 5 freeze: new payments are ledger-native (marker docs
+                # in ledger_payments) — reconcile those the same way.
+                payment_collection = db["ledger_payments"]
+                payment = await payment_collection.find_one(
+                    {
+                        "academy_id": academy_id,
+                        "payment_origin": "legacy_payment",
+                        "enrollment_id": enrollment_id,
+                        "status": "pending",
+                        "is_deleted": {"$ne": True},
+                    },
+                    sort=[("created_at", -1), ("payment_id", 1)],
+                )
             if payment is not None:
                 final_amount = int(
                     payment.get(
@@ -5864,7 +5879,7 @@ def compose_admin(
                     mismatch_state = "Mongo pending amount differs from Stripe paid amount"
                 else:
                     payment_id = str(payment.get("payment_id") or payment.get("_id"))
-                    await db["payments"].update_one(
+                    await payment_collection.update_one(
                         {"_id": payment["_id"]},
                         {
                             "$set": {

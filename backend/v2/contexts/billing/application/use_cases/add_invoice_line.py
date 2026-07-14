@@ -122,7 +122,10 @@ class AddInvoiceLine:
             created_at=now,
         )
 
-        updated_invoice, _ = add_line(invoice, existing_lines, new_line, now=now)
+        allocated_cents = await self._ledger.sum_allocations_for_invoice(invoice.invoice_id)
+        updated_invoice, _ = add_line(
+            invoice, existing_lines, new_line, now=now, allocated_cents=allocated_cents
+        )
 
         saved_invoice = await self._ledger.save_invoice(updated_invoice)
         await self._ledger.save_line(new_line)

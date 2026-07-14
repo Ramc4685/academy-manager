@@ -744,11 +744,13 @@ def compose_parent(
                 )
             )
         ledger_keys: set[str] = set()
+        ledger_row_ids: set[str] = set()
         async for doc in db["ledger_payments"].find(
             {"academy_id": academy_id, "parent_id": parent_id},
             sort=[("created_at", -1)],
             limit=100,
         ):
+            ledger_row_ids.add(str(doc.get("payment_id") or ""))
             stripe_payment_intent_id = (
                 str(doc.get("stripe_payment_intent_id"))
                 if doc.get("stripe_payment_intent_id")
@@ -805,7 +807,10 @@ def compose_parent(
         rows.extend(
             row
             for row in legacy_rows
-            if not row.stripe_payment_intent_id or row.stripe_payment_intent_id not in ledger_keys
+            if row.payment_id not in ledger_row_ids
+            and (
+                not row.stripe_payment_intent_id or row.stripe_payment_intent_id not in ledger_keys
+            )
         )
         rows.sort(
             key=lambda r: r.created_at or datetime.min.replace(tzinfo=UTC),

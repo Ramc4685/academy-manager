@@ -634,6 +634,18 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         return reversal_doc
 
+    async def sum_allocations_for_invoice(self, invoice_id: str) -> int:
+        return await self._sum_allocations(academy_id=current_academy_id(), invoice_id=invoice_id)
+
+    async def list_allocations_for_payment(self, payment_id: str) -> list[PaymentAllocation]:
+        academy_id = current_academy_id()
+        cursor = (
+            self._db["payment_allocations"]
+            .find({"academy_id": academy_id, "payment_id": payment_id})
+            .sort("created_at", 1)
+        )
+        return [self._allocation_from_doc(doc) async for doc in cursor]
+
     async def list_invoices_for_academy(self, limit: int = 100) -> list[dict[str, object]]:
         academy_id = current_academy_id()
         invoices = []
