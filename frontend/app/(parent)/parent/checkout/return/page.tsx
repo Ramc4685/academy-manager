@@ -182,8 +182,9 @@ const STATUS_VARIANTS: Record<string, { iconBg: string; icon: React.ReactNode }>
 
 const STATUS_SUMMARIES: Record<string, { title: string; body: (a: OnboardingApplication) => string }> = {
   PENDING_APPROVAL: {
-    title: "Payment received",
-    body: () => "We received your payment. An admin will confirm the enrollment shortly.",
+    title: "Child added",
+    body: (application) =>
+      `${application.child_profile.first_name || "Your child"} has been added. An admin will confirm the enrollment shortly.`,
   },
   CHECKOUT_EXPIRED: {
     title: "Checkout expired",

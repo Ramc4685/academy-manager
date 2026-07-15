@@ -22,6 +22,9 @@ ApplicationStatus = Literal[
     "CHECKOUT_PENDING",
     "CHECKOUT_EXPIRED",
     "PENDING_APPROVAL",
+    "APPROVING",
+    "WAITLISTING",
+    "DECLINING",
     "APPROVED",
     "WAITLISTED",
     "DECLINED",
@@ -76,6 +79,8 @@ class Application(BaseModel):
     decision_reason: str | None = None
     decided_by: str | None = None
     decided_at: datetime | None = None
+    review_claimed_at: datetime | None = None
+    review_claim_token: str | None = None
     # "YYYY-MM" billed $0 at checkout; see admin_registration_review
     zero_quote_period: str | None = None
     expires_at: datetime  # 7d TTL after creation

@@ -13,9 +13,13 @@ from backend.v2.contexts.onboarding.application.use_cases.manage_application imp
     GetApplicationStatus,
     PatchApplication,
     PatchApplicationCommand,
+    TransitionApplication,
 )
-from backend.v2.contexts.onboarding.domain.errors import ApplicationNotFound
-from backend.v2.contexts.onboarding.domain.models import Application
+from backend.v2.contexts.onboarding.domain.errors import (
+    ApplicationNotEditable,
+    ApplicationNotFound,
+)
+from backend.v2.contexts.onboarding.domain.models import Application, ChildProfile
 
 
 class FakeAppRepo:
@@ -38,6 +42,58 @@ class FakeAppRepo:
 class FakeWaiverRepo:
     async def get_active(self):
         return None
+
+
+class ExistingStudentRegistrations:
+    async def find_registration_student(
+        self,
+        *,
+        parent_id: str,
+        full_name: str,
+        date_of_birth: str | None,
+    ) -> str | None:
+        return "existing-student"
+
+    async def has_ambiguous_registration_match(
+        self,
+        *,
+        parent_id: str,
+        full_name: str,
+        date_of_birth: str | None,
+    ) -> bool:
+        return False
+
+    async def has_active_enrollment(
+        self,
+        student_id: str,
+        *,
+        exclude_enrollment_id: str | None = None,
+    ) -> bool:
+        return student_id == "existing-student"
+
+
+class ConfigurableStudentRegistrations:
+    def __init__(
+        self,
+        *,
+        student_id: str | None = None,
+        active: bool = False,
+        ambiguous: bool = False,
+    ) -> None:
+        self.student_id = student_id
+        self.active = active
+        self.ambiguous = ambiguous
+
+    async def find_registration_student(self, **kwargs) -> str | None:
+        return self.student_id
+
+    async def has_ambiguous_registration_match(self, **kwargs) -> bool:
+        return self.ambiguous
+
+    async def has_active_enrollment(
+        self, student_id: str, *, exclude_enrollment_id: str | None = None
+    ) -> bool:
+        return self.active and student_id == self.student_id
 
 
 def _app(parent_user_id: str = "alice") -> Application:
@@ -79,6 +135,108 @@ async def test_patch_application_allows_owner() -> None:
         )
     )
     assert result.parent_profile.first_name == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_patch_application_rejects_an_already_enrolled_child() -> None:
+    repo = FakeAppRepo(_app(parent_user_id="alice"))
+    uc = PatchApplication(apps=repo, waivers=FakeWaiverRepo())
+    uc._student_registrations = ExistingStudentRegistrations()  # type: ignore[attr-defined]
+
+    with pytest.raises(ApplicationNotEditable, match="already enrolled"):
+        await uc.execute(
+            PatchApplicationCommand(
+                application_id="app-1",
+                caller_user_id="alice",
+                child_profile={
+                    "first_name": "Sam",
+                    "last_name": "Student",
+                    "date_of_birth": "2015-05-10",
+                    "skill_level": "beginner",
+                },
+            )
+        )
+
+    assert repo._app is not None
+    assert repo._app.child_profile.first_name == ""
+
+
+@pytest.mark.asyncio
+async def test_patch_child_profile_clears_stale_student_binding_when_identity_changes() -> None:
+    repo = FakeAppRepo(_app().model_copy(update={"student_id": "old-student"}))
+    registrations = ConfigurableStudentRegistrations(student_id=None)
+    uc = PatchApplication(
+        apps=repo,
+        waivers=FakeWaiverRepo(),
+        student_registrations=registrations,
+    )
+
+    result = await uc.execute(
+        PatchApplicationCommand(
+            application_id="app-1",
+            caller_user_id="alice",
+            child_profile={
+                "first_name": "Different",
+                "last_name": "Child",
+                "date_of_birth": "2017-01-02",
+                "skill_level": "beginner",
+            },
+        )
+    )
+
+    assert result.student_id is None
+
+
+@pytest.mark.asyncio
+async def test_patch_rejects_ambiguous_legacy_child_match() -> None:
+    repo = FakeAppRepo(_app())
+    uc = PatchApplication(
+        apps=repo,
+        waivers=FakeWaiverRepo(),
+        student_registrations=ConfigurableStudentRegistrations(ambiguous=True),
+    )
+
+    with pytest.raises(ApplicationNotEditable, match="more than one possible child"):
+        await uc.execute(
+            PatchApplicationCommand(
+                application_id="app-1",
+                caller_user_id="alice",
+                child_profile={
+                    "first_name": "Sam",
+                    "last_name": "Student",
+                    "date_of_birth": "",
+                    "skill_level": "beginner",
+                },
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_checkout_transition_rechecks_active_enrollment() -> None:
+    app = _app().model_copy(
+        update={
+            "student_id": "existing-student",
+            "child_profile": ChildProfile(
+                first_name="Sam",
+                last_name="Student",
+                date_of_birth="2015-05-10",
+                skill_level="beginner",
+            ),
+        }
+    )
+    repo = FakeAppRepo(app)
+    uc = TransitionApplication(
+        apps=repo,
+        student_registrations=ConfigurableStudentRegistrations(
+            student_id="existing-student", active=True
+        ),
+    )
+
+    with pytest.raises(ApplicationNotEditable, match="already enrolled"):
+        await uc.execute("app-1", "CHECKOUT_PENDING")
+
+    assert repo._app is not None
+    assert repo._app.status == "DRAFT"
 
 
 @pytest.mark.asyncio

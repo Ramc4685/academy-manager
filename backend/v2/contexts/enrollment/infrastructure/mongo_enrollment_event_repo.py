@@ -36,7 +36,12 @@ class MongoEnrollmentEventRepository(TenantScopedRepository):
 
     async def record(self, event: EnrollmentLifecycleEvent) -> None:
         doc = event.model_dump(mode="python")
-        await self._insert_one({k: v for k, v in doc.items() if k != "academy_id"})
+        values = {k: v for k, v in doc.items() if k != "academy_id"}
+        await self._update_one(
+            {"event_id": event.event_id},
+            {"$setOnInsert": values},
+            upsert=True,
+        )
 
     async def list_for_enrollment(self, enrollment_id: str) -> list[EnrollmentLifecycleEvent]:
         cursor = self._find_many(

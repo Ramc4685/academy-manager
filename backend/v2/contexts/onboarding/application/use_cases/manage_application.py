@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Literal, Protocol
 
 from pydantic import BaseModel
 
@@ -91,16 +91,43 @@ class PatchApplicationCommand(BaseModel):
     accept_waiver: bool = False
 
 
+class StudentRegistrationQuery(Protocol):
+    async def find_registration_student(
+        self,
+        *,
+        parent_id: str,
+        full_name: str,
+        date_of_birth: str | None,
+    ) -> str | None: ...
+
+    async def has_ambiguous_registration_match(
+        self,
+        *,
+        parent_id: str,
+        full_name: str,
+        date_of_birth: str | None,
+    ) -> bool: ...
+
+    async def has_active_enrollment(
+        self,
+        student_id: str,
+        *,
+        exclude_enrollment_id: str | None = None,
+    ) -> bool: ...
+
+
 class PatchApplication:
     def __init__(
         self,
         *,
         apps: ApplicationRepository,
         waivers: WaiverRepository,
+        student_registrations: StudentRegistrationQuery | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._apps = apps
         self._waivers = waivers
+        self._student_registrations = student_registrations
         self._now = clock
 
     async def execute(self, cmd: PatchApplicationCommand) -> Application:
@@ -127,6 +154,33 @@ class PatchApplication:
                 waiver_template_id=waiver.waiver_id,
             )
 
+        child_profile = (
+            ChildProfile.model_validate(cmd.child_profile)
+            if cmd.child_profile
+            else app.child_profile
+        )
+        # A child-profile edit invalidates the old binding. Keeping it when
+        # the edited identity no longer matches could update the wrong child.
+        student_id = None if cmd.child_profile else app.student_id
+        if cmd.child_profile and self._student_registrations is not None:
+            full_name = f"{child_profile.first_name} {child_profile.last_name}".strip()
+            await self._assert_unambiguous_child(
+                app.parent_user_id,
+                full_name,
+                child_profile.date_of_birth or None,
+            )
+            existing_student_id = await self._student_registrations.find_registration_student(
+                parent_id=app.parent_user_id,
+                full_name=full_name,
+                date_of_birth=child_profile.date_of_birth or None,
+            )
+            if existing_student_id is not None:
+                if await self._student_registrations.has_active_enrollment(existing_student_id):
+                    raise ApplicationNotEditable(
+                        "This child is already enrolled. Manage their existing classes instead."
+                    )
+                student_id = existing_student_id
+
         updated = app.model_copy(
             update={
                 "parent_profile": (
@@ -134,11 +188,8 @@ class PatchApplication:
                     if cmd.parent_profile
                     else app.parent_profile
                 ),
-                "child_profile": (
-                    ChildProfile.model_validate(cmd.child_profile)
-                    if cmd.child_profile
-                    else app.child_profile
-                ),
+                "child_profile": child_profile,
+                "student_id": student_id,
                 "selected_session_id": cmd.selected_session_id or app.selected_session_id,
                 "waiver_acceptance": waiver_acceptance,
                 "updated_at": self._now(),
@@ -146,6 +197,19 @@ class PatchApplication:
         )
         await self._apps.save(updated)
         return updated
+
+    async def _assert_unambiguous_child(
+        self, parent_id: str, full_name: str, date_of_birth: str | None
+    ) -> None:
+        assert self._student_registrations is not None
+        if await self._student_registrations.has_ambiguous_registration_match(
+            parent_id=parent_id,
+            full_name=full_name,
+            date_of_birth=date_of_birth,
+        ):
+            raise ApplicationNotEditable(
+                "We found more than one possible child record. Contact the academy to continue."
+            )
 
 
 class GetApplicationStatus:
@@ -184,8 +248,14 @@ class TransitionApplication:
     target returns the existing app unchanged.
     """
 
-    def __init__(self, apps: ApplicationRepository, clock=lambda: datetime.now(UTC)) -> None:
+    def __init__(
+        self,
+        apps: ApplicationRepository,
+        student_registrations: StudentRegistrationQuery | None = None,
+        clock=lambda: datetime.now(UTC),
+    ) -> None:
         self._apps = apps
+        self._student_registrations = student_registrations
         self._now = clock
 
     async def execute_for_payment(
@@ -232,6 +302,8 @@ class TransitionApplication:
                 from_status=app.status,
                 to_status=to,
             )
+        if to == "CHECKOUT_PENDING":
+            await self._assert_child_not_enrolled(app)
         updates: dict[str, object] = {"status": to, "updated_at": self._now()}
         if stripe_checkout_session_id is not None:
             updates["stripe_checkout_session_id"] = stripe_checkout_session_id
@@ -240,3 +312,26 @@ class TransitionApplication:
         updated = app.model_copy(update=updates)
         await self._apps.save(updated)
         return updated
+
+    async def _assert_child_not_enrolled(self, app: Application) -> None:
+        if self._student_registrations is None:
+            return
+        full_name = f"{app.child_profile.first_name} {app.child_profile.last_name}".strip()
+        date_of_birth = app.child_profile.date_of_birth or None
+        if await self._student_registrations.has_ambiguous_registration_match(
+            parent_id=app.parent_user_id,
+            full_name=full_name,
+            date_of_birth=date_of_birth,
+        ):
+            raise ApplicationNotEditable(
+                "We found more than one possible child record. Contact the academy to continue."
+            )
+        student_id = app.student_id or await self._student_registrations.find_registration_student(
+            parent_id=app.parent_user_id,
+            full_name=full_name,
+            date_of_birth=date_of_birth,
+        )
+        if student_id and await self._student_registrations.has_active_enrollment(student_id):
+            raise ApplicationNotEditable(
+                "This child is already enrolled. Manage their existing classes instead."
+            )

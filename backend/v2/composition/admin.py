@@ -4125,7 +4125,8 @@ def compose_admin(
         waiver_signatures=MongoParentWaiverRepository(db),
         enrollment_events=enrollment_events,
         trial_conversion=link_trial_conversion,
-        academy_id=academy_id,
+        student_registrations=students_r,
+        academy_id=None,
     )
     # Identity / Settings
     academy_repo = MongoAcademyRepository(db)
