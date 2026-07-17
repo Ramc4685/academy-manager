@@ -22,6 +22,15 @@ const draftApplication = {
   expires_at: "2026-05-27T00:00:00Z",
 };
 
+function futureDateInput(daysAhead: number): string {
+  const value = new Date();
+  value.setDate(value.getDate() + daysAhead);
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 async function stubParentShell(page: Parameters<typeof stubMe>[0]) {
   await stubMe(page, {
     user_id: "user-parent-qa",
@@ -406,9 +415,11 @@ test.describe("QA defect regressions", () => {
       fulfillJson(route, { balance_cents: 0, credits: [] }),
     );
 
+    const resumeOn = futureDateInput(14);
+
     await page.goto("/parent/payments");
     await page.getByRole("button", { name: "Pause enrollment", exact: true }).click();
-    await page.getByLabel("Resume date").fill("2026-07-15");
+    await page.getByLabel("Resume date").fill(resumeOn);
     await page.getByLabel("Reason").fill("Summer travel");
 
     const pausePost = page.waitForRequest((request) => {
@@ -423,8 +434,8 @@ test.describe("QA defect regressions", () => {
     expect(payload).toMatchObject({
       enrollment_id: "enr-qa-1",
       pause_kind: "fixed",
-      resume_on: "2026-07-15",
-      period: "2026-07",
+      resume_on: resumeOn,
+      period: resumeOn.slice(0, 7),
       reason: "Summer travel",
     });
   });
