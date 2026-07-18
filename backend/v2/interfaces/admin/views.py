@@ -893,6 +893,9 @@ class InvoiceDetailResponse(BaseModel):
     delivery_status: str = "not_sent"
     sent_at: datetime | None = None
     last_sent_at: datetime | None = None
+    # Resend provider message id for the most recent successful send; lets the
+    # admin panel deep-link to the Resend delivery record.
+    email_provider_message_id: str | None = None
 
 
 class SendInvoiceResponse(BaseModel):

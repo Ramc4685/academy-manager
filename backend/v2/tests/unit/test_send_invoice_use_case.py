@@ -30,6 +30,7 @@ def _invoice(
     sent_at: datetime | None = None,
     last_sent_at: datetime | None = None,
     enrollment_id: str | None = None,
+    email_provider_message_id: str | None = None,
 ) -> LedgerInvoice:
     total = 10_000
     return LedgerInvoice(
@@ -49,6 +50,7 @@ def _invoice(
         delivery_status=delivery_status,  # type: ignore[arg-type]
         sent_at=sent_at,
         last_sent_at=last_sent_at,
+        email_provider_message_id=email_provider_message_id,
         created_at=FIRST_SEND,
         updated_at=FIRST_SEND,
     )
@@ -104,14 +106,16 @@ class FakeLedgerRepository:
 
 
 class FakeInvoiceEmail:
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(self, *, fail: bool = False, message_id: str | None = "re_test_1") -> None:
         self.fail = fail
+        self.message_id = message_id
         self.calls: list[dict] = []
 
-    async def send_invoice_email(self, **kwargs) -> None:
+    async def send_invoice_email(self, **kwargs) -> str | None:
         self.calls.append(kwargs)
         if self.fail:
             raise RuntimeError("email provider unavailable")
+        return self.message_id
 
 
 class FakeInvoiceStripe:
@@ -188,6 +192,34 @@ async def test_send_draft_invoice_finalizes_then_records_delivery_after_email() 
             "checkout_url": None,
         }
     ]
+
+
+async def test_successful_send_persists_provider_message_id() -> None:
+    """Resend's provider message id is stored on the invoice for deep-linking."""
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open")])
+    result = await _uc(repo, email=FakeInvoiceEmail(message_id="re_abc123")).execute("inv-1")
+
+    assert result.invoice.email_provider_message_id == "re_abc123"
+
+
+async def test_send_without_provider_id_leaves_field_none() -> None:
+    """A provider that returns no id (or a stub) leaves the field unset."""
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open")])
+    result = await _uc(repo, email=FakeInvoiceEmail(message_id=None)).execute("inv-1")
+
+    assert result.invoice.delivery_status == "sent"
+    assert result.invoice.email_provider_message_id is None
+
+
+async def test_failed_send_preserves_previous_provider_message_id() -> None:
+    """A later failed send must not wipe the last good Resend id (link stays valid)."""
+    repo = FakeLedgerRepository(
+        invoices=[_invoice(status="open", email_provider_message_id="re_first")]
+    )
+    result = await _uc(repo, email=FakeInvoiceEmail(fail=True)).execute("inv-1")
+
+    assert result.invoice.delivery_status == "delivery_failed"
+    assert result.invoice.email_provider_message_id == "re_first"
 
 
 async def test_send_open_invoice_records_delivery_without_changing_status() -> None:

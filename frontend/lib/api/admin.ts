@@ -524,6 +524,9 @@ export interface AdminInvoiceDetail {
   delivery_status: "not_sent" | "sent" | "delivery_failed" | string;
   sent_at: string | null;
   last_sent_at: string | null;
+  // Resend provider message id for the latest successful send; used to
+  // deep-link to the Resend delivery record from the invoice panel.
+  email_provider_message_id?: string | null;
   allocations: InvoiceAllocationView[];
   credit_usage: InvoiceCreditUsageView[];
   invoice_pdf_artifact_id: string | null;

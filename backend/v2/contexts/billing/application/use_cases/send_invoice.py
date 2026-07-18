@@ -78,7 +78,10 @@ class InvoiceEmailPort(Protocol):
         balance_due_cents: int,
         currency: str,
         checkout_url: str | None,
-    ) -> None: ...
+    ) -> str | None:
+        """Send the invoice email. Returns the provider message id when the
+        provider supplies one (Resend), else None. Raises on delivery failure."""
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +315,7 @@ class SendInvoice:
         )
         if self._email is not None:
             try:
-                await self._email.send_invoice_email(
+                provider_message_id = await self._email.send_invoice_email(
                     parent_id=invoice.parent_id,
                     invoice_id=invoice_id,
                     period=invoice.period,
@@ -321,7 +324,12 @@ class SendInvoice:
                     currency=invoice.currency,
                     checkout_url=checkout_url,
                 )
-                invoice = record_delivery(invoice, outcome="sent", now=now)
+                invoice = record_delivery(
+                    invoice,
+                    outcome="sent",
+                    now=now,
+                    provider_message_id=provider_message_id,
+                )
                 invoice = await self._ledger.save_invoice(invoice)
                 log.info("send_invoice: email sent for invoice=%s", invoice_id)
             except Exception as exc:
