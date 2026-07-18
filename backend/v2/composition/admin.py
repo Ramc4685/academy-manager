@@ -3734,6 +3734,43 @@ def compose_admin(
         ).execute(invoice_id)
         return result.model_dump(mode="python")
 
+    async def charge_billing_setup_balance(parent_id: str) -> dict[str, Any]:
+        """Billing Setup "Charge now" action: charge the parent's oldest open
+        invoice with a balance due, reusing the same guarded charge path as
+        the per-invoice autopay-charge route above."""
+        if not await parent_customers_repo.has_saved_card(parent_id=parent_id):
+            raise ValueError("no_saved_payment_method: parent has no saved card")
+        invoices = await billing_ledger_repo.list_invoices_for_parent(parent_id, limit=200)
+        chargeable = sorted(
+            (inv for inv in invoices if inv.balance_due_cents > 0),
+            key=lambda inv: inv.created_at,
+        )
+        if not chargeable:
+            raise ValueError("no_outstanding_balance: parent has no open invoices with a balance due")
+        return await charge_invoice_via_autopay(chargeable[0].invoice_id)
+
+    async def enable_billing_setup_autopay(parent_id: str) -> dict[str, int]:
+        """Billing Setup "Enable autopay" action: flips every one of the
+        parent's eligible enrollments (offered/paused) to active. Autopay is
+        per-enrollment, not per-parent — see billing_setup_registration.py."""
+        if not await parent_customers_repo.has_saved_card(parent_id=parent_id):
+            raise ValueError("no_saved_payment_method: parent has no saved card")
+        enrollments = await student_billing_enrollment_repo.list_for_parent(parent_id)
+        eligible = [e for e in enrollments if e.autopay_enrollment_status in {"offered", "paused"}]
+        enabled = 0
+        for enrollment in eligible:
+            applied = await student_billing_enrollment_repo.set_autopay_enrollment_status(
+                enrollment_id=enrollment.enrollment_id, status="active"
+            )
+            if applied:
+                enabled += 1
+        return {"eligible_count": len(eligible), "enabled_count": enabled}
+
+    async def record_billing_setup_invite(parent_id: str) -> datetime:
+        sent_at = datetime.now(UTC)
+        await parent_customers_repo.record_billing_setup_invite(parent_id=parent_id, sent_at=sent_at)
+        return sent_at
+
     def _dunning_worker() -> ProcessDunningRetries:
         required = ("get_default_payment_method", "create_off_session_payment_intent")
         if not all(hasattr(stripe, name) for name in required):
@@ -6563,6 +6600,9 @@ def compose_admin(
         list_admin_students=list_admin_students,
         list_billing_setup=list_billing_setup,
         send_add_card_reminder=send_add_card_reminder,
+        charge_billing_setup_balance=charge_billing_setup_balance,
+        enable_billing_setup_autopay=enable_billing_setup_autopay,
+        record_billing_setup_invite=record_billing_setup_invite,
         create_session=create_session,
         edit_session=edit_session,
         cancel_session=cancel_session,

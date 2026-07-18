@@ -214,6 +214,15 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
         cursor = self.collection.find(self._scoped({}), projection)
         return [doc async for doc in cursor]
 
+    async def has_saved_card(self, *, parent_id: str) -> bool:
+        """Whether this parent has a chargeable primary payment method —
+        the same "card on file" signal ``list_academy_customers`` projects,
+        for single-parent guard checks (charge / enable-autopay endpoints)."""
+        doc = await self._find_one({"parent_id": parent_id})
+        if not doc:
+            return False
+        return bool(doc.get("payment_method_label") or doc.get("payment_method_last4"))
+
     async def record_billing_setup_invite(self, *, parent_id: str, sent_at: datetime) -> None:
         """Track when the Billing Setup admin page last invited this parent
         (login invite or add-card reminder), so the UI can show "Invited

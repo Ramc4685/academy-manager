@@ -184,6 +184,9 @@ class AdminUseCases:
     # billing setup (Stripe registration status + invite/charge/autopay)
     list_billing_setup: ListBillingSetup
     send_add_card_reminder: SendAddCardReminder
+    charge_billing_setup_balance: object
+    enable_billing_setup_autopay: object
+    record_billing_setup_invite: object
     # sessions / roster
     create_session: CreateSession
     edit_session: EditSession

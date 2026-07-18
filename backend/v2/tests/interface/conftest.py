@@ -2090,6 +2090,9 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         reconcile_stripe_billing=AsyncMock(return_value={}),
         list_billing_setup=AsyncMock(),
         send_add_card_reminder=AsyncMock(),
+        charge_billing_setup_balance=AsyncMock(),
+        enable_billing_setup_autopay=AsyncMock(),
+        record_billing_setup_invite=AsyncMock(),
     )
 
 
