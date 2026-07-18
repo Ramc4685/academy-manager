@@ -128,6 +128,13 @@ class _FakeLedger:
     async def get_lines_for_invoice(self, invoice_id: str) -> list[InvoiceLine]:
         return [line for line in self.lines.values() if line.invoice_id == invoice_id]
 
+    async def list_invoices_for_student(
+        self, student_id: str, *, limit: int = 100
+    ) -> list[LedgerInvoice]:
+        return [invoice for invoice in self.invoices.values() if invoice.student_id == student_id][
+            :limit
+        ]
+
     async def sum_allocations_for_invoice(self, invoice_id: str) -> int:
         return 0
 
@@ -279,7 +286,7 @@ def _override_ledger(admin_client, ledger: _FakeLedger) -> None:
             connected_accounts=getattr(admin_client, "_test_connected_accounts", None),
             success_url="https://app.example.com/parent/payments?invoice=paid",
             cancel_url="https://app.example.com/parent/payments?invoice=cancelled",
-        ).execute(invoice_id)
+        ).execute(invoice_id, bundle_student_balance=True)
         return {
             "invoice_id": result.invoice.invoice_id,
             "delivery_status": result.invoice.delivery_status,

@@ -3693,7 +3693,7 @@ def compose_admin(
             settings=billing_settings_repo,
             success_url=f"{frontend_url}/parent/payments?invoice=paid",
             cancel_url=f"{frontend_url}/parent/payments?invoice=cancelled",
-        ).execute(invoice_id)
+        ).execute(invoice_id, bundle_student_balance=True)
         return {
             "invoice_id": result.invoice.invoice_id,
             "delivery_status": result.invoice.delivery_status,

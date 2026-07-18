@@ -539,6 +539,9 @@ class LedgerRepository(Protocol):
     async def get_invoice_by_stripe_invoice_id(
         self, stripe_invoice_id: str
     ) -> LedgerInvoice | None: ...
+    async def list_invoices_for_student(
+        self, student_id: str, *, limit: int = 100
+    ) -> list[LedgerInvoice]: ...
     async def get_open_invoice_for_student(
         self, student_id: str, period: str
     ) -> LedgerInvoice | None: ...
