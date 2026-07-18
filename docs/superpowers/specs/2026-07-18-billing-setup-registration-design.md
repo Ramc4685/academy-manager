@@ -41,8 +41,15 @@ one status.
 | **Card on file** | `parent_billing_customers` has a primary payment method | green — "Registered" | Charge now / Enable autopay |
 
 "Registered" (green) is defined strictly as **has a chargeable saved card**.
-Autopay on/off is shown as a secondary badge, independent of the three states
-above (a card-on-file parent may or may not have autopay active).
+
+**Autopay is per-enrollment (per-child), not per-parent.** The parent's
+`parent_billing_customers` doc holds only the Stripe customer + saved card;
+each child's enrollment carries its own autopay on/off/paused state
+(`student_billing_enrollments`, billing-owned — see
+`EnrollmentAutopayStateRepository`). On this parent-grouped page autopay is
+therefore shown as an **aggregate** ("autopay on for N of M children"), and the
+**"Enable autopay" action turns it on for all of the parent's eligible
+enrollments** (those with a card on file and a legal transition to `active`).
 
 ### Deriving "has a card"
 A parent has a card when their `parent_billing_customers` row has a primary
@@ -58,8 +65,9 @@ New read use case in `backend/v2/contexts/billing/application/use_cases/`
 (e.g. `billing_setup_registration.py`) that, scoped to the resolved
 `academy_id`, assembles one row per parent by joining:
 
-- `parent_billing_customers` → `stripe_customer_id`, saved-card display fields,
-  `autopay_enrollment_status`
+- `parent_billing_customers` → `stripe_customer_id`, saved-card display fields
+- **per-enrollment autopay state** (`EnrollmentAutopayStateRepository`,
+  billing-owned) → count active vs eligible enrollments for the parent's children
 - **identity** (via a port) → whether the parent has a login account
 - **enrollment** (via a port) → the parent's students (ids + display names)
 - **billing ledger** → outstanding balance per parent (sum of
@@ -76,7 +84,8 @@ Output row (`BillingSetupRow`, frozen pydantic):
 - `students: list[{student_id, full_name}]`
 - `registration_state: "no_account" | "account_no_card" | "card_on_file"`
 - `card_label: str | None` (e.g. "Visa"), `card_last4: str | None`
-- `autopay_active: bool`
+- `autopay_active_count: int`, `autopay_eligible_count: int` (per-child aggregate;
+  eligible = enrollments that can legally go `active` and have a card on file)
 - `outstanding_balance_cents: int`
 - `last_invited_at: datetime | None`
 
@@ -101,8 +110,10 @@ admin deps and authorize as admin.
 - `POST /admin/billing/setup/{parent_id}/charge` — charge the parent's
   outstanding balance now via `ChargeInvoiceViaAutopay`. Guard: 400 if no card
   on file or zero balance.
-- `POST /admin/billing/setup/{parent_id}/autopay/enable` — enable autopay via
-  the existing autopay enrollment transition. Guard: 400 if no card on file.
+- `POST /admin/billing/setup/{parent_id}/autopay/enable` — enable autopay for
+  ALL of the parent's eligible enrollments via the per-enrollment transition.
+  Guard: 400 if no card on file; skips enrollments with no legal transition and
+  returns how many were enabled.
 
 ### Action wiring (reuse existing use cases)
 - **Login invite** → `contexts/identity/.../send_login_invite.SendLoginInvite`.
@@ -111,8 +122,9 @@ admin deps and authorize as admin.
   send. No new Stripe flow — it points the parent at the card-setup checkout
   that already exists (`CompleteAutopaySetup` consumes the result).
 - **Charge now** → `contexts/billing/.../charge_invoice_via_autopay.ChargeInvoiceViaAutopay`.
-- **Enable autopay** → existing autopay enrollment status transition
-  (`offered`/`paused` → `active`), reusing the autopay status state machine.
+- **Enable autopay** → per-enrollment autopay status transition
+  (`offered`/`paused` → `active`) applied across the parent's eligible
+  enrollments, reusing the autopay status state machine.
 
 ## Frontend
 
@@ -123,12 +135,13 @@ billing admin pages).
   $N outstanding".
 - **Grouped by parent (payer)**; students rendered as chips under the parent.
 - **Columns:** parent (name/email + student chips), status badge, card
-  (`Visa ···· 4242`), autopay badge, outstanding balance, actions.
+  (`Visa ···· 4242`), autopay badge ("N/M children"), outstanding balance, actions.
 - **Filters:** All / Not invited / No card / Chargeable + name search.
 - **Row actions adapt to state:**
   - Invite (label reflects sub-case: "Send invite" vs "Remind: add card")
   - Charge now — shown only when card on file AND balance > 0
-  - Enable autopay — shown only when card on file AND autopay not active
+  - Enable autopay — shown when card on file AND at least one eligible
+    enrollment is not yet active (enables all of them)
 - Shows "Invited {date}" with a **resend** affordance when `last_invited_at`
   is set.
 
@@ -145,8 +158,8 @@ billing admin pages).
 ## Testing
 
 - **Unit:** status derivation across all three states (no account / account no
-  card / card on file), and the `autopay_active` and outstanding-balance
-  projections. Cover the "primary payment method present" boundary.
+  card / card on file), and the autopay active/eligible counts and
+  outstanding-balance projections. Cover the "primary payment method present" boundary.
 - **Interface:** each action endpoint — success path plus guardrails:
   - charge with no card → 400; charge with zero balance → 400
   - invite when already card-on-file → sensible no-op / not-applicable

@@ -26,7 +26,8 @@
 
 **Interfaces produced:**
 - `RegistrationState = Literal["no_account", "account_no_card", "card_on_file"]`
-- `BillingSetupRow(BaseModel, frozen)`: `parent_id: str`, `parent_name: str`, `parent_email: str | None`, `students: list[BillingSetupStudent]`, `registration_state: RegistrationState`, `card_label: str | None`, `card_last4: str | None`, `autopay_active: bool`, `outstanding_balance_cents: int`, `last_invited_at: datetime | None`
+- `BillingSetupRow(BaseModel, frozen)`: `parent_id: str`, `parent_name: str`, `parent_email: str | None`, `students: list[BillingSetupStudent]`, `registration_state: RegistrationState`, `card_label: str | None`, `card_last4: str | None`, `autopay_active_count: int`, `autopay_eligible_count: int`, `outstanding_balance_cents: int`, `last_invited_at: datetime | None`
+  - NOTE: autopay is PER-ENROLLMENT (per child), not per-parent. Read per-enrollment state via `EnrollmentAutopayStateRepository` (billing-owned) and aggregate counts across the parent's children.
 - `BillingSetupStudent(BaseModel, frozen)`: `student_id: str`, `full_name: str`
 - `BillingSetupSummary(BaseModel, frozen)`: `families_total: int`, `families_registered: int`, `families_no_card: int`, `outstanding_total_cents: int`
 - `BillingSetupPage(BaseModel, frozen)`: `rows: list[BillingSetupRow]`, `summary: BillingSetupSummary`, `next_cursor: str | None`
@@ -40,7 +41,9 @@
 - card present (primary `payment_method_label`/`last4` or primary autopay method) → `card_on_file`
 - else has login account → `account_no_card`
 - else → `no_account`
-- `autopay_active` = `autopay_enrollment_status == "active"`
+- `autopay_active_count` = # of the parent's enrollments with autopay state `active`;
+  `autopay_eligible_count` = # of enrollments that can legally transition to `active`
+  (card on file assumed at parent level).
 
 - [ ] **Step 1:** Write failing unit tests for status derivation covering all three states + autopay_active true/false + outstanding sum, using fake in-memory ports/repos. Name states explicitly.
 - [ ] **Step 2:** Run `pytest backend/v2/tests/unit/test_billing_setup_registration.py -v` → FAIL.
@@ -86,7 +89,7 @@
 - `GET /admin/billing/setup?status=&q=&cursor=&limit=` → `BillingSetupPage` view (+ summary)
 - `POST /admin/billing/setup/{parent_id}/invite` → context-aware: no account → `SendLoginInvite`; account-no-card → `SendAddCardReminder`. Returns outcome + refreshed `last_invited_at`.
 - `POST /admin/billing/setup/{parent_id}/charge` → `ChargeInvoiceViaAutopay` on outstanding balance. Guard: 400 if no card or zero balance. Return `ChargeResult` view.
-- `POST /admin/billing/setup/{parent_id}/autopay/enable` → autopay enrollment transition to active. Guard: 400 if no card.
+- `POST /admin/billing/setup/{parent_id}/autopay/enable` → enable autopay for ALL of the parent's eligible enrollments (per-enrollment transition to active). Guard: 400 if no card; returns count enabled.
 
 - [ ] **Step 1:** Write failing interface tests: list returns rows+summary; charge-no-card→400; charge-zero-balance→400; invite dispatches login-invite when no account and add-card-reminder when account-no-card; autopay-enable-no-card→400. Reuse `tests/interface/test_admin_billing.py` harness/factories.
 - [ ] **Step 2:** Run `pytest backend/v2/tests/interface/test_admin_billing_setup.py -v` → FAIL.
