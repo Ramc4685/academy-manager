@@ -112,12 +112,13 @@
 - [ ] **Step 4:** Typecheck/lint (`pnpm -C frontend lint` / tsc) → PASS. Verify in preview (admin Billing Setup page renders, filters work, an action fires against a stub).
 - [ ] **Step 5:** Commit `feat(billing): Billing Setup admin page`.
 
-### Task 6: Verify + PR
+### Task 6: Verify (incl. staging) + PR
 
 - [ ] Run backend suite for touched areas: `pytest backend/v2/tests/unit/test_billing_setup_registration.py backend/v2/tests/unit/test_send_add_card_reminder.py backend/v2/tests/interface/test_admin_billing_setup.py backend/v2/tests/interface/test_admin_billing.py -q`.
 - [ ] Frontend typecheck/lint green.
+- [ ] **Deploy to staging and verify end-to-end BEFORE opening the PR:** log in as admin, open Billing Setup, confirm the three statuses render for real families, exercise invite (login-invite + add-card reminder), charge-now against a test card, and enable-autopay across a multi-child family. Capture screenshots / logs as evidence.
 - [ ] `graphify update .`
-- [ ] Push branch, open PR against `main` with summary + test plan.
+- [ ] Push branch, open PR against `main` with summary + test plan + staging verification evidence.
 
 ## Self-Review
 
