@@ -756,6 +756,16 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         return [self._invoice_from_doc(doc) async for doc in cursor]
 
+    async def list_invoices_for_student(
+        self, student_id: str, *, limit: int = 100
+    ) -> list[LedgerInvoice]:
+        cursor = self._find_many(
+            {"student_id": student_id},
+            sort=[("created_at", -1)],
+            limit=limit,
+        )
+        return [self._invoice_from_doc(doc) async for doc in cursor]
+
     async def list_payments_for_parent(
         self, parent_id: str, *, limit: int = 100
     ) -> list[LedgerPayment]:
