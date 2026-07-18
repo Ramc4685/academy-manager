@@ -77,6 +77,8 @@ export const queryKeys = {
       ["admin", "billing", "quarantined-events"] as const,
     invoiceAttempts: (invoiceId: string) =>
       ["admin", "billing", "invoice-attempts", invoiceId] as const,
+    billingSetup: (params?: { status?: string; q?: string }) =>
+      ["admin", "billing", "setup", params?.status ?? "all", params?.q ?? ""] as const,
     legacyMatchQueue: () =>
       ["admin", "billing", "legacy-match-queue"] as const,
     selfServicePolicy: () => ["admin", "self-service", "policy"] as const,
