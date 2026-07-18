@@ -220,6 +220,21 @@ class MongoUserRepository:
         cursor = self.collection.find(query).sort([("role", 1), ("display_name", 1), ("email", 1)])
         return [self._to_admin_summary(doc) async for doc in cursor]
 
+    async def list_existing_user_ids(self, user_ids: list[str], *, academy_id: str) -> set[str]:
+        """Which of ``user_ids`` (== parent_id, per this codebase's convention
+        that a parent IS a User) already have a login account in this academy.
+
+        Used by the Billing Setup admin page to tell "no account yet" apart
+        from "account but no saved card".
+        """
+        if not user_ids:
+            return set()
+        cursor = self.collection.find(
+            {"academy_id": academy_id, "user_id": {"$in": user_ids}},
+            {"user_id": 1},
+        )
+        return {str(doc["user_id"]) async for doc in cursor}
+
     async def get_admin_user(self, user_id: str, *, academy_id: str) -> AdminUserDetail | None:
         doc = await self.collection.find_one({"academy_id": academy_id, **self._id_filter(user_id)})
         if doc is None:

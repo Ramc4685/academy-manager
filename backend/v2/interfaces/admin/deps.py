@@ -18,6 +18,12 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     SendDuesReminders,
     UndoPaymentPaid,
 )
+from backend.v2.contexts.billing.application.use_cases.billing_setup_registration import (
+    ListBillingSetup,
+)
+from backend.v2.contexts.billing.application.use_cases.send_add_card_reminder import (
+    SendAddCardReminder,
+)
 from backend.v2.contexts.billing.application.use_cases.connect_onboarding import (
     StartConnectOnboarding,
 )
@@ -175,6 +181,9 @@ class AdminUseCases:
     # directory
     list_admin_users: ListAdminUsers
     list_admin_students: ListAdminStudents
+    # billing setup (Stripe registration status + invite/charge/autopay)
+    list_billing_setup: ListBillingSetup
+    send_add_card_reminder: SendAddCardReminder
     # sessions / roster
     create_session: CreateSession
     edit_session: EditSession

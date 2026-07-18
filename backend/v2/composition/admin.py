@@ -41,8 +41,26 @@ from backend.v2.contexts.billing.application.use_cases.billing_settings_admin im
     GetPlatformChargeFallback,
     SetPlatformChargeFallback,
 )
+from backend.v2.contexts.billing.application.use_cases.billing_setup_registration import (
+    BillingSetupStudent,
+    EnrollmentAutopaySnapshot,
+    ListBillingSetup,
+    ParentBillingCustomerSnapshot,
+    ParentRosterEntry,
+)
 from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopay import (
     ChargeInvoiceViaAutopay,
+)
+from backend.v2.contexts.billing.application.use_cases.parent_billing import (
+    CreateCustomerPortalSession,
+    CreateCustomerPortalSessionCommand,
+)
+from backend.v2.contexts.billing.application.use_cases.send_add_card_reminder import (
+    ParentContact,
+    SendAddCardReminder,
+)
+from backend.v2.contexts.billing.application.use_cases.send_add_card_reminder import (
+    InviteEmailOutcome as AddCardReminderEmailOutcome,
 )
 from backend.v2.contexts.billing.application.use_cases.connect_onboarding import (
     StartConnectOnboarding,
@@ -4185,6 +4203,168 @@ def compose_admin(
     add_user_role = AddUserRole(users_r)
     remove_user_role = RemoveUserRole(users_r)
     list_admin_students = ListAdminStudents(students_r)
+
+    class _BillingSetupRosterAdapter:
+        """Bridges enrollment's paginated admin student directory into the
+        parent roster the Billing Setup page needs. Composition may bridge
+        billing + enrollment; the billing context itself must not import
+        enrollment directly (see ``billing_setup_registration.py``)."""
+
+        def __init__(self, list_students: ListAdminStudents) -> None:
+            self._list_students = list_students
+
+        async def _all_students(self) -> list[Any]:
+            students: list[Any] = []
+            cursor: str | None = None
+            for _ in range(1000):  # safety cap against a runaway pagination loop
+                page = await self._list_students.execute(limit=200, cursor=cursor)
+                students.extend(page.students)
+                if not page.next_cursor:
+                    break
+                cursor = page.next_cursor
+            return students
+
+        async def list_parents(self, *, academy_id: str) -> list[ParentRosterEntry]:
+            seen: dict[str, ParentRosterEntry] = {}
+            for student in await self._all_students():
+                if student.parent_id not in seen:
+                    seen[student.parent_id] = ParentRosterEntry(
+                        parent_id=student.parent_id,
+                        parent_name=student.parent_name or student.parent_id,
+                        parent_email=student.parent_email,
+                    )
+            return list(seen.values())
+
+        async def students_for_parents(
+            self, parent_ids: list[str], *, academy_id: str
+        ) -> dict[str, list[BillingSetupStudent]]:
+            wanted = set(parent_ids)
+            result: dict[str, list[BillingSetupStudent]] = {}
+            for student in await self._all_students():
+                if student.parent_id in wanted:
+                    result.setdefault(student.parent_id, []).append(
+                        BillingSetupStudent(student_id=student.student_id, full_name=student.full_name)
+                    )
+            return result
+
+    class _BillingSetupLoginAccountAdapter:
+        def __init__(self, users: MongoUserRepository) -> None:
+            self._users = users
+
+        async def login_account_parent_ids(self, parent_ids: list[str], *, academy_id: str) -> set[str]:
+            from backend.v2.shared.tenancy import current_academy_id
+
+            return await self._users.list_existing_user_ids(parent_ids, academy_id=current_academy_id())
+
+    class _BillingSetupCustomerAdapter:
+        def __init__(self, customers: MongoParentBillingCustomerRepository) -> None:
+            self._customers = customers
+
+        async def list_customers(self, *, academy_id: str) -> list[ParentBillingCustomerSnapshot]:
+            docs = await self._customers.list_academy_customers()
+            return [
+                ParentBillingCustomerSnapshot(
+                    parent_id=str(doc["parent_id"]),
+                    stripe_customer_id=doc.get("stripe_customer_id"),
+                    card_label=doc.get("payment_method_label"),
+                    card_last4=doc.get("payment_method_last4"),
+                    last_invited_at=doc.get("billing_setup_last_invited_at"),
+                )
+                for doc in docs
+            ]
+
+    class _BillingSetupAutopayAdapter:
+        def __init__(self, enrollments: MongoStudentBillingEnrollmentRepository) -> None:
+            self._enrollments = enrollments
+
+        async def list_autopay_states(self, *, academy_id: str) -> list[EnrollmentAutopaySnapshot]:
+            docs = await self._enrollments.list_academy_autopay_states()
+            return [
+                EnrollmentAutopaySnapshot(
+                    enrollment_id=str(doc["enrollment_id"]),
+                    parent_id=str(doc["parent_id"]),
+                    autopay_enrollment_status=doc.get("autopay_enrollment_status") or "not_offered",
+                )
+                for doc in docs
+            ]
+
+    class _BillingSetupBalanceAdapter:
+        def __init__(self, ledger: MongoBillingLedgerRepository) -> None:
+            self._ledger = ledger
+
+        async def outstanding_by_parent(self, *, academy_id: str) -> dict[str, int]:
+            return await self._ledger.outstanding_by_parent()
+
+    list_billing_setup = ListBillingSetup(
+        roster=_BillingSetupRosterAdapter(list_admin_students),
+        login_accounts=_BillingSetupLoginAccountAdapter(users_r),
+        customers=_BillingSetupCustomerAdapter(parent_customers_repo),
+        autopay=_BillingSetupAutopayAdapter(student_billing_enrollment_repo),
+        balances=_BillingSetupBalanceAdapter(billing_ledger_repo),
+    )
+
+    class _BillingSetupParentContactAdapter:
+        def __init__(self, users: MongoUserRepository) -> None:
+            self._users = users
+
+        async def get_parent_contact(self, parent_id: str, *, academy_id: str) -> ParentContact | None:
+            user = await self._users.get_by_id(parent_id)
+            if user is None:
+                return None
+            return ParentContact(parent_id=parent_id, email=str(user.email), display_name=user.display_name)
+
+    class _BillingSetupCardSetupLinkAdapter:
+        def __init__(
+            self,
+            *,
+            customers: MongoParentBillingCustomerRepository,
+            portal: CreateCustomerPortalSession,
+        ) -> None:
+            self._customers = customers
+            self._portal = portal
+
+        async def create_card_setup_link(self, *, parent_id: str, academy_id: str, return_url: str) -> str:
+            stripe_customer_id = await self._customers.get_stripe_customer_id(parent_id=parent_id)
+            result = await self._portal.execute(
+                CreateCustomerPortalSessionCommand(
+                    parent_id=parent_id,
+                    return_url=return_url,
+                    stripe_customer_id=stripe_customer_id,
+                )
+            )
+            return result.redirect_url
+
+    class _AddCardReminderEmailAdapter:
+        """Bridges billing's local InviteEmailPort to communications'
+        EmailSendPort — mirrors `_LoginInviteEmailAdapter` above; billing must
+        not import communications directly."""
+
+        def __init__(self, *, sender: EmailSendPort) -> None:
+            self._sender = sender
+
+        async def send_invite_email(
+            self, *, user_id: str, email: str, display_name: str, subject: str, body: str
+        ) -> AddCardReminderEmailOutcome:
+            outcome = await self._sender.send(
+                recipient=ResolvedRecipient(user_id=user_id, email=email, display_name=display_name),
+                subject=subject,
+                body=body,
+            )
+            return AddCardReminderEmailOutcome(ok=outcome.ok, failed_reason=outcome.failed_reason)
+
+    create_customer_portal_session = CreateCustomerPortalSession(stripe=stripe)
+    _billing_setup_return_url = (
+        f"{(settings.frontend_url or 'https://app.example.com').rstrip('/')}/admin/billing/setup"
+    )
+    send_add_card_reminder = SendAddCardReminder(
+        contacts=_BillingSetupParentContactAdapter(users_r),
+        links=_BillingSetupCardSetupLinkAdapter(
+            customers=parent_customers_repo, portal=create_customer_portal_session
+        ),
+        sender=_AddCardReminderEmailAdapter(sender=_email_sender),
+        academies=academy_repo,
+        return_url=_billing_setup_return_url,
+    )
     get_admin_student = GetAdminStudent(students_r)
     update_admin_student = UpdateAdminStudent(students_r)
     change_admin_student_parent = ChangeAdminStudentParent(students_r)
@@ -6381,6 +6561,8 @@ def compose_admin(
     admin = AdminUseCases(
         list_admin_users=list_admin_users,
         list_admin_students=list_admin_students,
+        list_billing_setup=list_billing_setup,
+        send_add_card_reminder=send_add_card_reminder,
         create_session=create_session,
         edit_session=edit_session,
         cancel_session=cancel_session,

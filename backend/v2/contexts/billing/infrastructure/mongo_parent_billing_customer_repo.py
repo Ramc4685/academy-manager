@@ -194,3 +194,35 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
             mutation,
             upsert=False,
         )
+
+    async def list_academy_customers(self) -> list[dict[str, Any]]:
+        """One row per parent with a billing-customer record in this academy.
+
+        Projects only display-safe fields for the Billing Setup admin page —
+        ``payment_method_label``/``payment_method_last4`` are set only when
+        the primary payment method's setup is ``active`` (see
+        ``set_default_payment_method``), so their presence here is exactly
+        the "has a chargeable saved card" signal.
+        """
+        projection = {
+            "parent_id": 1,
+            "stripe_customer_id": 1,
+            "payment_method_label": 1,
+            "payment_method_last4": 1,
+            "billing_setup_last_invited_at": 1,
+        }
+        cursor = self.collection.find(self._scoped({}), projection)
+        return [doc async for doc in cursor]
+
+    async def record_billing_setup_invite(self, *, parent_id: str, sent_at: datetime) -> None:
+        """Track when the Billing Setup admin page last invited this parent
+        (login invite or add-card reminder), so the UI can show "Invited
+        {date}" and offer a resend."""
+        await self._update_one(
+            {"parent_id": parent_id},
+            {
+                "$set": {"billing_setup_last_invited_at": sent_at},
+                "$setOnInsert": {"created_at": sent_at, "parent_id": parent_id},
+            },
+            upsert=True,
+        )

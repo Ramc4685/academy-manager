@@ -2088,6 +2088,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         remove_tuition_discount=remove_tuition_discount,
         tuition_discounts=tuition_discounts,
         reconcile_stripe_billing=AsyncMock(return_value={}),
+        list_billing_setup=AsyncMock(),
+        send_add_card_reminder=AsyncMock(),
     )
 
 

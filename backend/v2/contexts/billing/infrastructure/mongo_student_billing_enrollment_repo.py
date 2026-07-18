@@ -300,3 +300,14 @@ class MongoStudentBillingEnrollmentRepository(TenantScopedRepository):
                 }
             },
         )
+
+    async def list_academy_autopay_states(self) -> list[dict[str, Any]]:
+        """Per-enrollment autopay state for every child in this academy.
+
+        Used by the Billing Setup admin page to aggregate "N of M children on
+        autopay" per parent — autopay is per-enrollment, not per-parent (see
+        module docstring / ``set_autopay_enrollment_status``).
+        """
+        projection = {"enrollment_id": 1, "parent_id": 1, "autopay_enrollment_status": 1}
+        cursor = self.collection.find(self._scoped({}), projection)
+        return [doc async for doc in cursor]

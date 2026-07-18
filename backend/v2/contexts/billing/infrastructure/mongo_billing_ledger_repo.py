@@ -777,6 +777,21 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         return [self._payment_from_doc(doc) async for doc in cursor]
 
+    async def outstanding_by_parent(self) -> dict[str, int]:
+        """Sum of ``balance_due_cents`` across open invoices, grouped by parent.
+
+        Feeds the Billing Setup admin page's per-parent outstanding-balance
+        column and summary total.
+        """
+        pipeline = [
+            {"$match": {**self._scoped({}), "balance_due_cents": {"$gt": 0}}},
+            {"$group": {"_id": "$parent_id", "total": {"$sum": "$balance_due_cents"}}},
+        ]
+        totals: dict[str, int] = {}
+        async for doc in self.collection.aggregate(pipeline):
+            totals[str(doc["_id"])] = int(doc["total"])
+        return totals
+
     async def _existing_allocation_result(
         self, allocation_doc: dict[str, object]
     ) -> LedgerAllocationResult:
