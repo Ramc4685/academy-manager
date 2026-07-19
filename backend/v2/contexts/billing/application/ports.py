@@ -8,6 +8,7 @@ from typing import Any, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel
 
+from backend.v2.contexts.billing.domain.autopay_status import AutopayEnrollmentStatus
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.domain.connected_account import (
     ConnectedAccount,
@@ -37,6 +38,143 @@ from backend.v2.contexts.billing.domain.session_type import (
 )
 
 T = TypeVar("T")
+
+
+class BillingSetupStudent(BaseModel):
+    model_config = {"frozen": True}
+
+    student_id: str
+    full_name: str
+
+
+class ParentBillingCustomerSnapshot(BaseModel):
+    """Stripe setup fields needed by the Billing Setup read model."""
+
+    model_config = {"frozen": True}
+
+    parent_id: str
+    stripe_customer_id: str | None = None
+    card_label: str | None = None
+    card_last4: str | None = None
+    last_invited_at: datetime | None = None
+
+
+class EnrollmentAutopaySnapshot(BaseModel):
+    model_config = {"frozen": True}
+
+    enrollment_id: str
+    parent_id: str
+    autopay_enrollment_status: AutopayEnrollmentStatus
+
+
+class ParentRosterEntry(BaseModel):
+    model_config = {"frozen": True}
+
+    parent_id: str
+    parent_name: str
+    parent_email: str | None = None
+
+
+class ParentBalanceSnapshot(BaseModel):
+    """Aggregate balance plus the exact next invoice offered for charging."""
+
+    model_config = {"frozen": True}
+
+    outstanding_cents: int = 0
+    charge_invoice_id: str | None = None
+    charge_enrollment_id: str | None = None
+    charge_amount_cents: int = 0
+
+
+class LoginAccountDirectory(Protocol):
+    async def login_account_parent_ids(
+        self, parent_ids: list[str], *, academy_id: str
+    ) -> set[str]: ...
+
+    async def has_login_account(self, parent_id: str, *, academy_id: str) -> bool: ...
+
+
+class ParentStudentRoster(Protocol):
+    async def list_parents(self, *, academy_id: str) -> list[ParentRosterEntry]: ...
+
+    async def students_for_parents(
+        self, parent_ids: list[str], *, academy_id: str
+    ) -> dict[str, list[BillingSetupStudent]]: ...
+
+    async def get_parent(self, parent_id: str, *, academy_id: str) -> ParentRosterEntry | None: ...
+
+    async def students_for_parent(
+        self, parent_id: str, *, academy_id: str
+    ) -> list[BillingSetupStudent]: ...
+
+
+class BillingCustomerDirectory(Protocol):
+    async def list_customers(self, *, academy_id: str) -> list[ParentBillingCustomerSnapshot]: ...
+
+    async def get_customer(
+        self, parent_id: str, *, academy_id: str
+    ) -> ParentBillingCustomerSnapshot | None: ...
+
+
+class EnrollmentAutopayDirectory(Protocol):
+    async def list_autopay_states(self, *, academy_id: str) -> list[EnrollmentAutopaySnapshot]: ...
+
+    async def list_parent_autopay_states(
+        self, parent_id: str, *, academy_id: str
+    ) -> list[EnrollmentAutopaySnapshot]: ...
+
+
+class OutstandingBalanceDirectory(Protocol):
+    async def billing_setup_by_parent(
+        self, *, academy_id: str
+    ) -> dict[str, ParentBalanceSnapshot]: ...
+
+    async def billing_setup_for_parent(
+        self, parent_id: str, *, academy_id: str
+    ) -> ParentBalanceSnapshot | None: ...
+
+
+class InviteEmailOutcome(BaseModel):
+    model_config = {"frozen": True}
+
+    ok: bool
+    failed_reason: str | None = None
+
+
+class InviteEmailPort(Protocol):
+    async def send_invite_email(
+        self,
+        *,
+        user_id: str,
+        email: str,
+        display_name: str,
+        subject: str,
+        body: str,
+    ) -> InviteEmailOutcome: ...
+
+
+class ParentContact(BaseModel):
+    model_config = {"frozen": True}
+
+    parent_id: str
+    email: str
+    display_name: str
+
+
+class ParentContactLookup(Protocol):
+    async def get_parent_contact(
+        self, parent_id: str, *, academy_id: str
+    ) -> ParentContact | None: ...
+
+
+class CardSetupLinkPort(Protocol):
+    async def create_card_setup_link(
+        self, *, parent_id: str, academy_id: str, return_url: str
+    ) -> str: ...
+
+
+class AcademyNameLookup(Protocol):
+    async def get_academy_name(self, academy_id: str) -> str | None: ...
 
 
 class TransactionRunner(Protocol):

@@ -14,6 +14,7 @@ from typing import Any
 
 from bson import ObjectId
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserDetail,
@@ -220,10 +221,230 @@ class MongoUserRepository:
         cursor = self.collection.find(query).sort([("role", 1), ("display_name", 1), ("email", 1)])
         return [self._to_admin_summary(doc) async for doc in cursor]
 
+    async def list_existing_user_ids(self, user_ids: list[str], *, academy_id: str) -> set[str]:
+        """Which of ``user_ids`` (== parent_id, per this codebase's convention
+        that a parent IS a User) already have a login account in this academy.
+
+        Used by the Billing Setup admin page to tell "no account yet" apart
+        from "account but no saved card".
+        """
+        if not user_ids:
+            return set()
+        object_ids = [ObjectId(value) for value in user_ids if ObjectId.is_valid(value)]
+        aliases: list[dict[str, object]] = [
+            {"user_id": {"$in": user_ids}},
+            {"auth_uid": {"$in": user_ids}},
+            {"firebase_uid": {"$in": user_ids}},
+        ]
+        if object_ids:
+            aliases.append({"_id": {"$in": object_ids}})
+        cursor = self.collection.find(
+            {"$or": aliases},
+            {"user_id": 1, "auth_uid": 1, "firebase_uid": 1},
+        )
+        wanted = set(user_ids)
+        found: set[str] = set()
+        async for doc in cursor:
+            firebase_uid = doc.get("firebase_uid") or doc.get("auth_uid")
+            if not firebase_uid:
+                continue
+            membership = await self._db["academy_memberships"].find_one(
+                {
+                    "academy_id": academy_id,
+                    "user_id": str(firebase_uid),
+                    "status": "active",
+                    "roles": "parent",
+                    "login_invite_pending": {"$ne": True},
+                },
+                {"_id": 1},
+            )
+            if membership is None:
+                continue
+            doc_aliases = {
+                str(value)
+                for value in (
+                    doc.get("user_id"),
+                    doc.get("auth_uid"),
+                    doc.get("firebase_uid"),
+                    doc.get("_id"),
+                )
+                if value
+            }
+            found.update(wanted & doc_aliases)
+        return found
+
+    async def get_billing_setup_parent(self, parent_id: str, *, academy_id: str) -> User | None:
+        """Resolve a global user only through an active tenant parent membership."""
+        doc = await self.collection.find_one(self._id_filter(parent_id))
+        if doc is None:
+            return None
+        firebase_uid = doc.get("firebase_uid") or doc.get("auth_uid")
+        if not firebase_uid:
+            return None
+        membership = await self._db["academy_memberships"].find_one(
+            {
+                "academy_id": academy_id,
+                "user_id": str(firebase_uid),
+                "status": "active",
+                "roles": "parent",
+            },
+            {"_id": 1},
+        )
+        return self._to_domain(doc) if membership is not None else None
+
+    async def ensure_parent_login(
+        self,
+        *,
+        parent_id: str,
+        email: str,
+        display_name: str,
+        academy_id: str,
+        actor_id: str,
+    ) -> str:
+        """Provision a missing roster parent without changing ownership ids."""
+        now = datetime.now(UTC)
+        normalized_email = normalize_email(email)
+        normalized_name = " ".join(display_name.split())
+        existing = await self.collection.find_one(
+            {
+                "$or": [
+                    self._id_filter(parent_id),
+                    {"normalized_email": normalized_email},
+                    {"email": {"$regex": f"^{re.escape(normalized_email)}$", "$options": "i"}},
+                ]
+            }
+        )
+        uid = (
+            str(existing.get("firebase_uid") or existing.get("auth_uid") or existing.get("user_id"))
+            if existing is not None
+            else parent_id
+        )
+
+        try:
+            firebase_uid, _firebase_created = await get_firebase_admin_adapter().ensure_user(
+                uid=uid,
+                email=normalized_email,
+                display_name=normalized_name,
+            )
+        except Exception as exc:
+            raise UserCreateFailed("could not provision Firebase parent login") from exc
+
+        try:
+            if existing is None:
+                doc = {
+                    "user_id": firebase_uid,
+                    "auth_uid": firebase_uid,
+                    "firebase_uid": firebase_uid,
+                    "auth_provider": "firebase",
+                    "email": normalized_email,
+                    "normalized_email": normalized_email,
+                    "display_name": normalized_name,
+                    "role": "parent",
+                    "roles": ["parent"],
+                    "status": "active",
+                    "is_active": True,
+                    "academy_id": academy_id,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                try:
+                    await self.collection.insert_one(doc)
+                except DuplicateKeyError:
+                    existing = await self.collection.find_one(
+                        {
+                            "$or": [
+                                {"normalized_email": normalized_email},
+                                {"firebase_uid": firebase_uid},
+                            ]
+                        }
+                    )
+                    if existing is None:
+                        raise
+            else:
+                await self.collection.update_one(
+                    {"_id": existing["_id"]},
+                    {
+                        "$set": {
+                            "auth_uid": firebase_uid,
+                            "firebase_uid": firebase_uid,
+                            "auth_provider": "firebase",
+                            "updated_at": now,
+                        }
+                    },
+                )
+
+            await self._db["academy_memberships"].update_one(
+                {"academy_id": academy_id, "user_id": firebase_uid},
+                {
+                    "$set": {
+                        "status": "active",
+                        "login_invite_pending": True,
+                        "updated_at": now,
+                    },
+                    "$addToSet": {"roles": "parent"},
+                    "$setOnInsert": {
+                        "membership_id": str(new_ulid()),
+                        "academy_id": academy_id,
+                        "user_id": firebase_uid,
+                        "invited_by": actor_id,
+                        "invited_at": now,
+                        "created_at": now,
+                    },
+                },
+                upsert=True,
+            )
+            await self._write_audit(
+                academy_id=academy_id,
+                actor_id=actor_id,
+                action="parent.login_provisioned",
+                entity_id=firebase_uid,
+                reason="Billing Setup login invite",
+                changed_keys=["auth_uid", "firebase_uid", "auth_provider"],
+                before=existing or {},
+                after={
+                    "auth_uid": firebase_uid,
+                    "firebase_uid": firebase_uid,
+                    "auth_provider": "firebase",
+                },
+            )
+        except Exception:
+            # Do not roll back global identity records: a concurrent request may
+            # own them. The pending marker keeps this row retryable until the
+            # membership and invite workflow converges.
+            raise
+        return firebase_uid
+
     async def get_admin_user(self, user_id: str, *, academy_id: str) -> AdminUserDetail | None:
         doc = await self.collection.find_one({"academy_id": academy_id, **self._id_filter(user_id)})
         if doc is None:
             return None
+        return await self._admin_detail_for_doc(doc, academy_id=academy_id)
+
+    async def get_login_invite_user(
+        self, user_id: str, *, academy_id: str
+    ) -> AdminUserDetail | None:
+        """Resolve a global invite target through its active tenant membership."""
+        doc = await self.collection.find_one(self._id_filter(user_id))
+        if doc is None:
+            return None
+        firebase_uid = doc.get("firebase_uid") or doc.get("auth_uid")
+        if not firebase_uid:
+            return None
+        membership = await self._db["academy_memberships"].find_one(
+            {
+                "academy_id": academy_id,
+                "user_id": str(firebase_uid),
+                "status": "active",
+            },
+            {"_id": 1},
+        )
+        if membership is None:
+            return None
+        return await self._admin_detail_for_doc(doc, academy_id=academy_id)
+
+    async def _admin_detail_for_doc(
+        self, doc: dict[str, object], *, academy_id: str
+    ) -> AdminUserDetail:
         lookup_ids = [
             str(value)
             for value in (
@@ -256,10 +477,19 @@ class MongoUserRepository:
     async def record_login_invite(
         self, user_id: str, *, academy_id: str, sent_at: datetime
     ) -> None:
-        await self.collection.update_one(
-            {"academy_id": academy_id, **self._id_filter(user_id)},
-            {"$set": {"login_invite_sent_at": sent_at, "updated_at": sent_at}},
+        doc = await self.collection.find_one(self._id_filter(user_id))
+        firebase_uid = (doc or {}).get("firebase_uid") or (doc or {}).get("auth_uid")
+        if not firebase_uid:
+            raise UserCreateFailed("login invite target has no active academy membership")
+        result = await self._db["academy_memberships"].update_one(
+            {"academy_id": academy_id, "user_id": str(firebase_uid), "status": "active"},
+            {
+                "$set": {"login_invite_sent_at": sent_at, "updated_at": sent_at},
+                "$unset": {"login_invite_pending": ""},
+            },
         )
+        if getattr(result, "matched_count", 0) != 1:
+            raise UserCreateFailed("login invite target has no active academy membership")
 
     async def create_admin_user(
         self,

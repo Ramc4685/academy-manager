@@ -220,3 +220,55 @@ async def test_active_primary_setup_waits_for_explicit_default_promotion(db, aca
     assert doc["stripe_mandate_id"] == "mandate_active"
     assert doc["primary_payment_method_id"] == "pm_active_bank"
     assert doc["primary_setup_status"] == "active"
+
+
+@pytest.mark.parametrize("shape", ["top_level", "primary", "nested"])
+async def test_saved_card_detection_supports_all_compatible_projection_shapes(
+    db, acad, shape: str
+) -> None:
+    repo = MongoParentBillingCustomerRepository(db)
+    doc: dict[str, object] = {
+        "academy_id": acad,
+        "parent_id": f"parent-{shape}",
+        "stripe_customer_id": f"cus-{shape}",
+    }
+    if shape == "top_level":
+        doc.update(payment_method_label="Visa", payment_method_last4="4242")
+    elif shape == "primary":
+        doc.update(
+            primary_payment_method_label="Mastercard",
+            primary_payment_method_last4="4444",
+            primary_setup_status="active",
+        )
+    else:
+        doc["autopay_payment_methods"] = [
+            {
+                "role": "primary",
+                "setup_status": "active",
+                "payment_method_label": "Bank account",
+                "payment_method_last4": "6789",
+            }
+        ]
+    await db["parent_billing_customers"].insert_one(doc)
+
+    assert await repo.has_saved_card(parent_id=f"parent-{shape}") is True
+    listed = {
+        row["parent_id"]: repo.display_payment_method(row)
+        for row in await repo.list_academy_customers()
+    }
+    assert listed[f"parent-{shape}"][1] is not None
+
+
+async def test_pending_primary_method_is_not_chargeable(db, acad) -> None:
+    repo = MongoParentBillingCustomerRepository(db)
+    await db["parent_billing_customers"].insert_one(
+        {
+            "academy_id": acad,
+            "parent_id": "parent-pending",
+            "primary_payment_method_label": "Pending bank",
+            "primary_payment_method_last4": "6789",
+            "primary_setup_status": "verification_required",
+        }
+    )
+
+    assert await repo.has_saved_card(parent_id="parent-pending") is False

@@ -194,3 +194,77 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
             mutation,
             upsert=False,
         )
+
+    async def list_academy_customers(self) -> list[dict[str, Any]]:
+        """One row per parent with a billing-customer record in this academy.
+
+        Projects only display-safe fields for the Billing Setup admin page —
+        ``payment_method_label``/``payment_method_last4`` are set only when
+        the primary payment method's setup is ``active`` (see
+        ``set_default_payment_method``), so their presence here is exactly
+        the "has a chargeable saved card" signal.
+        """
+        projection = {
+            "parent_id": 1,
+            "stripe_customer_id": 1,
+            "payment_method_label": 1,
+            "payment_method_last4": 1,
+            "primary_payment_method_label": 1,
+            "primary_payment_method_last4": 1,
+            "primary_setup_status": 1,
+            "autopay_payment_methods": 1,
+            "billing_setup_last_invited_at": 1,
+        }
+        cursor = self.collection.find(self._scoped({}), projection)
+        return [doc async for doc in cursor]
+
+    async def get_academy_customer(self, *, parent_id: str) -> dict[str, Any] | None:
+        return await self._find_one({"parent_id": parent_id})
+
+    async def has_saved_card(self, *, parent_id: str) -> bool:
+        """Whether this parent has a chargeable primary payment method —
+        the same "card on file" signal ``list_academy_customers`` projects,
+        for single-parent guard checks (charge / enable-autopay endpoints)."""
+        doc = await self._find_one({"parent_id": parent_id})
+        if not doc:
+            return False
+        return self.display_payment_method(doc) != (None, None)
+
+    @staticmethod
+    def display_payment_method(doc: dict[str, Any]) -> tuple[str | None, str | None]:
+        """Resolve safe display fields across current and compatibility shapes."""
+        label = doc.get("payment_method_label")
+        last4 = doc.get("payment_method_last4")
+        if label or last4:
+            return (str(label) if label else None, str(last4) if last4 else None)
+        if doc.get("primary_setup_status") == "active":
+            primary_label = doc.get("primary_payment_method_label")
+            primary_last4 = doc.get("primary_payment_method_last4")
+            if primary_label or primary_last4:
+                return (
+                    str(primary_label) if primary_label else None,
+                    str(primary_last4) if primary_last4 else None,
+                )
+        for method in doc.get("autopay_payment_methods") or []:
+            if method.get("role") == "primary" and method.get("setup_status") == "active":
+                nested_label = method.get("payment_method_label")
+                nested_last4 = method.get("payment_method_last4")
+                if nested_label or nested_last4:
+                    return (
+                        str(nested_label) if nested_label else None,
+                        str(nested_last4) if nested_last4 else None,
+                    )
+        return None, None
+
+    async def record_billing_setup_invite(self, *, parent_id: str, sent_at: datetime) -> None:
+        """Track when the Billing Setup admin page last invited this parent
+        (login invite or add-card reminder), so the UI can show "Invited
+        {date}" and offer a resend."""
+        await self._update_one(
+            {"parent_id": parent_id},
+            {
+                "$set": {"billing_setup_last_invited_at": sent_at},
+                "$setOnInsert": {"created_at": sent_at, "parent_id": parent_id},
+            },
+            upsert=True,
+        )

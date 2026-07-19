@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from pymongo.errors import DuplicateKeyError
+
 from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -36,7 +38,13 @@ class MongoBillingAuditLogRepository(TenantScopedRepository):
 
     async def append(self, entry: BillingAuditEntry) -> None:
         doc = {k: v for k, v in entry.model_dump(mode="python").items() if k != "academy_id"}
-        await self._insert_one(doc)
+        try:
+            await self._insert_one(doc)
+        except DuplicateKeyError:
+            # ``(academy_id, audit_id)`` is unique. Deterministic audit ids let
+            # an idempotent request safely repair a prior post-mutation audit
+            # failure without creating duplicate trail entries.
+            return
 
     async def list_for_invoice(self, invoice_id: str) -> list[BillingAuditEntry]:
         cursor = self._find_many(

@@ -8,6 +8,7 @@ interface BigNumProps {
   color?: string;
   delta?: ReactNode;
   deltaTone?: "pos" | "neg" | "neutral";
+  className?: string;
 }
 
 /** Big tabular display numeric — Outfit, tight tracking. */
@@ -17,6 +18,7 @@ export function BigNum({
   color,
   delta,
   deltaTone = "pos",
+  className = "",
 }: BigNumProps) {
   const deltaColor =
     deltaTone === "pos"
@@ -27,8 +29,8 @@ export function BigNum({
   return (
     <div className="flex items-baseline gap-2">
       <span
-        className="font-display font-bold tracking-[-0.03em] leading-none tabular-nums"
-        style={{ fontSize: size, color: color ?? "#0f172a" }}
+        className={`font-display font-bold tracking-[-0.03em] leading-none tabular-nums ${color ? "" : "text-rally-ink"} ${className}`}
+        style={{ fontSize: size, ...(color ? { color } : {}) }}
       >
         {children}
       </span>

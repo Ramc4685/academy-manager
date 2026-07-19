@@ -146,6 +146,36 @@ class MongoStudentBillingEnrollmentRepository(TenantScopedRepository):
             )
         return applied
 
+    async def resume_autopay_for_billing_setup(
+        self, *, enrollment_id: str, parent_id: str, operation_id: str
+    ) -> bool:
+        """Resume once and retain operation ownership so audit replay converges."""
+        result = await self._update_one(
+            {
+                "enrollment_id": enrollment_id,
+                "parent_id": parent_id,
+                "autopay_enrollment_status": "paused",
+            },
+            {
+                "$set": {
+                    "autopay_enrollment_status": "active",
+                    "billing_setup_resume_operation_id": operation_id,
+                    "updated_at": datetime.now(UTC),
+                }
+            },
+        )
+        if getattr(result, "matched_count", 0) == 1:
+            return True
+        existing = await self._find_one(
+            {
+                "enrollment_id": enrollment_id,
+                "parent_id": parent_id,
+                "autopay_enrollment_status": "active",
+                "billing_setup_resume_operation_id": operation_id,
+            }
+        )
+        return existing is not None
+
     # Legacy enrollments in these statuses have a live billing relationship and
     # may self-heal into a projection doc; cancelled/withdrawn ones must not.
     _LEGACY_BACKFILLABLE_STATUSES = frozenset({"active", "paused"})
@@ -300,3 +330,14 @@ class MongoStudentBillingEnrollmentRepository(TenantScopedRepository):
                 }
             },
         )
+
+    async def list_academy_autopay_states(self) -> list[dict[str, Any]]:
+        """Per-enrollment autopay state for every child in this academy.
+
+        Used by the Billing Setup admin page to aggregate "N of M children on
+        autopay" per parent — autopay is per-enrollment, not per-parent (see
+        module docstring / ``set_autopay_enrollment_status``).
+        """
+        projection = {"enrollment_id": 1, "parent_id": 1, "autopay_enrollment_status": 1}
+        cursor = self.collection.find(self._scoped({}), projection)
+        return [doc async for doc in cursor]
