@@ -53,7 +53,9 @@ async def test_sends_branded_set_password_email_and_records_invite():
 
     result = await use_case.execute("parent-1", academy_id="acad")
 
-    links.generate_password_reset_link.assert_awaited_once_with("parent@yahoo.com")
+    links.generate_password_reset_link.assert_awaited_once_with(
+        "parent@yahoo.com", uid="parent-1", display_name="Pat Parent"
+    )
     sender.send_invite_email.assert_awaited_once()
     kwargs = sender.send_invite_email.await_args.kwargs
     assert kwargs["email"] == "parent@yahoo.com"
@@ -96,3 +98,43 @@ async def test_raises_and_does_not_record_when_send_fails():
     with pytest.raises(LoginInviteSendFailed):
         await use_case.execute("parent-1", academy_id="acad")
     users.record_login_invite.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_passes_uid_and_display_name_to_reset_link_port_for_self_heal():
+    users = AsyncMock()
+    users.get_admin_user.return_value = _user()
+    use_case, links, _ = _use_case(users)
+
+    await use_case.execute("parent-1", academy_id="acad")
+
+    links.generate_password_reset_link.assert_awaited_once_with(
+        "parent@yahoo.com", uid="parent-1", display_name="Pat Parent"
+    )
+
+
+@pytest.mark.asyncio
+async def test_wraps_unexpected_reset_link_error_as_send_failed():
+    users = AsyncMock()
+    users.get_admin_user.return_value = _user()
+    links = AsyncMock()
+    links.generate_password_reset_link.side_effect = RuntimeError("firebase unreachable")
+    use_case, _, sender = _use_case(users, links=links)
+
+    with pytest.raises(LoginInviteSendFailed):
+        await use_case.execute("parent-1", academy_id="acad")
+    sender.send_invite_email.assert_not_awaited()
+    users.record_login_invite.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_wraps_unexpected_academy_name_error_as_send_failed():
+    users = AsyncMock()
+    users.get_admin_user.return_value = _user()
+    academies = AsyncMock()
+    academies.get_academy_name.side_effect = RuntimeError("db unreachable")
+    use_case, _, sender = _use_case(users, academies=academies)
+
+    with pytest.raises(LoginInviteSendFailed):
+        await use_case.execute("parent-1", academy_id="acad")
+    sender.send_invite_email.assert_not_awaited()

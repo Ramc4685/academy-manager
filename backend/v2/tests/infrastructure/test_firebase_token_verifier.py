@@ -208,6 +208,80 @@ async def test_firebase_admin_adapter_user_methods_call_admin_sdk(
 
 
 @pytest.mark.asyncio
+async def test_firebase_admin_adapter_self_heals_missing_account_on_password_reset_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[tuple[str, dict[str, object]]] = []
+
+    class EmailNotFoundError(Exception):
+        pass
+
+    _email_not_found_error = EmailNotFoundError
+
+    class FakeAuth:
+        EmailNotFoundError = _email_not_found_error
+        _created = False
+
+        @staticmethod
+        def generate_password_reset_link(email: str) -> str:
+            seen.append(("reset_link", {"email": email}))
+            if not FakeAuth._created:
+                raise EmailNotFoundError("no user for email")
+            return f"https://reset.example/{email}"
+
+        @staticmethod
+        def create_user(**kwargs: object) -> None:
+            seen.append(("create", kwargs))
+            FakeAuth._created = True
+
+    monkeypatch.setattr(adapter_module, "firebase_admin_auth", FakeAuth)
+    monkeypatch.setattr(adapter_module, "_ensure_firebase_app", lambda: object())
+
+    link = await FirebaseAdminAdapter().generate_password_reset_link(
+        "new@example.com", uid="new-user", display_name="New User"
+    )
+
+    assert link == "https://reset.example/new@example.com"
+    assert seen == [
+        ("reset_link", {"email": "new@example.com"}),
+        (
+            "create",
+            {
+                "uid": "new-user",
+                "email": "new@example.com",
+                "display_name": "New User",
+                "email_verified": False,
+                "disabled": False,
+            },
+        ),
+        ("reset_link", {"email": "new@example.com"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_firebase_admin_adapter_reraises_missing_account_without_uid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class EmailNotFoundError(Exception):
+        pass
+
+    _email_not_found_error = EmailNotFoundError
+
+    class FakeAuth:
+        EmailNotFoundError = _email_not_found_error
+
+        @staticmethod
+        def generate_password_reset_link(email: str) -> str:
+            raise EmailNotFoundError("no user for email")
+
+    monkeypatch.setattr(adapter_module, "firebase_admin_auth", FakeAuth)
+    monkeypatch.setattr(adapter_module, "_ensure_firebase_app", lambda: object())
+
+    with pytest.raises(EmailNotFoundError):
+        await FirebaseAdminAdapter().generate_password_reset_link("orphan@example.com")
+
+
+@pytest.mark.asyncio
 async def test_mongo_user_repo_firebase_helpers_call_v2_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

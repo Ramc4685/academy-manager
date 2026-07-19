@@ -24,7 +24,9 @@ from backend.v2.contexts.identity.domain.errors import (
 
 
 class PasswordResetLinkPort(Protocol):
-    async def generate_password_reset_link(self, email: str) -> str: ...
+    async def generate_password_reset_link(
+        self, email: str, *, uid: str | None = None, display_name: str | None = None
+    ) -> str: ...
 
 
 class InviteEmailOutcome(BaseModel):
@@ -112,8 +114,13 @@ class SendLoginInvite:
         if user is None:
             raise UserNotFound(user_id)
 
-        reset_link = await self._links.generate_password_reset_link(str(user.email))
-        academy_name = await self._academies.get_academy_name(academy_id) or "your academy"
+        try:
+            reset_link = await self._links.generate_password_reset_link(
+                str(user.email), uid=user.user_id, display_name=user.display_name
+            )
+            academy_name = await self._academies.get_academy_name(academy_id) or "your academy"
+        except Exception as exc:
+            raise LoginInviteSendFailed(f"could not prepare invite: {exc}") from exc
 
         outcome = await self._sender.send_invite_email(
             user_id=user.user_id,
