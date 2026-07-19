@@ -33,6 +33,14 @@ class FakeRoster:
     ) -> dict[str, list[BillingSetupStudent]]:
         return {pid: self._students.get(pid, []) for pid in parent_ids}
 
+    async def get_parent(self, parent_id: str, *, academy_id: str) -> ParentRosterEntry | None:
+        return next((parent for parent in self._parents if parent.parent_id == parent_id), None)
+
+    async def students_for_parent(
+        self, parent_id: str, *, academy_id: str
+    ) -> list[BillingSetupStudent]:
+        return self._students.get(parent_id, [])
+
 
 class FakeLoginAccounts:
     def __init__(self, parent_ids_with_accounts: set[str]):
@@ -40,6 +48,9 @@ class FakeLoginAccounts:
 
     async def login_account_parent_ids(self, parent_ids: list[str], *, academy_id: str) -> set[str]:
         return {pid for pid in parent_ids if pid in self._ids}
+
+    async def has_login_account(self, parent_id: str, *, academy_id: str) -> bool:
+        return parent_id in self._ids
 
 
 class FakeCustomers:
@@ -49,6 +60,13 @@ class FakeCustomers:
     async def list_customers(self, *, academy_id: str) -> list[ParentBillingCustomerSnapshot]:
         return self._customers
 
+    async def get_customer(
+        self, parent_id: str, *, academy_id: str
+    ) -> ParentBillingCustomerSnapshot | None:
+        return next(
+            (customer for customer in self._customers if customer.parent_id == parent_id), None
+        )
+
 
 class FakeAutopay:
     def __init__(self, snapshots: list[EnrollmentAutopaySnapshot]):
@@ -56,6 +74,11 @@ class FakeAutopay:
 
     async def list_autopay_states(self, *, academy_id: str) -> list[EnrollmentAutopaySnapshot]:
         return self._snapshots
+
+    async def list_parent_autopay_states(
+        self, parent_id: str, *, academy_id: str
+    ) -> list[EnrollmentAutopaySnapshot]:
+        return [snapshot for snapshot in self._snapshots if snapshot.parent_id == parent_id]
 
 
 class FakeBalances:
@@ -67,10 +90,16 @@ class FakeBalances:
             parent_id: ParentBalanceSnapshot(
                 outstanding_cents=amount,
                 charge_invoice_id=f"inv-{parent_id}",
+                charge_enrollment_id=f"enrollment-{parent_id}",
                 charge_amount_cents=amount,
             )
             for parent_id, amount in self._balances.items()
         }
+
+    async def billing_setup_for_parent(
+        self, parent_id: str, *, academy_id: str
+    ) -> ParentBalanceSnapshot | None:
+        return (await self.billing_setup_by_parent(academy_id=academy_id)).get(parent_id)
 
 
 def _make_use_case(
@@ -191,6 +220,24 @@ async def test_outstanding_balance_is_summed_per_parent():
 
 
 @pytest.mark.asyncio
+async def test_charge_requires_active_autopay_on_the_target_invoice_enrollment():
+    parent = ParentRosterEntry(parent_id="p1", parent_name="Fay Wu")
+    active = EnrollmentAutopaySnapshot(
+        enrollment_id="enrollment-p1", parent_id="p1", autopay_enrollment_status="active"
+    )
+    page = await _make_use_case(
+        parents=[parent], autopay=[active], balances={"p1": 15_000}
+    ).execute(academy_id=ACADEMY_ID)
+    assert page.rows[0].charge_autopay_eligible is True
+
+    paused = active.model_copy(update={"autopay_enrollment_status": "paused"})
+    page = await _make_use_case(
+        parents=[parent], autopay=[paused], balances={"p1": 15_000}
+    ).execute(academy_id=ACADEMY_ID)
+    assert page.rows[0].charge_autopay_eligible is False
+
+
+@pytest.mark.asyncio
 async def test_status_filter_narrows_to_matching_state():
     use_case = _make_use_case(
         parents=[
@@ -266,3 +313,15 @@ async def test_pagination_cursor_returns_next_page():
         academy_id=ACADEMY_ID, limit=2, cursor=first_page.next_cursor
     )
     assert [r.parent_id for r in second_page.rows] == ["p2", "p3"]
+
+
+@pytest.mark.asyncio
+async def test_direct_parent_lookup_is_not_limited_by_page_position():
+    parents = [
+        ParentRosterEntry(parent_id=f"p{i}", parent_name=f"Parent {i:05d}") for i in range(10_005)
+    ]
+    use_case = _make_use_case(parents=parents)
+
+    page = await use_case.execute(academy_id=ACADEMY_ID, parent_id="p10004", limit=1)
+
+    assert [row.parent_id for row in page.rows] == ["p10004"]

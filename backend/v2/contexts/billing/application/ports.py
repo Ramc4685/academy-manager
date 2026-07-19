@@ -82,6 +82,7 @@ class ParentBalanceSnapshot(BaseModel):
 
     outstanding_cents: int = 0
     charge_invoice_id: str | None = None
+    charge_enrollment_id: str | None = None
     charge_amount_cents: int = 0
 
 
@@ -89,6 +90,8 @@ class LoginAccountDirectory(Protocol):
     async def login_account_parent_ids(
         self, parent_ids: list[str], *, academy_id: str
     ) -> set[str]: ...
+
+    async def has_login_account(self, parent_id: str, *, academy_id: str) -> bool: ...
 
 
 class ParentStudentRoster(Protocol):
@@ -98,19 +101,37 @@ class ParentStudentRoster(Protocol):
         self, parent_ids: list[str], *, academy_id: str
     ) -> dict[str, list[BillingSetupStudent]]: ...
 
+    async def get_parent(self, parent_id: str, *, academy_id: str) -> ParentRosterEntry | None: ...
+
+    async def students_for_parent(
+        self, parent_id: str, *, academy_id: str
+    ) -> list[BillingSetupStudent]: ...
+
 
 class BillingCustomerDirectory(Protocol):
     async def list_customers(self, *, academy_id: str) -> list[ParentBillingCustomerSnapshot]: ...
 
+    async def get_customer(
+        self, parent_id: str, *, academy_id: str
+    ) -> ParentBillingCustomerSnapshot | None: ...
+
 
 class EnrollmentAutopayDirectory(Protocol):
     async def list_autopay_states(self, *, academy_id: str) -> list[EnrollmentAutopaySnapshot]: ...
+
+    async def list_parent_autopay_states(
+        self, parent_id: str, *, academy_id: str
+    ) -> list[EnrollmentAutopaySnapshot]: ...
 
 
 class OutstandingBalanceDirectory(Protocol):
     async def billing_setup_by_parent(
         self, *, academy_id: str
     ) -> dict[str, ParentBalanceSnapshot]: ...
+
+    async def billing_setup_for_parent(
+        self, parent_id: str, *, academy_id: str
+    ) -> ParentBalanceSnapshot | None: ...
 
 
 class InviteEmailOutcome(BaseModel):

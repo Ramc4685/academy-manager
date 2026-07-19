@@ -124,6 +124,7 @@ class ChargeResult(BaseModel):
     invoice_id: str
     status: str  # invoice status after the attempt
     balance_due_cents: int
+    attempted_amount_cents: int = 0
     requires_action: bool = False
     processing: bool = False
     decline_code: str | None = None
@@ -345,6 +346,7 @@ class ChargeInvoiceViaAutopay:
                 invoice_id=invoice_id,
                 status=invoice.status,
                 balance_due_cents=invoice.balance_due_cents,
+                attempted_amount_cents=invoice.balance_due_cents,
                 decline_code=decline_str,
             )
 
@@ -370,6 +372,7 @@ class ChargeInvoiceViaAutopay:
                 invoice_id=invoice_id,
                 status=invoice.status,
                 balance_due_cents=invoice.balance_due_cents,
+                attempted_amount_cents=invoice.balance_due_cents,
                 decline_code=decline_code,
             )
 
@@ -394,6 +397,7 @@ class ChargeInvoiceViaAutopay:
                 invoice_id=invoice_id,
                 status=invoice.status,
                 balance_due_cents=invoice.balance_due_cents,
+                attempted_amount_cents=invoice.balance_due_cents,
                 processing=True,
                 requires_action=False,
             )
@@ -420,6 +424,7 @@ class ChargeInvoiceViaAutopay:
                 invoice_id=invoice_id,
                 status=invoice.status,
                 balance_due_cents=invoice.balance_due_cents,
+                attempted_amount_cents=invoice.balance_due_cents,
                 requires_action=True,
             )
 
@@ -473,6 +478,7 @@ class ChargeInvoiceViaAutopay:
             invoice_id=invoice_id,
             status=updated_invoice.status,
             balance_due_cents=updated_invoice.balance_due_cents,
+            attempted_amount_cents=invoice.balance_due_cents,
         )
 
     async def _ready_connected_account_id(self) -> str | None:

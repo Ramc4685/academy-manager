@@ -144,6 +144,27 @@ def test_charge_success_returns_result(admin_client):
     )
 
 
+def test_charge_processing_returns_submitted_state_and_actual_amount(admin_client):
+    admin_client.use_cases.charge_billing_setup_balance = AsyncMock(
+        return_value={
+            "invoice_id": "inv-1",
+            "success": False,
+            "status": "open",
+            "balance_due_cents": 4750,
+            "charged_amount_cents": 0,
+            "attempted_amount_cents": 4750,
+            "processing": True,
+        }
+    )
+
+    r = admin_client.post("/api/v2/admin/billing/setup/parent-1/charge", json=CHARGE_BODY)
+
+    assert r.status_code == 200, r.text
+    assert r.json()["processing"] is True
+    assert r.json()["charged_amount_cents"] == 0
+    assert r.json()["attempted_amount_cents"] == 4750
+
+
 def test_charge_unavailable_returns_503_without_provider_detail(admin_client):
     admin_client.use_cases.charge_billing_setup_balance = AsyncMock(
         side_effect=RuntimeError("secret Stripe provider detail")
@@ -177,6 +198,9 @@ def test_invite_dispatches_login_invite_when_no_account(admin_client):
     admin_client.use_cases.send_login_invite.execute.assert_awaited_once()
     admin_client.use_cases.provision_parent_login.execute.assert_awaited_once()
     admin_client.use_cases.send_add_card_reminder.execute.assert_not_awaited()
+    assert admin_client.use_cases.list_billing_setup.calls == [
+        {"academy_id": "acad", "parent_id": "parent-1", "limit": 1}
+    ]
 
 
 def test_invite_dispatches_add_card_reminder_when_account_no_card(admin_client):

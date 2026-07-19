@@ -19,7 +19,8 @@ Resolve GitHub review threads and security blockers for Billing Setup before mer
 ## Verification
 
 - No verification recorded yet.
-
+- 2026-07-19T10:49:18: PASS: scripts/dev/pre-push-checks.sh (backend ruff + full pytest v2/tests, frontend node tests/typecheck/lint; E2E skipped because no e2e files changed). Additional PASS: 106 focused billing/identity/interface/contract tests; import-linter 5/5 contracts; frontend production build. Advisory targeted mypy over broad composition/infra surfaced existing baseline errors and missing requests stubs; mypy is non-blocking.
+- 2026-07-19T10:57:38: PASS: final processing-charge audit regression (charged=0, attempted=5000, audit attempted=5000); final focused billing/identity/autopay checks pass.
 ## Reusable Lessons
 
 - None recorded yet.

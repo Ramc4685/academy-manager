@@ -66,7 +66,6 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-07-05-autopay-projection-backfill-and-graceful-activation](docs/test-results/active/2026-07-05-autopay-projection-backfill-and-graceful-activation.md)
 - [2026-07-07-parent-self-service](docs/test-results/active/2026-07-07-parent-self-service.md)
 - [2026-07-08-payment-visibility-phase-3-financial-reports](docs/test-results/active/2026-07-08-payment-visibility-phase-3-financial-reports.md)
-- [2026-07-19-pr-306-review-resolution](docs/test-results/active/2026-07-19-pr-306-review-resolution.md)
 - [slice-i-connect](docs/test-results/active/slice-i-connect.md)
 
 ## Required Workflow

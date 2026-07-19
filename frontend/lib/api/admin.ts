@@ -1862,6 +1862,7 @@ export interface BillingSetupRow {
   outstanding_balance_cents: number;
   charge_invoice_id: string | null;
   charge_amount_cents: number;
+  charge_autopay_eligible: boolean;
   last_invited_at: string | null;
 }
 
@@ -1919,6 +1920,8 @@ export interface BillingSetupChargeResponse {
   status: string;
   balance_due_cents: number;
   charged_amount_cents: number;
+  attempted_amount_cents: number;
+  processing: boolean;
   requires_action: boolean;
   decline_code: string | null;
 }

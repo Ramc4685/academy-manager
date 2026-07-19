@@ -58,6 +58,7 @@ class BillingSetupRow(BaseModel):
     outstanding_balance_cents: int = 0
     charge_invoice_id: str | None = None
     charge_amount_cents: int = 0
+    charge_autopay_eligible: bool = False
     last_invited_at: datetime | None = None
 
 
@@ -112,23 +113,46 @@ class ListBillingSetup:
         q: str | None = None,
         cursor: str | None = None,
         limit: int = 50,
+        parent_id: str | None = None,
     ) -> BillingSetupPage:
-        parents = await self._roster.list_parents(academy_id=academy_id)
+        if parent_id is not None:
+            parent = await self._roster.get_parent(parent_id, academy_id=academy_id)
+            parents = [parent] if parent is not None else []
+            students_by_parent = {
+                parent_id: await self._roster.students_for_parent(parent_id, academy_id=academy_id)
+            }
+            login_account_ids = (
+                {parent_id}
+                if await self._login_accounts.has_login_account(parent_id, academy_id=academy_id)
+                else set()
+            )
+            customer = await self._customers.get_customer(parent_id, academy_id=academy_id)
+            customers_by_parent = {parent_id: customer} if customer else {}
+            balance = await self._balances.billing_setup_for_parent(
+                parent_id, academy_id=academy_id
+            )
+            balances_by_parent = {parent_id: balance} if balance else {}
+            autopay_snapshots = await self._autopay.list_parent_autopay_states(
+                parent_id, academy_id=academy_id
+            )
+        else:
+            parents = await self._roster.list_parents(academy_id=academy_id)
+            parent_ids = [p.parent_id for p in parents]
+            students_by_parent = await self._roster.students_for_parents(
+                parent_ids, academy_id=academy_id
+            )
+            login_account_ids = await self._login_accounts.login_account_parent_ids(
+                parent_ids, academy_id=academy_id
+            )
+            customers_by_parent = {
+                c.parent_id: c for c in await self._customers.list_customers(academy_id=academy_id)
+            }
+            balances_by_parent = await self._balances.billing_setup_by_parent(academy_id=academy_id)
+            autopay_snapshots = await self._autopay.list_autopay_states(academy_id=academy_id)
         parent_ids = [p.parent_id for p in parents]
 
-        students_by_parent = await self._roster.students_for_parents(
-            parent_ids, academy_id=academy_id
-        )
-        login_account_ids = await self._login_accounts.login_account_parent_ids(
-            parent_ids, academy_id=academy_id
-        )
-        customers_by_parent = {
-            c.parent_id: c for c in await self._customers.list_customers(academy_id=academy_id)
-        }
-        balances_by_parent = await self._balances.billing_setup_by_parent(academy_id=academy_id)
-
         autopay_by_parent: dict[str, list[EnrollmentAutopaySnapshot]] = {}
-        for snapshot in await self._autopay.list_autopay_states(academy_id=academy_id):
+        for snapshot in autopay_snapshots:
             autopay_by_parent.setdefault(snapshot.parent_id, []).append(snapshot)
 
         rows: list[BillingSetupRow] = []
@@ -147,6 +171,15 @@ class ListBillingSetup:
                 for e in enrollments
                 if e.autopay_enrollment_status in _AUTOPAY_ENABLE_ELIGIBLE_STATES
             )
+            charge_autopay_eligible = bool(
+                balance
+                and balance.charge_enrollment_id
+                and any(
+                    enrollment.enrollment_id == balance.charge_enrollment_id
+                    and enrollment.autopay_enrollment_status == "active"
+                    for enrollment in enrollments
+                )
+            )
 
             rows.append(
                 BillingSetupRow(
@@ -162,6 +195,7 @@ class ListBillingSetup:
                     outstanding_balance_cents=balance.outstanding_cents if balance else 0,
                     charge_invoice_id=balance.charge_invoice_id if balance else None,
                     charge_amount_cents=balance.charge_amount_cents if balance else 0,
+                    charge_autopay_eligible=charge_autopay_eligible,
                     last_invited_at=customer.last_invited_at if customer else None,
                 )
             )

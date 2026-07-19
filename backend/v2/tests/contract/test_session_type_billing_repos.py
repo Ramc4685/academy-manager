@@ -146,6 +146,38 @@ async def test_set_autopay_enrollment_status_unknown_enrollment_returns_false(db
 
 
 @pytest.mark.asyncio
+async def test_billing_setup_resume_is_bound_to_planned_parent_and_operation(db, acad) -> None:
+    repo = MongoStudentBillingEnrollmentRepository(db)
+    await _seed_enrollment(
+        repo,
+        enrollment_id="e-resume",
+        academy_id=acad,
+        autopay_enrollment_status="paused",
+        parent_id="parent-new",
+    )
+
+    stale = await repo.resume_autopay_for_billing_setup(
+        enrollment_id="e-resume",
+        parent_id="parent-old",
+        operation_id="operation-old",
+    )
+    applied = await repo.resume_autopay_for_billing_setup(
+        enrollment_id="e-resume",
+        parent_id="parent-new",
+        operation_id="operation-new",
+    )
+    replay = await repo.resume_autopay_for_billing_setup(
+        enrollment_id="e-resume",
+        parent_id="parent-new",
+        operation_id="operation-new",
+    )
+
+    assert stale is False
+    assert applied is True
+    assert replay is True
+
+
+@pytest.mark.asyncio
 async def test_set_autopay_enrollment_status_rejects_stale_read_race(db, acad, monkeypatch) -> None:
     repo = MongoStudentBillingEnrollmentRepository(db)
     await _seed_enrollment(

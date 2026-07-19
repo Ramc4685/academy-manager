@@ -123,6 +123,10 @@ export default function BillingSetupPage() {
     onSuccess: (result) => {
       if (result.success) {
         setToast(`Charged ${formatCents(result.charged_amount_cents)} successfully.`);
+      } else if (result.processing) {
+        setToast(
+          `${formatCents(result.attempted_amount_cents)} submitted; awaiting bank settlement.`,
+        );
       } else if (result.requires_action) {
         setToast("Charge requires additional verification (3DS) — ask the parent to complete it.");
       } else {
@@ -228,7 +232,7 @@ export default function BillingSetupPage() {
                     if (!row.charge_invoice_id || row.charge_amount_cents <= 0) return;
                     if (
                       !window.confirm(
-                        `Charge ${formatCents(row.charge_amount_cents)} to invoice ${row.charge_invoice_id}?`,
+                        `Charge up to ${formatCents(row.charge_amount_cents)} to invoice ${row.charge_invoice_id}? Any applicable ACH discount is applied before submission.`,
                       )
                     ) {
                       return;
@@ -296,6 +300,7 @@ function BillingSetupTableRow({
   const chip = stateChip(row.registration_state);
   const canCharge =
     row.registration_state === "card_on_file" &&
+    row.charge_autopay_eligible &&
     Boolean(row.charge_invoice_id) &&
     row.charge_amount_cents > 0;
   const canEnableAutopay =
@@ -325,7 +330,7 @@ function BillingSetupTableRow({
       </td>
       <td className="px-4 py-3 text-slate-700">
         {row.autopay_active_count > 0 || row.autopay_eligible_count > 0
-          ? `${row.autopay_active_count}/${row.autopay_active_count + row.autopay_eligible_count} children`
+          ? `${row.autopay_active_count} active · ${row.autopay_eligible_count} resumable`
           : "—"}
       </td>
       <td className="px-4 py-3 text-slate-700">{formatCents(row.outstanding_balance_cents)}</td>

@@ -62,6 +62,7 @@ class BillingSetupRowDto(BaseModel):
     outstanding_balance_cents: int
     charge_invoice_id: str | None = None
     charge_amount_cents: int = 0
+    charge_autopay_eligible: bool = False
     last_invited_at: datetime | None = None
 
 
@@ -97,6 +98,7 @@ def _to_response(page: BillingSetupPage) -> BillingSetupPageResponse:
                 outstanding_balance_cents=row.outstanding_balance_cents,
                 charge_invoice_id=row.charge_invoice_id,
                 charge_amount_cents=row.charge_amount_cents,
+                charge_autopay_eligible=row.charge_autopay_eligible,
                 last_invited_at=row.last_invited_at,
             )
             for row in page.rows
@@ -142,10 +144,11 @@ async def _find_row(
     use_cases: AdminUseCases, parent_id: str, *, academy_id: str
 ) -> BillingSetupRow:
     list_use_case = _required_callable(use_cases.list_billing_setup, "Billing Setup")
-    page = await list_use_case.execute(academy_id=academy_id, limit=10_000)  # type: ignore[attr-defined]
-    for row in page.rows:
-        if row.parent_id == parent_id:
-            return cast(BillingSetupRow, row)
+    page = await list_use_case.execute(  # type: ignore[attr-defined]
+        academy_id=academy_id, parent_id=parent_id, limit=1
+    )
+    if page.rows:
+        return cast(BillingSetupRow, page.rows[0])
     raise HTTPException(status_code=404, detail=f"parent {parent_id!r} not found")
 
 
@@ -222,6 +225,8 @@ class BillingSetupChargeResponse(BaseModel):
     status: str
     balance_due_cents: int
     charged_amount_cents: int = 0
+    attempted_amount_cents: int = 0
+    processing: bool = False
     requires_action: bool = False
     decline_code: str | None = None
 
@@ -260,6 +265,8 @@ async def charge_billing_setup_parent(
         status=str(result["status"]),
         balance_due_cents=int(result["balance_due_cents"]),
         charged_amount_cents=int(result.get("charged_amount_cents", 0)),
+        attempted_amount_cents=int(result.get("attempted_amount_cents", 0)),
+        processing=bool(result.get("processing", False)),
         requires_action=bool(result.get("requires_action", False)),
         decline_code=_public_failure(result.get("decline_code"), "payment_declined")
         if result.get("decline_code")

@@ -45,12 +45,12 @@ def admin_db(monkeypatch):
         get_settings.cache_clear()
 
 
-def _use_cases(db):
+def _use_cases(db, *, stripe=None):
     return compose_admin(
         db,
         outbox=_FakeOutbox(),  # type: ignore[arg-type]
         idempotency_store=MongoIdempotencyStore(db),
-        stripe=FakeStripeGateway(),
+        stripe=stripe or FakeStripeGateway(),
     )
 
 
@@ -183,3 +183,245 @@ async def test_record_manual_payment_retry_does_not_double_record(admin_db) -> N
     assert payment_count == 1
     assert invoice is not None and invoice["balance_due_cents"] == 4_500
     assert audit_count == 1
+
+
+@pytest.mark.asyncio
+async def test_billing_setup_autopay_retry_converges_state_and_audit(admin_db) -> None:
+    await admin_db["billing_audit_log"].create_index(
+        [("academy_id", 1), ("audit_id", 1)], unique=True
+    )
+    await admin_db["parent_billing_customers"].insert_one(
+        {
+            "academy_id": ACAD,
+            "parent_id": "parent-1",
+            "payment_method_label": "Visa",
+            "payment_method_last4": "4242",
+        }
+    )
+    await admin_db["student_billing_enrollments"].insert_one(
+        {
+            "academy_id": ACAD,
+            "enrollment_id": "enroll-paused",
+            "parent_id": "parent-1",
+            "student_id": "student-1",
+            "session_type_id": "session-type-1",
+            "billing_start_date": NOW,
+            "status": "active",
+            "autopay_enrollment_status": "paused",
+            "enrolled_at": NOW,
+            "updated_at": NOW,
+        }
+    )
+    admin = _use_cases(admin_db)
+
+    with tenant_scope(ACAD):
+        first = await admin.enable_billing_setup_autopay(
+            parent_id="parent-1", actor_id="admin-1", request_id="request-autopay-0001"
+        )
+        second = await admin.enable_billing_setup_autopay(
+            parent_id="parent-1", actor_id="admin-1", request_id="request-autopay-0001"
+        )
+        enrollment = await admin_db["student_billing_enrollments"].find_one(
+            {"academy_id": ACAD, "enrollment_id": "enroll-paused"}
+        )
+        audits = await admin_db["billing_audit_log"].count_documents(
+            {"academy_id": ACAD, "action": "autopay_resumed"}
+        )
+
+    assert first == second == {"eligible_count": 1, "enabled_count": 1}
+    assert enrollment is not None
+    assert enrollment["autopay_enrollment_status"] == "active"
+    assert enrollment["billing_setup_resume_operation_id"].endswith("parent-1:request-autopay-0001")
+    assert audits == 1
+
+    await admin_db["parent_billing_customers"].delete_one(
+        {"academy_id": ACAD, "parent_id": "parent-1"}
+    )
+    with tenant_scope(ACAD), pytest.raises(ValueError, match="no_saved_payment_method"):
+        await admin.enable_billing_setup_autopay(
+            parent_id="parent-1", actor_id="admin-1", request_id="request-autopay-0001"
+        )
+
+
+class _BillingSetupStripe(FakeStripeGateway):
+    async def get_default_payment_method(self, *, academy_id: str, parent_id: str):
+        return "cus-parent-1", "pm-parent-1"
+
+
+@pytest.mark.asyncio
+async def test_billing_setup_charge_claim_and_result_are_replayable(admin_db) -> None:
+    stripe = _BillingSetupStripe()
+    await admin_db["billing_audit_log"].create_index(
+        [("academy_id", 1), ("audit_id", 1)], unique=True
+    )
+    await admin_db["parent_billing_customers"].insert_one(
+        {
+            "academy_id": ACAD,
+            "parent_id": "parent-1",
+            "payment_method_label": "Visa",
+            "payment_method_last4": "4242",
+        }
+    )
+    await admin_db["academy_connected_accounts"].insert_one(
+        {
+            "academy_id": ACAD,
+            "stripe_account_id": "acct-ready",
+            "status": "active",
+            "capabilities": {},
+            "charges_enabled": True,
+            "payouts_enabled": True,
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+    )
+    await admin_db["student_billing_enrollments"].insert_one(
+        {
+            "academy_id": ACAD,
+            "enrollment_id": "enroll-charge",
+            "parent_id": "parent-1",
+            "student_id": "student-1",
+            "session_type_id": "session-type-1",
+            "billing_start_date": NOW,
+            "status": "active",
+            "autopay_enrollment_status": "active",
+            "enrolled_at": NOW,
+            "updated_at": NOW,
+        }
+    )
+    await admin_db["invoices"].insert_one(
+        {
+            "academy_id": ACAD,
+            "invoice_id": "inv-charge",
+            "parent_id": "parent-1",
+            "student_id": "student-1",
+            "enrollment_id": "enroll-charge",
+            "period": "2026-07",
+            "status": "open",
+            "subtotal_cents": 5000,
+            "discount_cents": 0,
+            "total_cents": 5000,
+            "balance_due_cents": 5000,
+            "currency": "usd",
+            "due_date": date(2026, 7, 31).isoformat(),
+            "version": 0,
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+    )
+    admin = _use_cases(admin_db, stripe=stripe)
+
+    with tenant_scope(ACAD):
+        first = await admin.charge_billing_setup_balance(
+            parent_id="parent-1",
+            invoice_id="inv-charge",
+            expected_amount_cents=5000,
+            request_id="request-charge-0001",
+            actor_id="admin-1",
+        )
+        second = await admin.charge_billing_setup_balance(
+            parent_id="parent-1",
+            invoice_id="inv-charge",
+            expected_amount_cents=5000,
+            request_id="request-charge-0001",
+            actor_id="admin-1",
+        )
+
+    assert first == second
+    assert first["success"] is True
+    assert first["charged_amount_cents"] == 5000
+    assert len(stripe.off_session_payment_intents) == 1
+    assert await admin_db["ledger_payments"].count_documents({"academy_id": ACAD}) == 1
+    assert (
+        await admin_db["billing_audit_log"].count_documents(
+            {"academy_id": ACAD, "action": "admin_charge_initiated"}
+        )
+        == 1
+    )
+
+
+class _BillingSetupProcessingStripe(_BillingSetupStripe):
+    async def create_off_session_payment_intent(self, **kwargs):
+        pi_id, _, _ = await super().create_off_session_payment_intent(**kwargs)
+        return pi_id, "processing", None
+
+
+@pytest.mark.asyncio
+async def test_billing_setup_processing_audit_records_attempted_not_received_amount(
+    admin_db,
+) -> None:
+    stripe = _BillingSetupProcessingStripe()
+    await admin_db["billing_audit_log"].create_index(
+        [("academy_id", 1), ("audit_id", 1)], unique=True
+    )
+    await admin_db["parent_billing_customers"].insert_one(
+        {
+            "academy_id": ACAD,
+            "parent_id": "parent-1",
+            "payment_method_label": "Bank",
+            "payment_method_last4": "6789",
+        }
+    )
+    await admin_db["academy_connected_accounts"].insert_one(
+        {
+            "academy_id": ACAD,
+            "stripe_account_id": "acct-ready",
+            "status": "active",
+            "capabilities": {},
+            "charges_enabled": True,
+            "payouts_enabled": True,
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+    )
+    await admin_db["student_billing_enrollments"].insert_one(
+        {
+            "academy_id": ACAD,
+            "enrollment_id": "enroll-processing",
+            "parent_id": "parent-1",
+            "student_id": "student-1",
+            "session_type_id": "session-type-1",
+            "billing_start_date": NOW,
+            "status": "active",
+            "autopay_enrollment_status": "active",
+            "enrolled_at": NOW,
+            "updated_at": NOW,
+        }
+    )
+    await admin_db["invoices"].insert_one(
+        {
+            "academy_id": ACAD,
+            "invoice_id": "inv-processing",
+            "parent_id": "parent-1",
+            "student_id": "student-1",
+            "enrollment_id": "enroll-processing",
+            "period": "2026-07",
+            "status": "open",
+            "subtotal_cents": 5000,
+            "discount_cents": 0,
+            "total_cents": 5000,
+            "balance_due_cents": 5000,
+            "currency": "usd",
+            "due_date": date(2026, 7, 31).isoformat(),
+            "version": 0,
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+    )
+    admin = _use_cases(admin_db, stripe=stripe)
+
+    with tenant_scope(ACAD):
+        result = await admin.charge_billing_setup_balance(
+            parent_id="parent-1",
+            invoice_id="inv-processing",
+            expected_amount_cents=5000,
+            request_id="request-processing-0001",
+            actor_id="admin-1",
+        )
+        audit = await admin_db["billing_audit_log"].find_one(
+            {"academy_id": ACAD, "action": "admin_charge_initiated"}
+        )
+
+    assert result["processing"] is True
+    assert result["charged_amount_cents"] == 0
+    assert result["attempted_amount_cents"] == 5000
+    assert audit is not None and audit["after"]["attempted_amount_cents"] == 5000

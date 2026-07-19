@@ -784,7 +784,13 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         column and summary total.
         """
         pipeline = [
-            {"$match": {**self._scoped({}), "balance_due_cents": {"$gt": 0}}},
+            {
+                "$match": {
+                    **self._scoped({}),
+                    "status": {"$in": ["open", "partially_paid"]},
+                    "balance_due_cents": {"$gt": 0},
+                }
+            },
             {"$group": {"_id": "$parent_id", "total": {"$sum": "$balance_due_cents"}}},
         ]
         totals: dict[str, int] = {}
@@ -792,29 +798,42 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             totals[str(doc["_id"])] = int(doc["total"])
         return totals
 
-    async def billing_setup_by_parent(self) -> dict[str, dict[str, int | str]]:
+    async def billing_setup_by_parent(
+        self, *, parent_id: str | None = None
+    ) -> dict[str, dict[str, int | str | None]]:
         """Return aggregate balances and a stable, exact next charge target.
 
         The first invoice is selected after a deterministic oldest-first sort;
         the admin must echo its id and amount back before it can be charged.
         """
+        match: dict[str, Any] = {
+            **self._scoped({}),
+            "status": {"$in": ["open", "partially_paid"]},
+            "balance_due_cents": {"$gt": 0},
+        }
+        if parent_id is not None:
+            match["parent_id"] = parent_id
         pipeline = [
-            {"$match": {**self._scoped({}), "balance_due_cents": {"$gt": 0}}},
+            {"$match": match},
             {"$sort": {"created_at": 1, "invoice_id": 1}},
             {
                 "$group": {
                     "_id": "$parent_id",
                     "outstanding_cents": {"$sum": "$balance_due_cents"},
                     "charge_invoice_id": {"$first": "$invoice_id"},
+                    "charge_enrollment_id": {"$first": "$enrollment_id"},
                     "charge_amount_cents": {"$first": "$balance_due_cents"},
                 }
             },
         ]
-        rows: dict[str, dict[str, int | str]] = {}
+        rows: dict[str, dict[str, int | str | None]] = {}
         async for doc in self.collection.aggregate(pipeline):
             rows[str(doc["_id"])] = {
                 "outstanding_cents": int(doc["outstanding_cents"]),
                 "charge_invoice_id": str(doc["charge_invoice_id"]),
+                "charge_enrollment_id": (
+                    str(doc["charge_enrollment_id"]) if doc.get("charge_enrollment_id") else None
+                ),
                 "charge_amount_cents": int(doc["charge_amount_cents"]),
             }
         return rows
