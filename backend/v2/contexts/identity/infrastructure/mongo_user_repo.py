@@ -229,11 +229,164 @@ class MongoUserRepository:
         """
         if not user_ids:
             return set()
+        object_ids = [ObjectId(value) for value in user_ids if ObjectId.is_valid(value)]
+        aliases: list[dict[str, object]] = [
+            {"user_id": {"$in": user_ids}},
+            {"auth_uid": {"$in": user_ids}},
+            {"firebase_uid": {"$in": user_ids}},
+        ]
+        if object_ids:
+            aliases.append({"_id": {"$in": object_ids}})
         cursor = self.collection.find(
-            {"academy_id": academy_id, "user_id": {"$in": user_ids}},
-            {"user_id": 1},
+            {"academy_id": academy_id, "$or": aliases},
+            {"user_id": 1, "auth_uid": 1, "firebase_uid": 1},
         )
-        return {str(doc["user_id"]) async for doc in cursor}
+        wanted = set(user_ids)
+        found: set[str] = set()
+        async for doc in cursor:
+            doc_aliases = {
+                str(value)
+                for value in (
+                    doc.get("user_id"),
+                    doc.get("auth_uid"),
+                    doc.get("firebase_uid"),
+                    doc.get("_id"),
+                )
+                if value
+            }
+            found.update(wanted & doc_aliases)
+        return found
+
+    async def ensure_parent_login(
+        self,
+        *,
+        parent_id: str,
+        email: str,
+        display_name: str,
+        academy_id: str,
+        actor_id: str,
+    ) -> str:
+        """Provision a missing roster parent without changing ownership ids."""
+        now = datetime.now(UTC)
+        normalized_email = normalize_email(email)
+        normalized_name = " ".join(display_name.split())
+        existing = await self.collection.find_one(
+            {"academy_id": academy_id, **self._id_filter(parent_id)}
+        )
+        if existing is not None:
+            uid = str(existing.get("user_id") or parent_id)
+            auth_uid = existing.get("auth_uid") or existing.get("firebase_uid")
+            if auth_uid:
+                return str(auth_uid)
+        else:
+            await self._ensure_email_available(normalized_email, exclude_user_id=None)
+            uid = parent_id
+
+        try:
+            firebase_uid, firebase_created = await get_firebase_admin_adapter().ensure_user(
+                uid=uid,
+                email=normalized_email,
+                display_name=normalized_name,
+            )
+        except Exception as exc:
+            raise UserCreateFailed("could not provision Firebase parent login") from exc
+
+        membership_before = await self._db["academy_memberships"].find_one(
+            {"academy_id": academy_id, "user_id": firebase_uid}
+        )
+        try:
+            if existing is None:
+                doc = {
+                    "user_id": firebase_uid,
+                    "auth_uid": firebase_uid,
+                    "firebase_uid": firebase_uid,
+                    "auth_provider": "firebase",
+                    "email": normalized_email,
+                    "normalized_email": normalized_email,
+                    "display_name": normalized_name,
+                    "role": "parent",
+                    "roles": ["parent"],
+                    "status": "active",
+                    "is_active": True,
+                    "academy_id": academy_id,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                await self.collection.insert_one(doc)
+            else:
+                await self.collection.update_one(
+                    {"_id": existing["_id"]},
+                    {
+                        "$set": {
+                            "auth_uid": firebase_uid,
+                            "firebase_uid": firebase_uid,
+                            "auth_provider": "firebase",
+                            "updated_at": now,
+                        }
+                    },
+                )
+
+            await self._db["academy_memberships"].update_one(
+                {"academy_id": academy_id, "user_id": firebase_uid},
+                {
+                    "$set": {"status": "active", "updated_at": now},
+                    "$addToSet": {"roles": "parent"},
+                    "$setOnInsert": {
+                        "membership_id": str(new_ulid()),
+                        "academy_id": academy_id,
+                        "user_id": firebase_uid,
+                        "invited_by": actor_id,
+                        "invited_at": now,
+                        "created_at": now,
+                    },
+                },
+                upsert=True,
+            )
+            await self._write_audit(
+                academy_id=academy_id,
+                actor_id=actor_id,
+                action="parent.login_provisioned",
+                entity_id=firebase_uid,
+                reason="Billing Setup login invite",
+                changed_keys=["auth_uid", "firebase_uid", "auth_provider"],
+                before=existing or {},
+                after={
+                    "auth_uid": firebase_uid,
+                    "firebase_uid": firebase_uid,
+                    "auth_provider": "firebase",
+                },
+            )
+        except Exception:
+            if existing is None:
+                await self.collection.delete_one(
+                    {"academy_id": academy_id, "user_id": firebase_uid}
+                )
+            else:
+                restore_set: dict[str, object] = {
+                    "updated_at": existing.get("updated_at", now)
+                }
+                restore_unset: dict[str, str] = {}
+                for key in ("auth_uid", "firebase_uid", "auth_provider"):
+                    if key in existing:
+                        restore_set[key] = existing[key]
+                    else:
+                        restore_unset[key] = ""
+                restore_update: dict[str, object] = {"$set": restore_set}
+                if restore_unset:
+                    restore_update["$unset"] = restore_unset
+                await self.collection.update_one({"_id": existing["_id"]}, restore_update)
+            if membership_before is None:
+                await self._db["academy_memberships"].delete_one(
+                    {"academy_id": academy_id, "user_id": firebase_uid}
+                )
+            else:
+                await self._db["academy_memberships"].replace_one(
+                    {"_id": membership_before["_id"]}, membership_before, upsert=True
+                )
+            if firebase_created:
+                await type(self)._delete_firebase_user(firebase_uid)
+            raise
+        return firebase_uid
 
     async def get_admin_user(self, user_id: str, *, academy_id: str) -> AdminUserDetail | None:
         doc = await self.collection.find_one({"academy_id": academy_id, **self._id_filter(user_id)})

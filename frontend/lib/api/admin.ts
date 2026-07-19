@@ -1860,6 +1860,8 @@ export interface BillingSetupRow {
   autopay_active_count: number;
   autopay_eligible_count: number;
   outstanding_balance_cents: number;
+  charge_invoice_id: string | null;
+  charge_amount_cents: number;
   last_invited_at: string | null;
 }
 
@@ -1916,14 +1918,18 @@ export interface BillingSetupChargeResponse {
   success: boolean;
   status: string;
   balance_due_cents: number;
+  charged_amount_cents: number;
   requires_action: boolean;
   decline_code: string | null;
 }
 
-export function chargeBillingSetupParent(parentId: string): Promise<BillingSetupChargeResponse> {
+export function chargeBillingSetupParent(
+  parentId: string,
+  payload: { invoice_id: string; expected_amount_cents: number; request_id: string },
+): Promise<BillingSetupChargeResponse> {
   return apiFetch<BillingSetupChargeResponse>(
     `/admin/billing/setup/${encodeURIComponent(parentId)}/charge`,
-    { method: "POST" },
+    { method: "POST", body: JSON.stringify(payload) },
   );
 }
 
@@ -1934,10 +1940,11 @@ export interface BillingSetupAutopayEnableResponse {
 
 export function enableBillingSetupAutopay(
   parentId: string,
+  requestId: string,
 ): Promise<BillingSetupAutopayEnableResponse> {
   return apiFetch<BillingSetupAutopayEnableResponse>(
     `/admin/billing/setup/${encodeURIComponent(parentId)}/autopay/enable`,
-    { method: "POST" },
+    { method: "POST", body: JSON.stringify({ request_id: requestId }) },
   );
 }
 

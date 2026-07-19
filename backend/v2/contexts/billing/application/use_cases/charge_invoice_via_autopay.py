@@ -161,7 +161,14 @@ class ChargeInvoiceViaAutopay:
         self._connected_accounts = connected_accounts
         self._now = clock
 
-    async def execute(self, invoice_id: str, *, retry_scope: str | None = None) -> ChargeResult:
+    async def execute(
+        self,
+        invoice_id: str,
+        *,
+        retry_scope: str | None = None,
+        source: str = "autopay",
+        actor_id: str | None = None,
+    ) -> ChargeResult:
         now = self._now()
 
         # 1. Load invoice
@@ -301,8 +308,10 @@ class ChargeInvoiceViaAutopay:
             "invoice_id": invoice.invoice_id,
             "academy_id": invoice.academy_id,
             "parent_id": invoice.parent_id,
-            "source": "autopay",
+            "source": source,
         }
+        if actor_id:
+            pi_metadata["actor_id"] = actor_id
         pi_metadata.update(discount_metadata)
         try:
             pi_id, pi_status, decline_code = await self._stripe.create_off_session_payment_intent(

@@ -1161,6 +1161,21 @@ async def test_saved_card_lookup_uses_invoice_academy_and_parent() -> None:
     }
 
 
+async def test_admin_charge_source_and_actor_are_recorded_in_stripe_metadata() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(invoice_id="inv-admin", status="open")])
+    stripe = FakeStripeSucceeds()
+
+    await _uc(repo, stripe).execute(
+        "inv-admin",
+        source="admin_billing_setup",
+        actor_id="admin-1",
+    )
+
+    metadata = stripe.create_calls[0]["metadata"]
+    assert metadata["source"] == "admin_billing_setup"
+    assert metadata["actor_id"] == "admin-1"
+
+
 async def test_idempotency_key_same_on_retry_with_same_period_and_balance() -> None:
     """A true replay for the same invoice, period, and balance reuses the same PI key."""
     repo = FakeLedgerRepo(invoices=[_invoice(invoice_id="inv-retry", status="open")])

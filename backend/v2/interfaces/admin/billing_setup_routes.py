@@ -8,21 +8,34 @@ across a parent's eligible children.
 
 from __future__ import annotations
 
+import logging
+import re
 from datetime import datetime
-from typing import Literal
+from typing import Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.v2.contexts.billing.application.use_cases.billing_setup_registration import (
     BillingSetupPage,
+    BillingSetupRow,
     RegistrationState,
+)
+from backend.v2.contexts.identity.application.use_cases.provision_parent_login import (
+    ProvisionParentLoginCommand,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
 router = APIRouter(tags=["admin.billing.setup"])
+log = logging.getLogger(__name__)
+_PUBLIC_ERROR_CODE = re.compile(r"^[a-z0-9_]{1,64}$")
+
+
+def _public_failure(value: str | None, fallback: str) -> str:
+    candidate = (value or "").strip().lower()
+    return candidate if _PUBLIC_ERROR_CODE.fullmatch(candidate) else fallback
 
 
 def _required_callable(use_case: object | None, name: str) -> object:
@@ -47,6 +60,8 @@ class BillingSetupRowDto(BaseModel):
     autopay_active_count: int
     autopay_eligible_count: int
     outstanding_balance_cents: int
+    charge_invoice_id: str | None = None
+    charge_amount_cents: int = 0
     last_invited_at: datetime | None = None
 
 
@@ -80,6 +95,8 @@ def _to_response(page: BillingSetupPage) -> BillingSetupPageResponse:
                 autopay_active_count=row.autopay_active_count,
                 autopay_eligible_count=row.autopay_eligible_count,
                 outstanding_balance_cents=row.outstanding_balance_cents,
+                charge_invoice_id=row.charge_invoice_id,
+                charge_amount_cents=row.charge_amount_cents,
                 last_invited_at=row.last_invited_at,
             )
             for row in page.rows
@@ -121,12 +138,14 @@ class BillingSetupInviteResponse(BaseModel):
     invited_at: datetime | None = None
 
 
-async def _find_row(use_cases: AdminUseCases, parent_id: str, *, academy_id: str):
+async def _find_row(
+    use_cases: AdminUseCases, parent_id: str, *, academy_id: str
+) -> BillingSetupRow:
     list_use_case = _required_callable(use_cases.list_billing_setup, "Billing Setup")
     page = await list_use_case.execute(academy_id=academy_id, limit=10_000)  # type: ignore[attr-defined]
     for row in page.rows:
         if row.parent_id == parent_id:
-            return row
+            return cast(BillingSetupRow, row)
     raise HTTPException(status_code=404, detail=f"parent {parent_id!r} not found")
 
 
@@ -146,14 +165,31 @@ async def invite_billing_setup_parent(
     )
 
     if row.registration_state == "no_account":
+        if not row.parent_email:
+            return BillingSetupInviteResponse(
+                action="login_invite", ok=False, failed_reason="parent_email_missing"
+            )
+        provision = _required_callable(
+            use_cases.provision_parent_login, "Parent login provisioning"
+        )
         send_login_invite = _required_callable(use_cases.send_login_invite, "Login invite")
         try:
-            result = await send_login_invite.execute(  # type: ignore[attr-defined]
-                parent_id, academy_id=claims.academy_id
+            login_user_id = await provision.execute(  # type: ignore[attr-defined]
+                ProvisionParentLoginCommand(
+                    parent_id=parent_id,
+                    email=row.parent_email,
+                    display_name=row.parent_name,
+                    actor_id=claims.user_id,
+                ),
+                academy_id=claims.academy_id,
             )
-        except Exception as exc:
+            result = await send_login_invite.execute(  # type: ignore[attr-defined]
+                login_user_id, academy_id=claims.academy_id
+            )
+        except Exception:
+            log.exception("Billing Setup login invite failed parent_id=%s", parent_id)
             return BillingSetupInviteResponse(
-                action="login_invite", ok=False, failed_reason=str(exc)
+                action="login_invite", ok=False, failed_reason="login_invite_failed"
             )
         invited_at = await record_invite(parent_id)  # type: ignore[operator]
         return BillingSetupInviteResponse(
@@ -161,12 +197,20 @@ async def invite_billing_setup_parent(
         )
 
     send_reminder = _required_callable(use_cases.send_add_card_reminder, "Add-card reminder")
-    outcome = await send_reminder.execute(  # type: ignore[attr-defined]
-        academy_id=claims.academy_id, parent_id=parent_id
-    )
+    try:
+        outcome = await send_reminder.execute(  # type: ignore[attr-defined]
+            academy_id=claims.academy_id, parent_id=parent_id
+        )
+    except Exception:
+        log.exception("Billing Setup add-card reminder failed parent_id=%s", parent_id)
+        return BillingSetupInviteResponse(
+            action="add_card_reminder", ok=False, failed_reason="add_card_reminder_failed"
+        )
     if not outcome.ok:
         return BillingSetupInviteResponse(
-            action="add_card_reminder", ok=False, failed_reason=outcome.failed_reason
+            action="add_card_reminder",
+            ok=False,
+            failed_reason=_public_failure(outcome.failed_reason, "email_delivery_failed"),
         )
     invited_at = await record_invite(parent_id)  # type: ignore[operator]
     return BillingSetupInviteResponse(action="add_card_reminder", ok=True, invited_at=invited_at)
@@ -177,28 +221,49 @@ class BillingSetupChargeResponse(BaseModel):
     success: bool
     status: str
     balance_due_cents: int
+    charged_amount_cents: int = 0
     requires_action: bool = False
     decline_code: str | None = None
+
+
+class BillingSetupChargeRequest(BaseModel):
+    invoice_id: str = Field(min_length=1, max_length=120)
+    expected_amount_cents: int = Field(gt=0)
+    request_id: str = Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
 
 
 @router.post("/billing/setup/{parent_id}/charge", response_model=BillingSetupChargeResponse)
 async def charge_billing_setup_parent(
     parent_id: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    payload: BillingSetupChargeRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> BillingSetupChargeResponse:
     charge = _required_callable(use_cases.charge_billing_setup_balance, "Billing Setup charge")
     try:
-        result = await charge(parent_id)  # type: ignore[operator]
+        result = await charge(  # type: ignore[operator]
+            parent_id=parent_id,
+            invoice_id=payload.invoice_id,
+            expected_amount_cents=payload.expected_amount_cents,
+            request_id=payload.request_id,
+            actor_id=claims.user_id,
+        )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        code = _public_failure(str(exc).split(":", 1)[0], "charge_request_invalid")
+        raise HTTPException(status_code=400, detail=code) from exc
+    except RuntimeError as exc:
+        log.exception("Billing Setup charge unavailable parent_id=%s", parent_id)
+        raise HTTPException(status_code=503, detail="payment_service_unavailable") from exc
     return BillingSetupChargeResponse(
         invoice_id=str(result["invoice_id"]),
         success=bool(result["success"]),
         status=str(result["status"]),
         balance_due_cents=int(result["balance_due_cents"]),
+        charged_amount_cents=int(result.get("charged_amount_cents", 0)),
         requires_action=bool(result.get("requires_action", False)),
-        decline_code=result.get("decline_code"),
+        decline_code=_public_failure(result.get("decline_code"), "payment_declined")
+        if result.get("decline_code")
+        else None,
     )
 
 
@@ -207,22 +272,32 @@ class BillingSetupAutopayEnableResponse(BaseModel):
     enabled_count: int
 
 
+class BillingSetupAutopayEnableRequest(BaseModel):
+    request_id: str = Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+
+
 @router.post(
     "/billing/setup/{parent_id}/autopay/enable",
     response_model=BillingSetupAutopayEnableResponse,
 )
 async def enable_billing_setup_autopay(
     parent_id: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    payload: BillingSetupAutopayEnableRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> BillingSetupAutopayEnableResponse:
     enable = _required_callable(
         use_cases.enable_billing_setup_autopay, "Billing Setup autopay enable"
     )
     try:
-        result = await enable(parent_id)  # type: ignore[operator]
+        result = await enable(  # type: ignore[operator]
+            parent_id=parent_id,
+            actor_id=claims.user_id,
+            request_id=payload.request_id,
+        )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        code = _public_failure(str(exc).split(":", 1)[0], "autopay_request_invalid")
+        raise HTTPException(status_code=400, detail=code) from exc
     return BillingSetupAutopayEnableResponse(
         eligible_count=int(result["eligible_count"]),
         enabled_count=int(result["enabled_count"]),

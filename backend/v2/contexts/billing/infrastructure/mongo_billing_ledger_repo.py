@@ -792,6 +792,33 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             totals[str(doc["_id"])] = int(doc["total"])
         return totals
 
+    async def billing_setup_by_parent(self) -> dict[str, dict[str, int | str]]:
+        """Return aggregate balances and a stable, exact next charge target.
+
+        The first invoice is selected after a deterministic oldest-first sort;
+        the admin must echo its id and amount back before it can be charged.
+        """
+        pipeline = [
+            {"$match": {**self._scoped({}), "balance_due_cents": {"$gt": 0}}},
+            {"$sort": {"created_at": 1, "invoice_id": 1}},
+            {
+                "$group": {
+                    "_id": "$parent_id",
+                    "outstanding_cents": {"$sum": "$balance_due_cents"},
+                    "charge_invoice_id": {"$first": "$invoice_id"},
+                    "charge_amount_cents": {"$first": "$balance_due_cents"},
+                }
+            },
+        ]
+        rows: dict[str, dict[str, int | str]] = {}
+        async for doc in self.collection.aggregate(pipeline):
+            rows[str(doc["_id"])] = {
+                "outstanding_cents": int(doc["outstanding_cents"]),
+                "charge_invoice_id": str(doc["charge_invoice_id"]),
+                "charge_amount_cents": int(doc["charge_amount_cents"]),
+            }
+        return rows
+
     async def _existing_allocation_result(
         self, allocation_doc: dict[str, object]
     ) -> LedgerAllocationResult:

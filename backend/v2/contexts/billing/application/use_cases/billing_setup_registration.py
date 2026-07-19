@@ -16,10 +16,19 @@ as a single parent-level flag.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Protocol
+from typing import Literal
 
 from pydantic import BaseModel
 
+from backend.v2.contexts.billing.application.ports import (
+    BillingCustomerDirectory,
+    BillingSetupStudent,
+    EnrollmentAutopayDirectory,
+    EnrollmentAutopaySnapshot,
+    LoginAccountDirectory,
+    OutstandingBalanceDirectory,
+    ParentStudentRoster,
+)
 from backend.v2.contexts.billing.domain.autopay_status import AutopayEnrollmentStatus
 
 RegistrationState = Literal["no_account", "account_no_card", "card_on_file"]
@@ -32,13 +41,6 @@ RegistrationState = Literal["no_account", "account_no_card", "card_on_file"]
 # click cannot legally skip straight to "active" — only "paused" (a parent who
 # already consented before) can resume with one click.
 _AUTOPAY_ENABLE_ELIGIBLE_STATES: frozenset[AutopayEnrollmentStatus] = frozenset({"paused"})
-
-
-class BillingSetupStudent(BaseModel):
-    model_config = {"frozen": True}
-
-    student_id: str
-    full_name: str
 
 
 class BillingSetupRow(BaseModel):
@@ -54,6 +56,8 @@ class BillingSetupRow(BaseModel):
     autopay_active_count: int = 0
     autopay_eligible_count: int = 0
     outstanding_balance_cents: int = 0
+    charge_invoice_id: str | None = None
+    charge_amount_cents: int = 0
     last_invited_at: datetime | None = None
 
 
@@ -72,70 +76,6 @@ class BillingSetupPage(BaseModel):
     rows: tuple[BillingSetupRow, ...]
     summary: BillingSetupSummary
     next_cursor: str | None = None
-
-
-class ParentBillingCustomerSnapshot(BaseModel):
-    """What this read model needs to know about one parent's Stripe setup."""
-
-    model_config = {"frozen": True}
-
-    parent_id: str
-    stripe_customer_id: str | None = None
-    card_label: str | None = None
-    card_last4: str | None = None
-    last_invited_at: datetime | None = None
-
-
-class EnrollmentAutopaySnapshot(BaseModel):
-    model_config = {"frozen": True}
-
-    enrollment_id: str
-    parent_id: str
-    autopay_enrollment_status: AutopayEnrollmentStatus
-
-
-class ParentRosterEntry(BaseModel):
-    model_config = {"frozen": True}
-
-    parent_id: str
-    parent_name: str
-    parent_email: str | None = None
-
-
-class LoginAccountDirectory(Protocol):
-    """Identity-owned signal: which of these parents have a login account."""
-
-    async def login_account_parent_ids(
-        self, parent_ids: list[str], *, academy_id: str
-    ) -> set[str]: ...
-
-
-class ParentStudentRoster(Protocol):
-    """Enrollment-owned signal: which parents pay for students, and who those students are."""
-
-    async def list_parents(self, *, academy_id: str) -> list[ParentRosterEntry]: ...
-
-    async def students_for_parents(
-        self, parent_ids: list[str], *, academy_id: str
-    ) -> dict[str, list[BillingSetupStudent]]: ...
-
-
-class BillingCustomerDirectory(Protocol):
-    """Billing-owned: Stripe customer + saved-card display data, one row per parent."""
-
-    async def list_customers(self, *, academy_id: str) -> list[ParentBillingCustomerSnapshot]: ...
-
-
-class EnrollmentAutopayDirectory(Protocol):
-    """Billing-owned: per-enrollment autopay state for every child."""
-
-    async def list_autopay_states(self, *, academy_id: str) -> list[EnrollmentAutopaySnapshot]: ...
-
-
-class OutstandingBalanceDirectory(Protocol):
-    """Billing-owned: outstanding invoice balance, summed per parent."""
-
-    async def outstanding_by_parent(self, *, academy_id: str) -> dict[str, int]: ...
 
 
 def _registration_state(*, has_card: bool, has_login_account: bool) -> RegistrationState:
@@ -185,7 +125,7 @@ class ListBillingSetup:
         customers_by_parent = {
             c.parent_id: c for c in await self._customers.list_customers(academy_id=academy_id)
         }
-        outstanding_by_parent = await self._balances.outstanding_by_parent(academy_id=academy_id)
+        balances_by_parent = await self._balances.billing_setup_by_parent(academy_id=academy_id)
 
         autopay_by_parent: dict[str, list[EnrollmentAutopaySnapshot]] = {}
         for snapshot in await self._autopay.list_autopay_states(academy_id=academy_id):
@@ -200,6 +140,7 @@ class ListBillingSetup:
                 has_login_account=parent.parent_id in login_account_ids,
             )
             enrollments = autopay_by_parent.get(parent.parent_id, [])
+            balance = balances_by_parent.get(parent.parent_id)
             active_count = sum(1 for e in enrollments if e.autopay_enrollment_status == "active")
             eligible_count = sum(
                 1
@@ -218,7 +159,9 @@ class ListBillingSetup:
                     card_last4=customer.card_last4 if customer else None,
                     autopay_active_count=active_count,
                     autopay_eligible_count=eligible_count,
-                    outstanding_balance_cents=outstanding_by_parent.get(parent.parent_id, 0),
+                    outstanding_balance_cents=balance.outstanding_cents if balance else 0,
+                    charge_invoice_id=balance.charge_invoice_id if balance else None,
+                    charge_amount_cents=balance.charge_amount_cents if balance else 0,
                     last_invited_at=customer.last_invited_at if customer else None,
                 )
             )

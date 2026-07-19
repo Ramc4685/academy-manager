@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from backend.v2.contexts.billing.application.use_cases.billing_setup_registration import (
+from backend.v2.contexts.billing.application.ports import (
     BillingSetupStudent,
     EnrollmentAutopaySnapshot,
-    ListBillingSetup,
+    ParentBalanceSnapshot,
     ParentBillingCustomerSnapshot,
     ParentRosterEntry,
+)
+from backend.v2.contexts.billing.application.use_cases.billing_setup_registration import (
+    ListBillingSetup,
 )
 
 ACADEMY_ID = "academy-1"
@@ -59,8 +62,15 @@ class FakeBalances:
     def __init__(self, balances: dict[str, int]):
         self._balances = balances
 
-    async def outstanding_by_parent(self, *, academy_id: str) -> dict[str, int]:
-        return self._balances
+    async def billing_setup_by_parent(self, *, academy_id: str) -> dict[str, ParentBalanceSnapshot]:
+        return {
+            parent_id: ParentBalanceSnapshot(
+                outstanding_cents=amount,
+                charge_invoice_id=f"inv-{parent_id}",
+                charge_amount_cents=amount,
+            )
+            for parent_id, amount in self._balances.items()
+        }
 
 
 def _make_use_case(
@@ -175,6 +185,8 @@ async def test_outstanding_balance_is_summed_per_parent():
     )
     page = await use_case.execute(academy_id=ACADEMY_ID)
     assert page.rows[0].outstanding_balance_cents == 15000
+    assert page.rows[0].charge_invoice_id == "inv-p1"
+    assert page.rows[0].charge_amount_cents == 15000
     assert page.summary.outstanding_total_cents == 15000
 
 

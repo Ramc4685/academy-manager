@@ -5,10 +5,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
+from backend.v2.contexts.billing.application.ports import (
+    BillingSetupStudent,
+)
 from backend.v2.contexts.billing.application.use_cases.billing_setup_registration import (
     BillingSetupPage,
     BillingSetupRow,
-    BillingSetupStudent,
     BillingSetupSummary,
 )
 from backend.v2.contexts.identity.application.use_cases.send_login_invite import (
@@ -16,6 +18,12 @@ from backend.v2.contexts.identity.application.use_cases.send_login_invite import
 )
 
 NOW = datetime(2026, 7, 18, 12, 0, tzinfo=UTC)
+REQUEST_ID = "billing-setup-request-0001"
+CHARGE_BODY = {
+    "invoice_id": "inv-1",
+    "expected_amount_cents": 5000,
+    "request_id": REQUEST_ID,
+}
 
 
 class _FakeInviteOutcome:
@@ -51,6 +59,8 @@ def _row(
         autopay_active_count=0,
         autopay_eligible_count=0,
         outstanding_balance_cents=outstanding,
+        charge_invoice_id="inv-1" if outstanding else None,
+        charge_amount_cents=outstanding,
         last_invited_at=None,
     )
 
@@ -89,7 +99,7 @@ def test_charge_with_no_saved_card_returns_400(admin_client):
         side_effect=ValueError("no_saved_payment_method: parent has no saved card")
     )
 
-    r = admin_client.post("/api/v2/admin/billing/setup/parent-1/charge")
+    r = admin_client.post("/api/v2/admin/billing/setup/parent-1/charge", json=CHARGE_BODY)
 
     assert r.status_code == 400, r.text
     assert "no_saved_payment_method" in r.json()["detail"]
@@ -102,7 +112,7 @@ def test_charge_with_zero_balance_returns_400(admin_client):
         )
     )
 
-    r = admin_client.post("/api/v2/admin/billing/setup/parent-1/charge")
+    r = admin_client.post("/api/v2/admin/billing/setup/parent-1/charge", json=CHARGE_BODY)
 
     assert r.status_code == 400, r.text
     assert "no_outstanding_balance" in r.json()["detail"]
@@ -115,14 +125,35 @@ def test_charge_success_returns_result(admin_client):
             "success": True,
             "status": "paid",
             "balance_due_cents": 0,
+            "charged_amount_cents": 5000,
         }
     )
 
-    r = admin_client.post("/api/v2/admin/billing/setup/parent-1/charge")
+    r = admin_client.post("/api/v2/admin/billing/setup/parent-1/charge", json=CHARGE_BODY)
 
     assert r.status_code == 200, r.text
     assert r.json()["success"] is True
     assert r.json()["invoice_id"] == "inv-1"
+    assert r.json()["charged_amount_cents"] == 5000
+    admin_client.use_cases.charge_billing_setup_balance.assert_awaited_once_with(
+        parent_id="parent-1",
+        invoice_id="inv-1",
+        expected_amount_cents=5000,
+        request_id=REQUEST_ID,
+        actor_id="u-admin",
+    )
+
+
+def test_charge_unavailable_returns_503_without_provider_detail(admin_client):
+    admin_client.use_cases.charge_billing_setup_balance = AsyncMock(
+        side_effect=RuntimeError("secret Stripe provider detail")
+    )
+
+    r = admin_client.post("/api/v2/admin/billing/setup/parent-1/charge", json=CHARGE_BODY)
+
+    assert r.status_code == 503, r.text
+    assert r.json()["detail"] == "payment_service_unavailable"
+    assert "secret" not in r.text
 
 
 def test_invite_dispatches_login_invite_when_no_account(admin_client):
@@ -132,6 +163,8 @@ def test_invite_dispatches_login_invite_when_no_account(admin_client):
     admin_client.use_cases.send_login_invite.execute = AsyncMock(
         return_value=LoginInviteResult(sent_at=NOW)
     )
+    admin_client.use_cases.provision_parent_login = AsyncMock()
+    admin_client.use_cases.provision_parent_login.execute = AsyncMock(return_value="parent-1")
     admin_client.use_cases.send_add_card_reminder.execute = AsyncMock()
     admin_client.use_cases.record_billing_setup_invite = AsyncMock(return_value=NOW)
 
@@ -142,6 +175,7 @@ def test_invite_dispatches_login_invite_when_no_account(admin_client):
     assert body["action"] == "login_invite"
     assert body["ok"] is True
     admin_client.use_cases.send_login_invite.execute.assert_awaited_once()
+    admin_client.use_cases.provision_parent_login.execute.assert_awaited_once()
     admin_client.use_cases.send_add_card_reminder.execute.assert_not_awaited()
 
 
@@ -165,6 +199,21 @@ def test_invite_dispatches_add_card_reminder_when_account_no_card(admin_client):
     admin_client.use_cases.send_login_invite.execute.assert_not_awaited()
 
 
+def test_invite_add_card_exception_returns_normalized_failure(admin_client):
+    admin_client.use_cases.list_billing_setup = FakeListBillingSetup(
+        _page((_row(state="account_no_card"),))
+    )
+    admin_client.use_cases.send_add_card_reminder.execute = AsyncMock(
+        side_effect=RuntimeError("provider secret detail")
+    )
+
+    r = admin_client.post("/api/v2/admin/billing/setup/parent-1/invite")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is False
+    assert r.json()["failed_reason"] == "add_card_reminder_failed"
+
+
 def test_invite_not_applicable_when_already_card_on_file(admin_client):
     admin_client.use_cases.list_billing_setup = FakeListBillingSetup(
         _page((_row(state="card_on_file"),))
@@ -185,7 +234,10 @@ def test_autopay_enable_with_no_saved_card_returns_400(admin_client):
         side_effect=ValueError("no_saved_payment_method: parent has no saved card")
     )
 
-    r = admin_client.post("/api/v2/admin/billing/setup/parent-1/autopay/enable")
+    r = admin_client.post(
+        "/api/v2/admin/billing/setup/parent-1/autopay/enable",
+        json={"request_id": REQUEST_ID},
+    )
 
     assert r.status_code == 400, r.text
     assert "no_saved_payment_method" in r.json()["detail"]
@@ -196,7 +248,30 @@ def test_autopay_enable_success_returns_counts(admin_client):
         return_value={"eligible_count": 2, "enabled_count": 2}
     )
 
-    r = admin_client.post("/api/v2/admin/billing/setup/parent-1/autopay/enable")
+    r = admin_client.post(
+        "/api/v2/admin/billing/setup/parent-1/autopay/enable",
+        json={"request_id": REQUEST_ID},
+    )
 
     assert r.status_code == 200, r.text
     assert r.json() == {"eligible_count": 2, "enabled_count": 2}
+
+
+def test_billing_setup_routes_wrong_persona_are_hidden(coach_on_admin_client):
+    assert coach_on_admin_client.get("/api/v2/admin/billing/setup").status_code == 404
+    assert (
+        coach_on_admin_client.post("/api/v2/admin/billing/setup/parent-1/invite").status_code == 404
+    )
+    assert (
+        coach_on_admin_client.post(
+            "/api/v2/admin/billing/setup/parent-1/charge", json=CHARGE_BODY
+        ).status_code
+        == 404
+    )
+    assert (
+        coach_on_admin_client.post(
+            "/api/v2/admin/billing/setup/parent-1/autopay/enable",
+            json={"request_id": REQUEST_ID},
+        ).status_code
+        == 404
+    )

@@ -96,3 +96,32 @@ async def test_list_invoices_for_parent_is_tenant_isolated(db, acad) -> None:
     with tenant_scope("other-academy"):
         other_repo = MongoBillingLedgerRepository(db)
         assert await other_repo.list_invoices_for_parent("parent-a") == []
+
+
+@pytest.mark.asyncio
+async def test_billing_setup_targets_exact_oldest_invoice_and_is_tenant_isolated(db, acad) -> None:
+    repo = MongoBillingLedgerRepository(db)
+    oldest = _invoice(
+        invoice_id="inv-oldest",
+        parent_id="parent-a",
+        academy_id=acad,
+        created_at=datetime(2026, 5, 1, tzinfo=UTC),
+    ).model_copy(update={"balance_due_cents": 4_000, "total_cents": 4_000, "subtotal_cents": 4_000})
+    newer = _invoice(
+        invoice_id="inv-newer",
+        parent_id="parent-a",
+        academy_id=acad,
+        created_at=datetime(2026, 5, 10, tzinfo=UTC),
+    ).model_copy(update={"balance_due_cents": 6_000, "total_cents": 6_000, "subtotal_cents": 6_000})
+    await repo.create_invoice(oldest, lines=[], idempotency_key="key-oldest")
+    await repo.create_invoice(newer, lines=[], idempotency_key="key-newer")
+
+    rows = await repo.billing_setup_by_parent()
+
+    assert rows["parent-a"] == {
+        "outstanding_cents": 10_000,
+        "charge_invoice_id": "inv-oldest",
+        "charge_amount_cents": 4_000,
+    }
+    with tenant_scope("other-academy"):
+        assert await MongoBillingLedgerRepository(db).billing_setup_by_parent() == {}

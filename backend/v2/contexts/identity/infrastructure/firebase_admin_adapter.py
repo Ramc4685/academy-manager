@@ -191,6 +191,26 @@ class FirebaseAdminAdapter:
         )
         return str(user.uid)
 
+    async def ensure_user(
+        self, *, uid: str, email: str, display_name: str
+    ) -> tuple[str, bool]:
+        """Idempotently create a Firebase user with the roster's stable id."""
+        if firebase_admin_auth is None:
+            raise RuntimeError("firebase-admin is required for Firebase auth")
+        _ensure_firebase_app()
+        try:
+            user = await asyncio.to_thread(firebase_admin_auth.get_user, uid)
+        except Exception as exc:
+            if not _is_firebase_auth_error(exc, "UserNotFoundError"):
+                raise
+            created_uid = await self.create_user(
+                uid=uid, email=email, display_name=display_name
+            )
+            return created_uid, True
+        if str(user.email or "").strip().lower() != email.strip().lower():
+            raise RuntimeError("Firebase uid is already assigned to a different email")
+        return str(user.uid), False
+
     async def generate_password_reset_link(
         self, email: str, *, uid: str | None = None, display_name: str | None = None
     ) -> str:

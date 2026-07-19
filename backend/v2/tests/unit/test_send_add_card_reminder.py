@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from backend.v2.contexts.billing.application.use_cases.send_add_card_reminder import (
+from backend.v2.contexts.billing.application.ports import (
     InviteEmailOutcome,
     ParentContact,
+)
+from backend.v2.contexts.billing.application.use_cases.send_add_card_reminder import (
     SendAddCardReminder,
 )
 
@@ -23,7 +25,7 @@ class FakeContacts:
 
 
 class FakeLinks:
-    def __init__(self, link: str = "https://billing.stripe.com/session/test"):
+    def __init__(self, link: str = RETURN_URL):
         self._link = link
         self.calls: list[dict[str, str]] = []
 
@@ -83,7 +85,7 @@ async def test_sends_one_reminder_email_with_setup_link():
     call = sender.calls[0]
     assert call["email"] == "parent@example.com"
     assert call["display_name"] == "Pat Lee"
-    assert "billing.stripe.com" in call["body"]
+    assert RETURN_URL in call["body"]
     assert len(links.calls) == 1
     assert links.calls[0]["parent_id"] == "p1"
     assert links.calls[0]["return_url"] == RETURN_URL
@@ -123,3 +125,30 @@ async def test_email_send_failure_surfaces_reason():
 
     assert outcome.ok is False
     assert outcome.failed_reason == "smtp_error"
+
+
+@pytest.mark.asyncio
+async def test_escapes_parent_and_academy_names_in_html_email():
+    contacts = FakeContacts(
+        {
+            "p1": ParentContact(
+                parent_id="p1",
+                email="parent@example.com",
+                display_name='<img src=x onerror="alert(1)">',
+            )
+        }
+    )
+    sender = FakeSender()
+    use_case = SendAddCardReminder(
+        contacts=contacts,
+        links=FakeLinks(),
+        sender=sender,
+        academies=FakeAcademies(),
+        return_url=RETURN_URL,
+    )
+
+    await use_case.execute(academy_id=ACADEMY_ID, parent_id="p1")
+
+    body = sender.calls[0]["body"]
+    assert "<img" not in body
+    assert "&lt;img" in body

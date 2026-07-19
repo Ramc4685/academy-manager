@@ -9,8 +9,8 @@
  * across a parent's eligible children.
  */
 
-import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
   chargeBillingSetupParent,
@@ -60,16 +60,36 @@ function inviteLabel(state: BillingSetupRegistrationState): string {
 export default function BillingSetupPage() {
   const [status, setStatus] = useState<"all" | BillingSetupRegistrationState>("all");
   const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [toast, setToast] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
-  const params = { status, q: q || undefined };
-  const { data, isLoading, isError } = useQuery({
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQ(q.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [q]);
+
+  const params = useMemo(
+    () => ({ status, q: debouncedQ || undefined }),
+    [status, debouncedQ],
+  );
+  const {
+    data,
+    isLoading,
+    isError,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
     queryKey: queryKeys.admin.billingSetup(params),
-    queryFn: () => fetchBillingSetup(params),
+    queryFn: ({ pageParam }) =>
+      fetchBillingSetup({ ...params, cursor: pageParam || undefined }),
+    initialPageParam: "",
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
   });
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["admin", "billing", "setup"] });
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: queryKeys.admin.billingSetupAll() });
 
   const inviteMutation = useMutation({
     mutationFn: inviteBillingSetupParent,
@@ -89,10 +109,20 @@ export default function BillingSetupPage() {
   });
 
   const chargeMutation = useMutation({
-    mutationFn: chargeBillingSetupParent,
+    mutationFn: (request: {
+      parentId: string;
+      invoiceId: string;
+      amountCents: number;
+      requestId: string;
+    }) =>
+      chargeBillingSetupParent(request.parentId, {
+        invoice_id: request.invoiceId,
+        expected_amount_cents: request.amountCents,
+        request_id: request.requestId,
+      }),
     onSuccess: (result) => {
       if (result.success) {
-        setToast(`Charged ${formatCents(result.balance_due_cents === 0 ? 0 : result.balance_due_cents)} successfully.`);
+        setToast(`Charged ${formatCents(result.charged_amount_cents)} successfully.`);
       } else if (result.requires_action) {
         setToast("Charge requires additional verification (3DS) — ask the parent to complete it.");
       } else {
@@ -104,7 +134,8 @@ export default function BillingSetupPage() {
   });
 
   const autopayMutation = useMutation({
-    mutationFn: enableBillingSetupAutopay,
+    mutationFn: ({ parentId, requestId }: { parentId: string; requestId: string }) =>
+      enableBillingSetupAutopay(parentId, requestId),
     onSuccess: (result) => {
       setToast(`Autopay enabled for ${result.enabled_count} of ${result.eligible_count} eligible children.`);
       invalidate();
@@ -112,7 +143,8 @@ export default function BillingSetupPage() {
     onError: (err: Error) => setToast(`Enable autopay failed: ${err.message}`),
   });
 
-  const summary = data?.summary;
+  const summary = data?.pages[0]?.summary;
+  const rows = data?.pages.flatMap((page) => page.rows) ?? [];
 
   return (
     <div className="flex flex-col gap-6">
@@ -132,11 +164,11 @@ export default function BillingSetupPage() {
         </Card>
         <Card p={20}>
           <Overline>Registered</Overline>
-          <BigNum color="#16a34a">{summary?.families_registered ?? "—"}</BigNum>
+          <BigNum className="text-rally-cobalt-700">{summary?.families_registered ?? "—"}</BigNum>
         </Card>
         <Card p={20}>
           <Overline>Missing a card</Overline>
-          <BigNum color="#d97706">{summary?.families_no_card ?? "—"}</BigNum>
+          <BigNum className="text-rally-volt-700">{summary?.families_no_card ?? "—"}</BigNum>
         </Card>
         <Card p={20}>
           <Overline>Outstanding</Overline>
@@ -171,7 +203,7 @@ export default function BillingSetupPage() {
           <div className="p-8 text-center text-sm text-slate-500">Loading…</div>
         ) : isError ? (
           <div className="p-8 text-center text-sm text-red-600">Failed to load Billing Setup.</div>
-        ) : !data || data.rows.length === 0 ? (
+        ) : rows.length === 0 ? (
           <div className="p-8 text-center text-sm text-slate-500">No families match this filter.</div>
         ) : (
           <table className="w-full text-left text-sm">
@@ -187,22 +219,57 @@ export default function BillingSetupPage() {
               </tr>
             </thead>
             <tbody>
-              {data.rows.map((row) => (
+              {rows.map((row) => (
                 <BillingSetupTableRow
                   key={row.parent_id}
                   row={row}
                   onInvite={() => inviteMutation.mutate(row.parent_id)}
-                  onCharge={() => chargeMutation.mutate(row.parent_id)}
-                  onEnableAutopay={() => autopayMutation.mutate(row.parent_id)}
+                  onCharge={() => {
+                    if (!row.charge_invoice_id || row.charge_amount_cents <= 0) return;
+                    if (
+                      !window.confirm(
+                        `Charge ${formatCents(row.charge_amount_cents)} to invoice ${row.charge_invoice_id}?`,
+                      )
+                    ) {
+                      return;
+                    }
+                    chargeMutation.mutate({
+                      parentId: row.parent_id,
+                      invoiceId: row.charge_invoice_id,
+                      amountCents: row.charge_amount_cents,
+                      requestId: crypto.randomUUID(),
+                    });
+                  }}
+                  onEnableAutopay={() =>
+                    autopayMutation.mutate({
+                      parentId: row.parent_id,
+                      requestId: crypto.randomUUID(),
+                    })
+                  }
                   isInviting={inviteMutation.isPending && inviteMutation.variables === row.parent_id}
-                  isCharging={chargeMutation.isPending && chargeMutation.variables === row.parent_id}
+                  isCharging={
+                    chargeMutation.isPending && chargeMutation.variables?.parentId === row.parent_id
+                  }
                   isEnablingAutopay={
-                    autopayMutation.isPending && autopayMutation.variables === row.parent_id
+                    autopayMutation.isPending &&
+                    autopayMutation.variables?.parentId === row.parent_id
                   }
                 />
               ))}
             </tbody>
           </table>
+        )}
+        {hasNextPage && (
+          <div className="border-t border-rally-line p-4 text-center">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => fetchNextPage()}
+              disabled={isFetchingNextPage}
+            >
+              {isFetchingNextPage ? "Loading…" : "Load more families"}
+            </Button>
+          </div>
         )}
       </Card>
     </div>
@@ -227,9 +294,12 @@ function BillingSetupTableRow({
   isEnablingAutopay: boolean;
 }) {
   const chip = stateChip(row.registration_state);
-  const canCharge = row.registration_state === "card_on_file" && row.outstanding_balance_cents > 0;
+  const canCharge =
+    row.registration_state === "card_on_file" &&
+    Boolean(row.charge_invoice_id) &&
+    row.charge_amount_cents > 0;
   const canEnableAutopay =
-    row.registration_state === "card_on_file" && row.autopay_eligible_count > row.autopay_active_count;
+    row.registration_state === "card_on_file" && row.autopay_eligible_count > 0;
 
   return (
     <tr className="border-b border-slate-100 last:border-0">

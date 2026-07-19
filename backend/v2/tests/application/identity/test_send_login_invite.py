@@ -138,3 +138,18 @@ async def test_wraps_unexpected_academy_name_error_as_send_failed():
     with pytest.raises(LoginInviteSendFailed):
         await use_case.execute("parent-1", academy_id="acad")
     sender.send_invite_email.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_escapes_display_name_in_login_invite_html():
+    users = AsyncMock()
+    users.get_admin_user.return_value = _user().model_copy(
+        update={"display_name": '<img src=x onerror="alert(1)">'},
+    )
+    use_case, _, sender = _use_case(users)
+
+    await use_case.execute("parent-1", academy_id="acad")
+
+    body = sender.send_invite_email.await_args.kwargs["body"]
+    assert "<img" not in body
+    assert "&lt;img" in body

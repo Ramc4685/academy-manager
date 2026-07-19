@@ -25,7 +25,18 @@ from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
 )
-from backend.v2.contexts.billing.application.ports import StripeGateway
+from backend.v2.contexts.billing.application.ports import (
+    BillingSetupStudent,
+    EnrollmentAutopaySnapshot,
+    ParentBalanceSnapshot,
+    ParentBillingCustomerSnapshot,
+    ParentContact,
+    ParentRosterEntry,
+    StripeGateway,
+)
+from backend.v2.contexts.billing.application.ports import (
+    InviteEmailOutcome as AddCardReminderEmailOutcome,
+)
 from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
     AddInvoiceLine,
     AddInvoiceLineCommand,
@@ -42,11 +53,7 @@ from backend.v2.contexts.billing.application.use_cases.billing_settings_admin im
     SetPlatformChargeFallback,
 )
 from backend.v2.contexts.billing.application.use_cases.billing_setup_registration import (
-    BillingSetupStudent,
-    EnrollmentAutopaySnapshot,
     ListBillingSetup,
-    ParentBillingCustomerSnapshot,
-    ParentRosterEntry,
 )
 from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopay import (
     ChargeInvoiceViaAutopay,
@@ -71,10 +78,6 @@ from backend.v2.contexts.billing.application.use_cases.match_legacy_invoices imp
     ConfirmLegacyMatchCommand,
     ListLegacyMatchQueue,
 )
-from backend.v2.contexts.billing.application.use_cases.parent_billing import (
-    CreateCustomerPortalSession,
-    CreateCustomerPortalSessionCommand,
-)
 from backend.v2.contexts.billing.application.use_cases.process_dunning_retries import (
     ProcessDunningRetries,
 )
@@ -91,10 +94,6 @@ from backend.v2.contexts.billing.application.use_cases.remove_invoice_line impor
     RemoveInvoiceLineCommand,
 )
 from backend.v2.contexts.billing.application.use_cases.send_add_card_reminder import (
-    InviteEmailOutcome as AddCardReminderEmailOutcome,
-)
-from backend.v2.contexts.billing.application.use_cases.send_add_card_reminder import (
-    ParentContact,
     SendAddCardReminder,
 )
 from backend.v2.contexts.billing.application.use_cases.send_invoice import SendInvoice
@@ -404,6 +403,9 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
 from backend.v2.contexts.identity.application.use_cases.manage_user_roles import (
     AddUserRole,
     RemoveUserRole,
+)
+from backend.v2.contexts.identity.application.use_cases.provision_parent_login import (
+    ProvisionParentLogin,
 )
 from backend.v2.contexts.identity.application.use_cases.send_login_invite import (
     InviteEmailOutcome,
@@ -3721,7 +3723,12 @@ def compose_admin(
             "checkout_url": result.checkout_url,
         }
 
-    async def charge_invoice_via_autopay(invoice_id: str) -> dict[str, Any]:
+    async def charge_invoice_via_autopay(
+        invoice_id: str,
+        *,
+        source: str = "autopay",
+        actor_id: str | None = None,
+    ) -> dict[str, Any]:
         required = ("get_default_payment_method", "create_off_session_payment_intent")
         if not all(hasattr(stripe, name) for name in required):
             raise RuntimeError("Stripe autopay not configured")
@@ -3731,44 +3738,122 @@ def compose_admin(
             enrollment_autopay=student_billing_enrollment_repo,
             settings=billing_settings_repo,
             connected_accounts=connected_accounts_repo,
-        ).execute(invoice_id)
+        ).execute(invoice_id, source=source, actor_id=actor_id)
         return result.model_dump(mode="python")
 
-    async def charge_billing_setup_balance(parent_id: str) -> dict[str, Any]:
-        """Billing Setup "Charge now" action: charge the parent's oldest open
-        invoice with a balance due, reusing the same guarded charge path as
-        the per-invoice autopay-charge route above."""
-        if not await parent_customers_repo.has_saved_card(parent_id=parent_id):
-            raise ValueError("no_saved_payment_method: parent has no saved card")
-        invoices = await billing_ledger_repo.list_invoices_for_parent(parent_id, limit=200)
-        chargeable = sorted(
-            (inv for inv in invoices if inv.balance_due_cents > 0),
-            key=lambda inv: inv.created_at,
-        )
-        if not chargeable:
-            raise ValueError(
-                "no_outstanding_balance: parent has no open invoices with a balance due"
-            )
-        return await charge_invoice_via_autopay(chargeable[0].invoice_id)
+    async def charge_billing_setup_balance(
+        *,
+        parent_id: str,
+        invoice_id: str,
+        expected_amount_cents: int,
+        request_id: str,
+        actor_id: str,
+    ) -> dict[str, Any]:
+        """Charge the exact invoice and amount confirmed by the admin."""
+        from backend.v2.shared.tenancy import current_academy_id
 
-    async def enable_billing_setup_autopay(parent_id: str) -> dict[str, int]:
+        request_academy_id = current_academy_id()
+        idem_key = (
+            f"billing_setup_charge:{request_academy_id}:{actor_id}:{parent_id}:{invoice_id}:"
+            f"{expected_amount_cents}:{request_id}"
+        )
+        cached = await idempotency_store.get(idem_key)
+        if cached is None:
+            if not await parent_customers_repo.has_saved_card(parent_id=parent_id):
+                raise ValueError("no_saved_payment_method: parent has no saved card")
+            invoice = await billing_ledger_repo.get_invoice(invoice_id)
+            if invoice is None or invoice.parent_id != parent_id:
+                raise ValueError("charge_target_changed: invoice is not available for this parent")
+            if invoice.balance_due_cents != expected_amount_cents:
+                raise ValueError(
+                    "charge_target_changed: invoice balance changed; refresh and retry"
+                )
+            result = await charge_invoice_via_autopay(
+                invoice_id,
+                source="admin_billing_setup",
+                actor_id=actor_id,
+            )
+            payload = result
+            payload["charged_amount_cents"] = (
+                expected_amount_cents if bool(result["success"]) else 0
+            )
+            await idempotency_store.put(idem_key, {"payload": payload})
+        else:
+            payload = cached["payload"]
+
+        await billing_audit_log.append(
+            BillingAuditEntry(
+                audit_id=(
+                    f"baud-billing-setup-charge-{request_academy_id}-{invoice_id}-{request_id}"
+                ),
+                academy_id=request_academy_id,
+                action="admin_charge_initiated",
+                actor_id=actor_id,
+                at=datetime.now(UTC),
+                invoice_id=invoice_id,
+                reason="Billing Setup charge now",
+                before={"balance_due_cents": expected_amount_cents},
+                after={
+                    "success": bool(payload["success"]),
+                    "status": str(payload["status"]),
+                    "balance_due_cents": int(payload["balance_due_cents"]),
+                },
+            )
+        )
+        return payload
+
+    async def enable_billing_setup_autopay(
+        *, parent_id: str, actor_id: str, request_id: str
+    ) -> dict[str, Any]:
         """Billing Setup "Enable autopay" action: flips every one of the
         parent's eligible enrollments (offered/paused) to active. Autopay is
         per-enrollment, not per-parent — see billing_setup_registration.py."""
-        if not await parent_customers_repo.has_saved_card(parent_id=parent_id):
-            raise ValueError("no_saved_payment_method: parent has no saved card")
-        enrollments = await student_billing_enrollment_repo.list_for_parent(parent_id)
-        # "offered" cannot legally jump straight to "active" — only "paused" can
-        # (see ALLOWED_AUTOPAY_ENROLLMENT_TRANSITIONS in autopay_status.py).
-        eligible = [e for e in enrollments if e.autopay_enrollment_status == "paused"]
-        enabled = 0
-        for enrollment in eligible:
-            applied = await student_billing_enrollment_repo.set_autopay_enrollment_status(
-                enrollment_id=enrollment.enrollment_id, status="active"
+        from backend.v2.shared.tenancy import current_academy_id
+
+        request_academy_id = current_academy_id()
+        idem_key = (
+            f"billing_setup_autopay:{request_academy_id}:{actor_id}:{parent_id}:{request_id}"
+        )
+        cached = await idempotency_store.get(idem_key)
+        if cached is None:
+            if not await parent_customers_repo.has_saved_card(parent_id=parent_id):
+                raise ValueError("no_saved_payment_method: parent has no saved card")
+            enrollments = await student_billing_enrollment_repo.list_for_parent(parent_id)
+            # Only a previously-consented, parent-paused enrollment may resume.
+            eligible = [e for e in enrollments if e.autopay_enrollment_status == "paused"]
+            enabled_ids: list[str] = []
+            for enrollment in eligible:
+                applied = await student_billing_enrollment_repo.set_autopay_enrollment_status(
+                    enrollment_id=enrollment.enrollment_id, status="active"
+                )
+                if applied:
+                    enabled_ids.append(enrollment.enrollment_id)
+            payload: dict[str, Any] = {
+                "eligible_count": len(eligible),
+                "enabled_count": len(enabled_ids),
+                "enabled_enrollment_ids": enabled_ids,
+            }
+            await idempotency_store.put(idem_key, {"payload": payload})
+        else:
+            payload = cached["payload"]
+
+        for enrollment_id in payload.get("enabled_enrollment_ids", []):
+            await billing_audit_log.append(
+                BillingAuditEntry(
+                    audit_id=(
+                        f"baud-billing-setup-autopay-{request_academy_id}-{parent_id}-"
+                        f"{request_id}-{enrollment_id}"
+                    ),
+                    academy_id=request_academy_id,
+                    action="autopay_resumed",
+                    actor_id=actor_id,
+                    at=datetime.now(UTC),
+                    reason="Billing Setup enable autopay",
+                    before={"enrollment_id": enrollment_id, "status": "paused"},
+                    after={"enrollment_id": enrollment_id, "status": "active"},
+                )
             )
-            if applied:
-                enabled += 1
-        return {"eligible_count": len(eligible), "enabled_count": enabled}
+        return payload
 
     async def record_billing_setup_invite(parent_id: str) -> datetime:
         sent_at = datetime.now(UTC)
@@ -4243,6 +4328,7 @@ def compose_admin(
         sender=_LoginInviteEmailAdapter(sender=_email_sender),
         academies=academy_repo,
     )
+    provision_parent_login = ProvisionParentLogin(users_r)
     add_user_role = AddUserRole(users_r)
     remove_user_role = RemoveUserRole(users_r)
     list_admin_students = ListAdminStudents(students_r)
@@ -4341,8 +4427,18 @@ def compose_admin(
         def __init__(self, ledger: MongoBillingLedgerRepository) -> None:
             self._ledger = ledger
 
-        async def outstanding_by_parent(self, *, academy_id: str) -> dict[str, int]:
-            return await self._ledger.outstanding_by_parent()
+        async def billing_setup_by_parent(
+            self, *, academy_id: str
+        ) -> dict[str, ParentBalanceSnapshot]:
+            rows = await self._ledger.billing_setup_by_parent()
+            return {
+                parent_id: ParentBalanceSnapshot(
+                    outstanding_cents=int(row["outstanding_cents"]),
+                    charge_invoice_id=str(row["charge_invoice_id"]),
+                    charge_amount_cents=int(row["charge_amount_cents"]),
+                )
+                for parent_id, row in rows.items()
+            }
 
     list_billing_setup = ListBillingSetup(
         roster=_BillingSetupRosterAdapter(list_admin_students),
@@ -4367,27 +4463,14 @@ def compose_admin(
             )
 
     class _BillingSetupCardSetupLinkAdapter:
-        def __init__(
-            self,
-            *,
-            customers: MongoParentBillingCustomerRepository,
-            portal: CreateCustomerPortalSession,
-        ) -> None:
-            self._customers = customers
-            self._portal = portal
-
         async def create_card_setup_link(
             self, *, parent_id: str, academy_id: str, return_url: str
         ) -> str:
-            stripe_customer_id = await self._customers.get_stripe_customer_id(parent_id=parent_id)
-            result = await self._portal.execute(
-                CreateCustomerPortalSessionCommand(
-                    parent_id=parent_id,
-                    return_url=return_url,
-                    stripe_customer_id=stripe_customer_id,
-                )
-            )
-            return result.redirect_url
+            # A parent without a Stripe Customer cannot open Customer Portal.
+            # Send them to the authenticated parent payments screen, where the
+            # existing per-enrollment SetupIntent flow creates the customer and
+            # records consent before any off-session charge is allowed.
+            return return_url
 
     class _AddCardReminderEmailAdapter:
         """Bridges billing's local InviteEmailPort to communications'
@@ -4409,15 +4492,12 @@ def compose_admin(
             )
             return AddCardReminderEmailOutcome(ok=outcome.ok, failed_reason=outcome.failed_reason)
 
-    create_customer_portal_session = CreateCustomerPortalSession(stripe=stripe)
     _billing_setup_return_url = (
-        f"{(settings.frontend_url or 'https://app.example.com').rstrip('/')}/admin/billing/setup"
+        f"{(settings.frontend_url or 'https://app.example.com').rstrip('/')}/parent/payments"
     )
     send_add_card_reminder = SendAddCardReminder(
         contacts=_BillingSetupParentContactAdapter(users_r),
-        links=_BillingSetupCardSetupLinkAdapter(
-            customers=parent_customers_repo, portal=create_customer_portal_session
-        ),
+        links=_BillingSetupCardSetupLinkAdapter(),
         sender=_AddCardReminderEmailAdapter(sender=_email_sender),
         academies=academy_repo,
         return_url=_billing_setup_return_url,
@@ -6782,6 +6862,7 @@ def compose_admin(
         get_admin_user=get_admin_user,
         update_admin_user=update_admin_user,
         create_admin_user=create_admin_user,
+        provision_parent_login=provision_parent_login,
         send_login_invite=send_login_invite,
         add_user_role=add_user_role,
         remove_user_role=remove_user_role,

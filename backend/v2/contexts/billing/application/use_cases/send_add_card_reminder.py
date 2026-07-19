@@ -13,70 +13,31 @@ context does not import identity directly.
 
 from __future__ import annotations
 
-from typing import Protocol
+from html import escape
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel
-
-
-class InviteEmailOutcome(BaseModel):
-    """Outcome of a single reminder-email send attempt."""
-
-    model_config = {"frozen": True}
-
-    ok: bool
-    failed_reason: str | None = None
-
-
-class InviteEmailPort(Protocol):
-    """Outbound email port, billing-local mirror of the identity context's port."""
-
-    async def send_invite_email(
-        self,
-        *,
-        user_id: str,
-        email: str,
-        display_name: str,
-        subject: str,
-        body: str,
-    ) -> InviteEmailOutcome: ...
-
-
-class ParentContact(BaseModel):
-    model_config = {"frozen": True}
-
-    parent_id: str
-    email: str
-    display_name: str
-
-
-class ParentContactLookup(Protocol):
-    async def get_parent_contact(
-        self, parent_id: str, *, academy_id: str
-    ) -> ParentContact | None: ...
-
-
-class CardSetupLinkPort(Protocol):
-    """Builds the Stripe customer-portal URL where a parent adds a payment method."""
-
-    async def create_card_setup_link(
-        self, *, parent_id: str, academy_id: str, return_url: str
-    ) -> str: ...
-
-
-class AcademyNameLookup(Protocol):
-    async def get_academy_name(self, academy_id: str) -> str | None: ...
+from backend.v2.contexts.billing.application.ports import (
+    AcademyNameLookup,
+    CardSetupLinkPort,
+    InviteEmailOutcome,
+    InviteEmailPort,
+    ParentContactLookup,
+)
 
 
 def _reminder_body(*, display_name: str, academy_name: str, setup_link: str) -> str:
+    safe_display_name = escape(display_name)
+    safe_academy_name = escape(academy_name)
+    safe_setup_link = escape(setup_link, quote=True)
     return f"""
 <div style="font-family: -apple-system, 'Segoe UI', sans-serif; max-width: 520px; margin: 0 auto;">
-  <h2 style="color: #0a0f1c;">Add a payment method for {academy_name}</h2>
-  <p>Hi {display_name},</p>
-  <p>Your account at <strong>{academy_name}</strong> is set up, but we don't have
+  <h2 style="color: #0a0f1c;">Add a payment method for {safe_academy_name}</h2>
+  <p>Hi {safe_display_name},</p>
+  <p>Your account at <strong>{safe_academy_name}</strong> is set up, but we don't have
   a payment method on file yet. Add one to keep your children's enrollment
   current.</p>
   <p style="margin: 24px 0;">
-    <a href="{setup_link}"
+    <a href="{safe_setup_link}"
        style="background: #2545d3; color: #ffffff; padding: 12px 20px;
               border-radius: 8px; text-decoration: none; font-weight: 600;">
       Add payment method
@@ -110,6 +71,14 @@ class SendAddCardReminder:
         setup_link = await self._links.create_card_setup_link(
             parent_id=parent_id, academy_id=academy_id, return_url=self._return_url
         )
+        expected = urlsplit(self._return_url)
+        actual = urlsplit(setup_link)
+        if (
+            actual.scheme not in {"http", "https"}
+            or not actual.netloc
+            or (actual.scheme, actual.netloc) != (expected.scheme, expected.netloc)
+        ):
+            return InviteEmailOutcome(ok=False, failed_reason="card_setup_link_unavailable")
         academy_name = await self._academies.get_academy_name(academy_id) or "your academy"
 
         return await self._sender.send_invite_email(
