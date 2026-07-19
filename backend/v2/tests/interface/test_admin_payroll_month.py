@@ -132,6 +132,11 @@ def _minimal_admin_use_cases(
         update_academy_notifications_use_case=mock,  # type: ignore[arg-type]
         get_academy_gateway_use_case=mock,  # type: ignore[arg-type]
         change_user_role=mock,  # type: ignore[arg-type]
+        list_billing_setup=mock,  # type: ignore[arg-type]
+        send_add_card_reminder=mock,  # type: ignore[arg-type]
+        charge_billing_setup_balance=mock,
+        enable_billing_setup_autopay=mock,
+        record_billing_setup_invite=mock,
         list_monthly_payroll=list_monthly_payroll,
         bulk_generate_payroll=bulk_generate_payroll,
         bulk_recompute_payroll=bulk_recompute_payroll,
