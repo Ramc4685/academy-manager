@@ -280,7 +280,10 @@ async def send_login_invite(
     try:
         result = await use_case.execute(user_id, academy_id=claims.academy_id)
     except LoginInviteSendFailed as exc:
-        raise HTTPException(status_code=502, detail="Could not send the invite email") from exc
+        logger.exception("login invite failed for %s", user_id)
+        raise HTTPException(
+            status_code=502, detail=f"Could not send the invite email: {exc}"
+        ) from exc
     return LoginInviteResponse(sent_at=result.sent_at)
 
 
