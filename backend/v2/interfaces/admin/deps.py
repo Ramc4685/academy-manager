@@ -21,9 +21,6 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
 from backend.v2.contexts.billing.application.use_cases.billing_setup_registration import (
     ListBillingSetup,
 )
-from backend.v2.contexts.billing.application.use_cases.send_add_card_reminder import (
-    SendAddCardReminder,
-)
 from backend.v2.contexts.billing.application.use_cases.connect_onboarding import (
     StartConnectOnboarding,
 )
@@ -35,6 +32,9 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
     RecordExpense,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
+from backend.v2.contexts.billing.application.use_cases.send_add_card_reminder import (
+    SendAddCardReminder,
+)
 from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     CreateSessionType,
     ListSessionTypes,

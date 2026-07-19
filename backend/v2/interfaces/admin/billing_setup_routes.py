@@ -151,7 +151,7 @@ async def invite_billing_setup_parent(
             result = await send_login_invite.execute(  # type: ignore[attr-defined]
                 parent_id, academy_id=claims.academy_id
             )
-        except Exception as exc:  # noqa: BLE001 - surfaced as a failed outcome, not a 500
+        except Exception as exc:
             return BillingSetupInviteResponse(action="login_invite", ok=False, failed_reason=str(exc))
         invited_at = await record_invite(parent_id)  # type: ignore[operator]
         return BillingSetupInviteResponse(
