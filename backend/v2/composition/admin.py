@@ -494,7 +494,7 @@ class _InvoiceEmailAdapter:
         balance_due_cents: int,
         currency: str,
         checkout_url: str | None,
-    ) -> None:
+    ) -> str | None:
         from backend.v2.shared.tenancy import current_academy_id
 
         academy_id = current_academy_id()
@@ -536,6 +536,7 @@ class _InvoiceEmailAdapter:
         )
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "invoice email delivery failed")
+        return outcome.provider_message_id
 
     async def send_dunning_notice(
         self,
@@ -6158,6 +6159,7 @@ def compose_admin(
                 "delivery_status": str(invoice.get("delivery_status") or "not_sent"),
                 "sent_at": invoice.get("sent_at"),
                 "last_sent_at": invoice.get("last_sent_at"),
+                "email_provider_message_id": invoice.get("email_provider_message_id"),
             }
 
         payment = await db["payments"].find_one(
