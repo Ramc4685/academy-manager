@@ -3746,7 +3746,9 @@ def compose_admin(
             key=lambda inv: inv.created_at,
         )
         if not chargeable:
-            raise ValueError("no_outstanding_balance: parent has no open invoices with a balance due")
+            raise ValueError(
+                "no_outstanding_balance: parent has no open invoices with a balance due"
+            )
         return await charge_invoice_via_autopay(chargeable[0].invoice_id)
 
     async def enable_billing_setup_autopay(parent_id: str) -> dict[str, int]:
@@ -3770,7 +3772,9 @@ def compose_admin(
 
     async def record_billing_setup_invite(parent_id: str) -> datetime:
         sent_at = datetime.now(UTC)
-        await parent_customers_repo.record_billing_setup_invite(parent_id=parent_id, sent_at=sent_at)
+        await parent_customers_repo.record_billing_setup_invite(
+            parent_id=parent_id, sent_at=sent_at
+        )
         return sent_at
 
     def _dunning_worker() -> ProcessDunningRetries:
@@ -4282,7 +4286,9 @@ def compose_admin(
             for student in await self._all_students():
                 if student.parent_id in wanted:
                     result.setdefault(student.parent_id, []).append(
-                        BillingSetupStudent(student_id=student.student_id, full_name=student.full_name)
+                        BillingSetupStudent(
+                            student_id=student.student_id, full_name=student.full_name
+                        )
                     )
             return result
 
@@ -4290,10 +4296,14 @@ def compose_admin(
         def __init__(self, users: MongoUserRepository) -> None:
             self._users = users
 
-        async def login_account_parent_ids(self, parent_ids: list[str], *, academy_id: str) -> set[str]:
+        async def login_account_parent_ids(
+            self, parent_ids: list[str], *, academy_id: str
+        ) -> set[str]:
             from backend.v2.shared.tenancy import current_academy_id
 
-            return await self._users.list_existing_user_ids(parent_ids, academy_id=current_academy_id())
+            return await self._users.list_existing_user_ids(
+                parent_ids, academy_id=current_academy_id()
+            )
 
     class _BillingSetupCustomerAdapter:
         def __init__(self, customers: MongoParentBillingCustomerRepository) -> None:
@@ -4346,11 +4356,15 @@ def compose_admin(
         def __init__(self, users: MongoUserRepository) -> None:
             self._users = users
 
-        async def get_parent_contact(self, parent_id: str, *, academy_id: str) -> ParentContact | None:
+        async def get_parent_contact(
+            self, parent_id: str, *, academy_id: str
+        ) -> ParentContact | None:
             user = await self._users.get_by_id(parent_id)
             if user is None:
                 return None
-            return ParentContact(parent_id=parent_id, email=str(user.email), display_name=user.display_name)
+            return ParentContact(
+                parent_id=parent_id, email=str(user.email), display_name=user.display_name
+            )
 
     class _BillingSetupCardSetupLinkAdapter:
         def __init__(
@@ -4362,7 +4376,9 @@ def compose_admin(
             self._customers = customers
             self._portal = portal
 
-        async def create_card_setup_link(self, *, parent_id: str, academy_id: str, return_url: str) -> str:
+        async def create_card_setup_link(
+            self, *, parent_id: str, academy_id: str, return_url: str
+        ) -> str:
             stripe_customer_id = await self._customers.get_stripe_customer_id(parent_id=parent_id)
             result = await self._portal.execute(
                 CreateCustomerPortalSessionCommand(
@@ -4385,7 +4401,9 @@ def compose_admin(
             self, *, user_id: str, email: str, display_name: str, subject: str, body: str
         ) -> AddCardReminderEmailOutcome:
             outcome = await self._sender.send(
-                recipient=ResolvedRecipient(user_id=user_id, email=email, display_name=display_name),
+                recipient=ResolvedRecipient(
+                    user_id=user_id, email=email, display_name=display_name
+                ),
                 subject=subject,
                 body=body,
             )

@@ -97,7 +97,9 @@ def test_charge_with_no_saved_card_returns_400(admin_client):
 
 def test_charge_with_zero_balance_returns_400(admin_client):
     admin_client.use_cases.charge_billing_setup_balance = AsyncMock(
-        side_effect=ValueError("no_outstanding_balance: parent has no open invoices with a balance due")
+        side_effect=ValueError(
+            "no_outstanding_balance: parent has no open invoices with a balance due"
+        )
     )
 
     r = admin_client.post("/api/v2/admin/billing/setup/parent-1/charge")

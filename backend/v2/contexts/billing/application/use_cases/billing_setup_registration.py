@@ -105,7 +105,9 @@ class ParentRosterEntry(BaseModel):
 class LoginAccountDirectory(Protocol):
     """Identity-owned signal: which of these parents have a login account."""
 
-    async def login_account_parent_ids(self, parent_ids: list[str], *, academy_id: str) -> set[str]: ...
+    async def login_account_parent_ids(
+        self, parent_ids: list[str], *, academy_id: str
+    ) -> set[str]: ...
 
 
 class ParentStudentRoster(Protocol):
@@ -174,7 +176,9 @@ class ListBillingSetup:
         parents = await self._roster.list_parents(academy_id=academy_id)
         parent_ids = [p.parent_id for p in parents]
 
-        students_by_parent = await self._roster.students_for_parents(parent_ids, academy_id=academy_id)
+        students_by_parent = await self._roster.students_for_parents(
+            parent_ids, academy_id=academy_id
+        )
         login_account_ids = await self._login_accounts.login_account_parent_ids(
             parent_ids, academy_id=academy_id
         )
@@ -198,7 +202,9 @@ class ListBillingSetup:
             enrollments = autopay_by_parent.get(parent.parent_id, [])
             active_count = sum(1 for e in enrollments if e.autopay_enrollment_status == "active")
             eligible_count = sum(
-                1 for e in enrollments if e.autopay_enrollment_status in _AUTOPAY_ENABLE_ELIGIBLE_STATES
+                1
+                for e in enrollments
+                if e.autopay_enrollment_status in _AUTOPAY_ENABLE_ELIGIBLE_STATES
             )
 
             rows.append(

@@ -152,7 +152,9 @@ async def invite_billing_setup_parent(
                 parent_id, academy_id=claims.academy_id
             )
         except Exception as exc:
-            return BillingSetupInviteResponse(action="login_invite", ok=False, failed_reason=str(exc))
+            return BillingSetupInviteResponse(
+                action="login_invite", ok=False, failed_reason=str(exc)
+            )
         invited_at = await record_invite(parent_id)  # type: ignore[operator]
         return BillingSetupInviteResponse(
             action="login_invite", ok=True, invited_at=invited_at or result.sent_at
@@ -214,7 +216,9 @@ async def enable_billing_setup_autopay(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> BillingSetupAutopayEnableResponse:
-    enable = _required_callable(use_cases.enable_billing_setup_autopay, "Billing Setup autopay enable")
+    enable = _required_callable(
+        use_cases.enable_billing_setup_autopay, "Billing Setup autopay enable"
+    )
     try:
         result = await enable(parent_id)  # type: ignore[operator]
     except ValueError as exc:

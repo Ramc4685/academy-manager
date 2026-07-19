@@ -50,13 +50,17 @@ class ParentContact(BaseModel):
 
 
 class ParentContactLookup(Protocol):
-    async def get_parent_contact(self, parent_id: str, *, academy_id: str) -> ParentContact | None: ...
+    async def get_parent_contact(
+        self, parent_id: str, *, academy_id: str
+    ) -> ParentContact | None: ...
 
 
 class CardSetupLinkPort(Protocol):
     """Builds the Stripe customer-portal URL where a parent adds a payment method."""
 
-    async def create_card_setup_link(self, *, parent_id: str, academy_id: str, return_url: str) -> str: ...
+    async def create_card_setup_link(
+        self, *, parent_id: str, academy_id: str, return_url: str
+    ) -> str: ...
 
 
 class AcademyNameLookup(Protocol):

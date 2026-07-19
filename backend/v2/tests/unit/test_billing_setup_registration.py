@@ -16,7 +16,9 @@ ACADEMY_ID = "academy-1"
 
 
 class FakeRoster:
-    def __init__(self, parents: list[ParentRosterEntry], students: dict[str, list[BillingSetupStudent]]):
+    def __init__(
+        self, parents: list[ParentRosterEntry], students: dict[str, list[BillingSetupStudent]]
+    ):
         self._parents = parents
         self._students = students
 
@@ -82,7 +84,11 @@ def _make_use_case(
 @pytest.mark.asyncio
 async def test_parent_with_no_login_account_is_no_account():
     use_case = _make_use_case(
-        parents=[ParentRosterEntry(parent_id="p1", parent_name="Alice Smith", parent_email="alice@example.com")],
+        parents=[
+            ParentRosterEntry(
+                parent_id="p1", parent_name="Alice Smith", parent_email="alice@example.com"
+            )
+        ],
     )
     page = await use_case.execute(academy_id=ACADEMY_ID)
     assert page.rows[0].registration_state == "no_account"
@@ -125,7 +131,9 @@ async def test_card_on_file_does_not_require_login_account_flag():
         parents=[ParentRosterEntry(parent_id="p1", parent_name="Dana Kim")],
         login_accounts=set(),
         customers=[
-            ParentBillingCustomerSnapshot(parent_id="p1", stripe_customer_id="cus_1", card_last4="1111")
+            ParentBillingCustomerSnapshot(
+                parent_id="p1", stripe_customer_id="cus_1", card_last4="1111"
+            )
         ],
     )
     page = await use_case.execute(academy_id=ACADEMY_ID)
@@ -137,9 +145,15 @@ async def test_autopay_counts_aggregate_per_enrollment_not_per_parent():
     use_case = _make_use_case(
         parents=[ParentRosterEntry(parent_id="p1", parent_name="Eve Park")],
         autopay=[
-            EnrollmentAutopaySnapshot(enrollment_id="e1", parent_id="p1", autopay_enrollment_status="active"),
-            EnrollmentAutopaySnapshot(enrollment_id="e2", parent_id="p1", autopay_enrollment_status="paused"),
-            EnrollmentAutopaySnapshot(enrollment_id="e3", parent_id="p1", autopay_enrollment_status="offered"),
+            EnrollmentAutopaySnapshot(
+                enrollment_id="e1", parent_id="p1", autopay_enrollment_status="active"
+            ),
+            EnrollmentAutopaySnapshot(
+                enrollment_id="e2", parent_id="p1", autopay_enrollment_status="paused"
+            ),
+            EnrollmentAutopaySnapshot(
+                enrollment_id="e3", parent_id="p1", autopay_enrollment_status="offered"
+            ),
             EnrollmentAutopaySnapshot(
                 enrollment_id="e4", parent_id="p1", autopay_enrollment_status="not_offered"
             ),
@@ -173,7 +187,9 @@ async def test_status_filter_narrows_to_matching_state():
         ],
         login_accounts=set(),
         customers=[
-            ParentBillingCustomerSnapshot(parent_id="p2", stripe_customer_id="cus_2", card_last4="9999")
+            ParentBillingCustomerSnapshot(
+                parent_id="p2", stripe_customer_id="cus_2", card_last4="9999"
+            )
         ],
     )
     page = await use_case.execute(academy_id=ACADEMY_ID, status_filter="card_on_file")
@@ -187,8 +203,12 @@ async def test_status_filter_narrows_to_matching_state():
 async def test_name_search_matches_name_or_email_case_insensitively():
     use_case = _make_use_case(
         parents=[
-            ParentRosterEntry(parent_id="p1", parent_name="Grace Hopper", parent_email="grace@example.com"),
-            ParentRosterEntry(parent_id="p2", parent_name="Henry Ford", parent_email="henry@example.com"),
+            ParentRosterEntry(
+                parent_id="p1", parent_name="Grace Hopper", parent_email="grace@example.com"
+            ),
+            ParentRosterEntry(
+                parent_id="p2", parent_name="Henry Ford", parent_email="henry@example.com"
+            ),
         ],
     )
     page = await use_case.execute(academy_id=ACADEMY_ID, q="grace")
@@ -208,7 +228,9 @@ async def test_summary_counts_families_by_registration_state():
         ],
         login_accounts={"p2"},
         customers=[
-            ParentBillingCustomerSnapshot(parent_id="p3", stripe_customer_id="cus_3", card_last4="0000")
+            ParentBillingCustomerSnapshot(
+                parent_id="p3", stripe_customer_id="cus_3", card_last4="0000"
+            )
         ],
     )
     page = await use_case.execute(academy_id=ACADEMY_ID)
@@ -219,12 +241,16 @@ async def test_summary_counts_families_by_registration_state():
 
 @pytest.mark.asyncio
 async def test_pagination_cursor_returns_next_page():
-    parents = [ParentRosterEntry(parent_id=f"p{i}", parent_name=f"Parent {i:02d}") for i in range(5)]
+    parents = [
+        ParentRosterEntry(parent_id=f"p{i}", parent_name=f"Parent {i:02d}") for i in range(5)
+    ]
     use_case = _make_use_case(parents=parents)
 
     first_page = await use_case.execute(academy_id=ACADEMY_ID, limit=2)
     assert [r.parent_id for r in first_page.rows] == ["p0", "p1"]
     assert first_page.next_cursor == "p1"
 
-    second_page = await use_case.execute(academy_id=ACADEMY_ID, limit=2, cursor=first_page.next_cursor)
+    second_page = await use_case.execute(
+        academy_id=ACADEMY_ID, limit=2, cursor=first_page.next_cursor
+    )
     assert [r.parent_id for r in second_page.rows] == ["p2", "p3"]

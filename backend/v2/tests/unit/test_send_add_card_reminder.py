@@ -27,8 +27,12 @@ class FakeLinks:
         self._link = link
         self.calls: list[dict[str, str]] = []
 
-    async def create_card_setup_link(self, *, parent_id: str, academy_id: str, return_url: str) -> str:
-        self.calls.append({"parent_id": parent_id, "academy_id": academy_id, "return_url": return_url})
+    async def create_card_setup_link(
+        self, *, parent_id: str, academy_id: str, return_url: str
+    ) -> str:
+        self.calls.append(
+            {"parent_id": parent_id, "academy_id": academy_id, "return_url": return_url}
+        )
         return self._link
 
 
@@ -41,7 +45,13 @@ class FakeSender:
         self, *, user_id: str, email: str, display_name: str, subject: str, body: str
     ) -> InviteEmailOutcome:
         self.calls.append(
-            {"user_id": user_id, "email": email, "display_name": display_name, "subject": subject, "body": body}
+            {
+                "user_id": user_id,
+                "email": email,
+                "display_name": display_name,
+                "subject": subject,
+                "body": body,
+            }
         )
         return self._outcome
 
@@ -53,11 +63,17 @@ class FakeAcademies:
 
 @pytest.mark.asyncio
 async def test_sends_one_reminder_email_with_setup_link():
-    contacts = FakeContacts({"p1": ParentContact(parent_id="p1", email="parent@example.com", display_name="Pat Lee")})
+    contacts = FakeContacts(
+        {"p1": ParentContact(parent_id="p1", email="parent@example.com", display_name="Pat Lee")}
+    )
     links = FakeLinks()
     sender = FakeSender()
     use_case = SendAddCardReminder(
-        contacts=contacts, links=links, sender=sender, academies=FakeAcademies(), return_url=RETURN_URL
+        contacts=contacts,
+        links=links,
+        sender=sender,
+        academies=FakeAcademies(),
+        return_url=RETURN_URL,
     )
 
     outcome = await use_case.execute(academy_id=ACADEMY_ID, parent_id="p1")
@@ -91,10 +107,16 @@ async def test_unknown_parent_returns_failure_without_sending():
 
 @pytest.mark.asyncio
 async def test_email_send_failure_surfaces_reason():
-    contacts = FakeContacts({"p1": ParentContact(parent_id="p1", email="parent@example.com", display_name="Pat Lee")})
+    contacts = FakeContacts(
+        {"p1": ParentContact(parent_id="p1", email="parent@example.com", display_name="Pat Lee")}
+    )
     sender = FakeSender(InviteEmailOutcome(ok=False, failed_reason="smtp_error"))
     use_case = SendAddCardReminder(
-        contacts=contacts, links=FakeLinks(), sender=sender, academies=FakeAcademies(), return_url=RETURN_URL
+        contacts=contacts,
+        links=FakeLinks(),
+        sender=sender,
+        academies=FakeAcademies(),
+        return_url=RETURN_URL,
     )
 
     outcome = await use_case.execute(academy_id=ACADEMY_ID, parent_id="p1")
