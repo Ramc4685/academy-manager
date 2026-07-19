@@ -3756,7 +3756,9 @@ def compose_admin(
         if not await parent_customers_repo.has_saved_card(parent_id=parent_id):
             raise ValueError("no_saved_payment_method: parent has no saved card")
         enrollments = await student_billing_enrollment_repo.list_for_parent(parent_id)
-        eligible = [e for e in enrollments if e.autopay_enrollment_status in {"offered", "paused"}]
+        # "offered" cannot legally jump straight to "active" — only "paused" can
+        # (see ALLOWED_AUTOPAY_ENROLLMENT_TRANSITIONS in autopay_status.py).
+        eligible = [e for e in enrollments if e.autopay_enrollment_status == "paused"]
         enabled = 0
         for enrollment in eligible:
             applied = await student_billing_enrollment_repo.set_autopay_enrollment_status(

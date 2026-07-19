@@ -25,8 +25,13 @@ from backend.v2.contexts.billing.domain.autopay_status import AutopayEnrollmentS
 RegistrationState = Literal["no_account", "account_no_card", "card_on_file"]
 
 # Enrollment autopay states from which "Enable autopay" can legally flip to
-# active in one step (mirrors ALLOWED_AUTOPAY_ENROLLMENT_TRANSITIONS).
-_AUTOPAY_ENABLE_ELIGIBLE_STATES: frozenset[AutopayEnrollmentStatus] = frozenset({"offered", "paused"})
+# active in ONE step (mirrors ALLOWED_AUTOPAY_ENROLLMENT_TRANSITIONS in
+# autopay_status.py). "offered" is deliberately excluded: it means autopay was
+# offered but the parent has not yet completed the Stripe SetupIntent consent
+# flow (card/ACH disclosure versions on parent_billing_customers), so an admin
+# click cannot legally skip straight to "active" — only "paused" (a parent who
+# already consented before) can resume with one click.
+_AUTOPAY_ENABLE_ELIGIBLE_STATES: frozenset[AutopayEnrollmentStatus] = frozenset({"paused"})
 
 
 class BillingSetupStudent(BaseModel):

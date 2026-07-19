@@ -148,8 +148,9 @@ async def test_autopay_counts_aggregate_per_enrollment_not_per_parent():
     page = await use_case.execute(academy_id=ACADEMY_ID)
     row = page.rows[0]
     assert row.autopay_active_count == 1
-    # eligible = offered or paused (can transition straight to active); not_offered cannot yet.
-    assert row.autopay_eligible_count == 2
+    # eligible = paused only — "offered" cannot jump straight to "active"
+    # without completing Stripe consent first (see autopay_status.py).
+    assert row.autopay_eligible_count == 1
 
 
 @pytest.mark.asyncio

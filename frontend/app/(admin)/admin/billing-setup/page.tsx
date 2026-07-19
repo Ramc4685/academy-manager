@@ -254,8 +254,8 @@ function BillingSetupTableRow({
         {row.card_label ? `${row.card_label} ···· ${row.card_last4 ?? "????"}` : "—"}
       </td>
       <td className="px-4 py-3 text-slate-700">
-        {row.autopay_eligible_count > 0
-          ? `${row.autopay_active_count}/${row.autopay_eligible_count} children`
+        {row.autopay_active_count > 0 || row.autopay_eligible_count > 0
+          ? `${row.autopay_active_count}/${row.autopay_active_count + row.autopay_eligible_count} children`
           : "—"}
       </td>
       <td className="px-4 py-3 text-slate-700">{formatCents(row.outstanding_balance_cents)}</td>

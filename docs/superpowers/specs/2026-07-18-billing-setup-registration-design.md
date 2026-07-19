@@ -85,7 +85,9 @@ Output row (`BillingSetupRow`, frozen pydantic):
 - `registration_state: "no_account" | "account_no_card" | "card_on_file"`
 - `card_label: str | None` (e.g. "Visa"), `card_last4: str | None`
 - `autopay_active_count: int`, `autopay_eligible_count: int` (per-child aggregate;
-  eligible = enrollments that can legally go `active` and have a card on file)
+  eligible = enrollments in state `paused` only — `offered` cannot legally jump
+  straight to `active` without completing the Stripe consent flow first; see
+  `ALLOWED_AUTOPAY_ENROLLMENT_TRANSITIONS` in `autopay_status.py`)
 - `outstanding_balance_cents: int`
 - `last_invited_at: datetime | None`
 
@@ -123,8 +125,8 @@ admin deps and authorize as admin.
   that already exists (`CompleteAutopaySetup` consumes the result).
 - **Charge now** → `contexts/billing/.../charge_invoice_via_autopay.ChargeInvoiceViaAutopay`.
 - **Enable autopay** → per-enrollment autopay status transition
-  (`offered`/`paused` → `active`) applied across the parent's eligible
-  enrollments, reusing the autopay status state machine.
+  (`paused` → `active` only) applied across the parent's eligible enrollments,
+  reusing the autopay status state machine.
 
 ## Frontend
 
