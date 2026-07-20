@@ -1,5 +1,5 @@
 # DS2 — De-hex the design-system components
-Status: TODO
+Status: DONE (PR #NNN, 2026-07-20)
 Size: S · Depends on: DS1 · Tracker: ../TRACKER.md
 
 Second step of DS1→DS4. Requires DS1 merged (token names/values final). DS3 (new primitives) must not start before this: new primitives should be born on the token classes this plan establishes, and the audit's warning stands — "until fixed, every DS adoption spreads hex."

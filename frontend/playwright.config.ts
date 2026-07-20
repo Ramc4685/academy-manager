@@ -28,7 +28,8 @@ export default defineConfig({
     command: "pnpm dev",
     url: `http://localhost:${PORT}/login`,
     reuseExistingServer: !process.env.CI,
-    timeout: 60_000,
+    // Cold `next dev` in a fresh worktree can exceed 60s before /login responds.
+    timeout: 180_000,
     env: {
       PORT,
       NEXT_PUBLIC_E2E_AUTH_BYPASS: "1",
