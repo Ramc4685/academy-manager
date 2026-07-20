@@ -195,6 +195,38 @@ class MongoStudentRepository(TenantScopedRepository):
         cursor = self._find_many({"student_id": {"$in": student_ids}})
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def list_for_parent(self, parent_id: str) -> list[Student]:
+        # Parent docs carry the parent id under either ``parent_id`` (newer) or
+        # ``parent_user_id`` (legacy, pre-migration) — query both. Used by the
+        # parent daily digest to fan out over a family's children.
+        cursor = self._find_many({"$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}]})
+        students: list[Student] = []
+        async for doc in cursor:
+            if "parent_id" not in doc and "parent_user_id" in doc:
+                doc = {**doc, "parent_id": doc["parent_user_id"]}
+            students.append(self._to_domain(doc))
+        return students
+
+    async def get_parent_user_doc(self, parent_id: str) -> dict[str, Any] | None:
+        # Raw parent ``users`` doc (tenant-scoped), used by the parent daily
+        # digest for portal-status + display-name. Lives in infrastructure so the
+        # raw users read stays out of the composition layer. Mirrors the id
+        # resolution in ``_parent_info`` (user_id / auth_uid / firebase_uid / _id).
+        if not parent_id:
+            return None
+        academy_id = current_academy_id()
+        or_filter: list[dict[str, object]] = [
+            {"user_id": parent_id},
+            {"auth_uid": parent_id},
+            {"firebase_uid": parent_id},
+        ]
+        if BsonObjectId.is_valid(parent_id):
+            or_filter.append({"_id": BsonObjectId(parent_id)})
+        doc: dict[str, Any] | None = await self._db["users"].find_one(
+            {"academy_id": academy_id, "$or": or_filter}
+        )
+        return doc
+
     async def get_for_parent(self, parent_id: str, student_id: str) -> Student | None:
         # legacy docs use parent_user_id; newer docs use parent_id — query both during migration
         doc = await self._find_one(

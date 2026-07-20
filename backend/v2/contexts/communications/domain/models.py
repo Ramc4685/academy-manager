@@ -30,7 +30,7 @@ from backend.v2.contexts.communications.domain.errors import InvalidAudienceErro
 # ---------------------------------------------------------------------------
 
 
-AudienceRole = Literal["parent", "coach"]
+AudienceRole = Literal["parent", "coach", "admin"]
 
 
 @dataclass(frozen=True, slots=True)

@@ -21,6 +21,11 @@ class GetAcademyNotificationsOutput:
     # not the academy's local timezone.
     coach_digest_enabled: bool = False
     coach_digest_hour: int = 6
+    # Per-academy override for the parent daily digest. ``parent_digest_hour`` is
+    # interpreted in the scheduler timezone (see scheduler refactor in main.py),
+    # not the academy's local timezone.
+    parent_digest_enabled: bool = False
+    parent_digest_hour: int = 6
 
 
 def _coerce_hour(value: Any, default: int = 6) -> int:
@@ -37,6 +42,8 @@ def _notifications_output(
     *,
     default_coach_digest_enabled: bool = False,
     default_coach_digest_hour: int = 6,
+    default_parent_digest_enabled: bool = False,
+    default_parent_digest_hour: int = 6,
 ) -> GetAcademyNotificationsOutput:
     return GetAcademyNotificationsOutput(
         dues_reminders=bool(notifs.get("dues_reminders", False)),
@@ -46,6 +53,13 @@ def _notifications_output(
         coach_digest_hour=_coerce_hour(
             notifs.get("coach_digest_hour", default_coach_digest_hour),
             default=default_coach_digest_hour,
+        ),
+        parent_digest_enabled=bool(
+            notifs.get("parent_digest_enabled", default_parent_digest_enabled)
+        ),
+        parent_digest_hour=_coerce_hour(
+            notifs.get("parent_digest_hour", default_parent_digest_hour),
+            default=default_parent_digest_hour,
         ),
     )
 
@@ -57,10 +71,14 @@ class GetAcademyNotificationsUseCase:
         *,
         default_coach_digest_enabled: bool = False,
         default_coach_digest_hour: int = 6,
+        default_parent_digest_enabled: bool = False,
+        default_parent_digest_hour: int = 6,
     ) -> None:
         self._repo = academy_repo
         self._default_coach_digest_enabled = default_coach_digest_enabled
         self._default_coach_digest_hour = default_coach_digest_hour
+        self._default_parent_digest_enabled = default_parent_digest_enabled
+        self._default_parent_digest_hour = default_parent_digest_hour
 
     async def execute(self, academy_id: str) -> GetAcademyNotificationsOutput:
         doc = await self._repo.find_by_id(academy_id)
@@ -71,4 +89,6 @@ class GetAcademyNotificationsUseCase:
             notifs,
             default_coach_digest_enabled=self._default_coach_digest_enabled,
             default_coach_digest_hour=self._default_coach_digest_hour,
+            default_parent_digest_enabled=self._default_parent_digest_enabled,
+            default_parent_digest_hour=self._default_parent_digest_hour,
         )

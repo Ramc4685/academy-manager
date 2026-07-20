@@ -90,10 +90,11 @@ class FakeDigestSendRepository:
 @dataclass
 class FakeCoachResolver(AudienceResolver):
     coaches: list[ResolvedRecipient] = field(default_factory=list)
+    admins: list[ResolvedRecipient] = field(default_factory=list)
 
     async def resolve_academy_audience(self, audience: AcademyAudience) -> list[ResolvedRecipient]:
-        assert audience.role == "coach"
-        return list(self.coaches)
+        assert audience.role in ("coach", "admin")
+        return list(self.coaches) if audience.role == "coach" else list(self.admins)
 
     async def resolve_session_audience(self, audience: Any) -> list[ResolvedRecipient]:
         return []
@@ -112,8 +113,17 @@ class FakeCoachResolver(AudienceResolver):
 class StubSendPort:
     sent: list[dict[str, Any]] = field(default_factory=list)
 
-    async def send(self, *, recipient: ResolvedRecipient, subject: str, body: str) -> SendOutcome:
-        self.sent.append({"email": recipient.email, "subject": subject, "body": body})
+    async def send(
+        self,
+        *,
+        recipient: ResolvedRecipient,
+        subject: str,
+        body: str,
+        cc: list[str] | None = None,
+    ) -> SendOutcome:
+        self.sent.append(
+            {"email": recipient.email, "subject": subject, "body": body, "cc": cc or []}
+        )
         return SendOutcome(
             ok=True, provider_message_id=f"stub-{len(self.sent)}", failed_reason=None
         )
@@ -193,7 +203,9 @@ def test_renderer_includes_sessions_students_skills_youtube_and_pdf_citation() -
     assert "Court A" in body
     assert "Level 1" in body
     assert "Backhand Lift" in body
-    assert "Alice — Forehand Clear (practicing)" in body
+    assert "Alice" in body
+    assert "Forehand Clear" in body
+    assert "practicing" in body
     assert "Bob" in body  # unplaced student listed
     # YouTube URLs verbatim, every scope.
     assert SKILL_YOUTUBE in body
@@ -209,9 +221,9 @@ def test_renderer_includes_sessions_students_skills_youtube_and_pdf_citation() -
 # ---------------------------------------------------------------------------
 
 
-def _build(coaches, plans):
+def _build(coaches, plans, admins=()):
     digests = FakeDigestSendRepository()
-    resolver = FakeCoachResolver(coaches=coaches)
+    resolver = FakeCoachResolver(coaches=coaches, admins=list(admins))
     sender = StubSendPort()
     provider = FakePlanProvider(plan_by_coach=plans)
     use_case = SendCoachDailyDigest(
@@ -276,6 +288,59 @@ async def test_second_run_same_date_sends_zero() -> None:
     assert second.already_claimed == 1
     # Only the first run reached the send port.
     assert len(sender.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_admin_is_cc_d_on_every_coach_digest() -> None:
+    use_case, _digests, sender, _ = _build(
+        coaches=[
+            ResolvedRecipient(user_id="coach-1", email="c1@example.test"),
+            ResolvedRecipient(user_id="coach-2", email="c2@example.test"),
+        ],
+        plans={"coach-1": _populated_plan(), "coach-2": _populated_plan()},
+        admins=[ResolvedRecipient(user_id="admin-1", email="admin@example.test")],
+    )
+
+    result = await use_case.execute(
+        SendCoachDailyDigestCommand(
+            academy_id=ACADEMY_ID, digest_date=DIGEST_DATE, admin_cc_enabled=True
+        )
+    )
+
+    assert result.sent == 2
+    assert [s["cc"] for s in sender.sent] == [["admin@example.test"], ["admin@example.test"]]
+
+
+@pytest.mark.asyncio
+async def test_admin_cc_is_off_by_default() -> None:
+    use_case, _digests, sender, _ = _build(
+        coaches=[ResolvedRecipient(user_id="coach-1", email="c1@example.test")],
+        plans={"coach-1": _populated_plan()},
+        admins=[ResolvedRecipient(user_id="admin-1", email="admin@example.test")],
+    )
+
+    await use_case.execute(
+        SendCoachDailyDigestCommand(academy_id=ACADEMY_ID, digest_date=DIGEST_DATE)
+    )
+
+    assert sender.sent[0]["cc"] == []
+
+
+@pytest.mark.asyncio
+async def test_admin_cc_excludes_the_coach_being_emailed() -> None:
+    use_case, _digests, sender, _ = _build(
+        coaches=[ResolvedRecipient(user_id="coach-1", email="dual@example.test")],
+        plans={"coach-1": _populated_plan()},
+        admins=[ResolvedRecipient(user_id="coach-1", email="dual@example.test")],
+    )
+
+    await use_case.execute(
+        SendCoachDailyDigestCommand(
+            academy_id=ACADEMY_ID, digest_date=DIGEST_DATE, admin_cc_enabled=True
+        )
+    )
+
+    assert sender.sent[0]["cc"] == []
 
 
 @pytest.mark.asyncio

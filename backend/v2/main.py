@@ -25,6 +25,7 @@ from backend.v2.composition.admin import compose_admin
 from backend.v2.composition.coach import compose_coach
 from backend.v2.composition.digests import (
     compose_send_coach_daily_digest,
+    compose_send_parent_daily_digest,
     resolve_digest_schedule,
 )
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
@@ -46,6 +47,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo imp
 )
 from backend.v2.contexts.communications.application.use_cases.send_coach_daily_digest import (
     SendCoachDailyDigestCommand,
+)
+from backend.v2.contexts.communications.application.use_cases.send_parent_daily_digest import (
+    SendParentDailyDigestCommand,
 )
 from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import (
     BootstrapAcademy,
@@ -443,7 +447,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 continue
             with tenant_scope(academy_id):
                 result = await app.state.coach_digest.execute(
-                    SendCoachDailyDigestCommand(academy_id=academy_id, digest_date=on_date)
+                    SendCoachDailyDigestCommand(
+                        academy_id=academy_id,
+                        digest_date=on_date,
+                        admin_cc_enabled=bool(notifs.get("daily_digest_to_admin", False)),
+                    )
                 )
             totals["academy_count"] += 1
             totals["coaches"] += result.total_coaches
@@ -453,6 +461,58 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             totals["already_claimed"] += result.already_claimed
         if totals["coaches"]:
             log.info("coach_daily_digests_processed", extra=totals)
+
+    async def _send_parent_daily_digests() -> None:
+        # Hourly tick, mirroring _send_coach_daily_digests: only sends for
+        # academies whose *effective* parent-digest hour matches the current
+        # scheduler-TZ hour. The env vars (settings.parent_digest_enabled/hour)
+        # are deprecated defaults that apply only until an admin saves per-academy
+        # values. Idempotency is the per-(academy, parent, date) try_claim, so a
+        # re-run within the same hour sends nothing.
+        #
+        # NOTE: ``parent_digest_hour`` is interpreted in the scheduler timezone
+        # (settings.scheduler_tz), NOT each academy's local timezone.
+        now = datetime.now(scheduler.timezone)  # type: ignore[union-attr]
+        current_hour = now.hour
+        on_date = now.date()
+        academy_repo = MongoAcademyRepository(db)
+        totals = {
+            "academy_count": 0,
+            "parents": 0,
+            "sent": 0,
+            "skipped_empty": 0,
+            "failed": 0,
+            "already_claimed": 0,
+        }
+        for academy_id in await _scheduler_academy_ids(
+            academy_repo,
+            runtime_academy_id,
+        ):
+            doc = await academy_repo.find_by_id(academy_id)
+            notifs = (doc or {}).get("notifications") or {}
+            schedule = resolve_digest_schedule(
+                academy_enabled=notifs.get("parent_digest_enabled"),
+                academy_hour=notifs.get("parent_digest_hour"),
+                env_enabled=settings.parent_digest_enabled,
+                env_hour=settings.parent_digest_hour,
+            )
+            if not (schedule.enabled and schedule.hour == current_hour):
+                continue
+            with tenant_scope(academy_id):
+                result = await app.state.parent_digest.execute(
+                    SendParentDailyDigestCommand(
+                        academy_id=academy_id,
+                        digest_date=on_date,
+                    )
+                )
+            totals["academy_count"] += 1
+            totals["parents"] += result.total_parents
+            totals["sent"] += result.sent
+            totals["skipped_empty"] += result.skipped_empty
+            totals["failed"] += result.failed
+            totals["already_claimed"] += result.already_claimed
+        if totals["parents"]:
+            log.info("parent_daily_digests_processed", extra=totals)
 
     scheduler = AsyncIOScheduler(timezone=settings.scheduler_tz)
     scheduler.add_job(
@@ -514,6 +574,20 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         hour="*",
         minute=0,
         id="send_coach_daily_digests",
+        replace_existing=True,
+        max_instances=1,
+    )
+    # Parent daily digest — same hourly-tick + per-academy-effective-hour model as
+    # the coach digest above. Composed unconditionally so the per-academy override
+    # works regardless of the env flag; the composed sender is still the stub
+    # unless email delivery is explicitly on.
+    app.state.parent_digest = compose_send_parent_daily_digest(db)
+    scheduler.add_job(
+        _send_parent_daily_digests,
+        "cron",
+        hour="*",
+        minute=0,
+        id="send_parent_daily_digests",
         replace_existing=True,
         max_instances=1,
     )
