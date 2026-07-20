@@ -1,6 +1,6 @@
 # fix-rate-limiter-real-client-ip-webhook-ceiling
 
-PR: TBD
+PR: #312
 
 ## What changed
 Audit item **C3**. The public-endpoint rate limiter (`backend/v2/shared/http/rate_limit.py`) previously keyed buckets on `request.client.host`, which behind Fly + the Cloudflare-hosted BFF proxy is the proxy hop — every real user shared one 20 req/60s bucket on registration/onboarding.
