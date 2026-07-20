@@ -1,6 +1,6 @@
 # CI production release automation
 
-PR: #TBD
+PR: #309
 
 ## What changed
 
@@ -14,8 +14,7 @@ reruns the full validation matrix when bots edit a PR.
 No application migration or environment variable is required. The publishing
 job uses the repository-scoped `GITHUB_TOKEN` with job-only `contents: write`.
 The first successful deployment will aggregate completed release notes since
-the existing PR #299 production tag. Replace `PR: #TBD` with this change's PR
-number before merge.
+the existing PR #299 production tag.
 
 ## Risk / rollback
 
