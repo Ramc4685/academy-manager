@@ -1,13 +1,18 @@
-# fix-identity-make-login-invite-self-heal-work-under-email-en
+# Login-invite self-healing with enumeration protection
 
 PR: #307
 
 ## What changed
-fix(identity): make login-invite self-heal work under email enumeration protection
+Login-invite self-healing now checks Firebase account existence before
+generating a reset link, so it works when Firebase email-enumeration protection
+hides the usual missing-user error. Invite failures are also logged for
+operator diagnosis.
 
 ## Deploy notes
-No migration detected in the diff. Confirm no manual env var or manual step is needed before merge.
+No migration, environment variable, or manual deployment step is required.
 
 ## Risk / rollback
-_Auto-generated stub — author: fill in what breaks if this is wrong and how
-to roll back before merge._ Revert the merge commit if this regresses.
+The risk is an incorrect Firebase existence check creating or linking the wrong
+identity. Revert PR #307 to restore the exception-based flow; production
+projects with email-enumeration protection may then return 502 for parents
+whose Firebase account is missing.

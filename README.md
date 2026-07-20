@@ -93,6 +93,8 @@ The legacy CRA app has been removed from the canonical source tree.
 3. **Backend deploy** — `flyctl deploy --remote-only --app courtmastr-academy-api`.
 4. **Frontend deploy** — publish `frontend/` to the Next/Cloudflare Worker.
 5. **Smoke** — `scripts/smoke/production_smoke.sh` against the live URLs.
+6. **Release record** — publish a non-moving, SHA-bearing `deploy-*` GitHub
+   Release only when every changed component deployed and smoke passed.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for the operator runbook —
 environment variables, secret rotation, Stripe webhook configuration,

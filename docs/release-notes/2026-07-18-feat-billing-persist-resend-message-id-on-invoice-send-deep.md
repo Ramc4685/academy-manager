@@ -1,13 +1,17 @@
-# feat-billing-persist-resend-message-id-on-invoice-send-deep
+# Resend invoice-delivery visibility
 
 PR: #305
 
 ## What changed
-feat(billing): persist Resend message id on invoice send + deep-link (Phase 1)
+Successful invoice email sends now persist Resend's provider message ID and
+expose a delivery-record link in the admin billing panel. Failed later sends
+preserve the last successful provider ID.
 
 ## Deploy notes
-No migration detected in the diff. Confirm no manual env var or manual step is needed before merge.
+No migration, environment variable, or manual deployment step is required.
+The optional field is persisted through the existing invoice document mapping.
 
 ## Risk / rollback
-_Auto-generated stub — author: fill in what breaks if this is wrong and how
-to roll back before merge._ Revert the merge commit if this regresses.
+The main risk is linking an invoice to an incorrect Resend delivery record.
+Revert PR #305 to stop storing and displaying the ID. Existing optional field
+values can remain in Mongo because older code ignores them.

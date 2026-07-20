@@ -1,13 +1,18 @@
-# feat-billing-admin-send-bundles-full-student-balance-into-on
+# Combined student-balance invoice links
 
 PR: #303
 
 ## What changed
-feat(billing): admin Send bundles full student balance into one pay link
+Admin-sent invoice emails now bundle all eligible open invoices for the same
+student, parent, and currency into one Stripe pay link. The email shows the
+combined balance, while existing webhook and reconciliation logic allocates the
+payment back across the included invoices idempotently.
 
 ## Deploy notes
-No migration detected in the diff. Confirm no manual env var or manual step is needed before merge.
+No migration, environment variable, or manual deployment step is required.
 
 ## Risk / rollback
-_Auto-generated stub — author: fill in what breaks if this is wrong and how
-to roll back before merge._ Revert the merge commit if this regresses.
+The primary risk is including the wrong invoice in a combined checkout or
+showing an email amount that differs from Stripe. Revert PR #303 to restore
+single-invoice admin links. Checkout sessions already created by this version
+remain valid and must not be deleted or re-created manually.

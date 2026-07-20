@@ -309,11 +309,11 @@ git clean -fd
 ## Release Notes
 
 Write this yourself as part of the change, before pushing — do not leave it
-to CI. `.github/workflows/release-notes.yml` auto-generates a stub and
-comments on the PR if `backend/` or `frontend/` changed and no file exists,
-and fails the check if one exists but a section is empty/placeholder — but
-that stub is a backstop, not a substitute for you writing accurate Deploy
-notes and Risk/rollback before review.
+to CI. `.github/workflows/release-notes.yml` is validation-only: it fails when
+`backend/` or `frontend/` changed without a complete note, and it never writes
+to the PR branch. To create a local starting point after the PR number is
+known, run `python3 scripts/dev/release_notes_check.py --generate --pr-number
+<number>`, then replace every generated placeholder before pushing.
 
 Before merging a PR to `main` (or when batching several PRs into one deploy),
 add a file to `docs/release-notes/YYYY-MM-DD-<slug>.md`:
@@ -337,6 +337,11 @@ Keep each file terse — this is a deploy log, not a design doc. Link related
 PRs when several land in the same batch. If a PR includes a migration, the
 file must say whether it runs automatically (`run_migrations_on_boot`) or
 needs a manual step, since that isn't tracked anywhere else today.
+
+After every complete production deployment and successful smoke check,
+`.github/workflows/production.yml` aggregates the notes added since the last
+`deploy-*` tag and publishes an idempotent GitHub Release for the deployed SHA.
+Do not move or force-update production tags.
 
 ---
 
