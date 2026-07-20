@@ -10,7 +10,7 @@
     "deploy:cloudflare": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "upload:cloudflare": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "generate:api": "openapi-typescript http://localhost:8001/openapi.json -o lib/api/generated/v2.d.ts",
     "size": "size-limit",
     "lhci": "lhci autorun",

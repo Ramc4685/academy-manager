@@ -16,6 +16,7 @@ import {
 import { queryKeys } from "@/lib/query/keys";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
+import { roleToChipVariant } from "@/lib/admin/role-chip";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 
@@ -256,12 +257,6 @@ function Field({
   );
 }
 
-function mapRoleToStatus(role: string): any {
-  if (role === "admin") return "enrolled";
-  if (role === "coach") return "autopayOn";
-  return "manual";
-}
-
 function UsersTable({ users }: { users: AdminUserView[] }) {
   return (
     <div className="overflow-x-auto">
@@ -293,7 +288,7 @@ function UsersTable({ users }: { users: AdminUserView[] }) {
               <td className="px-2 py-3 text-rally-base">{user.email}</td>
               <td className="px-2 py-3 text-rally-muted">{user.phone || "-"}</td>
               <td className="px-2 py-3">
-                <Chip variant={mapRoleToStatus(user.role)} label={user.role.toUpperCase()} />
+                <Chip variant={roleToChipVariant(user.role)} label={user.role.toUpperCase()} />
               </td>
               <td className="px-2 py-3">
                 <Chip variant={user.status === "active" ? "enrolled" : "expired"} label={user.status.toUpperCase()} />

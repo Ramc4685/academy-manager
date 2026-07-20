@@ -38,7 +38,7 @@ Expected: returns the matching local user with `role`.
 ```
 curl -c /tmp/cookies.txt -X POST http://localhost:8001/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@badminton.app","password":"Admin@12345"}'
+  -d '{"email":"admin@example.com","password":"$ADMIN_PASSWORD"}'
 curl -b /tmp/cookies.txt http://localhost:8001/api/auth/me
 ```
 Expected: returns user with `role:"admin"`.

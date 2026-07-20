@@ -64,9 +64,9 @@ def _init_firebase_admin() -> None:
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-ADMIN_PASSWORD = os.environ.get("SEED_ADMIN_PASSWORD", "Admin@12345")
-COACH_PASSWORD = os.environ.get("SEED_COACH_PASSWORD", "Coach@12345")
-PARENT_PASSWORD = os.environ.get("SEED_PARENT_PASSWORD", "Parent@12345")
+ADMIN_PASSWORD = os.environ.get("SEED_ADMIN_PASSWORD", "CHANGE_ME")
+COACH_PASSWORD = os.environ.get("SEED_COACH_PASSWORD", "CHANGE_ME")
+PARENT_PASSWORD = os.environ.get("SEED_PARENT_PASSWORD", "CHANGE_ME")
 FIREBASE_MODE = os.environ.get("FIREBASE_AUTH_ENABLED", "").lower() in ("1", "true", "yes")
 FIREBASE_PROJECT = os.environ.get("FIREBASE_PROJECT_ID", "academy-courtmastr")
 FIREBASE_EMULATOR = os.environ.get("FIREBASE_AUTH_EMULATOR_HOST", "127.0.0.1:9099")

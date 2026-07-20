@@ -125,7 +125,9 @@ jobs:
 
       - name: v2 backend tests
         working-directory: backend
-        run: pytest v2/tests --override-ini="testpaths=v2/tests" --cov=v2/shared --cov-report=term-missing --cov-fail-under=70
+        # Ratchet: raise fail-under toward measured coverage whenever it grows; never lower without a tracker note.
+        # Measured v2 TOTAL = 87.2% (2429 tests, 2026-07-20); floor set to measured−1 for platform variance.
+        run: pytest v2/tests --override-ini="testpaths=v2/tests" --cov=v2 --cov-report=term-missing:skip-covered --cov-fail-under=86
 
   backend-advisory:
     name: Backend Lint
