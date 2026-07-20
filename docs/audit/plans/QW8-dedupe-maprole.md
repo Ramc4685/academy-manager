@@ -1,5 +1,5 @@
 # QW8 — Dedupe mapRoleToStatus
-Status: DONE (fix/audit-first-wave, 2026-07-20)
+Status: DONE (PR #310, 2026-07-20)
 Size: XS · Depends on: none · Tracker: ../TRACKER.md
 
 ## Problem

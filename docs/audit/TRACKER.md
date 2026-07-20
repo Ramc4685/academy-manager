@@ -26,15 +26,15 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 
 | ID | Item | Plan | Size | Depends on | Status | PR/Issue |
 |---|---|---|---|---|---|---|
-| QW1 | Re-point pnpm security overrides | [plans/QW1-pnpm-overrides.md](plans/QW1-pnpm-overrides.md) | XS | — | DONE | fix/audit-first-wave |
+| QW1 | Re-point pnpm security overrides | [plans/QW1-pnpm-overrides.md](plans/QW1-pnpm-overrides.md) | XS | — | DONE | #310 |
 | QW2 | (merged into C1) | — | — | C1 | — | |
-| QW3 | Scrub weak example credentials | [plans/QW3-env-example-creds.md](plans/QW3-env-example-creds.md) | XS | — | DONE | fix/audit-first-wave |
+| QW3 | Scrub weak example credentials | [plans/QW3-env-example-creds.md](plans/QW3-env-example-creds.md) | XS | — | DONE | #310 |
 | QW4 | Delete orphaned legacy bytecode dirs | [plans/QW4-orphaned-bytecode.md](plans/QW4-orphaned-bytecode.md) | XS | — | TODO | |
 | QW5 | Add CSP + HSTS headers | [plans/QW5-csp-hsts.md](plans/QW5-csp-hsts.md) | S | — | TODO | |
-| QW6 | Fix local pnpm typecheck (stale .next/types) | [plans/QW6-local-typecheck.md](plans/QW6-local-typecheck.md) | XS | — | DONE | fix/audit-first-wave |
-| QW7 | Widen CI coverage gate to v2 | [plans/QW7-coverage-gate.md](plans/QW7-coverage-gate.md) | XS | — | DONE | fix/audit-first-wave |
-| QW8 | Dedupe mapRoleToStatus | [plans/QW8-dedupe-maprole.md](plans/QW8-dedupe-maprole.md) | XS | — | DONE | fix/audit-first-wave |
-| QW9 | Move tracked repo-root clutter | [plans/QW9-root-clutter.md](plans/QW9-root-clutter.md) | XS | — | DONE | fix/audit-first-wave |
+| QW6 | Fix local pnpm typecheck (stale .next/types) | [plans/QW6-local-typecheck.md](plans/QW6-local-typecheck.md) | XS | — | DONE | #310 |
+| QW7 | Widen CI coverage gate to v2 | [plans/QW7-coverage-gate.md](plans/QW7-coverage-gate.md) | XS | — | DONE | #310 |
+| QW8 | Dedupe mapRoleToStatus | [plans/QW8-dedupe-maprole.md](plans/QW8-dedupe-maprole.md) | XS | — | DONE | #310 |
+| QW9 | Move tracked repo-root clutter | [plans/QW9-root-clutter.md](plans/QW9-root-clutter.md) | XS | — | DONE | #310 |
 | QW10 | Lease-lock scheduler jobs | [plans/QW10-scheduler-lease.md](plans/QW10-scheduler-lease.md) | S | — | TODO | |
 
 ## Medium-term
