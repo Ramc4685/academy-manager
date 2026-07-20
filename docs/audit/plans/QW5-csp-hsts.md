@@ -1,5 +1,5 @@
 # QW5 — Add CSP + HSTS headers
-Status: DONE (PR #TBD — report-only rollout; enforcement flip is a follow-up)
+Status: DONE (PR #315 — report-only rollout; enforcement flip is a follow-up)
 Size: S · Depends on: none · Tracker: ../TRACKER.md
 
 ## Problem

@@ -1,6 +1,6 @@
 # fix-frontend-csp-report-only-hsts-headers
 
-PR: #TBD
+PR: #315
 
 ## What changed
 Added a `Content-Security-Policy-Report-Only` header (audit item QW5) covering all routes except the proxied Firebase auth helper (`/__/auth/*`), plus `Strict-Transport-Security` (1 year, includeSubDomains, no preload yet). The CSP allows only same-origin scripts/styles (plus the zone-injected Cloudflare Web Analytics beacon), Firebase identity/storage endpoints in connect-src/img-src, Cloudflare Insights RUM in connect-src, and Stripe hosted Checkout in form-action.
