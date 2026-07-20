@@ -132,7 +132,7 @@ class SubmitTrialRequest:
             request_id=str(new_ulid()),
             academy_id=session.academy_id,
             parent_user_id=cmd.parent_user_id,
-            student_ref=cmd.student_ref,  # type: ignore[arg-type]
+            student_ref=cmd.student_ref,
             student_id=cmd.student_id,
             prospective_child_name=cmd.prospective_child_name,
             prospective_child_dob=cmd.prospective_child_dob,

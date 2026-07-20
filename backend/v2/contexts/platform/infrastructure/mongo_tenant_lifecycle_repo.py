@@ -70,7 +70,7 @@ class MongoTenantLifecycleRepository:
             display_name=str(doc.get("display_name") or doc["academy_id"]),
             slug=str(doc.get("slug") or doc["academy_id"]),
             primary_domain=str(doc.get("primary_domain") or doc.get("custom_domain") or ""),
-            status=str(doc.get("status") or "provisioning"),  # type: ignore[arg-type]
+            status=str(doc.get("status") or "provisioning"),
             plan_code=str(doc.get("plan_code") or "starter"),
             limits=TenantLimits.model_validate(doc.get("limits") or {}),
             status_reason=doc.get("status_reason"),

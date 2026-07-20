@@ -20,12 +20,12 @@ class MongoSkillRepository(TenantScopedRepository):
             name=str(doc["name"]),
             description=str(doc.get("description", "")),
             is_required=bool(doc.get("is_required", True)),
-            scoring_type=doc.get("scoring_type", "ATTEMPT_BASED"),  # type: ignore[arg-type]
+            scoring_type=doc.get("scoring_type", "ATTEMPT_BASED"),
             pass_threshold_pct=float(doc.get("pass_threshold_pct", 70.0)),
             coach_override_allowed=bool(doc.get("coach_override_allowed", False)),
             is_active=bool(doc.get("is_active", True)),
-            created_at=doc["created_at"],  # type: ignore[arg-type]
-            updated_at=doc["updated_at"],  # type: ignore[arg-type]
+            created_at=doc["created_at"],
+            updated_at=doc["updated_at"],
             created_by=str(doc.get("created_by", "")),
         )
 

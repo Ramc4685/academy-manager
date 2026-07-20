@@ -56,17 +56,17 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             amount_cents=int(doc.get("amount_cents", 0)),
             unapplied_amount_cents=int(doc.get("unapplied_amount_cents", 0)),
             currency=str(doc.get("currency", "usd")),
-            status=doc.get("status", "pending"),  # type: ignore[arg-type]
+            status=doc.get("status", "pending"),
             refunded_cents=int(doc.get("refunded_cents", 0)),
-            payment_method=doc.get("payment_method"),  # type: ignore[arg-type]
-            stripe_payment_intent_id=doc.get("stripe_payment_intent_id"),  # type: ignore[arg-type]
-            stripe_invoice_id=doc.get("stripe_invoice_id"),  # type: ignore[arg-type]
-            paid_at=doc.get("paid_at"),  # type: ignore[arg-type]
-            recorded_by=doc.get("recorded_by"),  # type: ignore[arg-type]
-            notes=doc.get("notes"),  # type: ignore[arg-type]
-            metadata=doc.get("metadata"),  # type: ignore[arg-type]
-            created_at=doc["created_at"],  # type: ignore[arg-type]
-            updated_at=doc["updated_at"],  # type: ignore[arg-type]
+            payment_method=doc.get("payment_method"),
+            stripe_payment_intent_id=doc.get("stripe_payment_intent_id"),
+            stripe_invoice_id=doc.get("stripe_invoice_id"),
+            paid_at=doc.get("paid_at"),
+            recorded_by=doc.get("recorded_by"),
+            notes=doc.get("notes"),
+            metadata=doc.get("metadata"),
+            created_at=doc["created_at"],
+            updated_at=doc["updated_at"],
         )
 
     @staticmethod

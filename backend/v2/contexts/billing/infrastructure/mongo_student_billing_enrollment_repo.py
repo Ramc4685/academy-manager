@@ -36,16 +36,16 @@ class MongoStudentBillingEnrollmentRepository(TenantScopedRepository):
             student_id=str(doc["student_id"]),
             parent_id=str(doc["parent_id"]),
             session_type_id=str(doc["session_type_id"]),
-            stripe_subscription_id=doc.get("stripe_subscription_id"),  # type: ignore[arg-type]
-            billing_start_date=doc["billing_start_date"],  # type: ignore[arg-type]
-            status=doc.get("status", "active"),  # type: ignore[arg-type]
-            autopay_enrollment_status=doc.get("autopay_enrollment_status", "not_offered"),  # type: ignore[arg-type]
-            last_attempt_outcome=doc.get("last_attempt_outcome"),  # type: ignore[arg-type]
-            last_attempt_at=doc.get("last_attempt_at"),  # type: ignore[arg-type]
-            last_failure_code=doc.get("last_failure_code"),  # type: ignore[arg-type]
-            override_price_cents=doc.get("override_price_cents"),  # type: ignore[arg-type]
-            enrolled_at=doc["enrolled_at"],  # type: ignore[arg-type]
-            updated_at=doc["updated_at"],  # type: ignore[arg-type]
+            stripe_subscription_id=doc.get("stripe_subscription_id"),
+            billing_start_date=doc["billing_start_date"],
+            status=doc.get("status", "active"),
+            autopay_enrollment_status=doc.get("autopay_enrollment_status", "not_offered"),
+            last_attempt_outcome=doc.get("last_attempt_outcome"),
+            last_attempt_at=doc.get("last_attempt_at"),
+            last_failure_code=doc.get("last_failure_code"),
+            override_price_cents=doc.get("override_price_cents"),
+            enrolled_at=doc["enrolled_at"],
+            updated_at=doc["updated_at"],
         )
 
     async def save(self, enrollment: StudentBillingEnrollment) -> None:
@@ -81,7 +81,7 @@ class MongoStudentBillingEnrollmentRepository(TenantScopedRepository):
         if not doc:
             return None
         status = doc.get("autopay_enrollment_status")
-        return status if status else None  # type: ignore[return-value]
+        return status if status else None
 
     async def set_autopay_enrollment_status(
         self,

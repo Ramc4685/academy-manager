@@ -19,10 +19,10 @@ class MongoStudentLevelProgressRepository(TenantScopedRepository):
             student_id=str(doc["student_id"]),
             program_id=str(doc["program_id"]),
             level_id=str(doc["level_id"]),
-            status=doc["status"],  # type: ignore[arg-type]
-            started_at=doc["started_at"],  # type: ignore[arg-type]
-            completed_at=doc.get("completed_at"),  # type: ignore[arg-type]
-            created_at=doc["created_at"],  # type: ignore[arg-type]
+            status=doc["status"],
+            started_at=doc["started_at"],
+            completed_at=doc.get("completed_at"),
+            created_at=doc["created_at"],
         )
 
     async def save(self, progress: StudentLevelProgress) -> None:

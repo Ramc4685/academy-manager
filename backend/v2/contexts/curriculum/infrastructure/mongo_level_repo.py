@@ -18,13 +18,13 @@ class MongoLevelRepository(TenantScopedRepository):
             sequence=int(doc["sequence"]),
             name=str(doc["name"]),
             description=str(doc.get("description", "")),
-            completion_rule=doc.get("completion_rule", "ALL_REQUIRED_SKILLS"),  # type: ignore[arg-type]
-            points_threshold=doc.get("points_threshold"),  # type: ignore[arg-type]
+            completion_rule=doc.get("completion_rule", "ALL_REQUIRED_SKILLS"),
+            points_threshold=doc.get("points_threshold"),
             requires_coach_recommendation=bool(doc.get("requires_coach_recommendation", True)),
             requires_admin_approval=bool(doc.get("requires_admin_approval", False)),
             is_active=bool(doc.get("is_active", True)),
-            created_at=doc["created_at"],  # type: ignore[arg-type]
-            updated_at=doc["updated_at"],  # type: ignore[arg-type]
+            created_at=doc["created_at"],
+            updated_at=doc["updated_at"],
             created_by=str(doc.get("created_by", "")),
         )
 

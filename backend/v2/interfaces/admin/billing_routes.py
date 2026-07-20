@@ -156,11 +156,11 @@ async def list_billing_invoices(
             InvoiceLineDto(
                 description=str(line.get("description", "")),
                 amount_cents=int(line.get("amount_cents", 0)),
-                line_type=line.get("line_type"),  # type: ignore[arg-type]
-                quantity=line.get("quantity"),  # type: ignore[arg-type]
-                unit_amount_cents=line.get("unit_amount_cents"),  # type: ignore[arg-type]
-                source_type=line.get("source_type"),  # type: ignore[arg-type]
-                source_id=line.get("source_id"),  # type: ignore[arg-type]
+                line_type=line.get("line_type"),
+                quantity=line.get("quantity"),
+                unit_amount_cents=line.get("unit_amount_cents"),
+                source_type=line.get("source_type"),
+                source_id=line.get("source_id"),
             )
             for line in item["lines"]
         ]
@@ -192,7 +192,7 @@ async def get_billing_invoice_detail(
 ) -> InvoiceDetailResponse:
     raw = await use_cases.get_billing_invoice_detail(invoice_id)  # type: ignore[operator]
     return InvoiceDetailResponse(
-        invoice_id=raw.get("invoice_id"),  # type: ignore[arg-type]
+        invoice_id=raw.get("invoice_id"),
         invoice_number=str(raw["invoice_number"]),
         period=str(raw.get("period") or ""),
         lines=[
@@ -201,18 +201,18 @@ async def get_billing_invoice_detail(
                 invoice_id=line.get("invoice_id"),
                 description=str(line.get("description", "")),
                 amount_cents=int(line.get("amount_cents", 0)),
-                line_type=line.get("line_type"),  # type: ignore[arg-type]
-                quantity=line.get("quantity"),  # type: ignore[arg-type]
-                unit_amount_cents=line.get("unit_amount_cents"),  # type: ignore[arg-type]
-                source_type=line.get("source_type"),  # type: ignore[arg-type]
-                source_id=line.get("source_id"),  # type: ignore[arg-type]
+                line_type=line.get("line_type"),
+                quantity=line.get("quantity"),
+                unit_amount_cents=line.get("unit_amount_cents"),
+                source_type=line.get("source_type"),
+                source_id=line.get("source_id"),
             )
             for line in raw.get("lines", [])
         ],
-        subtotal_cents=raw.get("subtotal_cents"),  # type: ignore[arg-type]
-        discount_cents=raw.get("discount_cents"),  # type: ignore[arg-type]
-        total_cents=raw.get("total_cents"),  # type: ignore[arg-type]
-        balance_due_cents=raw.get("balance_due_cents"),  # type: ignore[arg-type]
+        subtotal_cents=raw.get("subtotal_cents"),
+        discount_cents=raw.get("discount_cents"),
+        total_cents=raw.get("total_cents"),
+        balance_due_cents=raw.get("balance_due_cents"),
         due_amount_cents=int(raw.get("due_amount_cents", 0)),
         paid_amount_cents=int(raw.get("paid_amount_cents", 0)),
         status=str(raw.get("status", "open")),
@@ -230,12 +230,12 @@ async def get_billing_invoice_detail(
             )
             for item in raw.get("credit_usage", [])
         ],
-        invoice_pdf_artifact_id=raw.get("invoice_pdf_artifact_id"),  # type: ignore[arg-type]
-        receipt_artifact_id=raw.get("receipt_artifact_id"),  # type: ignore[arg-type]
+        invoice_pdf_artifact_id=raw.get("invoice_pdf_artifact_id"),
+        receipt_artifact_id=raw.get("receipt_artifact_id"),
         delivery_status=str(raw.get("delivery_status") or "not_sent"),
-        sent_at=raw.get("sent_at"),  # type: ignore[arg-type]
-        last_sent_at=raw.get("last_sent_at"),  # type: ignore[arg-type]
-        email_provider_message_id=raw.get("email_provider_message_id"),  # type: ignore[arg-type]
+        sent_at=raw.get("sent_at"),
+        last_sent_at=raw.get("last_sent_at"),
+        email_provider_message_id=raw.get("email_provider_message_id"),
     )
 
 

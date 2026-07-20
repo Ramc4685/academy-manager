@@ -15,13 +15,13 @@ class MongoSessionTypeRepository(TenantScopedRepository):
             session_type_id=str(doc["session_type_id"]),
             academy_id=str(doc["academy_id"]),
             name=str(doc["name"]),
-            description=doc.get("description"),  # type: ignore[arg-type]
-            price_cents=int(doc["price_cents"]),  # type: ignore[arg-type]
-            billing_period=doc.get("billing_period", "monthly"),  # type: ignore[arg-type]
-            overage_rate_cents=doc.get("overage_rate_cents"),  # type: ignore[arg-type]
+            description=doc.get("description"),
+            price_cents=int(doc["price_cents"]),
+            billing_period=doc.get("billing_period", "monthly"),
+            overage_rate_cents=doc.get("overage_rate_cents"),
             is_active=bool(doc.get("is_active", True)),
-            created_at=doc["created_at"],  # type: ignore[arg-type]
-            updated_at=doc["updated_at"],  # type: ignore[arg-type]
+            created_at=doc["created_at"],
+            updated_at=doc["updated_at"],
         )
 
     async def save(self, session_type: SessionType) -> None:

@@ -714,14 +714,14 @@ class _LazyTenancyMiddleware(TenancyMiddleware):
     single-academy mode (PRIMARY_ACADEMY_ID), or legacy compatibility mode.
     """
 
-    async def dispatch(self, request, call_next):  # type: ignore[override]
+    async def dispatch(self, request, call_next):
         if self._load_claims is None:
             use_case = getattr(request.app.state, "load_auth_claims", None)
             if use_case is not None:
                 # Re-bind to the use case's `.execute` method so the
                 # middleware can call it as load_claims(token,
                 # resolved_academy_id=...).
-                self._load_claims = use_case.execute  # type: ignore[assignment]
+                self._load_claims = use_case.execute
         if self._resolve_tenant is None:
             self._resolve_tenant = _build_request_tenant_resolver(request.app)
         if self._check_tenant_servable is None:

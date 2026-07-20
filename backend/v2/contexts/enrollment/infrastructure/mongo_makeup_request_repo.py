@@ -20,13 +20,13 @@ class MongoMakeupRequestRepository(TenantScopedRepository):
             parent_id=str(doc["parent_id"]),
             missed_occurrence_id=str(doc["missed_occurrence_id"]),
             requested_target_occurrence_id=_optional_str(doc.get("requested_target_occurrence_id")),
-            status=doc.get("status", "pending"),  # type: ignore[arg-type]
-            expires_at=doc["expires_at"],  # type: ignore[arg-type]
+            status=doc.get("status", "pending"),
+            expires_at=doc["expires_at"],
             denial_reason=_optional_str(doc.get("denial_reason")),
             decided_by=_optional_str(doc.get("decided_by")),
-            decided_at=doc.get("decided_at"),  # type: ignore[arg-type]
+            decided_at=doc.get("decided_at"),
             approved_target_occurrence_id=_optional_str(doc.get("approved_target_occurrence_id")),
-            created_at=doc["created_at"],  # type: ignore[arg-type]
+            created_at=doc["created_at"],
         )
 
     @staticmethod

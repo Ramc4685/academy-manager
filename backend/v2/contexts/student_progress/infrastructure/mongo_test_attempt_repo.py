@@ -22,14 +22,14 @@ class MongoTestAttemptRepository(TenantScopedRepository):
             occurrence_id=str(doc["occurrence_id"]) if doc.get("occurrence_id") else None,
             coach_id=str(doc["coach_id"]),
             scoring_type=str(doc["scoring_type"]),
-            attempts_count=int(doc["attempts_count"]),  # type: ignore[arg-type]
-            success_count=int(doc["success_count"]),  # type: ignore[arg-type]
+            attempts_count=int(doc["attempts_count"]),
+            success_count=int(doc["success_count"]),
             score=float(doc["score"]),  # type: ignore[arg-type]
             passed=bool(doc["passed"]),
             coach_override=bool(doc.get("coach_override", False)),
             override_reason=str(doc["override_reason"]) if doc.get("override_reason") else None,
             notes=str(doc.get("notes", "")),
-            tested_at=doc["tested_at"],  # type: ignore[arg-type]
+            tested_at=doc["tested_at"],
         )
 
     async def save(self, attempt: TestAttempt) -> None:

@@ -268,8 +268,8 @@ async def _build_session_skills(
                     "status": str(_skill_value(skill, "status", "NOT_STARTED")),
                 },
             )
-            group["student_ids"].append(entry.student_id)  # type: ignore[union-attr]
-            group["student_names"].append(entry.full_name)  # type: ignore[union-attr]
+            group["student_ids"].append(entry.student_id)
+            group["student_names"].append(entry.full_name)
 
     return {
         "session_id": session_id,
@@ -316,14 +316,9 @@ async def get_day_hub(
         for session in sessions
     ]
     student_ids = {
-        str(student["student_id"])
-        for session in session_models
-        for student in session["roster"]  # type: ignore[index]
+        str(student["student_id"]) for session in session_models for student in session["roster"]
     }
-    skill_focus_count = sum(
-        len(session["skill_groups"])
-        for session in session_models  # type: ignore[arg-type]
-    )
+    skill_focus_count = sum(len(session["skill_groups"]) for session in session_models)
     return {
         "date": target_date.isoformat(),
         "summary": {
@@ -391,7 +386,7 @@ async def bulk_update_skill_status(
                 skill_id=body.skill_id,
                 level_id=body.level_id,
                 program_id=body.program_id,
-                new_status=body.status,  # type: ignore[arg-type]
+                new_status=body.status,
                 updated_by=claims.user_id,
             )
         )
@@ -436,7 +431,7 @@ async def update_skill_status(
                 skill_id=skill_id,
                 level_id=body.level_id,
                 program_id=body.program_id,
-                new_status=body.status,  # type: ignore[arg-type]
+                new_status=body.status,
                 updated_by=claims.user_id,
             )
         )

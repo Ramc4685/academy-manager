@@ -24,25 +24,25 @@ class MongoApplicationRepository(TenantScopedRepository):
             academy_id=str(doc["academy_id"]),
             parent_user_id=str(doc["parent_user_id"]),
             parent_email=str(doc["parent_email"]),
-            status=doc.get("status", "DRAFT"),  # type: ignore[arg-type]
+            status=doc.get("status", "DRAFT"),
             parent_profile=ParentProfile.model_validate(doc.get("parent_profile") or {}),
             child_profile=ChildProfile.model_validate(doc.get("child_profile") or {}),
-            selected_session_id=doc.get("selected_session_id"),  # type: ignore[arg-type]
+            selected_session_id=doc.get("selected_session_id"),
             waiver_acceptance=WaiverAcceptance.model_validate(wa) if wa else None,
-            stripe_checkout_session_id=doc.get("stripe_checkout_session_id"),  # type: ignore[arg-type]
-            payment_id=doc.get("payment_id"),  # type: ignore[arg-type]
-            student_id=doc.get("student_id"),  # type: ignore[arg-type]
-            enrollment_id=doc.get("enrollment_id"),  # type: ignore[arg-type]
-            waitlist_id=doc.get("waitlist_id"),  # type: ignore[arg-type]
-            decision_reason=doc.get("decision_reason"),  # type: ignore[arg-type]
-            decided_by=doc.get("decided_by"),  # type: ignore[arg-type]
-            decided_at=doc.get("decided_at"),  # type: ignore[arg-type]
-            review_claimed_at=doc.get("review_claimed_at"),  # type: ignore[arg-type]
-            review_claim_token=doc.get("review_claim_token"),  # type: ignore[arg-type]
-            zero_quote_period=doc.get("zero_quote_period"),  # type: ignore[arg-type]
-            expires_at=doc["expires_at"],  # type: ignore[arg-type]
-            created_at=doc["created_at"],  # type: ignore[arg-type]
-            updated_at=doc["updated_at"],  # type: ignore[arg-type]
+            stripe_checkout_session_id=doc.get("stripe_checkout_session_id"),
+            payment_id=doc.get("payment_id"),
+            student_id=doc.get("student_id"),
+            enrollment_id=doc.get("enrollment_id"),
+            waitlist_id=doc.get("waitlist_id"),
+            decision_reason=doc.get("decision_reason"),
+            decided_by=doc.get("decided_by"),
+            decided_at=doc.get("decided_at"),
+            review_claimed_at=doc.get("review_claimed_at"),
+            review_claim_token=doc.get("review_claim_token"),
+            zero_quote_period=doc.get("zero_quote_period"),
+            expires_at=doc["expires_at"],
+            created_at=doc["created_at"],
+            updated_at=doc["updated_at"],
         )
 
     async def save(self, app: Application) -> None:

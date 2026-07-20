@@ -129,13 +129,13 @@ class MongoExpenseRepository(TenantScopedRepository):
         return Expense(
             expense_id=str(doc["expense_id"]),
             academy_id=str(doc["academy_id"]),
-            category=doc.get("category", "other"),  # type: ignore[arg-type]
-            amount_cents=int(doc["amount_cents"]),  # type: ignore[arg-type]
+            category=doc.get("category", "other"),
+            amount_cents=int(doc["amount_cents"]),
             note=str(doc.get("note", "")),
-            incurred_on=doc["incurred_on"],  # type: ignore[arg-type]
-            deleted_at=doc.get("deleted_at"),  # type: ignore[arg-type]
-            deleted_by=doc.get("deleted_by"),  # type: ignore[arg-type]
-            delete_reason=doc.get("delete_reason"),  # type: ignore[arg-type]
+            incurred_on=doc["incurred_on"],
+            deleted_at=doc.get("deleted_at"),
+            deleted_by=doc.get("deleted_by"),
+            delete_reason=doc.get("delete_reason"),
         )
 
     async def add(self, e: Expense) -> None:
@@ -185,14 +185,14 @@ class MongoPayoutRepository(TenantScopedRepository):
             payout_id=str(doc["payout_id"]),
             academy_id=str(doc["academy_id"]),
             coach_id=str(doc["coach_id"]),
-            amount_cents=int(doc["amount_cents"]),  # type: ignore[arg-type]
-            period_start=doc["period_start"],  # type: ignore[arg-type]
-            period_end=doc["period_end"],  # type: ignore[arg-type]
-            paid_at=doc.get("paid_at"),  # type: ignore[arg-type]
-            expected_revenue_cents=doc.get("expected_revenue_cents"),  # type: ignore[arg-type]
-            students_count=doc.get("students_count"),  # type: ignore[arg-type]
-            sessions_count=doc.get("sessions_count"),  # type: ignore[arg-type]
-            rule_label=doc.get("rule_label"),  # type: ignore[arg-type]
+            amount_cents=int(doc["amount_cents"]),
+            period_start=doc["period_start"],
+            period_end=doc["period_end"],
+            paid_at=doc.get("paid_at"),
+            expected_revenue_cents=doc.get("expected_revenue_cents"),
+            students_count=doc.get("students_count"),
+            sessions_count=doc.get("sessions_count"),
+            rule_label=doc.get("rule_label"),
         )
 
     async def list_all(self) -> list[Payout]:
@@ -336,7 +336,7 @@ class MongoPayoutRepository(TenantScopedRepository):
         )
         async for row in session_cursor:
             if row.get("amount_cents") is not None:
-                price_by_session[str(row["session_id"])] = int(row["amount_cents"])  # type: ignore[arg-type]
+                price_by_session[str(row["session_id"])] = int(row["amount_cents"])
 
         if not price_by_session:
             return {}

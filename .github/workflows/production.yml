@@ -164,10 +164,13 @@ jobs:
         working-directory: backend
         run: ruff format --check v2
 
-      - name: Mypy v2
-        working-directory: backend
-        continue-on-error: true
-        run: mypy --config-file pyproject.toml v2
+      - name: Mypy v2 (blocking at frozen baseline)
+        # Runs from the repo root so `backend.v2.*` has a single package base
+        # (audit C1). Pre-existing errors are frozen in backend/mypy-baseline.txt;
+        # only NEW errors fail the build. Burn-down: docs/audit/mypy-baseline.md.
+        run: >
+          mypy --config-file backend/pyproject.toml -p backend.v2
+          | mypy-baseline filter --baseline-path backend/mypy-baseline.txt
 
   frontend-static:
     name: Frontend Static

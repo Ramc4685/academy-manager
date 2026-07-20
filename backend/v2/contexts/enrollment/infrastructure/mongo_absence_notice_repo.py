@@ -21,7 +21,7 @@ class MongoAbsenceNoticeRepository(TenantScopedRepository):
             occurrence_id=str(doc["occurrence_id"]),
             session_id=str(doc["session_id"]),
             submitted_by=str(doc["submitted_by"]),
-            submitted_at=doc["submitted_at"],  # type: ignore[arg-type]
+            submitted_at=doc["submitted_at"],
             notice_window_met=bool(doc["notice_window_met"]),
         )
 

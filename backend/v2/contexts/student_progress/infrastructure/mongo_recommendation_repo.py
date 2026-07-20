@@ -20,11 +20,11 @@ class MongoLevelUpRecommendationRepository(TenantScopedRepository):
             from_level_id=str(doc["from_level_id"]),
             to_level_id=str(doc["to_level_id"]),
             program_id=str(doc["program_id"]),
-            status=doc["status"],  # type: ignore[arg-type]
+            status=doc["status"],
             recommended_by=str(doc["recommended_by"]),
-            recommended_at=doc["recommended_at"],  # type: ignore[arg-type]
+            recommended_at=doc["recommended_at"],
             reviewed_by=str(doc["reviewed_by"]) if doc.get("reviewed_by") else None,
-            reviewed_at=doc.get("reviewed_at"),  # type: ignore[arg-type]
+            reviewed_at=doc.get("reviewed_at"),
             rejection_reason=str(doc["rejection_reason"]) if doc.get("rejection_reason") else None,
         )
 

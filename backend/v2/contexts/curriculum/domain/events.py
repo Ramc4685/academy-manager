@@ -17,9 +17,9 @@ class ProgramCreatedPayload(BaseModel):
 
 
 class ProgramCreated(DomainEvent):
-    name: Literal["Curriculum.ProgramCreated"] = "Curriculum.ProgramCreated"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: ProgramCreatedPayload  # type: ignore[assignment]
+    name: Literal["Curriculum.ProgramCreated"] = "Curriculum.ProgramCreated"
+    schema_version: Literal[1] = 1
+    payload: ProgramCreatedPayload
 
 
 class LevelCreatedPayload(BaseModel):
@@ -31,9 +31,9 @@ class LevelCreatedPayload(BaseModel):
 
 
 class LevelCreated(DomainEvent):
-    name: Literal["Curriculum.LevelCreated"] = "Curriculum.LevelCreated"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: LevelCreatedPayload  # type: ignore[assignment]
+    name: Literal["Curriculum.LevelCreated"] = "Curriculum.LevelCreated"
+    schema_version: Literal[1] = 1
+    payload: LevelCreatedPayload
 
 
 class SkillCreatedPayload(BaseModel):
@@ -46,6 +46,6 @@ class SkillCreatedPayload(BaseModel):
 
 
 class SkillCreated(DomainEvent):
-    name: Literal["Curriculum.SkillCreated"] = "Curriculum.SkillCreated"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: SkillCreatedPayload  # type: ignore[assignment]
+    name: Literal["Curriculum.SkillCreated"] = "Curriculum.SkillCreated"
+    schema_version: Literal[1] = 1
+    payload: SkillCreatedPayload
