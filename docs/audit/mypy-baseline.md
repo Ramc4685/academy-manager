@@ -9,9 +9,11 @@ errors only.
 ## Commands (run from the repo root)
 
 ```bash
-# What CI runs — fails on any error not in the baseline:
+# What CI runs — fails on any error not in the baseline. --allow-unsynced
+# tolerates baseline entries that don't reproduce in the current env (one
+# no-untyped-def error is env-dependent between local and CI):
 mypy --config-file backend/pyproject.toml -p backend.v2 \
-  | mypy-baseline filter --baseline-path backend/mypy-baseline.txt
+  | mypy-baseline filter --baseline-path backend/mypy-baseline.txt --allow-unsynced
 
 # After fixing pre-existing errors, shrink the baseline (commit the result):
 mypy --config-file backend/pyproject.toml -p backend.v2 \

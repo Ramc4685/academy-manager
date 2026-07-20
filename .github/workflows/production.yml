@@ -168,9 +168,11 @@ jobs:
         # Runs from the repo root so `backend.v2.*` has a single package base
         # (audit C1). Pre-existing errors are frozen in backend/mypy-baseline.txt;
         # only NEW errors fail the build. Burn-down: docs/audit/mypy-baseline.md.
+        # --allow-unsynced: env-dependent errors may be absent in CI vs local;
+        # a resolved baseline entry must not fail the build, only NEW errors do.
         run: >
           mypy --config-file backend/pyproject.toml -p backend.v2
-          | mypy-baseline filter --baseline-path backend/mypy-baseline.txt
+          | mypy-baseline filter --baseline-path backend/mypy-baseline.txt --allow-unsynced
 
   frontend-static:
     name: Frontend Static

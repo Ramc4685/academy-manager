@@ -193,7 +193,7 @@ cd backend && ruff check v2 && ruff format --check v2
 cd backend && PYTHONPATH=.. lint-imports --config pyproject.toml   # DDD boundary contracts (CI-blocking)
 
 # Mypy — CI-blocking at a frozen baseline (audit C1). Run from the REPO ROOT:
-mypy --config-file backend/pyproject.toml -p backend.v2 | mypy-baseline filter --baseline-path backend/mypy-baseline.txt
+mypy --config-file backend/pyproject.toml -p backend.v2 | mypy-baseline filter --baseline-path backend/mypy-baseline.txt --allow-unsynced
 # Fixed pre-existing errors? Shrink the baseline with: ... | mypy-baseline sync --baseline-path backend/mypy-baseline.txt
 
 # Frontend (pnpm, from frontend/)
