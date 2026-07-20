@@ -28,8 +28,13 @@ from motor.motor_asyncio import AsyncIOMotorClient  # noqa: E402
 
 
 SOURCE = os.environ.get("BLNO_XLSX", "/tmp/blno.xlsx")
-COACH_PASSWORD = "Coach@12345"
-PARENT_PASSWORD = "Parent@12345"
+COACH_PASSWORD = os.environ.get("BLNO_COACH_PASSWORD")
+PARENT_PASSWORD = os.environ.get("BLNO_PARENT_PASSWORD")
+if not COACH_PASSWORD or not PARENT_PASSWORD:
+    sys.exit(
+        "BLNO_COACH_PASSWORD and BLNO_PARENT_PASSWORD must be set "
+        "before running import_blno.py"
+    )
 
 
 def hp(p: str) -> str:

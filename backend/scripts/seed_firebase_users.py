@@ -18,15 +18,15 @@ EMULATOR = os.environ.get("FIREBASE_AUTH_EMULATOR_HOST", "firebase-emulator:9099
 PROJECT = "academy-courtmastr"
 API_KEY = "test"
 
-ADMIN_PASSWORD = os.environ.get("SEED_ADMIN_PASSWORD", "Admin@12345")
-COACH_PASSWORD = os.environ.get("SEED_COACH_PASSWORD", "Coach@12345")
-PARENT_PASSWORD = os.environ.get("SEED_PARENT_PASSWORD", "Parent@12345")
+ADMIN_PASSWORD = os.environ.get("SEED_ADMIN_PASSWORD", "CHANGE_ME")
+COACH_PASSWORD = os.environ.get("SEED_COACH_PASSWORD", "CHANGE_ME")
+PARENT_PASSWORD = os.environ.get("SEED_PARENT_PASSWORD", "CHANGE_ME")
 
 TEST_USERS = [
-    ("ramchand4685@gmail.com", ADMIN_PASSWORD, "Admin"),
-    ("gowtham@blno.academy", COACH_PASSWORD, "Gowtham"),
-    ("kishore@blno.academy", COACH_PASSWORD, "Kishore"),
-    ("manojedward.btech@gmail.com", PARENT_PASSWORD, "Manoj Edward"),
+    ("admin@example.test", ADMIN_PASSWORD, "Admin"),
+    ("coach1@example.test", COACH_PASSWORD, "Coach One"),
+    ("coach2@example.test", COACH_PASSWORD, "Coach Two"),
+    ("parent1@example.test", PARENT_PASSWORD, "Parent One"),
 ]
 
 _firebase_admin_app = None
