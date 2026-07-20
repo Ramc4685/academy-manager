@@ -1,7 +1,14 @@
-"""Small in-memory rate limiter for public write endpoints."""
+"""Small in-memory rate limiter for public write endpoints.
+
+State is process-local: buckets live in a plain dict on the middleware
+instance. Scaling Fly beyond one machine silently voids the limits (each
+machine counts independently) — a shared-store limiter is out of scope
+here (see GAPS.md #3).
+"""
 
 from __future__ import annotations
 
+import hmac
 import time
 from collections.abc import Awaitable, Callable
 from math import ceil
@@ -17,9 +24,33 @@ _PUBLIC_WRITE_PATHS = {
     ("POST", "/api/v2/parent/onboarding/start"),
 }
 
+# Paths with their own (limit, window_seconds), overriding the instance
+# defaults. The Stripe webhook ceiling is deliberately high: signature
+# verification already rejects garbage, this only caps volumetric abuse,
+# and Stripe retries with backoff on 429 so no event is lost.
+_PATH_LIMIT_OVERRIDES: dict[tuple[str, str], tuple[int, int]] = {
+    ("POST", "/api/v2/parent/webhooks/stripe"): (600, 60),
+}
+
+_PROXY_AUTH_HEADER = "x-cm-proxy-auth"
+
 
 class InMemoryRateLimitMiddleware(BaseHTTPMiddleware):
-    """Process-local fixed-window limiter for unauthenticated public writes."""
+    """Process-local fixed-window limiter for unauthenticated public writes.
+
+    Client keying (behind Fly + the Cloudflare-hosted BFF proxy,
+    ``request.client.host`` is the proxy hop, not the end client):
+
+    1. If the request carries ``x-cm-proxy-auth`` matching the configured
+       proxy shared secret → trust ``CF-Connecting-IP`` (the end-client IP
+       Cloudflare stamped; the BFF proxy forwards it unchanged).
+    2. Else → ``Fly-Client-IP`` (stamped by Fly's edge; unforgeable by the
+       client, correct for direct-to-Fly hits).
+    3. Else → ``request.client.host`` (local dev/tests), else ``"unknown"``.
+
+    A direct client without the secret is keyed by its own Fly-Client-IP no
+    matter what headers it forges.
+    """
 
     def __init__(
         self,
@@ -29,36 +60,41 @@ class InMemoryRateLimitMiddleware(BaseHTTPMiddleware):
         window_seconds: int = 60,
         max_buckets: int = 10_000,
         clock: Clock | None = None,
+        proxy_shared_secret: str | None = None,
     ) -> None:
         super().__init__(app)
         self._limit = limit
         self._window_seconds = window_seconds
         self._max_buckets = max_buckets
         self._clock = clock or time.monotonic
-        self._buckets: dict[tuple[str, str], tuple[float, int]] = {}
+        self._proxy_shared_secret = proxy_shared_secret
+        # key -> (window_started_at, count, window_seconds)
+        self._buckets: dict[tuple[str, str], tuple[float, int, int]] = {}
 
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        if not self._is_limited_path(request):
+        limit_window = self._limit_for(request)
+        if limit_window is None:
             return await call_next(request)
+        limit, window_seconds = limit_window
 
         key = (self._client_key(request), request.url.path)
         now = self._clock()
         self._evict_expired(now)
-        window_started_at, count = self._buckets.get(key, (now, 0))
+        window_started_at, count, _ = self._buckets.get(key, (now, 0, window_seconds))
         elapsed = now - window_started_at
-        if elapsed >= self._window_seconds:
+        if elapsed >= window_seconds:
             window_started_at = now
             count = 0
 
         count += 1
-        self._buckets[key] = (window_started_at, count)
+        self._buckets[key] = (window_started_at, count, window_seconds)
         self._evict_over_capacity()
-        if count <= self._limit:
+        if count <= limit:
             return await call_next(request)
 
-        retry_after = max(1, ceil(self._window_seconds - elapsed))
+        retry_after = max(1, ceil(window_seconds - elapsed))
         return JSONResponse(
             status_code=429,
             content={
@@ -71,29 +107,42 @@ class InMemoryRateLimitMiddleware(BaseHTTPMiddleware):
             headers={"Retry-After": str(retry_after)},
         )
 
-    @staticmethod
-    def _is_limited_path(request: Request) -> bool:
+    def _limit_for(self, request: Request) -> tuple[int, int] | None:
         method_path = (request.method.upper(), request.url.path)
+        override = _PATH_LIMIT_OVERRIDES.get(method_path)
+        if override is not None:
+            return override
         if method_path in _PUBLIC_WRITE_PATHS:
-            return True
-        return (
+            return (self._limit, self._window_seconds)
+        if (
             request.method.upper() == "PATCH"
             and request.url.path.startswith("/api/v2/parent/onboarding/")
             and not request.url.path.endswith("/status")
-        )
+        ):
+            return (self._limit, self._window_seconds)
+        return None
 
-    @staticmethod
-    def _client_key(request: Request) -> str:
+    def _client_key(self, request: Request) -> str:
+        # Truthy check: an empty-string secret must never validate (an empty
+        # x-cm-proxy-auth header would pass compare_digest against it).
+        if self._proxy_shared_secret:
+            presented = request.headers.get(_PROXY_AUTH_HEADER)
+            if presented is not None and hmac.compare_digest(presented, self._proxy_shared_secret):
+                cf_connecting_ip = request.headers.get("cf-connecting-ip")
+                if cf_connecting_ip:
+                    return cf_connecting_ip
+        fly_client_ip = request.headers.get("fly-client-ip")
+        if fly_client_ip:
+            return fly_client_ip
         if request.client is not None:
             return request.client.host
         return "unknown"
 
     def _evict_expired(self, now: float) -> None:
-        cutoff = now - self._window_seconds
         expired = [
             key
-            for key, (window_started_at, _) in self._buckets.items()
-            if window_started_at < cutoff
+            for key, (window_started_at, _, window_seconds) in self._buckets.items()
+            if now - window_started_at >= window_seconds
         ]
         for key in expired:
             self._buckets.pop(key, None)

@@ -1,5 +1,5 @@
 # C3 — Rate limiter: real client IP + webhook coverage
-Status: TODO
+Status: DONE (PR #312, 2026-07-20)
 Size: S · Depends on: none · Tracker: ../TRACKER.md
 
 ## Problem

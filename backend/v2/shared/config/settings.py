@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(default="INFO")
     log_format: Literal["json", "console"] = Field(default="json")
 
+    proxy_shared_secret: str | None = Field(
+        default=None,
+        description="Shared secret the BFF proxy presents via x-cm-proxy-auth; when it matches, CF-Connecting-IP is trusted for rate-limit keying.",
+    )
     stripe_api_key: str | None = Field(default=None)
     stripe_webhook_secret: str | None = Field(default=None)
     stripe_connect_webhook_secret: str | None = Field(default=None)
