@@ -278,11 +278,21 @@ def compose_get_digest_delivery_log(db: AsyncIOMotorDatabase[Any]) -> GetDigestD
 # ---------------------------------------------------------------------------
 
 
-def _day_bounds_utc(on_date: date) -> tuple[datetime, datetime]:
-    return (
-        datetime.combine(on_date, time.min, tzinfo=UTC),
-        datetime.combine(on_date, time.max, tzinfo=UTC),
-    )
+def _day_bounds_utc(on_date: date, tz_name: str) -> tuple[datetime, datetime]:
+    """UTC bounds for the *scheduler-local* calendar day.
+
+    ``on_date`` is the local date the digest is being built for (per the hourly
+    scheduler in ``main.py``, which ticks in ``settings.scheduler_tz``). Session
+    occurrences are stored as aware UTC, so an evening local session can fall on
+    the *next* UTC calendar day — bounding by naive UTC midnight would drop it.
+    """
+    try:
+        tz: Any = ZoneInfo(tz_name)
+    except Exception:
+        tz = UTC
+    local_start = datetime.combine(on_date, time.min, tzinfo=tz)
+    local_end = datetime.combine(on_date, time.max, tzinfo=tz)
+    return local_start.astimezone(UTC), local_end.astimezone(UTC)
 
 
 def _as_aware_utc(value: datetime) -> datetime:
@@ -365,10 +375,11 @@ class _ParentDigestProvider:
                     skills_total=placement["skills_total"],
                     skills_left=placement["skills_left"],
                     levels_to_go=placement["levels_to_go"],
+                    # Deep-link the absence-request flow (the Requests page opens
+                    # on its Absences tab), NOT the attendance history page, which
+                    # ignores query params and cannot report an absence.
                     cant_make_it_url=(
-                        f"{frontend}/parent/attendance?session={session_id}"
-                        if (on_portal and frontend)
-                        else None
+                        f"{frontend}/parent/requests" if (on_portal and frontend) else None
                     ),
                 )
             )
@@ -426,7 +437,8 @@ class _ParentDigestProvider:
             enrollments = await self._enrollments.active_for_student(student_id)
         except Exception:
             return None
-        start, end = _day_bounds_utc(on_date)
+        scheduler_tz = getattr(get_settings(), "scheduler_tz", None) or "UTC"
+        start, end = _day_bounds_utc(on_date, scheduler_tz)
         best: tuple[datetime, str, Any] | None = None
         for enrollment in enrollments:
             try:
@@ -542,7 +554,9 @@ class _ParentDigestProvider:
             invoices = await self._ledger.list_invoices_for_parent(parent_id)
         except Exception:
             return None
-        open_statuses = {"open", "partially_paid", "draft"}
+        # Match the parent checkout path, which only treats "open"/"partially_paid"
+        # as payable — surfacing a pay link for a "draft" invoice would 404.
+        open_statuses = {"open", "partially_paid"}
         owed = [
             invoice
             for invoice in invoices
@@ -639,14 +653,26 @@ class _ParentDigestProvider:
         return f"{on_date.strftime('%A, %B')} {on_date.day}"
 
 
+_REAL_EMAIL_ENVS = frozenset({"staging", "prod"})
+
+
 def _build_email_sender(settings: Any) -> Any:
-    """Resend/Stub gating identical to the coach digest (see ``_build_digest_parts``)."""
+    """Resend/Stub gating for the parent digest.
+
+    Beyond ``email_delivery_enabled`` + ``resend_api_key``, the real adapter is
+    only wired in an approved environment (staging/prod) — see
+    ``ResendEmailSendPort``'s own contract and ``AGENTS.md``: "Do not send real
+    email from local/test environments." A dev or test deployment that has
+    inherited delivery flags and Resend credentials must still fall back to the
+    stub.
+    """
     from_address = settings.sender_email or (
         f"noreply@{settings.frontend_url.replace('https://', '').replace('http://', '').split('/')[0]}"
         if settings.frontend_url
         else "noreply@academy.app"
     )
-    if settings.email_delivery_enabled and settings.resend_api_key:
+    env = str(getattr(settings, "env", "") or "").lower()
+    if settings.email_delivery_enabled and settings.resend_api_key and env in _REAL_EMAIL_ENVS:
         return ResendEmailSendPort(api_key=settings.resend_api_key, from_address=from_address)
     return StubEmailSendPort()
 

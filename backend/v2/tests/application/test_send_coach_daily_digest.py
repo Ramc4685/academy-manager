@@ -120,9 +120,16 @@ class StubSendPort:
         subject: str,
         body: str,
         cc: list[str] | None = None,
+        bcc: list[str] | None = None,
     ) -> SendOutcome:
         self.sent.append(
-            {"email": recipient.email, "subject": subject, "body": body, "cc": cc or []}
+            {
+                "email": recipient.email,
+                "subject": subject,
+                "body": body,
+                "cc": cc or [],
+                "bcc": bcc or [],
+            }
         )
         return SendOutcome(
             ok=True, provider_message_id=f"stub-{len(self.sent)}", failed_reason=None
@@ -291,7 +298,7 @@ async def test_second_run_same_date_sends_zero() -> None:
 
 
 @pytest.mark.asyncio
-async def test_admin_is_cc_d_on_every_coach_digest() -> None:
+async def test_admin_is_bcc_d_on_every_coach_digest() -> None:
     use_case, _digests, sender, _ = _build(
         coaches=[
             ResolvedRecipient(user_id="coach-1", email="c1@example.test"),
@@ -308,11 +315,13 @@ async def test_admin_is_cc_d_on_every_coach_digest() -> None:
     )
 
     assert result.sent == 2
-    assert [s["cc"] for s in sender.sent] == [["admin@example.test"], ["admin@example.test"]]
+    # Admins are BCC'd (not CC'd) so no coach sees the admin addresses.
+    assert [s["cc"] for s in sender.sent] == [[], []]
+    assert [s["bcc"] for s in sender.sent] == [["admin@example.test"], ["admin@example.test"]]
 
 
 @pytest.mark.asyncio
-async def test_admin_cc_is_off_by_default() -> None:
+async def test_admin_copy_is_off_by_default() -> None:
     use_case, _digests, sender, _ = _build(
         coaches=[ResolvedRecipient(user_id="coach-1", email="c1@example.test")],
         plans={"coach-1": _populated_plan()},
@@ -324,10 +333,11 @@ async def test_admin_cc_is_off_by_default() -> None:
     )
 
     assert sender.sent[0]["cc"] == []
+    assert sender.sent[0]["bcc"] == []
 
 
 @pytest.mark.asyncio
-async def test_admin_cc_excludes_the_coach_being_emailed() -> None:
+async def test_admin_copy_excludes_the_coach_being_emailed() -> None:
     use_case, _digests, sender, _ = _build(
         coaches=[ResolvedRecipient(user_id="coach-1", email="dual@example.test")],
         plans={"coach-1": _populated_plan()},
@@ -341,6 +351,7 @@ async def test_admin_cc_excludes_the_coach_being_emailed() -> None:
     )
 
     assert sender.sent[0]["cc"] == []
+    assert sender.sent[0]["bcc"] == []
 
 
 @pytest.mark.asyncio

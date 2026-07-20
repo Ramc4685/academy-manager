@@ -100,7 +100,7 @@ def parse_audience(raw: Mapping[str, Any]) -> Audience:
     audience_type = raw["type"]
     if audience_type == "academy":
         role = raw.get("role", "parent")
-        if role not in ("parent", "coach"):
+        if role not in ("parent", "coach", "admin"):
             raise InvalidAudienceError(f"unknown academy role: {role!r}")
         return AcademyAudience(role=role)
     if audience_type == "session":

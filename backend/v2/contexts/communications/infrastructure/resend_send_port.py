@@ -30,6 +30,7 @@ class ResendEmailSendPort(EmailSendPort):
         subject: str,
         body: str,
         cc: list[str] | None = None,
+        bcc: list[str] | None = None,
         reply_to: str | None = None,
     ) -> SendOutcome:
         if not recipient.email:
@@ -43,6 +44,8 @@ class ResendEmailSendPort(EmailSendPort):
             }
             if cc:
                 params["cc"] = cc
+            if bcc:
+                params["bcc"] = bcc
             if reply_to:
                 params["reply_to"] = reply_to
             response = await asyncio.to_thread(resend.Emails.send, params)

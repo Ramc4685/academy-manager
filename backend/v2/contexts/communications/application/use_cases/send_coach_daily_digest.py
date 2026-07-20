@@ -124,9 +124,10 @@ class SendCoachDailyDigest:
                 email=coach.email,
                 display_name=coach.display_name,
             )
-            cc = [e for e in admin_emails if e != coach.email]
+            # BCC (not CC) so no coach sees the other admins' addresses.
+            bcc = [e for e in admin_emails if e != coach.email]
             outcome = await self.sender.send(
-                recipient=recipient, subject=subject, body=body, cc=cc or None
+                recipient=recipient, subject=subject, body=body, bcc=bcc or None
             )
             if outcome.ok:
                 await self.digests.mark_sent(claim.digest_id, outcome.provider_message_id)

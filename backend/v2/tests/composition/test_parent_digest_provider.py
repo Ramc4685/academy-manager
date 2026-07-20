@@ -153,7 +153,7 @@ async def test_build_view_assembles_variant_a_family() -> None:
     assert child.skills_total == 6
     assert child.skills_left == 4
     assert child.levels_to_go == 2  # sequences 2 and 3 are ahead of level 1
-    assert child.cant_make_it_url == "https://app.test/parent/attendance?session=sess-1"
+    assert child.cant_make_it_url == "https://app.test/parent/requests"
 
     assert view.dues is not None
     assert view.dues.amount == "$60.00"
