@@ -453,7 +453,7 @@ export default function ParentPaymentsPage() {
       {/* Balance hero */}
       {currentBalance > 0 && (
         <div className="rounded-2xl p-4" style={{ background: "#0a0f1c" }}>
-          <p className="text-xs" style={{ color: "#94a3b8" }}>Balance due</p>
+          <p className="text-xs" style={{ color: "var(--rally-subtle-ink)" }}>Balance due</p>
           <p className="mt-1 text-3xl font-semibold text-white">{money(currentBalance)}</p>
           <p className="mt-1.5 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium" style={{ background: "rgba(251,191,36,0.12)", color: "#fbbf24" }}>
             {invoices.filter((i) => i.balance_due_cents > 0 && i.status !== "void").length} open invoice
@@ -481,7 +481,7 @@ export default function ParentPaymentsPage() {
             <label
               data-testid="balance-autopay-optin"
               className="mt-2.5 flex items-center gap-2 text-xs"
-              style={{ color: "#94a3b8" }}
+              style={{ color: "var(--rally-subtle-ink)" }}
             >
               <input
                 type="checkbox"

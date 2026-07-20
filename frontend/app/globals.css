@@ -18,6 +18,7 @@
 
 :root {
   color-scheme: light dark;
+  /* deprecated — marketing/legacy pages only; do not use in new code */
   --academy-ink: #111827;
   --academy-muted: #667085;
   --academy-panel: #f7f8fb;
@@ -27,17 +28,25 @@
   --academy-gold: #ffd21f;
   --academy-night: #06121f;
 
-  /* Rally design tokens — referenced by components/ds/* */
-  --rally-ink: #0f172a;
-  --rally-paper: #f8fafc;
-  --rally-line: #e2e8f0;
-  --rally-muted: #64748b;
-  --rally-subtle: #94a3b8;
-  --rally-cobalt: #2563eb;
-  --rally-cobalt-hover: #1d4ed8;
-  --rally-cobalt-soft: #eff6ff;
-  --rally-volt: #facc15;
-  --rally-volt-soft: #fef9c3;
+  /* Rally design tokens — referenced by components/ds/*.
+   * Derived at build time from the palette in tailwind.config.ts (the single
+   * source of truth); add new colors there, never as raw hex here. */
+  --rally-ink: theme(colors.rally.ink);
+  --rally-paper: theme(colors.rally.paper);
+  --rally-line: theme(colors.rally.line);
+  --rally-muted: theme(colors.rally.muted);
+  --rally-subtle: theme(colors.rally.subtle);
+  --rally-subtle-ink: theme(colors.rally.subtle-ink);
+  --rally-cobalt: theme(colors.rally.cobalt.600);
+  --rally-cobalt-hover: theme(colors.rally.cobalt.700);
+  --rally-cobalt-soft: theme(colors.rally.cobalt.50);
+  --rally-volt: theme(colors.rally.volt.400);
+  --rally-volt-soft: theme(colors.rally.volt.100);
+  --rally-night: theme(colors.rally.night);
+  --rally-night-line: theme(colors.rally.night-line);
+  --rally-night-panel: theme(colors.rally.night-panel);
+  --rally-night-card: theme(colors.rally.night-card);
+  --rally-bright: theme(colors.rally.bright);
 }
 
 @layer base {

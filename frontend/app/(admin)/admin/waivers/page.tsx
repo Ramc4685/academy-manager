@@ -289,7 +289,7 @@ function SummaryCards({ summary }: { summary: AdminWaiverSummary }) {
         <BigNum size={32}>{summary.expiring_30d}</BigNum>
         <p className="mt-1 text-[11px] text-rally-subtle">Renewal attention needed</p>
       </Card>
-      <Card p={20} accent="#94a3b8">
+      <Card p={20} accent="var(--rally-subtle-ink)">
         <Overline>Outdated version</Overline>
         <BigNum size={32}>{summary.outdated_version}</BigNum>
         <p className="mt-1 text-[11px] text-rally-subtle">Previous waiver version</p>

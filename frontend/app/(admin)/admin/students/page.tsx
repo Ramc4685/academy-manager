@@ -115,7 +115,7 @@ function SummaryCards({ students }: { students: AdminStudentView[] }) {
         <BigNum size={32}>{active}</BigNum>
         <p className="mt-1 text-[11px] text-rally-subtle">Currently enrolled</p>
       </Card>
-      <Card p={20} accent="#94a3b8">
+      <Card p={20} accent="var(--rally-subtle-ink)">
         <Overline>Paused</Overline>
         <BigNum size={32}>{paused}</BigNum>
         <p className="mt-1 text-[11px] text-rally-subtle">Temporarily paused</p>
