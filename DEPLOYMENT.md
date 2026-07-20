@@ -284,6 +284,19 @@ GET /api/v2/healthz
 
 Monitor this endpoint from the production region. Alert on non-2xx responses, elevated latency, and repeated application errors. Application logs should be shipped to the platform log drain or external logging service.
 
+## Production Release Records
+
+The production GitHub Actions workflow publishes a `deploy-YYYY-MM-DD-<sha>`
+release only after every changed component deploys successfully and production
+smoke checks pass. Release content is aggregated from complete files under
+`docs/release-notes/` since the previous `deploy-*` tag.
+
+Publishing is idempotent and uses a job-scoped `GITHUB_TOKEN` with
+`contents: write`; other validation and deploy jobs remain read-only. A
+publishing failure happens after deployment, remains visible as a failed
+workflow, and can be rerun safely. Never force, move, or reuse a production tag
+for a different commit.
+
 ## Database Backups
 
 Use managed MongoDB backups when available. For self-managed MongoDB, run scheduled backups and keep encrypted copies outside the app host.

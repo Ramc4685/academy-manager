@@ -11,7 +11,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: production-${{ github.ref }}
@@ -492,10 +491,22 @@ jobs:
     name: Production Smoke
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [deploy-backend, deploy-frontend]
+    needs: [changes, deploy-backend, deploy-frontend]
     if: >
       always() &&
-      (needs.deploy-backend.result == 'success' || needs.deploy-frontend.result == 'success') &&
+      (
+        needs.changes.outputs.backend == 'true' ||
+        needs.changes.outputs.frontend == 'true' ||
+        github.event_name == 'workflow_dispatch'
+      ) &&
+      (
+        needs.deploy-backend.result == 'success' ||
+        (needs.changes.outputs.backend != 'true' && github.event_name != 'workflow_dispatch')
+      ) &&
+      (
+        needs.deploy-frontend.result == 'success' ||
+        (needs.changes.outputs.frontend != 'true' && github.event_name != 'workflow_dispatch')
+      ) &&
       github.ref == 'refs/heads/main' &&
       github.event_name != 'pull_request'
     steps:
@@ -508,3 +519,27 @@ jobs:
           FRONTEND_URL: ${{ env.FRONTEND_ORIGIN }}
           EXPECTED_FIREBASE_PROJECT_ID: ${{ env.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
         run: scripts/smoke/production_smoke.sh
+
+  publish-release:
+    name: Publish Production Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [smoke]
+    if: >
+      needs.smoke.result == 'success' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request'
+    permissions:
+      contents: write
+    steps:
+      - name: Check out deployed revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Publish SHA-pinned production release record
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOYMENT_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/dev/publish_release.py

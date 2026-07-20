@@ -1,4 +1,4 @@
-# fix-identity-self-heal-login-invites-when-firebase-account-i
+# Login-invite Firebase account self-healing
 
 PR: #304
 
@@ -8,8 +8,10 @@ PR: #304
 - Any other unexpected failure in `SendLoginInvite` is now wrapped as `LoginInviteSendFailed` (502) instead of propagating raw.
 
 ## Deploy notes
-No migration detected in the diff. Confirm no manual env var or manual step is needed before merge.
+No migration, environment variable, or manual deployment step is required.
 
 ## Risk / rollback
-_Auto-generated stub — author: fill in what breaks if this is wrong and how
-to roll back before merge._ Revert the merge commit if this regresses.
+The risk is creating a Firebase identity for the wrong directory record when
+repairing an orphaned account. Revert PR #304 to disable self-healing; parents
+whose Mongo directory record lacks a Firebase account will again be unable to
+receive a login invite until repaired manually.
