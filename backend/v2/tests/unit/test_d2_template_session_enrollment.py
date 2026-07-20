@@ -113,7 +113,7 @@ def _make_uc(occurrence_lookup, enrollment_lookup):
         enrollment_lookup=enrollment_lookup,
         outbox=_FakeOutbox(),
         idempotency_store=_FakeIdempotency(),
-        academy_id="test-academy",
+        academy_id=lambda: "test-academy",
         clock=lambda: _NOW,
     )
 

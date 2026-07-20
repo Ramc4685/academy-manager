@@ -640,7 +640,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             enrollment_lookup=_enrollment_lookup,
             outbox=_outbox,
             idempotency_store=_idempotency_store,
-            academy_id="test-academy",
+            academy_id=lambda: "test-academy",
             clock=_now,
         ),
         bulk_mark_attendance=BulkMarkAttendance(
@@ -649,7 +649,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             enrollment_lookup=_enrollment_lookup,
             outbox=_outbox,
             idempotency_store=_idempotency_store,
-            academy_id="test-academy",
+            academy_id=lambda: "test-academy",
             clock=_now,
         ),
         list_attendance_for_occurrence=_attendance_repo.list_for_occurrence,
@@ -668,7 +668,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             enrollments=enrollment_writer,
             students=student_writer,
             assigned_sessions=session_lookup,
-            academy_id="test-academy",
+            academy_id=lambda: "test-academy",
         ),
         remove_student_from_roster=CoachRemoveStudentFromRoster(
             enrollments=enrollment_writer,
@@ -1711,7 +1711,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         enrollments=enrollments_w,
         outbox=outbox,
         enrollment_events=enrollment_events,
-        academy_id="acad",
+        academy_id=lambda: "acad",
     )
     skip = SkipFromWaitlist(waitlist=waitlist)
     remove = RemoveFromWaitlist(waitlist=waitlist)

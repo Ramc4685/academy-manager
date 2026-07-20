@@ -10,6 +10,7 @@ enrollment instead of double-confirming.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from pydantic import BaseModel
@@ -64,7 +65,7 @@ class ConfirmEnrollment:
         students: StudentWriter,
         outbox: Outbox,
         idempotency_store: IdempotencyStore,
-        academy_id: str,
+        academy_id: Callable[[], str],
         enrollment_events: EnrollmentEventRepository | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
@@ -83,12 +84,14 @@ class ConfirmEnrollment:
         result_type=ConfirmEnrollmentResult,
     )
     async def execute(self, cmd: ConfirmEnrollmentCommand) -> ConfirmEnrollmentResult:
+        # Request-time tenant via the injected provider — never a boot-time value.
+        academy_id = self._academy_id()
         reserved = await self._sessions.try_reserve_seat(cmd.session_id)
         if not reserved:
             await self._outbox.append(
                 CapacityExceededEvent(
                     aggregate_id=cmd.session_id,
-                    academy_id=self._academy_id,
+                    academy_id=academy_id,
                     payload=CapacityExceededPayload(
                         session_id=cmd.session_id,
                         parent_id=cmd.parent_id,
@@ -102,7 +105,7 @@ class ConfirmEnrollment:
         student_id = str(new_ulid())
         student = Student(
             student_id=student_id,
-            academy_id=self._academy_id,
+            academy_id=academy_id,
             parent_id=cmd.parent_id,
             full_name=f"{cmd.student_first_name} {cmd.student_last_name}".strip(),
         )
@@ -110,7 +113,7 @@ class ConfirmEnrollment:
 
         enrollment = Enrollment(
             enrollment_id=str(new_ulid()),
-            academy_id=self._academy_id,
+            academy_id=academy_id,
             session_id=cmd.session_id,
             student_id=student_id,
             status="active",
@@ -121,7 +124,7 @@ class ConfirmEnrollment:
             await self._enrollment_events.record(
                 EnrollmentLifecycleEvent(
                     event_id=str(new_ulid()),
-                    academy_id=self._academy_id,
+                    academy_id=academy_id,
                     event_type="created",
                     enrollment_id=enrollment.enrollment_id,
                     session_id=cmd.session_id,
@@ -137,7 +140,7 @@ class ConfirmEnrollment:
         await self._outbox.append(
             EnrollmentConfirmed(
                 aggregate_id=enrollment.enrollment_id,
-                academy_id=self._academy_id,
+                academy_id=academy_id,
                 payload=EnrollmentConfirmedPayload(
                     enrollment_id=enrollment.enrollment_id,
                     session_id=cmd.session_id,

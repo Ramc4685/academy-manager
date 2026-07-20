@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
 
@@ -44,7 +45,7 @@ class StartApplication:
         self,
         *,
         apps: ApplicationRepository,
-        academy_id: str,
+        academy_id: Callable[[], str],
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._apps = apps
@@ -58,7 +59,8 @@ class StartApplication:
         now = self._now()
         app = Application(
             application_id=str(new_ulid()),
-            academy_id=self._academy_id,
+            # Request-time tenant via the injected provider — never a boot value.
+            academy_id=self._academy_id(),
             parent_user_id=cmd.parent_user_id,
             parent_email=cmd.parent_email,
             status="DRAFT",

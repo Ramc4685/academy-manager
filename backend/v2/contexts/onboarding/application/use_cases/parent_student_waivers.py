@@ -96,7 +96,7 @@ class AcceptParentWaiver:
         self,
         *,
         waivers: ParentWaiverRepository,
-        academy_id: str,
+        academy_id: Callable[[], str],
         id_factory: Callable[[], str] | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
@@ -133,13 +133,15 @@ class AcceptParentWaiver:
             [student.student_id for student in students]
         )
         now = self._clock()
+        # Request-time tenant via the injected provider — never a boot-time value.
+        academy_id = self._academy_id()
         for student in students:
             existing = signatures.get(student.student_id)
             if existing and _is_current(existing, template):
                 continue
             signature = WaiverSignature(
                 waiver_signature_id=self._id_factory(),
-                academy_id=self._academy_id,
+                academy_id=academy_id,
                 waiver_template_id=template.waiver_template_id,
                 student_id=student.student_id,
                 parent_user_id=parent_id,

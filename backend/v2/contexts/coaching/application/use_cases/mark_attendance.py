@@ -18,6 +18,7 @@ as the attendance row. No cross-context writes.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -41,7 +42,6 @@ from backend.v2.contexts.coaching.domain.events import (
 from backend.v2.contexts.coaching.domain.models import Attendance
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore, idempotent
-from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
 
 
 class MarkAttendanceCommand(BaseModel):
@@ -76,7 +76,7 @@ class MarkAttendance:
         enrollment_lookup: EnrollmentLookup,
         outbox: Outbox,
         idempotency_store: IdempotencyStore,
-        academy_id: str,
+        academy_id: Callable[[], str],
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._attendance = attendance_repo
@@ -150,7 +150,8 @@ class MarkAttendance:
         # 4. Persist + outbox in the same logical transaction. The repo handles
         # tenant scope via TenantScopedRepository.
         now = self._now()
-        academy_id = self._current_academy_id()
+        # Request-time tenant via the injected provider — never a boot-time value.
+        academy_id = self._academy_id()
         attendance = Attendance(
             attendance_id=cmd.mutation_id,
             academy_id=academy_id,
@@ -188,9 +189,3 @@ class MarkAttendance:
             status=attendance.status,
             marked_at=attendance.marked_at,
         )
-
-    def _current_academy_id(self) -> str:
-        try:
-            return current_academy_id()
-        except TenantContextUnset:
-            return self._academy_id

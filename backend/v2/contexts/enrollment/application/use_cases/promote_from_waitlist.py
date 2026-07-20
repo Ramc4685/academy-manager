@@ -37,7 +37,7 @@ class PromoteFromWaitlist:
         sessions: SessionWriter,
         enrollments: EnrollmentWriter,
         outbox: Outbox,
-        academy_id: str,
+        academy_id: Callable[[], str],
         enrollment_events: EnrollmentEventRepository | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
@@ -57,6 +57,8 @@ class PromoteFromWaitlist:
         reason: str | None = None,
     ) -> str | None:
         """Returns the promoted entry's waitlist_id, or None if the list is empty."""
+        # Request-time tenant via the injected provider — never a boot-time value.
+        academy_id = self._academy_id()
         entry = await self._waitlist.next_waiting(session_id)
         if entry is None:
             return None
@@ -76,7 +78,7 @@ class PromoteFromWaitlist:
             else:
                 enrollment = Enrollment(
                     enrollment_id=str(new_ulid()),
-                    academy_id=self._academy_id,
+                    academy_id=academy_id,
                     session_id=entry.session_id,
                     student_id=entry.student_id,
                     status="active",
@@ -89,7 +91,7 @@ class PromoteFromWaitlist:
             await self._enrollment_events.record(
                 EnrollmentLifecycleEvent(
                     event_id=str(new_ulid()),
-                    academy_id=self._academy_id,
+                    academy_id=academy_id,
                     event_type="promoted",
                     enrollment_id=enrollment.enrollment_id,
                     waitlist_id=entry.waitlist_id,
@@ -104,7 +106,7 @@ class PromoteFromWaitlist:
         await self._outbox.append(
             WaitlistPromoted(
                 aggregate_id=entry.waitlist_id,
-                academy_id=self._academy_id,
+                academy_id=academy_id,
                 payload=WaitlistPromotedPayload(
                     waitlist_id=entry.waitlist_id,
                     session_id=entry.session_id,

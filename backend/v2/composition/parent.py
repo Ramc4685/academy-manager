@@ -195,7 +195,7 @@ from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.security.redirect import validate_redirect_url
-from backend.v2.shared.tenancy import current_academy_id, tenant_scope
+from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id, tenant_scope
 
 from .event_handlers import HandlerDeps, install_handlers
 
@@ -398,6 +398,15 @@ def compose_parent(
 ) -> ParentComposition:
     settings = get_settings()
     academy_id = _require_academy_id(academy_id)
+
+    def request_academy_id() -> str:
+        # Request-time tenant for use cases that stamp academy_id at execute
+        # time. Falls back to the boot academy so non-HTTP callers (outbox
+        # event handlers, schedulers) behave exactly as today.
+        try:
+            return current_academy_id()
+        except TenantContextUnset:
+            return academy_id
 
     # Billing
     credits_repo = MongoCreditLedgerRepository(db)
@@ -675,7 +684,7 @@ def compose_parent(
         outbox=outbox,
         idempotency_store=idempotency_store,
         enrollment_events=enrollment_events,
-        academy_id=academy_id,
+        academy_id=request_academy_id,
     )
     promote = PromoteFromWaitlist(
         waitlist=waitlist,
@@ -683,7 +692,7 @@ def compose_parent(
         enrollments=enrollments_writer,
         outbox=outbox,
         enrollment_events=enrollment_events,
-        academy_id=academy_id,
+        academy_id=request_academy_id,
     )
 
     # Onboarding
@@ -691,8 +700,8 @@ def compose_parent(
     waivers_repo = MongoRegistrationWaiverRepository(db)
     parent_waivers_repo = MongoParentWaiverRepository(db)
     get_waiver_req = GetParentWaiverRequirement(waivers=parent_waivers_repo)
-    accept_waiver = AcceptParentWaiver(waivers=parent_waivers_repo, academy_id=academy_id)
-    start_app = StartApplication(apps=apps_repo, academy_id=academy_id)
+    accept_waiver = AcceptParentWaiver(waivers=parent_waivers_repo, academy_id=request_academy_id)
+    start_app = StartApplication(apps=apps_repo, academy_id=request_academy_id)
     patch_app = PatchApplication(
         apps=apps_repo,
         waivers=waivers_repo,
@@ -719,6 +728,9 @@ def compose_parent(
     )
 
     async def list_payments_for_parent(parent_id: str):
+        # Request-time tenant, not the composition-time closure (C4): a
+        # multi-tenant process would otherwise read the boot academy's rows.
+        academy_id = current_academy_id()
         from dataclasses import dataclass as _dc
 
         @_dc
@@ -829,6 +841,7 @@ def compose_parent(
         return await credits_repo.list_for_parent(parent_id)
 
     async def _parent_students(parent_id: str) -> list[dict[str, Any]]:
+        academy_id = current_academy_id()  # request-time tenant (C4)
         cursor = (
             db["students"]
             .find(
@@ -842,6 +855,7 @@ def compose_parent(
         return [doc async for doc in cursor]
 
     async def list_children_for_parent(parent_id: str) -> list[dict[str, Any]]:
+        academy_id = current_academy_id()  # request-time tenant (C4)
         students = await _parent_students(parent_id)
         rows: list[dict[str, Any]] = []
         for student in students:
@@ -872,6 +886,7 @@ def compose_parent(
         return rows
 
     async def list_enrollments_for_parent(parent_id: str) -> list[dict[str, Any]]:
+        academy_id = current_academy_id()  # request-time tenant (C4)
         students = await _parent_students(parent_id)
         by_id = {str(s.get("student_id") or s["_id"]): s for s in students}
         if not by_id:
@@ -958,6 +973,7 @@ def compose_parent(
     async def _resolve_coach_name(coach_id: str | None) -> str | None:
         if not coach_id:
             return None
+        academy_id = current_academy_id()  # request-time tenant (C4)
         user = await db["users"].find_one(
             {"academy_id": academy_id, "$or": [{"user_id": coach_id}, {"firebase_uid": coach_id}]}
         )
@@ -974,6 +990,7 @@ def compose_parent(
     async def list_attendance_for_parent(
         parent_id: str, *, limit: int = 50, offset: int = 0
     ) -> tuple[list[dict[str, Any]], int]:
+        academy_id = current_academy_id()  # request-time tenant (C4)
         students = await _parent_students(parent_id)
         by_id = {str(s.get("student_id") or s["_id"]): s for s in students}
         if not by_id:
@@ -1049,6 +1066,7 @@ def compose_parent(
     async def list_progress_for_parent(
         parent_id: str, *, limit: int = 50, offset: int = 0
     ) -> tuple[list[dict[str, Any]], int]:
+        academy_id = current_academy_id()  # request-time tenant (C4)
         students = await _parent_students(parent_id)
         by_id = {str(s.get("student_id") or s["_id"]): s for s in students}
         if not by_id:
@@ -1142,6 +1160,7 @@ def compose_parent(
         return await billing_ledger_repo.list_invoices_for_parent(parent_id)
 
     async def get_invoice_for_parent(*, parent_id: str, invoice_id: str):
+        academy_id = current_academy_id()  # request-time tenant (C4)
         invoice = await billing_ledger_repo.get_invoice(invoice_id)
         if invoice is None or invoice.parent_id != parent_id:
             return None
@@ -1203,6 +1222,7 @@ def compose_parent(
         cancel_url: str,
         enroll_autopay: bool = False,
     ):
+        academy_id = current_academy_id()  # request-time tenant (C4)
         _validate_checkout_redirect_urls(success_url, cancel_url)
         all_invoices = await billing_ledger_repo.list_invoices_for_parent(parent_id)
         payable = [
@@ -1418,6 +1438,7 @@ def compose_parent(
         success_url: str,
         cancel_url: str,
     ):
+        academy_id = current_academy_id()  # request-time tenant (C4)
         _validate_checkout_redirect_urls(success_url, cancel_url)
         enrollment = await db["enrollments"].find_one(
             {"academy_id": academy_id, "enrollment_id": enrollment_id}
@@ -1469,7 +1490,9 @@ def compose_parent(
 
     async def open_billing_portal(*, parent_id: str, return_url: str):
         _validate_checkout_redirect_urls(return_url)
-        with tenant_scope(academy_id):
+        # Request-time tenant (C4): re-scoping to the boot academy here would
+        # look up another tenant's Stripe customer in multi-academy mode.
+        with tenant_scope(request_academy_id()):
             stripe_customer_id = await parent_customers_repo.get_stripe_customer_id(
                 parent_id=parent_id
             )

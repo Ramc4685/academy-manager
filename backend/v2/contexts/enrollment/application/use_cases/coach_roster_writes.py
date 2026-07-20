@@ -7,6 +7,7 @@ mutate rosters for sessions they are assigned to.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Protocol
 
 from pydantic import BaseModel
@@ -50,20 +51,26 @@ class CoachAddStudentToRoster:
         enrollments: EnrollmentWriter,
         students: StudentWriter,
         assigned_sessions: CoachSessionLookup,
-        academy_id: str,
+        academy_id: Callable[[], str],
     ) -> None:
         self._assigned_sessions = assigned_sessions
-        self._delegate = EditRosterAdd(
-            sessions=sessions,
-            enrollments=enrollments,
-            students=students,
-            academy_id=academy_id,
-        )
+        self._sessions = sessions
+        self._enrollments = enrollments
+        self._students = students
+        self._academy_id = academy_id
 
     async def execute(self, cmd: CoachAddStudentToRosterCommand) -> Enrollment:
         if not await self._assigned_sessions.is_coach_assigned(cmd.coach_id, cmd.session_id):
             raise SessionNotAssigned("session not assigned to coach", session_id=cmd.session_id)
-        return await self._delegate.execute(
+        # Delegate is built per-execute so the tenant is resolved at request
+        # time; EditRosterAdd itself still takes a plain string (admin scope).
+        delegate = EditRosterAdd(
+            sessions=self._sessions,
+            enrollments=self._enrollments,
+            students=self._students,
+            academy_id=self._academy_id(),
+        )
+        return await delegate.execute(
             EditRosterAddCommand(
                 session_id=cmd.session_id,
                 student_id=cmd.student_id,
