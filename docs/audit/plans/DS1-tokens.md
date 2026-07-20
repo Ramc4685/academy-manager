@@ -1,5 +1,5 @@
 # DS1 — Single-source color tokens + contrast fixes
-Status: TODO
+Status: DONE (PR #313, 2026-07-20)
 Size: S · Depends on: none · Tracker: ../TRACKER.md
 
 First step of the ordered DS1→DS4 design-standardization sequence. DS2 (de-hex the DS components) must not start until this merges, because DS2 converts hex to the token names this plan finalizes.

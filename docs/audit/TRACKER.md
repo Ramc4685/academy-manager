@@ -82,7 +82,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 
 | ID | Item | Plan | Size | Depends on | Status | PR/Issue |
 |---|---|---|---|---|---|---|
-| DS1 | Single-source color tokens + contrast fixes | [plans/DS1-tokens.md](plans/DS1-tokens.md) | S | — | TODO | |
+| DS1 | Single-source color tokens + contrast fixes | [plans/DS1-tokens.md](plans/DS1-tokens.md) | S | — | DONE | #313 |
 | DS2 | De-hex design-system components | [plans/DS2-dehex-ds.md](plans/DS2-dehex-ds.md) | S | DS1 | TODO | |
 | DS3 | Add missing DS primitives (FormField, Skeleton, EmptyState, Modal, Toast) | [plans/DS3-primitives.md](plans/DS3-primitives.md) | M | DS2 | TODO | |
 | DS4 | Migrate parent surface onto DS | [plans/DS4-parent-migration.md](plans/DS4-parent-migration.md) | L | DS1-3 | TODO | |
